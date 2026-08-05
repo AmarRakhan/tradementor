@@ -83,16 +83,14 @@ data class TpProtectionResult(
 )
 
 object LocalTradingGatewayStore {
-    private const val PREFS = "local_trading_gateway"
-    private const val URL = "url"
+    private const val PREFS = "cloud_trading_gateway"
     private const val TEST_TOKEN = "one_test_token"
-    const val DEFAULT_URL = "https://tradementor-api-604335232956.europe-west4.run.app"
+    const val DEFAULT_URL = BuildConfig.CLOUD_API_URL.ifBlank {
+        "https://tradementor-api-604335232956.europe-west4.run.app"
+    }
 
-    fun url(context: Context): String = BuildConfig.CLOUD_API_URL.ifBlank {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(URL, DEFAULT_URL).orEmpty()
-    }.trimEnd('/')
-    fun saveUrl(context: Context, value: String) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        .edit().putString(URL, value.trim().trimEnd('/')).apply()
+    fun url(context: Context): String = DEFAULT_URL.trimEnd('/')
+
     fun testToken(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .getString(TEST_TOKEN, "").orEmpty().trim()
     fun saveTestToken(context: Context, value: String) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -116,7 +114,7 @@ class TradingGatewayClient {
     suspend fun health(baseUrl: String): TradingGatewayHealth = withContext(Dispatchers.IO) {
         val request = authenticated(Request.Builder().url("$baseUrl/v1/me/trading/health").get())
         http.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "Lokale handelsserver antwoordde met ${response.code}" }
+            check(response.isSuccessful) { "Cloud-API antwoordde met ${response.code}" }
             Gson().fromJson(response.body?.string().orEmpty(), TradingGatewayHealth::class.java)
         }
     }
