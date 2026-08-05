@@ -1,0 +1,9 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+firebase-admin>=6.9.0,<7
+google-cloud-firestore>=2.21.0,<3
+google-cloud-secret-manager>=2.24.0,<3
+pydantic>=2.11.0,<3
+hyperliquid-python-sdk==0.24.0
+httpx>=0.28.0,<1
+httpx>=0.28.0,<1

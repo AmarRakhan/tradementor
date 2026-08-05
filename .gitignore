@@ -1,0 +1,75 @@
+# Android/Gradle
+*.iml
+/.gradle
+.gradle/
+/build
+/app/build
+/captures
+.externalNativeBuild/
+.cxx/
+
+# Android Studio / local config
+/.idea/
+/local.properties
+/.kotlin
+
+# Local dev/user caches
+/.gradle-user
+/.gradle-user-home
+/.android
+/.android-user
+/.android-user-home
+/.android-signing-home
+/.local-android-sdk
+/.tmp
+/.tmp-appkit
+/.tmp-reown-inspect
+/.tools
+/.codex
+/.codex-tools
+
+# Server-side secrets / credentials
+/cloud/credentials/
+/trading_server/.env
+/trading_server/.venv/
+/trading_server/*.secret
+/trading_server/.api_wallet.dpapi
+/trading_server/.session_token.dpapi
+/trading_server/*.pfx
+/trading_server/*.keystore
+/trading_server/tmp/
+
+# Build artefacts
+/APK Releases/
+*.apk
+*.aab
+
+# Local backups/logs/temp
+/tmp
+/tmp/
+*.tmp
+*.log
+*.pid
+*.swp
+*.swo
+*.sqlite
+*.sqlite3
+*.db
+
+# Project-root media/debug artifacts (not app source)
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/*.bmp
+/*.gif
+/*.mp4
+/*.mov
+/*.mp3
+/*.wav
+/*.zip
+/*.rar
+/*.exe
+
+# macOS
+.DS_Store

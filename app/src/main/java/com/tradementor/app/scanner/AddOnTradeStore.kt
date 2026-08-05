@@ -1,0 +1,23 @@
+package com.tradementor.app.scanner
+
+import android.content.Context
+
+object AddOnTradeStore {
+    private const val PREFS = "add_on_trade_store"
+    private const val KEY = "symbols"
+
+    fun symbols(context: Context): Set<String> = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getStringSet(KEY, emptySet()).orEmpty().map { it.uppercase() }.toSet()
+
+    fun hasAdded(context: Context, symbol: String): Boolean = symbol.uppercase() in symbols(context)
+
+    fun markAdded(context: Context, symbol: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putStringSet(KEY, symbols(context) + symbol.uppercase()).apply()
+    }
+
+    fun retainOpen(context: Context, openSymbols: Set<String>) {
+        val retained = symbols(context).intersect(openSymbols.map { it.uppercase() }.toSet())
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putStringSet(KEY, retained).apply()
+    }
+}
