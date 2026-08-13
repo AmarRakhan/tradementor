@@ -1,6 +1,11 @@
 import { firebaseAuth } from "./firebase";
+import { demoModeEnabled } from "./demo-data";
 
 export async function authenticatedRequest(path: string, init: RequestInit = {}) {
+  const method = String(init.method || "GET").toUpperCase();
+  if (demoModeEnabled() && method !== "GET" && method !== "HEAD") {
+    throw new Error("Demo-modus is alleen-lezen. Er is niets opgeslagen of uitgevoerd.");
+  }
   const user = firebaseAuth.currentUser;
   if (!user) throw new Error("Log eerst in bij TradeMentor.");
   const token = await user.getIdToken();
