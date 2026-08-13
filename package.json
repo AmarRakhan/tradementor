@@ -1,0 +1,9 @@
+{
+  "name": "tradementor-cloud-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm --prefix web run dev --",
+    "build": "npm --prefix web run build && node tools/prepare-sites-artifact.mjs"
+  }
+}
