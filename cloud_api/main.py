@@ -123,10 +123,23 @@ from portfolio_risk import (
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
+from firebase_identity import identity_app
 
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
+
+# Staging can validate tokens from the established identity project while all
+# application data remains in the isolated Google Cloud project selected by
+# ADC/GOOGLE_CLOUD_PROJECT. This preserves user IDs without granting the
+# staging runtime a write path to the production Firestore database.
+data_project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+auth_project_id = os.getenv("FIREBASE_AUTH_PROJECT_ID", "").strip()
+auth_app = identity_app(
+    firebase_admin,
+    data_project_id=data_project_id,
+    auth_project_id=auth_project_id,
+)
 
 app = FastAPI(title="TradeMentor Cloud API", version="0.1.0")
 db = firestore.client()
@@ -2096,7 +2109,7 @@ def authenticated_user(authorization: str | None = Header(default=None)) -> dict
         raise HTTPException(401, "Firebase ID-token ontbreekt")
     token = authorization.removeprefix("Bearer ").strip()
     try:
-        return auth.verify_id_token(token, check_revoked=True)
+        return auth.verify_id_token(token, app=auth_app, check_revoked=True)
     except Exception as exc:
         raise HTTPException(401, "Ongeldige of verlopen gebruikerssessie") from exc
 
@@ -2118,6 +2131,8 @@ def health() -> dict[str, Any]:
     return {
         "status": "ready",
         "environment": os.getenv("TRADEMENTOR_ENV", "development"),
+        "dataProject": data_project_id or None,
+        "identityProject": auth_project_id or data_project_id or None,
         "ordersEnabled": False,
         "multiUser": True,
     }
