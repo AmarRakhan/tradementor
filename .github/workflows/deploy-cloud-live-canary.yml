@@ -79,7 +79,7 @@ jobs:
             --region "$GCP_REGION" \
             --image "$IMAGE" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=live-canary,TRADEMENTOR_ENVIRONMENT=production,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=true,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=live-canary,TRADEMENTOR_ENVIRONMENT=live-canary,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=true,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
             --allow-unauthenticated
 
       - name: Verify deployed canary boundary
@@ -106,6 +106,7 @@ jobs:
           assert health["dataProject"] == "tradementor-amar-20260813"
           assert health["identityProject"] == "tradementor-production"
           assert variables["ASTER_STRATEGY3_CANARY_ENABLED"] == "true"
+          assert variables["TRADEMENTOR_ENVIRONMENT"] == "live-canary"
           assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"
           assert variables["TRADEMENTOR_ALLOW_LIVE"] == "false"
           assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "false"
