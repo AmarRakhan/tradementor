@@ -16,6 +16,9 @@ confirmed Strategy 3 Aster open/fill/close/flat round trip.
 - Strategy 3 live runtime: disabled
 - MEXC live execution and automation: disabled
 - Schedulers: absent
+- Firebase tokens: signature, audience and expiry verified against
+  `tradementor-production`; the isolated runtime has no production Auth IAM
+  revocation lookup. Tokens remain short-lived.
 
 Deployment cannot itself place an order. The canary still requires a recent
 account-specific readiness report, an authenticated and verified user, an
