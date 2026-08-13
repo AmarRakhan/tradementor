@@ -14,7 +14,7 @@ def check_revoked_tokens(environment: str) -> bool:
     not receive.
     """
 
-    return environment.strip().lower() != "staging"
+    return environment.strip().lower() not in {"staging", "live-canary"}
 
 
 def identity_app(
