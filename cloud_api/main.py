@@ -3458,18 +3458,6 @@ def simulate_aster_strategy3(request: AsterStrategySettingsRequest, user: dict[s
 def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     """Read-only Strategy-3 gate. This endpoint cannot submit an order."""
     uid=str(user["uid"]);raw=aster_strategy3_reference(uid).get().to_dict() or {}
-    secret=load_aster_secret(user)
-    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
-    try:
-        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
-        active_symbols=sorted({str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0})
-        order_history=[];fills=[]
-        for symbol in active_symbols:
-            order_history.extend(client.all_orders(symbol,limit=100));fills.extend(client.user_trades(symbol,limit=500))
-        income=client.income_history(limit=500)
-    except (AsterApiError,ValueError) as exc:
-        raise HTTPException(409,f"Strategy-3-readiness kon Aster niet volledig lezen: {exc}") from exc
-
     owned=[]
     for row in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
         try:
@@ -3477,6 +3465,24 @@ def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)
             if leg.strategy_id=="aster-strategy-3" and leg.engine_type=="strategy3":owned.append(leg)
         except (TypeError,ValueError):pass
     s3_keys={(x.symbol,x.side) for x in owned}
+    secret=load_aster_secret(user)
+    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+    try:
+        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
+        active_symbols=sorted({str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0})
+        # Read one bounded history sample to prove the signed history endpoints
+        # are available. Iterating every active symbol made large accounts
+        # perform hundreds of sequential reads even though this route cannot
+        # place an order. Any ownership mismatch outside this sample remains
+        # conservatively blocked by reconciliation rather than guessed.
+        owned_symbols=sorted({x.symbol for x in owned})
+        probe_symbol=(owned_symbols or active_symbols or ["BTCUSDT"])[0]
+        order_history=client.all_orders(probe_symbol,limit=1)
+        fills=client.user_trades(probe_symbol,limit=5)
+        income=client.income_history(limit=50)
+    except (AsterApiError,ValueError) as exc:
+        raise HTTPException(409,f"Strategy-3-readiness kon Aster niet volledig lezen: {exc}") from exc
+
     s2_raw=aster_strategy2_reference(uid).get().to_dict() or {}
     s2_owned=[]
     for row in s2_raw.get("ownedLegs") if isinstance(s2_raw.get("ownedLegs"),list) else []:
@@ -3497,6 +3503,7 @@ def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)
         fills_readable=isinstance(fills,list),income_readable=isinstance(income,list),
         reconciliation_passed=recovery.allow_risk_increase and active.issubset(known),
         coexistence_safe=not bool(ownership_collisions),canary_validated=bool(raw.get("canaryValidated",False)))
+    report["historyProbe"]={"mode":"bounded-single-symbol","symbol":probe_symbol,"ordersLimit":1,"fillsLimit":5,"incomeLimit":50}
     # This route deliberately never changes paperOnly, enabled or liveReady.
     aster_strategy3_reference(uid).set({"readiness":report,"readinessCheckedAt":datetime.now(timezone.utc),
         "lastReason":"Read-only readiness uitgevoerd; live en canary blijven geblokkeerd"},merge=True)
