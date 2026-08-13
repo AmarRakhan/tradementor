@@ -1,0 +1,62 @@
+name: Verify isolated Strategy 3 live runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/verify-strategy3-live.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify service gates and dedicated one-minute scheduler
+        shell: bash
+        run: |
+          SERVICE_DESCRIPTION="$RUNNER_TEMP/strategy3-service.json"
+          JOB_DESCRIPTION="$RUNNER_TEMP/strategy3-job.json"
+          gcloud run services describe tradementor-strategy3-live-api \
+            --project tradementor-amar-20260813 \
+            --region europe-west4 \
+            --format=json > "$SERVICE_DESCRIPTION"
+          gcloud scheduler jobs describe tradementor-strategy3-live-tick \
+            --project tradementor-amar-20260813 \
+            --location europe-west4 \
+            --format=json > "$JOB_DESCRIPTION"
+          python - "$SERVICE_DESCRIPTION" "$JOB_DESCRIPTION" <<'PY'
+          import json
+          import sys
+
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          job = json.load(open(sys.argv[2], encoding="utf-8"))
+          variables = {
+              item["name"]: item.get("value")
+              for item in service["spec"]["template"]["spec"]["containers"][0]["env"]
+          }
+          service_url = variables["MEXC_AUTOMATION_BASE_URL"]
+          assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
+          assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "false"
+          assert variables["ASTER_STRATEGY3_LIVE_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "true"
+          assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
+          assert variables["MEXC_AUTOMATION_EXECUTION_ENABLED"] == "false"
+          assert job["state"] == "ENABLED"
+          assert job["schedule"] == "* * * * *"
+          assert job["httpTarget"]["uri"] == service_url + "/internal/aster-strategy3/tick"
+          assert job["httpTarget"]["oidcToken"]["audience"] == service_url
+          assert job["httpTarget"]["oidcToken"]["serviceAccountEmail"] == "tm-staging-runtime@tradementor-amar-20260813.iam.gserviceaccount.com"
+          PY
