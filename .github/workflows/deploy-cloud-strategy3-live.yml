@@ -3,11 +3,6 @@ name: Deploy isolated Strategy 3 live runtime
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - ".github/workflows/deploy-cloud-strategy3-live.yml"
 
 permissions:
   contents: read
@@ -175,8 +170,15 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --update-env-vars "ASTER_STRATEGY3_RUNTIME_ENABLED=true"
-          VALUE="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].env[?name=ASTER_STRATEGY3_RUNTIME_ENABLED].value)')"
-          test "$VALUE" = "true"
+          SERVICE_DESCRIPTION="$RUNNER_TEMP/strategy3-live-unlocked.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_DESCRIPTION"
+          python - "$SERVICE_DESCRIPTION" <<'PY'
+          import json
+          import sys
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          variables = {item["name"]: item.get("value") for item in service["spec"]["template"]["spec"]["containers"][0]["env"]}
+          assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "true"
+          PY
 
       - name: Publish Strategy 3 live service URL
         run: echo "$SERVICE_URL"
