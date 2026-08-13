@@ -1,0 +1,71 @@
+from firebase_identity import identity_app
+
+
+class FakeFirebaseAdmin:
+    def __init__(self):
+        self.apps = {"[DEFAULT]": {"name": "[DEFAULT]"}}
+        self.initializations = []
+
+    def get_app(self, name="[DEFAULT]"):
+        if name not in self.apps:
+            raise ValueError(name)
+        return self.apps[name]
+
+    def initialize_app(self, *, options, name):
+        app = {"name": name, "options": options}
+        self.apps[name] = app
+        self.initializations.append(app)
+        return app
+
+
+def test_separate_identity_app_preserves_staging_data_app():
+    firebase = FakeFirebaseAdmin()
+
+    selected = identity_app(
+        firebase,
+        data_project_id="tradementor-migration-20260812",
+        auth_project_id="tradementor-production",
+    )
+
+    assert selected == {
+        "name": "identity",
+        "options": {"projectId": "tradementor-production"},
+    }
+    assert firebase.get_app() == {"name": "[DEFAULT]"}
+
+
+def test_identity_app_is_reused_without_reinitializing():
+    firebase = FakeFirebaseAdmin()
+
+    first = identity_app(
+        firebase,
+        data_project_id="tradementor-migration-20260812",
+        auth_project_id="tradementor-production",
+    )
+    second = identity_app(
+        firebase,
+        data_project_id="tradementor-migration-20260812",
+        auth_project_id="tradementor-production",
+    )
+
+    assert second is first
+    assert len(firebase.initializations) == 1
+
+
+def test_default_app_is_used_when_projects_match_or_auth_is_unset():
+    firebase = FakeFirebaseAdmin()
+
+    same_project = identity_app(
+        firebase,
+        data_project_id="tradementor-production",
+        auth_project_id="tradementor-production",
+    )
+    unset = identity_app(
+        firebase,
+        data_project_id="tradementor-migration-20260812",
+        auth_project_id="",
+    )
+
+    assert same_project is firebase.get_app()
+    assert unset is firebase.get_app()
+    assert firebase.initializations == []
