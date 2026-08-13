@@ -1,0 +1,171 @@
+name: Deploy isolated Strategy 3 live runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/deploy-cloud-strategy3-live.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy3-live
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-strategy3-live-api
+  SCHEDULER_JOB: tradementor-strategy3-live-tick
+  FIREBASE_AUTH_PROJECT_ID: tradementor-production
+
+jobs:
+  test-deploy-and-schedule:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run backend tests
+        working-directory: cloud_api
+        run: pytest -q
+
+      - name: Authenticate to isolated Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify immutable Strategy 3 scope
+        shell: bash
+        run: |
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$FIREBASE_AUTH_PROJECT_ID" = "tradementor-production"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-strategy3-live-api"
+          test "$SCHEDULER_JOB" = "tradementor-strategy3-live-tick"
+
+      - name: Build and push Strategy 3 container
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy3-live-api:${GITHUB_SHA}"
+          docker build --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy Strategy 3 only live service
+        shell: bash
+        run: |
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy3-live,TRADEMENTOR_ENVIRONMENT=strategy3-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=true,ASTER_STRATEGY3_RUNTIME_ENABLED=true,ASTER_STRATEGY3_CANARY_ENABLED=false,ASTER_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
+            --allow-unauthenticated
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          gcloud run services update "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --update-env-vars "MEXC_AUTOMATION_BASE_URL=$SERVICE_URL"
+          echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+
+      - name: Verify deployed live boundary
+        shell: bash
+        run: |
+          HEALTH="$(curl --fail --silent --show-error "$SERVICE_URL/health")"
+          SERVICE_DESCRIPTION="$RUNNER_TEMP/strategy3-live-service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json > "$SERVICE_DESCRIPTION"
+          python - "$HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
+          import json
+          import sys
+
+          health = json.loads(sys.argv[1])
+          service = json.load(open(sys.argv[2], encoding="utf-8"))
+          service_url = sys.argv[3]
+          variables = {
+              item["name"]: item.get("value")
+              for item in service["spec"]["template"]["spec"]["containers"][0]["env"]
+          }
+          assert health["environment"] == "strategy3-live"
+          assert health["ordersEnabled"] is True
+          assert health["dataProject"] == "tradementor-amar-20260813"
+          assert health["identityProject"] == "tradementor-production"
+          assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
+          assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "false"
+          assert variables["ASTER_STRATEGY3_LIVE_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY3_CANARY_ENABLED"] == "false"
+          assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
+          assert variables["MEXC_AUTOMATION_EXECUTION_ENABLED"] == "false"
+          assert variables["MEXC_AUTOMATION_BASE_URL"] == service_url
+          PY
+
+      - name: Create or update one-minute Strategy 3 scheduler
+        shell: bash
+        run: |
+          TARGET="$SERVICE_URL/internal/aster-strategy3/tick"
+          if gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "$SCHEDULER_JOB" \
+              --project "$GCP_PROJECT_ID" \
+              --location "$GCP_REGION" \
+              --schedule "* * * * *" \
+              --uri "$TARGET" \
+              --http-method POST \
+              --oidc-service-account-email "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
+              --oidc-token-audience "$SERVICE_URL"
+          else
+            gcloud scheduler jobs create http "$SCHEDULER_JOB" \
+              --project "$GCP_PROJECT_ID" \
+              --location "$GCP_REGION" \
+              --schedule "* * * * *" \
+              --uri "$TARGET" \
+              --http-method POST \
+              --oidc-service-account-email "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
+              --oidc-token-audience "$SERVICE_URL"
+          fi
+
+      - name: Verify scheduler target and cadence
+        shell: bash
+        run: |
+          JOB_DESCRIPTION="$RUNNER_TEMP/strategy3-scheduler.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format=json > "$JOB_DESCRIPTION"
+          python - "$JOB_DESCRIPTION" "$SERVICE_URL" <<'PY'
+          import json
+          import sys
+
+          job = json.load(open(sys.argv[1], encoding="utf-8"))
+          service_url = sys.argv[2]
+          assert job["schedule"] == "* * * * *"
+          assert job["httpTarget"]["uri"] == service_url + "/internal/aster-strategy3/tick"
+          assert job["httpTarget"]["oidcToken"]["audience"] == service_url
+          PY
+
+      - name: Publish Strategy 3 live service URL
+        run: echo "$SERVICE_URL"
