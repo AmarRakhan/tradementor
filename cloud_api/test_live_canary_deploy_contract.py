@@ -10,6 +10,7 @@ def test_canary_service_is_separate_and_manually_bounded():
 
     assert "CLOUD_RUN_SERVICE: tradementor-live-canary-api" in workflow
     assert "TRADEMENTOR_ENV=live-canary" in workflow
+    assert "TRADEMENTOR_ENVIRONMENT=live-canary" in workflow
     assert "ASTER_STRATEGY3_CANARY_ENABLED=true" in workflow
     assert "ASTER_STRATEGY3_RUNTIME_ENABLED=false" in workflow
     assert "TRADEMENTOR_ALLOW_LIVE=false" in workflow
@@ -29,3 +30,9 @@ def test_workflow_verifies_the_deployed_runtime_boundary():
     assert 'variables["ASTER_STRATEGY3_CANARY_ENABLED"] == "true"' in workflow
     assert 'variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"' in workflow
     assert 'health["ordersEnabled"] is False' in workflow
+
+
+def test_canary_uses_isolated_token_verification_without_production_auth_iam():
+    identity = (ROOT / "cloud_api" / "firebase_identity.py").read_text(encoding="utf-8")
+
+    assert '{"staging", "live-canary"}' in identity
