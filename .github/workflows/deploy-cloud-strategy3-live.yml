@@ -110,7 +110,7 @@ jobs:
               for item in service["spec"]["template"]["spec"]["containers"][0]["env"]
           }
           assert health["environment"] == "strategy3-live"
-          assert health["ordersEnabled"] is True
+          assert health["ordersEnabled"] is False  # Generic health remains fail-closed; Strategy-3 gates below authorize execution.
           assert health["dataProject"] == "tradementor-amar-20260813"
           assert health["identityProject"] == "tradementor-production"
           assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
