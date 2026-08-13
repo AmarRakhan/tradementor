@@ -80,7 +80,7 @@ jobs:
             --region "$GCP_REGION" \
             --image "$IMAGE" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy3-live,TRADEMENTOR_ENVIRONMENT=strategy3-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=true,ASTER_STRATEGY3_RUNTIME_ENABLED=true,ASTER_STRATEGY3_CANARY_ENABLED=false,ASTER_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy3-live,TRADEMENTOR_ENVIRONMENT=strategy3-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=true,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,ASTER_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
             --allow-unauthenticated
           SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
           gcloud run services update "$CLOUD_RUN_SERVICE" \
@@ -117,7 +117,7 @@ jobs:
           assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
           assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "false"
           assert variables["ASTER_STRATEGY3_LIVE_ENABLED"] == "true"
-          assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"
           assert variables["ASTER_STRATEGY3_CANARY_ENABLED"] == "false"
           assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
           assert variables["MEXC_AUTOMATION_EXECUTION_ENABLED"] == "false"
@@ -170,6 +170,16 @@ jobs:
           assert job["httpTarget"]["uri"] == service_url + "/internal/aster-strategy3/tick"
           assert job["httpTarget"]["oidcToken"]["audience"] == service_url
           PY
+
+      - name: Unlock Strategy 3 runtime only after scheduler verification
+        shell: bash
+        run: |
+          gcloud run services update "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --update-env-vars "ASTER_STRATEGY3_RUNTIME_ENABLED=true"
+          VALUE="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].env[?name=ASTER_STRATEGY3_RUNTIME_ENABLED].value)')"
+          test "$VALUE" = "true"
 
       - name: Publish Strategy 3 live service URL
         run: echo "$SERVICE_URL"
