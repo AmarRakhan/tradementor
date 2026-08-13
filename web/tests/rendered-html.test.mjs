@@ -72,6 +72,21 @@ test("keeps execution safe and exposes the test destinations", async () => {
   assert.match(legalPage, /historische resultaten voorspellen geen toekomstige resultaten/i);
 });
 
+test("staging demo mode is explicit, synthetic and blocks every write", async () => {
+  const [page, client, demo, control] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/cloud-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/demo-data.ts", import.meta.url), "utf8"),
+    readFile(new URL("../components/demo-mode-control.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /DemoModeControl/);
+  assert.match(control, /DEMO ACTIEF · ALLEEN LEZEN/);
+  assert.match(client, /method !== "GET" && method !== "HEAD"/);
+  assert.match(client, /Demo-modus is alleen-lezen/);
+  assert.match(demo, /ordersEnabled: false/);
+  assert.match(demo, /demoData: true/);
+});
+
 test("Strategy 2 always exposes a personal live on/off control without bypassing readiness", async () => {
   const [source, quick, performance] = await Promise.all([
     readFile(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8"),
@@ -91,15 +106,18 @@ test("Strategy 2 always exposes a personal live on/off control without bypassing
 });
 
 test("keeps every browser request scoped to the signed-in Firebase user", async () => {
-  const [client, proxy, scannerStart, scannerSimulate] = await Promise.all([
+  const [client, proxy, bootstrap, scannerStart, scannerSimulate] = await Promise.all([
     readFile(new URL("../lib/cloud-client.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/cloud-proxy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/session/bootstrap/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/hyperliquid/scanner/start/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/hyperliquid/scanner/simulate/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(client, /firebaseAuth\.currentUser/);
   assert.match(client, /getIdToken/);
   assert.match(proxy, /authorization\?\.startsWith\("Bearer "\)/);
+  assert.match(bootstrap, /proxyCloud\(request, "\/v1\/me\/bootstrap", "POST", "\{\}"\)/);
+  assert.doesNotMatch(bootstrap, /tradementor-api-604335232956|run\.app/);
   assert.match(scannerStart, /proxyCloud\(request, "\/v1\/me\/hyperliquid\/scanner\/start"/);
   assert.match(scannerSimulate, /proxyCloud\(request, "\/v1\/me\/hyperliquid\/scanner\/simulate"/);
   assert.doesNotMatch(proxy, /private.?key|secret.?key/i);
