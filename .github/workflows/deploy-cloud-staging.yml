@@ -63,6 +63,36 @@ jobs:
           test "$FIREBASE_AUTH_PROJECT_ID" = "tradementor-production"
           test "$CLOUD_RUN_SERVICE" = "tradementor-staging-api"
 
+      - name: Classify recent staging connection failures
+        shell: bash
+        run: |
+          RAW="$(gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-staging-api" AND severity>=ERROR' \
+            --project "$GCP_PROJECT_ID" \
+            --freshness 30m \
+            --limit 20 \
+            --format='value(textPayload,jsonPayload.message)' 2>&1 || true)"
+          python - "$RAW" <<'PY'
+          import sys
+
+          value = sys.argv[1].lower()
+          if "secret manager api has not been used" in value or "secretmanager.googleapis.com" in value and "disabled" in value:
+              result = "SECRET_MANAGER_API_DISABLED"
+          elif "secretmanager" in value and ("permission" in value or "denied" in value or "403" in value):
+              result = "SECRET_MANAGER_PERMISSION_DENIED"
+          elif "firestore" in value and ("permission" in value or "denied" in value or "403" in value):
+              result = "FIRESTORE_PERMISSION_DENIED"
+          elif "permission_denied" in value or "permission denied" in value:
+              result = "UNCLASSIFIED_PERMISSION_DENIED"
+          elif "logging.logentries.list" in value or "does not have permission" in value:
+              result = "LOG_ACCESS_UNAVAILABLE"
+          elif value.strip():
+              result = "OTHER_RUNTIME_ERROR"
+          else:
+              result = "NO_RECENT_RUNTIME_ERROR"
+          print(f"staging_connection_diagnostic={result}")
+          PY
+
       - name: Build and push staging container
         shell: bash
         run: |
