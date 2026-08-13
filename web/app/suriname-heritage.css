@@ -1,0 +1,160 @@
+/* Suriname Heritage is a presentation-only skin. No trading or data rules live here. */
+.app-skin-card{margin-top:18px;padding:clamp(20px,3vw,30px);border:1px solid var(--tm-line);border-radius:var(--tm-radius-lg);background:var(--tm-surface);box-shadow:var(--tm-shadow-card)}
+.app-skin-card>p{max-width:760px;color:var(--tm-text-2);font-size:11px;line-height:1.65}
+.app-skin-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0 12px}
+.app-skin-options button{display:grid;grid-template-columns:64px 1fr;grid-template-rows:auto auto;gap:4px 14px;align-items:center;min-height:92px;padding:13px;border:1px solid var(--tm-line);border-radius:16px;text-align:left;background:rgba(5,14,27,.8)}
+.app-skin-options button.active{border-color:var(--tm-line-strong);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tm-line-strong) 50%,transparent),0 12px 34px rgba(0,0,0,.22)}
+.app-skin-options strong{align-self:end;font-size:13px}.app-skin-options small{align-self:start;color:var(--tm-text-3);font-size:9px}
+.skin-preview{grid-row:1/3;width:64px;height:62px;border-radius:12px;border:1px solid rgba(255,255,255,.1)}
+.skin-preview.original{background:radial-gradient(circle at 70% 15%,#3159a5,transparent 35%),linear-gradient(145deg,#061326,#071b30)}
+.skin-preview.heritage{background:linear-gradient(0deg,rgba(0,12,5,.35),rgba(0,12,5,.35)),url('/suriname-heritage-hero-v1.png') 72% center/cover}
+
+html[data-app-skin="suriname-heritage"]{
+  --tm-bg-0:#020603;--tm-bg-1:#061008;--tm-bg-2:#0a170d;
+  --tm-surface:rgba(5,14,8,.9);--tm-surface-raised:rgba(8,20,11,.95);--tm-surface-active:rgba(13,29,16,.97);
+  --tm-line:rgba(211,168,69,.22);--tm-line-strong:rgba(240,194,85,.52);
+  --tm-text:#fffaf0;--tm-text-2:#d7d0bb;--tm-text-3:#938c76;
+  --tm-teal:#3ec37f;--tm-cyan:#e2b84f;--tm-indigo:#9b7328;
+  --tm-profit:#45df81;--tm-loss:#ff5567;--tm-warning:#f0bd4e;
+  --ink:var(--tm-text);--muted:var(--tm-text-3);--line:var(--tm-line);--panel:var(--tm-surface);--panel-raised:var(--tm-surface-raised);--cyan:var(--tm-cyan);--green:var(--tm-profit);--danger:var(--tm-loss);
+}
+html[data-app-skin="suriname-heritage"],html[data-app-skin="suriname-heritage"] body{background:#020603}
+html[data-app-skin="suriname-heritage"] .app-shell{background:radial-gradient(circle at 70% -5%,rgba(198,145,41,.12),transparent 28%),radial-gradient(circle at 4% 52%,rgba(24,103,56,.11),transparent 35%),linear-gradient(145deg,#020503,#061008 48%,#020704)}
+html[data-app-skin="suriname-heritage"] .app-shell::before{opacity:.2;background-image:linear-gradient(rgba(207,164,67,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(207,164,67,.03) 1px,transparent 1px)}
+html[data-app-skin="suriname-heritage"] .topbar,html[data-app-skin="suriname-heritage"] .rail{border-color:var(--tm-line);background:linear-gradient(180deg,rgba(2,8,4,.97),rgba(4,12,6,.93));box-shadow:0 12px 34px rgba(0,0,0,.34)}
+html[data-app-skin="suriname-heritage"] .brand-mark{border-color:rgba(229,184,76,.45);box-shadow:0 0 24px rgba(226,174,51,.18)}
+html[data-app-skin="suriname-heritage"] .brand strong,html[data-app-skin="suriname-heritage"] .kicker,html[data-app-skin="suriname-heritage"] .safe-label{color:#e7bd58}
+html[data-app-skin="suriname-heritage"] .nav-button.active{border-color:rgba(226,184,79,.35);background:linear-gradient(145deg,rgba(161,112,27,.18),rgba(25,73,39,.16));box-shadow:inset 0 0 20px rgba(230,180,59,.05)}
+html[data-app-skin="suriname-heritage"] .nav-button.active::before{background:#e2b84f;box-shadow:0 0 14px rgba(226,184,79,.8)}
+html[data-app-skin="suriname-heritage"] .nav-button.active span{color:#ffe9a3;background:rgba(185,134,35,.18)}
+html[data-app-skin="suriname-heritage"] .hero-panel{border-color:rgba(226,184,79,.4);background-image:linear-gradient(90deg,rgba(1,7,3,.94) 0%,rgba(2,10,5,.76) 48%,rgba(2,8,4,.12) 78%,rgba(2,8,4,.04) 100%),url('/suriname-heritage-hero-v1.png');background-position:center,right center;background-size:cover,cover;background-repeat:no-repeat;box-shadow:0 28px 70px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,217,121,.04)}
+html[data-app-skin="suriname-heritage"] .hero-panel::before{background:linear-gradient(115deg,rgba(255,224,145,.04),transparent 45%)}
+html[data-app-skin="suriname-heritage"] .hero-panel::after{opacity:.35;background:radial-gradient(circle,rgba(231,178,53,.24),transparent 65%)}
+html[data-app-skin="suriname-heritage"] .hero-copy h1{color:#fff5d9;text-shadow:0 2px 24px rgba(0,0,0,.8)}
+html[data-app-skin="suriname-heritage"] .hero-copy p{color:#ebe4d1;text-shadow:0 2px 12px rgba(0,0,0,.85)}
+html[data-app-skin="suriname-heritage"] .risk-orbit{background:conic-gradient(from 210deg,#2fb968 0 20%,#d6a83f 20% 38%,#d9454f 38% 58%,rgba(72,77,55,.25) 58% 100%);box-shadow:0 0 0 8px rgba(2,8,4,.42),0 18px 50px rgba(0,0,0,.45)}
+html[data-app-skin="suriname-heritage"] .metric-strip,html[data-app-skin="suriname-heritage"] .direction-balance{border-color:rgba(214,171,69,.28);background:rgba(198,154,56,.12)}
+html[data-app-skin="suriname-heritage"] .metric,html[data-app-skin="suriname-heritage"] .direction-balance-cell,html[data-app-skin="suriname-heritage"] .primary-card,html[data-app-skin="suriname-heritage"] .exchange-card,html[data-app-skin="suriname-heritage"] .wallet-total,html[data-app-skin="suriname-heritage"] .wallet-navigation-settings,html[data-app-skin="suriname-heritage"] .interface-mode-card{background:linear-gradient(145deg,rgba(8,21,11,.96),rgba(3,11,6,.96));border-color:rgba(211,168,69,.23);box-shadow:0 18px 42px rgba(0,0,0,.26),inset 0 1px rgba(255,223,145,.025)}
+html[data-app-skin="suriname-heritage"] .metric span,html[data-app-skin="suriname-heritage"] .metric dt,html[data-app-skin="suriname-heritage"] .direction-balance-cell span{color:#d7ae51}
+html[data-app-skin="suriname-heritage"] .status-chip{border-color:rgba(224,181,74,.26);background:rgba(5,23,11,.68)}
+html[data-app-skin="suriname-heritage"] .bottom-nav{border-top-color:rgba(222,178,71,.32);background:rgba(2,8,4,.97);box-shadow:0 -15px 40px rgba(0,0,0,.35)}
+html[data-app-skin="suriname-heritage"] .bottom-nav::after{content:"";position:absolute;inset:auto 0 0;height:4px;background:linear-gradient(#16844a 0 33%,#fff 33% 43%,#cf3140 43% 78%,#fff 78% 88%,#16844a 88%)}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button{position:relative;min-height:64px;border:1px solid transparent;border-radius:13px;color:#9f967c;background:transparent}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button span{position:relative;width:34px;height:30px;color:transparent;background:transparent;box-shadow:none;font-size:0}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button span::after{position:absolute;inset:0;display:grid;place-items:center;color:#cda441;font-size:19px;line-height:1;text-shadow:0 0 12px rgba(225,181,72,.22)}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button[data-destination="hyperliquid"] span::after{content:"◆"}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button[data-destination="aster"] span::after{content:"✦"}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button[data-destination="positions"] span::after{content:"▥"}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button[data-destination="risk"] span::after{content:"⬟"}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button[data-destination="wallet"] span::after{content:"▣"}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button[data-destination="admin"] span::after{content:"★"}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button small{color:#a79c7e;font-size:7px;font-weight:850;letter-spacing:.08em}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button.active{border-color:rgba(226,184,79,.32);background:linear-gradient(180deg,rgba(188,139,37,.13),rgba(26,65,35,.12));box-shadow:inset 0 0 18px rgba(224,176,60,.055)}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button.active::before{top:-8px;width:34px;height:2px;background:#e2b84f;box-shadow:0 0 12px rgba(226,184,79,.8)}
+html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button.active span::after,html[data-app-skin="suriname-heritage"] .bottom-nav .nav-button.active small{color:#f3ca64}
+html[data-app-skin="suriname-heritage"] .test-environment-banner{background:linear-gradient(90deg,#07572d,#c89a32,#07572d);box-shadow:0 3px 18px rgba(186,134,30,.3)}
+html[data-app-skin="suriname-heritage"] .trading-terminal,html[data-app-skin="suriname-heritage"] .chart-stage{border-color:rgba(214,171,69,.28);background:#031008}
+html[data-app-skin="suriname-heritage"] button:focus-visible,html[data-app-skin="suriname-heritage"] a:focus-visible{outline-color:#e2b84f}
+
+/* Keep the Heritage presentation consistent below the first viewport and on every tab. */
+html[data-app-skin="suriname-heritage"] :where(.health-panel,.bot-status-panel,.exchange-status-panel,.account-summary,.billing-safety,.plan-summary,.plan-price,.settings-drawer,.position-filter-sheet,.primary-card,.position-card,.trading-terminal,.chart-stage,.risk-heading,.risk-chart-card,.risk-explanation,.risk-factor-card,.risk-simulator,.risk-capacity-card,.performance-calendar,.calendar-day,.strategy-card,.strategy-explanation,.strategy-check,.premium-layer,.premium-metric-grid,.premium-list-line,.premium-unavailable,.screener-toolbar,.screener-table,.screener-summary,.screener-empty,.creator-step,.creator-question,.creator-live-summary,.creator-help,.creator-existing-engine,.wallet-hero,.wallet-ring,.wallet-navigation-settings,.interface-mode-card,.app-skin-card,.exchange-card,.wallet-total){border-color:rgba(211,168,69,.24)!important;background-color:#061009!important;background-image:linear-gradient(145deg,rgba(9,23,12,.97),rgba(2,9,5,.98))!important;box-shadow:0 18px 42px rgba(0,0,0,.28),inset 0 1px rgba(255,224,145,.025)!important}
+html[data-app-skin="suriname-heritage"] :where(.panel-title,.card-heading,.premium-page-heading,.positions-page-heading,.drawer-heading,.risk-heading,.creator-question) :where(h1,h2,h3,strong),html[data-app-skin="suriname-heritage"] :where(.panel-title,.card-heading,.premium-page-heading,.positions-page-heading,.drawer-heading)>strong{color:#fff5d9}
+html[data-app-skin="suriname-heritage"] :where(.premium-segmented,.period-tabs,.positions-exchange-switch,.position-layout-choice,.position-view-toolbar,.position-filter-trigger,.creator-choices){border-color:rgba(211,168,69,.24)!important;background:rgba(2,9,5,.9)!important}
+html[data-app-skin="suriname-heritage"] :where(.premium-segmented,.period-tabs,.positions-exchange-switch,.position-layout-choice,.creator-choices) button[aria-pressed="true"],html[data-app-skin="suriname-heritage"] :where(.premium-segmented,.period-tabs,.positions-exchange-switch,.position-layout-choice,.creator-choices) button.active{border-color:rgba(234,190,79,.44)!important;background:linear-gradient(145deg,rgba(190,138,36,.24),rgba(23,87,46,.25))!important;color:#ffe6a1!important}
+html[data-app-skin="suriname-heritage"] :where(input,select,textarea,.premium-select,.premium-search){border-color:rgba(211,168,69,.24)!important;background-color:rgba(2,9,5,.92)!important;color:#fffaf0!important}
+html[data-app-skin="suriname-heritage"] :where(.position-card,.compact-position-row,.premium-list-line){border-left-color:#d8ad43!important}
+html[data-app-skin="suriname-heritage"] :where(.position-card,.compact-position-row,.premium-list-line):hover{background-color:#0a1a0e!important}
+html[data-app-skin="suriname-heritage"] .content>section:not(.hero-panel):not(.metric-strip):not(.direction-balance),html[data-app-skin="suriname-heritage"] .content>article,html[data-app-skin="suriname-heritage"] .content>aside{border-color:rgba(211,168,69,.24)!important;background-color:rgba(4,13,7,.96)!important}
+html[data-app-skin="suriname-heritage"] .content :where(section,article,aside,dialog){border-color:rgba(211,168,69,.22)}
+html[data-app-skin="suriname-heritage"] .content::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(circle at 100% 35%,rgba(211,168,69,.08),transparent 30%),radial-gradient(circle at 0 70%,rgba(20,102,53,.09),transparent 34%)}
+
+/* The gauge is a percentage: keep number and % together and inside the orbit. */
+html[data-app-skin="suriname-heritage"] .risk-core{overflow:hidden;text-align:center}
+html[data-app-skin="suriname-heritage"] .risk-orbit strong{display:block;max-width:100%;font-size:clamp(27px,5.4vw,48px)!important;line-height:.92!important;letter-spacing:-.045em;white-space:nowrap;overflow:hidden;text-overflow:clip}
+html[data-app-skin="suriname-heritage"] .risk-orbit strong::after{font-size:.48em;vertical-align:.14em}
+html[data-app-skin="suriname-heritage"] .risk-orbit .risk-core{width:82%;min-width:0;justify-items:center}
+html[data-app-skin="suriname-heritage"] .risk-orbit .risk-core strong{width:100%;overflow:visible!important;text-overflow:clip;font-variant-numeric:tabular-nums}
+html[data-app-skin="suriname-heritage"] .risk-orbit.risk-safe .risk-core strong{color:#49dd82}
+html[data-app-skin="suriname-heritage"] .risk-orbit.risk-caution .risk-core strong{color:#f1cf55}
+html[data-app-skin="suriname-heritage"] .risk-orbit.risk-high .risk-core strong{color:#f39a45}
+html[data-app-skin="suriname-heritage"] .risk-orbit.risk-critical .risk-core strong{color:#ff5c68}
+html[data-app-skin="suriname-heritage"] .risk-orbit.risk-unknown .risk-core strong{color:#d8d0ba}
+
+@media(max-width:620px){
+  .app-skin-options{grid-template-columns:1fr}.app-skin-options button{min-height:82px}.skin-preview{height:54px}
+  html[data-app-skin="suriname-heritage"] .hero-panel,html[data-app-skin="suriname-heritage"] .premium-app-shell .hero-panel{min-height:246px!important;padding:18px 16px!important;background-position:center,right center!important;background-size:cover,auto 130%!important}
+  html[data-app-skin="suriname-heritage"] .hero-copy{max-width:66%!important;padding-right:0!important}
+  html[data-app-skin="suriname-heritage"] .hero-copy h1{max-width:100%!important;font-size:clamp(27px,8.5vw,35px)!important;line-height:1!important}
+  html[data-app-skin="suriname-heritage"] .hero-copy p{max-width:100%!important;margin-bottom:11px!important;font-size:8px!important;line-height:1.5!important}
+  html[data-app-skin="suriname-heritage"] .status-row{max-width:92%;gap:5px!important}
+  html[data-app-skin="suriname-heritage"] .status-chip{min-height:24px!important;padding:5px 8px!important;font-size:6.5px!important}
+  html[data-app-skin="suriname-heritage"] .risk-orbit{right:5px!important;bottom:7px!important;width:112px!important;opacity:.96!important}
+  html[data-app-skin="suriname-heritage"] .risk-orbit .risk-core{width:98px!important;padding-inline:1px!important}
+  html[data-app-skin="suriname-heritage"] .risk-orbit strong{font-size:25px!important;line-height:.92!important;letter-spacing:-.055em!important}
+  html[data-app-skin="suriname-heritage"] .risk-orbit span{font-size:5.5px!important}
+  html[data-app-skin="suriname-heritage"] .risk-orbit small{max-width:86px!important;font-size:5.2px!important;line-height:1.15!important}
+  html[data-app-skin="suriname-heritage"] .metric-strip{margin-top:9px!important}
+  html[data-app-skin="suriname-heritage"] .metric{min-height:82px!important;padding:10px 12px!important}
+  html[data-app-skin="suriname-heritage"] .metric span{font-size:7px!important;line-height:1.2!important}
+  html[data-app-skin="suriname-heritage"] .metric strong{margin:4px 0 2px!important;font-size:16px!important;line-height:1.05!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+  html[data-app-skin="suriname-heritage"] .metric small{font-size:6.3px!important;line-height:1.25!important}
+  html[data-app-skin="suriname-heritage"] .metric.realized-today .realized-amount{font-size:15px!important;white-space:nowrap!important}
+  html[data-app-skin="suriname-heritage"] .metric.realized-trades strong{font-size:17px!important}
+}
+@media(prefers-reduced-motion:reduce){html[data-app-skin="suriname-heritage"] *{scroll-behavior:auto!important}}
+
+/* Heritage completeness pass: every reusable product surface inherits the skin. */
+html[data-app-skin="suriname-heritage"] :where(
+  .support-center,.support-empty,.support-loading,.support-report-list>article,
+  .aster-performance,.performance-metrics,.performance-metrics>div,
+  .strategy-performance-grid>article,.performance-calendar,.calendar-day-detail,
+  .strategy-card,.strategy-two-card,.strategy-control-card,.strategy-behavior,
+  .strategy-config-summary,.strategy-behavior-list>article,.strategy-inline-editor,
+  .strategy-power-control,.strategy-quick-control,.safety-card,
+  .position-overview,.compact-position-list,.compact-position-row,.position-list>.position-card,
+  .position-layout-choice,.position-filter-trigger,.position-filter-sheet,
+  .readiness-list>div,.confirmation-panel,.maker-dialog
+){
+  border-color:rgba(214,171,69,.26)!important;
+  background-color:#041008!important;
+  background-image:linear-gradient(145deg,rgba(8,22,11,.98),rgba(2,9,5,.99))!important;
+  box-shadow:0 16px 38px rgba(0,0,0,.3),inset 0 1px rgba(255,224,145,.03)!important;
+}
+html[data-app-skin="suriname-heritage"] :where(
+  .support-center>header>div>span,.performance-head .kicker,
+  .strategy-behavior>header span,.position-overview>.kicker,
+  .position-filter-sheet header span,.safety-card .kicker
+){color:#dfb64f!important}
+html[data-app-skin="suriname-heritage"] :where(
+  .support-center>header>button,.support-center button,
+  .position-layout-choice button,.position-filter-trigger,
+  .compact-position-row button,.strategy-card button,.strategy-behavior button,
+  .strategy-power-control button,.strategy-quick-control button,
+  .maker-dialog button,.position-filter-sheet button
+){
+  border-color:rgba(218,174,67,.3)!important;
+  color:#f7e7b4!important;
+  background-color:#07170c!important;
+  background-image:linear-gradient(145deg,rgba(26,70,37,.78),rgba(8,19,10,.96))!important;
+  box-shadow:inset 0 1px rgba(255,231,162,.04)!important;
+}
+html[data-app-skin="suriname-heritage"] :where(
+  .position-layout-choice button.active,.position-layout-choice button[aria-pressed="true"],
+  .position-tabs button.active,.position-tabs button[aria-pressed="true"],
+  .strategy-power-control.enabled button,.strategy-quick-control.enabled button
+){
+  border-color:rgba(238,195,84,.5)!important;
+  color:#fff0bd!important;
+  background-image:linear-gradient(145deg,rgba(181,129,32,.28),rgba(23,91,46,.38))!important;
+}
+html[data-app-skin="suriname-heritage"] :where(button:disabled,[aria-disabled="true"]){opacity:.52}
+html[data-app-skin="suriname-heritage"] :where(
+  .performance-metrics,.position-layout-choice,.compact-position-list
+){background-image:none!important;background-color:rgba(2,8,4,.92)!important}
+html[data-app-skin="suriname-heritage"] .compact-position-row.positive{border-left-color:#40ce79!important}
+html[data-app-skin="suriname-heritage"] .compact-position-row.negative{border-left-color:#e74c5b!important}
+html[data-app-skin="suriname-heritage"] .compact-position-row.selected-position{outline:1px solid rgba(230,184,70,.55);box-shadow:0 0 0 3px rgba(230,184,70,.08),0 16px 38px rgba(0,0,0,.3)!important}
+html[data-app-skin="suriname-heritage"] .performance-calendar .calendar-days button:not(.gain):not(.loss){background:#07150b!important;color:#d8cfb7!important}
+html[data-app-skin="suriname-heritage"] .performance-calendar .calendar-days button.gain{border-color:rgba(63,205,119,.35)!important;background:rgba(24,93,50,.28)!important;color:#72e49b!important}
+html[data-app-skin="suriname-heritage"] .performance-calendar .calendar-days button.loss{border-color:rgba(229,77,91,.34)!important;background:rgba(105,22,34,.26)!important;color:#ff8290!important}
+html[data-app-skin="suriname-heritage"] .safety-card .shield-mark{border-color:rgba(229,184,72,.42)!important;background:linear-gradient(145deg,#b78322,#155f32)!important;color:#fff4ca!important}

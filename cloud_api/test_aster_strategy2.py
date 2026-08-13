@@ -1,0 +1,83 @@
+from aster_strategy2 import *
+
+def cfg(**kw): return Strategy2Config(**kw).validated()
+def leg(side="LONG", **kw):
+    values={"side":side,"cycle_id":"c1","size":100,"weighted_entry":100,"current_price":100}
+    values.update(kw)
+    return LegState(**values)
+def portfolio(**kw): return PortfolioState(1000,1000,.10,100,100,200,**kw)
+
+def test_weighted_fill_uses_actual_fill():
+    value=apply_fill(leg(),fill_notional=50,fill_price=80,fee=.2)
+    assert round(value.weighted_entry,6)==round(93.333333,6) and value.size==150 and value.dca_count==1
+
+def test_long_and_short_fixed_dca_are_mirrored():
+    assert dca_due(cfg(),leg(current_price=98))
+    assert dca_due(cfg(),leg("SHORT",current_price=102))
+
+def test_progressive_and_custom_ladders():
+    assert dca_level(cfg(dca_mode="progressive"),"LONG",3)==.12
+    assert dca_level(cfg(dca_mode="custom",long_custom_levels=(.02,.05,.09),short_custom_levels=(.03,.07,.12)),"SHORT",2)==.07
+
+def test_max_dca_blocks_more_buys():
+    assert not dca_due(cfg(long_max_dca=3),leg(current_price=50,dca_count=3))
+
+def test_tp_is_net_of_fee_funding_and_recorded_fees():
+    value=leg(unrealized_pnl=2,fees=.2,funding=-.1)
+    assert tp_due(cfg(take_profit=.015),value,.1)
+    assert not tp_due(cfg(take_profit=.02),value,.1)
+
+def test_normal_tp_closes_full_leg():
+    result=decide_leg(cfg(take_profit=.01),leg(unrealized_pnl=2),portfolio())
+    assert result.kind=="FULL_TP" and result.notional==100
+
+def test_extreme_opposite_exposure_converts_winner_to_protection():
+    p=PortfolioState(1000,1100,.60,100,500,600)
+    result=decide_leg(cfg(take_profit=.01),leg(unrealized_pnl=2),p)
+    assert result.kind in {"PARTIAL_TP","ASSIGN_PROTECTION"} and result.retain_notional>0
+
+def test_defensive_mode_blocks_normal_dca():
+    p=PortfolioState(920,1000,.55,100,100,200)
+    assert decide_leg(cfg(),leg(current_price=95),p).kind=="HOLD"
+
+def test_budget_blocks_dca():
+    p=PortfolioState(1000,1000,.1,250,250,500,strategy_margin=500)
+    assert "Budget" in decide_leg(cfg(strategy_budget=.5),leg(current_price=95),p).reason
+
+def test_unknown_state_never_adds_risk():
+    assert decide_leg(cfg(),leg(current_price=90),portfolio(exchange_reliable=False)).kind=="HOLD"
+    assert decide_leg(cfg(),leg(current_price=90),portfolio(open_orders_unknown=True)).kind=="HOLD"
+
+def test_cashflows_do_not_fake_performance():
+    assert cashflow_adjusted_return(1000,1200,deposits=200)==0
+    assert cashflow_adjusted_return(1000,800,withdrawals=200)==0
+    assert adjusted_high_water_mark(1500,1200,withdrawals=300)==1200
+
+def test_compound_is_not_simple_sum():
+    assert round(compounded_return([.10,-.10]),4)==-.01
+
+def test_risk_modes_are_ordered():
+    c=cfg()
+    assert risk_mode(c,portfolio())=="NORMAL"
+    assert risk_mode(c,PortfolioState(960,1000,.4,0,0,0))=="CAUTION"
+    assert risk_mode(c,PortfolioState(930,1000,.55,0,0,0))=="DEFENSIVE"
+    assert risk_mode(c,PortfolioState(850,1000,.75,0,0,0))=="EMERGENCY"
+
+def test_worst_case_validation_is_concrete():
+    errors=validate_worst_case(cfg(base_notional=200,maximum_pairs=50,long_max_dca=8,short_max_dca=8,leverage=10,strategy_budget=.01),1000,10,50)
+    assert errors and "eerstvolgende zelfstandige positie" in errors[-1] and "geschatte margin" in errors[-1]
+
+def test_worst_case_budget_uses_margin_not_leveraged_notional():
+    config=cfg(base_notional=10,maximum_pairs=5,long_max_dca=9,short_max_dca=9,leverage=20,strategy_budget=.10)
+    assert validate_worst_case(config,1000,5,50)==[]
+
+def test_future_dca_capacity_is_not_reserved_during_configuration_validation():
+    config=cfg(base_notional=25,maximum_pairs=50,long_max_dca=10,short_max_dca=10,leverage=20,strategy_budget=.20)
+    assert validate_worst_case(config,295.70,5,200)==[]
+
+def test_side_state_machine_and_recovery_are_explicit():
+    value=transition(leg(),"PROTECT");assert value.lifecycle=="HARVEST_PROTECTION"
+    value=transition(value,"ESCALATE");assert value.lifecycle=="PROTECTION"
+    value=transition(value,"RELEASE");assert value.lifecycle=="HARVEST_PROTECTION"
+    recovery=transition(LegState("LONG","c",10,100,100,lifecycle="OPENING"),"UNKNOWN")
+    assert recovery.lifecycle=="RECOVERY" and transition(recovery,"RECONCILED").lifecycle=="HARVEST"

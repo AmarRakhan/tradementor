@@ -1,0 +1,101 @@
+# Android/Gradle
+*.iml
+/.gradle
+.gradle/
+/build
+/app/build
+/captures
+.externalNativeBuild/
+.cxx/
+
+# Android Studio / local config
+/.idea/
+/local.properties
+/.kotlin
+
+# Local dev/user caches
+/.gradle-user
+/.gradle-user-home
+/.android
+/.android-user
+/.android-user-home
+/.android-signing-home
+/.local-android-sdk
+/.tmp
+/.tmp-appkit
+/.tmp-reown-inspect
+/.tools
+/.codex
+/.codex-tools
+
+# Server-side secrets / credentials
+/cloud/credentials/
+/trading_server/.env
+/trading_server/.venv/
+/trading_server/*.secret
+/trading_server/.api_wallet.dpapi
+/trading_server/.session_token.dpapi
+/trading_server/*.pfx
+/trading_server/*.keystore
+/trading_server/tmp/
+/trading_server/__pycache__/
+/cloud_api/__pycache__/
+
+# Build artefacts
+/APK Releases/
+*.apk
+*.aab
+
+# Local backups/logs/temp
+/tmp
+/tmp/
+*.tmp
+*.log
+*.pid
+*.swp
+*.swo
+*.sqlite
+*.sqlite3
+*.db
+
+# Project-root media/debug artifacts (not app source)
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/*.bmp
+/*.gif
+/*.mp4
+/*.mov
+/*.mp3
+/*.wav
+/*.zip
+/*.rar
+/*.exe
+
+# Time/stale diagnostics in repo root
+/.test-python-deps/
+/Blueprint/
+/Project Docs/
+/tradementor-anr-20260801-2145/
+/agent-check.xml
+/build_both_versions.ps1
+/cloud-link-143.xml
+/foreground-check.xml
+/launchpad-141.xml
+/mixkit-download-2012.html
+/mixkit-win.html
+/phone-admin-141.xml
+/phone-window.xml
+/positions-cloud-144.xml
+/positions-cloud-144b.xml
+/risk-141.xml
+/state144.xml
+/state145.xml
+/tradementor-ui.xml
+/tradementor_current.xml
+/wallet-agent-check.xml
+/wallet-cloud-144.xml
+
+# macOS
+.DS_Store

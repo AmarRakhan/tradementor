@@ -1,0 +1,3 @@
+import {proxyCloud} from "@/lib/cloud-proxy";
+export async function GET(request:Request){return proxyCloud(request,"/v1/admin/health/accounts","GET")}
+export async function POST(request:Request){return proxyCloud(request,"/v1/admin/health/run","POST")}

@@ -1,0 +1,20 @@
+# Strategy 2 — onveranderbare herstelreferentie
+
+Deze referentie is vastgelegd voordat Strategy 3 (`Dual Harvest Adaptive Shield`) werd toegevoegd.
+Strategy 3 staat in eigen bestanden en mag deze Strategy-2-bestanden niet wijzigen.
+
+SHA-256:
+
+```
+2E1577428A2B0C1959E3CE0D68337A83B890097828D48616EEF48C285577DE74  cloud_api/aster_strategy2.py
+462511D541E6D8348E63A8A7321002F3DB38535BD645E88D193006D7792759AF  cloud_api/aster_strategy2_execution.py
+3E696AA4F393373C354F14BB9618CA5846EF0271CC6449F7FF00EBD59B8C1366  cloud_api/aster_strategy2_readiness.py
+527998A1CDFDF0D97470EC0453F4CB6AA55F9F33F2BB4BB0312CC009D8649E05  cloud_api/aster_strategy2_runtime.py
+572B3A7643693B9BCE1E5AC5517335C70C28461B43CC7515191D65D7A98F7ABC  cloud_api/aster_strategy2_simulation.py
+0CE8D695C593106CAB83F55522B6AF94B317A9253867027CD292E888869AFF4A  cloud_api/aster_strategy2_state.py
+9042A1C3D52A71074053E33511E6DC5C9232B7DC84467F2EB86F171956F3BC0C  web/components/aster-strategy2-behavior.tsx
+F23412DD1E7FDD3D80007C346264E816BDDA3D83CAD431ABC3B81D4CF837B8D8  web/components/aster-strategy2-maker.tsx
+EF6E880987894ACBBFD5FC63A31800FE6287CBB080C14A249A40A5FF4E6E2B39  web/components/aster-strategy2-quick-control.tsx
+```
+
+Live-orderuitvoering, ownership, scheduler en instellingen van Strategy 2 blijven buiten Strategy 3.
