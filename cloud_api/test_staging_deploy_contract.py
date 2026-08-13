@@ -7,6 +7,7 @@ WORKFLOW = (
     / "workflows"
     / "deploy-cloud-staging.yml"
 )
+MAIN = Path(__file__).resolve().parent / "main.py"
 
 
 def test_cloud_pipeline_is_pinned_to_isolated_staging():
@@ -20,6 +21,7 @@ def test_cloud_pipeline_is_pinned_to_isolated_staging():
     assert "--image \"$IMAGE\"" in workflow
     assert "--service-account \"${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}\"" in workflow
     assert "--allow-unauthenticated" in workflow
+    assert "TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app" in workflow
 
 
 def test_cloud_pipeline_cannot_enable_trading_or_schedulers():
@@ -43,3 +45,12 @@ def test_cloud_pipeline_cannot_enable_trading_or_schedulers():
         for line in production_lines
     )
     assert "scheduler" not in workflow.lower()
+
+
+def test_staging_read_source_is_wired_through_the_strict_allowlist():
+    main = MAIN.read_text(encoding="utf-8")
+
+    assert "from read_only_source import read_source_url" in main
+    assert '@app.middleware("http")' in main
+    assert "read_source_url(" in main
+    assert 'os.getenv("TRADEMENTOR_READ_SOURCE_URL"' in main

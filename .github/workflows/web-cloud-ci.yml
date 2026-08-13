@@ -1,0 +1,44 @@
+name: Web Cloud CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "web/**"
+      - "package.json"
+      - "tools/prepare-sites-artifact.mjs"
+      - ".github/workflows/web-cloud-ci.yml"
+  pull_request:
+    paths:
+      - "web/**"
+      - "package.json"
+      - "tools/prepare-sites-artifact.mjs"
+      - ".github/workflows/web-cloud-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build and run web safety tests
+        working-directory: web
+        run: npm test

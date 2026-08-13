@@ -25,7 +25,7 @@ from typing import Any
 
 import firebase_admin
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from firebase_admin import auth, firestore
 from google.cloud import secretmanager
 from google.cloud import tasks_v2
@@ -124,6 +124,7 @@ from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
 from firebase_identity import identity_app
+from read_only_source import read_source_url
 
 
 if not firebase_admin._apps:
@@ -142,6 +143,41 @@ auth_app = identity_app(
 )
 
 app = FastAPI(title="TradeMentor Cloud API", version="0.1.0")
+
+
+@app.middleware("http")
+async def existing_data_read_bridge(request: Request, call_next: Any) -> Response:
+    """Expose existing account snapshots in staging without a production write path."""
+
+    source = os.getenv("TRADEMENTOR_READ_SOURCE_URL", "").strip()
+    target = read_source_url(
+        source,
+        request.method,
+        request.url.path,
+        request.url.query,
+    )
+    if not target:
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Firebase ID-token ontbreekt")
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+            upstream = await client.request(
+                request.method,
+                target,
+                headers={"Authorization": authorization},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Alleen-lezen databron is tijdelijk niet bereikbaar") from exc
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json").split(";", 1)[0],
+        headers={"X-TradeMentor-Data-Mode": "existing-read-only"},
+    )
+
+
 db = firestore.client()
 info = Info(constants.MAINNET_API_URL, skip_ws=True)
 secrets_client = secretmanager.SecretManagerServiceClient()
