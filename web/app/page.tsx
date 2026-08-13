@@ -23,6 +23,7 @@ import { isCompletePortfolioSnapshot, sanitizePortfolioEquityRows, type Portfoli
 import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
+import { DemoModeControl } from "@/components/demo-mode-control";
 
 type Destination = "hyperliquid" | "aster" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -221,6 +222,7 @@ function TradeMentorHome() {
         <header className="topbar">
           <Brand />
           <div className="topbar-actions">
+            <DemoModeControl />
             <span className={`environment ${cloudReady ? "connected" : ""}`}><i /> {cloudReady ? "CLOUD VERBONDEN" : "CLOUD CONTROLEREN"}</span>
             <button className="refresh-button" type="button" onClick={() => { refreshAll(); setRefreshedAt(new Date().toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })); }}>
               Vernieuwen
@@ -529,7 +531,7 @@ function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRef
       <div className="premium-account"><span>{initials}</span><div><strong>Persoonlijk account</strong><small>{cloudReady ? "Cloud verbonden" : "Cloud controleren"}</small></div></div>
     </aside>
     <section className="premium-workspace">
-      <header className="premium-topbar"><div><span className="premium-breadcrumb">TRADEMENTOR · PREMIUM</span><strong>{premiumNavigation.find((item) => item.id === section)?.label}</strong></div><div><span className={`premium-cloud ${cloudReady ? "connected" : ""}`}><i />{cloudReady ? "LIVE DATA" : "CONTROLEREN"}</span><button type="button" onClick={onRefreshAll}>Vernieuwen</button><button className="premium-interface-switch" type="button" onClick={onUseLegacy} aria-label="Terug naar de vertrouwde webapp"><span className="desktop-label">Vertrouwde weergave</span><span className="mobile-label">Terug</span></button><span className="premium-avatar">{initials}</span></div></header>
+      <header className="premium-topbar"><div><span className="premium-breadcrumb">TRADEMENTOR · PREMIUM</span><strong>{premiumNavigation.find((item) => item.id === section)?.label}</strong></div><div><DemoModeControl /><span className={`premium-cloud ${cloudReady ? "connected" : ""}`}><i />{cloudReady ? "LIVE DATA" : "CONTROLEREN"}</span><button type="button" onClick={onRefreshAll}>Vernieuwen</button><button className="premium-interface-switch" type="button" onClick={onUseLegacy} aria-label="Terug naar de vertrouwde webapp"><span className="desktop-label">Vertrouwde weergave</span><span className="mobile-label">Terug</span></button><span className="premium-avatar">{initials}</span></div></header>
       <div className="premium-page">
         {section === "dashboard" && <PremiumDashboard totalEquity={totalEquity} totalPnl={totalPnl} positions={allPositions} runningBots={runningBots} hyperliquid={hyperliquid} aster={aster} refreshedAt={refreshedAt} />}
         {section === "screener" && <PremiumScreener scanner={scanner} error={scannerError} />}
