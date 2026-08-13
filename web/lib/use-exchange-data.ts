@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { authenticatedRequest } from "./cloud-client";
+import { demoModeEnabled, demoSnapshot } from "./demo-data";
 
 export type ExchangeId = "hyperliquid" | "aster";
 export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown> | null; error: string; updatedAt: number | null };
@@ -13,6 +14,10 @@ export function useExchangeData(cloudReady: boolean) {
   const [snapshots, setSnapshots] = useState<ExchangeSnapshots>({ hyperliquid: emptySnapshot(), aster: emptySnapshot() });
 
   const refresh = useCallback(async (exchange: ExchangeId) => {
+    if (demoModeEnabled()) {
+      setSnapshots((current) => ({ ...current, [exchange]: demoSnapshot(exchange) }));
+      return;
+    }
     setSnapshots((current) => ({ ...current, [exchange]: { ...current[exchange], loading: true, error: "" } }));
     try {
       const data = exchange === "hyperliquid"
