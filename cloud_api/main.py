@@ -123,7 +123,7 @@ from portfolio_risk import (
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
-from firebase_identity import identity_app
+from firebase_identity import check_revoked_tokens, identity_app
 from read_only_source import read_source_url
 
 
@@ -2145,7 +2145,11 @@ def authenticated_user(authorization: str | None = Header(default=None)) -> dict
         raise HTTPException(401, "Firebase ID-token ontbreekt")
     token = authorization.removeprefix("Bearer ").strip()
     try:
-        return auth.verify_id_token(token, app=auth_app, check_revoked=True)
+        return auth.verify_id_token(
+            token,
+            app=auth_app,
+            check_revoked=check_revoked_tokens(os.getenv("TRADEMENTOR_ENVIRONMENT", "production")),
+        )
     except Exception as exc:
         raise HTTPException(401, "Ongeldige of verlopen gebruikerssessie") from exc
 

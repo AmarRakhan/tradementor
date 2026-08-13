@@ -1,4 +1,4 @@
-from firebase_identity import identity_app
+from firebase_identity import check_revoked_tokens, identity_app
 
 
 class FakeFirebaseAdmin:
@@ -69,3 +69,13 @@ def test_default_app_is_used_when_projects_match_or_auth_is_unset():
     assert same_project is firebase.get_app()
     assert unset is firebase.get_app()
     assert firebase.initializations == []
+
+
+def test_isolated_staging_skips_only_the_remote_revocation_lookup():
+    assert check_revoked_tokens("staging") is False
+    assert check_revoked_tokens(" STAGING ") is False
+
+
+def test_other_environments_keep_revocation_checks_enabled():
+    assert check_revoked_tokens("production") is True
+    assert check_revoked_tokens("") is True

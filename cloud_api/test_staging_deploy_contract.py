@@ -54,3 +54,9 @@ def test_staging_read_source_is_wired_through_the_strict_allowlist():
     assert '@app.middleware("http")' in main
     assert "read_source_url(" in main
     assert 'os.getenv("TRADEMENTOR_READ_SOURCE_URL"' in main
+
+
+def test_staging_identity_validation_does_not_need_production_auth_iam():
+    main = MAIN.read_text(encoding="utf-8")
+
+    assert "check_revoked=check_revoked_tokens" in main

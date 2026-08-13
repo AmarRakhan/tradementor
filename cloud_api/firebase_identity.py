@@ -5,6 +5,18 @@ from __future__ import annotations
 from typing import Any
 
 
+def check_revoked_tokens(environment: str) -> bool:
+    """Require the remote revocation lookup outside isolated staging.
+
+    Firebase ID tokens are still cryptographically verified, audience-scoped
+    and expiry-checked in staging. The additional revocation lookup needs
+    production Auth IAM, which the isolated staging runtime deliberately does
+    not receive.
+    """
+
+    return environment.strip().lower() != "staging"
+
+
 def identity_app(
     firebase_admin_module: Any,
     *,
