@@ -1,4 +1,5 @@
 name: Deploy isolated Strategy 3 live runtime
+# Scheduler API en scheduler-beheer zijn door de projecteigenaar vrijgegeven.
 
 on:
   workflow_dispatch:
