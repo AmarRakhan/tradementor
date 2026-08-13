@@ -74,6 +74,7 @@ def test_default_app_is_used_when_projects_match_or_auth_is_unset():
 def test_isolated_staging_skips_only_the_remote_revocation_lookup():
     assert check_revoked_tokens("staging") is False
     assert check_revoked_tokens(" STAGING ") is False
+    assert check_revoked_tokens("live-canary") is False
 
 
 def test_other_environments_keep_revocation_checks_enabled():
