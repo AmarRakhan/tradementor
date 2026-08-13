@@ -124,6 +124,10 @@ jobs:
           assert variables["MEXC_AUTOMATION_BASE_URL"] == service_url
           PY
 
+      - name: Enable isolated Cloud Scheduler service
+        shell: bash
+        run: gcloud services enable cloudscheduler.googleapis.com --project "$GCP_PROJECT_ID" --quiet
+
       - name: Create or update one-minute Strategy 3 scheduler
         shell: bash
         run: |
