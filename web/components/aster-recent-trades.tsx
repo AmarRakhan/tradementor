@@ -15,12 +15,24 @@ function CoinIcon({ symbol }: { symbol: string }) { const asset = baseAsset(symb
 
 const RecentTradeRow = memo(function RecentTradeRow({ trade, closed }: { trade: Activity; closed: boolean }) {
   const asset = baseAsset(trade.symbol); const result = Number(closed ? trade.realizedPnlUsd : trade.unrealizedPnlUsd); const hasResult = Number.isFinite(result);
-  return <div className="recent-trade-row" role="row"><div className="recent-pair" role="cell"><CoinIcon symbol={asset} /><span><b>{asset}</b><small>Perp · {trade.strategy || "Niet aan strategie gekoppeld"}</small></span></div><div role="cell"><span className={`recent-side ${String(trade.side).toLowerCase()}`}>{String(trade.side || "—").toUpperCase()}</span></div><strong role="cell">{amount(closed ? trade.costBasisUsd : trade.executedNotionalUsd)}</strong><strong role="cell">{amount(closed ? trade.closedValueUsd : trade.currentValueUsd)}</strong><strong role="cell" className={hasResult ? result >= 0 ? "profit" : "loss" : ""}>{amount(hasResult ? result : null, true)}</strong><time role="cell" dateTime={trade.executedAt}>{time(trade.executedAt)}</time></div>;
+  const strategy = trade.strategy || "Niet aan strategie gekoppeld";
+  return <div className="recent-trade-row" role="row">
+    <div className="recent-pair" role="cell">
+      <CoinIcon symbol={asset} />
+      <span className="recent-pair-copy">
+        <span className="recent-pair-title"><b>{asset}</b><span className={`recent-side ${String(trade.side).toLowerCase()}`}>{String(trade.side || "—").toUpperCase()}</span></span>
+        <small title={`Perp · ${strategy} · ${time(trade.executedAt)}`}>Perp · {strategy} · <time dateTime={trade.executedAt}>{time(trade.executedAt)}</time></small>
+      </span>
+    </div>
+    <strong role="cell">{amount(closed ? trade.costBasisUsd : trade.executedNotionalUsd)}</strong>
+    <strong role="cell">{amount(closed ? trade.closedValueUsd : trade.currentValueUsd)}</strong>
+    <strong role="cell" className={hasResult ? result >= 0 ? "profit" : "loss" : ""}>{amount(hasResult ? result : null, true)}</strong>
+  </div>;
 });
 
 function RecentTradesCard({ title, rows, closed, liveState }: { title: string; rows: Activity[]; closed: boolean; liveState: string }) {
   const [expanded, setExpanded] = useState(false); const visible = expanded ? rows.slice(0, 20) : rows.slice(0, 8); const toggle = () => setExpanded((value) => !value);
-  return <article className="recent-trades-card"><header><div><h2>{title}</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div><button type="button" onClick={toggle}>Bekijk alle 20 <i>→</i></button></header><div className="recent-trades-head" role="row"><span>PAIR</span><span>TYPE</span><span>{closed ? "INGEKOCHT ($)" : "INGESTAPT ($)"}</span><span>{closed ? "VERKOCHT ($)" : "NU WAARD ($)"}</span><span>{closed ? "RESULTAAT ($)" : "VERSCHIL ($)"}</span><span>TIJD</span></div><div className="recent-trades-body" role="rowgroup">{visible.length ? visible.map((trade, index) => <RecentTradeRow key={`${trade.id || trade.symbol}:${trade.executedAt}:${index}`} trade={trade} closed={closed} />) : <div className="recent-trades-empty">{closed ? "Nog geen uitgestapte trades" : "Nog geen ingestapte trades"}</div>}</div>{rows.length > 8 && <button className="recent-trades-toggle" type="button" onClick={toggle}>{expanded ? "Toon minder ↑" : "Toon alle 20 ↓"}</button>}</article>;
+  return <article className="recent-trades-card"><header><div><h2>{title}</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div>{rows.length > 8 && <button type="button" onClick={toggle}>{expanded ? "Toon minder" : "Toon alle 20"} <i>{expanded ? "↑" : "↓"}</i></button>}</header><div className="recent-trades-head" role="row"><span>PAIR · TYPE · TIJD</span><span>{closed ? "INGEKOCHT ($)" : "INGESTAPT ($)"}</span><span>{closed ? "VERKOCHT ($)" : "NU WAARD ($)"}</span><span>{closed ? "RESULTAAT ($)" : "VERSCHIL ($)"}</span></div><div className="recent-trades-body" role="rowgroup">{visible.length ? visible.map((trade, index) => <RecentTradeRow key={`${trade.id || trade.symbol}:${trade.executedAt}:${index}`} trade={trade} closed={closed} />) : <div className="recent-trades-empty">{closed ? "Nog geen uitgestapte trades" : "Nog geen ingestapte trades"}</div>}</div></article>;
 }
 
 export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSnapshot; onRetry: () => void }) {

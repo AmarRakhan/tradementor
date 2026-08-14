@@ -19,6 +19,6 @@ test("Strategy 3 save verifies the server-confirmed effective values", () => {
 });
 
 test("narrow recent trade rows cannot widen the mobile page", () => {
-  assert.match(css, /@media\(max-width:430px\)[\s\S]*?recent-trade-row\{grid-template-columns:minmax\(0,1fr\) auto repeat\(3,minmax\(0,1fr\)\)/);
+  assert.match(css, /@media\(max-width:430px\)[\s\S]*?recent-trade-row\{grid-template-columns:minmax\(105px,1\.45fr\) repeat\(3,minmax\(43px,\.7fr\)\)/);
   assert.match(css, /recent-trades-card,[^}]*max-width:100%/);
 });
