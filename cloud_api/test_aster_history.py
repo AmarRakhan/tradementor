@@ -122,6 +122,18 @@ def test_recent_activity_exit_inherits_proven_strategy_from_same_position_cycle(
     assert activity["exits"][0]["strategy"] == "Dual Harvest Adaptive Shield"
 
 
+def test_recent_activity_exit_inherits_strategy3_client_id_from_same_position_cycle():
+    fills = [
+        {"id":"entry-fill","orderId":"entry-order","clientOrderId":"s3i-user-entry",
+         "symbol":"RAVEUSDT","positionSide":"LONG","side":"BUY","qty":"10","price":"3","time":1_000},
+        {"id":"exit-fill","orderId":"exit-order","symbol":"RAVEUSDT","positionSide":"LONG",
+         "side":"SELL","qty":"10","price":"3.1","realizedPnl":"1","time":2_000},
+    ]
+    activity = recent_trade_activity_from_fills(fills)
+    assert activity["entries"][0]["strategy"] == "Strategy 3"
+    assert activity["exits"][0]["strategy"] == "Strategy 3"
+
+
 def test_recent_activity_does_not_inherit_across_closed_position_cycles():
     fills = [
         {"id":"old-entry","orderId":"old-order","symbol":"LINKUSDT","positionSide":"LONG",
