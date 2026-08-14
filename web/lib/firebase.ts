@@ -1,5 +1,5 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { browserLocalPersistence, getAuth, setPersistence } from "firebase/auth";
 
 // Firebase web configuration identifies this public client. It is not a
 // credential and grants no database or trading access by itself. Firebase ID
@@ -16,4 +16,6 @@ const firebaseConfig = {
 
 export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(firebaseApp);
-export const firebaseAuthReady = Promise.resolve(firebaseAuth);
+export const firebaseAuthReady = typeof window === "undefined"
+  ? Promise.resolve(firebaseAuth)
+  : setPersistence(firebaseAuth, browserLocalPersistence).then(() => firebaseAuth);

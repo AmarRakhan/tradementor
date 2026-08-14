@@ -224,7 +224,7 @@ test("parallel premium interface preserves the trusted app and cannot trade whil
     readFile(new URL("../app/premium-next.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/preferences/interface/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../docs/PARALLEL_PREMIUM_INTERFACE_INVENTORY.md", import.meta.url), "utf8"),
-    readFile(new URL("../cloud_api/main.py", import.meta.url), "utf8"),
+    readFile(new URL("../../cloud_api/main.py", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /interfaceMode === "premium"/);

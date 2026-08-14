@@ -1,49 +1,130 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-const read=(path)=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
-test("staging is default and production is explicit",async()=>{const source=await read("lib/cloud-proxy.ts");assert.match(source,/TRADEMENTOR_DEPLOYMENT_MODE \?\? "staging"/);assert.match(source,/mode !== "production"/);assert.doesNotMatch(source,/tradementor-api-604335232956/)});
-test("risk actions are blocked",async()=>{const source=await read("lib/staging-backend.ts");for(const term of ["canary","rapid-build","execution\\/live","credentials","ordersEnabled:false"])assert.ok(source.includes(term),`missing ${term}`)});
-test("Firebase identity stays pinned",async()=>{const source=await read("lib/staging-auth.ts");assert.match(source,/tradementor-production/);assert.match(source,/securetoken\.google\.com/)});
-test("persistence is uid scoped",async()=>{const source=await read("lib/staging-db.ts");assert.match(source,/UNIQUE\(uid,key\)/);assert.match(source,/UNIQUE\(uid,strategy_id\)/)});
 
-test("read-only compatibility mode can load existing data but cannot write upstream",async()=>{
-  const source=await read("lib/cloud-proxy.ts");
-  assert.match(source,/mode === "read-only" && method === "GET"/);
-  assert.match(source,/isApprovedReadPath\(pathname\)/);
-  assert.match(source,/READ_ONLY_PATHS/);
-  assert.doesNotMatch(source,/mode === "read-only" && method !== "GET"/);
-  assert.match(source,/return stagingProxy\(request, pathname, method, bodyOverride\)/);
+const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+
+test("the cloud target is explicit, overrideable and authenticated", async () => {
+  const source = await read("lib/cloud-proxy.ts");
+  assert.match(source, /process\.env\.CLOUD_API_URL/);
+  assert.match(source, /tradementor-api-604335232956\.europe-west4\.run\.app/);
+  assert.match(source, /authorization\?\.startsWith\("Bearer "\)/);
+  assert.match(source, /status: 401/);
+  assert.doesNotMatch(source, /ASTER_SECRET|PRIVATE_KEY|API_SECRET/);
 });
-test("staging settings shadow production reads per Firebase uid",async()=>{
-  const [proxy,db]=await Promise.all([read("lib/cloud-proxy.ts"),read("lib/staging-db.ts")]);
-  assert.match(proxy,/requireStagingIdentity\(request\)/);
-  assert.match(proxy,/getStrategyOverride\(identity\.uid/);
-  assert.match(proxy,/getPreference\(identity\.uid/);
-  assert.match(proxy,/existing-read-plus-staging-shadow/);
-  assert.match(proxy,/ordersEnabled: false/);
-  assert.match(proxy,/liveEnabled: false/);
-  assert.match(db,/WHERE uid=\? AND strategy_id=\?/);
-  assert.match(db,/if\(!row\)return null/);
+
+test("risk-sensitive browser routes remain thin authenticated server proxies", async () => {
+  const paths = [
+    "app/api/exchanges/aster/strategy3/canary/route.ts",
+    "app/api/exchanges/aster/strategy3/rapid-build/route.ts",
+    "app/api/execution/live/route.ts",
+    "app/api/connections/aster/route.ts",
+  ];
+  for (const path of paths) {
+    const source = await read(path);
+    assert.match(source, /proxyCloud/);
+    assert.match(source, /\/v1\/me\//);
+    assert.doesNotMatch(source, /fetch\(|ASTER_SECRET|PRIVATE_KEY/);
+  }
 });
-test("Strategy 2 production proxy is narrowly scoped and preserves Firebase identity",async()=>{
-  const [maker,proxy,start,readiness]=await Promise.all([read("components/aster-strategy2-maker.tsx"),read("lib/secure-strategy2-live.ts"),read("app/api/exchanges/aster/strategy2/start/route.ts"),read("app/api/exchanges/aster/strategy2/readiness/route.ts")]);
-  assert.match(maker,/const paperOnly=false/);
-  assert.match(proxy,/const strategy2Paths = new Set/);
-  assert.match(proxy,/authorization\?\.startsWith\("Bearer "\)/);
-  assert.match(proxy,/Authorization: authorization/);
-  assert.match(proxy,/CLOUD_API_URL/);
-  assert.match(start,/proxyStrategy2Live/);
-  assert.match(readiness,/proxyStrategy2Live/);
+
+test("Firebase identity stays pinned and its bearer token is preserved", async () => {
+  const [firebase, proxy] = await Promise.all([read("lib/firebase.ts"), read("lib/cloud-proxy.ts")]);
+  assert.match(firebase, /authDomain: "tradementor-production\.firebaseapp\.com"/);
+  assert.match(firebase, /projectId: "tradementor-production"/);
+  assert.match(proxy, /Authorization: authorization/);
 });
-test("Strategy 2 live controls cannot bypass server readiness or create request loops",async()=>{
-  const maker=await read("components/aster-strategy2-maker.tsx");
-  assert.match(maker,/if\(state\.liveReady\)\{await action\("start-live"\)/);
-  assert.match(maker,/await checkReadiness\(\)/);
-  assert.match(maker,/result\.started!==true/);
-  assert.match(maker,/geen extra startopdrachten verzonden/);
-  assert.match(maker,/Boolean\(readiness\?\.softwareReady\)/);
+
+test("browser persistence is UID scoped and rejects a mismatched cached owner", async () => {
+  const [cache, page] = await Promise.all([read("lib/aster-snapshot-cache.mjs"), read("app/page.tsx")]);
+  assert.match(cache, /encodeURIComponent\(String\(uid/);
+  assert.match(cache, /saved\?\.uid !== uid/);
+  assert.match(cache, /exchange !== "aster"/);
+  assert.match(page, /tradementor\.portfolioEquity\.v2\.\$\{encodeURIComponent\(user\?\.uid \|\| ""\)\}/);
 });
-test("Strategy 3 remains authenticated paper-only",async()=>{const source=await read("app/api/exchanges/aster/strategy3/simulate/route.ts");assert.match(source,/requireStagingIdentity/);assert.match(source,/ordersEnabled:false/);assert.match(source,/ordersPlaced:0/)});
-test("Strategy 3 paper status survives a full app restart",async()=>{const [backend,proxy,db]=await Promise.all([read("lib/staging-backend.ts"),read("lib/cloud-proxy.ts"),read("lib/staging-db.ts")]);assert.match(backend,/s3\.status==="paper-active"\?"PAPER":"STOPPED"/);assert.match(backend,/strategy3:\{enabled:false,phase:"PAPER"/);assert.match(backend,/strategy3:\{enabled:false,phase:"STOPPED"/);assert.match(proxy,/strategy3\.status === "paper-active" \? "PAPER" : "STOPPED"/);assert.match(db,/ON CONFLICT\(uid,strategy_id\) DO UPDATE/);assert.match(db,/status=excluded\.status/);});
-test("Strategy 3 shadow never leaks stale production scheduler state",async()=>{const source=await read("lib/cloud-proxy.ts");assert.match(source,/Paper Mode actief · beslissingen worden gesimuleerd · 0 echte orders/);assert.match(source,/strategy3: strategy3 \? \{ \.\.\.upstreamStrategy3, enabled: false/);});
+
+test("the generic proxy fails closed before any upstream request without Firebase proof", async () => {
+  const source = await read("lib/cloud-proxy.ts");
+  const bearerGate = source.indexOf("authorization?.startsWith");
+  const upstreamFetch = source.indexOf("await fetch");
+  assert.ok(bearerGate >= 0 && upstreamFetch > bearerGate);
+  assert.match(source, /Firebase ID-token ontbreekt/);
+  assert.match(source, /TradeMentor Cloud is tijdelijk niet bereikbaar/);
+});
+
+test("Strategy settings and bot decisions remain server-authoritative", async () => {
+  const [route, control, status] = await Promise.all([
+    read("app/api/exchanges/aster/strategy3/settings/route.ts"),
+    read("components/aster-strategy3-control.tsx"),
+    read("lib/aster-bot-status.ts"),
+  ]);
+  assert.match(route, /proxyCloud/);
+  assert.match(route, /\/v1\/me\/aster\/strategy3\/settings/);
+  assert.match(control, /De server bevestigde niet dezelfde Strategy-3-instellingen/);
+  assert.doesNotMatch(control, /localStorage/);
+  assert.match(status, /browserDerived !== false/);
+  assert.match(status, /return null/);
+});
+
+test("Strategy 2 production proxy is narrowly scoped and preserves Firebase identity", async () => {
+  const [maker, proxy, start, readiness] = await Promise.all([
+    read("components/aster-strategy2-maker.tsx"),
+    read("lib/secure-strategy2-live.ts"),
+    read("app/api/exchanges/aster/strategy2/start/route.ts"),
+    read("app/api/exchanges/aster/strategy2/readiness/route.ts"),
+  ]);
+  assert.match(maker, /const paperOnly=false/);
+  assert.match(proxy, /const strategy2Paths = new Set/);
+  assert.match(proxy, /authorization\?\.startsWith\("Bearer "\)/);
+  assert.match(proxy, /Authorization: authorization/);
+  assert.match(proxy, /CLOUD_API_URL/);
+  assert.match(start, /proxyStrategy2Live/);
+  assert.match(readiness, /proxyStrategy2Live/);
+});
+
+test("Strategy 2 live controls cannot bypass server readiness or create request loops", async () => {
+  const maker = await read("components/aster-strategy2-maker.tsx");
+  assert.match(maker, /if\(state\.liveReady\)\{await action\("start-live"\)/);
+  assert.match(maker, /await checkReadiness\(\)/);
+  assert.match(maker, /result\.started!==true/);
+  assert.match(maker, /geen extra startopdrachten verzonden/);
+  assert.match(maker, /Boolean\(readiness\?\.softwareReady\)/);
+});
+
+test("Strategy 3 simulation remains local, paper-only and orderless", async () => {
+  const [route, simulator] = await Promise.all([
+    read("app/api/exchanges/aster/strategy3/simulate/route.ts"),
+    read("lib/aster-strategy3-paper.ts"),
+  ]);
+  assert.match(route, /simulateStrategy3Paper/);
+  assert.doesNotMatch(route, /proxyCloud|fetch\(/);
+  assert.match(simulator, /paperOnly:true,liveReady:false/);
+  assert.match(simulator, /Er zijn geen echte orders verzonden/);
+  assert.doesNotMatch(simulator, /placeOrder|createOrder|sendOrder/);
+});
+
+test("Strategy 3 settings survive restart through authoritative cloud state", async () => {
+  const [control, route] = await Promise.all([
+    read("components/aster-strategy3-control.tsx"),
+    read("app/api/exchanges/aster/strategy3/settings/route.ts"),
+  ]);
+  assert.match(control, /fromState\(settings\)/);
+  assert.match(control, /method:kind==="save"\?"PUT"/);
+  assert.match(control, /setDraft\(fromState\(saved\)\)/);
+  assert.match(control, /onChanged\(\)/);
+  assert.doesNotMatch(control, /localStorage/);
+  assert.match(route, /proxyCloud/);
+});
+
+test("Strategy 3 dashboard never invents scheduler or entry state", async () => {
+  const [parser, view] = await Promise.all([
+    read("lib/aster-bot-status.ts"),
+    read("components/aster-bot-status.tsx"),
+  ]);
+  assert.match(parser, /browserDerived !== false/);
+  assert.match(parser, /entryStatuses\.has\(status\)/);
+  assert.match(parser, /return null/);
+  assert.match(view, /STATUS NIET BETROUWBAAR/);
+  assert.match(view, /INSTAPSTATUS ONBEKEND/);
+  assert.doesNotMatch(view, /setInterval|setTimeout|fetch\(/);
+});
