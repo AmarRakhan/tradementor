@@ -21,8 +21,8 @@ env:
   ARTIFACT_REPOSITORY: tradementor
   CLOUD_RUN_SERVICE: tradementor-strategy3-live-api
   SOURCE_COMMIT: a05d348349db38ba6e0e109ed3083517a9d67396
-  REVISION_SUFFIX: readiness-a05d348
-  REVISION_TAG: s3fix-a05d348
+  REVISION_SUFFIX: readiness2-a05d348
+  REVISION_TAG: s3fix2-a05d348
 
 jobs:
   test-simulate-stage-and-promote:
@@ -143,13 +143,13 @@ jobs:
           assert old_spec == new_spec, "Candidate runtime configuration drifted"
           positive=[row for row in service["status"]["traffic"] if int(row.get("percent",0))>0]
           assert len(positive)==1 and positive[0]["revisionName"]==old_name and int(positive[0]["percent"])==100
-          tagged=[row for row in service["status"]["traffic"] if row.get("revisionName")==new_name and row.get("tag")=="s3fix-a05d348"]
+          tagged=[row for row in service["status"]["traffic"] if row.get("revisionName")==new_name and row.get("tag")=="s3fix2-a05d348"]
           assert tagged and int(tagged[0].get("percent",0))==0
           PY
           TAG_URL="$(python - "$SERVICE" "$NEW_REVISION" <<'PY'
           import json, sys
           service=json.load(open(sys.argv[1], encoding="utf-8"))
-          rows=[row for row in service["status"]["traffic"] if row.get("revisionName")==sys.argv[2] and row.get("tag")=="s3fix-a05d348"]
+          rows=[row for row in service["status"]["traffic"] if row.get("revisionName")==sys.argv[2] and row.get("tag")=="s3fix2-a05d348"]
           assert len(rows)==1 and rows[0].get("url")
           print(rows[0]["url"])
           PY
