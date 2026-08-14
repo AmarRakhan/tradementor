@@ -123,7 +123,7 @@ from portfolio_risk import (
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
-from firebase_identity import check_revoked_tokens, identity_app
+from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
 from read_only_source import read_source_url
 
 
@@ -2144,12 +2144,20 @@ def authenticated_user(authorization: str | None = Header(default=None)) -> dict
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Firebase ID-token ontbreekt")
     token = authorization.removeprefix("Bearer ").strip()
+    environment = os.getenv("TRADEMENTOR_ENVIRONMENT", "production")
     try:
-        return auth.verify_id_token(
+        claims = auth.verify_id_token(
             token,
             app=auth_app,
-            check_revoked=check_revoked_tokens(os.getenv("TRADEMENTOR_ENVIRONMENT", "production")),
+            check_revoked=check_revoked_tokens(environment),
         )
+        if environment.strip().lower() == "strategy3-live" and not recent_id_token(
+            claims,
+            now_epoch_seconds=time.time(),
+            maximum_age_seconds=600,
+        ):
+            raise ValueError("Strategy-3-live vereist een recent Firebase ID-token")
+        return claims
     except Exception as exc:
         raise HTTPException(401, "Ongeldige of verlopen gebruikerssessie") from exc
 
