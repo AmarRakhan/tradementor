@@ -53,7 +53,7 @@ jobs:
         run: |
           python -m py_compile main.py
           pytest -q
-          pytest -q test_aster_strategy3.py test_aster_strategy3_simulation.py test_aster_strategy3_live_safety.py test_aster_strategy3_runtime.py test_aster_strategy3_readiness_scale.py test_aster_strategy3_live_scheduler.py
+          pytest -q test_aster_strategy3.py test_aster_strategy3_live_safety.py test_aster_strategy3_runtime.py test_aster_strategy3_readiness_scale.py test_aster_strategy3_live_scheduler.py test_aster_strategy3_stress.py
 
       - name: Verify immutable runtime boundaries in source
         shell: bash
