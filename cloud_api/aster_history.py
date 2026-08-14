@@ -102,6 +102,34 @@ def merge_realized_events(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]
     return sorted(merged.values(), key=lambda row: str(row.get("closedAt", "")), reverse=True)
 
 
+def strategy_by_order_id_from_orders(
+    orders: list[dict[str, Any]], strategy_by_intent: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Join Aster order ids to proven strategy client ids without inference."""
+    strategy_by_intent = strategy_by_intent or {}
+    result: dict[str, str] = {}
+    for raw in orders:
+        if not isinstance(raw, dict):
+            continue
+        order_id = str(raw.get("orderId", raw.get("orderID", ""))).strip()
+        client_order_id = str(raw.get(
+            "clientOrderId", raw.get("clientOrderID", raw.get("origClientOrderId", "")),
+        )).strip()
+        if not order_id or not client_order_id:
+            continue
+        strategy = strategy_by_intent.get(client_order_id, "")
+        lowered = client_order_id.lower()
+        if not strategy and lowered.startswith(("s3-", "s3i-", "s3h-", "s3r-")):
+            strategy = "Strategy 3"
+        elif not strategy and lowered.startswith(("s2-", "s2i-", "s2h-", "s2r-")):
+            strategy = "Strategy 2"
+        elif not strategy and lowered.startswith(("s1-", "s1i-", "aster-")):
+            strategy = "Strategy 1"
+        if strategy:
+            result[order_id] = strategy
+    return result
+
+
 def recent_trade_activity_from_fills(
     fills: list[dict[str, Any]], *, active_positions: list[dict[str, Any]] | None = None,
     strategy_by_intent: dict[str, str] | None = None,

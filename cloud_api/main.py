@@ -68,7 +68,7 @@ from aster_gateway import (
     build_hedge_order_payload,
 )
 from aster_signing import AsterSecret, local_eip712_signer
-from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, trade_events_from_fills
+from aster_history import closed_trade_from_fill, closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import Strategy2Config, validate_worst_case
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -3067,6 +3067,30 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
             except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
                 continue
             fills.extend(row for row in rows if isinstance(row, dict))
+        # Aster fill history can omit clientOrderId, while allOrders retains it.
+        # Enrich only the symbols needed for the newest 20 closing fills and
+        # accept attribution solely through an exact exchange orderId match.
+        recent_close_symbols: list[str] = []
+        for raw in sorted(
+            fills,
+            key=lambda row: int(safe_float(row.get("time", row.get("updateTime")))),
+            reverse=True,
+        ):
+            if closed_trade_from_fill(raw) is None:
+                continue
+            symbol = str(raw.get("symbol", "")).upper()
+            if symbol and symbol not in recent_close_symbols:
+                recent_close_symbols.append(symbol)
+            if len(recent_close_symbols) >= 20:
+                break
+        for symbol in recent_close_symbols:
+            try:
+                order_rows = client.all_orders(symbol, limit=500)
+            except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
+                continue
+            strategy_by_order_id.update(
+                strategy_by_order_id_from_orders(order_rows, strategy_by_intent)
+            )
         confirmed = closed_trades_from_fills(fills)
         activity = recent_trade_activity_from_fills(
             fills, active_positions=active_positions, strategy_by_intent=strategy_by_intent,

@@ -1,4 +1,4 @@
-from aster_history import closed_trade_from_fill, closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, trade_events_from_fills
+from aster_history import closed_trade_from_fill, closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
 
 
 def test_long_sell_is_confirmed_close_even_at_breakeven():
@@ -132,6 +132,24 @@ def test_recent_activity_exit_inherits_strategy3_client_id_from_same_position_cy
     activity = recent_trade_activity_from_fills(fills)
     assert activity["entries"][0]["strategy"] == "Strategy 3"
     assert activity["exits"][0]["strategy"] == "Strategy 3"
+
+
+def test_recent_activity_joins_fill_to_exact_aster_order_history_identity():
+    fills = [
+        {"id":"fill-1","orderId":"entry-order","symbol":"LDOUSDT","positionSide":"LONG",
+         "side":"BUY","qty":"10","price":"1","time":1_000},
+        {"id":"fill-2","orderId":"close-order","symbol":"LDOUSDT","positionSide":"LONG",
+         "side":"SELL","qty":"10","price":"1.1","realizedPnl":"1","time":2_000},
+    ]
+    order_map = strategy_by_order_id_from_orders([
+        {"orderId":"entry-order","clientOrderId":"s3-a1-open-long"},
+        {"orderId":"close-order","clientOrderId":"s3-a1-close-long"},
+        {"orderId":"unrelated","clientOrderId":"manual-order"},
+    ])
+    activity = recent_trade_activity_from_fills(fills, strategy_by_order_id=order_map)
+    assert activity["entries"][0]["strategy"] == "Strategy 3"
+    assert activity["exits"][0]["strategy"] == "Strategy 3"
+    assert "unrelated" not in order_map
 
 
 def test_recent_activity_does_not_inherit_across_closed_position_cycles():
