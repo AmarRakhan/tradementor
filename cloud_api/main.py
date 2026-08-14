@@ -85,6 +85,7 @@ from aster_strategy3_readiness import build_strategy3_readiness_report
 from aster_strategy3_execution import Strategy3ExecutionContext, execute_strategy3_decision
 from aster_strategy3_status import strategy3_position_tp_contract
 from aster_strategy_status import operating_status_contract, position_count_contract, proven_owned_rows
+from aster_dashboard_status import build_aster_dashboard_status
 from aster_rapid_build import run_confirmed_batch
 from aster_strategy2_execution import ExecutionContext, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
@@ -3245,6 +3246,10 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 live_authorized=False,
             )
             current = aster_dashboard_snapshot(read_client.account_information(), read_client.position_risk())
+            # Open-order evidence is part of the same read-only exchange snapshot.
+            # A failed order read keeps the previous snapshot, so the dashboard
+            # cannot claim that entries are safe from partial Aster evidence.
+            current["openOrders"] = len(read_client.open_orders())
             snapshot = {**snapshot, **current, "capturedAt": datetime.now(timezone.utc)}
             automation_ref.set({"accountSnapshot": snapshot}, merge=True)
         except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
@@ -3259,6 +3264,19 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     strategy_settings = AsterStrategySettings.from_mapping(automation.get("settings") or {})
     strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
     strategy3_state = aster_strategy3_reference(uid).get().to_dict() or {}
+    for state, reference in ((strategy2_state, aster_strategy2_reference(uid)),
+                             (strategy3_state, aster_strategy3_reference(uid))):
+        try:
+            latest = next(iter(reference.collection("audit").order_by(
+                "timestamp", direction=firestore.Query.DESCENDING).limit(1).stream()), None)
+            audit = latest.to_dict() if latest is not None else {}
+            if isinstance(audit, dict) and audit:
+                state["lastAction"] = str(audit.get("event", state.get("lastAction", "NIET_BEWEZEN")))
+                state["lastActionAt"] = audit.get("timestamp")
+        except google_exceptions.GoogleAPICallError:
+            # Audit lookup is optional evidence: absence remains explicit and
+            # can never be upgraded to a positive browser-derived action.
+            pass
     owned_legs_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     strategy2_owned_by_key:dict[tuple[str,str],OwnedLeg]={}
     strategy3_owned_by_key:dict[tuple[str,str],OwnedLeg]={}
@@ -3370,8 +3388,23 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "maximumLeverage": int(safe_float(snapshot.get("maximumLeverage"))),
         "liveReady": hedge_mode, "snapshotAt": snapshot.get("capturedAt"),
     }
+    dashboard_status = build_aster_dashboard_status(
+        snapshot=snapshot,
+        strategy2_state=strategy2_state,
+        strategy3_state=strategy3_state,
+        strategy2_config=strategy2_settings,
+        strategy3_config=strategy3_settings,
+        runtime_gates={
+            "asterLiveExecution": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
+            "strategy2Live": os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false").lower() == "true",
+            "strategy2Runtime": os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false").lower() == "true",
+            "strategy3Live": os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false").lower() == "true",
+            "strategy3Runtime": os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false").lower() == "true",
+        },
+    )
     return {
         **status,
+        "botStatusDashboard": dashboard_status,
         **aster_automation_public(uid),
         **aster_strategy2_public(uid),
         **aster_strategy3_public(uid),

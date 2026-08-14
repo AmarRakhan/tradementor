@@ -23,6 +23,7 @@ import { isCompletePortfolioSnapshot, sanitizePortfolioEquityRows, type Portfoli
 import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
+import { AsterBotStatus } from "@/components/aster-bot-status";
 
 type Destination = "hyperliquid" | "aster" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -353,7 +354,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   return (
     <>
       {!positionsOnly && <section className="hero-panel">
-        <div className="hero-copy">
+        {destination === "aster" ? <AsterBotStatus snapshot={snapshot.data} /> : <div className="hero-copy">
           <span className="kicker">{copy.eyebrow}</span>
           <h1>{copy.title}</h1>
           <p>{copy.note}</p>
@@ -362,7 +363,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
             <span className={`status-chip ${view.connected ? "" : "muted"}`}><i /> {view.statusText}</span>
             <button className="status-chip refresh-chip" type="button" onClick={onRefresh} disabled={snapshot.loading}><i /> {snapshotStatus}</button>
           </div>
-        </div>
+        </div>}
         <div className={`risk-orbit risk-${view.riskTone}`} aria-label={view.riskLabel}>
           <div className="orbit-lines" />
           <div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div>

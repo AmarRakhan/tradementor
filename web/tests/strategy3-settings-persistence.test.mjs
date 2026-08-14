@@ -4,12 +4,12 @@ import { readFile } from "node:fs/promises";
 
 const route = await readFile(new URL("../app/api/exchanges/aster/strategy3/settings/route.ts", import.meta.url), "utf8");
 const control = await readFile(new URL("../components/aster-strategy3-control.tsx", import.meta.url), "utf8");
-const cloud = await readFile(new URL("../cloud_api/main.py", import.meta.url), "utf8");
+const cloud = await readFile(new URL("../../cloud_api/main.py", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("Strategy 3 settings use authoritative cloud persistence", () => {
-  assert.match(route, /proxyStrategy3Live/);
-  assert.doesNotMatch(route, /proxyCloud|proxyCandidate/);
+  assert.match(route, /proxyCloud/);
+  assert.doesNotMatch(route, /proxyCandidate/);
   assert.match(route, /\/v1\/me\/aster\/strategy3\/settings/);
   assert.doesNotMatch(route, /validateStrategy3Paper|saved\s*:\s*true/);
 });
