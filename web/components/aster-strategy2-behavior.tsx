@@ -10,16 +10,17 @@ export function AsterStrategy2Behavior({ snapshot }: { snapshot: Record<string, 
   const state = (snapshot?.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 : {}) as Record<string, unknown>;
   const settings = (state.settings && typeof state.settings === "object" ? state.settings : {}) as Record<string, unknown>;
   const positions = Array.isArray(snapshot?.positions) ? snapshot.positions as Array<Record<string, unknown>> : [];
+  const strategyPositions = positions.filter(position => String(position.strategyId ?? "") === "aster-strategy-2");
   const configured = Object.keys(settings).length > 0;
   const target = Math.max(0, Math.round(n(settings.maximumPairs))), targetLong = Math.ceil(target / 2), targetShort = Math.floor(target / 2);
-  const actualLong = n(state.longLegs, positions.filter(p => String(p.side ?? "").toUpperCase().includes("LONG")).length);
-  const actualShort = n(state.shortLegs, positions.filter(p => String(p.side ?? "").toUpperCase().includes("SHORT")).length);
+  const actualLong = n(state.longLegs);
+  const actualShort = n(state.shortLegs);
   const actual = actualLong + actualShort, enabled = state.enabled === true, phase = String(state.phase || "DRAFT").toUpperCase();
-  const maxLongDca = n(settings.longMaxDca), maxShortDca = n(settings.shortMaxDca), maxObservedDca = positions.reduce((highest,p)=>Math.max(highest,n(p.dcaCount)),0);
+  const maxLongDca = n(settings.longMaxDca), maxShortDca = n(settings.shortMaxDca), maxObservedDca = strategyPositions.reduce((highest,p)=>Math.max(highest,n(p.dcaCount)),0);
   const checks: Check[] = [
     { title:"Botstatus",expected:enabled?"De engine hoort actief te monitoren en handelen volgens deze configuratie.":"De engine hoort geen nieuwe exposure te openen.",observed:enabled?`Actief · fase ${phase}`:`Uit · fase ${phase}`,state:enabled?(phase==="DRAFT"||phase==="CONFIGURED"?"attention":"ok"):"ok" },
     { title:"Gebalanceerde start",expected:`${targetLong} LONG en ${targetShort} SHORT zo snel mogelijk opbouwen; daarna maximaal één normale nieuwe positie per minuut.`,observed:`${actualLong} LONG en ${actualShort} SHORT (${actual}/${target})`,state:!enabled?"unknown":actual>target||Math.abs(actualLong-actualShort)>1?"attention":actual===target?"ok":"unknown" },
-    { title:"DCA-grenzen",expected:settings.dcaEnabled===false?"Geen DCA-orders uitvoeren.":`Maximaal ${maxLongDca} LONG- en ${maxShortDca} SHORT-DCA-stappen per kant.`,observed:positions.length?`Hoogste zichtbaar DCA-aantal: ${maxObservedDca}`:"Nog geen actieve positiegegevens om te controleren.",state:positions.length?(maxObservedDca>Math.max(maxLongDca,maxShortDca)?"attention":"ok"):"unknown" },
+    { title:"DCA-grenzen",expected:settings.dcaEnabled===false?"Geen DCA-orders uitvoeren.":`Maximaal ${maxLongDca} LONG- en ${maxShortDca} SHORT-DCA-stappen per kant.`,observed:strategyPositions.length?`Hoogste bewezen Strategy-2-DCA-aantal: ${maxObservedDca}`:"Geen bewezen Strategy-2-posities om te controleren.",state:strategyPositions.length?(maxObservedDca>Math.max(maxLongDca,maxShortDca)?"attention":"ok"):"unknown" },
     { title:"Take Profit en herstart",expected:`Bij netto ${pct(settings.takeProfit)} vanaf weighted entry volledig sluiten wanneer protection dit veilig vindt${settings.autoRestart===false?". Niet automatisch herstarten.":", daarna klein herstarten met de nieuwste Base Order."}`,observed:"Een concrete TP-close is pas bewijsbaar uit exchange-fills en audit-events; huidige positie-snapshot alleen is onvoldoende.",state:"unknown" },
     { title:"Portfolio Protection",expected:settings.protectionEnabled===false?"Protection staat uit; normale harvestregels blijven gelden.":`Vanaf circa ${pct(settings.cautionDrawdown)} drawdown risico opvoeren en bestaande tegenovergestelde exposure zo nodig beschermen.`,observed:String(state.riskMode||state.protectionStatus||"Geen protection-event in de huidige publieke snapshot"),state:"unknown" },
   ];

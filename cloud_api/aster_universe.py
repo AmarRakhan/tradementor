@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import math
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 UNIVERSE_SOURCE = "aster"
@@ -183,3 +183,36 @@ def stale_snapshot(snapshot: AsterUniverseSnapshot, *, now: datetime | None = No
         checked >= snapshot.expires_at,
         reason,
     )
+
+
+def server_snapshot_contract(stored: Any, requested_top_n: Any,
+                             refresh: Callable[[int], AsterUniverseSnapshot], *,
+                             now: datetime | None = None) -> tuple[dict[str, Any], bool]:
+    """Use only a complete fresh Aster contract, otherwise refresh it.
+
+    ``refresh`` is injected so contract tests stay pure and production callers
+    can use the public-data-only Aster client.  The boolean indicates whether
+    the caller should persist the returned server evidence.
+    """
+    requested = normalize_top_n(requested_top_n)
+    checked = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    value = dict(stored) if isinstance(stored, dict) else {}
+    try:
+        expires = datetime.fromisoformat(str(value.get("expiresAt", "")).replace("Z", "+00:00")).astimezone(timezone.utc)
+        symbols = value.get("selectedSymbols") if isinstance(value.get("selectedSymbols"), list) else []
+        valid = all((
+            value.get("universeSource") == UNIVERSE_SOURCE,
+            value.get("quoteAsset") == QUOTE_ASSET,
+            value.get("marketType") == MARKET_TYPE,
+            int(value.get("requestedTopN", 0)) == requested,
+            int(value.get("selectedMarketCount", -1)) == len(symbols),
+            len(symbols) > 0,
+            checked < expires,
+            value.get("stale") is False,
+            value.get("entryBlocked") is False,
+        ))
+    except (TypeError, ValueError):
+        valid = False
+    if valid:
+        return value, False
+    return refresh(requested).public_dict(), True

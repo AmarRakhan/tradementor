@@ -104,6 +104,16 @@ def test_top_150_contains_exactly_first_150_of_two_hundred_eligible_markets():
     assert contract_value["entryBlocked"] is False
 
 
+def test_top_50_contains_exactly_fifty_when_at_least_fifty_are_eligible():
+    rows = [contract(f"M{rank:03d}USDT") for rank in range(1, 76)]
+    tickers = [ticker(f"M{rank:03d}USDT", 10_000 - rank) for rank in range(1, 76)]
+    value = build_snapshot({"symbols": rows}, tickers, 50, fetched_at=NOW).public_dict()
+    assert value["requestedTopN"] == 50
+    assert value["eligibleMarketCount"] == 75
+    assert value["selectedMarketCount"] == 50
+    assert value["selectedSymbols"] == [f"M{rank:03d}USDT" for rank in range(1, 51)]
+
+
 def test_request_above_availability_is_reported_without_silent_reset():
     rows = [contract(f"C{rank:03d}USDT") for rank in range(1, 21)]
     tickers = [ticker(f"C{rank:03d}USDT", 10_000 - rank) for rank in range(1, 21)]
