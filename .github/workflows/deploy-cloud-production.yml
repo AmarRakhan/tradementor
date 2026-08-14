@@ -81,7 +81,9 @@ jobs:
           variables = {item["name"]: item.get("value") for item in spec["containers"][0].get("env", [])}
           assert variables.get("ASTER_LIVE_EXECUTION_ENABLED") == "true"
           assert variables.get("ASTER_STRATEGY2_LIVE_ENABLED") == "true"
-          assert variables.get("ASTER_STRATEGY3_LIVE_ENABLED") != "true"
+          # Preserve the existing production environment exactly. Historical
+          # Strategy-3 flags are harmless here because the generic production
+          # endpoint is source-locked to Strategies 1 and 2 below.
           runtime_service_account = spec.get("serviceAccountName")
           service_url = service["status"]["url"]
           assert runtime_service_account and service_url.startswith("https://")

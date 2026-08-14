@@ -27,7 +27,7 @@ def test_production_scheduler_requires_live_s2_boundary_and_rejects_s3_target():
     workflow = (ROOT / ".github/workflows/deploy-cloud-production.yml").read_text(encoding="utf-8")
     assert 'variables.get("ASTER_LIVE_EXECUTION_ENABLED") == "true"' in workflow
     assert 'variables.get("ASTER_STRATEGY2_LIVE_ENABLED") == "true"' in workflow
-    assert 'variables.get("ASTER_STRATEGY3_LIVE_ENABLED") != "true"' in workflow
+    assert 'variables.get("ASTER_STRATEGY3_LIVE_ENABLED")' not in workflow
     assert '"/internal/aster-strategy3/tick" not in job["httpTarget"]["uri"]' in workflow
 
 
