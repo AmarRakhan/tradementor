@@ -64,7 +64,8 @@ test("Aster refresh is parallel, deduplicated and fail-closed for actions", asyn
   assert.match(hook, /Promise\.all\(\[\s*timedRead\("\/api\/exchanges\/aster"\),\s*timedRead\("\/api\/exchanges\/aster\/closed-trades"\)/s);
   assert.match(hook, /inFlight\.get\(key\)/);
   assert.match(hook, /current\.snapshots\[exchange\].*loading: false, serverConfirmed: false/s);
-  assert.match(page, /asterActionsEnabled.*snapshot\.serverConfirmed/);
+  assert.match(page, /asterActionsAreFresh[\s\S]*snapshot\.serverConfirmed/);
   assert.match(page, /fieldset className="aster-action-gate" disabled=\{!asterActionsEnabled\}/);
+  assert.match(page, /PremiumBotCreator[\s\S]*asterActionsAreFresh\(snapshots\.aster, cloudReady\)[\s\S]*creator-existing-engine/);
   assert.match(provider, /window\.addEventListener\("online", resume\)/);
 });
