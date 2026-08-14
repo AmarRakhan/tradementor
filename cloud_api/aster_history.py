@@ -114,6 +114,53 @@ def recent_trade_activity_from_fills(
     """
     strategy_by_intent = strategy_by_intent or {}
     strategy_by_order_id = strategy_by_order_id or {}
+
+    def fill_strategy(raw: dict[str, Any]) -> str:
+        order_id = str(raw.get("orderId", raw.get("orderID", raw.get("id", raw.get("tradeId", "")))))
+        client_order_id = str(raw.get("clientOrderId", raw.get("clientOrderID", "")))
+        strategy = fill_strategy(raw) or cycle_strategy_by_fill.get(id(raw), "")
+        return strategy
+
+    # Aster can omit the client-order id from a closing fill. Walk each
+    # uninterrupted position cycle in exchange-time order so a close can
+    # inherit the already proven strategy of its opening/DCA fill. A cycle
+    # without proof remains deliberately unattributed.
+    cycle_strategy_by_fill: dict[int, str] = {}
+    cycles: dict[tuple[str, str], dict[str, Any]] = {}
+    ordered_fills = sorted(
+        (raw for raw in fills if isinstance(raw, dict)),
+        key=lambda raw: int(_number(raw.get("time", raw.get("updateTime")))),
+    )
+    for raw in ordered_fills:
+        symbol = str(raw.get("symbol", "")).upper()
+        side = str(raw.get("positionSide", "")).upper()
+        order_side = str(raw.get("side", "")).upper()
+        if not order_side and "buyer" in raw:
+            order_side = "BUY" if bool(raw.get("buyer")) else "SELL"
+        quantity = abs(_number(raw.get("qty", raw.get("quantity"))))
+        if not symbol or side not in {"LONG", "SHORT"} or order_side not in {"BUY", "SELL"} or quantity <= 0:
+            continue
+        increases = (side == "LONG" and order_side == "BUY") or (side == "SHORT" and order_side == "SELL")
+        key = (symbol, side)
+        cycle = cycles.setdefault(key, {"exposure": 0.0, "strategy": ""})
+        explicit = fill_strategy(raw)
+        if increases:
+            if _number(cycle.get("exposure")) <= 1e-12:
+                cycle = {"exposure": 0.0, "strategy": explicit}
+                cycles[key] = cycle
+            elif explicit and cycle.get("strategy") and explicit != cycle.get("strategy"):
+                cycle["strategy"] = ""
+            elif explicit:
+                cycle["strategy"] = explicit
+            cycle["exposure"] = _number(cycle.get("exposure")) + quantity
+        elif _number(cycle.get("exposure")) > 1e-12:
+            cycle["exposure"] = max(0.0, _number(cycle.get("exposure")) - quantity)
+        inherited = explicit or str(cycle.get("strategy", ""))
+        if inherited:
+            cycle_strategy_by_fill[id(raw)] = inherited
+        if not increases and _number(cycle.get("exposure")) <= 1e-12:
+            cycles.pop(key, None)
+
     positions: dict[tuple[str, str], dict[str, Any]] = {}
     for raw in active_positions or []:
         symbol = str(raw.get("symbol", "")).upper()
