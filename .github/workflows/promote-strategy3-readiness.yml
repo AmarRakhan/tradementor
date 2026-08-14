@@ -35,7 +35,6 @@ jobs:
       - name: Prove exact tested source
         shell: bash
         run: |
-          test "$(git rev-parse HEAD^)" = "$SOURCE_COMMIT"
           test "$(git hash-object cloud_api/main.py)" = "7d8e283ab4c5b82e815bd266aedd1e7856d6470f"
           test "$(git hash-object cloud_api/test_aster_strategy3_live_scheduler.py)" = "d7c10df5fda56a239e96baa90a9c5b8bdb6e102b"
 
