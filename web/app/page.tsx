@@ -729,7 +729,7 @@ function StrategyTpPanel({ value, strategy }: { value: StrategyTpView | null; st
     <strong>{value.status}</strong>
     <span>Netto {net} · doel {target} · voortgang {progress}</span>
     <small>Fees {value.paidFeesUsd === null ? "—" : formatUsd(value.paidFeesUsd)} · funding {value.fundingUsd === null ? "—" : formatSignedUsd(value.fundingUsd)} · geschatte sluitfee {value.estimatedCloseFeeUsd === null ? "—" : formatUsd(value.estimatedCloseFeeUsd)}</small>
-    {strategy === "Strategy 3" && <small>Fase {value.phase || "—"} · protection {value.protection.active ? value.protection.role : "niet actief"} · trailing {value.trailing.active ? "actief" : value.trailing.enabled ? "stand-by" : "uit"}</small>}
+    <small>Fase {value.phase || "—"} · beslissing {value.decision || "HOLD"} · protection {value.protection.active ? value.protection.role : "niet actief"} · trailing {value.trailing.active ? "actief" : value.trailing.enabled ? "stand-by" : "uit"}</small>
     <small>Laatste serverbeoordeling: {assessed}</small>
     {value.blockReason && <small className="strategy2-tp-block">Reden: {value.blockReason}</small>}
     {value.scheduler.warning && <small className="strategy2-tp-warning">Waarschuwing: {value.scheduler.warning}</small>}

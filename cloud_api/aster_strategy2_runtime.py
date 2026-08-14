@@ -13,13 +13,18 @@ STRATEGY2_COST_EVIDENCE_MAX_AGE_SECONDS = 300
 
 def recover_audited_ownership(*,persisted:list[OwnedLeg],positions:list[dict[str,Any]],
                               audit_events:list[dict[str,Any]],fills:list[dict[str,Any]],
-                              excluded_keys:set[tuple[str,str]]|None=None)->tuple[list[OwnedLeg],list[dict[str,Any]]]:
+                              excluded_keys:set[tuple[str,str]]|None=None,
+                              strategy_id:str="aster-strategy-2",engine_type:str="strategy2",
+                              require_event_strategy:bool=False)->tuple[list[OwnedLeg],list[dict[str,Any]]]:
     """Recover a missing leg only when both our audit and a matching Aster fill prove ownership."""
     result=list(persisted);known={(x.symbol,x.side) for x in result};recovered=[];active=active_position_map(positions)
     excluded_keys=excluded_keys or set()
     opens=[]
     for event in audit_events:
         if str(event.get("event","")).upper()!="INITIAL_OPEN_LEG":continue
+        event_strategy=str(event.get("strategyId",event.get("strategy_id",""))).strip()
+        if require_event_strategy and event_strategy!=strategy_id:continue
+        if event_strategy and event_strategy!=strategy_id:continue
         symbol=str(event.get("symbol","")).upper();side=str(event.get("side","")).upper()
         if (symbol,side) not in active or (symbol,side) in known or (symbol,side) in excluded_keys:continue
         stamp=event.get("timestamp");stamp_ms=int(stamp.timestamp()*1000) if hasattr(stamp,"timestamp") else int(number(stamp))
@@ -38,7 +43,7 @@ def recover_audited_ownership(*,persisted:list[OwnedLeg],positions:list[dict[str
             if stamp_ms and abs(fill_ms-stamp_ms)<=300_000:matching.append(fill)
         row=active[key];qty=abs(number(row.get("positionAmt")));entry=number(row.get("entryPrice"))
         if not matching or qty<=0 or entry<=0:continue
-        leg=OwnedLeg(strategy_id="aster-strategy-2",engine_type="strategy2",symbol=symbol,side=side,
+        leg=OwnedLeg(strategy_id=strategy_id,engine_type=engine_type,symbol=symbol,side=side,
             cycle_id=cycle or f"recovered-{stamp_ms}",config_version=int(number(event.get("configVersion",1))) or 1,
             quantity=qty,weighted_entry=entry,role="HARVEST",created_at_ms=stamp_ms,
             fill_ids=tuple(str(x.get("id",x.get("tradeId",""))) for x in matching if x.get("id",x.get("tradeId"))),
@@ -129,9 +134,11 @@ def most_urgent_profitable_owned(config:Strategy2Config,owned:list[OwnedLeg],pos
     return candidates[0][2] if candidates else None
 
 def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg],positions:list[dict[str,Any]],
-                             excluded_dca:set[tuple[str,str]]|None=None)->tuple[OwnedLeg,Decision]|None:
+                             excluded_dca:set[tuple[str,str]]|None=None,
+                             excluded_actions:set[tuple[str,str,str]]|None=None)->tuple[OwnedLeg,Decision]|None:
     pos=active_position_map(positions);rank={"FULL_TP":0,"PARTIAL_TP":0,"ASSIGN_PROTECTION":1,"ADD_DCA":2,"HOLD":9}
     excluded_dca=excluded_dca or set()
+    excluded_actions=excluded_actions or set()
     choices=[]
     for item in owned:
         row=pos.get((item.symbol,item.side))
@@ -139,6 +146,8 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
         close_fee=estimated_close_fee(row);projected=leg_projection(item,row)
         decision=decide_leg(config,projected,portfolio,estimated_close_fee=close_fee)
         if decision.kind=="ADD_DCA" and (item.symbol,item.side) in excluded_dca:
+            continue
+        if (item.symbol,item.side,decision.kind) in excluded_actions:
             continue
         tp_surplus=net_profit(projected,close_fee)-projected.size*config.take_profit
         choices.append((rank.get(decision.kind,8),-tp_surplus,item,decision))
@@ -274,7 +283,6 @@ def strategy2_position_tp_contract(*,row:dict[str,Any],owned:OwnedLeg|None,confi
     costs_fresh=evidence_age is not None and evidence_age<=STRATEGY2_COST_EVIDENCE_MAX_AGE_SECONDS
     block=""
     if not ownership:block="Geen bewezen Strategy-2-ownership"
-    elif scheduler["status"]!="HEALTHY":block=str(scheduler["warning"])
     elif not costs_fresh:block="Fees en funding zijn niet recent genoeg door Aster bevestigd"
     reliable=not bool(block)
     gross=number(row.get("unrealizedPnl",row.get("unRealizedProfit")))
@@ -288,6 +296,10 @@ def strategy2_position_tp_contract(*,row:dict[str,Any],owned:OwnedLeg|None,confi
             decision=decide_leg(config,projection,portfolio,estimated_close_fee=close_fee)
             decision_kind=decision.kind
             block=decision.reason
+        elif portfolio is None:
+            block=("Netto TP is betrouwbaar bereikt, maar protection kan niet worden beoordeeld omdat de actuele "
+                "Strategy-2-portfoliostaat ontbreekt" if status=="TP bereikt" else
+                "TP nog niet bereikt; ontbrekende portfoliostaat blokkeert alleen protection")
     if reliable and status=="TP bereikt":
         if config.mode!="live":block="TP bereikt, maar de opgeslagen Strategy-2-modus is paper"
         elif not bool(state.get("monitor")):block="TP bereikt, maar Strategy-2-monitoring staat uit"
@@ -299,9 +311,13 @@ def strategy2_position_tp_contract(*,row:dict[str,Any],owned:OwnedLeg|None,confi
     progress=(net/target*100) if reliable and net is not None and target>0 else None
     evaluated_at=(datetime.fromtimestamp(owned.costs_updated_at_ms/1000,tz=timezone.utc).isoformat()
         if owned and owned.costs_updated_at_ms else None)
-    return {"netProfitUsd":net,"takeProfitTargetUsd":target if reliable else None,
-        "takeProfitPercent":config.take_profit*100 if reliable else None,
+    phase=str(state.get("phase","UNKNOWN"))
+    return {"netProfitUsd":net,"takeProfitTargetUsd":target if ownership else None,
+        "takeProfitPercent":config.take_profit*100 if ownership else None,
         "progressPercent":progress,"status":status,"evaluatedAt":evaluated_at,"blockReason":block,
         "scheduler":scheduler,"ownershipProven":ownership,"paidFeesUsd":owned.fees if reliable and owned else None,
         "fundingUsd":owned.funding if reliable and owned else None,"estimatedCloseFeeUsd":close_fee if reliable else None,
-        "costEvidenceAgeSeconds":round(evidence_age,1) if evidence_age is not None else None,"decision":decision_kind}
+        "costEvidenceAgeSeconds":round(evidence_age,1) if evidence_age is not None else None,"decision":decision_kind,
+        "phase":phase,"protection":{"role":owned.role if ownership and owned else None,
+            "active":bool(ownership and owned and owned.role in {"PROTECTION","HARVEST_PROTECTION"})},
+        "trailing":{"enabled":False,"active":False,"peakReturnPercent":None}}

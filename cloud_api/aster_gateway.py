@@ -354,7 +354,11 @@ class AsterV3Client:
         if end_time is not None: params["endTime"] = int(end_time)
         if from_id is not None: params["fromId"] = int(from_id)
         payload = self.signed_request("GET", "/fapi/v3/userTrades", params)
-        return payload if isinstance(payload, list) else []
+        if not isinstance(payload, list):
+            raise AsterApiError("Aster-fillhistorie heeft een ongeldig formaat")
+        if any(not isinstance(row, dict) for row in payload):
+            raise AsterApiError("Aster-fillhistorie bevat een ongeldig record")
+        return list(payload)
 
     def income_history(
         self, *, symbol: str | None = None, income_type: str | None = None,
@@ -369,7 +373,11 @@ class AsterV3Client:
         if start_time is not None: params["startTime"] = int(start_time)
         if end_time is not None: params["endTime"] = int(end_time)
         payload = self.signed_request("GET", "/fapi/v3/income", params)
-        return payload if isinstance(payload, list) else []
+        if not isinstance(payload, list):
+            raise AsterApiError("Aster-inkomstenhistorie heeft een ongeldig formaat")
+        if any(not isinstance(row, dict) for row in payload):
+            raise AsterApiError("Aster-inkomstenhistorie bevat een ongeldig record")
+        return list(payload)
 
     def leverage_brackets(self, symbol: str | None = None) -> list[dict[str, Any]]:
         payload = self.signed_request(

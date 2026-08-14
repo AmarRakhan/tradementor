@@ -62,15 +62,24 @@ def test_missing_strategy3_ownership_is_fail_closed_and_never_orderable():
     assert result["decision"] == "HOLD" and result["ownershipProven"] is False
 
 
-def test_stale_strategy3_scheduler_is_explicit_and_invalidates_amounts():
+def test_stale_strategy3_scheduler_warns_but_keeps_complete_amounts():
     now = datetime(2026, 8, 14, 19, 0, tzinfo=timezone.utc)
     owned = _owned("CCUSDT", "LONG", 59.01, 1, now)
     result = strategy3_position_tp_contract(row={"notionalUsd": 59.01, "unrealizedPnl": -.78},
         owned=owned, config=Strategy3Config(mode="live"), state=_state(now - timedelta(minutes=10)),
         portfolio=_portfolio(), now=now)
-    assert result["status"] == "Niet betrouwbaar te bepalen"
+    assert result["status"] == "TP nog niet bereikt"
     assert result["scheduler"]["status"] == "STALE" and result["scheduler"]["warning"]
-    assert result["estimatedCloseFeeUsd"] is None
+    assert result["estimatedCloseFeeUsd"] is not None
+
+
+def test_missing_portfolio_blocks_only_protection_not_simple_net_tp():
+    now = datetime(2026, 8, 14, 19, 0, tzinfo=timezone.utc)
+    owned = _owned("WINUSDT", "SHORT", 20, 1, now, fees=.02, funding=.01)
+    result = strategy3_position_tp_contract(row={"notionalUsd":20,"unrealizedPnl":.30},
+        owned=owned,config=Strategy3Config(mode="live",take_profit=.011),state=_state(now),portfolio=None,now=now)
+    assert result["status"]=="TP bereikt" and result["netProfitUsd"] is not None
+    assert result["decision"]=="HOLD" and "portfoliostaat" in result["blockReason"]
 
 
 def test_trailing_and_protection_explain_why_reached_tp_does_not_fully_close():
@@ -99,9 +108,9 @@ def test_status_projection_and_history_refresh_are_strictly_read_only():
     assert "execute_strategy3_decision" not in status_source and ".set(" not in status_source
 
     main_source = Path(__file__).with_name("main.py").read_text()
-    helper = main_source[main_source.index("def _read_strategy3_cost_evidence"):
+    helper = main_source[main_source.index("def _read_strategy_cost_evidence"):
         main_source.index("def _explicit_strategy1_owned_keys")]
-    assert "client.user_trades" in helper and "client.income_history" in helper
+    assert "refresh_owned_costs" in helper
     assert "execute_" not in helper and ".set(" not in helper and "new_order" not in helper
     status_route = main_source[main_source.index('def aster_status('):main_source.index('@app.get("/v1/me/aster/trade-events")')]
     assert 'row["strategy3Tp"]=strategy3_position_tp_contract' in status_route

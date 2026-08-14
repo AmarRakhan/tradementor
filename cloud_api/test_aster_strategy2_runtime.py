@@ -200,6 +200,20 @@ def test_ena_like_gross_4_83_percent_still_uses_fees_funding_and_close_fee():
     assert round(result["netProfitUsd"],6)==round(.92+.01-.10-19.09*.0005,6)
     assert result["status"]=="TP bereikt" and result["decision"]=="FULL_TP"
 
+def test_strategy2_off_keeps_existing_profitable_position_orderable_for_full_tp():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
+    state={**_live_state(now),"enabled":False,"monitor":True,"phase":"PROTECTIVE_ONLY"}
+    owned=_tp_owned("BEATUSDT","SHORT",17,.889,now,fees=.10,funding=-.02)
+    position={"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":"17","quantity":17,
+        "entryPrice":.889,"markPrice":.647,"notional":11,"notionalUsd":11,
+        "unRealizedProfit":4.11,"unrealizedPnl":4.11}
+    portfolio=PortfolioState(1000,1000,.1,100,100,200)
+    contract=strategy2_position_tp_contract(row=position,owned=owned,config=cfg,state=state,
+        portfolio=portfolio,now=now)
+    selected=next_management_decision(cfg,portfolio,[owned],[position])
+    assert contract["status"]=="TP bereikt" and contract["decision"]=="FULL_TP"
+    assert selected and selected[1].kind=="FULL_TP" and selected[1].risk_reducing is True
+
 def test_contract_uses_the_persisted_take_profit_instead_of_the_default():
     now=datetime(2026,8,14,18,0,tzinfo=timezone.utc)
     cfg=Strategy2Config.from_mapping({"mode":"live","takeProfit":.0175})
@@ -238,13 +252,23 @@ def test_eigen_like_negative_position_is_reliably_below_tp():
     assert result["status"]=="TP nog niet bereikt" and result["netProfitUsd"]<0
     assert result["takeProfitTargetUsd"]>0 and result["blockReason"]
 
-def test_stale_scheduler_is_visible_and_invalidates_net_tp_evidence():
+def test_stale_scheduler_is_warning_but_keeps_complete_net_tp_evidence():
     now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);state=_live_state(now-timedelta(minutes=10))
     owned=_tp_owned("BEATUSDT","SHORT",17,.889,now)
     result=strategy2_position_tp_contract(row={"notionalUsd":11,"unrealizedPnl":4.11},owned=owned,
         config=Strategy2Config(mode="live"),state=state,portfolio=None,now=now)
-    assert result["status"]=="Niet betrouwbaar te bepalen"
+    assert result["status"]=="TP bereikt" and result["netProfitUsd"] is not None
     assert result["scheduler"]["status"]=="STALE" and result["scheduler"]["warning"]
+
+def test_blocked_management_leg_does_not_hide_another_tp_candidate():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(take_profit=.015)
+    first=_tp_owned("BEATUSDT","SHORT",17,.889,now);second=_tp_owned("ENAUSDT","SHORT",227,.08814,now)
+    positions=[{"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":17,"markPrice":.647,"notional":11,"unRealizedProfit":4.11},
+        {"symbol":"ENAUSDT","positionSide":"SHORT","positionAmt":227,"markPrice":.08408,"notional":19.09,"unRealizedProfit":.92}]
+    portfolio=PortfolioState(1000,1000,.1,100,100,200)
+    selected=next_management_decision(cfg,portfolio,[first,second],positions,
+        excluded_actions={("BEATUSDT","SHORT","FULL_TP")})
+    assert selected and selected[0].symbol=="ENAUSDT" and selected[1].kind=="FULL_TP"
 
 def test_most_urgent_profitable_position_is_first_management_candidate():
     now=datetime(2026,8,14,18,0,tzinfo=timezone.utc)

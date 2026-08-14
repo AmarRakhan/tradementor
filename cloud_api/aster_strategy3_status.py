@@ -72,12 +72,8 @@ def strategy3_position_tp_contract(*, row: dict[str, Any], owned: OwnedLeg | Non
     block = ""
     if not ownership:
         block = "Geen bewezen Strategy-3-ownership"
-    elif scheduler["status"] != "HEALTHY":
-        block = str(scheduler["warning"])
     elif not costs_fresh:
         block = "Fees en funding zijn niet recent genoeg door Aster bevestigd"
-    elif portfolio is None:
-        block = "Actuele Strategy-3-portfoliostaat ontbreekt"
 
     reliable = not bool(block)
     gross = number(row.get("unrealizedPnl", row.get("unRealizedProfit")))
@@ -87,6 +83,8 @@ def strategy3_position_tp_contract(*, row: dict[str, Any], owned: OwnedLeg | Non
     decision_reason = block
     result_return = None
 
+    if reliable and owned is not None:
+        status = "TP bereikt" if net_profit_usd is not None and net_profit_usd >= target else "TP nog niet bereikt"
     if reliable and owned is not None and portfolio is not None:
         leg = LegState(
             owned.side, notional, number(row.get("entryPrice")) or owned.weighted_entry,
@@ -97,8 +95,6 @@ def strategy3_position_tp_contract(*, row: dict[str, Any], owned: OwnedLeg | Non
         decision = decide(config, leg, portfolio, close_fee)
         decision_kind = decision.kind
         decision_reason = decision.reason
-        status = "TP bereikt" if net_profit_usd is not None and net_profit_usd >= target else "TP nog niet bereikt"
-
         if status == "TP bereikt":
             if config.mode != "live":
                 decision_reason = "TP bereikt, maar de opgeslagen Strategy-3-modus is paper"
@@ -112,6 +108,10 @@ def strategy3_position_tp_contract(*, row: dict[str, Any], owned: OwnedLeg | Non
                 decision_reason = "TP bereikt, maar de centrale Strategy-3-runtimepoort staat uit"
             elif phase.upper() in {"DATA_HOLD", "RECONCILING", "CANARY_HOLD"}:
                 decision_reason = str(state.get("lastReason") or f"Strategy 3 staat in {phase}")
+    elif reliable and owned is not None and portfolio is None:
+        decision_reason = ("Netto TP is betrouwbaar bereikt, maar protection/trailing kan niet worden beoordeeld "
+            "omdat de actuele Strategy-3-portfoliostaat ontbreekt" if status == "TP bereikt" else
+            "TP nog niet bereikt; ontbrekende portfoliostaat blokkeert alleen protection/trailing")
 
     progress = (net_profit_usd / target * 100) if reliable and net_profit_usd is not None and target > 0 else None
     evaluated_at = (datetime.fromtimestamp(owned.costs_updated_at_ms / 1000, tz=timezone.utc).isoformat()
@@ -122,8 +122,8 @@ def strategy3_position_tp_contract(*, row: dict[str, Any], owned: OwnedLeg | Non
 
     return {
         "netProfitUsd": net_profit_usd,
-        "takeProfitTargetUsd": target if reliable else None,
-        "takeProfitPercent": config.take_profit * 100 if reliable else None,
+        "takeProfitTargetUsd": target if ownership else None,
+        "takeProfitPercent": config.take_profit * 100 if ownership else None,
         "progressPercent": progress,
         "status": status,
         "evaluatedAt": evaluated_at,

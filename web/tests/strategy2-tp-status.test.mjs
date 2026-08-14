@@ -14,6 +14,7 @@ test("Positions renders only the server Strategy-2 and Strategy-3 TP contracts",
   assert.match(page, /Laatste serverbeoordeling/);
   assert.match(page, /value\.scheduler\.warning/);
   assert.match(page, /Fase \{value\.phase/);
+  assert.match(page, /beslissing \{value\.decision/);
   assert.match(page, /protection \{value\.protection\.active/);
   assert.match(page, /trailing \{value\.trailing\.active/);
   assert.doesNotMatch(page, /Geen netto TP-status/);

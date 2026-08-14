@@ -5,6 +5,7 @@ import pytest
 
 from aster_gateway import (
     AsterAutomationConfig,
+    AsterApiError,
     AsterV3Client,
     AsterOrderIntent,
     AsterSubmissionUncertain,
@@ -209,3 +210,14 @@ def test_fill_history_rejects_ambiguous_cursor_and_time_window():
     client = AsterV3Client(signer_address="0xagent", sign_message=lambda _: "sig")
     with pytest.raises(AsterValidationError):
         client.user_trades("BTCUSDT", from_id=1, start_time=2)
+
+
+def test_history_reads_reject_malformed_records_instead_of_treating_them_as_empty():
+    def handler(request: httpx.Request):
+        return httpx.Response(200, json=[{"id": 1}, None])
+    client = AsterV3Client(signer_address="0xagent", sign_message=lambda _: "sig",
+                           transport=httpx.MockTransport(handler))
+    with pytest.raises(AsterApiError):
+        client.user_trades("BTCUSDT")
+    with pytest.raises(AsterApiError):
+        client.income_history(symbol="BTCUSDT")
