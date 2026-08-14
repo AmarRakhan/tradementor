@@ -3,6 +3,11 @@ name: Deploy isolated Strategy 3 live runtime
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/deploy-cloud-strategy3-live.yml"
 
 permissions:
   contents: read
