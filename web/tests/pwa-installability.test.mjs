@@ -22,17 +22,19 @@ test("service worker uses Samsung Internet native installation without an in-app
   assert.doesNotMatch(registration, /beforeinstallprompt/);
   assert.match(registration, /serviceWorker\.register/);
   assert.match(registration, /updateViaCache: "none"/);
-  assert.match(registration, /appVersion=\$\{pwaVersion\}/);
+  assert.match(registration, /appVersion=\$\{WEBAPP_VERSION\}/);
   assert.match(worker, /request\.url\.includes\("\/api\/"\)/);
 });
 
 test("private staging fetches its manifest with the signed-in session", async () => {
   const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
   const registration = await readFile(new URL("../components/pwa-registration.tsx", import.meta.url), "utf8");
+  const version = await readFile(new URL("../lib/app-version.ts", import.meta.url), "utf8");
   assert.match(layout, /rel="manifest"/);
   assert.match(layout, /crossOrigin="use-credentials"/);
-  assert.match(layout, /manifest\.webmanifest\?v=32/);
+  assert.match(layout, /manifest\.webmanifest\?v=\$\{WEBAPP_VERSION\}/);
   assert.doesNotMatch(layout, /manifest:\s*["']/);
-  assert.match(registration, /sw\.js\?v=\$\{pwaVersion\}/);
-  assert.match(registration, /const pwaVersion = "32"/);
+  assert.match(registration, /sw\.js\?v=\$\{WEBAPP_VERSION\}/);
+  assert.match(registration, /import \{ WEBAPP_VERSION \}/);
+  assert.match(version, /WEBAPP_VERSION = "38"/);
 });
