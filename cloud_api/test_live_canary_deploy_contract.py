@@ -35,4 +35,6 @@ def test_workflow_verifies_the_deployed_runtime_boundary():
 def test_canary_uses_isolated_token_verification_without_production_auth_iam():
     identity = (ROOT / "cloud_api" / "firebase_identity.py").read_text(encoding="utf-8")
 
-    assert '{"staging", "live-canary"}' in identity
+    assert '"staging"' in identity
+    assert '"live-canary"' in identity
+    assert '"strategy3-live"' in identity
