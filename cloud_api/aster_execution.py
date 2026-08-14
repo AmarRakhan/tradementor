@@ -112,6 +112,11 @@ def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, 
     """
     current = result
     status = str(current.get("status", "")).upper()
+    if status == "PARTIALLY_FILLED" and Decimal(str(current.get("executedQty", "0"))) > 0:
+        # Preserve the proven filled quantity for ownership accounting.  The
+        # caller must persist it and stop dependent/risk-increasing work until
+        # reconciliation resolves the remainder.
+        return {**current, "partialFillRequiresReconciliation": True}
     if status in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}:
         if status != "FILLED":
             raise RuntimeError(f"Aster-order eindigde als {status}")
@@ -125,6 +130,8 @@ def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, 
         raise RuntimeError("Aster-orderfill kan niet worden bevestigd")
     current = query(symbol, intent_id)
     status = str(current.get("status", "")).upper()
+    if status == "PARTIALLY_FILLED" and Decimal(str(current.get("executedQty", "0"))) > 0:
+        return {**current, "partialFillRequiresReconciliation": True}
     if status != "FILLED":
         raise RuntimeError(f"Aster-order is nog niet definitief gevuld ({status or 'ONBEKEND'})")
     return current

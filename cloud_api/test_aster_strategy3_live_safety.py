@@ -42,9 +42,27 @@ def test_open_uses_shared_confirmed_executor_and_unique_s3_id():
     assert len(submit)==1 and submit[0][1].startswith("s3-")
 
 
+def test_scheduler_retry_keeps_same_exchange_client_order_id():
+    first=FakeClient();second=FakeClient()
+    decision=Decision("OPEN_BASE","LONG",10)
+    execute_strategy3_decision(first,decision,plan(),context(tick_id="tick-a",action_id="stable-action"),risk_approved=lambda _:True)
+    execute_strategy3_decision(second,decision,plan(),context(tick_id="tick-b",action_id="stable-action"),risk_approved=lambda _:True)
+    first_id=[x[1] for x in first.calls if x[0]=="submit"][0]
+    second_id=[x[1] for x in second.calls if x[0]=="submit"][0]
+    assert first_id==second_id
+
+
 def test_unknown_fill_never_causes_blind_resend():
     client=FakeClient(status="NEW")
     with pytest.raises(RuntimeError): execute_strategy3_decision(client,Decision("OPEN_BASE","LONG",10),plan(),context(),risk_approved=lambda _:True)
+    assert len([x for x in client.calls if x[0]=="submit"])==1
+
+
+def test_partial_fill_returns_proven_quantity_for_reconciliation_without_resend():
+    client=FakeClient(status="PARTIALLY_FILLED")
+    result=execute_strategy3_decision(client,Decision("OPEN_BASE","LONG",10),plan(),context(),risk_approved=lambda _:True)
+    assert result[0]["result"]["executedQty"]=="1"
+    assert result[0]["result"]["partialFillRequiresReconciliation"] is True
     assert len([x for x in client.calls if x[0]=="submit"])==1
 
 
