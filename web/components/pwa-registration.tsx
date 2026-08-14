@@ -1,26 +1,25 @@
 "use client";
 
 import { useEffect } from "react";
-
-const pwaVersion = "32";
+import { WEBAPP_VERSION } from "@/lib/app-version";
 
 export function PwaRegistration() {
   useEffect(() => {
     const standalone = window.matchMedia("(display-mode: standalone)").matches;
     const params = new URLSearchParams(window.location.search);
-    if (standalone && params.get("source") === "pwa" && params.get("appVersion") !== pwaVersion) {
-      window.location.replace(`/?source=pwa&appVersion=${pwaVersion}`);
+    if (standalone && params.get("source") === "pwa" && params.get("appVersion") !== WEBAPP_VERSION) {
+      window.location.replace(`/?source=pwa&appVersion=${WEBAPP_VERSION}`);
       return;
     }
     if (!("serviceWorker" in navigator)) return;
-    const reloadKey = `amar-pwa-reloaded-v${pwaVersion}`;
+    const reloadKey = `amar-pwa-reloaded-v${WEBAPP_VERSION}`;
     const onControllerChange = () => {
       if (window.sessionStorage.getItem(reloadKey)) return;
       window.sessionStorage.setItem(reloadKey, "1");
       window.location.reload();
     };
     navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
-    navigator.serviceWorker.register(`/sw.js?v=${pwaVersion}`, { scope: "/", updateViaCache: "none" })
+    navigator.serviceWorker.register(`/sw.js?v=${WEBAPP_VERSION}`, { scope: "/", updateViaCache: "none" })
       .then((registration) => {
         registration.waiting?.postMessage({ type: "SKIP_WAITING" });
         return registration.update();
