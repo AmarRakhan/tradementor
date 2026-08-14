@@ -35,5 +35,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="nl"><head><link rel="manifest" href="/manifest.webmanifest?v=31" crossOrigin="use-credentials" /><link rel="apple-touch-icon" href="/tradementor-icon-192.png" /></head><body className={`${geistSans.variable} ${geistMono.variable}`}><div className="test-environment-banner live-runtime-banner">AMAR CRYPTO BOT 2026 · STRATEGY 3 LIVE · ECHTE ORDERS ALLEEN NA JOUW BEVESTIGING</div><PwaRegistration /><ZoomGuard /><AuthProvider>{children}</AuthProvider></body></html>;
+  return <html lang="nl"><head><link rel="manifest" href="/manifest.webmanifest?v=32" crossOrigin="use-credentials" /><link rel="apple-touch-icon" href="/tradementor-icon-192.png" /></head><body className={`${geistSans.variable} ${geistMono.variable}`}><div className="test-environment-banner live-runtime-banner">AMAR CRYPTO BOT 2026 · STRATEGY 3 LIVE · ECHTE ORDERS ALLEEN NA JOUW BEVESTIGING</div><PwaRegistration /><ZoomGuard /><AuthProvider>{children}</AuthProvider></body></html>;
 }
