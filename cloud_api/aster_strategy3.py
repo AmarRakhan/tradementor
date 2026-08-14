@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 import math
+from aster_universe import normalize_top_n
 
 Side = Literal["LONG", "SHORT"]
 Role = Literal["HARVEST", "HARVEST_PROTECTION", "PROTECTION"]
@@ -95,7 +96,7 @@ class Strategy3Config:
             long_dca_distance=f("longDcaDistance", .02), short_dca_distance=f("shortDcaDistance", .02),
             long_max_dca=int(f("longMaxDca", 5)), short_max_dca=int(f("shortMaxDca", 5)),
             dca_multiplier=f("dcaMultiplier", 1), maximum_positions=int(f("maximumPositions", 20)),
-            universe_top_n=int(f("universeTopN", 100)), leverage=int(f("leverage", 20)),
+            universe_top_n=normalize_top_n(raw.get("universeTopN", 100)), leverage=int(f("leverage", 20)),
             margin_mode="isolated" if raw.get("marginMode") == "isolated" else "cross",
             strategy_budget=f("strategyBudget", .35), protection_enabled=bool(raw.get("protectionEnabled", True)),
             caution_drawdown=f("cautionDrawdown", .03), defensive_drawdown=f("defensiveDrawdown", .06),
@@ -112,7 +113,7 @@ class Strategy3Config:
         if not 1 <= self.base_notional <= 100_000: raise ValueError("Basisorder moet tussen US$ 1 en US$ 100.000 liggen")
         if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
         if not 1 <= self.maximum_positions <= 200: raise ValueError("Aantal posities moet tussen 1 en 200 liggen")
-        if self.universe_top_n not in {50, 100, 200}: raise ValueError("Coin-universe moet Top 50, 100 of 200 zijn")
+        if self.universe_top_n < 1: raise ValueError("Aster USDT Top-N moet een positief geheel getal zijn")
         if not 1 <= self.leverage <= 200: raise ValueError("Leverage moet tussen 1x en 200x liggen")
         if not 0 <= self.long_max_dca <= 50 or not 0 <= self.short_max_dca <= 50: raise ValueError("DCA-limiet moet tussen 0 en 50 liggen")
         if not 0 < self.long_dca_distance <= .80 or not 0 < self.short_dca_distance <= .80: raise ValueError("DCA-afstand moet tussen 0 en 80% liggen")

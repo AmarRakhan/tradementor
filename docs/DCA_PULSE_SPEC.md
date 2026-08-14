@@ -14,7 +14,7 @@ DCA Pulse is exclusief: zodra strategie 3 actief is, gebruikt Scan & Buy uitslui
 
 ## Eerste aankoop
 
-Alleen actuele CoinMarketCap top-50-munten mogen een basisdeal starten. De geschikte Hyperliquid-markten worden volledig gerangschikt op de absolute 24-uursbeweging. Een stijger is uitsluitend long-kandidaat en moet met de actuele mark price onder de onderste BB(20,2) op gesloten 1-minuutcandles staan. Een daler is uitsluitend short-kandidaat en moet boven de bovenste band staan.
+Alleen markten binnen de actuele serverbevestigde Aster USDT Top-N mogen een basisdeal starten. Binnen dat universum mag de strategie haar eigen richting en instapsignaal bepalen. Een stijger is uitsluitend long-kandidaat en moet met de actuele mark price onder de onderste BB(20,2) op gesloten 1-minuutcandles staan. Een daler is uitsluitend short-kandidaat en moet boven de bovenste band staan.
 
 Long en short zijn altijd beide actief. Nieuwe unieke deals worden alleen toegelaten wanneer het verschil tussen het aantal long- en shortpairs na instap maximaal drie blijft. Positiegrootte beïnvloedt deze balanspoort niet.
 
@@ -22,7 +22,7 @@ Het basisorderbedrag is notional. De bot gebruikt automatisch de actuele maximal
 
 ## Bijkopen
 
-Een actieve pair kan niet opnieuw als basisdeal worden gekozen. Hij kan uitsluitend in zijn oorspronkelijke richting bijkopen. Top-50-lidmaatschap wordt na de basisorder niet opnieuw vereist.
+Een actieve pair kan niet opnieuw als basisdeal worden gekozen. Hij kan uitsluitend in zijn oorspronkelijke richting bijkopen. Lidmaatschap van het actuele Top-N-universum wordt na de basisorder niet opnieuw vereist.
 
 De ladder blijft verankerd aan de oorspronkelijke fill. Bij long 2% zijn de niveaus 98%, 96%, 94% enzovoort. Bij short 8% zijn dit 108%, 116%, 124% enzovoort. Een niveau wordt maximaal eenmaal uitgevoerd en per scan wordt maximaal één DCA-order per pair geplaatst. Ook voor de bijkoop moet de overeenkomstige 1-minuut-Bollinger-voorwaarde gelden.
 

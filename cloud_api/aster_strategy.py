@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from aster_universe import normalize_top_n
 
 
 Side = Literal["LONG", "SHORT"]
@@ -48,7 +49,7 @@ class AsterStrategySettings:
             enabled=bool(raw.get("enabled", False)),
             mode="live" if raw.get("mode") == "live" else "paper",
             base_notional=n("baseNotional", 10), maximum_pairs=i("maximumPairs", 5),
-            universe_top_n=i("universeTopN", 50), scan_interval_seconds=i("scanIntervalSeconds", 60),
+            universe_top_n=normalize_top_n(raw.get("universeTopN", 50)), scan_interval_seconds=i("scanIntervalSeconds", 60),
             long_dca_deviation=n("longDcaDeviation", .02), short_dca_deviation=n("shortDcaDeviation", .05),
             maximum_long_dca=i("maximumLongDca", 3), maximum_short_dca=i("maximumShortDca", 3),
             dca_multiplier=n("dcaMultiplier", 1), net_take_profit=n("netTakeProfit", .005),
@@ -63,7 +64,7 @@ class AsterStrategySettings:
     def validated(self) -> "AsterStrategySettings":
         if not 5 <= self.base_notional <= 100_000: raise ValueError("Basisorder moet tussen 5 en 100.000 USD liggen")
         if not 1 <= self.maximum_pairs <= 100: raise ValueError("Maximaal aantal pairs moet tussen 1 en 100 liggen")
-        if not 1 <= self.universe_top_n <= 200: raise ValueError("CoinMarketCap top-N moet tussen 1 en 200 liggen")
+        if self.universe_top_n < 1: raise ValueError("Aster USDT Top-N moet een positief geheel getal zijn")
         if self.scan_interval_seconds != 60: raise ValueError("Aster-scanner draait veilig eenmaal per minuut")
         if not 0 < self.long_dca_deviation <= .50 or not 0 < self.short_dca_deviation <= .50:
             raise ValueError("DCA-afstanden moeten tussen 0 en 50% liggen")

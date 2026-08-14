@@ -37,7 +37,7 @@ object StrategyProfileStore {
             enabledByDefault = true,
             specificationReady = true,
             executionReady = true,
-            summary = "Multi-pair DCA-bot voor uitsluitend CoinMarketCap top-50 munten"
+            summary = "Multi-pair DCA-bot binnen het actuele Aster USDT Top-N-universum"
         ),
         StrategyDefinition("strategy_4", "Trend Voyager", false, false),
         StrategyDefinition("strategy_5", "Reversal Radar", false, false),

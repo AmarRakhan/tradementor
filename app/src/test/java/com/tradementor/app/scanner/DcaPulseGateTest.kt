@@ -8,12 +8,13 @@ import org.junit.Test
 
 class DcaPulseGateTest {
     @Test
-    fun top50GateNormalizesHyperliquidSymbols() {
-        val allowed = setOf("BTC", "ETH", "SOL")
-        assertTrue(DcaPulseGate.isTop50("BTC", allowed))
-        assertTrue(DcaPulseGate.isTop50("xyz:SOL", allowed))
-        assertTrue(DcaPulseGate.isTop50("kBTC", allowed))
-        assertFalse(DcaPulseGate.isTop50("DOG", allowed))
+    fun asterUniverseGateNormalizesHyperliquidSymbols() {
+        val allowed = setOf("BTCUSDT", "ETHUSDT", "SOLUSDT", "1000PEPEUSDT")
+        assertTrue(DcaPulseGate.isAllowedUniverseSymbol("BTC", allowed))
+        assertTrue(DcaPulseGate.isAllowedUniverseSymbol("xyz:SOL", allowed))
+        assertTrue(DcaPulseGate.isAllowedUniverseSymbol("kBTC", allowed))
+        assertTrue(DcaPulseGate.isAllowedUniverseSymbol("kPEPE", allowed))
+        assertFalse(DcaPulseGate.isAllowedUniverseSymbol("DOG", allowed))
     }
 
     @Test
@@ -116,16 +117,10 @@ class DcaPulseGateTest {
     }
 
     @Test
-    fun arbitraryUniverseInputIsPassedToCloudAndClampedOnlyAtDocumentedBounds() {
-        assertEquals("/v1/me/market/top50?limit=1", DcaUniverseRequest.endpointPath(0))
-        assertEquals("/v1/me/market/top50?limit=137", DcaUniverseRequest.endpointPath(137))
-        assertEquals("/v1/me/market/top50?limit=500", DcaUniverseRequest.endpointPath(999))
-        assertEquals("top_universe_cache_50", DcaUniverseRequest.cacheKey(50))
-        assertEquals("top_universe_cache_200", DcaUniverseRequest.cacheKey(200))
-        assertFalse(DcaUniverseRequest.cacheKey(50) == DcaUniverseRequest.cacheKey(200))
-        assertEquals(180, DcaUniverseRequest.minimumCompleteCount(200))
-        assertTrue(DcaUniverseRequest.isComplete(200, 180))
-        assertFalse(DcaUniverseRequest.isComplete(200, 50))
+    fun arbitraryPositiveUniverseInputIsPassedToAsterEndpointWithoutPresetRounding() {
+        assertEquals("/v1/me/market/aster-usdt?limit=1", AsterUniverseRequest.endpointPath(0))
+        assertEquals("/v1/me/market/aster-usdt?limit=137", AsterUniverseRequest.endpointPath(137))
+        assertEquals("/v1/me/market/aster-usdt?limit=999", AsterUniverseRequest.endpointPath(999))
     }
 
     @Test

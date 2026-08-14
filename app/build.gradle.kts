@@ -1,7 +1,11 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    id("com.google.gms.google-services")
+    id("com.google.gms.google-services") apply false
+}
+
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 android {
@@ -48,10 +52,13 @@ android {
             // Stable local test key: keeps staging upgrades compatible across
             // Codex, Android Studio and manual builds. The key stays ignored
             // from Git and is never used for the public Play Store release.
-            storeFile = rootProject.file(".android/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            val stableDebugKeystore = rootProject.file(".android/debug.keystore")
+            if (stableDebugKeystore.exists()) {
+                storeFile = stableDebugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 

@@ -100,12 +100,20 @@ data class TpProtectionResult(
     val scanAndBuyEnabled: Boolean = false
 )
 
-data class RankedMarketAsset(val symbol: String = "", val rank: Int = 0)
-data class TopMarketCapResponse(
-    val symbols: List<RankedMarketAsset> = emptyList(),
-    val source: String = "CoinMarketCap",
-    val cached: Boolean = false,
-    val ageSeconds: Int = 0
+data class AsterUniverseResponse(
+    val universeSource: String = "aster",
+    val quoteAsset: String = "USDT",
+    val marketType: String = "perpetual",
+    val rankingMethod: String = "",
+    val requestedTopN: Int = 0,
+    val eligibleMarketCount: Int = 0,
+    val selectedMarketCount: Int = 0,
+    val selectedSymbols: List<String> = emptyList(),
+    val fetchedAt: String = "",
+    val expiresAt: String = "",
+    val stale: Boolean = true,
+    val entryBlocked: Boolean = true,
+    val entryBlockReason: String = ""
 )
 
 data class TradingCycleStatus(
@@ -172,18 +180,24 @@ class TradingGatewayClient {
         }
     }
 
-    suspend fun coinMarketCapTop(baseUrl: String, universeSize: Int): TopMarketCapResponse = withContext(Dispatchers.IO) {
-        val request = authenticated(Request.Builder().url(baseUrl + DcaUniverseRequest.endpointPath(universeSize)).get())
+    suspend fun asterUsdtUniverse(baseUrl: String, universeSize: Int): AsterUniverseResponse = withContext(Dispatchers.IO) {
+        val requested = AsterUniverseRequest.normalizedSize(universeSize)
+        val request = authenticated(Request.Builder().url(baseUrl + AsterUniverseRequest.endpointPath(requested)).get())
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             check(response.isSuccessful) {
                 runCatching { Gson().fromJson(body, Map::class.java)["detail"].toString() }
-                    .getOrDefault("CoinMarketCap universumcontrole antwoordde met ${response.code}")
+                    .getOrDefault("Aster USDT-universumcontrole antwoordde met ${response.code}")
             }
-            Gson().fromJson(body, TopMarketCapResponse::class.java).also { result ->
-                check(DcaUniverseRequest.isComplete(universeSize, result.symbols.size)) {
-                    "CoinMarketCap top-${DcaUniverseRequest.normalizedSize(universeSize)} is onvolledig: " +
-                        "${result.symbols.size}/${DcaUniverseRequest.minimumCompleteCount(universeSize)} vereist"
+            Gson().fromJson(body, AsterUniverseResponse::class.java).also { result ->
+                check(result.universeSource == "aster" && result.quoteAsset == "USDT" && result.marketType == "perpetual") {
+                    "De server bevestigde geen geldig Aster USDT-perpetualuniversum"
+                }
+                check(result.requestedTopN == requested && result.selectedMarketCount == result.selectedSymbols.size) {
+                    "De server bevestigde niet exact hetzelfde Aster Top-N-verzoek"
+                }
+                check(!result.stale && !result.entryBlocked) {
+                    result.entryBlockReason.ifBlank { "Actuele Aster-universumdata ontbreekt; nieuwe instappen blijven geblokkeerd" }
                 }
             }
         }
@@ -216,7 +230,7 @@ class TradingGatewayClient {
             "trailing_take_profit_enabled" to trailingTakeProfitEnabled,
             "trailing_deviation_percentage" to trailingDeviationPercentage,
             "stop_loss_enabled" to stopLossEnabled,
-            "top_universe_size" to DcaUniverseRequest.normalizedSize(topUniverseSize)
+            "top_universe_size" to AsterUniverseRequest.normalizedSize(topUniverseSize)
         )
         val request = Request.Builder()
             .url("$baseUrl/v1/me/orders/entry")

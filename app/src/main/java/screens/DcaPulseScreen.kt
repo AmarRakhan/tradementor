@@ -123,7 +123,7 @@ fun DcaPulseScreen(enabled: Boolean, onBack: () -> Unit, onEnabled: (Boolean) ->
         val configuredTopUniverse = topUniverseSize.toIntOrNull() ?: stored.topUniverseSize
         Text("MULTI-PAIR DCA · TOP $configuredTopUniverse BIJ EERSTE AANKOOP", color = DcaGreen, fontSize = 10.sp, fontWeight = FontWeight.Black)
         Text(
-            "DCA Pulse gebruikt uitsluitend zijn eigen regels. Nieuwe deals starten vanuit de CoinMarketCap top $configuredTopUniverse; daarna blijft de pair meedoen aan zijn vaste DCA-ladder.",
+            "Nieuwe deals starten uitsluitend vanuit de actuele Aster USDT Top $configuredTopUniverse op volume en liquiditeit. Bestaande deals blijven daarna veilig meedoen aan TP, DCA en herstel.",
             color = DcaMuted, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 8.dp)
         )
         Spacer(Modifier.height(14.dp))

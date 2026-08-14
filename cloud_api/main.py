@@ -39,7 +39,7 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 from pydantic import BaseModel, Field
-from dca_universe import merge_ranked_pages, minimum_complete_count, page_starts, symbol_codes
+from aster_universe import AsterUniverseSnapshot, build_snapshot as build_aster_universe_snapshot, normalize_top_n, stale_snapshot as stale_aster_universe_snapshot
 from trading_cycle import cycle_payload_values, cycle_start_decision
 from close_all import execute_close_all
 from position_close import ALLOWED_CLOSE_PERCENTAGES, close_size
@@ -191,7 +191,7 @@ _cache_lock = threading.RLock()
 _perp_dex_cache: tuple[float, list[str]] = (0.0, [])
 _positions_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _info_cache: dict[str, tuple[float, Any]] = {}
-_cmc_top_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
+_aster_universe_cache: AsterUniverseSnapshot | None = None
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
 _aster_strategy3_cost_cache: dict[str, tuple[float, dict[tuple[str, str], OwnedLeg]]] = {}
@@ -703,13 +703,15 @@ def _hyperliquid_closed_closes(symbol: str, *, count: int = 20) -> tuple[float, 
 
 def _hyperliquid_market_batch(user: dict[str, Any], settings: HyperliquidScannerSettings,
                               cursor: int, active_symbols: set[str] | None = None) -> tuple[list[HyperliquidMarketSnapshot], set[str], int, int]:
-    ranked = coinmarketcap_top(limit=settings.top_universe_size, user=user).get("symbols", [])
-    allowed = {str(item.get("symbol", "")).upper() for item in ranked}
+    del user
+    universe = aster_usdt_universe_snapshot(settings.top_universe_size).public_dict()
+    if universe["entryBlocked"]:
+        raise ValueError(str(universe["entryBlockReason"]))
+    allowed = {str(symbol).upper().removesuffix("USDT") for symbol in universe["selectedSymbols"]}
     rows = _hyperliquid_meta_rows()
     eligible = [
         row for row in rows
-        if str(row["symbol"]).upper() != "BTC"
-        and hyperliquid_universe_matches(str(row["symbol"]), allowed)
+        if hyperliquid_universe_matches(str(row["symbol"]), allowed)
     ]
     eligible.sort(key=lambda row: -abs((row["mark"] / row["previous"] - 1.0) * 100.0))
     if settings.entry_mode == "direct":
@@ -1041,13 +1043,35 @@ def _record_aster_order_attribution(ref: Any, result: dict[str, Any], *, strateg
     ref.set({"orderAttributions":rows[-2000:]}, merge=True)
 
 
+def _configured_universe_contract(raw: dict[str, Any], requested_top_n: int) -> dict[str, Any]:
+    stored = raw.get("universe") if isinstance(raw.get("universe"), dict) else None
+    if stored and int(safe_float(stored.get("requestedTopN"))) == requested_top_n:
+        value=dict(stored);expires=value.get("expiresAt")
+        try:
+            expiry=expires if isinstance(expires,datetime) else datetime.fromisoformat(str(expires).replace("Z","+00:00"))
+            if datetime.now(timezone.utc)>=expiry.astimezone(timezone.utc):
+                value.update({"stale":True,"entryBlocked":True,
+                    "entryBlockReason":"Aster-universumcache is verlopen; nieuwe instappen zijn geblokkeerd"})
+        except (TypeError,ValueError):
+            value.update({"stale":True,"entryBlocked":True,
+                "entryBlockReason":"Geldigheid van Aster-universumdata ontbreekt; nieuwe instappen zijn geblokkeerd"})
+        return value
+    cached = _aster_universe_cache
+    if cached and datetime.now(timezone.utc)<cached.expires_at:
+        return replace(cached,requested_top_n=requested_top_n).public_dict()
+    now = datetime.now(timezone.utc)
+    empty = build_aster_universe_snapshot({"symbols": []}, [], requested_top_n, fetched_at=now)
+    return replace(empty, stale=True, entry_block_reason="Aster-universum is nog niet server-side ververst; nieuwe instappen zijn geblokkeerd").public_dict()
+
+
 def aster_strategy3_public(uid: str) -> dict[str, Any]:
     raw = aster_strategy3_reference(uid).get().to_dict() or {}
     settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else Strategy3Config().public_dict()
     owned = [x for x in raw.get("ownedLegs", []) if isinstance(x, dict)]
     roles = [str(x.get("role", "HARVEST")) for x in owned]
     account_snapshot = raw.get("accountSnapshot") if isinstance(raw.get("accountSnapshot"), dict) else {}
-    return {"strategy3": {"settings": settings, "effectiveLiveSettings": settings,
+    universe = _configured_universe_contract(raw, int(settings.get("universeTopN", 100)))
+    return {"strategy3": {"settings": settings, "effectiveLiveSettings": settings, "universe": universe,
         "settingsSource": "server", "phase": str(raw.get("phase", "DRAFT")),
         "enabled": bool(raw.get("enabled",False)), "liveReady": bool(raw.get("liveReady",False)),
         "paperOnly": not bool(raw.get("canaryValidated",False)), "canaryValidated":bool(raw.get("canaryValidated",False)),
@@ -1290,15 +1314,25 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             ref.set({"rapidBuildRequested":False,"phase":"RISK_HOLD","lastReason":"Snelle startopbouw gestopt door actuele Strategy-3-risicocontrole"},merge=True)
         return {"status":"waiting","action":"HOLD","ordersSent":0,"reason":"Nieuwe entry geblokkeerd door Strategy-3-risicobudget"}
     try:
-        info={str(x.get("symbol","")).upper():x for x in client.public_exchange_info().get("symbols",[]) if str(x.get("status","")).upper()=="TRADING"}
+        exchange_info=client.public_exchange_info()
+        info={str(x.get("symbol","")).upper():x for x in exchange_info.get("symbols",[]) if str(x.get("status","")).upper()=="TRADING"}
         prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
-        changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in client.ticker_24h()}
-        cmc=coinmarketcap_top(limit=settings.universe_top_n,user={"uid":uid})["symbols"];brackets=client.leverage_brackets()
-    except (AsterApiError,ValueError,HTTPException) as exc:
+        market24=client.ticker_24h()
+        changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in market24}
+        universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)
+        brackets=client.leverage_brackets()
+    except (AsterApiError,ValueError) as exc:
         reason=f"Strategy-3 marktdata niet gereed: {exc}"
-        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
+        blocked=aster_usdt_universe_snapshot(settings.universe_top_n,client=client).public_dict()
+        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now,"universe":blocked},merge=True)
         return {"status":"data-hold","reason":reason,"ordersSent":0}
-    blocked_symbols={symbol for symbol,_ in active_keys|s1_keys|s2_keys|s3_keys};candidates=[f"{x}USDT" for x in symbol_codes(cmc)]
+    universe_contract=universe.public_dict()
+    ref.set({"universe":universe_contract},merge=True)
+    if universe.entry_blocked:
+        reason=universe_contract["entryBlockReason"]
+        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"data-hold","reason":reason,"ordersSent":0,"universe":universe_contract}
+    blocked_symbols={symbol for symbol,_ in active_keys|s1_keys|s2_keys|s3_keys};candidates=list(universe_contract["selectedSymbols"])
     candidates=[x for x in candidates if x in info and x in prices and x not in blocked_symbols];candidates.sort(key=lambda x:changes.get(x,0),reverse=side=="LONG")
     if dry_run or not live:
         reason="Droge Strategy-3-planning; geen order verzonden" if dry_run else "Live-mode is niet volledig bewezen"
@@ -1340,7 +1374,8 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else Strategy2Config().public_dict()
     snapshot=raw.get("accountSnapshot") if isinstance(raw.get("accountSnapshot"),dict) else {}
     owned=raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []
-    return {"strategy2": {"settings": settings, "phase": str(raw.get("phase", "DRAFT")),
+    universe=_configured_universe_contract(raw,int(settings.get("universeTopN",50)))
+    return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": bool(raw.get("enabled", False)),
         "monitor":bool(raw.get("monitor",False)),"canaryValidated":bool(raw.get("canaryValidated",False)),
         "runtimeEnabled":os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true",
@@ -1528,13 +1563,22 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         if not bool(raw.get("initialBuildComplete",False)):
             ref.set({"initialBuildComplete":True,"phase":"RUNNING","lastReason":f"Gebalanceerde start compleet: {long_count} LONG / {short_count} SHORT","updatedAt":now},merge=True)
     try:
-        info_rows=client.public_exchange_info().get("symbols",[]);rows={str(x.get("symbol","")).upper():x for x in info_rows if str(x.get("status","")).upper()=="TRADING"}
+        exchange_info=client.public_exchange_info();info_rows=exchange_info.get("symbols",[]);rows={str(x.get("symbol","")).upper():x for x in info_rows if str(x.get("status","")).upper()=="TRADING"}
         prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
-        changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in client.ticker_24h()}
-        cmc=coinmarketcap_top(limit=settings.universe_top_n,user={"uid":uid})["symbols"]
+        market24=client.ticker_24h()
+        changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in market24}
+        universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)
         all_brackets=client.leverage_brackets()
-    except (AsterApiError,ValueError,HTTPException) as exc:return {"status":"data-hold","reason":str(exc),"ordersSent":0}
-    codes=[f"{code}USDT" for code in symbol_codes(cmc) if f"{code}USDT" in rows and f"{code}USDT" in prices]
+    except (AsterApiError,ValueError) as exc:
+        blocked=aster_usdt_universe_snapshot(settings.universe_top_n,client=client).public_dict()
+        ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now,"universe":blocked},merge=True)
+        return {"status":"data-hold","reason":str(exc),"ordersSent":0,"universe":blocked}
+    universe_contract=universe.public_dict();ref.set({"universe":universe_contract},merge=True)
+    if universe.entry_blocked:
+        reason=universe_contract["entryBlockReason"]
+        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"data-hold","reason":reason,"ordersSent":0,"universe":universe_contract}
+    codes=[symbol for symbol in universe_contract["selectedSymbols"] if symbol in rows and symbol in prices]
     order_limit=entry_order_limit(initial_build_complete,owned,settings.maximum_pairs)
     if dry_run or not live:
         return {"status":"simulated","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG","plannedOrders":order_limit,
@@ -1615,6 +1659,7 @@ def aster_automation_public(uid: str) -> dict[str, Any]:
         "automationReason": str(value.get("lastReason", "Niet gestart")),
         "automationLastTickAt": value.get("lastTickAt"),
         "automationSettings": settings or AsterStrategySettings().public_dict(),
+        "automationUniverse": _configured_universe_contract(value, int((settings or {}).get("universeTopN", 50))),
         "cycleStartEquity": safe_float(value.get("cycleStartEquity")),
         "realizedProfit": safe_float(value.get("realizedProfit")),
         "safetyBuffer": safe_float(value.get("safetyBuffer")),
@@ -1716,15 +1761,16 @@ def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, 
     account=AsterStrategyAccount(equity,available,ratio,safe_float(control.get("cycleStartEquity")) or equity,used_margin)
     action=decide_aster_tick(settings,account,pairs,AsterTickMarket(prices))
     base={"status":"simulated" if dry_run else "ok","action":action.kind,"reason":action.reason,"marginRatio":ratio,"activePairs":len(pairs)}
-    if dry_run: return base
-    rows={};brackets=[];market24=[]
+    if dry_run and action.kind!="FILL_SLOT": return base
+    rows={};brackets=[];market24=[];universe=None
     if action.kind in {"ADD_DCA","HARVEST_RESET","FILL_SLOT"}:
         try:
-            brackets=client.leverage_brackets();info_rows=client.public_exchange_info().get("symbols",[])
+            brackets=client.leverage_brackets();exchange_info=client.public_exchange_info();info_rows=exchange_info.get("symbols",[])
             rows={str(x.get("symbol","")).upper():x for x in info_rows if str(x.get("status","")).upper()=="TRADING"}
             if action.kind=="FILL_SLOT":
                 tickers=client.ticker_prices();market24=client.ticker_24h()
                 prices.update({str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in tickers})
+                universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)
         except (AsterApiError,ValueError) as exc:
             message=str(exc);match=re.search(r"banned until\s+(\d+)",message,re.IGNORECASE)
             next_retry=datetime.fromtimestamp(int(match.group(1))/1000,tz=timezone.utc)+timedelta(seconds=5) if match else now_utc+timedelta(minutes=1)
@@ -1772,13 +1818,19 @@ def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, 
                 control["momentumPot"]=safe_float(control.get("momentumPot"))+reinvest
                 control["safetyBuffer"]=safe_float(control.get("safetyBuffer"))+(realized-reinvest)
         elif action.kind=="FILL_SLOT" and settings.enabled and len(pairs)<settings.maximum_pairs:
-            cmc=coinmarketcap_top(limit=settings.universe_top_n,user={"uid":uid})["symbols"]
+            universe_contract=universe.public_dict() if universe is not None else aster_usdt_universe_snapshot(settings.universe_top_n,client=client).public_dict()
+            ref.set({"universe":universe_contract},merge=True)
+            if universe_contract["entryBlocked"]:
+                reason=str(universe_contract["entryBlockReason"])
+                ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now_utc},merge=True)
+                return {**base,"status":"data-hold","reason":reason,"universe":universe_contract}
             changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in market24}
             active_symbols=set(grouped); candidates=[]
-            preferred=("BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT") if not pairs else ()
-            for symbol in list(preferred)+[f"{code}USDT" for code in symbol_codes(cmc)]:
+            for symbol in universe_contract["selectedSymbols"]:
                 if symbol in rows and symbol in prices and symbol not in active_symbols and symbol not in candidates: candidates.append(symbol)
-            candidates.sort(key=lambda x:(x not in preferred,-changes.get(x,-999)))
+            candidates.sort(key=lambda x:-changes.get(x,-999))
+            if dry_run:
+                return {**base,"status":"simulated","candidates":candidates,"ordersSent":0,"universe":universe_contract}
             opened=[]; candidate_failures=[]
             for symbol in candidates:
                 if len(pairs)+len(opened)>=settings.maximum_pairs:break
@@ -2536,58 +2588,44 @@ def cloud_settings(request: CloudSettingsRequest, user: dict[str, Any] = Depends
     return {"maxActivePositions": request.max_active_positions}
 
 
-@app.get("/v1/me/market/top50")
-def coinmarketcap_top(
-    limit: int = Query(default=50, ge=1, le=500),
+def _public_aster_client() -> AsterV3Client:
+    """Create a public-data-only client; its signer can never authorize orders."""
+    return AsterV3Client(signer_address="", sign_message=lambda _: "", live_authorized=False)
+
+
+def aster_usdt_universe_snapshot(limit: int, *, client: AsterV3Client | None = None,
+                                  force_refresh: bool = False) -> AsterUniverseSnapshot:
+    """Return one shared, TTL-bound Aster universe for every strategy."""
+    global _aster_universe_cache
+    requested = normalize_top_n(limit)
+    now = datetime.now(timezone.utc)
+    with _cache_lock:
+        cached = _aster_universe_cache
+        if cached and not force_refresh and now < cached.expires_at:
+            return replace(cached, requested_top_n=requested)
+    try:
+        source = client or _public_aster_client()
+        snapshot = build_aster_universe_snapshot(
+            source.public_exchange_info(), source.ticker_24h(), requested, fetched_at=now,
+        )
+    except (AsterApiError, ValueError) as exc:
+        reason = f"Actuele Aster USDT-marktdata ontbreekt: {exc}; nieuwe instappen zijn geblokkeerd"
+        if cached:
+            return stale_aster_universe_snapshot(replace(cached,requested_top_n=requested), now=now, reason=reason)
+        empty = build_aster_universe_snapshot({"symbols": []}, [], requested, fetched_at=now)
+        return replace(empty, stale=True, entry_block_reason=reason)
+    with _cache_lock:
+        _aster_universe_cache = snapshot
+    return snapshot
+
+
+@app.get("/v1/me/market/aster-usdt")
+def aster_usdt_universe(
+    limit: int = Query(default=50, ge=1),
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
-    """Return the requested CoinMarketCap top-N as a fail-closed DCA allow-list.
-
-    The API key remains server-side. A missing key or unusable response must never
-    silently broaden the allowed universe, because DCA Pulse treats this list as
-    a mandatory entry and averaging condition.
-    """
     del user
-    now = time.time()
-    cached_at, cached_values = _cmc_top_cache.get(limit, (0.0, []))
-    if cached_values and now - cached_at < 15 * 60:
-        return {"symbols": cached_values, "source": "CoinMarketCap", "cached": True, "ageSeconds": int(now - cached_at)}
-
-    api_key = os.getenv("COINMARKETCAP_API_KEY", "").strip()
-    cmc_url = (
-        "https://pro-api.coinmarketcap.com/v3/cryptocurrency/listings/latest"
-        if api_key else
-        "https://pro-api.coinmarketcap.com/public-api/v3/cryptocurrency/listings/latest"
-    )
-    cmc_headers = {"Accept": "application/json"}
-    if api_key:
-        cmc_headers["X-CMC_PRO_API_KEY"] = api_key
-    try:
-        # CoinMarketCap's public endpoint caps a response at 50 rows. Fetch and
-        # merge pages so Top-100/150/200 behaves the same as Top-50 in production.
-        payloads = []
-        for start in page_starts(limit, page_size=50):
-            response = httpx.get(
-                cmc_url,
-                params={
-                    "start": start,
-                    "limit": min(50, limit - start + 1),
-                    "convert": "USD",
-                    "sort": "market_cap",
-                },
-                headers=cmc_headers,
-                timeout=10.0,
-            )
-            response.raise_for_status()
-            payloads.append(response.json())
-        values = merge_ranked_pages(payloads, limit)
-        if len(values) < minimum_complete_count(limit):
-            raise ValueError("onvolledige CoinMarketCap-ranglijst")
-    except Exception as exc:
-        raise HTTPException(503, f"CoinMarketCap top-{limit} kon niet betrouwbaar worden gecontroleerd; DCA-orders blijven geblokkeerd") from exc
-
-    _cmc_top_cache[limit] = (now, values)
-    return {"symbols": values, "source": "CoinMarketCap", "cached": False, "ageSeconds": 0}
+    return aster_usdt_universe_snapshot(limit).public_dict()
 
 
 @app.put("/v1/me/state")
@@ -5435,8 +5473,6 @@ def live_entry_order(request: LiveEntryOrderRequest, user: dict[str, Any] = Depe
     """Execute an idempotent production entry for one authenticated tenant."""
     if os.getenv("TRADEMENTOR_ALLOW_LIVE", "").lower() != "true":
         orders_locked()
-    if request.symbol.strip().upper() == "BTC":
-        raise HTTPException(409, "Bitcoin is uitgesloten van Scan & Buy en uitsluitend beschikbaar in Bitcoin Trade Casino")
     reference = user_reference(user)
     live_ref = reference.collection("executionControls").document("liveTrading")
     live = live_ref.get().to_dict() or {}
@@ -5454,8 +5490,10 @@ def live_entry_order(request: LiveEntryOrderRequest, user: dict[str, Any] = Depe
             raise HTTPException(422, "DCA Pulse vereist minimaal één actieve uitstapbeveiliging")
         if False and not request.stop_loss_enabled:
             raise HTTPException(422, "DCA Pulse vereist voor live handel altijd een harde stop-loss")
-        ranked = coinmarketcap_top(limit=request.top_universe_size, user=user).get("symbols", [])
-        allowed = {str(item.get("symbol", "")).upper() for item in ranked}
+        universe = aster_usdt_universe_snapshot(request.top_universe_size).public_dict()
+        if universe["entryBlocked"]:
+            raise HTTPException(503, str(universe["entryBlockReason"]))
+        allowed = {str(symbol).upper().removesuffix("USDT") for symbol in universe["selectedSymbols"]}
         base_symbol = request.symbol.split(":")[-1].split("/")[0].split("-")[0].upper()
         candidates = {base_symbol}
         if base_symbol.startswith("K") and len(base_symbol) > 2:
@@ -5463,7 +5501,7 @@ def live_entry_order(request: LiveEntryOrderRequest, user: dict[str, Any] = Depe
         if base_symbol.startswith("1000") and len(base_symbol) > 5:
             candidates.add(base_symbol[4:])
         if not candidates.intersection(allowed):
-            raise HTTPException(422, f"DCA Pulse staat uitsluitend actuele CoinMarketCap top-{request.top_universe_size}-munten toe")
+            raise HTTPException(422, f"DCA Pulse staat uitsluitend actuele Aster USDT Top-{request.top_universe_size}-markten toe")
     address = linked_wallet(user)
     settings = reference.collection("settings").document("trading").get().to_dict() or {}
     maximum = int(settings.get("maxActivePositions", settings.get("maxActiveTrades", 40)))
@@ -5950,7 +5988,7 @@ def dca_add_on(request: DcaAddOnRequest, user: dict[str, Any] = Depends(authenti
         if base_symbol.startswith("1000") and len(base_symbol) > 5:
             candidates.add(base_symbol[4:])
         if False and not candidates.intersection(allowed):
-            raise HTTPException(422, "DCA Pulse staat uitsluitend actuele CoinMarketCap top-50-munten toe")
+            raise HTTPException(422, "DCA Pulse staat uitsluitend actuele Aster USDT Top-N-markten toe")
         if False and request.leverage > 5:
             raise HTTPException(422, "DCA Pulse staat maximaal 5× hefboom toe")
         if False and not request.stop_loss_enabled:

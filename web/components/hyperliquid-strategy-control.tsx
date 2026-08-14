@@ -59,7 +59,7 @@ export function HyperliquidStrategyControl({ cloudReady, onChanged }: { cloudRea
     maxSafetyOrders: Math.round(number(fields.safetyOrders, 0)),
     longDeviationPercent: number(fields.longDeviation, 0), shortDeviationPercent: number(fields.shortDeviation, 0),
     maxActiveDeals: Math.round(number(fields.maximum, 0)), cooldownMinutes: Math.round(number(fields.cooldown, 0)),
-    portfolioTargetPercent: number(fields.target, 0), topUniverseSize: Math.round(number(fields.topUniverse, 0)),
+    portfolioTargetPercent: number(fields.target, 0), topUniverseSize: number(fields.topUniverse, 0),
     entryMode: fields.entryMode, leverage: Math.round(number(fields.leverage, 1)),
     stopLossEnabled: fields.stopLoss, stopLossPercent: number(fields.stopLossPercent, 25),
   }), [fields]);
@@ -110,7 +110,7 @@ export function HyperliquidStrategyControl({ cloudReady, onChanged }: { cloudRea
         <NumberField label="Max. actieve deals" value={fields.maximum} onChange={(value) => setFields({ ...fields, maximum: value })} />
         <NumberField label="Cloudcontrole (minuten)" value={fields.cooldown} onChange={(value) => setFields({ ...fields, cooldown: value })} />
         <NumberField label="Portfoliodoel (%)" value={fields.target} onChange={(value) => setFields({ ...fields, target: value })} />
-        <NumberField label="CoinMarketCap top-N" value={fields.topUniverse} onChange={(value) => setFields({ ...fields, topUniverse: value })} />
+        <NumberField label="Aster USDT-handelsuniversum – Top-N op volume en liquiditeit" value={fields.topUniverse} onChange={(value) => setFields({ ...fields, topUniverse: value })} />
         <label>Instapregel<select value={fields.entryMode} onChange={(event) => setFields({ ...fields, entryMode: event.target.value as Fields["entryMode"] })}><option value="bollinger">24u beweging + Bollinger</option><option value="direct">Direct hardste beweging</option></select></label>
         <NumberField label="Max. gevraagde hefboom" value={fields.leverage} onChange={(value) => setFields({ ...fields, leverage: value })} />
       </div>

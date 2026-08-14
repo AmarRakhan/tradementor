@@ -289,27 +289,21 @@ class BackgroundScanWorker(
                 QuantumShieldCapacityStore.save(applicationContext, effectiveMaximum)
             }
             val marketLeverages = repository.getMarkets().orEmpty().associate { it.market.name.uppercase() to it.market.maxLeverage }
-            val topUniverseSize = if (activeStrategy.id == "strategy_3") dcaSettings.topUniverseSize.coerceIn(1, 500) else 50
+            val topUniverseSize = if (activeStrategy.id == "strategy_3") dcaSettings.topUniverseSize.coerceAtLeast(1) else 50
             var universeFailureReason: String? = null
-            val top50Symbols = if (activeStrategy.id == "strategy_3") {
+            val allowedUniverseSymbols = if (activeStrategy.id == "strategy_3") {
                 runCatching {
-                    gatewayClient.coinMarketCapTop(LocalTradingGatewayStore.url(applicationContext), topUniverseSize)
-                        .symbols
-                        .map { it.symbol.uppercase() }
-                        .take(topUniverseSize)
+                    gatewayClient.asterUsdtUniverse(LocalTradingGatewayStore.url(applicationContext), topUniverseSize)
+                        .selectedSymbols
+                        .map { it.uppercase() }
                         .toSet()
-                        .also {
-                            if (it.isNotEmpty()) {
-                                prefs.edit().putStringSet(DcaUniverseRequest.cacheKey(topUniverseSize), it).apply()
-                            }
-                        }
                 }.getOrElse { error ->
-                    Log.w("TradeMentorBackground", "Top-50 ophalen mislukt: ${error.message}")
-                    universeFailureReason = error.message ?: "CoinMarketCap-universum niet beschikbaar"
-                    prefs.getStringSet(DcaUniverseRequest.cacheKey(topUniverseSize), emptySet()).orEmpty()
+                    Log.w("TradeMentorBackground", "Aster Top-N ophalen mislukt: ${error.message}")
+                    universeFailureReason = error.message ?: "Actueel Aster USDT-universum niet beschikbaar"
+                    emptySet()
                 }
             } else emptySet()
-            if (activeStrategy.id == "strategy_3" && top50Symbols.isEmpty()) {
+            if (activeStrategy.id == "strategy_3" && allowedUniverseSymbols.isEmpty()) {
                 val message = "Top-$topUniverseSize controle mislukt · geen orders · ${universeFailureReason.orEmpty()}"
                 ScannerProgressStore.update(applicationContext, "refill_wait", 0, topUniverseSize, message)
                 if (autoTradingEnabled) {
@@ -318,7 +312,7 @@ class BackgroundScanWorker(
                 return Result.success()
             }
             val tradableUniverseCount = if (activeStrategy.id == "strategy_3") {
-                repository.getMarkets().orEmpty().count { DcaPulseGate.isTop50(it.market.name, top50Symbols) }
+                repository.getMarkets().orEmpty().count { DcaPulseGate.isAllowedUniverseSymbol(it.market.name, allowedUniverseSymbols) }
             } else 0
             val handledThisScan = mutableSetOf<String>()
             val evaluatedThisScan = mutableSetOf<String>()
@@ -450,7 +444,7 @@ class BackgroundScanWorker(
                 }
             } else emptyMap()
             val recommendations = if (activeStrategy.id == "strategy_3") advisorEngine.analyzeDcaPulse(
-                top50Symbols = top50Symbols,
+                universeSymbols = allowedUniverseSymbols,
                 directEntry = dcaSettings.usesDirectEntry(),
                 excludedSymbols = activeSymbols,
                 onProgress = progress@ { partialResults, completed, total ->
@@ -519,7 +513,7 @@ class BackgroundScanWorker(
                 onProgress = progress@ { partialResults, completed, total ->
                     ScannerProgressStore.update(applicationContext, "scanning", completed, total)
                     // DCA Pulse waits for the complete comparison. Otherwise the first
-                    // analyzed market could buy before a harder-moving top-50 pair is seen.
+                    // analyzed market could buy before all server-selected candidates are seen.
                     if (activeStrategy.id == "strategy_3" && completed < total) return@progress
                     val requiredScore = if (activeStrategy.id == "strategy_3") dcaSettings.minimumQualityScore else profile.minimumScore
                     val prioritizedResults = if (activeStrategy.id == "strategy_3") {
@@ -530,7 +524,7 @@ class BackgroundScanWorker(
                             val normalizedSymbol = recommendation.symbol.uppercase()
                             if (normalizedSymbol in handledThisScan) return@forEach
                             if (!evaluatedThisScan.add(normalizedSymbol)) return@forEach
-                            if (activeStrategy.id == "strategy_3" && !DcaPulseGate.isTop50(normalizedSymbol, top50Symbols)) {
+                            if (activeStrategy.id == "strategy_3" && !DcaPulseGate.isAllowedUniverseSymbol(normalizedSymbol, allowedUniverseSymbols)) {
                                 liveValidationRejected++
                                 return@forEach
                             }
@@ -674,7 +668,7 @@ class BackgroundScanWorker(
                 it.qualityScore >= if (activeStrategy.id == "strategy_3") dcaSettings.minimumQualityScore else profile.minimumScore
             }.filter {
                 activeStrategy.id != "strategy_3" ||
-                    (DcaPulseGate.isTop50(it.symbol, top50Symbols) && dcaSettings.allowsShort(it.shortDirection))
+                    (DcaPulseGate.isAllowedUniverseSymbol(it.symbol, allowedUniverseSymbols) && dcaSettings.allowsShort(it.shortDirection))
             }
             val symbols = recommendations.map { it.symbol }.toSet()
             val previous = prefs.getStringSet("last_symbols", emptySet()).orEmpty()
