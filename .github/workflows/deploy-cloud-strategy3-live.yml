@@ -56,15 +56,6 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Grant the runtime minimum production Auth API consumption
-        shell: bash
-        run: |
-          gcloud projects add-iam-policy-binding "$FIREBASE_AUTH_PROJECT_ID" \
-            --member "serviceAccount:${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --role "roles/serviceusage.serviceUsageConsumer" \
-            --condition=None \
-            --quiet
-
       - name: Verify immutable Strategy 3 scope
         shell: bash
         run: |
