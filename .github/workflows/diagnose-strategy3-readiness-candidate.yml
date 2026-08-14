@@ -1,4 +1,4 @@
-name: Diagnose failed Strategy 3 readiness candidate
+name: Diagnose Strategy 3 candidate startup locally
 
 on:
   push:
@@ -15,15 +15,60 @@ jobs:
   diagnose:
     runs-on: ubuntu-latest
     environment: staging
+    env:
+      IMAGE: europe-west4-docker.pkg.dev/tradementor-amar-20260813/tradementor/strategy3-live-api@sha256:ff3ed733b77437ce8fa9338510fd959367d8795709d6730ec0986b131230c64a
     steps:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Read failed revision condition
+
+      - name: Pull exact failed image
         run: |
-          gcloud run revisions describe tradementor-strategy3-live-api-readiness-a05d348             --project tradementor-amar-20260813             --region europe-west4             --format=json
-      - name: Read startup errors only
+          gcloud auth configure-docker europe-west4-docker.pkg.dev --quiet
+          docker pull "$IMAGE"
+
+      - name: Reproduce startup without production access
+        shell: bash
         run: |
-          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-strategy3-live-api" AND resource.labels.revision_name="tradementor-strategy3-live-api-readiness-a05d348" AND severity>=ERROR'             --project tradementor-amar-20260813             --limit 100             --order asc             --format=json
+          set -Eeuo pipefail
+          FAKE_ADC="$RUNNER_TEMP/fake-adc.json"
+          printf '%s\n' '{"type":"authorized_user","client_id":"diagnostic-only","client_secret":"diagnostic-only","refresh_token":"diagnostic-only","quota_project_id":"tradementor-amar-20260813"}' > "$FAKE_ADC"
+          docker run --detach --name strategy3-startup-diagnostic \
+            --publish 127.0.0.1:18080:8080 \
+            --mount "type=bind,source=$FAKE_ADC,target=/run/fake-adc.json,readonly" \
+            --env GOOGLE_APPLICATION_CREDENTIALS=/run/fake-adc.json \
+            --env GOOGLE_CLOUD_PROJECT=tradementor-amar-20260813 \
+            --env FIREBASE_AUTH_PROJECT_ID=tradementor-production \
+            --env TRADEMENTOR_ENV=strategy3-live \
+            --env TRADEMENTOR_ENVIRONMENT=strategy3-live \
+            --env TRADEMENTOR_ALLOW_LIVE=true \
+            --env ASTER_LIVE_EXECUTION_ENABLED=true \
+            --env ASTER_STRATEGY2_LIVE_ENABLED=false \
+            --env ASTER_STRATEGY3_LIVE_ENABLED=true \
+            --env ASTER_STRATEGY3_RUNTIME_ENABLED=true \
+            --env ASTER_STRATEGY3_CANARY_ENABLED=false \
+            --env ASTER_CANARY_ENABLED=false \
+            --env MEXC_LIVE_EXECUTION_ENABLED=false \
+            --env MEXC_AUTOMATION_EXECUTION_ENABLED=false \
+            "$IMAGE"
+          healthy=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18080/health > "$RUNNER_TEMP/health.json"; then
+              healthy=1
+              break
+            fi
+            if ! docker inspect --format '{{.State.Running}}' strategy3-startup-diagnostic | grep -qx true; then
+              break
+            fi
+            sleep 1
+          done
+          docker logs strategy3-startup-diagnostic 2>&1 || true
+          docker inspect --format 'exit={{.State.ExitCode}} error={{.State.Error}}' strategy3-startup-diagnostic
+          if [ "$healthy" = "1" ]; then
+            python -m json.tool "$RUNNER_TEMP/health.json"
+          else
+            exit 1
+          fi
