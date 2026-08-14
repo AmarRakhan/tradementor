@@ -2,19 +2,39 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 
 def check_revoked_tokens(environment: str) -> bool:
-    """Require the remote revocation lookup outside isolated staging.
+    """Require the remote revocation lookup only where Auth and data share IAM.
 
-    Firebase ID tokens are still cryptographically verified, audience-scoped
-    and expiry-checked in staging. The additional revocation lookup needs
-    production Auth IAM, which the isolated staging runtime deliberately does
-    not receive.
+    ID tokens are always cryptographically verified, audience-scoped and
+    expiry-checked. Isolated runtimes use the production identity project but
+    deliberately do not receive production-wide Admin SDK access, so they skip
+    only the additional remote user/revocation lookup.
     """
 
-    return environment.strip().lower() not in {"staging", "live-canary"}
+    return environment.strip().lower() not in {
+        "staging",
+        "live-canary",
+        "strategy3-live",
+    }
+
+
+def recent_id_token(
+    claims: Mapping[str, Any],
+    *,
+    now_epoch_seconds: float,
+    maximum_age_seconds: int = 600,
+) -> bool:
+    """Return whether a token is fresh enough for the isolated live runtime."""
+
+    try:
+        issued_at = float(claims["iat"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    age_seconds = now_epoch_seconds - issued_at
+    return -60 <= age_seconds <= maximum_age_seconds
 
 
 def identity_app(
