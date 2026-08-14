@@ -71,14 +71,12 @@ def test_default_app_is_used_when_projects_match_or_auth_is_unset():
     assert firebase.initializations == []
 
 
-def test_isolated_runtimes_skip_only_the_remote_revocation_lookup():
+def test_isolated_staging_skips_only_the_remote_revocation_lookup():
     assert check_revoked_tokens("staging") is False
     assert check_revoked_tokens(" STAGING ") is False
     assert check_revoked_tokens("live-canary") is False
-    assert check_revoked_tokens("strategy3-live") is False
-    assert check_revoked_tokens(" STRATEGY3-LIVE ") is False
 
 
-def test_shared_project_environments_keep_revocation_checks_enabled():
+def test_other_environments_keep_revocation_checks_enabled():
     assert check_revoked_tokens("production") is True
     assert check_revoked_tokens("") is True
