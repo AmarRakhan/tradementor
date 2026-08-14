@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { AsterUniverseStatus } from "@/components/aster-universe-status";
 
 type Fields = {
   mode: "paper" | "live"; base: string; pairs: string; topN: string;
@@ -28,7 +29,7 @@ export function AsterDryRunControl({ snapshot=null, onChanged=()=>{} }:{snapshot
       reinvest:pct("momentumReinvestRatio",.5),blockRisk:pct("blockRiskRatio",.5),reduceRisk:pct("reduceRiskRatio",.7),emergencyRisk:pct("emergencyRiskRatio",.8)});
   },[snapshot?.automationSettings,open]);
   const settings=useMemo(()=>({enabled:false,mode:fields.mode,baseNotional:n(fields.base),maximumPairs:Math.round(n(fields.pairs)),
-    universeTopN:Math.round(n(fields.topN)),scanIntervalSeconds:60,longDcaDeviation:n(fields.longDca)/100,
+    universeTopN:n(fields.topN),scanIntervalSeconds:60,longDcaDeviation:n(fields.longDca)/100,
     shortDcaDeviation:n(fields.shortDca)/100,maximumLongDca:Math.round(n(fields.maxLongDca)),maximumShortDca:Math.round(n(fields.maxShortDca)),
     dcaMultiplier:n(fields.dcaMultiplier),netTakeProfit:n(fields.takeProfit)/100,botMarginBudgetRatio:n(fields.botBudget)/100,
     pairBudgetTolerance:n(fields.pairTolerance)/100,momentumReinvestRatio:n(fields.reinvest)/100,blockRiskRatio:n(fields.blockRisk)/100,
@@ -46,12 +47,13 @@ export function AsterDryRunControl({ snapshot=null, onChanged=()=>{} }:{snapshot
     <div className="strategy-title-row"><div><span className="kicker">ASTER MULTI-PAIR</span><h2>Profit Harvest Hedge</h2></div><span className={`strategy-state ${active?"on":""}`}>{active?"ACTIEF":"GESTOPT"}</span></div>
     <p>$10 LONG + $10 SHORT per pair · DCA 2%/5% · netto oogst 0,5% · Cross · maximale contractleverage.</p>
     <div className="strategy-facts"><span>{fields.pairs} pairs</span><span>Top {fields.topN}</span><span>Elke minuut</span><span>{fields.mode.toUpperCase()}</span></div>
+    <AsterUniverseStatus value={snapshot?.automationUniverse}/>
     <button type="button" className="expand-settings" onClick={()=>setOpen(!open)}>{open?"Instellingen sluiten":"Strategie instellen"}</button>
     {open&&<div className="strategy-settings">
       <div className="mode-switch"><button className={fields.mode==="paper"?"active":""} onClick={()=>setFields({...fields,mode:"paper"})}>Paper</button><button className={fields.mode==="live"?"active danger":""} onClick={()=>setFields({...fields,mode:"live"})}>Echt geld</button></div>
       <div className="settings-grid">
         <F l="Positieomvang per kant (USD)" v={fields.base} c={v=>setFields({...fields,base:v})}/><F l="Max. actieve pairs" v={fields.pairs} c={v=>setFields({...fields,pairs:v})}/>
-        <F l="CoinMarketCap top-N" v={fields.topN} c={v=>setFields({...fields,topN:v})}/><F l="Netto winstoogst (%)" v={fields.takeProfit} c={v=>setFields({...fields,takeProfit:v})}/>
+        <TopNField v={fields.topN} c={v=>setFields({...fields,topN:v})}/><F l="Netto winstoogst (%)" v={fields.takeProfit} c={v=>setFields({...fields,takeProfit:v})}/>
         <F l="LONG DCA-afstand (%)" v={fields.longDca} c={v=>setFields({...fields,longDca:v})}/><F l="SHORT DCA-afstand (%)" v={fields.shortDca} c={v=>setFields({...fields,shortDca:v})}/>
         <F l="Max. LONG DCA" v={fields.maxLongDca} c={v=>setFields({...fields,maxLongDca:v})}/><F l="Max. SHORT DCA" v={fields.maxShortDca} c={v=>setFields({...fields,maxShortDca:v})}/>
         <F l="DCA-vermenigvuldiger" v={fields.dcaMultiplier} c={v=>setFields({...fields,dcaMultiplier:v})}/><F l="Botbudget (% portfolio)" v={fields.botBudget} c={v=>setFields({...fields,botBudget:v})}/>
@@ -66,3 +68,4 @@ export function AsterDryRunControl({ snapshot=null, onChanged=()=>{} }:{snapshot
   </article>;
 }
 function F({l,v,c}:{l:string;v:string;c:(v:string)=>void}){return <label>{l}<input inputMode="decimal" value={v} onChange={e=>c(e.target.value.replace(",","."))}/></label>}
+function TopNField({v,c}:{v:string;c:(v:string)=>void}){return <label>Aster USDT-handelsuniversum – Top-N op volume en liquiditeit<input type="number" inputMode="numeric" min="1" step="1" value={v} onChange={e=>c(e.target.value)}/></label>}

@@ -190,7 +190,7 @@ private fun StrategyOverviewCard(
                 Text(
                     when {
                         definition.id == "strategy_2" -> "Autonoom · beschermd · maximaal 3×"
-                        definition.id == "strategy_3" -> "Multi-pair · DCA-ladder · top 50"
+                        definition.id == "strategy_3" -> "Multi-pair · DCA-ladder · Aster Top-N"
                         definition.defined -> "Doel: gecontroleerde portfoliogroei"
                         else -> "Regels worden later samen bepaald"
                     },
@@ -227,7 +227,7 @@ private fun StrategyDetailPage(
             when {
                 definition.id == "strategy_1" -> "HUIDIGE WINNENDE AANPAK"
                 definition.id == "strategy_2" -> "ACTIEF · AUTONOOM · BESCHERMD"
-                definition.id == "strategy_3" -> "MULTI-PAIR · DCA · TOP 50"
+                definition.id == "strategy_3" -> "MULTI-PAIR · DCA · ASTER TOP-N"
                 else -> "NOG NIET BESCHIKBAAR"
             },
             color = if (definition.specificationReady) StrategyGreen else StrategyMuted,

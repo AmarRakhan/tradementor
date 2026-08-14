@@ -56,11 +56,11 @@ bijbehorende releasegate aantoonbaar zijn geslaagd.
 - **Gereed:** OPEN/ADD/HEDGE vereist alle gates; CLOSE/CANCEL blijft beschermend beschikbaar.
 - **In uitvoering:** Firestore-transacties/locks en adapters voor alle drie exchanges aansluiten.
 
-## 7. CoinMarketCap Market Selector
+## 7. Aster USDT Market Selector
 
-- **Gereed:** instelbaar top-N 1–500, minimaal 90% volledigheid en absolute 24u-beweging.
-- **Gereed:** alleen daadwerkelijk door de exchange ondersteunde contracten blijven over.
-- **In uitvoering:** algemene cloudservice, cachebeleid en per-exchange actieve-contractfeeds aansluiten.
+- **Gereed:** ieder positief geheel Top-N-getal blijft exact behouden.
+- **Gereed:** alleen actieve Aster USDT-perpetualcontracten met complete ordermetadata blijven over.
+- **Gereed:** rangschikking gebruikt Aster 24-uurs quotevolume en liquiditeit; stale data blokkeert alleen nieuwe instappen.
 
 ## 8. Wallet
 
@@ -80,4 +80,3 @@ De masteropdracht is **nog niet releaseklaar**. Er is bewust geen nieuwe APK
 gebouwd en niets naar de productiecloud gepubliceerd. De huidige nieuwe code is
 een lokaal getest veiligheidsfundament; echte adapters en end-to-end gates
 moeten nog worden afgerond.
-

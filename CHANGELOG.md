@@ -117,7 +117,7 @@
 - Automatische sluiting via een beveiligde Cloud Tasks-wachtrij, ook als app of telefoon uit staat.
 - Handmatige sluiting, inzetgrenzen, saldo-controle, cooldown, een BTC-positie tegelijk en expliciete bevestiging.
 - Per tijdvak maximaal de laatste 1.000 voorspellingen, gewonnen/verloren telling en apart succespercentage.
-- BTC is uitgesloten van DCA en de algemene scanner; de cloud weigert BTC-orders via het scannerpad.
+- Een eerdere algemene BTC-uitsluiting in het scannerpad is verwijderd; de serverbevestigde universumselectie is leidend.
 - Cloudrevision: `tradementor-api-00037-6d9`; sluitwachtrij actief in `europe-west1`.
 - APK: `APK Releases/TradeMentor-Test-v2.52-build221.apk`.
 - Validatie: 21 cloudtests en alle Android `publicDebug`-unit-tests geslaagd; geen echte order geplaatst.
@@ -133,7 +133,7 @@
 
 ### [2.46-build215-test]
 - DCA top-universum en max actieve deals ondersteunen nu willekeurige waarden van 1 t/m 500; 150 deals wordt niet meer verborgen teruggezet naar 100.
-- Een top-50-cache kan nooit meer stilletjes worden gebruikt voor een top-200-scan; onvolledige CoinMarketCap-resultaten blokkeren orders en tonen een concrete fout.
+- Een cache van een andere Top-N-grootte kan nooit stilletjes worden hergebruikt; onvolledige universumdata blokkeert orders en toont een concrete fout.
 - Scannerstatus toont voortaan hoeveel op Hyperliquid verhandelbare markten werkelijk zijn gescand ten opzichte van het ingestelde universum.
 - Interne simulatie met top 200 en 150 vrije deals vult 150 neporders in een 75 LONG / 75 SHORT-balans, zonder echte transacties.
 - Close All-doel ondersteunt 1 t/m 1000 procent; +80% en +300% zijn gesimuleerd met een vaste cyclus-startwaarde.
@@ -145,7 +145,7 @@
 - Teruggaan of sluiten vanuit een DCA-instellingenscherm slaat wijzigingen expliciet op; ingevoerde waarden verdwijnen niet stilzwijgend.
 - Ongeldige of lege tekst in één veld kan geen andere DCA-waarde meer terugzetten naar een standaardwaarde.
 - Top-universum is dynamisch van 1 t/m 500; het exacte getal wordt aan scanner én cloud-ordercontrole doorgegeven.
-- Cloud CoinMarketCap-endpoint accepteert dezelfde dynamische universumgrootte in plaats van een verborgen vaste top-50.
+- Het cloud-universumendpoint accepteert dezelfde dynamische universumgrootte in plaats van een verborgen vaste keuze.
 - Automatische tests dekken alle DCA-velden, gedeelde waardekoppeling, grenzen 1–500 en willekeurige invoer zoals 137.
 
 ## 2026-08-06

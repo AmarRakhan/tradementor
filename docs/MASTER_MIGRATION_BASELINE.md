@@ -90,8 +90,8 @@ Vastgelegd op: 2026-08-08 (Europe/Amsterdam)
 
 ## Market Selector, Wallet en startup
 
-- De CoinMarketCap-selectielaag ondersteunt ieder ingesteld top-N-getal binnen 1–500 en faalt dicht wanneer minder dan 90% van de gevraagde ranglijst beschikbaar is.
-- Kandidaten worden alleen toegelaten als het contract werkelijk actief is op de betreffende exchange en worden op absolute 24-uursbeweging gerangschikt.
+- De Aster-selectielaag bewaart ieder positief geheel Top-N-getal exact en faalt dicht wanneer actuele Aster-data ontbreekt of stale is.
+- Kandidaten zijn uitsluitend actieve Aster USDT-perpetualcontracten en worden op 24-uurs quotevolume en werkelijke liquiditeit gerangschikt.
 - De selector geeft nooit zelfstandig ordertoestemming, leverage of richting; dat blijft de verantwoordelijkheid van strategie en risk manager.
 - Wallet-aggregatie telt exchange-equity op zonder unrealized PnL dubbel bij te tellen en noemt een totaal expliciet voorlopig wanneer een exchange ontbreekt of stale is.
 - Startup herstelt een betrouwbare enabled-status pas na read, reconciliation en realtime stream. Een nieuwe/onbekende Aster-configuratie blijft altijd UIT.

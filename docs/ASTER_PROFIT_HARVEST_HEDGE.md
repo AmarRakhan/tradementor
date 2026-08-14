@@ -9,7 +9,7 @@ De strategie gebruikt per pair een LONG en SHORT als basishedge en probeert mark
 - Positieomvang: 10 USD per kant.
 - Cross Margin en maximale leverage die Aster voor het contract toestaat.
 - Maximaal 5 actieve pairs; iedere actieve pair is uitgesloten van nieuwe selectie.
-- CoinMarketCap top 50, instelbaar tot top 200.
+- Aster USDT Top-N op 24-uurs quotevolume en liquiditeit; ieder positief geheel getal blijft exact opgeslagen.
 - Scannercontrole: iedere minuut.
 - LONG DCA: iedere 2% vanaf de oorspronkelijke instapprijs.
 - SHORT DCA: iedere 5% vanaf de oorspronkelijke instapprijs.

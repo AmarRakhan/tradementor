@@ -16,17 +16,16 @@ import java.util.concurrent.ConcurrentHashMap
 
 class AdvisorEngine(private val repository: MarketRepository) {
 
-    /** Exact DCA Pulse entry universe: CMC top 50, absolute 24h move, BB(20,2) on closed 1m candles. */
+    /** Entry universe is the server-confirmed Aster USDT Top-N; signals remain strategy-owned. */
     suspend fun analyzeDcaPulse(
-        top50Symbols: Set<String>,
+        universeSymbols: Set<String>,
         directEntry: Boolean = false,
         excludedSymbols: Set<String> = emptySet(),
         onProgress: suspend (results: List<AdvisorRecommendation>, completed: Int, total: Int) -> Unit = { _, _, _ -> }
     ): List<AdvisorRecommendation> {
         val excludedBases = excludedSymbols.map(DcaPulseGate::normalizedBaseSymbol).toSet()
         val markets = repository.getMarkets().orEmpty()
-            .filterNot { DcaPulseGate.normalizedBaseSymbol(it.market.name) == "BTC" }
-            .filter { DcaPulseGate.isTop50(it.market.name, top50Symbols) }
+            .filter { DcaPulseGate.isAllowedUniverseSymbol(it.market.name, universeSymbols) }
             .filterNot { DcaPulseGate.normalizedBaseSymbol(it.market.name) in excludedBases }
             .distinctBy { DcaPulseGate.normalizedBaseSymbol(it.market.name) }
             .sortedByDescending { kotlin.math.abs(it.changePercentage) }
@@ -260,7 +259,6 @@ class AdvisorEngine(private val repository: MarketRepository) {
         onProgress: suspend (results: List<AdvisorRecommendation>, completed: Int, total: Int) -> Unit = { _, _, _ -> }
     ): List<AdvisorRecommendation> = withContext(Dispatchers.Default) { coroutineScope {
         val markets = repository.getMarkets().orEmpty()
-            .filterNot { DcaPulseGate.normalizedBaseSymbol(it.market.name) == "BTC" }
             .filterNot { it.market.name.uppercase() in excludedSymbols }
             .sortedByDescending { it.context.dayNotionalVolume.toDoubleOrNull() ?: 0.0 }
         val plans = listOf(

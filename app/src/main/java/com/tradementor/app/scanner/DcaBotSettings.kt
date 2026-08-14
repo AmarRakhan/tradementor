@@ -26,8 +26,7 @@ data class DcaBotSettings(
     val cooldownMinutes: Int = 15,
     val portfolioTargetPercentage: Double = 10.0,
     val topUniverseSize: Int = 50,
-    val entryMode: String = "bollinger",
-    val requireCoinMarketCapTop50: Boolean = true
+    val entryMode: String = "bollinger"
 ) {
     fun usesDirectEntry(): Boolean = entryMode == "direct"
     fun allowsShort(shortDirection: Boolean): Boolean = true
@@ -69,9 +68,8 @@ data class DcaBotSettings(
         minimumQualityScore = minimumQualityScore.coerceIn(50.0, 95.0),
         cooldownMinutes = cooldownMinutes.coerceIn(1, 10_080),
         portfolioTargetPercentage = portfolioTargetPercentage.coerceIn(1.0, 1_000.0),
-        topUniverseSize = topUniverseSize.coerceIn(1, 500),
-        entryMode = if (entryMode == "direct") "direct" else "bollinger",
-        requireCoinMarketCapTop50 = true
+        topUniverseSize = topUniverseSize.coerceAtLeast(1),
+        entryMode = if (entryMode == "direct") "direct" else "bollinger"
     )
 }
 
@@ -134,15 +132,9 @@ data class DcaBotSettingsInput(
     }
 }
 
-object DcaUniverseRequest {
-    fun normalizedSize(value: Int): Int = value.coerceIn(1, 500)
-    fun endpointPath(value: Int): String = "/v1/me/market/top50?limit=${normalizedSize(value)}"
-    fun cacheKey(value: Int): String = "top_universe_cache_${normalizedSize(value)}"
-    fun minimumCompleteCount(value: Int): Int =
-        kotlin.math.ceil(normalizedSize(value) * 0.90).toInt().coerceAtLeast(1)
-
-    fun isComplete(requestedSize: Int, returnedCount: Int): Boolean =
-        returnedCount >= minimumCompleteCount(requestedSize)
+object AsterUniverseRequest {
+    fun normalizedSize(value: Int): Int = value.coerceAtLeast(1)
+    fun endpointPath(value: Int): String = "/v1/me/market/aster-usdt?limit=${normalizedSize(value)}"
 }
 
 data class DcaDealState(
@@ -215,15 +207,18 @@ object DcaPulseGate {
         .substringBefore('-')
         .uppercase()
 
-    fun isTop50(symbol: String, top50Symbols: Set<String>): Boolean {
-        val allowed = top50Symbols.map { it.uppercase() }.toSet()
-        val normalized = normalizedBaseSymbol(symbol)
-        val underlyingCandidates = buildSet {
-            add(normalized)
-            if (normalized.startsWith("K") && normalized.length > 2) add(normalized.drop(1))
-            if (normalized.startsWith("1000") && normalized.length > 5) add(normalized.drop(4))
+    private fun normalizedUnderlyingSymbol(symbol: String): String {
+        val normalized = normalizedBaseSymbol(symbol).removeSuffix("USDT")
+        return when {
+            normalized.startsWith("1000") && normalized.length > 4 -> normalized.drop(4)
+            normalized.startsWith("K") && normalized.length > 1 -> normalized.drop(1)
+            else -> normalized
         }
-        return underlyingCandidates.any { it in allowed }
+    }
+
+    fun isAllowedUniverseSymbol(symbol: String, universeSymbols: Set<String>): Boolean {
+        val allowed = universeSymbols.map(::normalizedUnderlyingSymbol).toSet()
+        return normalizedUnderlyingSymbol(symbol) in allowed
     }
 
     fun reachedDeviation(
