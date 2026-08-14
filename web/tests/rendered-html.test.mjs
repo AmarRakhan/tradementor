@@ -47,7 +47,8 @@ test("keeps execution safe and exposes the test destinations", async () => {
   assert.match(page, /Nieuwe exposure geblokkeerd/);
   assert.match(page, /Bekijk Premium/);
   assert.match(page, /Bruto PnL \/ positie/);
-  assert.match(page, /Geen netto TP-status/);
+  assert.match(page, /TP komt alleen uit serverbewijs/);
+  assert.match(page, /strategy2Tp:\s*parseStrategy2Tp\(row\.strategy2Tp\)/);
   assert.match(page, /DataOrigin origin="direct"/);
   assert.match(page, /DataOrigin origin="calculated"/);
   assert.match(page, /NETTO OPEN PNL/);

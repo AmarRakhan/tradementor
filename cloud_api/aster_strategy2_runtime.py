@@ -1,10 +1,15 @@
 """Pure runtime projection/planning for persistent Aster Strategy 2 ticks."""
 from __future__ import annotations
 from dataclasses import asdict, replace
+from datetime import datetime, timezone
 import math
 from typing import Any
-from aster_strategy2 import Decision,LegState,PortfolioState,Strategy2Config,decide_leg,risk_mode
+from aster_strategy2 import Decision,LegState,PortfolioState,Strategy2Config,decide_leg,net_profit,risk_mode
 from aster_strategy2_state import OwnedLeg,number
+
+ASTER_ESTIMATED_CLOSE_FEE_RATE = .0005
+STRATEGY2_SCHEDULER_LATE_SECONDS = 180
+STRATEGY2_COST_EVIDENCE_MAX_AGE_SECONDS = 300
 
 def recover_audited_ownership(*,persisted:list[OwnedLeg],positions:list[dict[str,Any]],
                               audit_events:list[dict[str,Any]],fills:list[dict[str,Any]],
@@ -104,6 +109,25 @@ def leg_projection(owned:OwnedLeg,row:dict[str,Any])->LegState:
     return LegState(owned.side,owned.cycle_id,notional,entry,mark,owned.dca_count,owned.realized_pnl,
         number(row.get("unRealizedProfit",row.get("unrealizedProfit"))),owned.fees,owned.funding,owned.role,owned.config_version,"HARVEST")
 
+def estimated_close_fee(row:dict[str,Any])->float:
+    notional=abs(number(row.get("notional",row.get("notionalUsd"))))
+    if notional<=0:
+        notional=abs(number(row.get("positionAmt",row.get("quantity"))))*number(row.get("markPrice"))
+    return notional*ASTER_ESTIMATED_CLOSE_FEE_RATE
+
+def most_urgent_profitable_owned(config:Strategy2Config,owned:list[OwnedLeg],positions:list[dict[str,Any]])->OwnedLeg|None:
+    """Pick the profitable owned leg furthest above its net TP threshold."""
+    pos=active_position_map(positions);candidates=[]
+    for leg in owned:
+        row=pos.get((leg.symbol,leg.side))
+        if not row:continue
+        gross=number(row.get("unRealizedProfit",row.get("unrealizedProfit")))
+        projection=leg_projection(leg,row)
+        surplus=net_profit(projection,estimated_close_fee(row))-projection.size*config.take_profit
+        if gross>0:candidates.append((surplus,gross,leg))
+    candidates.sort(key=lambda item:(item[0],item[1]),reverse=True)
+    return candidates[0][2] if candidates else None
+
 def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg],positions:list[dict[str,Any]],
                              excluded_dca:set[tuple[str,str]]|None=None)->tuple[OwnedLeg,Decision]|None:
     pos=active_position_map(positions);rank={"FULL_TP":0,"PARTIAL_TP":0,"ASSIGN_PROTECTION":1,"ADD_DCA":2,"HOLD":9}
@@ -112,13 +136,15 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
     for item in owned:
         row=pos.get((item.symbol,item.side))
         if not row:continue
-        decision=decide_leg(config,leg_projection(item,row),portfolio,estimated_close_fee=abs(number(row.get("notional")))*.0005)
+        close_fee=estimated_close_fee(row);projected=leg_projection(item,row)
+        decision=decide_leg(config,projected,portfolio,estimated_close_fee=close_fee)
         if decision.kind=="ADD_DCA" and (item.symbol,item.side) in excluded_dca:
             continue
-        choices.append((rank.get(decision.kind,8),item,decision))
+        tp_surplus=net_profit(projected,close_fee)-projected.size*config.take_profit
+        choices.append((rank.get(decision.kind,8),-tp_surplus,item,decision))
     if not choices:return None
-    choices.sort(key=lambda x:x[0])
-    return (choices[0][1],choices[0][2]) if choices[0][2].kind!="HOLD" else None
+    choices.sort(key=lambda x:(x[0],x[1]))
+    return (choices[0][2],choices[0][3]) if choices[0][3].kind!="HOLD" else None
 
 def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:
     harvest=[x for x in owned if x.role!="PROTECTION"]
@@ -208,14 +234,74 @@ def update_owned_after_open(leg:OwnedLeg,*,quantity:float,price:float,intent_id:
     return replace(leg,quantity=total,weighted_entry=average,dca_count=leg.dca_count+(1 if is_dca else 0),
         intent_ids=tuple(dict.fromkeys((*leg.intent_ids,intent_id))))
 
-def enrich_confirmed_costs(owned:list[OwnedLeg],trades:list[dict[str,Any]],income:list[dict[str,Any]])->list[OwnedLeg]:
+def enrich_confirmed_costs(owned:list[OwnedLeg],trades:list[dict[str,Any]],income:list[dict[str,Any]],*,
+                           refreshed_symbols:set[str]|None=None,checked_at_ms:int=0)->list[OwnedLeg]:
     result=[]
+    refreshed_symbols=refreshed_symbols or {x.symbol for x in owned}
     for leg in owned:
+        if leg.symbol not in refreshed_symbols:
+            result.append(leg);continue
         relevant=[x for x in trades if str(x.get("symbol","")).upper()==leg.symbol and str(x.get("positionSide","")).upper()==leg.side and int(number(x.get("time")))>=leg.created_at_ms]
-        fees=sum(abs(number(x.get("commission"))) for x in relevant)
-        realized=sum(number(x.get("realizedPnl")) for x in relevant)
-        funding=sum(number(x.get("income")) for x in income if str(x.get("symbol","")).upper()==leg.symbol
+        fees=sum(abs(number(x.get("commission"))) for x in relevant) if relevant else leg.fees
+        realized=sum(number(x.get("realizedPnl")) for x in relevant) if relevant else leg.realized_pnl
+        funding_rows=[x for x in income if str(x.get("symbol","")).upper()==leg.symbol
             and str(x.get("incomeType","")).upper()=="FUNDING_FEE" and str(x.get("positionSide","")).upper()==leg.side
-            and int(number(x.get("time")))>=leg.created_at_ms)
-        result.append(replace(leg,fees=fees,realized_pnl=realized,funding=funding))
+            and int(number(x.get("time")))>=leg.created_at_ms]
+        funding=sum(number(x.get("income")) for x in funding_rows) if funding_rows else leg.funding
+        result.append(replace(leg,fees=fees,realized_pnl=realized,funding=funding,costs_updated_at_ms=checked_at_ms))
     return result
+
+def scheduler_status(state:dict[str,Any],*,now:datetime|None=None)->dict[str,Any]:
+    now=now or datetime.now(timezone.utc);stamp=state.get("lastTickAt")
+    if not isinstance(stamp,datetime):
+        return {"status":"STALE","lastTickAt":stamp,"ageSeconds":None,"warning":"Strategy-2-scheduler heeft nog geen bewezen heartbeat"}
+    if stamp.tzinfo is None:stamp=stamp.replace(tzinfo=timezone.utc)
+    age=max(0,(now-stamp.astimezone(timezone.utc)).total_seconds());stale=age>STRATEGY2_SCHEDULER_LATE_SECONDS
+    return {"status":"STALE" if stale else "HEALTHY","lastTickAt":stamp,"ageSeconds":round(age,1),
+        "warning":f"Strategy-2-scheduler is {int(age)} seconden stil" if stale else ""}
+
+def strategy2_position_tp_contract(*,row:dict[str,Any],owned:OwnedLeg|None,config:Strategy2Config,
+                                   state:dict[str,Any],portfolio:PortfolioState|None,
+                                   now:datetime|None=None)->dict[str,Any]:
+    """Server-only TP evidence. Missing proof is explicit and never inferred by the browser."""
+    now=now or datetime.now(timezone.utc);scheduler=scheduler_status(state,now=now)
+    notional=abs(number(row.get("notionalUsd",row.get("notional"))))
+    if notional<=0:notional=abs(number(row.get("quantity",row.get("positionAmt"))))*number(row.get("markPrice"))
+    target=notional*config.take_profit;close_fee=estimated_close_fee(row)
+    ownership=bool(owned and owned.strategy_id=="aster-strategy-2" and owned.engine_type=="strategy2")
+    evidence_age=None
+    if owned and owned.costs_updated_at_ms:evidence_age=max(0,now.timestamp()-owned.costs_updated_at_ms/1000)
+    costs_fresh=evidence_age is not None and evidence_age<=STRATEGY2_COST_EVIDENCE_MAX_AGE_SECONDS
+    block=""
+    if not ownership:block="Geen bewezen Strategy-2-ownership"
+    elif scheduler["status"]!="HEALTHY":block=str(scheduler["warning"])
+    elif not costs_fresh:block="Fees en funding zijn niet recent genoeg door Aster bevestigd"
+    reliable=not bool(block)
+    gross=number(row.get("unrealizedPnl",row.get("unRealizedProfit")))
+    net=(gross+(owned.funding if owned else 0)-(owned.fees if owned else 0)-close_fee) if reliable else None
+    status="Niet betrouwbaar te bepalen";decision_kind="HOLD"
+    if reliable:
+        status="TP bereikt" if net is not None and net>=target else "TP nog niet bereikt"
+        if portfolio is not None and owned is not None:
+            projection=LegState(owned.side,owned.cycle_id,notional,owned.weighted_entry,number(row.get("markPrice")),
+                owned.dca_count,owned.realized_pnl,gross,owned.fees,owned.funding,owned.role,owned.config_version,"HARVEST")
+            decision=decide_leg(config,projection,portfolio,estimated_close_fee=close_fee)
+            decision_kind=decision.kind
+            block=decision.reason
+    if reliable and status=="TP bereikt":
+        if config.mode!="live":block="TP bereikt, maar de opgeslagen Strategy-2-modus is paper"
+        elif not bool(state.get("monitor")):block="TP bereikt, maar Strategy-2-monitoring staat uit"
+        elif not bool(state.get("liveReady")) or not bool(state.get("canaryValidated")):
+            block="TP bereikt, maar liveReady/canaryValidated is niet volledig bewezen"
+        elif state.get("runtimeEnabled") is False:block="TP bereikt, maar de centrale Strategy-2-runtimepoort staat uit"
+        elif str(state.get("phase","")).upper() in {"DATA_HOLD","RECONCILING","CANARY_HOLD"}:
+            block=str(state.get("lastReason") or f"Strategy 2 staat in {state.get('phase')}")
+    progress=(net/target*100) if reliable and net is not None and target>0 else None
+    evaluated_at=(datetime.fromtimestamp(owned.costs_updated_at_ms/1000,tz=timezone.utc).isoformat()
+        if owned and owned.costs_updated_at_ms else None)
+    return {"netProfitUsd":net,"takeProfitTargetUsd":target if reliable else None,
+        "takeProfitPercent":config.take_profit*100 if reliable else None,
+        "progressPercent":progress,"status":status,"evaluatedAt":evaluated_at,"blockReason":block,
+        "scheduler":scheduler,"ownershipProven":ownership,"paidFeesUsd":owned.fees if reliable and owned else None,
+        "fundingUsd":owned.funding if reliable and owned else None,"estimatedCloseFeeUsd":close_fee if reliable else None,
+        "costEvidenceAgeSeconds":round(evidence_age,1) if evidence_age is not None else None,"decision":decision_kind}

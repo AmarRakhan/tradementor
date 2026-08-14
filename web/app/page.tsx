@@ -604,7 +604,8 @@ function PremiumExchanges({ snapshots, onRefresh }: { snapshots: ExchangeSnapsho
 
 function PremiumUnavailable({ title }: { title: string }) { return <><PremiumPageHeading eyebrow="BINNENKORT BESCHIKBAAR" title={title} detail="Dit onderdeel zat nog niet als werkende functie in de huidige webapp." /><section className="premium-unavailable"><span>Binnenkort beschikbaar</span><h2>Geen nepknoppen of verzonnen gegevens</h2><p>De plaats in de navigatie is alvast zichtbaar. De functie wordt pas interactief wanneer de echte databron en veilige gebruikersflow beschikbaar zijn.</p></section></>; }
 
-type PositionView = { symbol: string; side: string; size: number; entry: number; mark: number; pnl: number; leverage: number; dcaCount: number; lastOrderAt: number; openedAt: number; strategy: string };
+type StrategyTpView = { netProfitUsd: number | null; takeProfitTargetUsd: number | null; takeProfitPercent: number | null; progressPercent: number | null; status: "TP bereikt" | "TP nog niet bereikt" | "Niet betrouwbaar te bepalen"; evaluatedAt: string | null; blockReason: string; paidFeesUsd: number | null; fundingUsd: number | null; estimatedCloseFeeUsd: number | null; ownershipProven: boolean; decision: string; phase: string; protection: { role: string | null; active: boolean }; trailing: { enabled: boolean; active: boolean; peakReturnPercent: number | null }; scheduler: { status: string; lastTickAt: unknown; ageSeconds: number | null; warning: string } };
+type PositionView = { symbol: string; side: string; size: number; entry: number; mark: number; pnl: number; leverage: number; dcaCount: number; lastOrderAt: number; openedAt: number; strategy: string; strategy2Tp: StrategyTpView | null; strategy3Tp: StrategyTpView | null };
 type ClosedTradeView = { symbol: string; side: string; size: number; entry: number; exit: number; pnl: number; openedAt: string; closedAt: string; strategy: string; dcaCount: number };
 
 const positionFilterOptions = [
@@ -646,8 +647,9 @@ function CompactPositionRow({ position, exchange, onChanged, selected = false, o
     <header><div className="compact-symbol"><strong>{position.symbol}</strong><span className={`side-badge ${position.side.toLowerCase()}`}>{position.side.toUpperCase()}</span><span>Cross</span>{position.leverage > 0 && <span>{position.leverage}×</span>}</div><div className="compact-row-action"><span className="compact-status"><i/>Actief</span><TradeReportControl trade={{exchange,symbol:position.symbol,side:position.side,size:position.size,entry:position.entry,mark:position.mark,pnl:position.pnl,leverage:position.leverage,dcaCount:position.dcaCount,status:"active"}}/><PositionCloseControl symbol={position.symbol} exchange={exchange} onClosed={onChanged} /></div></header>
     <div className="compact-financial-grid">
       <dl><div><dt>Grootte</dt><dd>{formatUsd(position.size)}</dd></div><div><dt>Instapprijs</dt><dd>{formatPrice(position.entry)}</dd></div><div><dt>Instaptijd</dt><dd>{formatDateTime(position.openedAt)}</dd></div><div><dt>Strategie</dt><dd>{position.strategy || "—"}</dd></div><div><dt>DCA-status</dt><dd>{position.dcaCount}× bijgekocht</dd></div></dl>
-      <dl><div className="compact-result"><dt>Open PnL <DataOrigin origin="direct" /></dt><dd>{formatSignedUsd(position.pnl)}</dd></div><div className="compact-result"><dt>Bruto PnL / positie <DataOrigin origin="calculated" /></dt><dd>{formatOptionalSignedPercent(resultPercent)}</dd><small>Geen netto TP-status</small></div><div><dt>Actuele prijs <DataOrigin origin="direct" /></dt><dd>{formatPrice(position.mark)}</dd></div></dl>
+      <dl><div className="compact-result"><dt>Open PnL <DataOrigin origin="direct" /></dt><dd>{formatSignedUsd(position.pnl)}</dd></div><div className="compact-result"><dt>Bruto PnL / positie <DataOrigin origin="calculated" /></dt><dd>{formatOptionalSignedPercent(resultPercent)}</dd></div><div><dt>Actuele prijs <DataOrigin origin="direct" /></dt><dd>{formatPrice(position.mark)}</dd></div></dl>
     </div>
+    {isManagedStrategyPosition(position) && <StrategyTpPanel value={positionTp(position)} strategy={strategyTpLabel(position)} />}
   </article>;
 }
 
@@ -671,7 +673,7 @@ function PositionRow({ position, exchange, onChanged, selected = false, onSelect
     </header>
     <div className="position-financial-grid">
       <dl className="position-data position-data-left"><div><dt>Grootte</dt><dd>{formatUsd(position.size)}</dd></div><div><dt>Instap</dt><dd>{formatPrice(position.entry)}</dd></div></dl>
-      <PositionResultMeter value={resultPercent} />
+      <PositionResultMeter value={resultPercent} tp={positionTp(position)} managed={isManagedStrategyPosition(position)} strategy={strategyTpLabel(position)} />
       <dl className="position-data position-data-right"><div className="result-metric"><dt>Open PnL <DataOrigin origin="direct" /></dt><dd>{formatUsd(position.pnl)}</dd></div><div><dt>Actueel <DataOrigin origin="direct" /></dt><dd>{formatPrice(position.mark)}</dd></div></dl>
     </div>
     <footer className="position-row-foot"><div className="position-dca"><span>DCA-status</span><strong>{position.dcaCount}× bijgekocht</strong><small>Instap: {formatDateTime(position.openedAt)} · {position.strategy || "Strategie —"}</small></div><PositionCloseControl symbol={position.symbol} exchange={exchange} onClosed={onChanged} /></footer>
@@ -684,22 +686,53 @@ function ClosedTradeRow({ trade, exchange, selected = false, positionId, onSelec
     <header className="position-row-head"><div className="position-symbol"><span>{trade.symbol}</span><small>{trade.side} · {new Date(trade.closedAt).toLocaleString("nl-NL")}</small></div><div className="position-head-actions"><TradeReportControl trade={{exchange,symbol:trade.symbol,side:trade.side,size:trade.size,entry:0,mark:trade.exit,pnl:trade.pnl,leverage:0,dcaCount:0,status:"closed"}}/><span className="position-live-status closed">Afgesloten</span></div></header>
     <div className="position-financial-grid">
       <dl className="position-data position-data-left"><div><dt>Gesloten bedrag</dt><dd>{formatUsd(trade.size)}</dd></div><div><dt>Sluitprijs</dt><dd>{formatPrice(trade.exit)}</dd></div></dl>
-      <PositionResultMeter value={resultPercent} />
+      <PositionResultMeter value={resultPercent} tp={null} managed={false} strategy="" />
       <dl className="position-data position-data-right"><div className="result-metric"><dt>Gerealiseerd</dt><dd>{formatUsd(trade.pnl)}</dd></div><div><dt>Resultaat</dt><dd>{formatSignedPercent(resultPercent)}</dd></div></dl>
     </div>
     <footer className="position-row-foot"><div className="position-dca"><span>Tradeverloop</span><strong>{formatDateTime(trade.openedAt)} → {formatDateTime(trade.closedAt)}</strong><small>{trade.strategy || "Strategie —"}</small></div></footer>
   </article>;
 }
 
-function PositionResultMeter({ value }: { value: number | null }) {
+function PositionResultMeter({ value, tp, managed, strategy }: { value: number | null; tp: StrategyTpView | null; managed: boolean; strategy: string }) {
   const numericValue = value ?? 0;
   const bounded = Math.max(-20, Math.min(20, numericValue));
   const fill = Math.max(7, Math.abs(bounded) / 20 * 72);
   const meterStyle = { "--meter-fill": `${fill}%` } as CSSProperties;
   return <div className={`position-result-meter ${numericValue >= 0 ? "positive" : "negative"}`} style={meterStyle} aria-label={`Berekend bruto positie-resultaat ${formatOptionalSignedPercent(value)}`}>
     <div className="position-result-ring"><span>Bruto PnL / positie</span><strong>{formatOptionalSignedPercent(value)}</strong></div>
-    <small><DataOrigin origin="calculated" /> Geen netto TP-status</small>
+    <small><DataOrigin origin="calculated" /> Bruto resultaat; TP komt alleen uit serverbewijs</small>
+    {managed && <StrategyTpPanel value={tp} strategy={strategy} />}
   </div>;
+}
+
+function isStrategy2Position(position: PositionView) {
+  return position.strategy2Tp !== null || /Strategy\s*2/i.test(position.strategy);
+}
+
+function isStrategy3Position(position: PositionView) {
+  return position.strategy3Tp !== null || /Strategy\s*3/i.test(position.strategy);
+}
+
+function isManagedStrategyPosition(position: PositionView) { return isStrategy2Position(position) || isStrategy3Position(position); }
+function positionTp(position: PositionView) { return isStrategy3Position(position) ? position.strategy3Tp : position.strategy2Tp; }
+function strategyTpLabel(position: PositionView) { return isStrategy3Position(position) ? "Strategy 3" : "Strategy 2"; }
+
+function StrategyTpPanel({ value, strategy }: { value: StrategyTpView | null; strategy: string }) {
+  if (!value) return <section className="strategy2-tp-panel unknown" aria-label={`${strategy} netto TP: Niet betrouwbaar te bepalen`}><strong>Niet betrouwbaar te bepalen</strong><span>De server heeft geen volledig, bewezen netto TP-contract geleverd.</span></section>;
+  const tone = value.status === "TP bereikt" ? "reached" : value.status === "TP nog niet bereikt" ? "pending" : "unknown";
+  const net = value.netProfitUsd === null ? "—" : formatSignedUsd(value.netProfitUsd);
+  const progress = value.progressPercent === null ? "—" : `${value.progressPercent.toFixed(1)}%`;
+  const assessed = value.evaluatedAt ? formatDateTime(value.evaluatedAt) : "Geen betrouwbare beoordeling";
+  const target = value.takeProfitTargetUsd === null || value.takeProfitPercent === null ? "—" : `${formatUsd(value.takeProfitTargetUsd)} (${value.takeProfitPercent.toFixed(2)}%)`;
+  return <section className={`strategy2-tp-panel ${tone}`} aria-label={`${strategy} netto TP: ${value.status}`}>
+    <strong>{value.status}</strong>
+    <span>Netto {net} · doel {target} · voortgang {progress}</span>
+    <small>Fees {value.paidFeesUsd === null ? "—" : formatUsd(value.paidFeesUsd)} · funding {value.fundingUsd === null ? "—" : formatSignedUsd(value.fundingUsd)} · geschatte sluitfee {value.estimatedCloseFeeUsd === null ? "—" : formatUsd(value.estimatedCloseFeeUsd)}</small>
+    {strategy === "Strategy 3" && <small>Fase {value.phase || "—"} · protection {value.protection.active ? value.protection.role : "niet actief"} · trailing {value.trailing.active ? "actief" : value.trailing.enabled ? "stand-by" : "uit"}</small>}
+    <small>Laatste serverbeoordeling: {assessed}</small>
+    {value.blockReason && <small className="strategy2-tp-block">Reden: {value.blockReason}</small>}
+    {value.scheduler.warning && <small className="strategy2-tp-warning">Waarschuwing: {value.scheduler.warning}</small>}
+  </section>;
 }
 
 function DataOrigin({ origin }: { origin: "direct" | "calculated" | "aggregate" }) {
@@ -708,7 +741,7 @@ function DataOrigin({ origin }: { origin: "direct" | "calculated" | "aggregate" 
     ? "Deze waarde komt rechtstreeks uit de actuele Aster API-snapshot."
     : origin === "aggregate"
       ? "Deze waarde is uitsluitend samengesteld uit officiële Aster-velden."
-      : `TradeMentor-berekening: ${ASTER_FINANCIAL_DATA_CONTRACT.positionDisplayReturn.formula}. Dit is niet de netto TP-status van de bot.`;
+      : `TradeMentor-berekening: ${ASTER_FINANCIAL_DATA_CONTRACT.positionDisplayReturn.formula}. Netto TP wordt uitsluitend uit afzonderlijk serverbewijs getoond.`;
   return <abbr className={`data-origin ${origin}`} title={title}>{label}</abbr>;
 }
 function sortPositions(values: PositionView[], filter: string): PositionView[] {
@@ -733,6 +766,26 @@ function asNumber(value: unknown): number {
   const result = typeof value === "number" ? value : Number(value);
   return Number.isFinite(result) ? result : 0;
 }
+
+function parseStrategyTp(value: unknown): StrategyTpView | null {
+  const row=asRecord(value);const status=String(row.status??"");
+  if (!(["TP bereikt","TP nog niet bereikt","Niet betrouwbaar te bepalen"] as string[]).includes(status)) return null;
+  const scheduler=asRecord(row.scheduler);
+  const protection=asRecord(row.protection);const trailing=asRecord(row.trailing);
+  return {netProfitUsd:optionalFinancialNumber(row.netProfitUsd),takeProfitTargetUsd:optionalFinancialNumber(row.takeProfitTargetUsd),
+    takeProfitPercent:optionalFinancialNumber(row.takeProfitPercent),progressPercent:optionalFinancialNumber(row.progressPercent),
+    status:status as StrategyTpView["status"],evaluatedAt:row.evaluatedAt?String(row.evaluatedAt):null,
+    blockReason:String(row.blockReason??""),paidFeesUsd:optionalFinancialNumber(row.paidFeesUsd),
+    fundingUsd:optionalFinancialNumber(row.fundingUsd),estimatedCloseFeeUsd:optionalFinancialNumber(row.estimatedCloseFeeUsd),
+    ownershipProven:row.ownershipProven===true,decision:String(row.decision??"HOLD"),phase:String(row.phase??""),
+    protection:{role:protection.role?String(protection.role):null,active:protection.active===true},
+    trailing:{enabled:trailing.enabled===true,active:trailing.active===true,peakReturnPercent:optionalFinancialNumber(trailing.peakReturnPercent)},
+    scheduler:{status:String(scheduler.status??"STALE"),lastTickAt:scheduler.lastTickAt,
+      ageSeconds:optionalFinancialNumber(scheduler.ageSeconds),warning:String(scheduler.warning??"")}};
+}
+
+function parseStrategy2Tp(value: unknown): StrategyTpView | null { return parseStrategyTp(value); }
+function parseStrategy3Tp(value: unknown): StrategyTpView | null { return parseStrategyTp(value); }
 
 function asTimestamp(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value < 10_000_000_000 ? value * 1000 : value;
@@ -790,7 +843,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
       const size = asNumber(row.szi);
       const symbol = String(row.coin ?? "—");
       const metadata=dealMeta.get(symbol.toUpperCase());
-      return { symbol, side: size >= 0 ? "long" : "short", size: Math.abs(asNumber(row.positionValue) || size * asNumber(row.entryPx)), entry: asNumber(row.entryPx), mark: asNumber(row.markPx), pnl: asNumber(row.unrealizedPnl), leverage: asNumber(asRecord(row.leverage).value), dcaCount: metadata?.dcaCount ?? 0, lastOrderAt:metadata?.lastOrderAt ?? asTimestamp(row.openedAt), openedAt: asTimestamp(row.openedAt), strategy: String(row.strategyName ?? row.strategyId ?? "") };
+      return { symbol, side: size >= 0 ? "long" : "short", size: Math.abs(asNumber(row.positionValue) || size * asNumber(row.entryPx)), entry: asNumber(row.entryPx), mark: asNumber(row.markPx), pnl: asNumber(row.unrealizedPnl), leverage: asNumber(asRecord(row.leverage).value), dcaCount: metadata?.dcaCount ?? 0, lastOrderAt:metadata?.lastOrderAt ?? asTimestamp(row.openedAt), openedAt: asTimestamp(row.openedAt), strategy: String(row.strategyName ?? row.strategyId ?? ""), strategy2Tp:null, strategy3Tp:null };
     });
     openPnl = asNumber(data.unrealizedPnl);
     activeCount = asNumber(data.activePositionCount);
@@ -818,6 +871,8 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
       lastOrderAt: asTimestamp(row.lastOrderAt ?? row.updatedAt ?? row.openedAt),
       openedAt: asTimestamp(row.openedAt),
       strategy: String(row.strategyName ?? row.strategyId ?? ""),
+      strategy2Tp: parseStrategy2Tp(row.strategy2Tp),
+      strategy3Tp: parseStrategy3Tp(row.strategy3Tp),
     }));
     activeCount = asNumber(data.activePositions);
     tradingEnabled = Boolean(data.liveEnabled);

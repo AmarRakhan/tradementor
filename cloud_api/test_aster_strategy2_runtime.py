@@ -1,7 +1,7 @@
 from aster_strategy2 import Strategy2Config
 from aster_strategy2_state import OwnedLeg
 from aster_strategy2_runtime import *
-from datetime import datetime,timezone
+from datetime import datetime,timedelta,timezone
 
 def row(side="LONG",qty="1",entry="100",mark="100",pnl="0"):
     return {"symbol":"BTCUSDT","positionSide":side,"positionAmt":qty,"entryPrice":entry,"markPrice":mark,"unRealizedProfit":pnl}
@@ -169,3 +169,86 @@ def test_only_changed_owned_symbols_require_fill_history():
     positions=[row(qty="2",entry="101"),
         {"symbol":"ETHUSDT","positionSide":"SHORT","positionAmt":"3","entryPrice":"50"}]
     assert changed_owned_symbols(owned,positions)=={"BTCUSDT"}
+
+def _live_state(now):
+    return {"monitor":True,"enabled":True,"liveReady":True,"canaryValidated":True,
+        "runtimeEnabled":True,"phase":"RUNNING","lastTickAt":now,"lastReason":"Actieve controle"}
+
+def _tp_owned(symbol,side,qty,entry,now,*,fees=0.0,funding=0.0,role="HARVEST"):
+    return OwnedLeg("aster-strategy-2","strategy2",symbol,side,"cycle",1,qty,entry,
+        role=role,fees=fees,funding=funding,costs_updated_at_ms=int(now.timestamp()*1000))
+
+def test_beat_like_gross_37_40_percent_uses_net_costs_and_closes_in_normal_mode():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
+    owned=_tp_owned("BEATUSDT","SHORT",17,.889,now,fees=.10,funding=-.02)
+    row={"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":"17","quantity":17,
+        "entryPrice":.889,"markPrice":.647,"notionalUsd":11,"unrealizedPnl":4.11}
+    portfolio=PortfolioState(1000,1000,.1,100,100,200)
+    result=strategy2_position_tp_contract(row=row,owned=owned,config=cfg,state=_live_state(now),portfolio=portfolio,now=now)
+    assert round(result["netProfitUsd"],4)==3.9845
+    assert round(result["takeProfitTargetUsd"],3)==.165
+    assert result["takeProfitPercent"]==1.5 and result["status"]=="TP bereikt"
+    assert result["decision"]=="FULL_TP" and "volledige sluiting" in result["blockReason"]
+
+def test_ena_like_gross_4_83_percent_still_uses_fees_funding_and_close_fee():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
+    owned=_tp_owned("ENAUSDT","SHORT",227,.08814,now,fees=.10,funding=.01)
+    row={"symbol":"ENAUSDT","positionSide":"SHORT","positionAmt":"227","quantity":227,
+        "entryPrice":.08814,"markPrice":.08408,"notionalUsd":19.09,"unrealizedPnl":.92}
+    portfolio=PortfolioState(1000,1000,.1,100,100,200)
+    result=strategy2_position_tp_contract(row=row,owned=owned,config=cfg,state=_live_state(now),portfolio=portfolio,now=now)
+    assert round(result["netProfitUsd"],6)==round(.92+.01-.10-19.09*.0005,6)
+    assert result["status"]=="TP bereikt" and result["decision"]=="FULL_TP"
+
+def test_contract_uses_the_persisted_take_profit_instead_of_the_default():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc)
+    cfg=Strategy2Config.from_mapping({"mode":"live","takeProfit":.0175})
+    owned=_tp_owned("BEATUSDT","SHORT",17,.889,now)
+    result=strategy2_position_tp_contract(row={"notionalUsd":11,"unrealizedPnl":4.11},owned=owned,
+        config=cfg,state=_live_state(now),portfolio=None,now=now)
+    assert round(result["takeProfitPercent"],4)==1.75
+    assert round(result["takeProfitTargetUsd"],4)==.1925
+
+def test_protection_mode_returns_partial_close_or_concrete_block_reason():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
+    owned=_tp_owned("BEATUSDT","SHORT",17,.889,now)
+    row={"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":"17","quantity":17,
+        "entryPrice":.889,"markPrice":.647,"notionalUsd":11,"unrealizedPnl":4.11}
+    portfolio=PortfolioState(900,1000,.60,600,50,650)
+    result=strategy2_position_tp_contract(row=row,owned=owned,config=cfg,state=_live_state(now),portfolio=portfolio,now=now)
+    assert result["status"]=="TP bereikt"
+    assert result["decision"] in {"PARTIAL_TP","ASSIGN_PROTECTION"}
+    assert result["blockReason"]
+
+def test_missing_ownership_never_produces_orderable_tp_status():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live")
+    result=strategy2_position_tp_contract(row={"notionalUsd":11,"unrealizedPnl":4.11},owned=None,
+        config=cfg,state=_live_state(now),portfolio=None,now=now)
+    assert result["status"]=="Niet betrouwbaar te bepalen" and result["netProfitUsd"] is None
+    assert result["ownershipProven"] is False and "ownership" in result["blockReason"]
+    assert result["takeProfitTargetUsd"] is None and result["takeProfitPercent"] is None
+    assert result["paidFeesUsd"] is None and result["fundingUsd"] is None and result["estimatedCloseFeeUsd"] is None
+
+def test_eigen_like_negative_position_is_reliably_below_tp():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
+    owned=_tp_owned("EIGENUSDT","LONG",55.82,1,now,fees=.03,funding=-.01)
+    result=strategy2_position_tp_contract(row={"symbol":"EIGENUSDT","positionSide":"LONG","quantity":55.82,
+        "entryPrice":1,"markPrice":1,"notionalUsd":55.82,"unrealizedPnl":-4.26},owned=owned,
+        config=cfg,state=_live_state(now),portfolio=PortfolioState(1000,1000,.1,100,100,200),now=now)
+    assert result["status"]=="TP nog niet bereikt" and result["netProfitUsd"]<0
+    assert result["takeProfitTargetUsd"]>0 and result["blockReason"]
+
+def test_stale_scheduler_is_visible_and_invalidates_net_tp_evidence():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);state=_live_state(now-timedelta(minutes=10))
+    owned=_tp_owned("BEATUSDT","SHORT",17,.889,now)
+    result=strategy2_position_tp_contract(row={"notionalUsd":11,"unrealizedPnl":4.11},owned=owned,
+        config=Strategy2Config(mode="live"),state=state,portfolio=None,now=now)
+    assert result["status"]=="Niet betrouwbaar te bepalen"
+    assert result["scheduler"]["status"]=="STALE" and result["scheduler"]["warning"]
+
+def test_most_urgent_profitable_position_is_first_management_candidate():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc)
+    beat=_tp_owned("BEATUSDT","SHORT",17,.889,now);ena=_tp_owned("ENAUSDT","SHORT",227,.08814,now)
+    positions=[{"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":17,"markPrice":.647,"notional":11,"unRealizedProfit":4.11},
+        {"symbol":"ENAUSDT","positionSide":"SHORT","positionAmt":227,"markPrice":.08408,"notional":19.09,"unRealizedProfit":.92}]
+    assert most_urgent_profitable_owned(Strategy2Config(),[ena,beat],positions)==beat

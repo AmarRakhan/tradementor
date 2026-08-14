@@ -25,7 +25,7 @@ from typing import Any
 
 import firebase_admin
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from firebase_admin import auth, firestore
 from google.cloud import secretmanager
 from google.cloud import tasks_v2
@@ -70,7 +70,7 @@ from aster_gateway import (
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_strategy import AsterStrategySettings
-from aster_strategy2 import Strategy2Config, validate_worst_case
+from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
 from aster_strategy2_state import OwnedLeg, reconcile_owned_legs
 from aster_strategy2_readiness import build_readiness_report
@@ -83,12 +83,14 @@ from aster_strategy3 import persisted_runtime_mode as strategy3_persisted_runtim
 from aster_strategy3_simulation import standard_suite as strategy3_standard_suite, failure_suite as strategy3_failure_suite
 from aster_strategy3_readiness import build_strategy3_readiness_report
 from aster_strategy3_execution import Strategy3ExecutionContext, execute_strategy3_decision
+from aster_strategy3_status import strategy3_position_tp_contract
 from aster_rapid_build import run_confirmed_batch
 from aster_strategy2_execution import ExecutionContext, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
 from aster_strategy2_runtime import next_management_decision, scanner_allowed, active_position_map
-from aster_strategy2_runtime import changed_owned_symbols
+from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned
 from aster_strategy2_runtime import enrich_confirmed_costs
+from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
 from aster_strategy2_runtime import remove_strategy3_proven_conflicts
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, entry_order_limit, management_preempts_initial_build
@@ -123,12 +125,61 @@ from portfolio_risk import (
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
+from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
+from read_only_source import read_source_url
 
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
 
+# Staging can validate tokens from the established identity project while all
+# application data remains in the isolated Google Cloud project selected by
+# ADC/GOOGLE_CLOUD_PROJECT. This preserves user IDs without granting the
+# staging runtime a write path to the production Firestore database.
+data_project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+auth_project_id = os.getenv("FIREBASE_AUTH_PROJECT_ID", "").strip()
+auth_app = identity_app(
+    firebase_admin,
+    data_project_id=data_project_id,
+    auth_project_id=auth_project_id,
+)
+
 app = FastAPI(title="TradeMentor Cloud API", version="0.1.0")
+
+
+@app.middleware("http")
+async def existing_data_read_bridge(request: Request, call_next: Any) -> Response:
+    """Expose existing account snapshots in staging without a production write path."""
+
+    source = os.getenv("TRADEMENTOR_READ_SOURCE_URL", "").strip()
+    target = read_source_url(
+        source,
+        request.method,
+        request.url.path,
+        request.url.query,
+    )
+    if not target:
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Firebase ID-token ontbreekt")
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+            upstream = await client.request(
+                request.method,
+                target,
+                headers={"Authorization": authorization},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Alleen-lezen databron is tijdelijk niet bereikbaar") from exc
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json").split(";", 1)[0],
+        headers={"X-TradeMentor-Data-Mode": "existing-read-only"},
+    )
+
+
 db = firestore.client()
 info = Info(constants.MAINNET_API_URL, skip_ws=True)
 secrets_client = secretmanager.SecretManagerServiceClient()
@@ -143,6 +194,7 @@ _info_cache: dict[str, tuple[float, Any]] = {}
 _cmc_top_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
+_aster_strategy3_cost_cache: dict[str, tuple[float, dict[tuple[str, str], OwnedLeg]]] = {}
 
 
 class WalletLinkRequest(BaseModel):
@@ -1013,6 +1065,43 @@ def aster_strategy3_public(uid: str) -> dict[str, Any]:
         "trailingBlocked":0, "unassignedPositions":int(safe_float(raw.get("unassignedPositions")))}}
 
 
+def _read_strategy3_cost_evidence(uid: str, client: AsterV3Client, owned: list[OwnedLeg],
+                                  *, now: datetime) -> dict[tuple[str, str], OwnedLeg]:
+    """Read fee/funding evidence for Positions; never persist or place orders."""
+    with _cache_lock:
+        cached = _aster_strategy3_cost_cache.get(uid)
+        if cached and time.monotonic() - cached[0] < 30:
+            return cached[1]
+    trades: list[dict[str, Any]] = []
+    income: list[dict[str, Any]] = []
+    refreshed_symbols: set[str] = set()
+    legs_by_symbol:dict[str,list[OwnedLeg]]={}
+    for leg in owned:legs_by_symbol.setdefault(leg.symbol,[]).append(leg)
+    for symbol, symbol_legs in sorted(legs_by_symbol.items()):
+        start_time=min((leg.created_at_ms for leg in symbol_legs if leg.created_at_ms>0),default=0) or None
+        try:
+            values = client.user_trades(symbol, start_time=start_time, limit=1000)
+            symbol_income = client.income_history(symbol=symbol, start_time=start_time, limit=1000)
+        except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
+            continue
+        rows=[row for row in values if isinstance(row,dict)] if isinstance(values,list) else []
+        every_leg_has_fill=all(any(str(row.get("positionSide","")).upper()==leg.side and
+            int(safe_float(row.get("time",row.get("timestamp",0))))>=leg.created_at_ms for row in rows)
+            for leg in symbol_legs)
+        history_complete=isinstance(values,list) and len(values)<1000 and isinstance(symbol_income,list) and len(symbol_income)<1000
+        if every_leg_has_fill and history_complete:
+            trades.extend(rows)
+            income.extend(row for row in symbol_income if isinstance(row,dict))
+            refreshed_symbols.add(symbol)
+    checked_at_ms = int(now.timestamp() * 1000)
+    enriched = enrich_confirmed_costs(owned, trades, income,
+        refreshed_symbols=refreshed_symbols, checked_at_ms=checked_at_ms)
+    result = {(leg.symbol, leg.side): leg for leg in enriched}
+    with _cache_lock:
+        _aster_strategy3_cost_cache[uid] = (time.monotonic(), result)
+    return result
+
+
 def _explicit_strategy1_owned_keys(raw: dict[str, Any]) -> set[tuple[str, str]]:
     """Read explicit Strategy-1 claims; an exchange snapshot is not ownership."""
     keys:set[tuple[str,str]]=set()
@@ -1253,8 +1342,11 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     owned=raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []
     return {"strategy2": {"settings": settings, "phase": str(raw.get("phase", "DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": bool(raw.get("enabled", False)),
+        "monitor":bool(raw.get("monitor",False)),"canaryValidated":bool(raw.get("canaryValidated",False)),
+        "runtimeEnabled":os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true",
         "configVersion": int(safe_float(raw.get("configVersion", settings.get("version", 1)))),
         "lastReason":str(raw.get("lastReason","Nog niet gestart")),"lastTickAt":raw.get("lastTickAt"),
+        "scheduler":strategy2_scheduler_status(raw),
         "activePairs":int(safe_float(snapshot.get("activePairs"))),
         "longLegs":sum(1 for x in owned if isinstance(x,dict) and x.get("side")=="LONG"),
         "shortLegs":sum(1 for x in owned if isinstance(x,dict) and x.get("side")=="SHORT")}}
@@ -1265,14 +1357,20 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     settings=Strategy2Config.from_mapping(raw.get("settings"));enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
     if not monitor and not dry_run:return {"status":"stopped","reason":"Strategy 2 monitoring staat uit"}
     live=settings.mode=="live" and not dry_run
-    if live and (not bool(raw.get("liveReady")) or os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true"):
-        return {"status":"blocked","reason":"Strategy 2 live-uitvoering is niet volledig vrijgegeven"}
+    if live and (not bool(raw.get("liveReady")) or not bool(raw.get("canaryValidated")) or os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true"):
+        reason="Strategy 2 live-uitvoering is niet volledig vrijgegeven: liveReady, canaryValidated of centrale poort ontbreekt"
+        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"blocked","reason":reason}
     secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live)
     try: hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True);return {"status":"data-hold","reason":str(exc)}
-    if not hedge:return {"status":"blocked","reason":"Aster Hedge Mode staat uit"}
-    if orders:return {"status":"reconciling","reason":"Open Aster-orders worden eerst gereconcilieerd"}
+    if not hedge:
+        reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"blocked","reason":reason}
+    if orders:
+        reason="Open Aster-orders worden eerst gereconcilieerd";ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"reconciling","reason":reason}
     owned=[]
     for item in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
         try:owned.append(owned_from_mapping(item))
@@ -1285,7 +1383,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             active_keys=set(active_position_map(positions));known_keys={(x.symbol,x.side) for x in owned}
             missing_symbols={symbol for symbol,side in active_keys if (symbol,side) not in known_keys}
             changed_symbols=changed_owned_symbols(owned,positions)
-            recovery_symbols=changed_symbols|(audited_symbols&missing_symbols)
+            urgent=most_urgent_profitable_owned(settings,owned,positions)
+            recovery_symbols=changed_symbols|(audited_symbols&missing_symbols)|({urgent.symbol} if urgent else set())
             for symbol in sorted(recovery_symbols):fills.extend(client.user_trades(symbol,limit=500))
             s3_raw=aster_strategy3_reference(uid).get().to_dict() or {};s3_keys=set();s3_legs=[]
             for item in s3_raw.get("ownedLegs",[]) if isinstance(s3_raw.get("ownedLegs"),list) else []:
@@ -1310,7 +1409,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         if not recovery.allow_risk_increase:
             ref.set({"phase":"RECONCILING","lastReason":"; ".join(recovery.reasons),"lastTickAt":now},merge=True)
             return {"status":"reconciling","reason":"; ".join(recovery.reasons),"ordersSent":0}
-        owned=(enrich_confirmed_costs(list(recovery.legs),fills,income)
+        owned=(enrich_confirmed_costs(list(recovery.legs),fills,income,refreshed_symbols=recovery_symbols,
+                checked_at_ms=int(now.timestamp()*1000))
             if fills or income else list(recovery.legs))
     posmap=active_position_map(positions)
     confirmed_flat=[x for x in owned if (x.symbol,x.side) not in posmap]
@@ -1320,14 +1420,17 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     portfolio=strategy2_portfolio_state(settings,account,positions,owned,safe_float(raw.get("adjustedHighWaterMark")) or safe_float(account.get("totalMarginBalance")))
     snapshot={"equity":portfolio.equity,"highWaterMark":portfolio.adjusted_high_water_mark,"drawdown":portfolio.drawdown,
         "marginRatio":portfolio.margin_ratio,"longExposure":portfolio.long_exposure,"shortExposure":portfolio.short_exposure,
-        "strategyExposure":portfolio.strategy_exposure,"activePairs":len({x.symbol for x in owned}),"capturedAt":now}
+        "strategyExposure":portfolio.strategy_exposure,"strategyMargin":portfolio.strategy_margin,
+        "activePairs":len({x.symbol for x in owned}),"capturedAt":now}
     ref.set({"accountSnapshot":snapshot,"adjustedHighWaterMark":portfolio.adjusted_high_water_mark,"ownedLegs":[owned_to_mapping(x) for x in owned],"lastTickAt":now},merge=True)
     blocked_dca_raw=raw.get("blockedDcaMinimums") if isinstance(raw.get("blockedDcaMinimums"),dict) else {}
     blocked_dca=(
         {(str(x).split("|",1)[0],str(x).split("|",1)[1]) for x in blocked_dca_raw.get("legs",[]) if "|" in str(x)}
         if int(safe_float(blocked_dca_raw.get("configVersion")))==settings.version else set()
     )
-    selected=same_pair_protection_decision(settings,portfolio,owned,strategy_positions) or portfolio_protection_decision(settings,portfolio,owned) or next_management_decision(settings,portfolio,owned,strategy_positions,blocked_dca)
+    # Existing position management precedes new exposure. Within TP candidates,
+    # next_management_decision ranks the largest net surplus first.
+    selected=portfolio_protection_decision(settings,portfolio,owned) or next_management_decision(settings,portfolio,owned,strategy_positions,blocked_dca) or same_pair_protection_decision(settings,portfolio,owned,strategy_positions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
     if selected:
@@ -2095,8 +2198,20 @@ def authenticated_user(authorization: str | None = Header(default=None)) -> dict
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Firebase ID-token ontbreekt")
     token = authorization.removeprefix("Bearer ").strip()
+    environment = os.getenv("TRADEMENTOR_ENVIRONMENT", "production")
     try:
-        return auth.verify_id_token(token, check_revoked=True)
+        claims = auth.verify_id_token(
+            token,
+            app=auth_app,
+            check_revoked=check_revoked_tokens(environment),
+        )
+        if environment.strip().lower() == "strategy3-live" and not recent_id_token(
+            claims,
+            now_epoch_seconds=time.time(),
+            maximum_age_seconds=600,
+        ):
+            raise ValueError("Strategy-3-live vereist een recent Firebase ID-token")
+        return claims
     except Exception as exc:
         raise HTTPException(401, "Ongeldige of verlopen gebruikerssessie") from exc
 
@@ -2118,6 +2233,8 @@ def health() -> dict[str, Any]:
     return {
         "status": "ready",
         "environment": os.getenv("TRADEMENTOR_ENV", "development"),
+        "dataProject": data_project_id or None,
+        "identityProject": auth_project_id or data_project_id or None,
         "ordersEnabled": False,
         "multiUser": True,
     }
@@ -3081,6 +3198,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
     strategy3_state = aster_strategy3_reference(uid).get().to_dict() or {}
     owned_legs_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    strategy2_owned_by_key:dict[tuple[str,str],OwnedLeg]={}
+    strategy3_owned_by_key:dict[tuple[str,str],OwnedLeg]={}
     for strategy_state in (strategy2_state, strategy3_state):
         for item in strategy_state.get("ownedLegs", []) if isinstance(strategy_state.get("ownedLegs"), list) else []:
             if not isinstance(item, dict):
@@ -3093,6 +3212,46 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             previous_activity = max(int(safe_float(previous.get("last_order_at_ms"))), int(safe_float(previous.get("created_at_ms"))))
             if not previous or item_activity >= previous_activity:
                 owned_legs_by_key[key] = item
+            if strategy_state is strategy2_state:
+                try:
+                    parsed=owned_from_mapping(item)
+                    if parsed.strategy_id=="aster-strategy-2" and parsed.engine_type=="strategy2":strategy2_owned_by_key[key]=parsed
+                except (TypeError,ValueError):pass
+            elif strategy_state is strategy3_state:
+                try:
+                    parsed=owned_from_mapping(item)
+                    if parsed.strategy_id=="aster-strategy-3" and parsed.engine_type=="strategy3":strategy3_owned_by_key[key]=parsed
+                except (TypeError,ValueError):pass
+    strategy2_settings=Strategy2Config.from_mapping(strategy2_state.get("settings"))
+    strategy2_snapshot=strategy2_state.get("accountSnapshot") if isinstance(strategy2_state.get("accountSnapshot"),dict) else {}
+    strategy2_portfolio=None
+    if safe_float(strategy2_snapshot.get("equity"))>0:
+        strategy2_portfolio=Strategy2PortfolioState(
+            safe_float(strategy2_snapshot.get("equity")),safe_float(strategy2_snapshot.get("highWaterMark")),
+            safe_float(strategy2_snapshot.get("marginRatio")),safe_float(strategy2_snapshot.get("longExposure")),
+            safe_float(strategy2_snapshot.get("shortExposure")),safe_float(strategy2_snapshot.get("strategyExposure")),
+            True,True,False,safe_float(strategy2_snapshot.get("strategyMargin")))
+    strategy3_canary=aster_strategy3_reference(uid).collection("canaries").document("s3-open-fill-close-v1").get().to_dict() or {}
+    strategy3_persisted_settings=strategy3_state.get("settings") if isinstance(strategy3_state.get("settings"),dict) else {}
+    strategy3_settings=replace(Strategy3Config.from_mapping(strategy3_persisted_settings),
+        mode=strategy3_persisted_runtime_mode(strategy3_persisted_settings,strategy3_canary))
+    strategy3_snapshot=strategy3_state.get("accountSnapshot") if isinstance(strategy3_state.get("accountSnapshot"),dict) else {}
+    strategy3_portfolio=None
+    if safe_float(strategy3_snapshot.get("equity"))>0:
+        strategy3_portfolio=Strategy3PortfolioState(
+            safe_float(strategy3_snapshot.get("equity")),safe_float(strategy3_snapshot.get("highWaterMark")),
+            safe_float(strategy3_snapshot.get("marginRatio")),safe_float(strategy3_snapshot.get("longExposure")),
+            safe_float(strategy3_snapshot.get("shortExposure")),safe_float(strategy3_snapshot.get("strategyMargin")))
+    strategy3_costs_by_key:dict[tuple[str,str],OwnedLeg]={}
+    if strategy3_owned_by_key:
+        try:
+            strategy3_read_client=AsterV3Client(signer_address=secret.signer_address,
+                sign_message=local_eip712_signer(secret),live_authorized=False)
+            strategy3_costs_by_key=_read_strategy3_cost_evidence(uid,strategy3_read_client,
+                list(strategy3_owned_by_key.values()),now=datetime.now(timezone.utc))
+        except (AsterApiError,AsterSubmissionUncertain,AsterValidationError,HTTPException,ValueError):
+            strategy3_costs_by_key=strategy3_owned_by_key
+    strategy3_peaks=strategy3_state.get("trailingPeaks") if isinstance(strategy3_state.get("trailingPeaks"),dict) else {}
     positions = []
     for raw in snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []:
         row = dict(raw) if isinstance(raw, dict) else {}
@@ -3117,6 +3276,19 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             else "Strategy 2 · Dual Profit Harvest DCA" if "2" in strategy_id
             else ""
         )
+        if strategy_id=="aster-strategy-2":
+            row["strategy2Tp"]=strategy2_position_tp_contract(row=row,
+                owned=strategy2_owned_by_key.get((symbol,side)),config=strategy2_settings,
+                state={**strategy2_state,"runtimeEnabled":os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"},
+                portfolio=strategy2_portfolio)
+        elif strategy_id=="aster-strategy-3":
+            row["strategy3Tp"]=strategy3_position_tp_contract(row=row,
+                owned=strategy3_costs_by_key.get((symbol,side)),config=strategy3_settings,
+                state={**strategy3_state,"runtimeEnabled":all(os.getenv(name,"false").lower()=="true" for name in
+                    ("ASTER_LIVE_EXECUTION_ENABLED","ASTER_STRATEGY3_LIVE_ENABLED","ASTER_STRATEGY3_RUNTIME_ENABLED"))},
+                portfolio=strategy3_portfolio,
+                trailing_peak_return=(safe_float(strategy3_peaks.get(f"{symbol}|{side}"))
+                    if f"{symbol}|{side}" in strategy3_peaks else None))
         positions.append(row)
     closed_trades = _stored_aster_closed_trades(user)
     status = {
@@ -3406,18 +3578,6 @@ def simulate_aster_strategy3(request: AsterStrategySettingsRequest, user: dict[s
 def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     """Read-only Strategy-3 gate. This endpoint cannot submit an order."""
     uid=str(user["uid"]);raw=aster_strategy3_reference(uid).get().to_dict() or {}
-    secret=load_aster_secret(user)
-    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
-    try:
-        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
-        active_symbols=sorted({str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0})
-        order_history=[];fills=[]
-        for symbol in active_symbols:
-            order_history.extend(client.all_orders(symbol,limit=100));fills.extend(client.user_trades(symbol,limit=500))
-        income=client.income_history(limit=500)
-    except (AsterApiError,ValueError) as exc:
-        raise HTTPException(409,f"Strategy-3-readiness kon Aster niet volledig lezen: {exc}") from exc
-
     owned=[]
     for row in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
         try:
@@ -3425,6 +3585,24 @@ def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)
             if leg.strategy_id=="aster-strategy-3" and leg.engine_type=="strategy3":owned.append(leg)
         except (TypeError,ValueError):pass
     s3_keys={(x.symbol,x.side) for x in owned}
+    secret=load_aster_secret(user)
+    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+    try:
+        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
+        active_symbols=sorted({str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0})
+        # Read one bounded history sample to prove the signed history endpoints
+        # are available. Iterating every active symbol made large accounts
+        # perform hundreds of sequential reads even though this route cannot
+        # place an order. Any ownership mismatch outside this sample remains
+        # conservatively blocked by reconciliation rather than guessed.
+        owned_symbols=sorted({x.symbol for x in owned})
+        probe_symbol=(owned_symbols or active_symbols or ["BTCUSDT"])[0]
+        order_history=client.all_orders(probe_symbol,limit=1)
+        fills=client.user_trades(probe_symbol,limit=5)
+        income=client.income_history(limit=50)
+    except (AsterApiError,ValueError) as exc:
+        raise HTTPException(409,f"Strategy-3-readiness kon Aster niet volledig lezen: {exc}") from exc
+
     s2_raw=aster_strategy2_reference(uid).get().to_dict() or {}
     s2_owned=[]
     for row in s2_raw.get("ownedLegs") if isinstance(s2_raw.get("ownedLegs"),list) else []:
@@ -3445,6 +3623,7 @@ def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)
         fills_readable=isinstance(fills,list),income_readable=isinstance(income,list),
         reconciliation_passed=recovery.allow_risk_increase and active.issubset(known),
         coexistence_safe=not bool(ownership_collisions),canary_validated=bool(raw.get("canaryValidated",False)))
+    report["historyProbe"]={"mode":"bounded-single-symbol","symbol":probe_symbol,"ordersLimit":1,"fillsLimit":5,"incomeLimit":50}
     # Readiness never submits an order and never grants a new canary. It may
     # restore liveReady only for this same account when its completed canary
     # and live authorization were already persisted and every fresh read-only
@@ -4681,6 +4860,48 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
             strategy3_results.append({"uid":item.id,"status":"data-hold","reason":message})
         finally:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
     return {"processed":len(results)+len(strategy2_results)+len(strategy3_results),"strategy1":results,"strategy2":strategy2_results,"strategy3":strategy3_results}
+
+
+@app.post("/internal/aster-strategy3/tick")
+def run_aster_strategy3_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Run only the normal Strategy-3 loop; rapid build and other engines stay isolated."""
+    verify_internal_cloud_request(authorization)
+    live_gates = (
+        os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true"
+        and os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false").lower() == "true"
+        and os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false").lower() == "true"
+    )
+    if not live_gates:
+        return {"processed": 0, "status": "centrally-disabled", "strategy3": []}
+
+    controls = list(db.collection("asterStrategy3").where("monitor", "==", True).stream())
+    strategy3_results = []
+    for item in controls[:100]:
+        reference = aster_strategy3_reference(item.id)
+        if not _acquire_mexc_automation_lease(reference):
+            strategy3_results.append({"uid": item.id, "status": "lease-busy"})
+            continue
+        try:
+            state = item.to_dict() or {}
+            if bool(state.get("rapidBuildRequested")):
+                reference.set({
+                    "rapidBuildRequested": False,
+                    "rapidBuildBlockedReason": "Dedicated live scheduler allows normal one-action ticks only",
+                    "updatedAt": datetime.now(timezone.utc),
+                }, merge=True)
+            strategy3_results.append({"uid": item.id, **_run_aster_strategy3_tick(item.id)})
+        except Exception as exc:
+            message = f"Veilige Strategy-3-schedulerfout: {exc}"
+            reference.set({
+                "phase": "DATA_HOLD",
+                "rapidBuildRequested": False,
+                "lastReason": message,
+                "lastTickAt": datetime.now(timezone.utc),
+            }, merge=True)
+            strategy3_results.append({"uid": item.id, "status": "data-hold", "reason": message})
+        finally:
+            reference.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
+    return {"processed": len(strategy3_results), "strategy3": strategy3_results}
 
 
 @app.post("/internal/aster-automation/{uid}/simulate")

@@ -22,6 +22,7 @@ class OwnedLeg:
     quantity:float=0.0;weighted_entry:float=0.0;dca_count:int=0;role:str="HARVEST"
     intent_ids:tuple[str,...]=();fill_ids:tuple[str,...]=();open_order_ids:tuple[str,...]=()
     created_at_ms:int=0;realized_pnl:float=0.0;fees:float=0.0;funding:float=0.0;last_order_at_ms:int=0
+    costs_updated_at_ms:int=0
 
 @dataclass(frozen=True)
 class RecoveryResult:
