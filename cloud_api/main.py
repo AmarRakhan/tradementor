@@ -25,7 +25,7 @@ from typing import Any
 
 import firebase_admin
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from firebase_admin import auth, firestore
 from google.cloud import secretmanager
 from google.cloud import tasks_v2
@@ -123,12 +123,61 @@ from portfolio_risk import (
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
+from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
+from read_only_source import read_source_url
 
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
 
+# Staging can validate tokens from the established identity project while all
+# application data remains in the isolated Google Cloud project selected by
+# ADC/GOOGLE_CLOUD_PROJECT. This preserves user IDs without granting the
+# staging runtime a write path to the production Firestore database.
+data_project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+auth_project_id = os.getenv("FIREBASE_AUTH_PROJECT_ID", "").strip()
+auth_app = identity_app(
+    firebase_admin,
+    data_project_id=data_project_id,
+    auth_project_id=auth_project_id,
+)
+
 app = FastAPI(title="TradeMentor Cloud API", version="0.1.0")
+
+
+@app.middleware("http")
+async def existing_data_read_bridge(request: Request, call_next: Any) -> Response:
+    """Expose existing account snapshots in staging without a production write path."""
+
+    source = os.getenv("TRADEMENTOR_READ_SOURCE_URL", "").strip()
+    target = read_source_url(
+        source,
+        request.method,
+        request.url.path,
+        request.url.query,
+    )
+    if not target:
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Firebase ID-token ontbreekt")
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+            upstream = await client.request(
+                request.method,
+                target,
+                headers={"Authorization": authorization},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Alleen-lezen databron is tijdelijk niet bereikbaar") from exc
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "application/json").split(";", 1)[0],
+        headers={"X-TradeMentor-Data-Mode": "existing-read-only"},
+    )
+
+
 db = firestore.client()
 info = Info(constants.MAINNET_API_URL, skip_ws=True)
 secrets_client = secretmanager.SecretManagerServiceClient()
@@ -2095,8 +2144,20 @@ def authenticated_user(authorization: str | None = Header(default=None)) -> dict
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Firebase ID-token ontbreekt")
     token = authorization.removeprefix("Bearer ").strip()
+    environment = os.getenv("TRADEMENTOR_ENVIRONMENT", "production")
     try:
-        return auth.verify_id_token(token, check_revoked=True)
+        claims = auth.verify_id_token(
+            token,
+            app=auth_app,
+            check_revoked=check_revoked_tokens(environment),
+        )
+        if environment.strip().lower() == "strategy3-live" and not recent_id_token(
+            claims,
+            now_epoch_seconds=time.time(),
+            maximum_age_seconds=600,
+        ):
+            raise ValueError("Strategy-3-live vereist een recent Firebase ID-token")
+        return claims
     except Exception as exc:
         raise HTTPException(401, "Ongeldige of verlopen gebruikerssessie") from exc
 
@@ -2118,6 +2179,8 @@ def health() -> dict[str, Any]:
     return {
         "status": "ready",
         "environment": os.getenv("TRADEMENTOR_ENV", "development"),
+        "dataProject": data_project_id or None,
+        "identityProject": auth_project_id or data_project_id or None,
         "ordersEnabled": False,
         "multiUser": True,
     }
@@ -3406,18 +3469,6 @@ def simulate_aster_strategy3(request: AsterStrategySettingsRequest, user: dict[s
 def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     """Read-only Strategy-3 gate. This endpoint cannot submit an order."""
     uid=str(user["uid"]);raw=aster_strategy3_reference(uid).get().to_dict() or {}
-    secret=load_aster_secret(user)
-    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
-    try:
-        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
-        active_symbols=sorted({str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0})
-        order_history=[];fills=[]
-        for symbol in active_symbols:
-            order_history.extend(client.all_orders(symbol,limit=100));fills.extend(client.user_trades(symbol,limit=500))
-        income=client.income_history(limit=500)
-    except (AsterApiError,ValueError) as exc:
-        raise HTTPException(409,f"Strategy-3-readiness kon Aster niet volledig lezen: {exc}") from exc
-
     owned=[]
     for row in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
         try:
@@ -3425,6 +3476,24 @@ def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)
             if leg.strategy_id=="aster-strategy-3" and leg.engine_type=="strategy3":owned.append(leg)
         except (TypeError,ValueError):pass
     s3_keys={(x.symbol,x.side) for x in owned}
+    secret=load_aster_secret(user)
+    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+    try:
+        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
+        active_symbols=sorted({str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0})
+        # Read one bounded history sample to prove the signed history endpoints
+        # are available. Iterating every active symbol made large accounts
+        # perform hundreds of sequential reads even though this route cannot
+        # place an order. Any ownership mismatch outside this sample remains
+        # conservatively blocked by reconciliation rather than guessed.
+        owned_symbols=sorted({x.symbol for x in owned})
+        probe_symbol=(owned_symbols or active_symbols or ["BTCUSDT"])[0]
+        order_history=client.all_orders(probe_symbol,limit=1)
+        fills=client.user_trades(probe_symbol,limit=5)
+        income=client.income_history(limit=50)
+    except (AsterApiError,ValueError) as exc:
+        raise HTTPException(409,f"Strategy-3-readiness kon Aster niet volledig lezen: {exc}") from exc
+
     s2_raw=aster_strategy2_reference(uid).get().to_dict() or {}
     s2_owned=[]
     for row in s2_raw.get("ownedLegs") if isinstance(s2_raw.get("ownedLegs"),list) else []:
@@ -3445,6 +3514,7 @@ def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)
         fills_readable=isinstance(fills,list),income_readable=isinstance(income,list),
         reconciliation_passed=recovery.allow_risk_increase and active.issubset(known),
         coexistence_safe=not bool(ownership_collisions),canary_validated=bool(raw.get("canaryValidated",False)))
+    report["historyProbe"]={"mode":"bounded-single-symbol","symbol":probe_symbol,"ordersLimit":1,"fillsLimit":5,"incomeLimit":50}
     # Readiness never submits an order and never grants a new canary. It may
     # restore liveReady only for this same account when its completed canary
     # and live authorization were already persisted and every fresh read-only
@@ -4681,6 +4751,48 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
             strategy3_results.append({"uid":item.id,"status":"data-hold","reason":message})
         finally:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
     return {"processed":len(results)+len(strategy2_results)+len(strategy3_results),"strategy1":results,"strategy2":strategy2_results,"strategy3":strategy3_results}
+
+
+@app.post("/internal/aster-strategy3/tick")
+def run_aster_strategy3_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Run only the normal Strategy-3 loop; rapid build and other engines stay isolated."""
+    verify_internal_cloud_request(authorization)
+    live_gates = (
+        os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true"
+        and os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false").lower() == "true"
+        and os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false").lower() == "true"
+    )
+    if not live_gates:
+        return {"processed": 0, "status": "centrally-disabled", "strategy3": []}
+
+    controls = list(db.collection("asterStrategy3").where("monitor", "==", True).stream())
+    strategy3_results = []
+    for item in controls[:100]:
+        reference = aster_strategy3_reference(item.id)
+        if not _acquire_mexc_automation_lease(reference):
+            strategy3_results.append({"uid": item.id, "status": "lease-busy"})
+            continue
+        try:
+            state = item.to_dict() or {}
+            if bool(state.get("rapidBuildRequested")):
+                reference.set({
+                    "rapidBuildRequested": False,
+                    "rapidBuildBlockedReason": "Dedicated live scheduler allows normal one-action ticks only",
+                    "updatedAt": datetime.now(timezone.utc),
+                }, merge=True)
+            strategy3_results.append({"uid": item.id, **_run_aster_strategy3_tick(item.id)})
+        except Exception as exc:
+            message = f"Veilige Strategy-3-schedulerfout: {exc}"
+            reference.set({
+                "phase": "DATA_HOLD",
+                "rapidBuildRequested": False,
+                "lastReason": message,
+                "lastTickAt": datetime.now(timezone.utc),
+            }, merge=True)
+            strategy3_results.append({"uid": item.id, "status": "data-hold", "reason": message})
+        finally:
+            reference.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
+    return {"processed": len(strategy3_results), "strategy3": strategy3_results}
 
 
 @app.post("/internal/aster-automation/{uid}/simulate")
