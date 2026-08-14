@@ -21,12 +21,11 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "TradeMentor Web",
+  title: "Amar Crypto Bot 2026",
   description: "Eén veilige trade floor voor Hyperliquid, Aster en je totale portfolio.",
   icons: { icon: "/tradementor-logo.png?v=redgreen-1", shortcut: "/tradementor-logo.png?v=redgreen-1" },
-  manifest: "/manifest.webmanifest",
-  applicationName: "TradeMentor",
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "TradeMentor" },
+  applicationName: "Amar Crypto Bot 2026",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Amar Bot 2026" },
   openGraph: {
     title: "TradeMentor Web",
     description: "Persoonlijke multi-exchange portfolio-intelligentie met bewuste handelsactivering.",
@@ -36,5 +35,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="nl"><body className={`${geistSans.variable} ${geistMono.variable}`}><PwaRegistration /><ZoomGuard /><AuthProvider>{children}</AuthProvider></body></html>;
+  return <html lang="nl"><head><link rel="manifest" href="/manifest.webmanifest?v=29" crossOrigin="use-credentials" /><link rel="apple-touch-icon" href="/tradementor-icon-192.png" /></head><body className={`${geistSans.variable} ${geistMono.variable}`}><div className="test-environment-banner live-runtime-banner">AMAR CRYPTO BOT 2026 · STRATEGY 3 LIVE · ECHTE ORDERS ALLEEN NA JOUW BEVESTIGING</div><PwaRegistration /><ZoomGuard /><AuthProvider>{children}</AuthProvider></body></html>;
 }

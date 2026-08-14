@@ -1,24 +1,77 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "./cloud-client";
-import { demoModeEnabled, demoSnapshot } from "./demo-data";
+import { loadAsterSnapshot, mergeCompleteAsterSnapshot, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
 
 export type ExchangeId = "hyperliquid" | "aster";
-export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown> | null; error: string; updatedAt: number | null };
+export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown> | null; error: string; updatedAt: number | null; source: "none" | "cache" | "server"; serverConfirmed: boolean; timings?: Record<string, number> };
 export type ExchangeSnapshots = Record<ExchangeId, ExchangeSnapshot>;
 
-const emptySnapshot = (): ExchangeSnapshot => ({ loading: false, data: null, error: "", updatedAt: null });
+const emptySnapshot = (): ExchangeSnapshot => ({ loading: false, data: null, error: "", updatedAt: null, source: "none", serverConfirmed: false });
+const inFlight = new Map<string, Promise<{ data: Record<string, unknown>; timings: Record<string, number> }>>();
 
-export function useExchangeData(cloudReady: boolean) {
-  const [snapshots, setSnapshots] = useState<ExchangeSnapshots>({ hyperliquid: emptySnapshot(), aster: emptySnapshot() });
+function cachedAster(uid: string): ExchangeSnapshot {
+  if (typeof window === "undefined" || !uid) return emptySnapshot();
+  const started = performance.now();
+  const cached = loadAsterSnapshot(window.localStorage, uid);
+  if (!cached) return emptySnapshot();
+  return { loading: false, data: cached.data, error: "", updatedAt: cached.updatedAt, source: "cache", serverConfirmed: false, timings: { cacheReadMs: Math.round(performance.now() - started) } };
+}
+
+async function timedRead(path: string) {
+  const started = performance.now();
+  let attempts = 0;
+  const value = await withBoundedRetry(async () => {
+    attempts += 1;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    try { return await authenticatedRequest(path, { cache: "no-store", signal: controller.signal }); }
+    finally { window.clearTimeout(timeout); }
+  }, { attempts: 2, delays: [350] }) as Record<string, unknown>;
+  return { value, durationMs: Math.round(performance.now() - started), attempts };
+}
+
+function fetchAsterSnapshot(uid: string) {
+  const key = `${uid}:aster`;
+  const current = inFlight.get(key);
+  if (current) return current;
+  const started = performance.now();
+  const request = Promise.all([
+    timedRead("/api/exchanges/aster"),
+    timedRead("/api/exchanges/aster/closed-trades"),
+  ]).then(([account, history]) => ({
+    data: mergeCompleteAsterSnapshot(account.value, history.value) as Record<string, unknown>,
+    timings: {
+      statusMs: account.durationMs,
+      historyMs: history.durationMs,
+      statusAttempts: account.attempts,
+      historyAttempts: history.attempts,
+      totalMs: Math.round(performance.now() - started),
+    },
+  })).finally(() => inFlight.delete(key));
+  inFlight.set(key, request);
+  return request;
+}
+
+export function useExchangeData(cloudReady: boolean, uid: string) {
+  const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAster(uid) } }));
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    if (state.uid === uid) return;
+    setState({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAster(uid) } });
+  }, [state.uid, uid]);
+
+  const snapshots = useMemo(() => state.uid === uid ? state.snapshots : { hyperliquid: emptySnapshot(), aster: emptySnapshot() }, [state, uid]);
 
   const refresh = useCallback(async (exchange: ExchangeId) => {
-    if (demoModeEnabled()) {
-      setSnapshots((current) => ({ ...current, [exchange]: demoSnapshot(exchange) }));
-      return;
-    }
-    setSnapshots((current) => ({ ...current, [exchange]: { ...current[exchange], loading: true, error: "" } }));
+    if (!uid) return;
+    setState((current) => current.uid !== uid ? current : ({ ...current, snapshots: { ...current.snapshots, [exchange]: { ...current.snapshots[exchange], loading: true, error: "" } } }));
     try {
       const data = exchange === "hyperliquid"
           ? await Promise.all([
@@ -27,19 +80,21 @@ export function useExchangeData(cloudReady: boolean) {
             authenticatedRequest("/api/exchanges/hyperliquid/dca-deals"),
             authenticatedRequest("/api/exchanges/hyperliquid/closed-trades"),
           ]).then(([account, execution, dca, closed]) => ({ ...account, ...execution, ...dca, ...closed }))
-        : await authenticatedRequest(`/api/exchanges/${exchange}`).then(async (account) => {
-            try {
-              const closed = await authenticatedRequest(`/api/exchanges/${exchange}/closed-trades`);
-              return { ...account, ...closed };
-            } catch {
-              return account;
-            }
-          });
-      setSnapshots((current) => ({ ...current, [exchange]: { loading: false, data, error: "", updatedAt: Date.now() } }));
+        : await fetchAsterSnapshot(uid);
+      if (!mounted.current) return;
+      const updatedAt = Date.now();
+      const payload = exchange === "aster" ? data.data : data;
+      const timings = exchange === "aster" ? data.timings : undefined;
+      if (exchange === "aster") {
+        saveAsterSnapshot(window.localStorage, uid, payload, updatedAt);
+        console.info("[TradeMentor Aster timing]", timings);
+      }
+      setState((current) => current.uid !== uid ? current : ({ ...current, snapshots: { ...current.snapshots, [exchange]: { loading: false, data: payload, error: "", updatedAt, source: "server", serverConfirmed: true, ...(timings ? { timings } : {}) } } }));
     } catch (reason) {
-      setSnapshots((current) => ({ ...current, [exchange]: { ...current[exchange], loading: false, error: reason instanceof Error ? reason.message : "Exchangegegevens zijn niet beschikbaar." } }));
+      if (!mounted.current) return;
+      setState((current) => current.uid !== uid ? current : ({ ...current, snapshots: { ...current.snapshots, [exchange]: { ...current.snapshots[exchange], loading: false, serverConfirmed: false, error: reason instanceof Error ? reason.message : "Exchangegegevens zijn niet beschikbaar." } } }));
     }
-  }, []);
+  }, [uid]);
 
   const refreshAll = useCallback(() => Promise.allSettled((["hyperliquid", "aster"] as ExchangeId[]).map(refresh)), [refresh]);
 

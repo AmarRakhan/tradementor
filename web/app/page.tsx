@@ -23,7 +23,6 @@ import { isCompletePortfolioSnapshot, sanitizePortfolioEquityRows, type Portfoli
 import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
-import { DemoModeControl } from "@/components/demo-mode-control";
 
 type Destination = "hyperliquid" | "aster" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -76,7 +75,7 @@ function TradeMentorHome() {
   const adminAccount = String(user?.email || "").toLowerCase() === "amar_rakhan@hotmail.com";
   const [adminDeviceAllowed, setAdminDeviceAllowed] = useState(false);
   const [adminDeviceEnrolled, setAdminDeviceEnrolled] = useState(false);
-  const { snapshots, refresh, refreshAll } = useExchangeData(cloudReady);
+  const { snapshots, refresh, refreshAll } = useExchangeData(cloudReady, user?.uid || "");
 
   useEffect(() => {
     const hyperliquid = exchangeView("hyperliquid", snapshots.hyperliquid).equityNumber;
@@ -84,7 +83,7 @@ function TradeMentorHome() {
     const total = (hyperliquid ?? 0) + (aster ?? 0);
     if (total <= 0 || (!snapshots.hyperliquid.updatedAt && !snapshots.aster.updatedAt)) return;
     try {
-      const key = "tradementor.test.portfolioEquity.v1";
+      const key = `tradementor.portfolioEquity.v2.${encodeURIComponent(user?.uid || "")}`;
       const rows = JSON.parse(window.localStorage.getItem(key) || "[]");
       const history = sanitizePortfolioEquityRows(Array.isArray(rows) ? rows : []);
       const latest = history[history.length - 1];
@@ -98,7 +97,7 @@ function TradeMentorHome() {
       history.push(next);
       window.localStorage.setItem(key, JSON.stringify(history.slice(-20_000)));
     } catch { /* Een beschadigde lokale historie mag actuele exchange-data nooit blokkeren. */ }
-  }, [snapshots.hyperliquid.updatedAt, snapshots.aster.updatedAt]);
+  }, [snapshots.hyperliquid.updatedAt, snapshots.aster.updatedAt, user?.uid]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tradementor.activeDestination");
@@ -222,8 +221,7 @@ function TradeMentorHome() {
         <header className="topbar">
           <Brand />
           <div className="topbar-actions">
-            <DemoModeControl />
-            <span className={`environment ${cloudReady ? "connected" : ""}`}><i /> {cloudReady ? "CLOUD VERBONDEN" : "CLOUD CONTROLEREN"}</span>
+            <span className={`environment ${cloudReady ? "connected" : ""}`}><i /> {cloudReady ? "LIVE DATA VERBONDEN" : "LIVE DATA CONTROLEREN"}</span>
             <button className="refresh-button" type="button" onClick={() => { refreshAll(); setRefreshedAt(new Date().toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })); }}>
               Vernieuwen
             </button>
@@ -324,6 +322,14 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   const netOpenPnl = longPnl + shortPnl;
   const displayedPositions = sortPositions(view.positions, positionFilter);
   const realizedEvents = Array.isArray(snapshot.data?.realizedEvents) ? snapshot.data.realizedEvents as Array<Record<string, unknown>> : [];
+  const asterActionsEnabled = destination !== "aster" || Boolean(cloudReady && snapshot.serverConfirmed && snapshot.updatedAt && Date.now() - snapshot.updatedAt < 120_000 && !snapshot.error);
+  const snapshotStatus = destination !== "aster" ? refreshedAt : snapshot.loading
+    ? "Vernieuwen…"
+    : snapshot.error && snapshot.data
+      ? "Tijdelijk geen nieuwe gegevens; laatst bekende gegevens worden getoond"
+      : snapshot.updatedAt
+        ? `Laatst bijgewerkt om ${new Date(snapshot.updatedAt).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+        : "Nog geen Aster-gegevens ontvangen";
   useEffect(() => {
     const saved = window.localStorage.getItem(`tradementor.positionLayout.${destination}`);
     if (saved === "cards" || saved === "list") setPositionLayout(saved);
@@ -350,7 +356,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
           <div className="status-row">
             <span className={`status-chip ${view.tradingEnabled ? "" : "warning"}`}><i /> {view.tradingEnabled ? "Live handel aan" : "Live handel uit"}</span>
             <span className={`status-chip ${view.connected ? "" : "muted"}`}><i /> {view.statusText}</span>
-            <button className="status-chip refresh-chip" type="button" onClick={onRefresh} disabled={snapshot.loading}><i /> {snapshot.loading ? "Vernieuwen…" : refreshedAt}</button>
+            <button className="status-chip refresh-chip" type="button" onClick={onRefresh} disabled={snapshot.loading}><i /> {snapshotStatus}</button>
           </div>
         </div>
         <div className={`risk-orbit risk-${view.riskTone}`} aria-label={view.riskLabel}>
@@ -375,7 +381,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <DirectionBalanceCell label="SHORT" count={shortPositions.length} value={shortPnl} />
       </section>}
       {!positionsOnly && destination === "aster" && <AsterRecentTrades snapshot={snapshot} onRetry={onRefresh} />}
-      {!positionsOnly && destination === "aster" && <AsterPerformancePanel snapshot={snapshot.data} onChanged={onRefresh} />}
+      {!positionsOnly && destination === "aster" && <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}><AsterPerformancePanel snapshot={snapshot.data} onChanged={onRefresh} /></fieldset>}
 
       <section className="dashboard-grid">
         {positionsOnly && <article className="primary-card position-card">
@@ -396,7 +402,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         </article>}
 
         {!positionsOnly && <aside className="side-stack">
-          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <><AsterDryRunControl snapshot={snapshot.data} onChanged={onRefresh} /><AsterStrategy2Maker snapshot={snapshot.data} onChanged={onRefresh} /></>}
+          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterDryRunControl snapshot={snapshot.data} onChanged={onRefresh} /><AsterStrategy2Maker snapshot={snapshot.data} onChanged={onRefresh} /></fieldset>}
           {destination !== "aster" && <ExchangeLiveControl exchange={destination} cloudReady={cloudReady} snapshot={snapshot.data} onChanged={onRefresh} />}
           <article className={`safety-card ${view.tradingEnabled ? "live" : ""}`}>
             <div className="shield-mark">TM</div>
@@ -531,7 +537,7 @@ function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRef
       <div className="premium-account"><span>{initials}</span><div><strong>Persoonlijk account</strong><small>{cloudReady ? "Cloud verbonden" : "Cloud controleren"}</small></div></div>
     </aside>
     <section className="premium-workspace">
-      <header className="premium-topbar"><div><span className="premium-breadcrumb">TRADEMENTOR · PREMIUM</span><strong>{premiumNavigation.find((item) => item.id === section)?.label}</strong></div><div><DemoModeControl /><span className={`premium-cloud ${cloudReady ? "connected" : ""}`}><i />{cloudReady ? "LIVE DATA" : "CONTROLEREN"}</span><button type="button" onClick={onRefreshAll}>Vernieuwen</button><button className="premium-interface-switch" type="button" onClick={onUseLegacy} aria-label="Terug naar de vertrouwde webapp"><span className="desktop-label">Vertrouwde weergave</span><span className="mobile-label">Terug</span></button><span className="premium-avatar">{initials}</span></div></header>
+      <header className="premium-topbar"><div><span className="premium-breadcrumb">TRADEMENTOR · PREMIUM</span><strong>{premiumNavigation.find((item) => item.id === section)?.label}</strong></div><div><span className={`premium-cloud ${cloudReady ? "connected" : ""}`}><i />{cloudReady ? "LIVE DATA" : "CONTROLEREN"}</span><button type="button" onClick={onRefreshAll}>Vernieuwen</button><button className="premium-interface-switch" type="button" onClick={onUseLegacy} aria-label="Terug naar de vertrouwde webapp"><span className="desktop-label">Vertrouwde weergave</span><span className="mobile-label">Terug</span></button><span className="premium-avatar">{initials}</span></div></header>
       <div className="premium-page">
         {section === "dashboard" && <PremiumDashboard totalEquity={totalEquity} totalPnl={totalPnl} positions={allPositions} runningBots={runningBots} hyperliquid={hyperliquid} aster={aster} refreshedAt={refreshedAt} />}
         {section === "screener" && <PremiumScreener scanner={scanner} error={scannerError} />}
@@ -766,6 +772,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
   let positions: PositionView[] = [];
   let closedTrades: ClosedTradeView[] = [];
   let connected = Boolean(snapshot.data) && !snapshot.error;
+  let accountDataAvailable = connected;
   let tradingEnabled = false;
   let riskLabel = "MARGIN RATIO";
   let riskNumber: number | null = null;
@@ -787,7 +794,10 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     riskLabel = "MAINTENANCE";
     riskNumber = equity > 0 ? maintenance / equity * 100 : null;
   } else {
-    connected = connected && Boolean(data.configured);
+    const configured = data.configured === true;
+    const walletRecognized = data.walletRecognized === true;
+    connected = connected && (configured || walletRecognized);
+    accountDataAvailable = connected && configured;
     equity = asNumber(data.equity);
     available = asNumber(data.availableBalance);
     openPnl = asNumber(data.unrealizedPnl);
@@ -807,7 +817,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     activeCount = asNumber(data.activePositions);
     tradingEnabled = Boolean(data.liveEnabled);
     riskLabel = "MAINTENANCE";
-    riskNumber = asNumber(data.marginRatio) * 100;
+    riskNumber = accountDataAvailable ? asNumber(data.marginRatio) * 100 : null;
   }
   closedTrades = (Array.isArray(data.closedTrades) ? data.closedTrades : []).map((raw) => asRecord(raw)).map((row) => ({ symbol: String(row.symbol ?? "—"), side: String(row.side ?? "—"), size: asNumber(row.notionalUsd), entry: asNumber(row.entryPrice), exit: asNumber(row.exitPrice), pnl: asNumber(row.realizedPnlUsd), openedAt: String(row.openedAt ?? ""), closedAt: String(row.closedAt ?? ""), strategy: String(row.strategyName ?? row.strategyId ?? ""), dcaCount: asNumber(row.dcaCount) }));
 
@@ -815,18 +825,19 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     ?? (exchange === "hyperliquid" ? optionalFinancialNumber(data.totalMarginUsed) : null);
   const derivedTradeCapital = positions.reduce((total, position) => total + (position.leverage > 0 ? Math.abs(position.size) / position.leverage : 0), 0);
   const activeTradeCapital = exchange === "aster" ? reportedTradeCapital : reportedTradeCapital ?? derivedTradeCapital;
-  const statusText = snapshot.loading && !snapshot.data ? "Gegevens laden" : snapshot.error ? "Controle nodig" : connected ? "Exchange verbonden" : "Niet gekoppeld";
-  const metricDetail = snapshot.error || (snapshot.loading ? "Exchange wordt vernieuwd" : connected ? "Actuele exchange-snapshot" : "Nog niet gekoppeld");
+  const readOnlyRecognized = exchange === "aster" && data.walletRecognized === true && data.configured !== true;
+  const statusText = snapshot.loading && !snapshot.data ? "Gegevens laden" : snapshot.error ? "Controle nodig" : readOnlyRecognized ? "Wallet herkend · alleen-lezen" : connected ? "Exchange verbonden" : "Niet gekoppeld";
+  const metricDetail = snapshot.error || (snapshot.loading ? "Exchange wordt vernieuwd" : readOnlyRecognized ? "Trading en automatische orders staan uit" : connected ? "Actuele exchange-snapshot" : "Nog niet gekoppeld");
   return {
     connected,
     tradingEnabled,
     statusText,
     metricDetail,
-    equity: connected ? formatUsd(equity) : "—",
-    equityNumber: connected ? equity : null,
-    available: connected ? formatUsd(available) : "—",
-    openPnl: connected ? formatUsd(openPnl) : "—",
-    activeTradeCapital: connected && activeTradeCapital !== null ? formatUsd(activeTradeCapital) : "\u2014",
+    equity: accountDataAvailable ? formatUsd(equity) : "—",
+    equityNumber: accountDataAvailable ? equity : null,
+    available: accountDataAvailable ? formatUsd(available) : "—",
+    openPnl: accountDataAvailable ? formatUsd(openPnl) : "—",
+    activeTradeCapital: accountDataAvailable && activeTradeCapital !== null ? formatUsd(activeTradeCapital) : "\u2014",
     activeCount,
     positions,
     closedTrades,
@@ -834,7 +845,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     riskTone: riskNumber === null ? "unknown" : riskNumber < 30 ? "safe" : riskNumber < 50 ? "caution" : riskNumber < 70 ? "high" : "critical",
     riskValue: riskNumber === null ? "—" : `${riskNumber.toFixed(2)}%`,
     riskDetail: riskNumber === null ? "Nog geen betrouwbare waarde" : exchange === "aster" ? "0% is ruim · 100% is liquidatiegrens" : "Rechtstreeks uit account- en positiedata",
-    maintenanceMargin: (exchange === "hyperliquid" || exchange === "aster") && connected ? formatUsd(asNumber(data.maintenanceMargin)) : "—",
+    maintenanceMargin: (exchange === "hyperliquid" || exchange === "aster") && accountDataAvailable ? formatUsd(asNumber(data.maintenanceMargin)) : "—",
     accountLeverage: exchange === "hyperliquid" && connected ? `${asNumber(data.unifiedAccountLeverage).toFixed(2)}×` : "—",
   };
 }

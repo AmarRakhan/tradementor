@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -19,7 +20,8 @@ import {
   updateProfile,
   type User,
 } from "firebase/auth";
-import { firebaseAuth } from "@/lib/firebase";
+import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase";
+import { clearAsterSnapshot, withBoundedRetry } from "@/lib/aster-snapshot-cache.mjs";
 
 type AuthContextValue = {
   user: User | null;
@@ -50,29 +52,98 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [cloudReady, setCloudReady] = useState(false);
   const [error, setError] = useState("");
+  const bootstrapInFlight = useRef<{ uid: string; promise: Promise<void> } | null>(null);
 
-  const bootstrap = useCallback(async (current: User) => {
-    setCloudReady(false);
-    const token = await current.getIdToken();
-    const response = await fetch("/api/session/bootstrap", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) throw new Error("De persoonlijke cloudsessie kon niet worden gecontroleerd.");
-    setCloudReady(true);
+  const previewUser = useMemo(() => {
+    if (typeof window === "undefined" || window.location.hostname !== "terminal.local" || !new URLSearchParams(window.location.search).has("staging-demo")) return null;
+    return { uid: "preview-user", email: "preview@tradementor.invalid", displayName: "Staging Preview", emailVerified: true, getIdToken: async () => "tradementor-local-preview" } as unknown as User;
   }, []);
 
-  useEffect(() => onAuthStateChanged(firebaseAuth, (current) => {
-    setUser(current);
-    setReady(true);
-    setError("");
-    if (current) bootstrap(current).catch((reason) => setError(authMessage(reason)));
-    else setCloudReady(false);
-  }), [bootstrap]);
+  const bootstrap = useCallback(async (current: User) => {
+    if (bootstrapInFlight.current?.uid === current.uid) return bootstrapInFlight.current.promise;
+    setCloudReady(false);
+    const started = performance.now();
+    const run = (async () => {
+    let token: string;
+    try {
+      token = await current.getIdToken(false);
+    } catch (reason) {
+      const code = typeof reason === "object" && reason && "code" in reason ? String(reason.code) : "";
+      if (code.includes("user-token-expired") || code.includes("invalid-user-token") || code.includes("user-disabled")) {
+        await firebaseSignOut(firebaseAuth);
+        throw new Error("Je oude sessie is verwijderd. Log opnieuw in om verder te gaan.");
+      }
+      throw reason;
+    }
+    const send = async (value: string) => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 12_000);
+      try { return await fetch("/api/session/bootstrap", { method: "POST", headers: { Authorization: `Bearer ${value}` }, signal: controller.signal, cache: "no-store" }); }
+      finally { window.clearTimeout(timeout); }
+    };
+    const verifiedSend = (value: string) => withBoundedRetry(async () => {
+      const candidate = await send(value);
+      if (candidate.status >= 500) throw new Error("De cloudsessie reageert tijdelijk niet.");
+      return candidate;
+    }, { attempts: 2, delays: [500] });
+    let response = await verifiedSend(token);
+    if (response.status === 401) {
+      token = await current.getIdToken(true);
+      response = await verifiedSend(token);
+      if (response.status === 401) {
+        await firebaseSignOut(firebaseAuth);
+        throw new Error("Je oude sessie is verwijderd. Log opnieuw in om verder te gaan.");
+      }
+    }
+    if (!response.ok) throw new Error("De persoonlijke cloudsessie kon niet worden gecontroleerd.");
+    setCloudReady(true);
+    console.info("[TradeMentor bootstrap timing]", { totalMs: Math.round(performance.now() - started) });
+    })().finally(() => {
+      if (bootstrapInFlight.current?.uid === current.uid) bootstrapInFlight.current = null;
+    });
+    bootstrapInFlight.current = { uid: current.uid, promise: run };
+    return run;
+  }, []);
+
+  useEffect(() => {
+    if (previewUser) { setUser(previewUser); setReady(true); bootstrap(previewUser).catch((reason) => setError(authMessage(reason))); return; }
+    let unsubscribe = () => {};
+    let active = true;
+    firebaseAuthReady
+      .then(() => {
+        if (!active) return;
+        unsubscribe = onAuthStateChanged(firebaseAuth, (current) => {
+          setUser(current);
+          setReady(true);
+          setError("");
+          if (current) bootstrap(current).catch((reason) => setError(authMessage(reason)));
+          else setCloudReady(false);
+        });
+      })
+      .catch((reason) => {
+        if (!active) return;
+        setReady(true);
+        setError(authMessage(reason));
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [bootstrap, previewUser]);
+
+  useEffect(() => {
+    const resume = () => {
+      const current = firebaseAuth.currentUser;
+      if (current && !cloudReady) bootstrap(current).catch((reason) => setError(authMessage(reason)));
+    };
+    window.addEventListener("online", resume);
+    return () => window.removeEventListener("online", resume);
+  }, [bootstrap, cloudReady]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     setError("");
     try {
+      await firebaseAuthReady;
       await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
     } catch (reason) {
       const message = authMessage(reason);
@@ -84,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(async (name: string, email: string, password: string) => {
     setError("");
     try {
+      await firebaseAuthReady;
       const result = await createUserWithEmailAndPassword(firebaseAuth, email.trim(), password);
       await updateProfile(result.user, { displayName: name.trim() });
       await sendEmailVerification(result.user);
@@ -107,16 +179,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     if (typeof window !== "undefined") {
+      const uid = firebaseAuth.currentUser?.uid;
+      if (uid) {
+        clearAsterSnapshot(window.localStorage, uid);
+        window.localStorage.removeItem(`tradementor.portfolioEquity.v2.${encodeURIComponent(uid)}`);
+      }
       window.localStorage.removeItem("tradementor.admin.credential.v2");
       window.localStorage.setItem("tradementor.activeDestination", "wallet");
     }
     await firebaseSignOut(firebaseAuth);
   }, []);
   const idToken = useCallback(async () => {
-    const current = firebaseAuth.currentUser;
+    const current = firebaseAuth.currentUser || previewUser;
     if (!current) throw new Error("Log eerst in bij TradeMentor.");
     return current.getIdToken();
-  }, []);
+  }, [previewUser]);
 
   const value = useMemo(() => ({ user, ready, cloudReady, error, signIn, register, resetPassword, signOut, idToken }), [user, ready, cloudReady, error, signIn, register, resetPassword, signOut, idToken]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
