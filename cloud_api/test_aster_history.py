@@ -108,6 +108,39 @@ def test_recent_activity_attributes_exchange_order_id_without_client_id():
     assert activity["entries"][0]["strategy"] == "Dual Harvest Adaptive Shield"
 
 
+def test_recent_activity_exit_inherits_proven_strategy_from_same_position_cycle():
+    fills = [
+        {"id":"entry-fill","orderId":"entry-order","symbol":"RAVEUSDT","positionSide":"SHORT",
+         "side":"SELL","qty":"10","price":"3","time":1_000},
+        {"id":"exit-fill","orderId":"exit-order","symbol":"RAVEUSDT","positionSide":"SHORT",
+         "side":"BUY","qty":"10","price":"2.9","realizedPnl":"1","time":2_000},
+    ]
+    activity = recent_trade_activity_from_fills(
+        fills, strategy_by_order_id={"entry-order":"Dual Harvest Adaptive Shield"},
+    )
+    assert activity["entries"][0]["strategy"] == "Dual Harvest Adaptive Shield"
+    assert activity["exits"][0]["strategy"] == "Dual Harvest Adaptive Shield"
+
+
+def test_recent_activity_does_not_inherit_across_closed_position_cycles():
+    fills = [
+        {"id":"old-entry","orderId":"old-order","symbol":"LINKUSDT","positionSide":"LONG",
+         "side":"BUY","qty":"2","price":"10","time":1_000},
+        {"id":"old-exit","orderId":"old-exit-order","symbol":"LINKUSDT","positionSide":"LONG",
+         "side":"SELL","qty":"2","price":"11","time":2_000},
+        {"id":"manual-entry","orderId":"manual-order","symbol":"LINKUSDT","positionSide":"LONG",
+         "side":"BUY","qty":"1","price":"12","time":3_000},
+        {"id":"manual-exit","orderId":"manual-exit-order","symbol":"LINKUSDT","positionSide":"LONG",
+         "side":"SELL","qty":"1","price":"13","time":4_000},
+    ]
+    activity = recent_trade_activity_from_fills(
+        fills, strategy_by_order_id={"old-order":"Dual Harvest Adaptive Shield"},
+    )
+    newest_exit, old_exit = activity["exits"]
+    assert newest_exit["strategy"] == "Niet aan strategie gekoppeld"
+    assert old_exit["strategy"] == "Dual Harvest Adaptive Shield"
+
+
 def test_recent_activity_is_newest_first_even_when_aster_returns_shuffled_fills():
     fills = [
         {"id":"entry-middle","orderId":"2","symbol":"ETHUSDT","positionSide":"LONG","side":"BUY","qty":"1","price":"20","time":2_000},
