@@ -30,10 +30,18 @@ class Strategy3ExecutionContext:
     confirm: bool
     live_gate_open: bool
     strategy_id: str = STRATEGY3_ID
+    tick_id: str = ""
+    action_id: str = ""
 
 
 def _prefix(context: Strategy3ExecutionContext, decision: Decision) -> str:
-    raw = f"s3-{context.strategy_id}-{context.cycle_id}-v{context.config_version}-{decision.kind.lower()}"
+    # action_id includes the action generation (DCA number / entry slot), so a
+    # retry keeps exactly the same exchange id while a later legitimate DCA in
+    # the same position cycle cannot replay an earlier order.
+    raw = "-".join(filter(None, (
+        "s3", context.strategy_id, context.cycle_id, f"v{context.config_version}",
+        decision.kind.lower(), context.action_id,
+    )))
     return raw if len(raw) <= 22 else f"s3-{hashlib.sha256(raw.encode()).hexdigest()[:12]}"
 
 

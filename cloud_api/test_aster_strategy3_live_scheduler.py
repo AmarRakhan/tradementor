@@ -25,7 +25,9 @@ def test_dedicated_scheduler_is_strategy3_only() -> None:
 def test_dedicated_scheduler_clears_rapid_build_requests() -> None:
     block = _dedicated_strategy3_scheduler_source()
     assert '"rapidBuildRequested": False' in block
-    assert "normal one-action ticks only" in block
+    assert "volledige veilige werkvoorraad" in block
+    assert "one-action" not in block
+    assert "_acquire_strategy3_tick_lease" in block
 
 
 def test_readiness_rearm_preserves_isolated_runtime_boundaries() -> None:
@@ -47,3 +49,26 @@ def test_readiness_rearm_preserves_isolated_runtime_boundaries() -> None:
     assert "client.all_orders(probe_symbol,limit=1)" in source
     assert "client.user_trades(probe_symbol,limit=5)" in source
     assert "client.income_history(limit=50)" in source
+
+
+def test_deployment_contract_keeps_exact_one_minute_cadence() -> None:
+    workflow = Path(__file__).parents[1].joinpath(
+        ".github/workflows/deploy-cloud-strategy3-live.yml"
+    ).read_text(encoding="utf-8")
+    assert '--schedule "* * * * *"' in workflow
+    assert 'assert job["schedule"] == "* * * * *"' in workflow
+
+
+def test_full_tick_status_and_backlog_contract_is_persisted() -> None:
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    driver = source[source.index("def _run_aster_strategy3_tick("):source.index("def aster_strategy2_public(")]
+    for field in (
+        "tickId","startedAt","endedAt","positionsAssessed","plannedActions",
+        "executedProtectionActions","executedTpClosures","executedDcas","newEntries",
+        "definitiveRejections","uncertainActions","remainingBacklog","longCount",
+        "shortCount","activePositions","maximumPositions","marginRatio",
+        "strategyBudgetUsed","lastSuccessfulReconciliation","blockReason",
+    ):
+        assert f'"{field}"' in driver
+    assert "while time.monotonic()<deadline" in driver
+    assert "range(10)" not in driver and "actions[:10]" not in driver

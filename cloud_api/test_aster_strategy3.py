@@ -16,6 +16,9 @@ def test_normal_both_sides_are_profit_harvesters():
 def test_protection_outranks_profit_and_is_dynamic():
     result=decide(cfg(),leg(unrealized_pnl=3),port(margin_ratio=.6,short_exposure=500))
     assert result.kind in {"PARTIAL_TP","ASSIGN_PROTECTION"} and result.retain_notional>0
+def test_already_assigned_protection_does_not_repeat_forever():
+    result=decide(cfg(),leg(unrealized_pnl=3,role="PROTECTION"),port(margin_ratio=.6,short_exposure=500))
+    assert result.kind=="HOLD"
 def test_trailing_defaults_off_and_can_be_armed():
     assert not cfg().trailing_enabled
     result=decide(cfg(trailing_enabled=True),leg(unrealized_pnl=2),port())

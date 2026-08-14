@@ -84,6 +84,7 @@ from aster_strategy3_simulation import standard_suite as strategy3_standard_suit
 from aster_strategy3_readiness import build_strategy3_readiness_report
 from aster_strategy3_execution import Strategy3ExecutionContext, execute_strategy3_decision
 from aster_strategy3_status import strategy3_position_tp_contract
+from aster_strategy3_workqueue import Strategy3Action
 from aster_rapid_build import run_confirmed_batch
 from aster_strategy2_execution import ExecutionContext, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
@@ -1043,6 +1044,47 @@ def _record_aster_order_attribution(ref: Any, result: dict[str, Any], *, strateg
     ref.set({"orderAttributions":rows[-2000:]}, merge=True)
 
 
+def _claim_strategy3_action(ref: Any, action: Strategy3Action) -> str:
+    """Atomically claim one action and its per-symbol/side execution lock."""
+    action_ref=ref.collection("actionIntents").document(action.action_id)
+    lock_id=hashlib.sha256(action.lock_key.encode("utf-8")).hexdigest()[:24]
+    lock_ref=ref.collection("executionLocks").document(lock_id)
+    transaction=db.transaction()
+
+    @firestore.transactional
+    def claim(txn) -> str:
+        existing=action_ref.get(transaction=txn).to_dict() or {}
+        status=str(existing.get("status","")).lower()
+        if status in {"confirmed","rejected"}:return status
+        if status in {"submitting","uncertain"}:return "uncertain"
+        lock=lock_ref.get(transaction=txn).to_dict() or {}
+        if bool(lock.get("active")) and str(lock.get("actionId",""))!=action.action_id:
+            return "lock-busy"
+        now=datetime.now(timezone.utc)
+        txn.set(action_ref,{**action.public_dict(),"strategyId":"aster-strategy-3",
+            "engineType":"strategy3","status":"submitting","startedAt":now})
+        txn.set(lock_ref,{"active":True,"actionId":action.action_id,"tickId":action.tick_id,
+            "lockKey":action.lock_key,"updatedAt":now})
+        return "claimed"
+
+    return claim(transaction)
+
+
+def _finish_strategy3_action(ref: Any, action: Strategy3Action, status: str, *,
+                             reason: str="", result: dict[str,Any]|None=None) -> None:
+    """Persist the terminal/uncertain action state before later work begins."""
+    action_ref=ref.collection("actionIntents").document(action.action_id)
+    lock_id=hashlib.sha256(action.lock_key.encode("utf-8")).hexdigest()[:24]
+    payload={"status":status,"reason":reason,"updatedAt":datetime.now(timezone.utc)}
+    if result is not None:payload["exchangeResult"]=result
+    action_ref.set(payload,merge=True)
+    # An uncertain action deliberately retains the lock until a later
+    # reconciliation proves its exchange outcome.
+    if status in {"confirmed","rejected"}:
+        ref.collection("executionLocks").document(lock_id).set({"active":False,
+            "actionId":action.action_id,"updatedAt":datetime.now(timezone.utc)},merge=True)
+
+
 def _configured_universe_contract(raw: dict[str, Any], requested_top_n: int) -> dict[str, Any]:
     stored = raw.get("universe") if isinstance(raw.get("universe"), dict) else None
     if stored and int(safe_float(stored.get("requestedTopN"))) == requested_top_n:
@@ -1151,8 +1193,8 @@ def _aster_owned_keys(uid: str) -> tuple[set[tuple[str, str]], set[tuple[str, st
     return s1,s2
 
 
-def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
-    """One fail-closed S3 tick; the exchange remains source of truth."""
+def _run_aster_strategy3_single_action_tick(uid:str,*,dry_run:bool=False,tick_id:str="",reconcile_only:bool=False)->dict[str,Any]:
+    """Execute at most one S3 action for the full-tick work-queue driver."""
     ref=aster_strategy3_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     persisted_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     canary_doc=ref.collection("canaries").document("s3-open-fill-close-v1").get().to_dict() or {}
@@ -1243,14 +1285,33 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         "longExposure":long_exp,"shortExposure":short_exp,"strategyMargin":strategy_margin,"activeTrades":len(owned),"capturedAt":now}
     snapshot["accountActivePositions"] = len(active_keys)
     ref.set({"accountSnapshot":snapshot,"adjustedHighWaterMark":hwm,"ownedLegs":[owned_to_mapping(x) for x in owned],"unassignedPositions":0,"lastTickAt":now},merge=True)
+    if reconcile_only:
+        return {"status":"reconciled","action":"HOLD","tickId":tick_id,"ordersSent":0,
+            "positionsAssessed":len(s3_positions),"activePositions":len(active_keys),
+            "longCount":sum(1 for _,side in active_keys if side=="LONG"),
+            "shortCount":sum(1 for _,side in active_keys if side=="SHORT"),
+            "marginRatio":portfolio.margin_ratio,"strategyMargin":strategy_margin,"equity":equity}
     if selected:
         _,leg,state,decision=selected;key=f"{leg.symbol}|{leg.side}"
+        generation=leg.dca_count+1 if decision.kind=="ADD_DCA" else leg.dca_count
+        action=Strategy3Action(decision.kind,leg.symbol,leg.side,leg.cycle_id,settings.version,
+            generation,decision.notional,decision.reason,tick_id)
+        if dry_run:
+            return {"status":"simulated","action":decision.kind,"actionId":action.action_id,
+                "tickId":tick_id,"ordersSent":0,"reason":decision.reason}
         if decision.kind=="ASSIGN_PROTECTION":
+            claim=_claim_strategy3_action(ref,action)
+            if claim in {"uncertain","lock-busy"}:
+                return {"status":"uncertain","action":decision.kind,"actionId":action.action_id,"tickId":tick_id,
+                    "reason":"Protection-lock is nog niet gereconcilieerd","ordersSent":0}
             owned=[replace(x,role="PROTECTION") if x==leg else x for x in owned]
-            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,"phase":"PROTECTION","lastReason":decision.reason},merge=True)
-            return {"status":"ok","action":decision.kind,"ordersSent":0}
+            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,"phase":"PROTECTION","lastReason":decision.reason,
+                "currentAction":action.public_dict()},merge=True)
+            _finish_strategy3_action(ref,action,"confirmed",reason=decision.reason)
+            return {"status":"ok","action":decision.kind,"actionId":action.action_id,"tickId":tick_id,"ordersSent":0}
         if decision.kind=="ADD_DCA" and (not enabled or portfolio.margin_ratio>=settings.defensive_margin_ratio):
             return {"status":"waiting","action":"HOLD","reason":"DCA geblokkeerd door stop- of risicomodus","ordersSent":0}
+        claimed_action=False
         try:
             row=posmap[(leg.symbol,leg.side)];mark=safe_float(row.get("markPrice"));qty=abs(Decimal(str(row.get("positionAmt"))))
             plan=PairExecutionPlan(leg.symbol,qty,qty*Decimal(str(mark)),max(1,int(safe_float(row.get("leverage")))))
@@ -1258,8 +1319,18 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 info={str(x.get("symbol","")).upper():x for x in client.public_exchange_info().get("symbols",[])}
                 plan=plan_aster_pair(info[leg.symbol],planning_brackets(client,client.leverage_brackets(),leg.symbol,settings.leverage),mark,decision.notional)
                 plan=replace(plan,leverage=configure_maximum_usable_leverage(client,replace(plan,leverage=min(plan.leverage,settings.leverage))))
-            if dry_run or not live:return {"status":"simulated","action":decision.kind,"ordersSent":0,"reason":decision.reason}
-            context=Strategy3ExecutionContext(leg.cycle_id,settings.version,leg,True,True,gates)
+            if dry_run or not live:return {"status":"simulated","action":decision.kind,"actionId":action.action_id,"tickId":tick_id,"ordersSent":0,"reason":decision.reason}
+            claim=_claim_strategy3_action(ref,action)
+            if claim in {"uncertain","lock-busy"}:
+                return {"status":"uncertain","action":decision.kind,"actionId":action.action_id,"tickId":tick_id,
+                    "reason":"Bestaande Strategy-3-actie of symbol-side-lock is nog niet gereconcilieerd","ordersSent":0}
+            if claim=="confirmed":
+                return {"status":"replayed","action":decision.kind,"actionId":action.action_id,"tickId":tick_id,"ordersSent":0}
+            if claim=="rejected":
+                return {"status":"rejected","action":decision.kind,"actionId":action.action_id,"tickId":tick_id,"ordersSent":0}
+            claimed_action=True
+            context=Strategy3ExecutionContext(leg.cycle_id,settings.version,leg,True,True,gates,
+                tick_id=tick_id,action_id=action.action_id)
             result=execute_strategy3_decision(client,decision,plan,context,risk_approved=lambda margin:
                 portfolio.margin_ratio<settings.defensive_margin_ratio and strategy_margin+margin<=equity*settings.strategy_budget)
         except Exception as exc:
@@ -1268,7 +1339,12 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             # therefore safe to cool down only this action and let subsequent
             # rapid-build ticks consider other free contracts.  Unknown order
             # outcomes and every risk-reducing close still fail closed.
+            if claimed_action and isinstance(exc,ValueError):
+                _finish_strategy3_action(ref,action,"rejected",reason=str(exc))
+                return {"status":"rejected","action":decision.kind,"symbol":leg.symbol,"side":leg.side,
+                    "actionId":action.action_id,"tickId":tick_id,"ordersSent":0,"reason":str(exc)}
             if decision.kind!="ADD_DCA" or not is_definite_contract_rejection(exc):
+                if live and claimed_action:_finish_strategy3_action(ref,action,"uncertain",reason=str(exc))
                 raise
             cooldown_key=f"{key}|ADD_DCA"
             action_cooldowns[cooldown_key]=now_ms+30*60*1000
@@ -1276,9 +1352,10 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             ref.set({"actionCooldowns":action_cooldowns,"trailingPeaks":peaks,"phase":"RUNNING",
                 "lastReason":reason,"lastTickAt":now},merge=True)
             ref.collection("audit").add({"event":"DCA_CONTRACT_REJECTION_SKIPPED","symbol":leg.symbol,
-                "side":leg.side,"cycleId":leg.cycle_id,"reason":str(exc),"timestamp":now})
+                "side":leg.side,"cycleId":leg.cycle_id,"actionId":action.action_id,"tickId":tick_id,"reason":str(exc),"timestamp":now})
+            if live:_finish_strategy3_action(ref,action,"rejected",reason=str(exc))
             return {"status":"ok","action":"DCA_SKIPPED","symbol":leg.symbol,"side":leg.side,
-                "ordersSent":0,"reason":reason}
+                "actionId":action.action_id,"tickId":tick_id,"ordersSent":0,"reason":reason}
         rr=result[0].get("result",{});filled=safe_float(rr.get("executedQty")) or float(plan.quantity);price=safe_float(rr.get("avgPrice")) or mark
         _record_aster_order_attribution(ref,rr,strategy_id="aster-strategy-3",
             strategy_name=str(settings.name or "Strategy 3"),cycle_id=leg.cycle_id,
@@ -1290,9 +1367,16 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             remaining=max(0,leg.quantity-filled);owned=[replace(x,quantity=remaining,role=decision.role) if x==leg and remaining>1e-12 else x for x in owned if x!=leg or remaining>1e-12]
             peaks.pop(key,None)
         ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,
-            "actionCooldowns":action_cooldowns,"phase":"RUNNING","lastReason":decision.reason,"updatedAt":now},merge=True)
-        ref.collection("audit").add({"event":decision.kind,"symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,"timestamp":now})
-        return {"status":"ok","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":len(result)}
+            "actionCooldowns":action_cooldowns,"phase":"RUNNING","lastReason":decision.reason,
+            "currentAction":action.public_dict(),"updatedAt":now},merge=True)
+        partial=bool(rr.get("partialFillRequiresReconciliation"))
+        _finish_strategy3_action(ref,action,"uncertain" if partial else "confirmed",
+            reason="Partial fill vereist exchange-reconciliation" if partial else decision.reason,result=rr)
+        ref.collection("audit").add({"event":decision.kind,"symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,
+            "actionId":action.action_id,"tickId":tick_id,"partial":partial,"timestamp":now})
+        return {"status":"uncertain" if partial else "ok","action":decision.kind,"symbol":leg.symbol,"side":leg.side,
+            "actionId":action.action_id,"tickId":tick_id,"partial":partial,"ordersSent":len(result),
+            "reason":"Partial fill vereist exchange-reconciliation" if partial else decision.reason}
     if not enabled:
         ref.set({"trailingPeaks":peaks,"phase":"PROTECTIVE_ONLY","lastReason":"Strategy 3 staat veilig gestopt"},merge=True)
         return {"status":"waiting","action":"HOLD","ordersSent":0,"reason":"Strategy 3 staat veilig gestopt"}
@@ -1340,11 +1424,22 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         return {"status":"simulated","action":"OPEN_BASE","side":side,"candidates":len(candidates),"ordersSent":0,"reason":reason}
     failures=[]
     for symbol in candidates:
+        action=None
         try:
             plan=plan_aster_pair(info[symbol],planning_brackets(client,brackets,symbol,settings.leverage),prices[symbol],settings.base_notional)
             plan=replace(plan,leverage=configure_maximum_usable_leverage(client,replace(plan,leverage=min(plan.leverage,settings.leverage))))
-            cycle=f"s3c{int(time.time()*1000)}";decision=Strategy3Decision("OPEN_BASE",side,notional=settings.base_notional,reason="Gebalanceerde Strategy-3-entry")
-            result=execute_strategy3_decision(client,decision,plan,Strategy3ExecutionContext(cycle,settings.version,None,True,True,gates),
+            cycle=f"s3c-{tick_id}-{len(active_keys)+1}-{symbol}-{side}"
+            decision=Strategy3Decision("OPEN_BASE",side,notional=settings.base_notional,reason="Gebalanceerde Strategy-3-entry")
+            action=Strategy3Action("OPEN_BASE",symbol,side,cycle,settings.version,len(active_keys)+1,
+                settings.base_notional,decision.reason,tick_id)
+            claim=_claim_strategy3_action(ref,action)
+            if claim in {"uncertain","lock-busy"}:
+                return {"status":"uncertain","action":"OPEN_BASE","actionId":action.action_id,"tickId":tick_id,
+                    "reason":"Bestaande Strategy-3-entry of symbol-side-lock is nog niet gereconcilieerd","ordersSent":0}
+            if claim=="confirmed":continue
+            if claim=="rejected":continue
+            result=execute_strategy3_decision(client,decision,plan,
+                Strategy3ExecutionContext(cycle,settings.version,None,True,True,gates,tick_id=tick_id,action_id=action.action_id),
                 risk_approved=lambda margin:strategy_margin+margin<=equity*settings.strategy_budget)
             rr=result[0].get("result",{});qty=safe_float(rr.get("executedQty")) or float(plan.quantity);price=safe_float(rr.get("avgPrice")) or prices[symbol]
             _record_aster_order_attribution(ref,rr,strategy_id="aster-strategy-3",
@@ -1352,21 +1447,161 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 config_version=settings.version,symbol=symbol,side=side,action="OPEN_BASE")
             owned.append(OwnedLeg("aster-strategy-3","strategy3",symbol,side,cycle,settings.version,qty,price,0,"HARVEST",
                 (str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000),last_order_at_ms=int(time.time()*1000)))
-            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,"phase":"RUNNING","lastReason":f"{symbol} {side} bevestigd","updatedAt":now},merge=True)
-            ref.collection("audit").add({"event":"INITIAL_OPEN_LEG","strategyId":"aster-strategy-3","symbol":symbol,"side":side,"cycleId":cycle,"configVersion":settings.version,"timestamp":now})
-            return {"status":"ok","action":"OPEN_BASE","symbol":symbol,"side":side,"ordersSent":1}
+            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,"phase":"RUNNING",
+                "lastReason":f"{symbol} {side} bevestigd","currentAction":action.public_dict(),"updatedAt":now},merge=True)
+            partial=bool(rr.get("partialFillRequiresReconciliation"))
+            _finish_strategy3_action(ref,action,"uncertain" if partial else "confirmed",
+                reason="Partial fill vereist exchange-reconciliation" if partial else decision.reason,result=rr)
+            ref.collection("audit").add({"event":"INITIAL_OPEN_LEG","strategyId":"aster-strategy-3","symbol":symbol,"side":side,
+                "cycleId":cycle,"configVersion":settings.version,"actionId":action.action_id,"tickId":tick_id,
+                "partial":partial,"timestamp":now})
+            return {"status":"uncertain" if partial else "ok","action":"OPEN_BASE","symbol":symbol,"side":side,
+                "actionId":action.action_id,"tickId":tick_id,"partial":partial,"ordersSent":1,
+                "reason":"Partial fill vereist exchange-reconciliation" if partial else decision.reason}
         except ValueError as exc:
             # Contract minimum/step-size validation is deterministic and happens
             # before order submission. Never raise the user's configured amount;
             # skip this contract and continue with the next eligible candidate.
+            if action is not None:_finish_strategy3_action(ref,action,"rejected",reason=str(exc))
             failures.append(f"{symbol}: {exc}")
             continue
         except Exception as exc:
-            if not is_definite_contract_rejection(exc):raise
+            if not is_definite_contract_rejection(exc):
+                if action is not None:_finish_strategy3_action(ref,action,"uncertain",reason=str(exc))
+                raise
+            if action is not None:_finish_strategy3_action(ref,action,"rejected",reason=str(exc))
             failures.append(f"{symbol}: {exc}")
     reason="; ".join(failures[:3]) or "Geen geldig vrij contract"
     ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now},merge=True)
     return {"status":"waiting","action":"OPEN_BASE","ordersSent":0,"reason":reason}
+
+
+def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
+    """Drain Strategy 3's complete finite workload inside one minute tick.
+
+    There is intentionally no action-count ceiling.  Every iteration starts
+    with authoritative reconciliation, and the loop stops only for a genuine
+    safety condition, an uncertain result, or the reserved final-reconcile
+    time.  Unfinished work is persisted for the next scheduler minute.
+    """
+    started=datetime.now(timezone.utc);started_monotonic=time.monotonic()
+    tick_id=_strategy3_tick_id(uid,started)
+    ref=aster_strategy3_reference(uid);initial=ref.get().to_dict() or {}
+    prior_backlog=initial.get("remainingBacklog") if isinstance(initial.get("remainingBacklog"),list) else []
+    try:configured_budget=float(os.getenv("ASTER_STRATEGY3_TICK_BUDGET_SECONDS","48"))
+    except ValueError:configured_budget=48.0
+    try:pacing_ms=float(os.getenv("ASTER_STRATEGY3_ACTION_PACING_MS","75"))
+    except ValueError:pacing_ms=75.0
+    pacing_seconds=min(1.0,max(0.0,pacing_ms/1000.0))
+    # A time reserve is a real Cloud Run safety boundary, not an action limit.
+    work_seconds=min(55.0,max(5.0,configured_budget));final_reserve=min(5.0,max(1.0,work_seconds*.10))
+    deadline=started_monotonic+work_seconds-final_reserve
+    planned={"protection":0,"tp":0,"dca":0,"entry":0}
+    protection=tp=dca=entries=rejected=uncertain=orders_sent=0
+    executed=[];seen_action_ids=set();block_reason="";backlog=[];last={}
+
+    while time.monotonic()<deadline:
+        try:last=_run_aster_strategy3_single_action_tick(uid,dry_run=dry_run,tick_id=tick_id)
+        except Exception as exc:
+            uncertain+=1;block_reason=f"Onzekere Strategy-3-uitvoering; eerst exchange-reconciliation: {exc}"
+            backlog=[{"tickId":tick_id,"kind":"RESUME_RECONCILIATION","priority":1,"reason":block_reason}]
+            break
+        status=str(last.get("status","")).lower();kind=str(last.get("action","HOLD")).upper()
+        action_id=str(last.get("actionId",""))
+        if action_id:
+            if action_id in seen_action_ids:
+                block_reason="Dezelfde deterministische actie bleef na uitvoering zichtbaar; reconciliation vereist"
+                backlog=[{"tickId":tick_id,"actionId":action_id,"kind":kind,"priority":1,"reason":block_reason}]
+                break
+            seen_action_ids.add(action_id)
+        orders_sent+=int(safe_float(last.get("ordersSent")))
+        if kind=="ASSIGN_PROTECTION":planned["protection"]+=1
+        elif kind in {"PARTIAL_TP","TRAILING_TP","FULL_TP"}:planned["tp"]+=1
+        elif kind in {"ADD_DCA","DCA_SKIPPED"}:planned["dca"]+=1
+        elif kind=="OPEN_BASE":planned["entry"]+=1
+
+        if status=="simulated":
+            # Paper mode proves planning and zero live submissions; it must not
+            # repeatedly plan the same immutable action in one call.
+            break
+        if status in {"uncertain","data-hold","reconciling","blocked"}:
+            uncertain+=1 if status=="uncertain" else 0
+            block_reason=str(last.get("reason","Exchange-state is niet betrouwbaar genoeg voor vervolg"))
+            backlog=[{"tickId":tick_id,"actionId":action_id,"kind":"RESUME_RECONCILIATION",
+                "priority":1,"reason":block_reason}]
+            break
+        if kind=="DCA_SKIPPED":
+            rejected+=1;executed.append({**last,"outcome":"rejected"});continue
+        if status=="rejected":
+            rejected+=1;executed.append({**last,"outcome":"rejected"});continue
+        if status=="replayed":
+            block_reason="Eerder bevestigde actie is veilig herkend; actuele positie moet eerst opnieuw worden gereconcilieerd"
+            backlog=[{"tickId":tick_id,"actionId":action_id,"kind":"RESUME_RECONCILIATION",
+                "priority":1,"reason":block_reason}]
+            break
+        if status=="ok" and kind!="HOLD":
+            executed.append(last)
+            if kind=="ASSIGN_PROTECTION":protection+=1
+            elif kind in {"PARTIAL_TP","TRAILING_TP","FULL_TP"}:tp+=1
+            elif kind=="ADD_DCA":dca+=1
+            elif kind=="OPEN_BASE":entries+=1
+            if pacing_seconds and not dry_run:time.sleep(pacing_seconds)
+            continue
+        # waiting/stopped/HOLD means the freshly reconciled finite workload is
+        # empty or a real risk/budget boundary has been reached.
+        block_reason=str(last.get("reason",""))
+        if status=="waiting" and any(marker in block_reason.lower() for marker in (
+            "geblokkeerd","risicobudget","onvoldoende margin","geen geldig vrij contract",
+        )):
+            backlog=[{"tickId":tick_id,"kind":"RESUME_FULL_TICK","priority":2,"reason":block_reason}]
+        break
+    else:
+        block_reason="Veilige ticklooptijd is opgebruikt; werkvoorraad wordt volgende minuut hervat"
+        backlog=[{"tickId":tick_id,"kind":"RESUME_FULL_TICK","priority":1,"reason":block_reason}]
+
+    if time.monotonic()>=deadline and not backlog:
+        block_reason="Veilige ticklooptijd is opgebruikt; werkvoorraad wordt volgende minuut hervat"
+        backlog=[{"tickId":tick_id,"kind":"RESUME_FULL_TICK","priority":1,"reason":block_reason}]
+
+    final={}
+    try:
+        final=_run_aster_strategy3_single_action_tick(uid,dry_run=True,tick_id=tick_id,reconcile_only=True)
+    except Exception as exc:
+        if not block_reason:block_reason=f"Eindreconciliatie niet betrouwbaar: {exc}"
+        if not backlog:backlog=[{"tickId":tick_id,"kind":"RESUME_RECONCILIATION","priority":1,"reason":block_reason}]
+
+    latest=ref.get().to_dict() or {};snapshot=latest.get("accountSnapshot") if isinstance(latest.get("accountSnapshot"),dict) else {}
+    settings=latest.get("settings") if isinstance(latest.get("settings"),dict) else {}
+    maximum=int(safe_float(settings.get("maximumPositions"))) or 20
+    equity=safe_float(snapshot.get("equity"));strategy_margin=safe_float(snapshot.get("strategyMargin"))
+    long_count=int(safe_float(final.get("longCount")))
+    short_count=int(safe_float(final.get("shortCount")))
+    active=int(safe_float(final.get("activePositions",snapshot.get("accountActivePositions"))))
+    finished=datetime.now(timezone.utc)
+    completed=not backlog and not uncertain
+    status_contract={
+        "tickId":tick_id,"startedAt":started,"endedAt":finished,
+        "positionsAssessed":int(safe_float(final.get("positionsAssessed"))),
+        "plannedActions":planned,"executedProtectionActions":protection,
+        "executedTpClosures":tp,"executedDcas":dca,"newEntries":entries,
+        "definitiveRejections":rejected,"uncertainActions":uncertain,
+        "ordersSent":orders_sent,"remainingBacklog":backlog,
+        "resumedBacklogCount":len(prior_backlog),"longCount":long_count,"shortCount":short_count,
+        "activePositions":active,"maximumPositions":maximum,
+        "marginRatio":safe_float(snapshot.get("marginRatio")),
+        "strategyBudgetUsed":strategy_margin/equity if equity>0 else None,
+        "lastSuccessfulReconciliation":finished if final.get("status")=="reconciled" else latest.get("lastSuccessfulReconciliation"),
+        "complete":completed,"stale":final.get("status")!="reconciled",
+        "blockReason":block_reason if not completed or block_reason else "",
+    }
+    ref.set({"lastTickStatus":status_contract,"remainingBacklog":backlog,
+        "lastSuccessfulReconciliation":status_contract["lastSuccessfulReconciliation"],
+        "phase":"UNCERTAIN" if uncertain else "BACKLOG" if backlog else latest.get("phase","RUNNING"),
+        "lastReason":status_contract["blockReason"] or f"Tick {tick_id}: volledige werkvoorraad verwerkt",
+        "lastTickAt":finished},merge=True)
+    return {"status":"simulated" if dry_run else "ok" if completed else "backlog",
+        "tickStatus":status_contract,"actions":executed,"ordersSent":orders_sent,
+        "reason":status_contract["blockReason"]}
 
 
 def aster_strategy2_public(uid: str) -> dict[str, Any]:
@@ -4828,6 +5063,27 @@ def _acquire_mexc_automation_lease(reference) -> bool:
     return acquire(transaction)
 
 
+def _strategy3_tick_id(uid:str,now:datetime|None=None)->str:
+    current=now or datetime.now(timezone.utc)
+    return f"s3t-{current.strftime('%Y%m%dT%H%MZ')}-{hashlib.sha256(uid.encode('utf-8')).hexdigest()[:8]}"
+
+
+def _acquire_strategy3_tick_lease(reference,tick_id:str)->bool:
+    """Block overlapping/retried scheduler calls for the same account."""
+    transaction=db.transaction()
+
+    @firestore.transactional
+    def acquire(txn)->bool:
+        value=reference.get(transaction=txn).to_dict() or {};now=datetime.now(timezone.utc)
+        lease=value.get("leaseUntil")
+        if isinstance(lease,datetime) and lease>now:return False
+        txn.set(reference,{"leaseUntil":now+timedelta(minutes=3),"leaseOwnerTickId":tick_id,
+            "leaseAcquiredAt":now},merge=True)
+        return True
+
+    return acquire(transaction)
+
+
 @app.post("/internal/mexc-automation/tick")
 def run_mexc_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_cloud_request(authorization)
@@ -4902,7 +5158,7 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
 
 @app.post("/internal/aster-strategy3/tick")
 def run_aster_strategy3_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    """Run only the normal Strategy-3 loop; rapid build and other engines stay isolated."""
+    """Run only Strategy 3's complete finite work queue; other engines stay isolated."""
     verify_internal_cloud_request(authorization)
     live_gates = (
         os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true"
@@ -4916,7 +5172,8 @@ def run_aster_strategy3_scheduler(authorization: str | None = Header(default=Non
     strategy3_results = []
     for item in controls[:100]:
         reference = aster_strategy3_reference(item.id)
-        if not _acquire_mexc_automation_lease(reference):
+        tick_id=_strategy3_tick_id(item.id)
+        if not _acquire_strategy3_tick_lease(reference,tick_id):
             strategy3_results.append({"uid": item.id, "status": "lease-busy"})
             continue
         try:
@@ -4924,7 +5181,7 @@ def run_aster_strategy3_scheduler(authorization: str | None = Header(default=Non
             if bool(state.get("rapidBuildRequested")):
                 reference.set({
                     "rapidBuildRequested": False,
-                    "rapidBuildBlockedReason": "Dedicated live scheduler allows normal one-action ticks only",
+                    "rapidBuildBlockedReason": "De gewone minuut-tick verwerkt nu zelf de volledige veilige werkvoorraad",
                     "updatedAt": datetime.now(timezone.utc),
                 }, merge=True)
             strategy3_results.append({"uid": item.id, **_run_aster_strategy3_tick(item.id)})

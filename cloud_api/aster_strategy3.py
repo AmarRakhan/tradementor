@@ -211,6 +211,8 @@ def decide(config: Strategy3Config, leg: LegState, portfolio: PortfolioState, cl
     result = net_return(leg, close_fee)
     retain = min(leg.size, protection_required(config, portfolio, leg.side))
     # Protection always outranks fixed TP and trailing.
+    if retain >= leg.size - 1e-9 and result >= config.take_profit and leg.role == "PROTECTION":
+        return Decision("HOLD", leg.side, role=leg.role, reason=f"{mode}: bewezen beschermingsleg blijft behouden")
     if retain >= leg.size - 1e-9 and result >= config.take_profit:
         return Decision("ASSIGN_PROTECTION", leg.side, retain_notional=leg.size, role="PROTECTION", reason=f"Winstdoel bereikt, maar {mode} vereist volledige bescherming")
     if retain > 0 and result >= config.take_profit:
