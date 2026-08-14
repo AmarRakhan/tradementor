@@ -1,5 +1,6 @@
 name: Deploy isolated Strategy 3 live runtime
 # Scheduler API en scheduler-beheer zijn door de projecteigenaar vrijgegeven.
+# Strategy 3 accepteert uitsluitend Firebase ID-tokens van maximaal tien minuten oud.
 
 on:
   workflow_dispatch:
