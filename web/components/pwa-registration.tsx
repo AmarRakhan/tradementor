@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-const pwaVersion = "29";
+const pwaVersion = "31";
 
 export function PwaRegistration() {
   useEffect(() => {

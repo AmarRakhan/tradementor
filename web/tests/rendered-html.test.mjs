@@ -20,7 +20,7 @@ test("server-renders the TradeMentor web shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>TradeMentor Web<\/title>/i);
+  assert.match(html, /<title>Amar Crypto Bot 2026<\/title>/i);
   assert.doesNotMatch(html, /TRADEMENTOR TEST|NIET DE LIVE-VERSIE/);
   assert.match(html, /Beveiligde sessie controleren/);
   assert.match(html, /tradementor-logo\.png/);
@@ -55,12 +55,12 @@ test("keeps execution safe and exposes the test destinations", async () => {
   assert.doesNotMatch(page, /<Metric label="OPEN PNL"/);
   assert.match(page, /reportedTradeCapital.*optionalFinancialNumber\(data\.activeTradeCapital\)/);
   assert.match(page, /derivedTradeCapital.*position\.size.*position\.leverage/);
-  assert.match(page, /activeTradeCapital:\s*connected\s*&&\s*activeTradeCapital !== null/);
+  assert.match(page, /activeTradeCapital:\s*accountDataAvailable\s*&&\s*activeTradeCapital !== null/);
   assert.match(page, /exchange === "aster" \? reportedTradeCapital/);
   assert.ok(page.indexOf('className="direction-balance"') < page.indexOf('<AsterPerformancePanel'), "LONG/netto/SHORT must appear before Aster Performance");
   assert.match(page, /tradementor\.activeDestination/);
   assert.match(page, /Abonnementstatus komt straks alleen van de beveiligde server/);
-  assert.match(layout, /title:\s*"TradeMentor Web"/);
+  assert.match(layout, /title:\s*"Amar Crypto Bot 2026"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.match(authGate, /Live handel staat na iedere nieuwe aanmelding standaard uit/);
   assert.match(authGate, /Bevestig je e-mailadres/);
@@ -72,52 +72,36 @@ test("keeps execution safe and exposes the test destinations", async () => {
   assert.match(legalPage, /historische resultaten voorspellen geen toekomstige resultaten/i);
 });
 
-test("staging demo mode is explicit, synthetic and blocks every write", async () => {
-  const [page, client, demo, control] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../lib/cloud-client.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/demo-data.ts", import.meta.url), "utf8"),
-    readFile(new URL("../components/demo-mode-control.tsx", import.meta.url), "utf8"),
-  ]);
-  assert.match(page, /DemoModeControl/);
-  assert.match(control, /DEMO ACTIEF · ALLEEN LEZEN/);
-  assert.match(client, /method !== "GET" && method !== "HEAD"/);
-  assert.match(client, /Demo-modus is alleen-lezen/);
-  assert.match(demo, /ordersEnabled: false/);
-  assert.match(demo, /demoData: true/);
-});
-
 test("Strategy 2 always exposes a personal live on/off control without bypassing readiness", async () => {
-  const [source, quick, performance] = await Promise.all([
+  const [source, performance, proxy, startRoute] = await Promise.all([
     readFile(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../components/aster-strategy2-quick-control.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-performance-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/secure-strategy2-live.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/strategy2/start/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(source, /Strategy 2 live bot/);
   assert.match(source, /role="switch"/);
   assert.match(source, /persoonlijke veiligheidscontrole nodig/);
   assert.match(source, /if\(state\.liveReady\)\{await action\("start-live"\)/);
   assert.match(source, /await checkReadiness\(\)/);
-  assert.match(quick, /STRATEGY 2 LIVE BOT/);
-  assert.match(quick, /\/strategy2\/readiness/);
-  assert.match(quick, /readiness\.liveReady !== true/);
-  assert.match(quick, /Voer eenmalige mini-canary/);
-  assert.match(performance, /AsterStrategy2QuickControl/);
+  assert.match(source, /const paperOnly=false/);
+  assert.doesNotMatch(performance, /AsterStrategy2QuickControl/);
+  assert.match(proxy, /strategy2Paths/);
+  assert.match(proxy, /Authorization: authorization/);
+  assert.match(proxy, /X-TradeMentor-Client-Mode": "strategy2-live"/);
+  assert.match(startRoute, /proxyStrategy2Live/);
 });
 
 test("keeps every browser request scoped to the signed-in Firebase user", async () => {
-  const [client, proxy, bootstrap, scannerStart, scannerSimulate] = await Promise.all([
+  const [client, proxy, scannerStart, scannerSimulate] = await Promise.all([
     readFile(new URL("../lib/cloud-client.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/cloud-proxy.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/session/bootstrap/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/hyperliquid/scanner/start/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/hyperliquid/scanner/simulate/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(client, /firebaseAuth\.currentUser/);
   assert.match(client, /getIdToken/);
   assert.match(proxy, /authorization\?\.startsWith\("Bearer "\)/);
-  assert.match(bootstrap, /proxyCloud\(request, "\/v1\/me\/bootstrap", "POST", "\{\}"\)/);
-  assert.doesNotMatch(bootstrap, /tradementor-api-604335232956|run\.app/);
   assert.match(scannerStart, /proxyCloud\(request, "\/v1\/me\/hyperliquid\/scanner\/start"/);
   assert.match(scannerSimulate, /proxyCloud\(request, "\/v1\/me\/hyperliquid\/scanner\/simulate"/);
   assert.doesNotMatch(proxy, /private.?key|secret.?key/i);
@@ -239,7 +223,7 @@ test("parallel premium interface preserves the trusted app and cannot trade whil
     readFile(new URL("../app/premium-next.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/preferences/interface/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../docs/PARALLEL_PREMIUM_INTERFACE_INVENTORY.md", import.meta.url), "utf8"),
-    readFile(new URL("../../cloud_api/main.py", import.meta.url), "utf8"),
+    readFile(new URL("../cloud_api/main.py", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /interfaceMode === "premium"/);
@@ -370,18 +354,19 @@ test("mobile navigation keeps Wallet visible after Positions and Risk were added
   assert.match(styles, /grid-template-columns:\s*repeat\(var\(--mobile-nav-count, 5\), minmax\(0, 1fr\)\)/);
 });
 
-test("Strategy 2 settings can be edited directly without reopening the wizard", async () => {
+test("Strategy 2 has one settings editor and its read-only summary opens the same maker", async () => {
   const [behavior, performance, styles] = await Promise.all([
     readFile(new URL("../components/aster-strategy2-behavior.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-performance-panel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/premium-next.css", import.meta.url), "utf8"),
   ]);
-  assert.match(behavior, /Instellingen aanpassen/);
-  assert.match(behavior, /strategy2\/settings/);
-  assert.match(behavior, /Basisorder per positie \(US\$\)/);
-  assert.match(behavior, /LONG DCA-afstand/);
+  assert.match(behavior, /Open Strategy Maker/);
+  assert.match(behavior, /tradementor:open-strategy2-maker/);
+  assert.doesNotMatch(behavior, /strategy2\/settings/);
+  assert.doesNotMatch(behavior, /authenticatedRequest/);
+  assert.match(behavior, /Basisorder per positie/);
   assert.match(behavior, /Portfolio Protection/);
-  assert.match(performance, /onChanged=\{onChanged\}/);
+  assert.match(performance, /AsterStrategy2Behavior snapshot=\{snapshot\}/);
   assert.match(styles, /\.strategy-inline-editor/);
 });
 

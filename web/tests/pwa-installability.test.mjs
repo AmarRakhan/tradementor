@@ -31,8 +31,8 @@ test("private staging fetches its manifest with the signed-in session", async ()
   const registration = await readFile(new URL("../components/pwa-registration.tsx", import.meta.url), "utf8");
   assert.match(layout, /rel="manifest"/);
   assert.match(layout, /crossOrigin="use-credentials"/);
-  assert.match(layout, /manifest\.webmanifest\?v=29/);
+  assert.match(layout, /manifest\.webmanifest\?v=31/);
   assert.doesNotMatch(layout, /manifest:\s*["']/);
   assert.match(registration, /sw\.js\?v=\$\{pwaVersion\}/);
-  assert.match(registration, /const pwaVersion = "29"/);
+  assert.match(registration, /const pwaVersion = "31"/);
 });
