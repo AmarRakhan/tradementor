@@ -118,7 +118,14 @@ def recent_trade_activity_from_fills(
     def fill_strategy(raw: dict[str, Any]) -> str:
         order_id = str(raw.get("orderId", raw.get("orderID", raw.get("id", raw.get("tradeId", "")))))
         client_order_id = str(raw.get("clientOrderId", raw.get("clientOrderID", "")))
-        strategy = fill_strategy(raw) or cycle_strategy_by_fill.get(id(raw), "")
+        strategy = strategy_by_order_id.get(order_id, "") or strategy_by_intent.get(client_order_id, "")
+        lowered = client_order_id.lower()
+        if not strategy and lowered.startswith(("s3-", "s3i-", "s3h-", "s3r-")):
+            strategy = "Strategy 3"
+        elif not strategy and lowered.startswith(("s2-", "s2i-", "s2h-", "s2r-")):
+            strategy = "Strategy 2"
+        elif not strategy and lowered.startswith(("s1-", "s1i-", "aster-")):
+            strategy = "Strategy 1"
         return strategy
 
     # Aster can omit the client-order id from a closing fill. Walk each
@@ -185,14 +192,7 @@ def recent_trade_activity_from_fills(
         increases = (side == "LONG" and order_side == "BUY") or (side == "SHORT" and order_side == "SELL")
         order_id = str(raw.get("orderId", raw.get("orderID", raw.get("id", raw.get("tradeId", "")))))
         client_order_id = str(raw.get("clientOrderId", raw.get("clientOrderID", "")))
-        strategy = strategy_by_order_id.get(order_id, "") or strategy_by_intent.get(client_order_id, "")
-        lowered = client_order_id.lower()
-        if not strategy and lowered.startswith(("s3-", "s3i-", "s3h-", "s3r-")):
-            strategy = "Strategy 3"
-        elif not strategy and lowered.startswith(("s2-", "s2i-", "s2h-", "s2r-")):
-            strategy = "Strategy 2"
-        elif not strategy and lowered.startswith(("s1-", "s1i-", "aster-")):
-            strategy = "Strategy 1"
+        strategy = fill_strategy(raw) or cycle_strategy_by_fill.get(id(raw), "")
         key = f"{symbol}|{side}|{order_side}|{order_id or timestamp}"
         row = grouped.setdefault(key, {
             "id": order_id or key, "symbol": symbol, "side": side,
