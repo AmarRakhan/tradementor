@@ -1,0 +1,133 @@
+name: One-shot disable Amar legacy strategies for exclusive Strategy 2
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/one-shot-disable-amar-legacy.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  disable:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      TARGET_EMAIL: Amar_rakhan@hotmail.com
+      EXPECTED_UID: mQpS3sbpa8eMUlkPaWUP1TabyZq1
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Disable only legacy Strategy 1 and 3 after strict proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-transfer-${GITHUB_RUN_ID: -6}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          IMAGE="$(jq -r '.spec.template.spec.containers[0].image' "$SERVICE_JSON")"
+          RUNTIME_SERVICE_ACCOUNT="$(jq -r '.spec.template.spec.serviceAccountName' "$SERVICE_JSON")"
+          test -n "$IMAGE"
+          test -n "$RUNTIME_SERVICE_ACCOUNT"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import os, time
+          from datetime import datetime, timezone
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+
+          if not firebase_admin._apps:
+              firebase_admin.initialize_app(options={"projectId": "tradementor-production"})
+          email = os.environ["TARGET_EMAIL"]
+          expected_uid = os.environ["EXPECTED_UID"]
+          user = auth.get_user_by_email(email)
+          if user.uid != expected_uid or (user.email or "").lower() != email.lower():
+              raise RuntimeError("FAIL_CLOSED_IDENTITY_MISMATCH")
+
+          db = firestore.Client(project="tradementor-amar-20260813")
+          s1_ref = db.collection("asterAutomation").document(expected_uid)
+          s2_ref = db.collection("asterStrategy2").document(expected_uid)
+          s3_ref = db.collection("asterStrategy3").document(expected_uid)
+
+          def keys(state, strategy_ids, engines):
+              out = set()
+              rows = state.get("ownedLegs") if isinstance(state.get("ownedLegs"), list) else []
+              for row in rows:
+                  if not isinstance(row, dict):
+                      continue
+                  sid = str(row.get("strategy_id", row.get("strategyId", ""))).lower()
+                  eng = str(row.get("engine_type", row.get("engineType", ""))).lower()
+                  symbol = str(row.get("symbol", "")).upper()
+                  side = str(row.get("side", "")).upper()
+                  if sid in strategy_ids and eng in engines and symbol and side in {"LONG", "SHORT"}:
+                      out.add((symbol, side))
+              return out
+
+          @firestore.transactional
+          def transfer(tx):
+              s1_snap = s1_ref.get(transaction=tx)
+              s2_snap = s2_ref.get(transaction=tx)
+              s3_snap = s3_ref.get(transaction=tx)
+              if not s2_snap.exists:
+                  raise RuntimeError("FAIL_CLOSED_NO_STRATEGY2_DOCUMENT")
+              s1 = s1_snap.to_dict() or {}
+              s2 = s2_snap.to_dict() or {}
+              s3 = s3_snap.to_dict() or {}
+              s1_keys = keys(s1, {"aster-strategy-1", "strategy_1"}, {"strategy1", "strategy_1"})
+              s2_keys = keys(s2, {"aster-strategy-2"}, {"strategy2"})
+              s3_keys = keys(s3, {"aster-strategy-3"}, {"strategy3"})
+              collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
+              required = (
+                  bool(s2.get("enabled")) and bool(s2.get("monitor"))
+                  and bool(s2.get("exclusiveOwnership"))
+                  and int(s2.get("unassignedPositions", 0) or 0) == 0
+                  and not collisions and len(s2_keys) == 68
+              )
+              if not required:
+                  raise RuntimeError("FAIL_CLOSED_OWNERSHIP_PRECONDITION")
+              now = datetime.now(timezone.utc)
+              reason = "Administratief uitgeschakeld na bewezen exclusieve Strategy-2-ownership"
+              tx.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
+                              "lastReason": reason, "updatedAt": now}, merge=True)
+              tx.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
+                              "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
+                              "lastReason": reason, "updatedAt": now}, merge=True)
+              return len(s2_keys)
+
+          owned = transfer(db.transaction())
+          print(f"ADMIN_TRANSFER_OK uid={expected_uid} strategy2Owned={owned} ordersSent=0 schedulerChanged=0 deleted=0")
+
+          deadline = time.time() + 210
+          while time.time() < deadline:
+              s2 = s2_ref.get().to_dict() or {}
+              s1 = s1_ref.get().to_dict() or {}
+              s3 = s3_ref.get().to_dict() or {}
+              legacy = bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor"))
+              phase = str(s2.get("phase", ""))
+              owned_now = len(keys(s2, {"aster-strategy-2"}, {"strategy2"}))
+              print(f"POSTCHECK phase={phase} legacyActive={int(legacy)} owned={owned_now} unassigned={int(s2.get('unassignedPositions',0) or 0)}")
+              if not legacy and phase.upper() not in {"RECONCILING", "RECOVERY", "RECOVERING"}:
+                  print("POSTCHECK_OK")
+                  return
+              time.sleep(15)
+          raise RuntimeError("POSTCHECK_TIMEOUT_FAIL_CLOSED")
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,EXPECTED_UID=$EXPECTED_UID"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+          trap - EXIT
