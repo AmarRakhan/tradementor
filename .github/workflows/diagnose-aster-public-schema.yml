@@ -1,0 +1,94 @@
+name: Diagnose public Aster market schema
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/aster-schema-probe.trigger"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fetch each public Aster market endpoint once
+        shell: python
+        run: |
+          import json
+          import urllib.request
+          from collections import Counter
+
+          def fetch(path):
+              request = urllib.request.Request(
+                  "https://fapi.asterdex.com" + path,
+                  headers={"User-Agent": "TradeMentor-schema-probe/1"},
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return json.load(response)
+
+          exchange = fetch("/fapi/v3/exchangeInfo")
+          tickers = fetch("/fapi/v3/ticker/24hr")
+          symbols = [row for row in exchange.get("symbols", []) if isinstance(row, dict)]
+          tickers = tickers if isinstance(tickers, list) else [tickers]
+          tickers = [row for row in tickers if isinstance(row, dict)]
+
+          def values(rows, *keys):
+              return Counter(str(row.get(key, "<missing>")) for row in rows for key in keys)
+
+          def positive(value):
+              try:
+                  return float(value) > 0
+              except (TypeError, ValueError):
+                  return False
+
+          def filters(row):
+              return {str(item.get("filterType", "")).upper(): item
+                      for item in row.get("filters", []) if isinstance(item, dict)}
+
+          checks = Counter()
+          for row in symbols:
+              checks["status"] += str(row.get("status", "")).upper() == "TRADING"
+              contract_type = str(row.get("contractType", row.get("type", ""))).upper()
+              checks["perpetual"] += "PERPETUAL" in contract_type
+              quote = str(row.get("quoteAsset", "")).upper()
+              settlement = str(row.get("marginAsset", row.get("settleAsset", quote))).upper()
+              checks["usdt"] += quote == "USDT" and settlement == "USDT"
+              current = filters(row)
+              price = current.get("PRICE_FILTER", {})
+              lot = current.get("LOT_SIZE", {})
+              market_lot = current.get("MARKET_LOT_SIZE", lot)
+              notional = current.get("MIN_NOTIONAL", current.get("NOTIONAL", {}))
+              checks["filters"] += all((
+                  positive(price.get("tickSize")),
+                  positive(lot.get("stepSize")),
+                  positive(market_lot.get("stepSize")),
+                  positive(notional.get("notional", notional.get("minNotional"))),
+              ))
+
+          ticker_checks = Counter()
+          for row in tickers:
+              ticker_checks["last"] += positive(row.get("lastPrice", row.get("price")))
+              ticker_checks["volume"] += positive(row.get("quoteVolume", row.get("turnover")))
+              ticker_checks["bid"] += positive(row.get("bidPrice"))
+              ticker_checks["ask"] += positive(row.get("askPrice"))
+
+          print("symbol_count", len(symbols))
+          print("ticker_count", len(tickers))
+          print("symbol_keys", sorted({key for row in symbols for key in row}))
+          print("ticker_keys", sorted({key for row in tickers for key in row}))
+          print("status_values", values(symbols, "status"))
+          print("contract_type_values", values(symbols, "contractType", "type"))
+          print("quote_values", values(symbols, "quoteAsset"))
+          print("margin_values", values(symbols, "marginAsset", "settleAsset"))
+          print("filter_types", Counter(str(item.get("filterType", ""))
+                for row in symbols for item in row.get("filters", []) if isinstance(item, dict)))
+          print("contract_checks", checks)
+          print("ticker_checks", ticker_checks)
+          print("sample_symbols", [{key: row.get(key) for key in
+                ("symbol", "status", "contractType", "type", "quoteAsset", "marginAsset", "settleAsset")}
+                for row in symbols[:3]])
