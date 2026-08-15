@@ -41,7 +41,9 @@ def test_exclusive_handoff_is_token_scoped_fail_closed_and_order_free():
     assert "and central_exclusive" in block
     assert "not collisions and unassigned == 0" in block
     assert '"enabled": False, "monitor": False' in block
+    assert 'batch.set(s2_ref, {"exclusiveOwnership": True, "updatedAt": now}, merge=True)' in block
     assert "batch.commit()" in block
+    assert '"exclusiveOwnership": True' in block
     assert '"ordersSent": 0' in block
     assert "AsterV3Client" not in block
     assert "execute_aster" not in block

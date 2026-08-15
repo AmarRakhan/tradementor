@@ -118,10 +118,11 @@ def strategy2_exclusive_handoff(
     batch = control_plane.db.batch()
     batch.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
         "lastReason": reason, "updatedAt": now}, merge=True)
+    batch.set(s2_ref, {"exclusiveOwnership": True, "updatedAt": now}, merge=True)
     batch.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
         "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE", "lastReason": reason, "updatedAt": now}, merge=True)
     batch.commit()
-    return {"completed": True, "uid": uid, "strategy2OwnedLegs": len(s2_keys),
+    return {"completed": True, "uid": uid, "strategy2OwnedLegs": len(s2_keys), "exclusiveOwnership": True,
         "ordersSent": 0, "positionsChanged": 0, "schedulerChanged": False}
 
 
