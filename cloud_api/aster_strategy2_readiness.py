@@ -20,6 +20,23 @@ class ReadinessCheck:
     message: str
 
 
+def combined_strategy_ownership(
+    *,
+    strategy1_keys: set[tuple[str, str]],
+    strategy2_keys: set[tuple[str, str]],
+    strategy3_keys: set[tuple[str, str]],
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """Return proven account ownership and any cross-strategy collision.
+
+    Strategy 2 may coexist with proven Strategy-3 positions, but it must never
+    claim or manage them. A duplicate claim remains fail-closed.
+    """
+
+    known = strategy1_keys | strategy2_keys | strategy3_keys
+    collisions = strategy3_keys & (strategy1_keys | strategy2_keys)
+    return known, collisions
+
+
 def build_readiness_report(
     *, hedge_mode: bool, account: dict[str, Any], positions: list[dict[str, Any]],
     open_orders: list[dict[str, Any]], ownership_keys: set[tuple[str, str]],

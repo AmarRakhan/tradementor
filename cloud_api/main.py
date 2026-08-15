@@ -73,7 +73,7 @@ from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
 from aster_strategy2_state import OwnedLeg, reconcile_owned_legs
-from aster_strategy2_readiness import build_readiness_report
+from aster_strategy2_readiness import build_readiness_report, combined_strategy_ownership
 from aster_canary import choose_flat_symbol, existing_canary_action
 from aster_strategy2 import Decision
 from aster_strategy3 import Strategy3Config, LegState as Strategy3LegState, PortfolioState as Strategy3PortfolioState
@@ -3966,12 +3966,17 @@ def aster_strategy2_readiness(user: dict[str, Any] = Depends(authenticated_user)
     strategy2_keys={(x.symbol,x.side) for x in owned}
     strategy1_raw=aster_automation_reference(uid).get().to_dict() or {}
     strategy1_keys=_explicit_strategy1_owned_keys(strategy1_raw)
+    strategy3_raw=aster_strategy3_reference(uid).get().to_dict() or {}
+    strategy3_rows=proven_owned_rows(strategy3_raw.get("ownedLegs",[]),
+        strategy_id="aster-strategy-3",engine_type="strategy3")
+    strategy3_keys={(str(x.get("symbol","")).upper(),str(x.get("side","")).upper()) for x in strategy3_rows}
     strategy2_positions=[x for x in positions if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in strategy2_keys]
     strategy2_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in strategy2_keys]
     recovery=reconcile_owned_legs(persisted=owned,positions=strategy2_positions,open_orders=strategy2_orders,fills=fills,exchange_reliable=True)
-    known_keys=strategy1_keys|strategy2_keys
+    known_keys,ownership_collisions=combined_strategy_ownership(strategy1_keys=strategy1_keys,
+        strategy2_keys=strategy2_keys,strategy3_keys=strategy3_keys)
     active_keys={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in positions if abs(safe_float(x.get("positionAmt")))>0}
-    ownership_consistent=active_keys.issubset(known_keys)
+    ownership_consistent=active_keys.issubset(known_keys) and not ownership_collisions
     report=build_readiness_report(hedge_mode=hedge,account=account,positions=positions,open_orders=orders,
         ownership_keys=known_keys,order_history_readable=isinstance(order_history,list),
         fills_readable=isinstance(fills,list),income_readable=isinstance(income,list),
