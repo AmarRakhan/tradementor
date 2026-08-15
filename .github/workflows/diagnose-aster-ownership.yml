@@ -95,15 +95,24 @@ jobs:
                   "strategy3ValidKeys": len(s3_keys),
                   "crossStrategyCollisions": len((s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)),
               })
-          payload = "OWNERSHIP_RESULT " + json.dumps({"monitoredDocuments": len(controls), "records": results}, sort_keys=True)
-          with open("/dev/termination-log", "w", encoding="utf-8") as handle:
-              handle.write(payload)
-          print("Aggregate ownership result stored in task termination status")
-          raise SystemExit(17)
+          import os
+          metric_values = [
+              sum(item["accountActivePositions"] for item in results),
+              sum(item["reportedUnassignedPositions"] for item in results),
+              sum(item["strategy1ValidKeys"] for item in results),
+              sum(item["strategy2ValidKeys"] for item in results),
+              sum(item["strategy3ValidKeys"] for item in results),
+              sum(item["crossStrategyCollisions"] for item in results),
+          ]
+          task_index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
+          metric = metric_values[task_index]
+          if metric < 0 or metric > 249:
+              raise SystemExit(254)
+          raise SystemExit(metric + 1)
           PY
           )"
 
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --max-retries 0             --task-timeout 120s             --quiet
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 6             --parallelism 6             --max-retries 0             --task-timeout 120s             --quiet
           set +e
           EXECUTE_OUTPUT="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait 2>&1)"
           EXECUTE_RC=$?
@@ -112,8 +121,19 @@ jobs:
           EXECUTION="$(sed -n 's/.*Execution \[\([^]]*\)\].*/\1/p' <<<"$EXECUTE_OUTPUT" | tail -1)"
           test -n "$EXECUTION"
           TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          RESULT="$(jq -r '.. | strings | select(startswith("OWNERSHIP_RESULT "))' <<<"$TASKS_JSON" | head -1)"
+          RESULT="$(jq -c '
+            [.. | objects | select((.index? | type) == "number" and (.lastAttemptResult.exitCode? | type) == "number") | {index: .index, value: (.lastAttemptResult.exitCode - 1)}]
+            | unique_by(.index) | sort_by(.index)
+            | select(length == 6 and ([.[].index] == [0,1,2,3,4,5]) and all(.[]; .value >= 0 and .value <= 249))
+            | {
+                accountActivePositions: .[0].value,
+                reportedUnassignedPositions: .[1].value,
+                strategy1ValidKeys: .[2].value,
+                strategy2ValidKeys: .[3].value,
+                strategy3ValidKeys: .[4].value,
+                crossStrategyCollisions: .[5].value
+              }' <<<"$TASKS_JSON")"
           test -n "$RESULT"
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
-          printf '%s\n' "$RESULT"
+          printf 'OWNERSHIP_RESULT %s\n' "$RESULT"
