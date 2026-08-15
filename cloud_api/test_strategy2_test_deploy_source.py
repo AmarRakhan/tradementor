@@ -63,6 +63,11 @@ def test_push_deploy_verifies_route_without_interrupting_an_enabled_scheduler():
     shared_group = "group: tradementor-strategy2-test-live-control"
     assert shared_group in workflow
     assert shared_group in resume
+    assert "Prove a fresh successful Strategy 2 scheduler execution" in resume
+    assert 'gcloud scheduler jobs run "$SCHEDULER_JOB"' in resume
+    assert 'last_attempt and last_attempt != before' in resume
+    assert 'job["state"] == "ENABLED"' in resume
+    assert 'code in {0, None}' in resume
     existing_job = workflow[workflow.index('if gcloud scheduler jobs describe'):workflow.index('else', workflow.index('if gcloud scheduler jobs describe'))]
     assert "gcloud scheduler jobs pause" not in existing_job
 

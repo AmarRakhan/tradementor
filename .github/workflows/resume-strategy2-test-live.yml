@@ -120,3 +120,41 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --location "$GCP_REGION" \
             --format='value(state)')" = "ENABLED"
+
+      - name: Prove a fresh successful Strategy 2 scheduler execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          BEFORE_ATTEMPT="$(gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format='value(lastAttemptTime)')"
+          gcloud scheduler jobs run "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION"
+          for attempt in $(seq 1 12); do
+            JOB_JSON="$RUNNER_TEMP/strategy2-scheduler-after-resume.json"
+            gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+              --project "$GCP_PROJECT_ID" \
+              --location "$GCP_REGION" \
+              --format=json > "$JOB_JSON"
+            if python - "$JOB_JSON" "$BEFORE_ATTEMPT" <<'PY'
+          import json
+          import sys
+
+          job = json.load(open(sys.argv[1], encoding="utf-8"))
+          before = sys.argv[2]
+          last_attempt = str(job.get("lastAttemptTime", ""))
+          status = job.get("status") or {}
+          code = status.get("code", 0)
+          assert job["state"] == "ENABLED"
+          assert last_attempt and last_attempt != before
+          assert code in {0, None}, status
+          PY
+            then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Strategy 2 scheduler produced no fresh successful execution within 60 seconds" >&2
+          exit 1
