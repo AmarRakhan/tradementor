@@ -91,7 +91,7 @@ function TradeMentorHome() {
   const adminAccount = String(user?.email || "").toLowerCase() === "amar_rakhan@hotmail.com";
   const [adminDeviceAllowed, setAdminDeviceAllowed] = useState(false);
   const [adminDeviceEnrolled, setAdminDeviceEnrolled] = useState(false);
-  const { snapshots, refresh, refreshAll } = useExchangeData(cloudReady, user?.uid || "");
+  const { snapshots, refresh, refreshAll, confirmAsterStrategy2 } = useExchangeData(cloudReady, user?.uid || "");
 
   useEffect(() => {
     const hyperliquid = exchangeView("hyperliquid", snapshots.hyperliquid).equityNumber;
@@ -230,6 +230,7 @@ function TradeMentorHome() {
       snapshots={snapshots}
       refreshedAt={refreshedAt}
       onRefresh={(exchange) => refresh(exchange)}
+      onStrategy2Confirmed={confirmAsterStrategy2}
       onRefreshAll={() => { refreshAll(); setRefreshedAt(new Date().toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })); }}
       onUseLegacy={() => changeInterfaceMode("legacy")}
       preferenceReady={interfacePreferenceReady}
@@ -271,7 +272,7 @@ function TradeMentorHome() {
         </div>
 
         <div className="content">
-          {active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} showHyperliquidTab={showHyperliquidTab} onShowHyperliquidTabChange={changeHyperliquidTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} />}
+          {active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} showHyperliquidTab={showHyperliquidTab} onShowHyperliquidTabChange={changeHyperliquidTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} onStrategy2Confirmed={confirmAsterStrategy2} />}
         </div>
       </section>
 
@@ -343,7 +344,7 @@ function TradeMentorHome() {
   );
 }
 
-function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefresh, positionsOnly = false, selectedPositionId = "", onSelectPosition }: { destination: TradingExchange; refreshedAt: string; snapshot: ExchangeSnapshot; cloudReady: boolean; onRefresh: () => void; positionsOnly?: boolean; selectedPositionId?: string; onSelectPosition?: (selection: TradeSelection) => void }) {
+function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefresh, onStrategy2Confirmed = () => {}, positionsOnly = false, selectedPositionId = "", onSelectPosition }: { destination: TradingExchange; refreshedAt: string; snapshot: ExchangeSnapshot; cloudReady: boolean; onRefresh: () => void; onStrategy2Confirmed?: (strategy2: Record<string, unknown>) => void; positionsOnly?: boolean; selectedPositionId?: string; onSelectPosition?: (selection: TradeSelection) => void }) {
   const [positionTab, setPositionTab] = useState<"active" | "closed">("active");
   const [positionFilter, setPositionFilter] = useState("largest");
   const [positionLayout, setPositionLayout] = useState<"cards" | "list">("list");
@@ -441,7 +442,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         </article>}
 
         {!positionsOnly && <aside className="side-stack">
-          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterDryRunControl snapshot={snapshot.data} onChanged={onRefresh} /><AsterStrategy2Maker snapshot={snapshot.data} onChanged={onRefresh} /></fieldset>}
+          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterDryRunControl snapshot={snapshot.data} onChanged={onRefresh} /><AsterStrategy2Maker snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></fieldset>}
           {destination !== "aster" && <ExchangeLiveControl exchange={destination} cloudReady={cloudReady} snapshot={snapshot.data} onChanged={onRefresh} />}
           <article className={`safety-card ${view.tradingEnabled && asterExecutionConfirmed ? "live" : ""}`}>
             <div className="shield-mark">TM</div>
@@ -550,7 +551,7 @@ const premiumNavigation: Array<{ id: PremiumSection; label: string; glyph: strin
   { id: "settings", label: "Instellingen", glyph: "⚙" },
 ];
 
-function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRefresh, onRefreshAll, onUseLegacy, preferenceReady, preferenceMessage, appSkin, onAppSkinChange }: { cloudReady: boolean; initials: string; snapshots: ExchangeSnapshots; refreshedAt: string; onRefresh: (exchange: TradingExchange) => void; onRefreshAll: () => void; onUseLegacy: () => void; preferenceReady: boolean; preferenceMessage: string; appSkin: AppSkin; onAppSkinChange: (skin: AppSkin) => void }) {
+function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRefresh, onStrategy2Confirmed, onRefreshAll, onUseLegacy, preferenceReady, preferenceMessage, appSkin, onAppSkinChange }: { cloudReady: boolean; initials: string; snapshots: ExchangeSnapshots; refreshedAt: string; onRefresh: (exchange: TradingExchange) => void; onStrategy2Confirmed: (strategy2: Record<string, unknown>) => void; onRefreshAll: () => void; onUseLegacy: () => void; preferenceReady: boolean; preferenceMessage: string; appSkin: AppSkin; onAppSkinChange: (skin: AppSkin) => void }) {
   const [section, setSection] = useState<PremiumSection>("dashboard");
   const [portfolioExchange, setPortfolioExchange] = useState<TradingExchange>("hyperliquid");
   const [scanner, setScanner] = useState<Record<string, unknown> | null>(null);
@@ -580,9 +581,9 @@ function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRef
       <div className="premium-page">
         {section === "dashboard" && <PremiumDashboard totalEquity={totalEquity} totalPnl={totalPnl} positions={allPositions} runningBots={runningBots} hyperliquid={hyperliquid} aster={aster} refreshedAt={refreshedAt} />}
         {section === "screener" && <PremiumScreener scanner={scanner} error={scannerError} />}
-        {section === "bots" && <PremiumBotCreator cloudReady={cloudReady} snapshots={snapshots} onRefresh={onRefresh} />}
+        {section === "bots" && <PremiumBotCreator cloudReady={cloudReady} snapshots={snapshots} onRefresh={onRefresh} onStrategy2Confirmed={onStrategy2Confirmed} />}
         {section === "risk" && <RiskTimeline snapshots={snapshots} />}
-        {section === "portfolio" && <><PremiumPageHeading eyebrow="ECHTE EXCHANGE-STATE" title="Portfolio & posities" detail="Dezelfde positie-, filter- en sluitfuncties als in de vertrouwde weergave." /><div className="premium-segmented"><button className={portfolioExchange === "hyperliquid" ? "active" : ""} type="button" onClick={() => setPortfolioExchange("hyperliquid")}>Hyperliquid</button><button className={portfolioExchange === "aster" ? "active" : ""} type="button" onClick={() => setPortfolioExchange("aster")}>Aster</button></div><ExchangeView destination={portfolioExchange} refreshedAt={refreshedAt} snapshot={snapshots[portfolioExchange]} cloudReady={cloudReady} onRefresh={() => onRefresh(portfolioExchange)} /></>}
+        {section === "portfolio" && <><PremiumPageHeading eyebrow="ECHTE EXCHANGE-STATE" title="Portfolio & posities" detail="Dezelfde positie-, filter- en sluitfuncties als in de vertrouwde weergave." /><div className="premium-segmented"><button className={portfolioExchange === "hyperliquid" ? "active" : ""} type="button" onClick={() => setPortfolioExchange("hyperliquid")}>Hyperliquid</button><button className={portfolioExchange === "aster" ? "active" : ""} type="button" onClick={() => setPortfolioExchange("aster")}>Aster</button></div><ExchangeView destination={portfolioExchange} refreshedAt={refreshedAt} snapshot={snapshots[portfolioExchange]} cloudReady={cloudReady} onRefresh={() => onRefresh(portfolioExchange)} onStrategy2Confirmed={onStrategy2Confirmed} /></>}
         {section === "exchanges" && <PremiumExchanges snapshots={snapshots} onRefresh={(exchange) => onRefresh(exchange as TradingExchange)} />}
         {section === "wallet" && <><PremiumPageHeading eyebrow="CENTRALE WALLET" title="Wallet & interface" detail="Alle exchangegegevens en jouw persoonlijke interfacekeuze op één plek." /><WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode="premium" preferenceReady={preferenceReady} preferenceMessage={preferenceMessage} onInterfaceModeChange={(mode) => { if (mode === "legacy") onUseLegacy(); }} appSkin={appSkin} onAppSkinChange={onAppSkinChange} /></>}
         {(section === "academy" || section === "settings") && <PremiumUnavailable title={section === "academy" ? "Academy" : "Uitgebreide instellingen"} />}
@@ -625,14 +626,14 @@ function PremiumScreener({ scanner, error }: { scanner: Record<string, unknown> 
   </>;
 }
 
-function PremiumBotCreator({ cloudReady, snapshots, onRefresh }: { cloudReady: boolean; snapshots: ExchangeSnapshots; onRefresh: (exchange: TradingExchange) => void }) {
+function PremiumBotCreator({ cloudReady, snapshots, onRefresh, onStrategy2Confirmed }: { cloudReady: boolean; snapshots: ExchangeSnapshots; onRefresh: (exchange: TradingExchange) => void; onStrategy2Confirmed: (strategy2: Record<string, unknown>) => void }) {
   const [creatorExchange, setCreatorExchange] = useState<TradingExchange>("aster");
   const asterActionsEnabled = asterActionsAreFresh(snapshots.aster, cloudReady);
   return <>
     <PremiumPageHeading eyebrow="BOT CREATOR" title="Een krachtige bot, stap voor stap" detail="Bestaande strategie-instellingen blijven volledig beschikbaar; ingewikkelde keuzes krijgen uitleg op het moment dat je ze nodig hebt." />
     <div className="creator-progress"><span>1</span><i className="active" /><span>2</span><i /><span>3</span><i /><span>4</span><i /><span>5</span><small>Exchange en strategie kiezen</small></div>
     <section className="creator-layout"><article className="creator-question"><span className="creator-step">STAP 1 VAN 5</span><h2>Welke bot wil je instellen?</h2><p>Kies eerst de exchange. Daarna gebruikt TradeMentor exact de bestaande veilige Strategy Maker.</p><div className="creator-choices"><button type="button" className={creatorExchange === "aster" ? "active" : ""} onClick={() => setCreatorExchange("aster")}><strong>Aster</strong><small>Dual Profit Harvest & Strategy Maker</small></button><button type="button" className={creatorExchange === "hyperliquid" ? "active" : ""} onClick={() => setCreatorExchange("hyperliquid")}><strong>Hyperliquid</strong><small>DCA Pulse multipair scanner</small></button></div><div className="creator-help"><strong>Waarom deze keuze?</strong><span>Iedere exchange gebruikt zijn eigen bestaande instellingen en veiligheidscontroles. Er wordt geen nieuwe trading-engine gemaakt.</span></div></article><aside className="creator-live-summary"><span>JOUW STRATEGIE</span><h3>{creatorExchange === "aster" ? "Aster Strategy Maker" : "DCA Pulse"}</h3><dl><div><dt>Exchange</dt><dd>{creatorExchange === "aster" ? "Aster" : "Hyperliquid"}</dd></div><div><dt>Data</dt><dd>Live gekoppeld</dd></div><div><dt>Uitvoering</dt><dd>Huidige veilige flow</dd></div><div><dt>Instellingen</dt><dd>Volledig behouden</dd></div></dl></aside></section>
-    <section className="creator-existing-engine">{creatorExchange === "aster" ? <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Maker snapshot={snapshots.aster.data} onChanged={() => onRefresh("aster")} /></fieldset> : <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={() => onRefresh("hyperliquid")} />}</section>
+    <section className="creator-existing-engine">{creatorExchange === "aster" ? <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Maker snapshot={snapshots.aster.data} serverConfirmed={snapshots.aster.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={() => onRefresh("aster")} /></fieldset> : <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={() => onRefresh("hyperliquid")} />}</section>
   </>;
 }
 

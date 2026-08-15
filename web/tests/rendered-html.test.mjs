@@ -83,7 +83,10 @@ test("Strategy 2 always exposes a personal live on/off control without bypassing
   assert.match(source, /Strategy 2 live bot/);
   assert.match(source, /role="switch"/);
   assert.match(source, /persoonlijke veiligheidscontrole nodig/);
-  assert.match(source, /if\(state\.liveReady\)\{await action\("start-live"\)/);
+  assert.match(source, /if\(liveReady\)\{await action\("start-live"\)/);
+  assert.match(source, /if\(status\.pending\)return/);
+  assert.match(source, /Serverstatus controleren…/);
+  assert.match(source, /onConfirmed\(confirmed\)/);
   assert.match(source, /await checkReadiness\(\)/);
   assert.match(source, /const paperOnly=false/);
   assert.doesNotMatch(performance, /AsterStrategy2QuickControl/);

@@ -35,14 +35,15 @@ jobs:
       - name: Check out exact test source
         uses: actions/checkout@v4
         with:
-          ref: test-aster-position-capacity-v41
+          ref: ${{ github.sha }}
 
       - name: Verify immutable test scope
         shell: bash
         run: |
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
-          test "$(git rev-parse --abbrev-ref HEAD)" = "test-aster-position-capacity-v41"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_REF_NAME" = "amar-crypto-bot-2026-cloud"
           test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
           test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
           test "$SCHEDULER_JOB" = "tradementor-strategy2-test-live-tick"

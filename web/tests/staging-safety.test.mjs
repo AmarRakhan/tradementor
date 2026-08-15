@@ -84,7 +84,9 @@ test("Strategy 2 production proxy is narrowly scoped and preserves Firebase iden
 
 test("Strategy 2 live controls cannot bypass server readiness or create request loops", async () => {
   const maker = await read("components/aster-strategy2-maker.tsx");
-  assert.match(maker, /if\(state\.liveReady\)\{await action\("start-live"\)/);
+  assert.match(maker, /if\(liveReady\)\{await action\("start-live"\)/);
+  assert.match(maker, /if\(status\.pending\)return/);
+  assert.match(maker, /onConfirmed\(confirmed\)/);
   assert.match(maker, /await checkReadiness\(\)/);
   assert.match(maker, /result\.started!==true/);
   assert.match(maker, /geen extra startopdrachten verzonden/);

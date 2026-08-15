@@ -10,7 +10,7 @@ const strategy2Paths = new Set([
 ]);
 
 /**
- * Route only Strategy 2's authenticated endpoints to the production API.
+ * Route only Strategy 2's authenticated endpoints to the configured API.
  * The generic site proxy remains read-only; server-side readiness, canary,
  * ownership and live-enable checks stay authoritative for every live action.
  */
