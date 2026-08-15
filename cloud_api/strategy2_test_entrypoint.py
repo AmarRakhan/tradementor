@@ -68,6 +68,9 @@ def strategy2_token_diagnostics(
     unassigned = int(control_plane.safe_float(s2.get("unassignedPositions")))
     legacy_active = bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor"))
     exclusive = bool(s2.get("exclusiveOwnership"))
+    central_exclusive = os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP", "false").lower() == "true"
+    handoff_eligible = bool(s2_snapshot.exists and s2.get("enabled") and s2.get("monitor")
+        and central_exclusive and len(s2_keys) == 68 and not unassigned and not collision_keys)
     return {
         "readOnly": True,
         "identity": {"uid": uid, "email": str(user.get("email", "")),
@@ -81,6 +84,7 @@ def strategy2_token_diagnostics(
             "ownedLegs": len(s2_keys), "longLegs": long_legs, "shortLegs": short_legs,
             "unassignedPositions": unassigned, "crossStrategyCollisions": len(collision_keys),
             "legacyStrategiesActive": legacy_active, "lastTickAt": last_tick_utc,
+            "centralExclusiveRuntime": central_exclusive, "handoffEligible": handoff_eligible,
             "heartbeatAgeSeconds": heartbeat_age,
             "heartbeatFresh": heartbeat_age is not None and heartbeat_age <= 180,
         },
@@ -105,7 +109,8 @@ def strategy2_exclusive_handoff(
     s3_keys = _strategy_keys(s3, "aster-strategy-3", "strategy3")
     collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
     unassigned = int(control_plane.safe_float(s2.get("unassignedPositions")))
-    if not (s2.get("enabled") and s2.get("monitor") and s2.get("exclusiveOwnership")
+    central_exclusive = os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP", "false").lower() == "true"
+    if not (s2.get("enabled") and s2.get("monitor") and central_exclusive
             and len(s2_keys) == 68 and not collisions and unassigned == 0):
         raise control_plane.HTTPException(409, "Exclusieve Strategy-2-ownership is niet volledig bewezen")
     now = datetime.now(timezone.utc)
