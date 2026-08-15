@@ -54,11 +54,27 @@ jobs:
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import json
           import os
+          import firebase_admin
+          from firebase_admin import auth
           from google.cloud import firestore
+          from google.cloud import secretmanager
 
           db = firestore.Client(project="tradementor-amar-20260813")
-          uids = [doc.id for doc in db.collection("asterStrategy2").stream()]
-          if not uids or len(set(uids)) != len(uids):
+          if not firebase_admin._apps:
+              firebase_admin.initialize_app(options={"projectId": "tradementor-amar-20260813"})
+          secrets = secretmanager.SecretManagerServiceClient()
+          uids = []
+          page = auth.list_users()
+          while page:
+              for user in page.users:
+                  name = f"projects/tradementor-amar-20260813/secrets/tradementor-aster-{user.uid}/versions/latest"
+                  try:
+                      secrets.access_secret_version(request={"name": name})
+                  except Exception:
+                      continue
+                  uids.append(user.uid)
+              page = page.get_next_page()
+          if len(uids) != 4 or len(set(uids)) != 4:
               raise SystemExit(254)
           results = []
           for uid in sorted(uids):

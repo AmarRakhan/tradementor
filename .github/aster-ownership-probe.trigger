@@ -1,1 +1,1 @@
-User explicitly approved corrected all-account read-only Strategy-2 classification: count historical and configured control documents separately, inspect only aggregate numeric status fields, and never output identifiers, symbols, balances, secrets or orders.
+User explicitly approved exact-four-account read-only Strategy-2 classification: enumerate Firebase users internally, test only whether each exact Aster secret version is readable without decoding it, inspect aggregate numeric status fields, and never output identifiers, symbols, balances, secret payloads or orders.
