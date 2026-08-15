@@ -117,8 +117,8 @@ jobs:
           EXECUTE_OUTPUT="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait 2>&1)"
           EXECUTE_RC=$?
           set -e
-          test "$EXECUTE_RC" -eq 0
-          EXECUTION="$(sed -n 's/.*Execution \[\([^]]*\)\].*/\1/p' <<<"$EXECUTE_OUTPUT" | tail -1)"
+          test "$EXECUTE_RC" -ne 0
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
           test -n "$EXECUTION"
           TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
           STATUS_FIELDS="$(jq -c '[.. | objects | to_entries[] | select((.key | test("index|exit|code"; "i")) and (.value | type == "number")) | {key: .key, value: .value}]' <<<"$TASKS_JSON")"
