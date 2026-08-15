@@ -1031,6 +1031,26 @@ def aster_strategy3_reference(uid: str):
     return db.collection("asterStrategy3").document(uid)
 
 
+def ensure_aster_strategy2_control(uid: str) -> dict[str, Any]:
+    """Register every linked user with Strategy 2 without enabling trading.
+
+    Existing state is never overwritten.  This closes the scheduler-discovery
+    gap for migrated Aster users that have a valid secret but no Strategy-2
+    control document yet.  Live execution still requires the user's persisted
+    readiness, canary and explicit start confirmation.
+    """
+    ref=aster_strategy2_reference(uid);snapshot=ref.get()
+    if snapshot.exists:return snapshot.to_dict() or {}
+    now=datetime.now(timezone.utc)
+    initial={"settings":Strategy2Config().public_dict(),"enabled":False,"monitor":False,
+        "phase":"DRAFT","lastReason":"Strategy 2 automatisch geregistreerd; wacht op persoonlijke live-bevestiging",
+        "liveReady":False,"canaryValidated":False,"unassignedPositions":0,
+        "exclusiveOwnership":True,"createdAt":now,"updatedAt":now}
+    try:ref.create(initial)
+    except google_exceptions.AlreadyExists:pass
+    return ref.get().to_dict() or initial
+
+
 def _record_aster_order_attribution(ref: Any, result: dict[str, Any], *, strategy_id: str,
                                      strategy_name: str, cycle_id: str, config_version: int,
                                      symbol: str, side: str, action: str) -> None:
@@ -3335,6 +3355,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     # This keeps stopped/not-yet-started bots from showing an old balance while
     # avoiding a signed Aster request for every open browser tab.
     uid = str(user["uid"])
+    ensure_aster_strategy2_control(uid)
     automation_ref = aster_automation_reference(uid)
     automation = automation_ref.get().to_dict() or {}
     snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}

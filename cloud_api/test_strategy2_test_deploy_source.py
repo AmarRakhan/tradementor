@@ -30,8 +30,20 @@ def test_strategy2_start_and_status_read_the_same_firestore_document():
     assert 'db.collection("asterStrategy2").document(uid)' in reference
     assert "aster_strategy2_reference(uid).get()" in status
     assert "ref=aster_strategy2_reference(uid)" in start
+    assert "ensure_aster_strategy2_control(uid)" in status
     assert '"strategy2-test-live": frozenset({"/v1/me/aster/status"})' in bridge
     assert 'environment=os.getenv("TRADEMENTOR_ENVIRONMENT", "")' in entrypoint
+
+
+def test_missing_linked_account_registration_never_enables_trading():
+    source = MAIN.read_text(encoding="utf-8")
+    registration = source[source.index("def ensure_aster_strategy2_control"):source.index("def _record_aster_order_attribution")]
+    assert '"enabled":False' in registration
+    assert '"monitor":False' in registration
+    assert '"liveReady":False' in registration
+    assert '"canaryValidated":False' in registration
+    assert "ref.create(initial)" in registration
+    assert "ref.set(" not in registration
 
 
 def test_isolated_strategy2_scheduler_route_exists_and_is_fail_closed():
