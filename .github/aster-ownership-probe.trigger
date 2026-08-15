@@ -1,1 +1,1 @@
-User-authorized read-only aggregate ownership probe via Cloud Run failed-task termination status; expected diagnostic exit only; explicit plus fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
+User-authorized read-only aggregate ownership probe: six anonymous counts encoded only as Cloud Run task exit statuses; expected diagnostic exits; explicit plus fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
