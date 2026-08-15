@@ -4,6 +4,7 @@ import pytest
 
 from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_income_history, paged_user_trades, refresh_owned_costs
 from aster_strategy2_state import OwnedLeg
+from aster_strategy2_runtime import cost_evidence_max_age_seconds
 
 
 class ReadOnlyClient:
@@ -90,3 +91,54 @@ def test_strategy3_ownership_recovers_only_from_explicit_s3_audit_and_fill():
     owned,recovered=recover_audited_ownership(persisted=[],positions=positions,audit_events=audit,fills=fills,
         strategy_id="aster-strategy-3",engine_type="strategy3",require_event_strategy=True)
     assert recovered and owned[0].strategy_id=="aster-strategy-3" and owned[0].engine_type=="strategy3"
+
+
+def _scaled_legs(symbol_count):
+    result=[]
+    for index in range(symbol_count):
+        symbol=f"S{index:02d}USDT"
+        result.append(OwnedLeg("aster-strategy-2","strategy2",symbol,"LONG",f"l{index}",1,1,100,
+            costs_updated_at_ms=0))
+        result.append(OwnedLeg("aster-strategy-2","strategy2",symbol,"SHORT",f"s{index}",1,1,100,
+            costs_updated_at_ms=0))
+    return result
+
+
+@pytest.mark.parametrize(("leg_count","symbol_count"),[(68,34),(100,50)])
+def test_cost_rotation_scales_without_structural_five_minute_data_hold(leg_count,symbol_count):
+    owned=_scaled_legs(symbol_count)
+    assert len(owned)==leg_count
+    positions=[{"symbol":leg.symbol,"positionSide":leg.side,"quantity":1,"entryPrice":100,
+        "unrealizedPnl":-1} for leg in owned]
+    minute_ms=60_000
+    for minute in range((symbol_count+5)//6):
+        selected=set(cost_refresh_symbols(owned,positions,maximum_background=4,maximum_total=6))
+        checked_at=(minute+1)*minute_ms
+        owned=[OwnedLeg(**{**leg.__dict__,"costs_updated_at_ms":checked_at}) if leg.symbol in selected else leg
+            for leg in owned]
+    now_ms=((symbol_count+5)//6+2)*minute_ms
+    limit_ms=cost_evidence_max_age_seconds(owned)*1000
+    assert all(leg.costs_updated_at_ms>0 and now_ms-leg.costs_updated_at_ms<=limit_ms for leg in owned)
+    assert limit_ms>300_000
+
+
+def test_migrated_leg_falls_back_to_full_history_without_importing_old_cycle_costs():
+    class Migrated:
+        def __init__(self):self.calls=[]
+        def user_trades(self,symbol,**kwargs):
+            self.calls.append(("trades",kwargs))
+            if kwargs.get("start_time") is not None:return []
+            return [{"id":7,"symbol":symbol,"positionSide":"LONG","time":100,
+                "commission":".25","realizedPnl":"9"}]
+        def income_history(self,**kwargs):
+            self.calls.append(("income",kwargs))
+            return []
+    client=Migrated()
+    leg=OwnedLeg("aster-strategy-2","strategy2","BRKBUSDT","LONG","migrated",1,1,50,
+        fees=.04,funding=-.01,created_at_ms=1_000)
+    refreshed,failures=refresh_owned_costs(client,[leg],{"BRKBUSDT"},checked_at_ms=2_000)
+    assert not failures
+    assert refreshed[0].costs_updated_at_ms==2_000
+    assert refreshed[0].fees==.04 and refreshed[0].funding==-.01
+    assert [call[0] for call in client.calls].count("trades")==2
+    assert client.calls[-1][1]["start_time"]==1_000

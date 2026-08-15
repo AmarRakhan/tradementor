@@ -11,6 +11,21 @@ ASTER_ESTIMATED_CLOSE_FEE_RATE = .0005
 STRATEGY2_SCHEDULER_LATE_SECONDS = 180
 STRATEGY2_COST_EVIDENCE_MAX_AGE_SECONDS = 300
 
+def cost_evidence_max_age_seconds(owned:list[OwnedLeg]|list[dict[str,Any]],*,
+                                  maximum_symbols_per_tick:int=6,scheduler_interval_seconds:int=60,
+                                  safety_intervals:int=2)->int:
+    """Scale freshness to one complete, rate-bounded symbol rotation.
+
+    Changed symbols still jump to the front of the refresh queue.  Unchanged
+    symbols rotate oldest-first, so the bound is deterministic for 68 and 100
+    legs without increasing Aster request pressure.
+    """
+    symbols={str(item.symbol if isinstance(item,OwnedLeg) else item.get("symbol","")).upper()
+        for item in owned if str(item.symbol if isinstance(item,OwnedLeg) else item.get("symbol",""))}
+    rotations=math.ceil(len(symbols)/max(1,int(maximum_symbols_per_tick))) if symbols else 1
+    return max(STRATEGY2_COST_EVIDENCE_MAX_AGE_SECONDS,
+        (rotations+max(1,int(safety_intervals)))*max(1,int(scheduler_interval_seconds)))
+
 def recover_audited_ownership(*,persisted:list[OwnedLeg],positions:list[dict[str,Any]],
                               audit_events:list[dict[str,Any]],fills:list[dict[str,Any]],
                               excluded_keys:set[tuple[str,str]]|None=None,
@@ -317,7 +332,9 @@ def strategy2_position_tp_contract(*,row:dict[str,Any],owned:OwnedLeg|None,confi
     ownership=bool(owned and owned.strategy_id=="aster-strategy-2" and owned.engine_type=="strategy2")
     evidence_age=None
     if owned and owned.costs_updated_at_ms:evidence_age=max(0,now.timestamp()-owned.costs_updated_at_ms/1000)
-    costs_fresh=evidence_age is not None and evidence_age<=STRATEGY2_COST_EVIDENCE_MAX_AGE_SECONDS
+    evidence_limit=cost_evidence_max_age_seconds(
+        state.get("ownedLegs") if isinstance(state.get("ownedLegs"),list) else ([owned] if owned else []))
+    costs_fresh=evidence_age is not None and evidence_age<=evidence_limit
     block=""
     if not ownership:block="Geen bewezen Strategy-2-ownership"
     elif not costs_fresh:block="Fees en funding zijn niet recent genoeg door Aster bevestigd"

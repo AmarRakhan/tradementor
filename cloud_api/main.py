@@ -91,7 +91,7 @@ from aster_dashboard_status import build_aster_dashboard_status
 from aster_rapid_build import run_confirmed_batch
 from aster_strategy2_execution import ExecutionContext, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
-from aster_strategy2_runtime import next_management_decision, scanner_allowed, active_position_map
+from aster_strategy2_runtime import next_management_decision, scanner_allowed, active_position_map, cost_evidence_max_age_seconds
 from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned
 from aster_strategy2_runtime import enrich_confirmed_costs
 from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
@@ -1589,7 +1589,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     # Existing position management precedes new exposure. Within TP candidates,
     # next_management_decision ranks the largest net surplus first.
     now_ms=int(now.timestamp()*1000)
-    management_owned=[leg for leg in owned if leg.costs_updated_at_ms>0 and now_ms-leg.costs_updated_at_ms<=300_000]
+    cost_evidence_limit_ms=cost_evidence_max_age_seconds(owned)*1000
+    management_owned=[leg for leg in owned if leg.costs_updated_at_ms>0 and now_ms-leg.costs_updated_at_ms<=cost_evidence_limit_ms]
     management_keys={(leg.symbol,leg.side) for leg in management_owned}
     management_positions=[row for row in strategy_positions if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in management_keys]
     cost_holds=[f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}"

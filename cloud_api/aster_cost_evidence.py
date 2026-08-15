@@ -88,18 +88,34 @@ def paged_income_history(client: Any, *, symbol: str, start_time: int | None = N
     raise ValueError(f"{symbol}: inkomstenhistorie overschrijdt de veilige paginatiegrens")
 
 
+def _matching_fill(row: dict[str, Any], leg: OwnedLeg, *, enforce_owned_since: bool) -> bool:
+    if str(row.get("symbol", "")).upper() != leg.symbol or str(row.get("positionSide", "")).upper() != leg.side:
+        return False
+    if not enforce_owned_since or leg.created_at_ms <= 0:
+        return True
+    return int(number(row.get("time", row.get("timestamp")))) >= leg.created_at_ms
+
+
 def read_symbol_cost_evidence(client: Any, symbol: str, legs: Iterable[OwnedLeg]) -> SymbolCostEvidence:
     values = list(legs)
     start_time = min((leg.created_at_ms for leg in values if leg.created_at_ms > 0), default=0) or None
     trades = paged_user_trades(client, symbol, start_time=start_time)
-    for leg in values:
-        if not any(
-            str(row.get("symbol", "")).upper() == leg.symbol
-            and str(row.get("positionSide", "")).upper() == leg.side
-            and (leg.created_at_ms <= 0 or int(number(row.get("time", row.get("timestamp")))) >= leg.created_at_ms)
-            for row in trades
-        ):
-            raise ValueError(f"{leg.symbol} {leg.side}: geen bevestigde openingsfill in de complete historie")
+    missing = [leg for leg in values if not any(_matching_fill(row, leg, enforce_owned_since=True) for row in trades)]
+    if missing and start_time is not None:
+        # Ownership transfers can happen after the exchange opening fill.  Use
+        # one complete read-only fallback only to prove that historical fill;
+        # cost attribution below remains bounded by the persisted ownership
+        # timestamp, so fees/funding from older closed cycles are not imported.
+        complete_trades = paged_user_trades(client, symbol, start_time=None)
+        for leg in missing:
+            if not any(_matching_fill(row, leg, enforce_owned_since=False) for row in complete_trades):
+                raise ValueError(f"{leg.symbol} {leg.side}: geen bevestigde openingsfill in de volledige beschikbare Aster-historie")
+        seen = {str(row.get("id", row.get("tradeId", ""))) for row in trades}
+        trades.extend(row for row in complete_trades
+            if str(row.get("id", row.get("tradeId", ""))) not in seen)
+    elif missing:
+        leg = missing[0]
+        raise ValueError(f"{leg.symbol} {leg.side}: geen bevestigde openingsfill in de volledige beschikbare Aster-historie")
     income = paged_income_history(client, symbol=symbol, start_time=start_time)
     return SymbolCostEvidence(symbol.upper(), tuple(trades), tuple(income))
 
@@ -149,9 +165,8 @@ def cost_refresh_symbols(owned: list[OwnedLeg], positions: list[dict[str, Any]],
                          maximum_background: int = 4, maximum_total: int = 6) -> list[str]:
     """Select a rotating, rate-budgeted fee/funding refresh batch.
 
-    Profitable and changed positions remain first, but no class can bypass the
-    genuine Aster REST request budget.  Within each class the oldest persisted
-    evidence wins, so repeated minute ticks rotate instead of starving legs.
+    Changed positions remain first and all unchanged symbols rotate oldest-first.
+    No class can bypass the genuine Aster REST request budget or starve another.
     """
     pos = {(str(row.get("symbol", "")).upper(), str(row.get("positionSide", row.get("side", ""))).upper()): row
         for row in positions}
@@ -170,21 +185,13 @@ def cost_refresh_symbols(owned: list[OwnedLeg], positions: list[dict[str, Any]],
     oldest_by_symbol: dict[str, int] = {}
     for leg in owned:
         oldest_by_symbol[leg.symbol] = min(oldest_by_symbol.get(leg.symbol, leg.costs_updated_at_ms), leg.costs_updated_at_ms)
+    # A changed quantity/entry is immediately critical.  Every other symbol
+    # rotates oldest-first; profitability only breaks equal-age ties.  This
+    # prevents a large profitable class from starving unchanged positions.
     candidates = sorted(oldest_by_symbol, key=lambda symbol: (
-        symbol not in urgent,
         symbol not in changed,
         oldest_by_symbol[symbol],
+        symbol not in urgent,
         symbol,
     ))
-    background_used = 0
-    selected: list[str] = []
-    for symbol in candidates:
-        is_priority = symbol in urgent or symbol in changed
-        if not is_priority and background_used >= max(0, maximum_background):
-            continue
-        selected.append(symbol)
-        if not is_priority:
-            background_used += 1
-        if len(selected) >= max(1, maximum_total):
-            break
-    return selected
+    return candidates[:max(1, int(maximum_total))]
