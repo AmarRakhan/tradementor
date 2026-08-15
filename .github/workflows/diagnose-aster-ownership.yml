@@ -51,19 +51,30 @@ jobs:
           test -n "$IMAGE"
           test "$RUNTIME_SERVICE_ACCOUNT" = "tm-staging-runtime@tradementor-amar-20260813.iam.gserviceaccount.com"
 
+          mapfile -t ASTER_SECRET_NAMES < <(
+            gcloud secrets list --project "$GCP_PROJECT_ID" \
+              --filter='name~^tradementor-aster-' --format='value(name)' | sed '/^$/d' | sort
+          )
+          test "${#ASTER_SECRET_NAMES[@]}" -eq 4
+          ASTER_UIDS=""
+          for secret_name in "${ASTER_SECRET_NAMES[@]}"; do
+            test "${secret_name#tradementor-aster-}" != "$secret_name"
+            uid="${secret_name#tradementor-aster-}"
+            test -n "$uid"
+            ASTER_UIDS="${ASTER_UIDS}${ASTER_UIDS:+,}${uid}"
+          done
+
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import json
+          import os
           from google.cloud import firestore
 
           db = firestore.Client(project="tradementor-amar-20260813")
-          s2_controls = {
-              doc.id: doc for doc in db.collection("asterStrategy2").where("monitor", "==", True).stream()
-          }
-          s3_controls = {
-              doc.id: doc for doc in db.collection("asterStrategy3").where("monitor", "==", True).stream()
-          }
+          uids = [value for value in os.environ.get("ASTER_UIDS", "").split(",") if value]
+          if len(uids) != 4 or len(set(uids)) != 4:
+              raise SystemExit(254)
           results = []
-          for uid in sorted(set(s2_controls) | set(s3_controls)):
+          for uid in sorted(uids):
               s2_snapshot = db.collection("asterStrategy2").document(uid).get()
               s3_snapshot = db.collection("asterStrategy3").document(uid).get()
               s1_snapshot = db.collection("asterAutomation").document(uid).get()
@@ -99,6 +110,10 @@ jobs:
                   .where("event", "==", "S2_SHADOW_OWNERSHIP_REMOVED").stream()
               )
               results.append({
+                  "strategy2DocumentExists": int(s2_snapshot.exists),
+                  "strategy2Monitor": int(bool(s2.get("monitor"))),
+                  "strategy2Enabled": int(bool(s2.get("enabled"))),
+                  "legacyActive": int(bool(s1.get("monitor") or s1.get("enabled") or s3.get("monitor") or s3.get("enabled"))),
                   "phaseCategory": "OWNERSHIP_RECONCILING" if str(s2.get("phase", "")).upper() in {"RECONCILING", "RECOVERY", "RECOVERING"} else "OTHER",
                   "accountActivePositions": active_positions,
                   "reportedUnassignedPositions": int(s2.get("unassignedPositions", 0) or 0),
@@ -111,17 +126,18 @@ jobs:
                   "crossStrategyCollisions": len((s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)),
                   "shadowRemovalEvents": len(removals),
               })
-          import os
           metric_values = [
               len(results),
+              sum(item["strategy2DocumentExists"] for item in results),
+              sum(item["strategy2Monitor"] for item in results),
+              sum(item["strategy2Enabled"] for item in results),
               sum(item["accountActivePositions"] for item in results),
               sum(item["reportedUnassignedPositions"] for item in results),
-              sum(item["strategy1ValidKeys"] for item in results),
               sum(item["strategy2ValidKeys"] for item in results),
-              sum(item["strategy3ValidKeys"] for item in results),
               sum(item["crossStrategyCollisions"] for item in results),
-              sum(item["shadowRemovalEvents"] for item in results),
               sum(1 for item in results if item["phaseCategory"] == "OWNERSHIP_RECONCILING"),
+              sum(item["legacyActive"] for item in results),
+              sum(1 for item in results if item["accountActivePositions"] != item["strategy2ValidKeys"]),
           ]
           task_index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
           metric = metric_values[task_index]
@@ -131,7 +147,7 @@ jobs:
           PY
           )"
 
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 9             --parallelism 9             --max-retries 0             --task-timeout 120s             --quiet
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --set-env-vars "ASTER_UIDS=$ASTER_UIDS"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 11             --parallelism 11             --max-retries 0             --task-timeout 120s             --quiet
           set +e
           EXECUTE_OUTPUT="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait 2>&1)"
           EXECUTE_RC=$?

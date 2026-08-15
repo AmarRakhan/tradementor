@@ -1,1 +1,1 @@
-User explicitly approved app-wide read-only Strategy-2 ownership diagnosis: inspect only aggregate numeric task-status fields; no identifiers, symbols, balances, secrets, orders, IAM, scheduler, or service changes.
+User explicitly approved all-four-account read-only Strategy-2 diagnosis: derive exactly four linked account IDs internally from secret names, inspect only aggregate numeric status fields, and never output identifiers, symbols, balances, secret payloads or orders.
