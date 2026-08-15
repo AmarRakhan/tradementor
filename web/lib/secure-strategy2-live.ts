@@ -7,6 +7,8 @@ const strategy2Paths = new Set([
   "/v1/me/aster/strategy2/canary",
   "/v1/me/aster/strategy2/start",
   "/v1/me/aster/strategy2/stop",
+  "/v1/me/aster/strategy2/diagnostics",
+  "/v1/me/aster/strategy2/exclusive-handoff",
 ]);
 
 /**

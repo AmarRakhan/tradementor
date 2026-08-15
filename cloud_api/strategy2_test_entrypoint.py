@@ -6,10 +6,13 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Depends, Header
+from fastapi import Body, Depends, Header
 
 import main as control_plane
 from read_only_source import read_source_url as environment_read_source_url
+from aster_cost_evidence import paged_user_trades
+from aster_gateway import AsterApiError, AsterV3Client
+from strategy2_handoff import HandoffProof, build_handoff_proof, ownership_rows, proof_public
 
 
 def _test_runtime_read_source_url(
@@ -41,11 +44,31 @@ def _strategy_keys(state: dict[str, Any], strategy_id: str, engine_type: str) ->
     return {(str(row["symbol"]).upper(), str(row["side"]).upper()) for row in rows}
 
 
+def _token_account_proof(uid: str) -> HandoffProof:
+    """Read one current account snapshot and complete fill evidence; never authorize orders."""
+    secret = control_plane.load_aster_secret({"uid": uid})
+    client = AsterV3Client(signer_address=secret.signer_address,
+        sign_message=control_plane.local_eip712_signer(secret), live_authorized=False)
+    try:
+        positions = client.position_risk()
+        open_orders = client.open_orders()
+        active = control_plane.active_position_map(positions)
+        fills: list[dict[str, Any]] = []
+        for symbol in sorted({key[0] for key in active}):
+            fills.extend(paged_user_trades(client, symbol, start_time=None))
+    except (AsterApiError, ValueError) as exc:
+        raise control_plane.HTTPException(409, f"Aster-accountsnapshot is niet betrouwbaar: {exc}") from exc
+    state = control_plane.aster_strategy2_reference(uid).get().to_dict() or {}
+    return build_handoff_proof(positions=positions, open_orders=open_orders, fills=fills,
+        config_version=int(control_plane.safe_float(state.get("configVersion", 1))) or 1,
+        captured_at_ms=int(datetime.now(timezone.utc).timestamp() * 1000))
+
+
 @app.get("/v1/me/aster/strategy2/diagnostics")
 def strategy2_token_diagnostics(
     user: dict[str, Any] = Depends(control_plane.authenticated_user),
 ) -> dict[str, Any]:
-    """Return token-scoped ownership evidence without exchange or write access."""
+    """Return token-scoped ownership evidence from one current exchange snapshot."""
     uid = str(user["uid"])
     s2_snapshot = control_plane.aster_strategy2_reference(uid).get()
     s2 = (s2_snapshot.to_dict() or {}) if s2_snapshot.exists else {}
@@ -69,8 +92,13 @@ def strategy2_token_diagnostics(
     legacy_active = bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor"))
     exclusive = bool(s2.get("exclusiveOwnership"))
     central_exclusive = os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP", "false").lower() == "true"
-    handoff_eligible = bool(s2_snapshot.exists and s2.get("enabled") and s2.get("monitor")
-        and central_exclusive and len(s2_keys) == 68 and not unassigned and not collision_keys)
+    proof = _token_account_proof(uid)
+    proof_data = proof_public(proof)
+    ownership_matches = s2_keys == set(proof.active_keys)
+    ownership_proven = bool(s2_snapshot.exists and exclusive and ownership_matches
+        and not unassigned and not collision_keys and proof.complete)
+    handoff_required = not ownership_proven
+    handoff_eligible = bool(s2_snapshot.exists and central_exclusive and proof.complete and not collision_keys)
     return {
         "readOnly": True,
         "identity": {"uid": uid, "email": str(user.get("email", "")),
@@ -80,11 +108,12 @@ def strategy2_token_diagnostics(
             "monitor": bool(s2.get("monitor")), "phase": str(s2.get("phase", "MISSING")),
             "reason": str(s2.get("lastReason", "Strategy-2-document ontbreekt")),
             "exclusiveOwnership": exclusive,
-            "ownershipProven": bool(s2_snapshot.exists and exclusive and not unassigned and not collision_keys),
+            "ownershipProven": ownership_proven,
             "ownedLegs": len(s2_keys), "longLegs": long_legs, "shortLegs": short_legs,
             "unassignedPositions": unassigned, "crossStrategyCollisions": len(collision_keys),
             "legacyStrategiesActive": legacy_active, "lastTickAt": last_tick_utc,
             "centralExclusiveRuntime": central_exclusive, "handoffEligible": handoff_eligible,
+            "handoffRequired": handoff_required, "accountSnapshot": proof_data,
             "heartbeatAgeSeconds": heartbeat_age,
             "heartbeatFresh": heartbeat_age is not None and heartbeat_age <= 180,
         },
@@ -93,36 +122,57 @@ def strategy2_token_diagnostics(
 
 @app.post("/v1/me/aster/strategy2/exclusive-handoff")
 def strategy2_exclusive_handoff(
+    payload: dict[str, Any] = Body(default={}),
     user: dict[str, Any] = Depends(control_plane.authenticated_user),
 ) -> dict[str, Any]:
-    """Disable legacy controls only after token-scoped S2 ownership proof."""
+    """Atomically replace ownership only after token-scoped exchange proof."""
     uid = str(user["uid"])
     s1_ref = control_plane.aster_automation_reference(uid)
     s2_ref = control_plane.aster_strategy2_reference(uid)
     s3_ref = control_plane.aster_strategy3_reference(uid)
-    s1_snapshot, s2_snapshot, s3_snapshot = s1_ref.get(), s2_ref.get(), s3_ref.get()
-    if not s2_snapshot.exists:
-        raise control_plane.HTTPException(409, "Strategy-2-document ontbreekt")
-    s1, s2, s3 = s1_snapshot.to_dict() or {}, s2_snapshot.to_dict() or {}, s3_snapshot.to_dict() or {}
-    s1_keys = _strategy_keys(s1, "aster-strategy-1", "strategy1") | _strategy_keys(s1, "strategy_1", "strategy_1")
-    s2_keys = _strategy_keys(s2, "aster-strategy-2", "strategy2")
-    s3_keys = _strategy_keys(s3, "aster-strategy-3", "strategy3")
-    collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
-    unassigned = int(control_plane.safe_float(s2.get("unassignedPositions")))
+    proof = _token_account_proof(uid)
+    expected = str(payload.get("snapshotFingerprint", "")).strip()
+    if not expected or expected != proof.snapshot_fingerprint:
+        raise control_plane.HTTPException(409, "Aster-accountsnapshot is gewijzigd; controleer opnieuw")
+    if proof.open_order_count:
+        raise control_plane.HTTPException(409, "Open Aster-order aanwezig; overdracht veilig geblokkeerd")
+    if not proof.complete:
+        raise control_plane.HTTPException(409, "Niet iedere actieve leg heeft een bewezen openingsfill")
     central_exclusive = os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP", "false").lower() == "true"
-    if not (s2.get("enabled") and s2.get("monitor") and central_exclusive
-            and len(s2_keys) == 68 and not collisions and unassigned == 0):
-        raise control_plane.HTTPException(409, "Exclusieve Strategy-2-ownership is niet volledig bewezen")
+    if not central_exclusive:
+        raise control_plane.HTTPException(409, "Centrale exclusieve Strategy-2-runtime is niet vrijgegeven")
     now = datetime.now(timezone.utc)
     reason = "Administratief uitgeschakeld na bewezen exclusieve Strategy-2-ownership"
-    batch = control_plane.db.batch()
-    batch.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
-        "lastReason": reason, "updatedAt": now}, merge=True)
-    batch.set(s2_ref, {"exclusiveOwnership": True, "updatedAt": now}, merge=True)
-    batch.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
-        "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE", "lastReason": reason, "updatedAt": now}, merge=True)
-    batch.commit()
-    return {"completed": True, "uid": uid, "strategy2OwnedLegs": len(s2_keys), "exclusiveOwnership": True,
+    transaction = control_plane.db.transaction()
+
+    @control_plane.firestore.transactional
+    def commit_handoff(txn):
+        s1_snapshot = s1_ref.get(transaction=txn)
+        s2_snapshot = s2_ref.get(transaction=txn)
+        s3_snapshot = s3_ref.get(transaction=txn)
+        if not s2_snapshot.exists:
+            raise control_plane.HTTPException(409, "Strategy-2-document ontbreekt")
+        s1, s2, s3 = s1_snapshot.to_dict() or {}, s2_snapshot.to_dict() or {}, s3_snapshot.to_dict() or {}
+        s1_keys = _strategy_keys(s1, "aster-strategy-1", "strategy1") | _strategy_keys(s1, "strategy_1", "strategy_1")
+        s2_keys = _strategy_keys(s2, "aster-strategy-2", "strategy2")
+        s3_keys = _strategy_keys(s3, "aster-strategy-3", "strategy3")
+        collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
+        if collisions:
+            raise control_plane.HTTPException(409, "Dubbele ownershipclaim; overdracht veilig geblokkeerd")
+        txn.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
+            "lastReason": reason, "updatedAt": now}, merge=True)
+        # Deliberately do not write enabled/monitor: a handoff never starts Strategy 2.
+        txn.set(s2_ref, {"ownedLegs": ownership_rows(proof), "exclusiveOwnership": True,
+            "unassignedPositions": 0, "ownershipSnapshotFingerprint": proof.snapshot_fingerprint,
+            "ownershipTransferredAt": now, "updatedAt": now}, merge=True)
+        txn.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
+            "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE", "lastReason": reason, "updatedAt": now}, merge=True)
+        return bool(s2.get("enabled")), bool(s2.get("monitor"))
+
+    enabled, monitor = commit_handoff(transaction)
+    return {"completed": True, "uid": uid, "strategy2OwnedLegs": len(proof.owned_legs),
+        "activeAccountLegs": len(proof.active_keys), "exclusiveOwnership": True,
+        "strategy2Enabled": enabled, "strategy2Monitor": monitor,
         "ordersSent": 0, "positionsChanged": 0, "schedulerChanged": False}
 
 

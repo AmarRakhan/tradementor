@@ -1,11 +1,7 @@
 name: One-shot disable Amar legacy strategies for exclusive Strategy 2
 
 on:
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - ".github/workflows/one-shot-disable-amar-legacy.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -74,8 +70,9 @@ jobs:
           s2_keys = keys(s2, {"aster-strategy-2"}, {"strategy2"})
           s3_keys = keys(s3, {"aster-strategy-3"}, {"strategy3"})
           collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
+          expected_owned = len(s2_keys)
           if not (bool(s2.get("enabled")) and bool(s2.get("monitor")) and bool(s2.get("exclusiveOwnership"))
-                  and int(s2.get("unassignedPositions", 0) or 0) == 0 and not collisions and len(s2_keys) == 68):
+                  and int(s2.get("unassignedPositions", 0) or 0) == 0 and not collisions):
               raise SystemExit(43)
 
           now = datetime.now(timezone.utc)
@@ -92,11 +89,11 @@ jobs:
           legacy = bool(s1_after.get("enabled") or s1_after.get("monitor") or s3_after.get("enabled") or s3_after.get("monitor"))
           unchanged = (bool(s2_after.get("enabled")) and bool(s2_after.get("monitor"))
                        and bool(s2_after.get("exclusiveOwnership"))
-                       and len(keys(s2_after, {"aster-strategy-2"}, {"strategy2"})) == 68
+                       and len(keys(s2_after, {"aster-strategy-2"}, {"strategy2"})) == expected_owned
                        and int(s2_after.get("unassignedPositions", 0) or 0) == 0)
           if legacy or not unchanged:
               raise SystemExit(44)
-          print("ADMIN_TRANSFER_OK strategy2Owned=68 ordersSent=0 schedulerChanged=0 deleted=0")
+          print(f"ADMIN_TRANSFER_OK strategy2Owned={expected_owned} ordersSent=0 schedulerChanged=0 deleted=0")
           PY
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"                         --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
