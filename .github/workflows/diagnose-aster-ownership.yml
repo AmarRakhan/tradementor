@@ -59,14 +59,17 @@ jobs:
 
           db = firestore.Client(project="tradementor-amar-20260813")
           secrets = secretmanager.SecretManagerServiceClient()
+          candidates = {doc.id for doc in db.collection("users").stream()}
+          for collection_name in ("asterAutomation", "asterStrategy2", "asterStrategy3"):
+              candidates.update(doc.id for doc in db.collection(collection_name).stream())
           uids = []
-          for user in db.collection("users").stream():
-              name = f"projects/tradementor-amar-20260813/secrets/tradementor-aster-{user.id}/versions/latest"
+          for uid in candidates:
+              name = f"projects/tradementor-amar-20260813/secrets/tradementor-aster-{uid}/versions/latest"
               try:
                   secrets.access_secret_version(request={"name": name})
               except Exception:
                   continue
-              uids.append(user.id)
+              uids.append(uid)
           if len(uids) != 4 or len(set(uids)) != 4:
               raise SystemExit(254)
           results = []
