@@ -34,11 +34,17 @@ jobs:
           NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           SINCE="$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
           JOB_JSON="$RUNNER_TEMP/scheduler.json"
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          SERVICE_IAM="$RUNNER_TEMP/service-iam.json"
           SCHEDULER_LOGS="$RUNNER_TEMP/scheduler-logs.json"
           SERVICE_LOGS="$RUNNER_TEMP/service-logs.json"
 
           gcloud scheduler jobs describe "$SCHEDULER_JOB" \
             --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$JOB_JSON"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_IAM"
           set +e
           gcloud logging read \
             "resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"$SCHEDULER_JOB\" AND timestamp>=\"$SINCE\"" \
@@ -52,13 +58,15 @@ jobs:
           test -s "$SCHEDULER_LOGS" || echo '[]' > "$SCHEDULER_LOGS"
           test -s "$SERVICE_LOGS" || echo '[]' > "$SERVICE_LOGS"
 
-          python - "$JOB_JSON" "$SCHEDULER_LOGS" "$SERVICE_LOGS" "$NOW" \
-            "$SCHEDULER_LOG_RC" "$SERVICE_LOG_RC" <<'PY'
+          python - "$JOB_JSON" "$SERVICE_JSON" "$SERVICE_IAM" "$SCHEDULER_LOGS" \
+            "$SERVICE_LOGS" "$NOW" "$SCHEDULER_LOG_RC" "$SERVICE_LOG_RC" <<'PY'
           import json, sys
 
           job = json.load(open(sys.argv[1], encoding="utf-8"))
-          scheduler_logs = json.load(open(sys.argv[2], encoding="utf-8"))
-          service_logs = json.load(open(sys.argv[3], encoding="utf-8"))
+          service = json.load(open(sys.argv[2], encoding="utf-8"))
+          service_iam = json.load(open(sys.argv[3], encoding="utf-8"))
+          scheduler_logs = json.load(open(sys.argv[4], encoding="utf-8"))
+          service_logs = json.load(open(sys.argv[5], encoding="utf-8"))
 
           def scheduler_row(row):
               payload = row.get("jsonPayload") or {}
@@ -94,7 +102,7 @@ jobs:
           service_summary = [row for row in service_summary if row["status"] or row["severity"] in {"ERROR", "CRITICAL", "ALERT", "EMERGENCY"}][:50]
           result = {
               "readOnly": True,
-              "observedAt": sys.argv[4],
+              "observedAt": sys.argv[6],
               "scheduler": {
                   "name": job.get("name"),
                   "state": job.get("state"),
@@ -105,11 +113,17 @@ jobs:
                   "status": job.get("status"),
                   "uri": (job.get("httpTarget") or {}).get("uri"),
                   "audience": ((job.get("httpTarget") or {}).get("oidcToken") or {}).get("audience"),
+                  "oidcServiceAccount": ((job.get("httpTarget") or {}).get("oidcToken") or {}).get("serviceAccountEmail"),
+              },
+              "service": {
+                  "url": (service.get("status") or {}).get("url"),
+                  "invokerBindings": [binding for binding in service_iam.get("bindings", [])
+                                      if binding.get("role") == "roles/run.invoker"],
               },
               "schedulerEvents": scheduler_summary,
               "serviceRequestsAndErrors": service_summary,
-              "schedulerLogReadAllowed": sys.argv[5] == "0",
-              "serviceLogReadAllowed": sys.argv[6] == "0",
+              "schedulerLogReadAllowed": sys.argv[7] == "0",
+              "serviceLogReadAllowed": sys.argv[8] == "0",
           }
           print("STRATEGY2_SCHEDULER_DIAGNOSTICS " + json.dumps(result, sort_keys=True, default=str))
           PY
