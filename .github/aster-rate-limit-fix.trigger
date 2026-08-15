@@ -1,1 +1,1 @@
-Deploy commit a34dc780a5b6ba9a1d8dff07e1874664c0f8054d without changing runtime or Scheduler configuration.
+Retry the guarded deployment with Cloud Run-compatible candidate tags; do not change runtime or Scheduler configuration.
