@@ -133,7 +133,7 @@ jobs:
           RC=$?
           set -e
           EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by="~metadata.creationTimestamp" --format="value(metadata.name)")"
-          gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format="table(index,status.exitCode,status.message)"
+          gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json
           test "$RC" -eq 0
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
