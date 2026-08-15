@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
       - name: Fetch each public Aster market endpoint once
         shell: python
         run: |
@@ -89,6 +90,15 @@ jobs:
                 for row in symbols for item in row.get("filters", []) if isinstance(item, dict)))
           print("contract_checks", checks)
           print("ticker_checks", ticker_checks)
+          import sys
+          sys.path.insert(0, "cloud_api")
+          from aster_universe import build_snapshot
+          parsed = build_snapshot(exchange, tickers, 200).public_dict()
+          print("parser_result", {key: parsed[key] for key in
+                ("eligibleMarketCount", "selectedMarketCount", "entryBlocked", "entryBlockReason")})
+          assert parsed["eligibleMarketCount"] > 0
+          assert parsed["selectedMarketCount"] > 0
+          assert parsed["entryBlocked"] is False
           print("sample_symbols", [{key: row.get(key) for key in
                 ("symbol", "status", "contractType", "type", "quoteAsset", "marginAsset", "settleAsset")}
                 for row in symbols[:3]])
