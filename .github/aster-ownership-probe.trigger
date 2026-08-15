@@ -1,1 +1,1 @@
-User-authorized temporary read-only Cloud Run ownership probe; auto-delete after execution.
+User-authorized retry: read-only aggregate ownership counts via Cloud Run task status; explicit and fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
