@@ -1,1 +1,1 @@
-User explicitly approved one final read-only probe of numeric task-status fields named index, exit, or code; explicit plus fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
+User explicitly approved corrected repeat of the read-only numeric task-status probe; accept Cloud Run wrapper return code 0; numeric fields named index, exit, or code only; explicit plus fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
