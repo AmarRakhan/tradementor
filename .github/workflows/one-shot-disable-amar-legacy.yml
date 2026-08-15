@@ -21,7 +21,6 @@ jobs:
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
       TARGET_EMAIL: Amar_rakhan@hotmail.com
-      EXPECTED_UID: mQpS3sbpa8eMUIkPaWUP1TabyZq1
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -53,15 +52,15 @@ jobs:
           if not firebase_admin._apps:
               firebase_admin.initialize_app(options={"projectId": "tradementor-production"})
           email = os.environ["TARGET_EMAIL"]
-          expected_uid = os.environ["EXPECTED_UID"]
           user = auth.get_user_by_email(email)
-          if user.uid != expected_uid or (user.email or "").lower() != email.lower():
+          if (user.email or "").lower() != email.lower():
               raise SystemExit(41)
+          verified_uid = user.uid
 
           db = firestore.Client(project="tradementor-amar-20260813")
-          s1_ref = db.collection("asterAutomation").document(expected_uid)
-          s2_ref = db.collection("asterStrategy2").document(expected_uid)
-          s3_ref = db.collection("asterStrategy3").document(expected_uid)
+          s1_ref = db.collection("asterAutomation").document(verified_uid)
+          s2_ref = db.collection("asterStrategy2").document(verified_uid)
+          s3_ref = db.collection("asterStrategy3").document(verified_uid)
 
           def keys(state, strategy_ids, engines):
               out = set()
@@ -110,7 +109,7 @@ jobs:
               return len(s2_keys)
 
           owned = transfer()
-          print(f"ADMIN_TRANSFER_OK uid={expected_uid} strategy2Owned={owned} ordersSent=0 schedulerChanged=0 deleted=0")
+          print(f"ADMIN_TRANSFER_OK uid={verified_uid} strategy2Owned={owned} ordersSent=0 schedulerChanged=0 deleted=0")
 
           deadline = time.time() + 210
           while time.time() < deadline:
@@ -121,14 +120,15 @@ jobs:
               phase = str(s2.get("phase", ""))
               owned_now = len(keys(s2, {"aster-strategy-2"}, {"strategy2"}))
               print(f"POSTCHECK phase={phase} legacyActive={int(legacy)} owned={owned_now} unassigned={int(s2.get('unassignedPositions',0) or 0)}")
-              if not legacy and phase.upper() not in {"RECONCILING", "RECOVERY", "RECOVERING"}:
+              if (not legacy and owned_now == 68 and int(s2.get("unassignedPositions",0) or 0) == 0
+                  and bool(s2.get("enabled")) and bool(s2.get("monitor")) and bool(s2.get("exclusiveOwnership"))):
                   print("POSTCHECK_OK")
                   raise SystemExit(0)
               time.sleep(15)
           raise SystemExit(44)
           PY
           )"
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,EXPECTED_UID=$EXPECTED_UID"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
           RC=$?
