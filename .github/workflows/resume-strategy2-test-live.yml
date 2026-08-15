@@ -13,7 +13,9 @@ permissions:
   id-token: write
 
 concurrency:
-  group: tradementor-strategy2-test-live-scheduler-control
+  # Shared with the deploy workflow so a completed resume can never be
+  # overwritten by a deployment that is still configuring the same job.
+  group: tradementor-strategy2-test-live-control
   cancel-in-progress: false
 
 env:

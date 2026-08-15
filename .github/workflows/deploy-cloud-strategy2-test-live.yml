@@ -15,7 +15,9 @@ permissions:
   id-token: write
 
 concurrency:
-  group: tradementor-strategy2-test-live
+  # Deployment and scheduler control must never race.  A resume that runs
+  # during deployment used to be undone when this workflow paused the job.
+  group: tradementor-strategy2-test-live-control
   cancel-in-progress: false
 
 env:
@@ -125,12 +127,17 @@ jobs:
           PY
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
 
-      - name: Configure paused Strategy 2-only scheduler
+      - name: Configure Strategy 2-only scheduler without changing its state
         shell: bash
         run: |
+          set -euo pipefail
           TARGET="$SERVICE_URL/internal/aster-strategy2/tick"
           if gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
-            gcloud scheduler jobs pause "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION"
+            INITIAL_STATE="$(gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+              --project "$GCP_PROJECT_ID" \
+              --location "$GCP_REGION" \
+              --format='value(state)')"
+            test "$INITIAL_STATE" = "PAUSED" || test "$INITIAL_STATE" = "ENABLED"
           else
             gcloud scheduler jobs create http "$SCHEDULER_JOB" \
               --project "$GCP_PROJECT_ID" \
@@ -140,6 +147,7 @@ jobs:
               --uri "$SERVICE_URL/health" \
               --http-method GET
             gcloud scheduler jobs pause "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION"
+            INITIAL_STATE="PAUSED"
           fi
           gcloud scheduler jobs update http "$SCHEDULER_JOB" \
             --project "$GCP_PROJECT_ID" \
@@ -150,10 +158,12 @@ jobs:
             --http-method POST \
             --oidc-service-account-email "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
             --oidc-token-audience "$SERVICE_URL"
+          echo "SCHEDULER_INITIAL_STATE=$INITIAL_STATE" >> "$GITHUB_ENV"
 
-      - name: Verify Strategy 2 route and keep scheduler paused
+      - name: Verify Strategy 2 route and preserve scheduler state
         shell: bash
         run: |
+          set -euo pipefail
           JOB_DESCRIPTION="$RUNNER_TEMP/strategy2-test-scheduler.json"
           OPENAPI="$RUNNER_TEMP/strategy2-test-openapi.json"
           gcloud scheduler jobs describe "$SCHEDULER_JOB" \
@@ -162,14 +172,16 @@ jobs:
             --format=json > "$JOB_DESCRIPTION"
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 \
             "$SERVICE_URL/openapi.json" > "$OPENAPI"
-          python - "$JOB_DESCRIPTION" "$OPENAPI" "$SERVICE_URL" <<'PY'
+          python - "$JOB_DESCRIPTION" "$OPENAPI" "$SERVICE_URL" "$SCHEDULER_INITIAL_STATE" <<'PY'
           import json
           import sys
 
           job = json.load(open(sys.argv[1], encoding="utf-8"))
           openapi = json.load(open(sys.argv[2], encoding="utf-8"))
           service_url = sys.argv[3]
-          assert job["state"] == "PAUSED"
+          initial_state = sys.argv[4]
+          assert initial_state in {"PAUSED", "ENABLED"}
+          assert job["state"] == initial_state
           assert job["schedule"] == "* * * * *"
           assert job["httpTarget"]["uri"] == service_url + "/internal/aster-strategy2/tick"
           assert "/internal/aster-automation/tick" not in job["httpTarget"]["uri"]
@@ -177,7 +189,7 @@ jobs:
           assert "/internal/aster-strategy2/tick" in openapi["paths"]
           assert "post" in openapi["paths"]["/internal/aster-strategy2/tick"]
           PY
-          test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "PAUSED"
+          test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "$SCHEDULER_INITIAL_STATE"
 
       - name: Publish test service URL
         run: echo "$SERVICE_URL"

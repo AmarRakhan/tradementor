@@ -47,15 +47,24 @@ def test_isolated_strategy2_scheduler_route_exists_and_is_fail_closed():
     assert '_run_aster_strategy3_tick' not in route
 
 
-def test_push_deploy_verifies_the_route_but_keeps_scheduler_paused():
+def test_push_deploy_verifies_route_without_interrupting_an_enabled_scheduler():
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    resume = (ROOT / ".github" / "workflows" / "resume-strategy2-test-live.yml").read_text(encoding="utf-8")
     assert '"/internal/aster-strategy2/tick"' in workflow
     assert 'strategy2_test_entrypoint:app' in workflow
     assert 'openapi["paths"]' in workflow
+    assert 'INITIAL_STATE="$(gcloud scheduler jobs describe' in workflow
+    assert 'assert job["state"] == initial_state' in workflow
+    assert '= "$SCHEDULER_INITIAL_STATE"' in workflow
+    assert "gcloud scheduler jobs pause" in workflow  # new-job bootstrap only
     assert 'test "$(gcloud scheduler jobs describe' in workflow
-    assert 'format=\'value(state)\')" = "PAUSED"' in workflow
     assert "gcloud scheduler jobs resume" not in workflow
     assert workflow.count("--retry-all-errors") >= 2
+    shared_group = "group: tradementor-strategy2-test-live-control"
+    assert shared_group in workflow
+    assert shared_group in resume
+    existing_job = workflow[workflow.index('if gcloud scheduler jobs describe'):workflow.index('else', workflow.index('if gcloud scheduler jobs describe'))]
+    assert "gcloud scheduler jobs pause" not in existing_job
 
 
 def test_strategy2_test_only_publication_cannot_deploy_other_cloud_environments():
