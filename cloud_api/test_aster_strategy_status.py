@@ -62,6 +62,16 @@ def test_strategy2_ownership_never_includes_accountwide_or_strategy3_rows():
     assert [(row["symbol"], row["side"]) for row in owned] == [("BTCUSDT", "LONG")]
 
 
+def test_strategy2_readiness_counts_only_proven_strategy3_rows_as_known_ownership():
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    start = source.index("def aster_strategy2_readiness")
+    end = source.index('@app.post("/v1/me/aster/strategy2/canary")', start)
+    readiness = source[start:end]
+    assert 'strategy_id="aster-strategy-3",engine_type="strategy3"' in readiness
+    assert "known_keys=strategy1_keys|strategy2_keys|strategy3_keys" in readiness
+    assert "not bool(strategy2_keys&strategy3_keys)" in readiness
+
+
 def test_resolved_ownership_warning_is_not_published_as_current():
     assert ownership_reason_contract("Actieve exposure zonder bewezen ownership", 0) == OWNERSHIP_CONFIRMED_REASON
     assert ownership_reason_contract("Actieve Aster-exposure zonder bewezen Strategy-ownership", 0) == OWNERSHIP_CONFIRMED_REASON
