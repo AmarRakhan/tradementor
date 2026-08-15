@@ -85,7 +85,8 @@ from aster_strategy3_readiness import build_strategy3_readiness_report
 from aster_strategy3_execution import Strategy3ExecutionContext, execute_strategy3_decision
 from aster_strategy3_status import strategy3_position_tp_contract
 from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_user_trades, refresh_owned_costs
-from aster_strategy_status import operating_status_contract, position_count_contract, proven_owned_rows
+from aster_strategy_status import (operating_status_contract, ownership_reason_contract,
+    position_count_contract, proven_owned_rows, reconciled_ownership_update)
 from aster_dashboard_status import build_aster_dashboard_status
 from aster_rapid_build import run_confirmed_batch
 from aster_strategy2_execution import ExecutionContext, execute_decision as execute_aster_strategy2_decision
@@ -1093,12 +1094,13 @@ def aster_strategy3_public(uid: str) -> dict[str, Any]:
     roles = [str(x.get("role", "HARVEST")) for x in owned]
     account_snapshot = raw.get("accountSnapshot") if isinstance(raw.get("accountSnapshot"), dict) else {}
     universe = _server_universe_contract(ref, raw, int(settings.get("universeTopN", 100)))
+    unassigned_positions = int(safe_float(raw.get("unassignedPositions")))
     return {"strategy3": {"settings": settings, "effectiveLiveSettings": settings, "universe": universe,
         "settingsSource": "server", "phase": str(raw.get("phase", "DRAFT")),
         "enabled": bool(raw.get("enabled",False)), "liveReady": bool(raw.get("liveReady",False)),
         "paperOnly": not bool(raw.get("canaryValidated",False)), "canaryValidated":bool(raw.get("canaryValidated",False)),
         "configVersion": int(safe_float(raw.get("configVersion", settings.get("version", 1)))),
-        "lastReason": str(raw.get("lastReason", "Nieuw — simulatie; standaard uit")),
+        "lastReason": ownership_reason_contract(raw.get("lastReason"), unassigned_positions),
         "lastSimulation": raw.get("lastSimulation") if isinstance(raw.get("lastSimulation"), dict) else None,
         "lastTickAt":raw.get("lastTickAt"), "activeTrades":len(owned),
         "accountActivePositions":int(safe_float(account_snapshot.get("accountActivePositions"))),
@@ -1108,7 +1110,7 @@ def aster_strategy3_public(uid: str) -> dict[str, Any]:
         "harvestLegs":sum(1 for x in roles if x=="HARVEST"),
         "shieldLegs":sum(1 for x in roles if x in {"PROTECTION","HARVEST_PROTECTION"}),
         "trailingActive":len(raw.get("trailingPeaks", {}) if isinstance(raw.get("trailingPeaks"),dict) else {}),
-        "trailingBlocked":0, "unassignedPositions":int(safe_float(raw.get("unassignedPositions")))}}
+        "trailingBlocked":0, "unassignedPositions":unassigned_positions}}
 
 
 def _read_strategy_cost_evidence(uid: str, client: AsterV3Client, owned: list[OwnedLeg], *,
@@ -1217,6 +1219,13 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     if unknown:
         ref.set({"phase":"RECONCILING","unassignedPositions":len(unknown),"lastReason":"Actieve exposure zonder bewezen ownership","lastTickAt":now},merge=True)
         return {"status":"reconciling","reason":"Actieve exposure zonder bewezen ownership","ordersSent":0}
+    # The exchange-truth check above is authoritative for the current tick.
+    # Clear both halves of a previously persisted ownership warning together,
+    # before any later fee/funding or risk hold can return early.
+    ownership_update=reconciled_ownership_update(raw.get("lastReason"))
+    stored_reason=str(raw.get("lastReason") or "Nieuw — simulatie; standaard uit")
+    if int(safe_float(raw.get("unassignedPositions")))!=0 or ownership_update["lastReason"]!=stored_reason:
+        ref.set(ownership_update,merge=True)
     fills=[];income=[]
     try:
         changed_symbols = changed_owned_symbols(owned, positions)

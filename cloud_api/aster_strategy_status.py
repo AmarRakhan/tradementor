@@ -9,6 +9,35 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 
+OWNERSHIP_CONFIRMED_REASON = "Alle actieve posities hebben bewezen Strategy-ownership"
+_STALE_UNKNOWN_OWNERSHIP_REASONS = {
+    "Actieve exposure zonder bewezen ownership",
+    "Actieve Aster-exposure zonder bewezen Strategy-ownership",
+}
+
+
+def ownership_reason_contract(last_reason: Any, unassigned_positions: int) -> str:
+    """Never publish a resolved ownership warning as the current reason.
+
+    ``lastReason`` is persisted separately from ``unassignedPositions``. A
+    successful reconciliation can therefore clear the counter while an older
+    warning remains in Firestore. The public contract must not expose those
+    mutually contradictory values.
+    """
+    reason = str(last_reason or "Nieuw — simulatie; standaard uit")
+    if int(unassigned_positions) == 0 and reason in _STALE_UNKNOWN_OWNERSHIP_REASONS:
+        return OWNERSHIP_CONFIRMED_REASON
+    return reason
+
+
+def reconciled_ownership_update(last_reason: Any) -> dict[str, Any]:
+    """Return the state written after the active-position ownership check passes."""
+    return {
+        "unassignedPositions": 0,
+        "lastReason": ownership_reason_contract(last_reason, 0),
+    }
+
+
 def proven_owned_rows(rows: Iterable[Any], *, strategy_id: str, engine_type: str) -> list[dict[str, Any]]:
     """Return only rows whose persisted identity explicitly proves ownership."""
     result: list[dict[str, Any]] = []

@@ -1,4 +1,6 @@
-from aster_strategy_status import operating_status_contract, position_count_contract, proven_owned_rows
+from aster_strategy_status import (OWNERSHIP_CONFIRMED_REASON, operating_status_contract,
+    ownership_reason_contract, position_count_contract, proven_owned_rows,
+    reconciled_ownership_update)
 from pathlib import Path
 
 
@@ -58,6 +60,24 @@ def test_strategy2_ownership_never_includes_accountwide_or_strategy3_rows():
     ]
     owned = proven_owned_rows(rows, strategy_id="aster-strategy-2", engine_type="strategy2")
     assert [(row["symbol"], row["side"]) for row in owned] == [("BTCUSDT", "LONG")]
+
+
+def test_resolved_ownership_warning_is_not_published_as_current():
+    assert ownership_reason_contract("Actieve exposure zonder bewezen ownership", 0) == OWNERSHIP_CONFIRMED_REASON
+    assert ownership_reason_contract("Actieve Aster-exposure zonder bewezen Strategy-ownership", 0) == OWNERSHIP_CONFIRMED_REASON
+
+
+def test_active_ownership_warning_and_unrelated_reasons_are_preserved():
+    warning = "Actieve exposure zonder bewezen ownership"
+    assert ownership_reason_contract(warning, 1) == warning
+    assert ownership_reason_contract("Nieuwe entry geblokkeerd door risicobudget", 0) == "Nieuwe entry geblokkeerd door risicobudget"
+
+
+def test_successful_reconciliation_clears_counter_and_stale_reason_atomically():
+    assert reconciled_ownership_update("Actieve exposure zonder bewezen ownership") == {
+        "unassignedPositions": 0,
+        "lastReason": OWNERSHIP_CONFIRMED_REASON,
+    }
 
 
 def test_strategy2_off_returns_before_every_new_entry_path_but_after_management():
