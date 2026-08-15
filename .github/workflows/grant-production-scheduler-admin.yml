@@ -1,0 +1,58 @@
+name: Grant production Scheduler administration
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/grant-production-scheduler-admin.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-scheduler-iam
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  grant-and-verify:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Verify immutable IAM scope
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$DEPLOY_SERVICE_ACCOUNT" = "github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com"
+
+      - name: Authenticate without stored keys
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Grant only Cloud Scheduler Admin and verify
+        shell: bash
+        run: |
+          MEMBER="serviceAccount:$DEPLOY_SERVICE_ACCOUNT"
+          gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+            --member "$MEMBER" \
+            --role roles/cloudscheduler.admin \
+            --condition=None \
+            --quiet
+          ROLE="$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" \
+            --flatten='bindings[].members' \
+            --filter="bindings.role=roles/cloudscheduler.admin AND bindings.members=$MEMBER" \
+            --format='value(bindings.role)')"
+          test "$ROLE" = "roles/cloudscheduler.admin"
