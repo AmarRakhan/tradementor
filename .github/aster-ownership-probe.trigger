@@ -1,1 +1,1 @@
-User explicitly approved corrected repeat: resolve execution internally from the uniquely named temporary job, then inspect only numeric task-status fields named index, exit, or code; explicit plus fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
+User explicitly approved app-wide read-only Strategy-2 ownership diagnosis: inspect only aggregate numeric task-status fields; no identifiers, symbols, balances, secrets, orders, IAM, scheduler, or service changes.
