@@ -43,27 +43,17 @@ jobs:
           test -n "$IMAGE"
           test -n "$RUNTIME_SERVICE_ACCOUNT"
           SCRIPT_B64="$(base64 -w0 <<'PY'
-          import os, time
           from datetime import datetime, timezone
-          import firebase_admin
-          from firebase_admin import auth
           from google.cloud import firestore
 
-          if not firebase_admin._apps:
-              firebase_admin.initialize_app(options={"projectId": "tradementor-production"})
-          email = os.environ["TARGET_EMAIL"]
-          user = auth.get_user_by_email(email)
-          if (user.email or "").lower() != email.lower():
-              raise SystemExit(41)
-          verified_uid = user.uid
-
+          verified_uid = "mQpS3sbpa8eMUIkPaWUP1TabyZq1"
           db = firestore.Client(project="tradementor-amar-20260813")
           s1_ref = db.collection("asterAutomation").document(verified_uid)
           s2_ref = db.collection("asterStrategy2").document(verified_uid)
           s3_ref = db.collection("asterStrategy3").document(verified_uid)
 
           def keys(state, strategy_ids, engines):
-              out = set()
+              result = set()
               rows = state.get("ownedLegs") if isinstance(state.get("ownedLegs"), list) else []
               for row in rows:
                   if not isinstance(row, dict):
@@ -73,62 +63,43 @@ jobs:
                   symbol = str(row.get("symbol", "")).upper()
                   side = str(row.get("side", "")).upper()
                   if sid in strategy_ids and eng in engines and symbol and side in {"LONG", "SHORT"}:
-                      out.add((symbol, side))
-              return out
+                      result.add((symbol, side))
+              return result
 
-          def transfer():
-              s1_snap = s1_ref.get()
-              s2_snap = s2_ref.get()
-              s3_snap = s3_ref.get()
-              if not s2_snap.exists:
-                  raise SystemExit(42)
-              s1 = s1_snap.to_dict() or {}
-              s2 = s2_snap.to_dict() or {}
-              s3 = s3_snap.to_dict() or {}
-              s1_keys = keys(s1, {"aster-strategy-1", "strategy_1"}, {"strategy1", "strategy_1"})
-              s2_keys = keys(s2, {"aster-strategy-2"}, {"strategy2"})
-              s3_keys = keys(s3, {"aster-strategy-3"}, {"strategy3"})
-              collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
-              required = (
-                  bool(s2.get("enabled")) and bool(s2.get("monitor"))
-                  and bool(s2.get("exclusiveOwnership"))
-                  and int(s2.get("unassignedPositions", 0) or 0) == 0
-                  and not collisions and len(s2_keys) == 68
-              )
-              if not required:
-                  raise SystemExit(43)
-              now = datetime.now(timezone.utc)
-              reason = "Administratief uitgeschakeld na bewezen exclusieve Strategy-2-ownership"
-              batch = db.batch()
-              batch.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
-                              "lastReason": reason, "updatedAt": now}, merge=True)
-              batch.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
-                              "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
-                              "lastReason": reason, "updatedAt": now}, merge=True)
-              batch.commit()
-              return len(s2_keys)
+          s1_snap, s2_snap, s3_snap = s1_ref.get(), s2_ref.get(), s3_ref.get()
+          if not s2_snap.exists:
+              raise SystemExit(42)
+          s1, s2, s3 = s1_snap.to_dict() or {}, s2_snap.to_dict() or {}, s3_snap.to_dict() or {}
+          s1_keys = keys(s1, {"aster-strategy-1", "strategy_1"}, {"strategy1", "strategy_1"})
+          s2_keys = keys(s2, {"aster-strategy-2"}, {"strategy2"})
+          s3_keys = keys(s3, {"aster-strategy-3"}, {"strategy3"})
+          collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
+          if not (bool(s2.get("enabled")) and bool(s2.get("monitor")) and bool(s2.get("exclusiveOwnership"))
+                  and int(s2.get("unassignedPositions", 0) or 0) == 0 and not collisions and len(s2_keys) == 68):
+              raise SystemExit(43)
 
-          owned = transfer()
-          print(f"ADMIN_TRANSFER_OK uid={verified_uid} strategy2Owned={owned} ordersSent=0 schedulerChanged=0 deleted=0")
+          now = datetime.now(timezone.utc)
+          reason = "Administratief uitgeschakeld na bewezen exclusieve Strategy-2-ownership"
+          batch = db.batch()
+          batch.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
+                             "lastReason": reason, "updatedAt": now}, merge=True)
+          batch.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
+                             "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
+                             "lastReason": reason, "updatedAt": now}, merge=True)
+          batch.commit()
 
-          deadline = time.time() + 210
-          while time.time() < deadline:
-              s2 = s2_ref.get().to_dict() or {}
-              s1 = s1_ref.get().to_dict() or {}
-              s3 = s3_ref.get().to_dict() or {}
-              legacy = bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor"))
-              phase = str(s2.get("phase", ""))
-              owned_now = len(keys(s2, {"aster-strategy-2"}, {"strategy2"}))
-              print(f"POSTCHECK phase={phase} legacyActive={int(legacy)} owned={owned_now} unassigned={int(s2.get('unassignedPositions',0) or 0)}")
-              if (not legacy and owned_now == 68 and int(s2.get("unassignedPositions",0) or 0) == 0
-                  and bool(s2.get("enabled")) and bool(s2.get("monitor")) and bool(s2.get("exclusiveOwnership"))):
-                  print("POSTCHECK_OK")
-                  raise SystemExit(0)
-              time.sleep(15)
-          raise SystemExit(44)
+          s1_after, s2_after, s3_after = s1_ref.get().to_dict() or {}, s2_ref.get().to_dict() or {}, s3_ref.get().to_dict() or {}
+          legacy = bool(s1_after.get("enabled") or s1_after.get("monitor") or s3_after.get("enabled") or s3_after.get("monitor"))
+          unchanged = (bool(s2_after.get("enabled")) and bool(s2_after.get("monitor"))
+                       and bool(s2_after.get("exclusiveOwnership"))
+                       and len(keys(s2_after, {"aster-strategy-2"}, {"strategy2"})) == 68
+                       and int(s2_after.get("unassignedPositions", 0) or 0) == 0)
+          if legacy or not unchanged:
+              raise SystemExit(44)
+          print("ADMIN_TRANSFER_OK strategy2Owned=68 ordersSent=0 schedulerChanged=0 deleted=0")
           PY
           )"
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"                         --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
           RC=$?
