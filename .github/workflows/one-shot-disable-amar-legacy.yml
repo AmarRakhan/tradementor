@@ -21,7 +21,7 @@ jobs:
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
       TARGET_EMAIL: Amar_rakhan@hotmail.com
-      EXPECTED_UID: mQpS3sbpa8eMUlkPaWUP1TabyZq1
+      EXPECTED_UID: mQpS3sbpa8eMUIkPaWUP1TabyZq1
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -128,6 +128,11 @@ jobs:
           PY
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,EXPECTED_UID=$EXPECTED_UID"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          RC=$?
+          set -e
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" --project "$GCP_PROJECT_ID" --limit 100 --order=asc --format="value(textPayload)" || true
+          test "$RC" -eq 0
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
