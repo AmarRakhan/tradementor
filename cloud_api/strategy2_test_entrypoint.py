@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Header
+from fastapi import Depends, Header
 
 import main as control_plane
 from read_only_source import read_source_url as environment_read_source_url
@@ -32,6 +32,58 @@ def _test_runtime_read_source_url(
 # the isolated test runtime.
 control_plane.read_source_url = _test_runtime_read_source_url
 app = control_plane.app
+
+
+@app.get("/v1/me/aster/strategy2/diagnostics")
+def strategy2_token_diagnostics(
+    user: dict[str, Any] = Depends(control_plane.authenticated_user),
+) -> dict[str, Any]:
+    """Return token-scoped ownership evidence without exchange or write access."""
+    uid = str(user["uid"])
+    s2_snapshot = control_plane.aster_strategy2_reference(uid).get()
+    s2 = (s2_snapshot.to_dict() or {}) if s2_snapshot.exists else {}
+    s1 = control_plane.aster_automation_reference(uid).get().to_dict() or {}
+    s3 = control_plane.aster_strategy3_reference(uid).get().to_dict() or {}
+
+    def owned_keys(state: dict[str, Any], strategy_id: str, engine_type: str) -> set[tuple[str, str]]:
+        rows = control_plane.proven_owned_rows(
+            state.get("ownedLegs", []), strategy_id=strategy_id, engine_type=engine_type,
+        )
+        return {(str(row["symbol"]).upper(), str(row["side"]).upper()) for row in rows}
+
+    s1_keys = owned_keys(s1, "aster-strategy-1", "strategy1") | owned_keys(s1, "strategy_1", "strategy_1")
+    s2_keys = owned_keys(s2, "aster-strategy-2", "strategy2")
+    s3_keys = owned_keys(s3, "aster-strategy-3", "strategy3")
+    collision_keys = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
+    last_tick = s2.get("lastTickAt")
+    if isinstance(last_tick, datetime):
+        last_tick_utc = last_tick.replace(tzinfo=timezone.utc) if last_tick.tzinfo is None else last_tick.astimezone(timezone.utc)
+        heartbeat_age = max(0, int((datetime.now(timezone.utc) - last_tick_utc).total_seconds()))
+    else:
+        last_tick_utc = None
+        heartbeat_age = None
+    long_legs = sum(side == "LONG" for _, side in s2_keys)
+    short_legs = sum(side == "SHORT" for _, side in s2_keys)
+    unassigned = int(control_plane.safe_float(s2.get("unassignedPositions")))
+    legacy_active = bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor"))
+    exclusive = bool(s2.get("exclusiveOwnership"))
+    return {
+        "readOnly": True,
+        "identity": {"uid": uid, "email": str(user.get("email", "")),
+            "emailVerified": user.get("email_verified") is True},
+        "strategy2": {
+            "documentExists": s2_snapshot.exists, "enabled": bool(s2.get("enabled")),
+            "monitor": bool(s2.get("monitor")), "phase": str(s2.get("phase", "MISSING")),
+            "reason": str(s2.get("lastReason", "Strategy-2-document ontbreekt")),
+            "exclusiveOwnership": exclusive,
+            "ownershipProven": bool(s2_snapshot.exists and exclusive and not unassigned and not collision_keys),
+            "ownedLegs": len(s2_keys), "longLegs": long_legs, "shortLegs": short_legs,
+            "unassignedPositions": unassigned, "crossStrategyCollisions": len(collision_keys),
+            "legacyStrategiesActive": legacy_active, "lastTickAt": last_tick_utc,
+            "heartbeatAgeSeconds": heartbeat_age,
+            "heartbeatFresh": heartbeat_age is not None and heartbeat_age <= 180,
+        },
+    }
 
 
 def _live_gates_open() -> bool:
