@@ -111,7 +111,7 @@ jobs:
               for item in service["spec"]["template"]["spec"]["containers"][0]["env"]
           }
           assert health["environment"] == "strategy2-test-live"
-          assert health["ordersEnabled"] is True
+          assert health["status"] == "ready"
           assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
           assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
           assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "true"
