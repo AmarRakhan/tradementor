@@ -1,0 +1,120 @@
+name: Resume Strategy 2 Shared Live Test Scheduler
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/resume-strategy2-test-live.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-test-live-scheduler-control
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+  SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+
+jobs:
+  resume-strategy2-test-scheduler:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Verify immutable test-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$GCP_REGION" = "europe-west4"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
+          test "$SCHEDULER_JOB" = "tradementor-strategy2-test-live-tick"
+
+      - name: Authenticate to isolated Google Cloud test project
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify Strategy 2-only runtime and scheduler target
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$RUNNER_TEMP/strategy2-service.json"
+          JOB_JSON="$RUNNER_TEMP/strategy2-scheduler.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json > "$SERVICE_JSON"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format='value(status.url)')"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format=json > "$JOB_JSON"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$SERVICE_JSON" "$JOB_JSON" "$SERVICE_URL" "$HEALTH" <<'PY'
+          import json
+          import sys
+
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          job = json.load(open(sys.argv[2], encoding="utf-8"))
+          service_url = sys.argv[3]
+          health = json.loads(sys.argv[4])
+          variables = {
+              item["name"]: item.get("value")
+              for item in service["spec"]["template"]["spec"]["containers"][0]["env"]
+          }
+          assert health["environment"] == "strategy2-test-live"
+          assert health["status"] == "ready"
+          assert variables["TRADEMENTOR_ENV"] == "strategy2-test-live"
+          assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
+          assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "true"
+          assert variables["ASTER_STRATEGY3_LIVE_ENABLED"] == "false"
+          assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"
+          assert variables["ASTER_STRATEGY3_CANARY_ENABLED"] == "false"
+          assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
+          assert variables["MEXC_AUTOMATION_EXECUTION_ENABLED"] == "false"
+          assert job["name"].endswith("/jobs/tradementor-strategy2-test-live-tick")
+          assert job["state"] in {"PAUSED", "ENABLED"}
+          assert job["schedule"] == "* * * * *"
+          assert job["httpTarget"]["httpMethod"] == "POST"
+          assert job["httpTarget"]["uri"] == service_url + "/internal/aster-strategy2/tick"
+          assert "/internal/aster-strategy3/tick" not in job["httpTarget"]["uri"]
+          assert "/internal/aster-automation/tick" not in job["httpTarget"]["uri"]
+          PY
+
+      - name: Resume only the isolated Strategy 2 test scheduler
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATE="$(gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format='value(state)')"
+          if test "$STATE" = "PAUSED"; then
+            gcloud scheduler jobs resume "$SCHEDULER_JOB" \
+              --project "$GCP_PROJECT_ID" \
+              --location "$GCP_REGION"
+          else
+            test "$STATE" = "ENABLED"
+          fi
+          test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format='value(state)')" = "ENABLED"
