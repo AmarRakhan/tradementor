@@ -39,14 +39,21 @@ jobs:
 
           gcloud scheduler jobs describe "$SCHEDULER_JOB" \
             --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$JOB_JSON"
+          set +e
           gcloud logging read \
             "resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"$SCHEDULER_JOB\" AND timestamp>=\"$SINCE\"" \
-            --project "$GCP_PROJECT_ID" --limit 100 --order desc --format=json > "$SCHEDULER_LOGS"
+            --project "$GCP_PROJECT_ID" --limit 100 --order desc --format=json > "$SCHEDULER_LOGS" 2>"$RUNNER_TEMP/scheduler-logs.error"
+          SCHEDULER_LOG_RC=$?
           gcloud logging read \
             "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$CLOUD_RUN_SERVICE\" AND timestamp>=\"$SINCE\"" \
-            --project "$GCP_PROJECT_ID" --limit 200 --order desc --format=json > "$SERVICE_LOGS"
+            --project "$GCP_PROJECT_ID" --limit 200 --order desc --format=json > "$SERVICE_LOGS" 2>"$RUNNER_TEMP/service-logs.error"
+          SERVICE_LOG_RC=$?
+          set -e
+          test -s "$SCHEDULER_LOGS" || echo '[]' > "$SCHEDULER_LOGS"
+          test -s "$SERVICE_LOGS" || echo '[]' > "$SERVICE_LOGS"
 
-          python - "$JOB_JSON" "$SCHEDULER_LOGS" "$SERVICE_LOGS" "$NOW" <<'PY'
+          python - "$JOB_JSON" "$SCHEDULER_LOGS" "$SERVICE_LOGS" "$NOW" \
+            "$SCHEDULER_LOG_RC" "$SERVICE_LOG_RC" <<'PY'
           import json, sys
 
           job = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -101,6 +108,8 @@ jobs:
               },
               "schedulerEvents": scheduler_summary,
               "serviceRequestsAndErrors": service_summary,
+              "schedulerLogReadAllowed": sys.argv[5] == "0",
+              "serviceLogReadAllowed": sys.argv[6] == "0",
           }
           print("STRATEGY2_SCHEDULER_DIAGNOSTICS " + json.dumps(result, sort_keys=True, default=str))
           PY
