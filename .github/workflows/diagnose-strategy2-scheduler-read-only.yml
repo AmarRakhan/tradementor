@@ -70,14 +70,20 @@ jobs:
 
           def scheduler_row(row):
               payload = row.get("jsonPayload") or {}
-              status = payload.get("status") or {}
+              status = payload.get("status")
+              if isinstance(status, dict):
+                  status_code = status.get("code")
+                  status_message = status.get("message")
+              else:
+                  status_code = None
+                  status_message = str(status) if status is not None else None
               return {
                   "timestamp": row.get("timestamp"),
                   "severity": row.get("severity"),
                   "eventType": payload.get("@type"),
                   "debugInfo": payload.get("debugInfo"),
-                  "statusCode": status.get("code"),
-                  "statusMessage": status.get("message"),
+                  "statusCode": status_code,
+                  "statusMessage": status_message,
                   "targetType": payload.get("targetType"),
                   "url": payload.get("url"),
               }
