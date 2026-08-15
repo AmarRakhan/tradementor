@@ -1,4 +1,4 @@
-# Shared live test candidate 41
+# Shared live test candidate 41 · Strategy 2 readiness ownership fix
 name: Deploy Strategy 2 Shared Live Test
 
 on:
