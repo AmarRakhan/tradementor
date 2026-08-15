@@ -75,6 +75,7 @@ def test_isolated_runtimes_skip_only_the_remote_revocation_lookup():
     assert check_revoked_tokens("staging") is False
     assert check_revoked_tokens(" STAGING ") is False
     assert check_revoked_tokens("live-canary") is False
+    assert check_revoked_tokens("strategy2-test-live") is False
     assert check_revoked_tokens("strategy3-live") is False
     assert check_revoked_tokens(" STRATEGY3-LIVE ") is False
 
