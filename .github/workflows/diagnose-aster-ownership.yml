@@ -121,19 +121,8 @@ jobs:
           EXECUTION="$(sed -n 's/.*Execution \[\([^]]*\)\].*/\1/p' <<<"$EXECUTE_OUTPUT" | tail -1)"
           test -n "$EXECUTION"
           TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          RESULT="$(jq -c '
-            [.. | objects | select((.index? | type) == "number" and (.lastAttemptResult.exitCode? | type) == "number") | {index: .index, value: (.lastAttemptResult.exitCode - 1)}]
-            | unique_by(.index) | sort_by(.index)
-            | select(length == 6 and ([.[].index] == [0,1,2,3,4,5]) and all(.[]; .value >= 0 and .value <= 249))
-            | {
-                accountActivePositions: .[0].value,
-                reportedUnassignedPositions: .[1].value,
-                strategy1ValidKeys: .[2].value,
-                strategy2ValidKeys: .[3].value,
-                strategy3ValidKeys: .[4].value,
-                crossStrategyCollisions: .[5].value
-              }' <<<"$TASKS_JSON")"
-          test -n "$RESULT"
+          STATUS_FIELDS="$(jq -c '[.. | objects | to_entries[] | select((.key | test("index|exit|code"; "i")) and (.value | type == "number")) | {key: .key, value: .value}]' <<<"$TASKS_JSON")"
+          test -n "$STATUS_FIELDS"
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
-          printf 'OWNERSHIP_RESULT %s\n' "$RESULT"
+          printf 'TASK_STATUS_FIELDS %s\n' "$STATUS_FIELDS"
