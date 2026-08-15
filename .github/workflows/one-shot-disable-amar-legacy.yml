@@ -56,7 +56,7 @@ jobs:
           expected_uid = os.environ["EXPECTED_UID"]
           user = auth.get_user_by_email(email)
           if user.uid != expected_uid or (user.email or "").lower() != email.lower():
-              raise RuntimeError("FAIL_CLOSED_IDENTITY_MISMATCH")
+              raise SystemExit(41)
 
           db = firestore.Client(project="tradementor-amar-20260813")
           s1_ref = db.collection("asterAutomation").document(expected_uid)
@@ -83,7 +83,7 @@ jobs:
               s2_snap = s2_ref.get(transaction=tx)
               s3_snap = s3_ref.get(transaction=tx)
               if not s2_snap.exists:
-                  raise RuntimeError("FAIL_CLOSED_NO_STRATEGY2_DOCUMENT")
+                  raise SystemExit(42)
               s1 = s1_snap.to_dict() or {}
               s2 = s2_snap.to_dict() or {}
               s3 = s3_snap.to_dict() or {}
@@ -98,7 +98,7 @@ jobs:
                   and not collisions and len(s2_keys) == 68
               )
               if not required:
-                  raise RuntimeError("FAIL_CLOSED_OWNERSHIP_PRECONDITION")
+                  raise SystemExit(43)
               now = datetime.now(timezone.utc)
               reason = "Administratief uitgeschakeld na bewezen exclusieve Strategy-2-ownership"
               tx.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
@@ -124,7 +124,7 @@ jobs:
                   print("POSTCHECK_OK")
                   return
               time.sleep(15)
-          raise RuntimeError("POSTCHECK_TIMEOUT_FAIL_CLOSED")
+          raise SystemExit(44)
           PY
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,EXPECTED_UID=$EXPECTED_UID"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
@@ -132,7 +132,8 @@ jobs:
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
           RC=$?
           set -e
-          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" --project "$GCP_PROJECT_ID" --limit 100 --order=asc --format="value(textPayload)" || true
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by="~metadata.creationTimestamp" --format="value(metadata.name)")"
+          gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format="table(index,status.exitCode,status.message)"
           test "$RC" -eq 0
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
