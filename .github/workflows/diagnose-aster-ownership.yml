@@ -16,25 +16,49 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 5
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy3-live-api
     steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - run: pip install google-cloud-firestore
-      - name: Read aggregate ownership evidence only
-        shell: python
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Create, execute and remove isolated read-only diagnostic job
+        shell: bash
         run: |
+          JOB="tm-own-probe-${GITHUB_RUN_ID: -6}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          readarray -t SERVICE_VALUES < <(python - "$SERVICE_JSON" <<'PY'
+          import json, sys
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          spec = service["spec"]["template"]["spec"]
+          print(spec["containers"][0]["image"])
+          print(spec["serviceAccountName"])
+          PY
+          )
+          IMAGE="${SERVICE_VALUES[0]}"
+          RUNTIME_SERVICE_ACCOUNT="${SERVICE_VALUES[1]}"
+          test -n "$IMAGE"
+          test "$RUNTIME_SERVICE_ACCOUNT" = "tm-staging-runtime@tradementor-amar-20260813.iam.gserviceaccount.com"
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json
           from google.cloud import firestore
 
           db = firestore.Client(project="tradementor-amar-20260813")
           controls = list(db.collection("asterStrategy3").where("monitor", "==", True).stream())
-          print("monitored_strategy3_documents", len(controls))
-          for index, doc in enumerate(controls, 1):
+          results = []
+          for doc in controls:
               s3 = doc.to_dict() or {}
               s2_snapshot = db.collection("asterStrategy2").document(doc.id).get()
               s1_snapshot = db.collection("asterAutomation").document(doc.id).get()
@@ -59,9 +83,8 @@ jobs:
               s2_keys, s2_rows = keys(s2, {"aster-strategy-2"}, {"strategy2"})
               s3_keys, s3_rows = keys(s3, {"aster-strategy-3"}, {"strategy3"})
               snapshot = s3.get("accountSnapshot") if isinstance(s3.get("accountSnapshot"), dict) else {}
-              print("record", index, {
-                  "phase": str(s3.get("phase", "")),
-                  "reasonCategory": "OWNERSHIP_UNKNOWN" if int(s3.get("unassignedPositions", 0) or 0) else "NONE",
+              results.append({
+                  "phaseCategory": "OWNERSHIP_RECONCILING" if int(s3.get("unassignedPositions", 0) or 0) else "OTHER",
                   "accountActivePositions": int(snapshot.get("accountActivePositions", 0) or 0),
                   "reportedUnassignedPositions": int(s3.get("unassignedPositions", 0) or 0),
                   "strategy1Rows": s1_rows,
@@ -72,3 +95,13 @@ jobs:
                   "strategy3ValidKeys": len(s3_keys),
                   "crossStrategyCollisions": len((s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)),
               })
+          print("OWNERSHIP_RESULT " + json.dumps({"monitoredDocuments": len(controls), "records": results}, sort_keys=True))
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --max-retries 0             --task-timeout 120s             --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --quiet
+          sleep 5
+          RESULT="$(gcloud logging read             "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:OWNERSHIP_RESULT"             --project "$GCP_PROJECT_ID"             --limit 5             --freshness 10m             --format='value(textPayload)')"
+          test -n "$RESULT"
+          printf '%s\n' "$RESULT"
