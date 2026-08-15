@@ -28,6 +28,7 @@ def test_strategy2_diagnostics_exposes_required_ownership_evidence():
         '"ownershipProven"', '"ownedLegs"', '"longLegs"', '"shortLegs"',
         '"unassignedPositions"', '"crossStrategyCollisions"',
         '"legacyStrategiesActive"', '"heartbeatFresh"', '"reason"',
+        '"centralExclusiveRuntime"', '"handoffEligible"',
     ):
         assert field in route
 
@@ -36,6 +37,8 @@ def test_exclusive_handoff_is_token_scoped_fail_closed_and_order_free():
     block = SOURCE[SOURCE.index('@app.post("/v1/me/aster/strategy2/exclusive-handoff")'):]
     assert "Depends(control_plane.authenticated_user)" in block
     assert "len(s2_keys) == 68" in block
+    assert 'os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP", "false")' in block
+    assert "and central_exclusive" in block
     assert "not collisions and unassigned == 0" in block
     assert '"enabled": False, "monitor": False' in block
     assert "batch.commit()" in block
