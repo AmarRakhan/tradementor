@@ -90,6 +90,16 @@ def test_ranking_uses_quote_volume_then_liquidity_then_symbol_deterministically(
     ]
 
 
+def test_real_aster_24h_schema_without_bid_or_ask_remains_eligible():
+    row = ticker("BTCUSDT", 1_000_000)
+    row.pop("bidPrice")
+    row.pop("askPrice")
+    snapshot = build_snapshot({"symbols": [contract("BTCUSDT")]}, [row], 1, fetched_at=NOW)
+    assert [item.symbol for item in snapshot.eligible_markets] == ["BTCUSDT"]
+    assert snapshot.eligible_markets[0].spread_ratio is None
+    assert snapshot.entry_blocked is False
+
+
 def test_top_150_contains_exactly_first_150_of_two_hundred_eligible_markets():
     rows = [contract(f"C{rank:03d}USDT") for rank in range(1, 201)]
     tickers = [ticker(f"C{rank:03d}USDT", 10_000 - rank) for rank in range(1, 201)]
