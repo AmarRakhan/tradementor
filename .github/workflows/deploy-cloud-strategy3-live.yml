@@ -26,8 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - name: Check out source
+      - name: Check out tested Strategy 3 candidate
         uses: actions/checkout@v4
+        with:
+          ref: c34e233d52813655bde4fc81bfc402d69949a896
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -64,7 +66,9 @@ jobs:
         shell: bash
         run: |
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy3-live-api:${GITHUB_SHA}"
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          test "$SOURCE_SHA" = "c34e233d52813655bde4fc81bfc402d69949a896"
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy3-live-api:${SOURCE_SHA}"
           docker build --tag "$IMAGE" cloud_api
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
