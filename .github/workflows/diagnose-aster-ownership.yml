@@ -58,7 +58,7 @@ jobs:
 
           db = firestore.Client(project="tradementor-amar-20260813")
           uids = [doc.id for doc in db.collection("asterStrategy2").stream()]
-          if len(uids) != 4 or len(set(uids)) != 4:
+          if not uids or len(set(uids)) != len(uids):
               raise SystemExit(254)
           results = []
           for uid in sorted(uids):
@@ -97,6 +97,7 @@ jobs:
                   .where("event", "==", "S2_SHADOW_OWNERSHIP_REMOVED").stream()
               )
               results.append({
+                  "configured": int(bool(s2.get("settings") or s2.get("liveReady") or s2.get("canaryValidated") or s2.get("monitor") or s2.get("enabled") or s2.get("ownedLegs"))),
                   "strategy2DocumentExists": int(s2_snapshot.exists),
                   "strategy2Monitor": int(bool(s2.get("monitor"))),
                   "strategy2Enabled": int(bool(s2.get("enabled"))),
@@ -115,6 +116,7 @@ jobs:
               })
           metric_values = [
               len(results),
+              sum(item["configured"] for item in results),
               sum(item["strategy2DocumentExists"] for item in results),
               sum(item["strategy2Monitor"] for item in results),
               sum(item["strategy2Enabled"] for item in results),
@@ -134,7 +136,7 @@ jobs:
           PY
           )"
 
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 11             --parallelism 11             --max-retries 0             --task-timeout 120s             --quiet
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 12             --parallelism 12             --max-retries 0             --task-timeout 120s             --quiet
           set +e
           EXECUTE_OUTPUT="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait 2>&1)"
           EXECUTE_RC=$?

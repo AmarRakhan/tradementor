@@ -1,1 +1,1 @@
-User explicitly approved corrected all-four-account read-only Strategy-2 diagnosis: require exactly four Strategy-2 control documents internally, inspect only aggregate numeric status fields, and never output identifiers, symbols, balances, secrets or orders.
+User explicitly approved corrected all-account read-only Strategy-2 classification: count historical and configured control documents separately, inspect only aggregate numeric status fields, and never output identifiers, symbols, balances, secrets or orders.
