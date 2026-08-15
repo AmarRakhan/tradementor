@@ -156,6 +156,24 @@ def test_exchange_minimum_blocked_dca_does_not_monopolize_scheduler():
     assert next_management_decision(config,portfolio,[leg],positions) is not None
     assert next_management_decision(config,portfolio,[leg],positions,{("LITUSDT","LONG")}) is None
 
+def test_confirmed_flat_initial_build_resets_stale_drawdown_baseline():
+    account={"totalMarginBalance":"451.55","totalWalletBalance":"451.55","totalMaintMargin":"0"}
+    hwm=initial_build_high_water_mark(account=account,positions=[],owned=[],previous_hwm=600,
+        initial_build_complete=False)
+    portfolio=portfolio_state(Strategy2Config(),account,[],[],hwm)
+    assert hwm==451.55
+    assert portfolio.drawdown==0
+    assert risk_mode(Strategy2Config(),portfolio)=="NORMAL"
+
+def test_initial_build_never_resets_high_water_mark_with_active_exposure():
+    account={"totalMarginBalance":"451.55","totalWalletBalance":"451.55","totalMaintMargin":"0"}
+    positions=[{"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"1","markPrice":"10"}]
+    assert initial_build_high_water_mark(account=account,positions=positions,owned=[],previous_hwm=600,
+        initial_build_complete=False)==600
+    leg=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","c",1,1,10)
+    assert initial_build_high_water_mark(account=account,positions=[],owned=[leg],previous_hwm=600,
+        initial_build_complete=False)==600
+
 def test_unchanged_owned_legs_do_not_request_fill_history():
     owned=[OwnedLeg("s3","strategy3","BTCUSDT","LONG","c1",1,2,100)]
     positions=[row(qty="2",entry="100")]

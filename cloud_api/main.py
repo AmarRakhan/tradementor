@@ -98,6 +98,7 @@ from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_stat
 from aster_strategy2_runtime import remove_strategy3_proven_conflicts
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, entry_order_limit, management_preempts_initial_build
+from aster_strategy2_runtime import initial_build_high_water_mark
 from aster_portfolio_replay import ReplayCandle, ReplaySeed, comparison_conclusion, config_with_overrides, run_portfolio_replay
 from aster_strategy import Account as AsterStrategyAccount, Leg as AsterStrategyLeg, Pair as AsterStrategyPair
 from aster_automation import TickMarket as AsterTickMarket, decide_tick as decide_aster_tick
@@ -1525,7 +1526,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     for leg in confirmed_flat:ref.collection("audit").add({"event":"CONFIRMED_FLAT","symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,"timestamp":now})
     owned=[x for x in owned if (x.symbol,x.side) in posmap];owned_keys={(x.symbol,x.side) for x in owned}
     strategy_positions=[x for x in positions if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in owned_keys]
-    portfolio=strategy2_portfolio_state(settings,account,positions,owned,safe_float(raw.get("adjustedHighWaterMark")) or safe_float(account.get("totalMarginBalance")))
+    initial_build_complete=bool(raw.get("initialBuildComplete",False))
+    cycle_hwm=initial_build_high_water_mark(account=account,positions=positions,owned=owned,
+        previous_hwm=safe_float(raw.get("adjustedHighWaterMark")),initial_build_complete=initial_build_complete)
+    portfolio=strategy2_portfolio_state(settings,account,positions,owned,cycle_hwm)
     snapshot={"equity":portfolio.equity,"highWaterMark":portfolio.adjusted_high_water_mark,"drawdown":portfolio.drawdown,
         "marginRatio":portfolio.margin_ratio,"longExposure":portfolio.long_exposure,"shortExposure":portfolio.short_exposure,
         "strategyExposure":portfolio.strategy_exposure,"strategyMargin":portfolio.strategy_margin,
@@ -1656,7 +1660,6 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         reason="Strategy 2 staat veilig gestopt" if not enabled else "Geen beheeractie; pair- of risicolimiet bereikt"
         ref.set({"phase":"PROTECTIVE_ONLY" if not enabled else "WAITING","lastReason":reason},merge=True);return {"status":"waiting","action":"HOLD","reason":reason,"ordersSent":0}
     active_keys={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in positions if abs(safe_float(x.get("positionAmt")))>0}
-    initial_build_complete=bool(raw.get("initialBuildComplete",False))
     long_target,short_target=balanced_entry_targets(settings.maximum_pairs)
     long_count,short_count=harvest_counts(owned)
     if long_count>=long_target and short_count>=short_target:

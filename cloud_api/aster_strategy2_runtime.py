@@ -108,6 +108,22 @@ def portfolio_state(config:Strategy2Config,account:dict[str,Any],positions:list[
     return PortfolioState(equity,max(hwm,equity),maint/equity if equity>0 else 1.0,long_exposure,short_exposure,strategy_exposure,
         exchange_reliable,ownership_reliable,open_orders_unknown,strategy_margin)
 
+def initial_build_high_water_mark(*,account:dict[str,Any],positions:list[dict[str,Any]],owned:list[OwnedLeg],
+                                  previous_hwm:float,initial_build_complete:bool)->float:
+    """Choose the drawdown baseline for a Strategy-2 entry cycle.
+
+    A confirmed-flat, not-yet-built cycle is a fresh entry cycle. It must not
+    inherit drawdown from a previous, already closed portfolio. Any active
+    exchange position, proven owned leg, or completed build keeps the prior
+    high-water mark so protective behaviour cannot be weakened during recovery.
+    """
+    wallet=number(account.get("totalWalletBalance"));unrealized=number(account.get("totalUnrealizedProfit"))
+    equity=number(account.get("totalMarginBalance")) or wallet+unrealized
+    active_positions=any(abs(number(row.get("positionAmt")))>0 for row in positions)
+    if equity>0 and not initial_build_complete and not owned and not active_positions:
+        return equity
+    return max(previous_hwm,equity)
+
 def leg_projection(owned:OwnedLeg,row:dict[str,Any])->LegState:
     mark=number(row.get("markPrice"));qty=abs(number(row.get("positionAmt")));entry=number(row.get("entryPrice")) or owned.weighted_entry
     notional=qty*mark
