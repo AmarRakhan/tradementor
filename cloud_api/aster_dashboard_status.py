@@ -259,6 +259,88 @@ def _entry_status(*, snapshot: dict[str, Any], state: dict[str, Any], config: St
     return _result("ALLOWED", "ALL_CHECKS_PASSED", "Alle actuele Strategy-3-instapcontroles zijn geslaagd", checked_at=checked_at)
 
 
+def _strategy2_result(status: str, code: str, text: str, *, checked_at: Any) -> dict[str, Any]:
+    return {
+        "status": status,
+        "reasonCode": code,
+        "reasonText": text,
+        "strategyId": "aster-strategy-2",
+        "checkedAt": checked_at,
+    }
+
+
+def _strategy2_entry_checks(*, snapshot: dict[str, Any], state: dict[str, Any],
+                            config: Strategy2Config, strategy: dict[str, Any],
+                            active_keys: set[tuple[str, str]],
+                            s2_owned: set[tuple[str, str]], s3_owned: set[tuple[str, str]],
+                            data_fresh: bool, counts_consistent: bool) -> list[dict[str, str]]:
+    phase = str(state.get("phase", "UNKNOWN")).upper()
+    account_state = state.get("accountSnapshot") if isinstance(state.get("accountSnapshot"), dict) else {}
+    equity = _number(account_state.get("equity"))
+    margin_ratio = _number(account_state.get("marginRatio"))
+    high_water_mark = _number(account_state.get("highWaterMark"))
+    drawdown = _number(account_state.get("drawdown"))
+    if drawdown <= 0 and equity > 0 and high_water_mark > 0:
+        drawdown = max(0.0, 1 - equity / high_water_mark)
+    strategy_margin = _number(account_state.get("strategyMargin"))
+    next_margin = config.base_notional / max(1, config.leverage)
+    universe = state.get("universe") if isinstance(state.get("universe"), dict) else {}
+    selected = {str(symbol).upper() for symbol in universe.get("selectedSymbols", []) if str(symbol)}
+    active_symbols = {symbol for symbol, _side in active_keys}
+    checks = [
+        ("ASTER_DATA_FRESH", data_fresh, "UNKNOWN", "Aster-data is recent bevestigd", "Aster-data is verouderd of ontbreekt"),
+        ("ACCOUNT_COUNTS", counts_consistent, "UNKNOWN", "Accountaantallen zijn consistent", "Accountaantallen zijn tegenstrijdig"),
+        ("OWNERSHIP_CONFLICT", not bool(s2_owned & s3_owned), "BLOCK", "Strategy-ownership botst niet", "Strategy-ownership botst"),
+        ("OWNERSHIP_UNKNOWN", not bool(active_keys - (s2_owned | s3_owned)), "BLOCK", "Alle posities hebben bewezen ownership", "Position ownership is onduidelijk"),
+        ("STRATEGY2_ENABLED", bool(state.get("enabled", False)), "BLOCK", "Strategy 2 staat aan", "Strategy 2 staat uit"),
+        ("STRATEGY2_MONITOR", bool(state.get("monitor", False)), "BLOCK", "Strategy-2-monitoring staat aan", "Strategy-2-monitoring staat uit"),
+        ("STRATEGY2_LIVE_MODE", config.mode == "live", "BLOCK", "Strategy 2 staat in live-modus", "Strategy 2 staat in papermodus"),
+        ("STRATEGY2_LIVE_GATES", _all_live_gates(strategy["liveGates"]), "BLOCK", "Alle Strategy-2-livepoorten zijn vrijgegeven", "Strategy-2-live-uitvoering is niet volledig vrijgegeven"),
+        ("STRATEGY2_SCHEDULER", strategy["schedulerStatus"].get("status") == "HEALTHY", "UNKNOWN", "Strategy-2-schedulerheartbeat is recent", "Strategy-2-scheduler is niet recent bevestigd"),
+        ("OPEN_ORDERS", int(_number(snapshot.get("openOrders"))) == 0, "WAIT", "Geen open Aster-orders", "Open Aster-order moet eerst worden gereconcilieerd"),
+        ("STRATEGY2_TARGET", len(s2_owned & active_keys) < config.maximum_pairs, "BLOCK", "Strategy-2-doel heeft vrije ruimte", "Ingesteld Strategy-2-positiedoel is bereikt"),
+        ("STRATEGY2_ACCOUNT_STATE", equity > 0, "UNKNOWN", "Strategy-2-accountstaat is beschikbaar", "Strategy-2-accountstaat ontbreekt"),
+        ("STRATEGY2_RISK_MODE", equity > 0 and margin_ratio < config.caution_margin_ratio and drawdown < config.caution_drawdown,
+         "BLOCK", "Strategy 2 staat in normale risicomodus", "Strategy 2 staat niet in normale risicomodus"),
+        ("STRATEGY2_BUDGET", equity > 0 and strategy_margin + next_margin <= equity * config.strategy_budget,
+         "BLOCK", "Strategy-2-budget heeft ruimte", "Strategy-2-budget is bereikt"),
+        ("STRATEGY2_MARKET_DATA", not bool(universe.get("entryBlocked", True)), "UNKNOWN",
+         "Aster-marktdata is bruikbaar", str(universe.get("entryBlockReason", "Aster-marktdata ontbreekt"))),
+        ("STRATEGY2_FREE_CONTRACT", bool(selected - active_symbols), "BLOCK",
+         "Vrij Aster USDT-perpetualcontract beschikbaar", "Geen geschikt vrij Aster USDT-perpetualcontract"),
+    ]
+    if phase in DATA_HOLD_PHASES:
+        checks.append(("STRATEGY2_DATA_HOLD", False, "UNKNOWN", "Geen data-hold", str(state.get("lastReason", "Exchange- of marktdata ontbreekt"))))
+    elif phase in RECOVERY_PHASES:
+        checks.append(("STRATEGY2_RECONCILING", False, "WAIT", "Geen reconciliatie nodig", str(state.get("lastReason", "Reconciliatie actief"))))
+    elif phase in RISK_HOLD_PHASES:
+        checks.append((f"STRATEGY2_{phase}", False, "BLOCK", "Geen blokkerende runtimefase", str(state.get("lastReason", phase))))
+    return [{"code": code, "status": "PASS" if passed else failure, "text": good if passed else bad}
+            for code, passed, failure, good, bad in checks]
+
+
+def _strategy2_entry_status(*, snapshot: dict[str, Any], state: dict[str, Any],
+                            config: Strategy2Config, strategy: dict[str, Any],
+                            active_keys: set[tuple[str, str]],
+                            s2_owned: set[tuple[str, str]], s3_owned: set[tuple[str, str]],
+                            data_fresh: bool, counts_consistent: bool) -> dict[str, Any]:
+    checked_at = state.get("lastTickAt")
+    checks = _strategy2_entry_checks(snapshot=snapshot, state=state, config=config, strategy=strategy,
+        active_keys=active_keys, s2_owned=s2_owned, s3_owned=s3_owned,
+        data_fresh=data_fresh, counts_consistent=counts_consistent)
+    active_blocks = [check for check in checks if check["status"] != "PASS"]
+    first = active_blocks[0] if active_blocks else None
+    if first:
+        status = "UNKNOWN" if first["status"] == "UNKNOWN" else "WAITING" if first["status"] == "WAIT" else "BLOCKED"
+        result = _strategy2_result(status, first["code"], first["text"], checked_at=checked_at)
+    else:
+        result = _strategy2_result("ALLOWED", "ALL_STRATEGY2_CHECKS_PASSED",
+            "Alle actuele Strategy-2-instapcontroles zijn geslaagd", checked_at=checked_at)
+    result["checks"] = checks
+    result["activeBlocks"] = active_blocks
+    return result
+
+
 def build_aster_dashboard_status(*, snapshot: dict[str, Any], strategy2_state: dict[str, Any],
                                  strategy3_state: dict[str, Any], strategy2_config: Strategy2Config,
                                  strategy3_config: Strategy3Config, runtime_gates: dict[str, bool],
@@ -280,6 +362,10 @@ def build_aster_dashboard_status(*, snapshot: dict[str, Any], strategy2_state: d
     strategy3 = _strategy_contract(strategy_id=3, state=strategy3_state, config=strategy3_config,
         active_keys=active_keys, owned_keys=s3_owned, data_fresh=data_fresh and counts_consistent,
         runtime_gates=runtime_gates, now=now)
+    strategy2["targetPositions"] = strategy2_config.maximum_pairs
+    strategy2["activeTargetPositions"] = len(s2_owned & active_keys)
+    strategy2["remainingToTarget"] = max(0, strategy2_config.maximum_pairs - strategy2["activeTargetPositions"])
+    strategy2["capacityBasis"] = "SERVER_OWNED_STRATEGY_POSITIONS"
     maximum = strategy3_config.maximum_positions
     strategy3["maximumPositions"] = maximum
     strategy3["remainingAccountCapacity"] = max(0, maximum - len(active_keys))
@@ -290,6 +376,10 @@ def build_aster_dashboard_status(*, snapshot: dict[str, Any], strategy2_state: d
         strategy=strategy3, active_keys=active_keys, s2_owned=s2_owned, s3_owned=s3_owned,
         data_fresh=data_fresh, counts_consistent=counts_consistent)
     entry["activeBlocks"] = [check for check in entry["checks"] if check["status"] != "PASS"]
+    strategy2_entry = _strategy2_entry_status(snapshot=snapshot, state=strategy2_state,
+        config=strategy2_config, strategy=strategy2, active_keys=active_keys,
+        s2_owned=s2_owned, s3_owned=s3_owned, data_fresh=data_fresh,
+        counts_consistent=counts_consistent)
     cadence = int(_number(strategy3_state.get("schedulerIntervalSeconds")))
     cadence_verified = bool(strategy3_state.get("schedulerCadenceVerified", False))
     tick_at = _utc(strategy3_state.get("lastTickAt"))
@@ -307,6 +397,7 @@ def build_aster_dashboard_status(*, snapshot: dict[str, Any], strategy2_state: d
         },
         "strategy2": strategy2,
         "strategy3": strategy3,
+        "strategy2NewEntry": strategy2_entry,
         "newEntry": entry,
         "nextExpectedCheckAt": next_check,
         "evidence": {

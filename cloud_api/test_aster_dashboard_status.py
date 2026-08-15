@@ -19,8 +19,9 @@ def position(symbol: str, side: str) -> dict:
     return {"symbol": symbol, "side": side, "quantity": 1, "notionalUsd": 10}
 
 
-def contract(*, positions=None, s2=None, s3=None, maximum=200, now=NOW, snapshot=None):
-    positions = positions or [position("BTCUSDT", "LONG")]
+def contract(*, positions=None, s2=None, s3=None, maximum=200, now=NOW, snapshot=None,
+             gates=None, strategy2_config=None):
+    positions = [position("BTCUSDT", "LONG")] if positions is None else positions
     account = {"capturedAt": now, "activePositions": len(positions), "positions": positions,
                "openOrders": 0, "marginRatio": .10}
     account.update(snapshot or {})
@@ -32,10 +33,11 @@ def contract(*, positions=None, s2=None, s3=None, maximum=200, now=NOW, snapshot
               "accountSnapshot": {"equity": 1000, "marginRatio": .10, "strategyMargin": 10},
               "universe": {"entryBlocked": False, "selectedSymbols": ["BTCUSDT", "ETHUSDT"]}}
     state3.update(s3 or {})
-    gates = {"asterLiveExecution": True, "strategy2Live": False, "strategy2Runtime": False,
-             "strategy3Live": True, "strategy3Runtime": True}
+    gates = gates or {"asterLiveExecution": True, "strategy2Live": False, "strategy2Runtime": False,
+                      "strategy3Live": True, "strategy3Runtime": True}
     return build_aster_dashboard_status(snapshot=account, strategy2_state=state2, strategy3_state=state3,
-        strategy2_config=Strategy2Config(), strategy3_config=replace(Strategy3Config(), mode="live", maximum_positions=maximum),
+        strategy2_config=strategy2_config or Strategy2Config(),
+        strategy3_config=replace(Strategy3Config(), mode="live", maximum_positions=maximum),
         runtime_gates=gates, evaluated_at=now)
 
 
@@ -49,6 +51,46 @@ def test_strategy3_disabled_is_blocked():
     value = contract(s3={"enabled": False})
     assert value["strategy3"]["status"] == "STOPPED"
     assert value["newEntry"]["reasonCode"] == "STRATEGY_DISABLED"
+
+
+def test_strategy2_entries_are_independent_when_strategy3_is_off():
+    positions = [position("ETHUSDT", "SHORT")]
+    value = contract(
+        positions=positions,
+        s2={
+            "enabled": True, "monitor": True, "phase": "RUNNING", "canaryValidated": True,
+            "liveReady": True, "ownedLegs": [leg(2, "ETHUSDT", "SHORT")],
+            "accountSnapshot": {"equity": 1000, "highWaterMark": 1000, "marginRatio": .10,
+                                "strategyMargin": 1},
+            "universe": {"entryBlocked": False, "selectedSymbols": ["ETHUSDT", "BTCUSDT"]},
+        },
+        s3={"enabled": False, "monitor": False, "phase": "STOPPED", "ownedLegs": []},
+        gates={"asterLiveExecution": True, "strategy2Live": True, "strategy2Runtime": True,
+               "strategy3Live": False, "strategy3Runtime": False},
+        strategy2_config=replace(Strategy2Config(), mode="live", maximum_pairs=100),
+    )
+    assert value["strategy2"]["status"] == "LIVE"
+    assert value["strategy3"]["status"] == "STOPPED"
+    assert value["strategy2NewEntry"]["status"] == "ALLOWED"
+    assert value["strategy2NewEntry"]["strategyId"] == "aster-strategy-2"
+    assert value["strategy2NewEntry"]["reasonCode"] == "ALL_STRATEGY2_CHECKS_PASSED"
+    assert value["strategy2"]["targetPositions"] == 100
+    assert value["strategy2"]["activeTargetPositions"] == 1
+    assert value["strategy2"]["remainingToTarget"] == 99
+    assert value["newEntry"]["reasonCode"] == "STRATEGY_DISABLED"
+
+
+def test_strategy2_entry_reason_never_uses_strategy3_switch():
+    value = contract(
+        positions=[],
+        s2={"enabled": False, "monitor": False},
+        s3={"enabled": False, "monitor": False},
+        gates={"asterLiveExecution": True, "strategy2Live": True, "strategy2Runtime": True,
+               "strategy3Live": False, "strategy3Runtime": False},
+        strategy2_config=replace(Strategy2Config(), mode="live"),
+    )
+    assert value["strategy2NewEntry"]["reasonCode"] == "STRATEGY2_ENABLED"
+    assert value["strategy2NewEntry"]["reasonText"] == "Strategy 2 staat uit"
 
 
 def test_strategy2_and_strategy3_counts_are_separate_from_account_total():
