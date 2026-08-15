@@ -6,6 +6,7 @@ import pytest
 from aster_gateway import (
     AsterAutomationConfig,
     AsterApiError,
+    AsterRestGuard,
     AsterV3Client,
     AsterOrderIntent,
     AsterSubmissionUncertain,
@@ -137,6 +138,41 @@ def test_public_ticker_read_never_signs_or_submits_an_order():
     )
     assert client.ticker_prices()[0]["price"] == "65000"
     assert calls == [("GET", "/fapi/v3/ticker/price")]
+
+
+def test_aster_minus_1003_ban_stops_followup_rest_calls_until_advertised_time():
+    calls=[]
+    now=[1_786_774_000_000]
+    guard=AsterRestGuard(lambda: now[0])
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(418,json={"code":-1003,
+            "msg":"Way too many requests; IP banned until 1786774073319"})
+    client=AsterV3Client(signer_address="",sign_message=lambda _:"",transport=httpx.MockTransport(handler),
+        rest_guard=guard)
+    with pytest.raises(AsterApiError,match="-1003"):
+        client.public_exchange_info()
+    with pytest.raises(AsterApiError,match="tijdelijk geblokkeerd"):
+        client.ticker_24h()
+    assert calls==["/fapi/v3/exchangeInfo"]
+    assert guard.blocked_until_ms==1_786_774_078_319
+
+
+def test_public_market_payload_is_singleflight_cached_across_clients(monkeypatch):
+    import aster_gateway
+    calls=[]
+    monkeypatch.setattr(aster_gateway,"_PUBLIC_MARKET_CACHE",{})
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200,json={"symbols":[]})
+    transport=httpx.MockTransport(handler)
+    first=AsterV3Client(signer_address="",sign_message=lambda _:"",transport=transport,shared_public_cache=True,
+        rest_guard=AsterRestGuard())
+    second=AsterV3Client(signer_address="",sign_message=lambda _:"",transport=transport,shared_public_cache=True,
+        rest_guard=AsterRestGuard())
+    assert first.public_exchange_info()=={"symbols":[]}
+    assert second.public_exchange_info()=={"symbols":[]}
+    assert calls==["/fapi/v3/exchangeInfo"]
 
 
 def test_live_submission_requires_three_explicit_authorization_layers():

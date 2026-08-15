@@ -7,7 +7,9 @@ New Aster automation is OFF by default.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from enum import Enum
 import re
@@ -23,6 +25,9 @@ ASTER_FUTURES_REST = "https://fapi.asterdex.com"
 ASTER_FUTURES_WEBSOCKET = "wss://fstream.asterdex.com"
 ASTER_API_VERSION = "v3"
 CLIENT_ORDER_ID_PATTERN = re.compile(r"^[.A-Z:/a-z0-9_-]{1,36}$")
+PUBLIC_EXCHANGE_INFO_TTL_SECONDS = 6 * 60 * 60
+PUBLIC_TICKER_24H_TTL_SECONDS = 5 * 60
+PUBLIC_PRICE_TTL_SECONDS = 10
 
 
 class AsterValidationError(ValueError):
@@ -35,6 +40,56 @@ class AsterSubmissionUncertain(RuntimeError):
 
 class AsterApiError(RuntimeError):
     pass
+
+
+class AsterRestGuard:
+    """Process-wide fail-fast gate for Aster's shared-IP REST bans.
+
+    Aster includes an absolute millisecond timestamp in error ``-1003``.  Once
+    observed, every client in this Cloud Run process stops issuing REST calls
+    until that instant.  This prevents status pages and schedulers from turning
+    one rejection into a retry storm.
+    """
+
+    def __init__(self, clock_ms: Callable[[], int] | None = None) -> None:
+        self._clock_ms = clock_ms or (lambda: int(time.time() * 1000))
+        self._blocked_until_ms = 0
+        self._reason = ""
+        self._lock = threading.Lock()
+
+    @property
+    def blocked_until_ms(self) -> int:
+        with self._lock:
+            return self._blocked_until_ms
+
+    def assert_allowed(self) -> None:
+        now = self._clock_ms()
+        with self._lock:
+            blocked_until, reason = self._blocked_until_ms, self._reason
+        if now < blocked_until:
+            stamp = datetime.fromtimestamp(blocked_until / 1000, tz=timezone.utc).isoformat()
+            raise AsterApiError(f"Aster REST tijdelijk geblokkeerd tot {stamp}: {reason or 'rate-limit'}")
+
+    def observe(self, status_code: int, payload: Any) -> None:
+        code = payload.get("code") if isinstance(payload, dict) else None
+        message = str(payload.get("msg", "")) if isinstance(payload, dict) else ""
+        if status_code != 429 and str(code) != "-1003" and "banned until" not in message.lower():
+            return
+        match = re.search(r"banned until\s+(\d+)", message, re.IGNORECASE)
+        now = self._clock_ms()
+        blocked_until = int(match.group(1)) if match else now + 60_000
+        # Give Aster five seconds after its advertised boundary and never
+        # shorten a ban already learned by another request in this process.
+        blocked_until += 5_000
+        with self._lock:
+            if blocked_until > self._blocked_until_ms:
+                self._blocked_until_ms = blocked_until
+                self._reason = message or f"HTTP {status_code}"
+
+
+_SHARED_REST_GUARD = AsterRestGuard()
+_PUBLIC_MARKET_CACHE: dict[str, tuple[float, Any]] = {}
+_PUBLIC_MARKET_LOCK = threading.RLock()
 
 
 class PositionSide(str, Enum):
@@ -233,32 +288,63 @@ class AsterV3Client:
         transport: httpx.BaseTransport | None = None,
         nonce: MonotonicNonce | None = None,
         live_authorized: bool = False,
+        rest_guard: AsterRestGuard | None = None,
+        shared_public_cache: bool | None = None,
     ) -> None:
         self._signer_address = signer_address
         self._sign_message = sign_message
         self._nonce = nonce or MonotonicNonce()
         self._live_authorized = live_authorized
+        self._rest_guard = rest_guard or _SHARED_REST_GUARD
+        self._shared_public_cache = transport is None if shared_public_cache is None else shared_public_cache
         self._http = httpx.Client(base_url=ASTER_FUTURES_REST, timeout=15.0, transport=transport)
 
-    def public_exchange_info(self) -> dict[str, Any]:
+    def _decode_response(self, response: httpx.Response, *, invalid_message: str) -> Any:
         try:
-            response = self._http.get("/fapi/v3/exchangeInfo")
-            response.raise_for_status()
             payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise AsterApiError("Aster exchangeInfo kon niet betrouwbaar worden gelezen") from exc
+        except ValueError as exc:
+            raise AsterApiError(invalid_message) from exc
+        self._rest_guard.observe(response.status_code, payload)
+        payload_code = payload.get("code") if isinstance(payload, dict) else None
+        if response.status_code >= 400 or str(payload_code) == "-1003":
+            code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
+            message = payload.get("msg", "Aster-request afgewezen") if isinstance(payload, dict) else "Aster-request afgewezen"
+            raise AsterApiError(f"Aster {code}: {message}")
+        return payload
+
+    def _public_get(self, path: str, *, ttl_seconds: int, invalid_message: str) -> Any:
+        def request() -> Any:
+            self._rest_guard.assert_allowed()
+            try:
+                response = self._http.get(path)
+            except httpx.HTTPError as exc:
+                raise AsterApiError(invalid_message) from exc
+            return self._decode_response(response, invalid_message=invalid_message)
+
+        if not self._shared_public_cache:
+            return request()
+        # Holding this small dedicated lock across the fetch is intentional:
+        # concurrent dashboard/scheduler requests become one Aster call.
+        with _PUBLIC_MARKET_LOCK:
+            cached = _PUBLIC_MARKET_CACHE.get(path)
+            now = time.monotonic()
+            if cached and now < cached[0]:
+                return deepcopy(cached[1])
+            payload = request()
+            _PUBLIC_MARKET_CACHE[path] = (now + max(1, ttl_seconds), deepcopy(payload))
+            return payload
+
+    def public_exchange_info(self) -> dict[str, Any]:
+        payload = self._public_get("/fapi/v3/exchangeInfo", ttl_seconds=PUBLIC_EXCHANGE_INFO_TTL_SECONDS,
+            invalid_message="Aster exchangeInfo kon niet betrouwbaar worden gelezen")
         if not isinstance(payload, dict):
             raise AsterApiError("Aster exchangeInfo heeft een ongeldig formaat")
         return payload
 
     def ticker_prices(self) -> list[dict[str, Any]]:
         """Read current public prices without signing or trading."""
-        try:
-            response = self._http.get("/fapi/v3/ticker/price")
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise AsterApiError("Aster-prijzen konden niet betrouwbaar worden gelezen") from exc
+        payload = self._public_get("/fapi/v3/ticker/price", ttl_seconds=PUBLIC_PRICE_TTL_SECONDS,
+            invalid_message="Aster-prijzen konden niet betrouwbaar worden gelezen")
         if isinstance(payload, dict):
             return [payload]
         if not isinstance(payload, list):
@@ -266,16 +352,14 @@ class AsterV3Client:
         return [item for item in payload if isinstance(item, dict)]
 
     def ticker_24h(self) -> list[dict[str, Any]]:
-        try:
-            response = self._http.get("/fapi/v3/ticker/24hr")
-            response.raise_for_status(); payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise AsterApiError("Aster 24-uursmarktdata kon niet betrouwbaar worden gelezen") from exc
+        payload = self._public_get("/fapi/v3/ticker/24hr", ttl_seconds=PUBLIC_TICKER_24H_TTL_SECONDS,
+            invalid_message="Aster 24-uursmarktdata kon niet betrouwbaar worden gelezen")
         if isinstance(payload, dict): return [payload]
         if not isinstance(payload, list): raise AsterApiError("Aster 24-uursmarktdata heeft een ongeldig formaat")
         return [item for item in payload if isinstance(item, dict)]
 
     def signed_request(self, method: str, path: str, parameters: dict[str, Any] | None = None) -> Any:
+        self._rest_guard.assert_allowed()
         values = dict(parameters or {})
         values["nonce"] = str(self._nonce.next())
         values["signer"] = self._signer_address
@@ -298,7 +382,9 @@ class AsterV3Client:
             payload = response.json()
         except ValueError as exc:
             raise AsterApiError("Aster gaf geen geldig JSON-antwoord") from exc
-        if response.status_code >= 400:
+        self._rest_guard.observe(response.status_code, payload)
+        payload_code = payload.get("code") if isinstance(payload, dict) else None
+        if response.status_code >= 400 or str(payload_code) == "-1003":
             code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
             message = payload.get("msg", "Aster-request afgewezen") if isinstance(payload, dict) else "Aster-request afgewezen"
             raise AsterApiError(f"Aster {code}: {message}")

@@ -14,6 +14,7 @@ def test_strategy2_off_blocks_entries_but_describes_safe_existing_management():
     assert status["bot"] == {"state": "OFF", "enabled": False}
     assert status["newEntries"]["state"] == "BLOCKED_BOT_OFF"
     assert status["existingPositionManagement"]["state"] == "SAFE_EXISTING_ONLY"
+    assert status["existingPositionManagement"]["exchangeConfirmed"] is True
     assert status["marketData"]["state"] == "READY"
 
 
@@ -24,6 +25,16 @@ def test_stale_market_data_blocks_only_new_entries_not_management():
         "reason": "Aster-data ontbreekt"}
     assert status["existingPositionManagement"]["state"] == "FULL"
     assert status["marketData"]["state"] == "STALE"
+
+
+def test_rest_ban_never_claims_existing_position_management_is_confirmed():
+    status = operating_status_contract(enabled=False, monitor=True, runtime_enabled=False,
+        owned_leg_count=3, universe=_universe(blocked=True, stale=True), exchange_data_fresh=False)
+    assert status["bot"]["state"] == "OFF"
+    assert status["newEntries"]["blocked"] is True
+    assert status["existingPositionManagement"]["state"] == "UNCONFIRMED"
+    assert status["existingPositionManagement"]["exchangeConfirmed"] is False
+    assert "niet worden bevestigd" in status["existingPositionManagement"]["reason"]
 
 
 def test_counts_distinguish_unique_markets_and_position_legs():
@@ -75,3 +86,11 @@ def test_both_strategy_entry_paths_use_the_shared_aster_snapshot_builder():
     source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
     assert source.count("build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)") >= 2
     assert source.count('universe_contract["selectedSymbols"]') >= 3
+
+
+def test_public_dashboard_status_never_refreshes_every_position_cost_from_aster():
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    route = source[source.index("def aster_status("):source.index('@app.get("/v1/me/aster/trade-events")')]
+    assert "_read_strategy_cost_evidence(" not in route
+    assert "refresh_owned_costs(" not in route
+    assert "strategy2_costs_by_key=dict(strategy2_owned_by_key)" in route

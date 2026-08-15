@@ -37,6 +37,13 @@ test("Strategy 2 distinguishes bot, entry, management and proven position counts
   assert.doesNotMatch(strategy2Source,/actieve pairs/);
 });
 
+test("web never claims Aster position management is confirmed during stale exchange data",()=>{
+  const page=fs.readFileSync(new URL("../app/page.tsx",import.meta.url),"utf8");
+  assert.match(page,/Aster-uitvoering niet bevestigd/);
+  assert.match(page,/actuele uitvoering kon door Aster niet worden bevestigd/);
+  assert.doesNotMatch(page,/Sluiten en exchange-side bescherming blijven afzonderlijk beschikbaar/);
+});
+
 test("web contains no removed external universe label",()=>{
   assert.doesNotMatch(source,new RegExp(["coin","market","cap"].join(""),"i"));
   assert.doesNotMatch(source,new RegExp(`\\b${["c","m","c"].join("")}\\b`,"i"));

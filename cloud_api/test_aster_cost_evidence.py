@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aster_cost_evidence import cost_refresh_symbols, paged_income_history, paged_user_trades, refresh_owned_costs
+from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_income_history, paged_user_trades, refresh_owned_costs
 from aster_strategy2_state import OwnedLeg
 
 
@@ -61,6 +61,24 @@ def test_profitable_and_changed_positions_precede_background_refresh():
         {"symbol":"OLDUSDT","positionSide":"LONG","quantity":1,"entryPrice":100,"unrealizedPnl":-1}]
     selected=cost_refresh_symbols(owned,positions,maximum_background=1)
     assert set(selected)=={"WINUSDT","CHANGEDUSDT","OLDUSDT"}
+
+
+def test_profitable_positions_cannot_bypass_real_aster_request_budget():
+    owned=[OwnedLeg("s3","strategy3",f"S{i:02d}USDT","LONG",str(i),1,1,100,
+        costs_updated_at_ms=i) for i in range(20)]
+    positions=[{"symbol":leg.symbol,"positionSide":"LONG","quantity":1,"entryPrice":100,
+        "unrealizedPnl":1} for leg in owned]
+    selected=cost_refresh_symbols(owned,positions,maximum_background=4,maximum_total=6)
+    assert selected==[f"S{i:02d}USDT" for i in range(6)]
+
+
+def test_dashboard_history_scan_is_bounded_and_rotates_background_symbols():
+    background=[f"S{i:02d}USDT" for i in range(30)]
+    first=bounded_history_symbols(["EXITUSDT"],background,maximum_symbols=8,rotation_slot=0)
+    second=bounded_history_symbols(["EXITUSDT"],background,maximum_symbols=8,rotation_slot=1)
+    assert len(first)==len(second)==8
+    assert first[0]==second[0]=="EXITUSDT"
+    assert set(first[1:]).isdisjoint(set(second[1:]))
 
 
 def test_strategy3_ownership_recovers_only_from_explicit_s3_audit_and_fill():

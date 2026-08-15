@@ -84,7 +84,7 @@ from aster_strategy3_simulation import standard_suite as strategy3_standard_suit
 from aster_strategy3_readiness import build_strategy3_readiness_report
 from aster_strategy3_execution import Strategy3ExecutionContext, execute_strategy3_decision
 from aster_strategy3_status import strategy3_position_tp_contract
-from aster_cost_evidence import cost_refresh_symbols, paged_user_trades, refresh_owned_costs
+from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_user_trades, refresh_owned_costs
 from aster_strategy_status import operating_status_contract, position_count_contract, proven_owned_rows
 from aster_dashboard_status import build_aster_dashboard_status
 from aster_rapid_build import run_confirmed_batch
@@ -1231,7 +1231,7 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         return {"status":"reconciling","reason":"; ".join(recovery.reasons),"ordersSent":0}
     for event in recovery.audit:ref.collection("audit").add({**event,"timestamp":now})
     owned=list(recovery.legs)
-    refresh_symbols=cost_refresh_symbols(owned,positions,maximum_background=12)
+    refresh_symbols=cost_refresh_symbols(owned,positions,maximum_background=4,maximum_total=6)
     owned,cost_failures=refresh_owned_costs(client,owned,refresh_symbols,checked_at_ms=int(now.timestamp()*1000))
     s3_keys={(x.symbol,x.side) for x in owned}
     wallet=safe_float(account.get("totalWalletBalance"));unreal=safe_float(account.get("totalUnrealizedProfit"))
@@ -1416,8 +1416,13 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     counts=position_count_contract(owned,scope="strategy2-proven-owned")
     enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
     runtime_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
+    account_snapshot=raw.get("accountSnapshot") if isinstance(raw.get("accountSnapshot"),dict) else {}
+    captured=account_snapshot.get("capturedAt")
+    if isinstance(captured,datetime):
+        captured=captured.replace(tzinfo=timezone.utc) if captured.tzinfo is None else captured.astimezone(timezone.utc)
+    exchange_data_fresh=bool(isinstance(captured,datetime) and timedelta(0)<=datetime.now(timezone.utc)-captured<=timedelta(seconds=120))
     operation=operating_status_contract(enabled=enabled,monitor=monitor,runtime_enabled=runtime_enabled,
-        owned_leg_count=counts["positionLegCount"],universe=universe)
+        owned_leg_count=counts["positionLegCount"],universe=universe,exchange_data_fresh=exchange_data_fresh)
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
         "displayPhase":"UIT" if not enabled else str(raw.get("phase","DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": enabled,
@@ -1462,8 +1467,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         active_keys=set(active_position_map(positions));known_keys={(x.symbol,x.side) for x in owned}
         missing_symbols={symbol for symbol,side in active_keys if (symbol,side) not in known_keys}
         changed_symbols=changed_owned_symbols(owned,positions)
-        refresh_symbols=set(cost_refresh_symbols(owned,positions,maximum_background=12))
-        recovery_symbols=changed_symbols|(audited_symbols&missing_symbols)|refresh_symbols
+        refresh_symbols=set(cost_refresh_symbols(owned,positions,maximum_background=4,maximum_total=6))
+        # Cost refresh below already reads complete fills and income.  Do not
+        # duplicate those fill calls merely for the background rotation.
+        recovery_symbols=changed_symbols|(audited_symbols&missing_symbols)
         for symbol in sorted(recovery_symbols):
             starts=[leg.created_at_ms for leg in owned if leg.symbol==symbol and leg.created_at_ms>0]
             fills.extend(paged_user_trades(client,symbol,start_time=min(starts) if starts else None))
@@ -3221,19 +3228,20 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
                 for intent in leg.get("intent_ids") if isinstance(leg.get("intent_ids"), list) else []:
                     if str(intent):
                         strategy_by_intent[str(intent)] = strategy_name
-        symbols = []
+        background_symbols = []
         for row in [*active_positions, *strategy2_legs, *stored]:
             symbol = str(row.get("symbol", "")).upper() if isinstance(row, dict) else ""
-            if symbol and symbol not in symbols:
-                symbols.append(symbol)
+            if symbol and symbol not in background_symbols:
+                background_symbols.append(symbol)
+        priority_symbols=[]
         prioritized_income = [row for row in recent_income if str(row.get("incomeType", "")).upper() == "REALIZED_PNL"]
         prioritized_income.extend(row for row in recent_income if str(row.get("incomeType", "")).upper() != "REALIZED_PNL")
         for row in prioritized_income:
             symbol = str(row.get("symbol", "")).upper()
-            if symbol and symbol not in symbols and str(row.get("incomeType", "")).upper() in {"REALIZED_PNL", "COMMISSION"}:
-                symbols.append(symbol)
-            if len(symbols) >= 100:
-                break
+            if symbol and symbol not in priority_symbols and str(row.get("incomeType", "")).upper() in {"REALIZED_PNL", "COMMISSION"}:
+                priority_symbols.append(symbol)
+        symbols=bounded_history_symbols(priority_symbols,background_symbols,maximum_symbols=8,
+            rotation_slot=int(time.time()//60))
         fills: list[dict[str, Any]] = []
         for symbol in symbols:
             # A single stale/delisted symbol must not erase the complete trade
@@ -3297,7 +3305,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     automation = automation_ref.get().to_dict() or {}
     snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
     captured_at = snapshot.get("capturedAt")
-    snapshot_stale = not isinstance(captured_at, datetime) or datetime.now(timezone.utc) - captured_at > timedelta(seconds=20)
+    snapshot_stale = not isinstance(captured_at, datetime) or datetime.now(timezone.utc) - captured_at > timedelta(seconds=90)
     if snapshot_stale:
         try:
             read_client = AsterV3Client(
@@ -3379,15 +3387,10 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             safe_float(strategy2_snapshot.get("marginRatio")),safe_float(strategy2_snapshot.get("longExposure")),
             safe_float(strategy2_snapshot.get("shortExposure")),safe_float(strategy2_snapshot.get("strategyExposure")),
             True,True,False,safe_float(strategy2_snapshot.get("strategyMargin")))
+    # Dashboard reads never fan out into per-symbol Aster fill/funding calls.
+    # The strategy runtimes already persist this evidence under ownedLegs; the
+    # browser consumes it fail-closed until a scheduler refreshes it.
     strategy2_costs_by_key=dict(strategy2_owned_by_key);strategy2_cost_failures:dict[str,str]={}
-    if strategy2_owned_by_key:
-        try:
-            strategy2_read_client=AsterV3Client(signer_address=secret.signer_address,
-                sign_message=local_eip712_signer(secret),live_authorized=False)
-            strategy2_costs_by_key,strategy2_cost_failures=_read_strategy_cost_evidence(uid,strategy2_read_client,
-                list(strategy2_owned_by_key.values()),now=evidence_now,strategy="strategy2")
-        except (AsterApiError,AsterSubmissionUncertain,AsterValidationError,HTTPException,ValueError):
-            strategy2_costs_by_key=strategy2_owned_by_key
     strategy3_canary=aster_strategy3_reference(uid).collection("canaries").document("s3-open-fill-close-v1").get().to_dict() or {}
     strategy3_persisted_settings=strategy3_state.get("settings") if isinstance(strategy3_state.get("settings"),dict) else {}
     strategy3_settings=replace(Strategy3Config.from_mapping(strategy3_persisted_settings),
@@ -3399,15 +3402,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             safe_float(strategy3_snapshot.get("equity")),safe_float(strategy3_snapshot.get("highWaterMark")),
             safe_float(strategy3_snapshot.get("marginRatio")),safe_float(strategy3_snapshot.get("longExposure")),
             safe_float(strategy3_snapshot.get("shortExposure")),safe_float(strategy3_snapshot.get("strategyMargin")))
-    strategy3_costs_by_key:dict[tuple[str,str],OwnedLeg]={};strategy3_cost_failures:dict[str,str]={}
-    if strategy3_owned_by_key:
-        try:
-            strategy3_read_client=AsterV3Client(signer_address=secret.signer_address,
-                sign_message=local_eip712_signer(secret),live_authorized=False)
-            strategy3_costs_by_key,strategy3_cost_failures=_read_strategy_cost_evidence(uid,strategy3_read_client,
-                list(strategy3_owned_by_key.values()),now=evidence_now,strategy="strategy3")
-        except (AsterApiError,AsterSubmissionUncertain,AsterValidationError,HTTPException,ValueError):
-            strategy3_costs_by_key=strategy3_owned_by_key
+    strategy3_costs_by_key:dict[tuple[str,str],OwnedLeg]=dict(strategy3_owned_by_key);strategy3_cost_failures:dict[str,str]={}
     strategy3_peaks=strategy3_state.get("trailingPeaks") if isinstance(strategy3_state.get("trailingPeaks"),dict) else {}
     positions = []
     for raw in snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []:

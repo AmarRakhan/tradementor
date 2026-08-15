@@ -43,7 +43,8 @@ def position_count_contract(rows: Iterable[dict[str, Any]], *, scope: str) -> di
 
 
 def operating_status_contract(*, enabled: bool, monitor: bool, runtime_enabled: bool,
-                              owned_leg_count: int, universe: dict[str, Any]) -> dict[str, Any]:
+                              owned_leg_count: int, universe: dict[str, Any],
+                              exchange_data_fresh: bool = True) -> dict[str, Any]:
     stale = bool(universe.get("stale", True))
     selected = int(universe.get("selectedMarketCount") or 0)
     market_blocked = bool(universe.get("entryBlocked", True))
@@ -59,10 +60,14 @@ def operating_status_contract(*, enabled: bool, monitor: bool, runtime_enabled: 
     else:
         entry_state, entry_reason = "ALLOWED", ""
 
-    if monitor and owned_leg_count:
+    if monitor and owned_leg_count and exchange_data_fresh:
         management_state = "FULL" if enabled else "SAFE_EXISTING_ONLY"
         management_reason = ("Bestaande bewezen Strategy-2-posities worden volledig beheerd" if enabled else
             "Bot uit: bestaande bewezen Strategy-2-posities blijven veilig gemonitord; nieuwe instappen blijven uit")
+    elif monitor and owned_leg_count:
+        management_state = "UNCONFIRMED"
+        management_reason = ("Positiebeheer staat ingeschakeld, maar actuele uitvoering kon door Aster "
+            "niet worden bevestigd; exchange-side bescherming blijft onafhankelijk actief")
     elif owned_leg_count:
         management_state = "PAUSED"
         management_reason = "Bestaande Strategy-2-posities zijn bewezen, maar monitoring staat uit"
@@ -73,6 +78,7 @@ def operating_status_contract(*, enabled: bool, monitor: bool, runtime_enabled: 
     return {
         "bot": {"state": "ON" if enabled else "OFF", "enabled": enabled},
         "newEntries": {"state": entry_state, "blocked": entry_state != "ALLOWED", "reason": entry_reason},
-        "existingPositionManagement": {"state": management_state, "monitor": monitor, "reason": management_reason},
+        "existingPositionManagement": {"state": management_state, "monitor": monitor,
+            "exchangeConfirmed": exchange_data_fresh, "reason": management_reason},
         "marketData": {"state": market_state, "stale": stale, "reason": market_reason},
     }
