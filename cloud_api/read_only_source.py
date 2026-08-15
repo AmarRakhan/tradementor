@@ -26,10 +26,27 @@ READ_ONLY_PATHS = frozenset(
     }
 )
 
+# Strategy 2 controls in the shared live-test runtime are stored in that
+# runtime's own Firestore project.  Forwarding the combined Aster status to the
+# production read source would make GET disagree with start/stop mutations.
+LOCAL_STATE_PATHS_BY_ENVIRONMENT = {
+    "strategy2-test-live": frozenset({"/v1/me/aster/status"}),
+}
 
-def read_source_url(base_url: str, method: str, path: str, query: str = "") -> str | None:
+
+def read_source_url(
+    base_url: str,
+    method: str,
+    path: str,
+    query: str = "",
+    *,
+    environment: str = "",
+) -> str | None:
     """Return a safe upstream URL, or ``None`` when forwarding is forbidden."""
 
+    local_paths = LOCAL_STATE_PATHS_BY_ENVIRONMENT.get(environment.strip().lower(), frozenset())
+    if path in local_paths:
+        return None
     if method.upper() not in {"GET", "HEAD"} or path not in READ_ONLY_PATHS:
         return None
     parsed = urlsplit(base_url.strip())

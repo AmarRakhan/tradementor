@@ -4,6 +4,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-cloud-strategy2-test-live.yml"
 MAIN = ROOT / "cloud_api" / "main.py"
+TEST_ENTRYPOINT = ROOT / "cloud_api" / "strategy2_test_entrypoint.py"
+NON_TEST_DEPLOYMENTS = (
+    ROOT / ".github" / "workflows" / "deploy-cloud-production.yml",
+    ROOT / ".github" / "workflows" / "deploy-cloud-staging.yml",
+    ROOT / ".github" / "workflows" / "deploy-cloud-live-canary.yml",
+)
 
 
 def test_version_42_workflow_builds_the_exact_triggering_cloud_branch_commit():
@@ -16,9 +22,46 @@ def test_version_42_workflow_builds_the_exact_triggering_cloud_branch_commit():
 
 def test_strategy2_start_and_status_read_the_same_firestore_document():
     source = MAIN.read_text(encoding="utf-8")
+    bridge = (ROOT / "cloud_api" / "read_only_source.py").read_text(encoding="utf-8")
+    entrypoint = TEST_ENTRYPOINT.read_text(encoding="utf-8")
     reference = source[source.index("def aster_strategy2_reference"):source.index("def aster_strategy3_reference")]
     status = source[source.index('@app.get("/v1/me/aster/status")'):source.index('@app.post("/v1/me/aster/strategy2/replays")')]
     start = source[source.index('@app.post("/v1/me/aster/strategy2/start")'):source.index('@app.post("/v1/me/aster/strategy2/stop")')]
     assert 'db.collection("asterStrategy2").document(uid)' in reference
     assert "aster_strategy2_reference(uid).get()" in status
     assert "ref=aster_strategy2_reference(uid)" in start
+    assert '"strategy2-test-live": frozenset({"/v1/me/aster/status"})' in bridge
+    assert 'environment=os.getenv("TRADEMENTOR_ENVIRONMENT", "")' in entrypoint
+
+
+def test_isolated_strategy2_scheduler_route_exists_and_is_fail_closed():
+    route = TEST_ENTRYPOINT.read_text(encoding="utf-8")
+    assert 'control_plane.verify_internal_cloud_request(authorization)' in route
+    assert 'environment == "strategy2-test-live"' in route
+    assert 'os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false")' in route
+    assert 'os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false")' in route
+    assert 'os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false")' in route
+    assert 'return {"processed": 0, "status": "centrally-disabled"' in route
+    assert 'control_plane.db.collection("asterStrategy2")' in route
+    assert 'db.collection("asterAutomation")' not in route
+    assert '_run_aster_strategy3_tick' not in route
+
+
+def test_push_deploy_verifies_the_route_but_keeps_scheduler_paused():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert '"/internal/aster-strategy2/tick"' in workflow
+    assert 'strategy2_test_entrypoint:app' in workflow
+    assert 'openapi["paths"]' in workflow
+    assert 'test "$(gcloud scheduler jobs describe' in workflow
+    assert 'format=\'value(state)\')" = "PAUSED"' in workflow
+    assert "gcloud scheduler jobs resume" not in workflow
+
+
+def test_strategy2_test_only_publication_cannot_deploy_other_cloud_environments():
+    guard = (
+        "github.event_name != 'push' || "
+        "!contains(github.event.head_commit.message, '[strategy2-test-only]')"
+    )
+    for deployment in NON_TEST_DEPLOYMENTS:
+        workflow = deployment.read_text(encoding="utf-8")
+        assert guard in workflow

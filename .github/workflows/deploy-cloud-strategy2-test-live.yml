@@ -87,6 +87,8 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE" \
+            --command "uvicorn" \
+            --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
             --allow-unauthenticated
@@ -149,30 +151,33 @@ jobs:
             --oidc-service-account-email "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
             --oidc-token-audience "$SERVICE_URL"
 
-      - name: Verify and resume Strategy 2-only scheduler
+      - name: Verify Strategy 2 route and keep scheduler paused
         shell: bash
         run: |
           JOB_DESCRIPTION="$RUNNER_TEMP/strategy2-test-scheduler.json"
+          OPENAPI="$RUNNER_TEMP/strategy2-test-openapi.json"
           gcloud scheduler jobs describe "$SCHEDULER_JOB" \
             --project "$GCP_PROJECT_ID" \
             --location "$GCP_REGION" \
             --format=json > "$JOB_DESCRIPTION"
-          python - "$JOB_DESCRIPTION" "$SERVICE_URL" <<'PY'
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 \
+            "$SERVICE_URL/openapi.json" > "$OPENAPI"
+          python - "$JOB_DESCRIPTION" "$OPENAPI" "$SERVICE_URL" <<'PY'
           import json
           import sys
 
           job = json.load(open(sys.argv[1], encoding="utf-8"))
-          service_url = sys.argv[2]
+          openapi = json.load(open(sys.argv[2], encoding="utf-8"))
+          service_url = sys.argv[3]
           assert job["state"] == "PAUSED"
           assert job["schedule"] == "* * * * *"
           assert job["httpTarget"]["uri"] == service_url + "/internal/aster-strategy2/tick"
           assert "/internal/aster-automation/tick" not in job["httpTarget"]["uri"]
           assert "/internal/aster-strategy3/tick" not in job["httpTarget"]["uri"]
+          assert "/internal/aster-strategy2/tick" in openapi["paths"]
+          assert "post" in openapi["paths"]["/internal/aster-strategy2/tick"]
           PY
-          gcloud scheduler jobs resume "$SCHEDULER_JOB" \
-            --project "$GCP_PROJECT_ID" \
-            --location "$GCP_REGION"
-          test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "ENABLED"
+          test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "PAUSED"
 
       - name: Publish test service URL
         run: echo "$SERVICE_URL"
