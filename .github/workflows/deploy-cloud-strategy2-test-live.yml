@@ -27,6 +27,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
   SCHEDULER_JOB: tradementor-strategy2-test-live-tick
   FIREBASE_AUTH_PROJECT_ID: tradementor-production
+  STRATEGY2_INTERNAL_AUDIENCE: https://tradementor-strategy2-test-live-api-mumsywcfmq-ez.a.run.app
 
 jobs:
   test-and-deploy:
@@ -92,7 +93,7 @@ jobs:
             --command "uvicorn" \
             --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false,MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE" \
             --allow-unauthenticated
 
       - name: Verify service boundary
@@ -105,7 +106,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json > "$SERVICE_DESCRIPTION"
-          python - "$HEALTH" "$SERVICE_DESCRIPTION" <<'PY'
+          python - "$HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
           import json
           import sys
 
@@ -124,40 +125,19 @@ jobs:
           assert variables["ASTER_STRATEGY3_LIVE_ENABLED"] == "false"
           assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"
           assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
+          assert variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[3]
           PY
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
 
-      - name: Configure Strategy 2-only scheduler without changing its state
+      - name: Read existing Strategy 2 scheduler state without modifying it
         shell: bash
         run: |
           set -euo pipefail
-          TARGET="$SERVICE_URL/internal/aster-strategy2/tick"
-          if gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
-            INITIAL_STATE="$(gcloud scheduler jobs describe "$SCHEDULER_JOB" \
-              --project "$GCP_PROJECT_ID" \
-              --location "$GCP_REGION" \
-              --format='value(state)')"
-            test "$INITIAL_STATE" = "PAUSED" || test "$INITIAL_STATE" = "ENABLED"
-          else
-            gcloud scheduler jobs create http "$SCHEDULER_JOB" \
-              --project "$GCP_PROJECT_ID" \
-              --location "$GCP_REGION" \
-              --schedule "* * * * *" \
-              --time-zone "Etc/UTC" \
-              --uri "$SERVICE_URL/health" \
-              --http-method GET
-            gcloud scheduler jobs pause "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION"
-            INITIAL_STATE="PAUSED"
-          fi
-          gcloud scheduler jobs update http "$SCHEDULER_JOB" \
+          INITIAL_STATE="$(gcloud scheduler jobs describe "$SCHEDULER_JOB" \
             --project "$GCP_PROJECT_ID" \
             --location "$GCP_REGION" \
-            --schedule "* * * * *" \
-            --time-zone "Etc/UTC" \
-            --uri "$TARGET" \
-            --http-method POST \
-            --oidc-service-account-email "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --oidc-token-audience "$SERVICE_URL"
+            --format='value(state)')"
+          test "$INITIAL_STATE" = "PAUSED" || test "$INITIAL_STATE" = "ENABLED"
           echo "SCHEDULER_INITIAL_STATE=$INITIAL_STATE" >> "$GITHUB_ENV"
 
       - name: Verify Strategy 2 route and preserve scheduler state
@@ -172,7 +152,8 @@ jobs:
             --format=json > "$JOB_DESCRIPTION"
           curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 \
             "$SERVICE_URL/openapi.json" > "$OPENAPI"
-          python - "$JOB_DESCRIPTION" "$OPENAPI" "$SERVICE_URL" "$SCHEDULER_INITIAL_STATE" <<'PY'
+          python - "$JOB_DESCRIPTION" "$OPENAPI" "$SERVICE_URL" "$SCHEDULER_INITIAL_STATE" \
+            "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" <<'PY'
           import json
           import sys
 
@@ -180,10 +161,14 @@ jobs:
           openapi = json.load(open(sys.argv[2], encoding="utf-8"))
           service_url = sys.argv[3]
           initial_state = sys.argv[4]
+          runtime_service_account = sys.argv[5]
           assert initial_state in {"PAUSED", "ENABLED"}
           assert job["state"] == initial_state
           assert job["schedule"] == "* * * * *"
           assert job["httpTarget"]["uri"] == service_url + "/internal/aster-strategy2/tick"
+          assert job["httpTarget"]["httpMethod"] == "POST"
+          assert job["httpTarget"]["oidcToken"]["audience"] == service_url
+          assert job["httpTarget"]["oidcToken"]["serviceAccountEmail"] == runtime_service_account
           assert "/internal/aster-automation/tick" not in job["httpTarget"]["uri"]
           assert "/internal/aster-strategy3/tick" not in job["httpTarget"]["uri"]
           assert "/internal/aster-strategy2/tick" in openapi["paths"]

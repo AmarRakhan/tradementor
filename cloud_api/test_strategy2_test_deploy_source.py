@@ -70,9 +70,15 @@ def test_push_deploy_verifies_route_without_interrupting_an_enabled_scheduler():
     assert 'INITIAL_STATE="$(gcloud scheduler jobs describe' in workflow
     assert 'assert job["state"] == initial_state' in workflow
     assert '= "$SCHEDULER_INITIAL_STATE"' in workflow
-    assert "gcloud scheduler jobs pause" in workflow  # new-job bootstrap only
-    assert 'test "$(gcloud scheduler jobs describe' in workflow
+    assert 'MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE' in workflow
+    assert 'variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[3]' in workflow
+    assert "gcloud scheduler jobs update" not in workflow
+    assert "gcloud scheduler jobs create" not in workflow
+    assert "gcloud scheduler jobs pause" not in workflow
     assert "gcloud scheduler jobs resume" not in workflow
+    assert "gcloud scheduler jobs run" not in workflow
+    assert 'assert job["httpTarget"]["oidcToken"]["audience"] == service_url' in workflow
+    assert 'assert job["httpTarget"]["oidcToken"]["serviceAccountEmail"] == runtime_service_account' in workflow
     assert workflow.count("--retry-all-errors") >= 2
     shared_group = "group: tradementor-strategy2-test-live-control"
     assert shared_group in workflow
@@ -82,8 +88,6 @@ def test_push_deploy_verifies_route_without_interrupting_an_enabled_scheduler():
     assert 'last_attempt and last_attempt != before' in resume
     assert 'job["state"] == "ENABLED"' in resume
     assert 'code in {0, None}' in resume
-    existing_job = workflow[workflow.index('if gcloud scheduler jobs describe'):workflow.index('else', workflow.index('if gcloud scheduler jobs describe'))]
-    assert "gcloud scheduler jobs pause" not in existing_job
 
 
 def test_strategy2_test_only_publication_cannot_deploy_other_cloud_environments():
