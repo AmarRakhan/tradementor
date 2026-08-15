@@ -98,7 +98,7 @@ jobs:
         run: |
           SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
           SERVICE_DESCRIPTION="$RUNNER_TEMP/strategy2-test-service.json"
-          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$SERVICE_URL/health")"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 "$SERVICE_URL/health")"
           gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
@@ -160,7 +160,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --location "$GCP_REGION" \
             --format=json > "$JOB_DESCRIPTION"
-          curl --fail --silent --show-error --retry 6 --retry-delay 5 \
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 \
             "$SERVICE_URL/openapi.json" > "$OPENAPI"
           python - "$JOB_DESCRIPTION" "$OPENAPI" "$SERVICE_URL" <<'PY'
           import json

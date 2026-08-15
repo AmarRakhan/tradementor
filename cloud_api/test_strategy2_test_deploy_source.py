@@ -55,6 +55,7 @@ def test_push_deploy_verifies_the_route_but_keeps_scheduler_paused():
     assert 'test "$(gcloud scheduler jobs describe' in workflow
     assert 'format=\'value(state)\')" = "PAUSED"' in workflow
     assert "gcloud scheduler jobs resume" not in workflow
+    assert workflow.count("--retry-all-errors") >= 2
 
 
 def test_strategy2_test_only_publication_cannot_deploy_other_cloud_environments():
