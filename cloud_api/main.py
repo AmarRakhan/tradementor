@@ -95,7 +95,7 @@ from aster_strategy2_runtime import next_management_decision, scanner_allowed, a
 from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned
 from aster_strategy2_runtime import enrich_confirmed_costs
 from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
-from aster_strategy2_runtime import remove_strategy3_proven_conflicts
+from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, entry_order_limit, management_preempts_initial_build
 from aster_strategy2_runtime import initial_build_high_water_mark
@@ -1491,11 +1491,33 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 if s3_leg.strategy_id=="aster-strategy-3" and s3_leg.engine_type=="strategy3":
                     s3_keys.add((s3_leg.symbol,s3_leg.side));s3_legs.append(s3_leg)
             except (TypeError,ValueError):pass
-        owned,resolved_conflicts=remove_strategy3_proven_conflicts(strategy2_legs=owned,strategy3_legs=s3_legs)
-        if resolved_conflicts:
-            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"updatedAt":now},merge=True)
-            for item in resolved_conflicts:ref.collection("audit").add({"event":"S2_SHADOW_OWNERSHIP_REMOVED",**item,"timestamp":now})
-        if {(leg.symbol,leg.side) for leg in owned}&s3_keys:
+        exclusive=os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP","false").lower()=="true"
+        s1_raw=aster_automation_reference(uid).get().to_dict() or {};s1_legs=[]
+        for item in s1_raw.get("ownedLegs",[]) if isinstance(s1_raw.get("ownedLegs"),list) else []:
+            try:s1_legs.append(owned_from_mapping(item))
+            except (TypeError,ValueError):pass
+        if exclusive:
+            legacy_active=bool(s1_raw.get("monitor") or s1_raw.get("enabled") or s3_raw.get("monitor") or s3_raw.get("enabled"))
+            if legacy_active:
+                reason="Exclusieve Strategy-2-overdracht wacht tot Strategy 1 en 3 centraal zijn uitgeschakeld"
+                ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
+                return {"status":"reconciling","reason":reason,"ordersSent":0}
+            transferred,missing,transfer_errors=transfer_active_ownership_to_strategy2(positions=positions,
+                strategy2_legs=owned,strategy3_legs=s3_legs,strategy1_legs=s1_legs)
+            if missing or transfer_errors or len(transferred)!=len(active_keys):
+                reason="Exclusieve Strategy-2-overdracht is niet volledig bewijsbaar"
+                ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now,
+                    "unassignedPositions":len(missing)},merge=True)
+                return {"status":"reconciling","reason":reason,"ordersSent":0}
+            previous={(leg.symbol,leg.side,leg.strategy_id,leg.engine_type,leg.quantity,leg.weighted_entry) for leg in owned}
+            current={(leg.symbol,leg.side,leg.strategy_id,leg.engine_type,leg.quantity,leg.weighted_entry) for leg in transferred}
+            owned=transferred;s3_keys=set()
+            if current!=previous:
+                ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"updatedAt":now,
+                    "unassignedPositions":0},merge=True)
+                ref.collection("audit").add({"event":"EXCLUSIVE_STRATEGY2_OWNERSHIP_TRANSFERRED",
+                    "positionCount":len(owned),"timestamp":now})
+        elif {(leg.symbol,leg.side) for leg in owned}&s3_keys:
             reason="Strategy-2-ownership botst met Strategy 3 en is niet eenduidig bewezen"
             ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
             return {"status":"reconciling","reason":reason,"ordersSent":0}
@@ -1505,7 +1527,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"updatedAt":now},merge=True)
             for item in recovered_ownership:ref.collection("audit").add({"event":"OWNERSHIP_RECOVERED_FROM_AUDIT",**item,"timestamp":now})
             refresh_symbols|={str(item.get("symbol","")).upper() for item in recovered_ownership}
-        s1_keys=_explicit_strategy1_owned_keys(aster_automation_reference(uid).get().to_dict() or {})
+        s1_keys=set() if exclusive else _explicit_strategy1_owned_keys(s1_raw)
         s2_keys={(leg.symbol,leg.side) for leg in owned}
         unknown=active_keys-(s1_keys|s2_keys|s3_keys)
         if unknown:

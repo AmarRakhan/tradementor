@@ -36,6 +36,7 @@ def test_strategy2_start_and_status_read_the_same_firestore_document():
 
 def test_isolated_strategy2_scheduler_route_exists_and_is_fail_closed():
     route = TEST_ENTRYPOINT.read_text(encoding="utf-8")
+    workflow = WORKFLOW.read_text(encoding="utf-8")
     assert 'control_plane.verify_internal_cloud_request(authorization)' in route
     assert 'environment == "strategy2-test-live"' in route
     assert 'os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false")' in route
@@ -45,6 +46,7 @@ def test_isolated_strategy2_scheduler_route_exists_and_is_fail_closed():
     assert 'control_plane.db.collection("asterStrategy2")' in route
     assert 'db.collection("asterAutomation")' not in route
     assert '_run_aster_strategy3_tick' not in route
+    assert "ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true" in workflow
 
 
 def test_push_deploy_verifies_route_without_interrupting_an_enabled_scheduler():

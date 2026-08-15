@@ -62,22 +62,43 @@ def owned_to_mapping(leg:OwnedLeg)->dict[str,Any]:
     for key in ("intent_ids","fill_ids","open_order_ids"):value[key]=list(value[key])
     return value
 
-def remove_strategy3_proven_conflicts(*,strategy2_legs:list[OwnedLeg],strategy3_legs:list[OwnedLeg])->tuple[list[OwnedLeg],list[dict[str,Any]]]:
-    """Remove only S2 metadata shadowing an explicitly intent-proven S3 leg.
+def transfer_active_ownership_to_strategy2(*,positions:list[dict[str,Any]],strategy2_legs:list[OwnedLeg],
+                                           strategy3_legs:list[OwnedLeg]|None=None,
+                                           strategy1_legs:list[OwnedLeg]|None=None
+                                           )->tuple[list[OwnedLeg],list[tuple[str,str]],list[str]]:
+    """Build one exclusive Strategy-2 ownership row for every active position.
 
-    This never changes exchange exposure. Ambiguous collisions remain intact
-    so the caller continues to fail closed.
+    The exchange remains authoritative for side, quantity and entry price.  A
+    transfer is allowed only when an existing strategy record proves the same
+    symbol/side.  Strategy 2 wins collisions, followed by Strategy 3 and then
+    Strategy 1. Duplicate claims inside one source are rejected.  This pure
+    function never sends orders and never mutates persisted state.
     """
-    proven={(leg.symbol,leg.side) for leg in strategy3_legs
-        if leg.strategy_id=="aster-strategy-3" and leg.engine_type=="strategy3"
-        and any(str(intent).startswith("s3-") for intent in leg.intent_ids)}
-    kept=[];removed=[]
-    for leg in strategy2_legs:
-        if (leg.symbol,leg.side) in proven:
-            removed.append({"symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,
-                "reason":"Expliciete Strategy-3-orderintent bewijst ownership; foutieve Strategy-2-schaduwclaim verwijderd"})
-        else:kept.append(leg)
-    return kept,removed
+    sources=(('strategy2',strategy2_legs),('strategy3',strategy3_legs or []),('strategy1',strategy1_legs or []))
+    indexed:dict[str,dict[tuple[str,str],OwnedLeg]]={};errors=[]
+    for name,legs in sources:
+        by_key:dict[tuple[str,str],OwnedLeg]={}
+        for leg in legs:
+            key=(str(leg.symbol).upper(),str(leg.side).upper())
+            if key in by_key:
+                errors.append(f"duplicate-{name}-ownership")
+            else:
+                by_key[key]=leg
+        indexed[name]=by_key
+    active=active_position_map(positions);transferred=[];missing=[]
+    for key,row in sorted(active.items()):
+        source=next((indexed[name][key] for name,_ in sources if key in indexed[name]),None)
+        quantity=abs(number(row.get('positionAmt')));entry=number(row.get('entryPrice'))
+        if source is None:
+            missing.append(key);continue
+        if quantity<=0 or entry<=0:
+            errors.append('invalid-exchange-position');continue
+        transferred.append(replace(source,strategy_id='aster-strategy-2',engine_type='strategy2',
+            symbol=key[0],side=key[1],quantity=quantity,weighted_entry=entry,
+            cycle_id=source.cycle_id or f"ownership-transfer-{key[0].lower()}-{key[1].lower()}"))
+    if len({(leg.symbol,leg.side) for leg in transferred})!=len(transferred):
+        errors.append('duplicate-transfer-output')
+    return transferred,missing,sorted(set(errors))
 
 def active_position_map(rows:list[dict[str,Any]])->dict[tuple[str,str],dict[str,Any]]:
     return {(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()):x for x in rows

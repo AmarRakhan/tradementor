@@ -34,20 +34,34 @@ def test_missing_strategy2_ownership_never_claims_strategy3_leg():
         excluded_keys={("CAPUSDT","LONG")})
     assert owned==[] and recovered==[]
 
-def test_proven_strategy3_intent_removes_only_matching_s2_shadow_claim():
+def test_exclusive_transfer_keeps_s2_and_absorbs_s3_without_changing_exchange_truth():
     s2_cap=OwnedLeg("aster-strategy-2","strategy2","CAPUSDT","LONG","old-s2",1,172,.0585)
     s2_btc=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","SHORT","real-s2",1,1,100)
-    s3_cap=OwnedLeg("aster-strategy-3","strategy3","CAPUSDT","LONG","s3",1,172,.0585,
+    s3_eth=OwnedLeg("aster-strategy-3","strategy3","ETHUSDT","LONG","s3",1,2,2000,
         intent_ids=("s3-1abdc22e638a-open-long",))
-    kept,removed=remove_strategy3_proven_conflicts(strategy2_legs=[s2_cap,s2_btc],strategy3_legs=[s3_cap])
-    assert kept==[s2_btc]
-    assert [(x["symbol"],x["side"]) for x in removed]==[("CAPUSDT","LONG")]
+    positions=[{"symbol":"CAPUSDT","positionSide":"LONG","positionAmt":"173","entryPrice":".0586"},
+        {"symbol":"BTCUSDT","positionSide":"SHORT","positionAmt":"1","entryPrice":"100"},
+        {"symbol":"ETHUSDT","positionSide":"LONG","positionAmt":"2.5","entryPrice":"2010"}]
+    transferred,missing,errors=transfer_active_ownership_to_strategy2(positions=positions,
+        strategy2_legs=[s2_cap,s2_btc],strategy3_legs=[s3_eth])
+    assert missing==[] and errors==[]
+    assert {(x.symbol,x.side,x.strategy_id,x.engine_type) for x in transferred}=={
+        ("CAPUSDT","LONG","aster-strategy-2","strategy2"),
+        ("BTCUSDT","SHORT","aster-strategy-2","strategy2"),
+        ("ETHUSDT","LONG","aster-strategy-2","strategy2")}
+    cap=next(x for x in transferred if x.symbol=="CAPUSDT")
+    assert cap.cycle_id=="old-s2" and cap.quantity==173 and cap.weighted_entry==.0586
 
-def test_ambiguous_strategy3_claim_never_silently_removes_s2_ownership():
-    s2=OwnedLeg("aster-strategy-2","strategy2","CAPUSDT","LONG","s2",1,172,.0585)
-    unproven_s3=OwnedLeg("aster-strategy-3","strategy3","CAPUSDT","LONG","s3",1,172,.0585)
-    kept,removed=remove_strategy3_proven_conflicts(strategy2_legs=[s2],strategy3_legs=[unproven_s3])
-    assert kept==[s2] and removed==[]
+def test_exclusive_transfer_fails_closed_when_any_active_position_lacks_evidence():
+    positions=[{"symbol":"ADAUSDT","positionSide":"SHORT","positionAmt":"20","entryPrice":".5"}]
+    transferred,missing,errors=transfer_active_ownership_to_strategy2(positions=positions,strategy2_legs=[])
+    assert transferred==[] and missing==[("ADAUSDT","SHORT")] and errors==[]
+
+def test_exclusive_transfer_rejects_duplicate_source_claims():
+    position={"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100"}
+    leg=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","c",1,1,100)
+    _,_,errors=transfer_active_ownership_to_strategy2(positions=[position],strategy2_legs=[leg,leg])
+    assert errors==["duplicate-strategy2-ownership"]
 
 def test_global_portfolio_includes_all_risk_but_strategy_exposure_only_owned():
     owned=[OwnedLeg("s2","strategy2","BTCUSDT","LONG","c",1,1,100)]
