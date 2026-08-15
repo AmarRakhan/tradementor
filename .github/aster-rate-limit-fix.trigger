@@ -1,1 +1,1 @@
-Retry the guarded deployment with Cloud Run-compatible candidate tags; do not change runtime or Scheduler configuration.
+Deploy the verified Aster 24h ticker schema fix without changing runtime or Scheduler configuration.
