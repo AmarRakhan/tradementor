@@ -72,7 +72,7 @@ jobs:
       - name: Deploy candidate without traffic
         shell: bash
         run: |
-          TAG="rate-fix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TAG="rf-${GITHUB_RUN_ID: -6}-${GITHUB_RUN_ATTEMPT}"
           gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --no-traffic --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
           python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
@@ -141,7 +141,7 @@ jobs:
       - name: Deploy candidate without traffic
         shell: bash
         run: |
-          TAG="rate-fix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TAG="rf-${GITHUB_RUN_ID: -6}-${GITHUB_RUN_ATTEMPT}"
           gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --no-traffic --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
           python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
