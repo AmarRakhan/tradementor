@@ -39,7 +39,7 @@ def build_readiness_report(
         ReadinessCheck("fills", fills_readable, "Werkelijke fills en partial fills zijn leesbaar"),
         ReadinessCheck("funding", income_readable, "Funding, fees en realized PnL zijn leesbaar"),
         ReadinessCheck("reconciliation", reconciliation_passed, "Herstart/reconciliation is consistent"),
-        ReadinessCheck("ownership", not unowned, "Alle actieve exposure heeft bewezen Strategy-ownership" if not unowned else f"{len(unowned)} actieve leg(s) hebben geen bewezen Strategy-2-ownership"),
+        ReadinessCheck("ownership", not unowned, "Alle actieve exposure heeft bewezen Strategy-ownership" if not unowned else f"{len(unowned)} actieve leg(s) hebben geen bewezen Strategy-ownership"),
         ReadinessCheck("open_orders", not open_orders, "Geen onbeoordeelde open orders" if not open_orders else f"{len(open_orders)} open order(s) moeten eerst worden gereconcilieerd"),
         ReadinessCheck("live_canary", canary_validated, "Minimale echte open/fill/close-canary is gevalideerd" if canary_validated else "Echte canary is nog niet met aparte toestemming uitgevoerd"),
     ]

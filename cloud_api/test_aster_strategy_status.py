@@ -72,6 +72,18 @@ def test_strategy2_readiness_counts_only_proven_strategy3_rows_as_known_ownershi
     assert "not bool(strategy2_keys&strategy3_keys)" in readiness
 
 
+def test_strategy2_readiness_recovers_only_exact_established_server_evidence_in_test():
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    helper = source[source.index("def _read_established_aster_status"):source.index("db = firestore.client()")]
+    readiness = source[source.index("def aster_strategy2_readiness"):source.index('@app.post("/v1/me/aster/strategy2/canary")')]
+    assert '!= "strategy2-test-live"' in helper
+    assert 'read_source_url(os.getenv("TRADEMENTOR_READ_SOURCE_URL", ""), "GET", "/v1/me/aster/status")' in helper
+    assert "if active_keys-(strategy1_keys|strategy2_keys|strategy3_keys)" in readiness
+    assert "matching_source_ownership(current_positions=positions" in readiness
+    assert "OWNERSHIP_RECOVERED_FROM_ESTABLISHED_STATUS" in readiness
+    assert "source_recovery[\"accepted\"]=False" in readiness
+
+
 def test_resolved_ownership_warning_is_not_published_as_current():
     assert ownership_reason_contract("Actieve exposure zonder bewezen ownership", 0) == OWNERSHIP_CONFIRMED_REASON
     assert ownership_reason_contract("Actieve Aster-exposure zonder bewezen Strategy-ownership", 0) == OWNERSHIP_CONFIRMED_REASON
