@@ -1,1 +1,1 @@
-User explicitly approved all-four-account read-only Strategy-2 diagnosis: derive exactly four linked account IDs internally from secret names, inspect only aggregate numeric status fields, and never output identifiers, symbols, balances, secret payloads or orders.
+User explicitly approved corrected all-four-account read-only Strategy-2 diagnosis: require exactly four Strategy-2 control documents internally, inspect only aggregate numeric status fields, and never output identifiers, symbols, balances, secrets or orders.

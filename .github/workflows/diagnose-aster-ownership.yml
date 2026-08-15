@@ -51,26 +51,13 @@ jobs:
           test -n "$IMAGE"
           test "$RUNTIME_SERVICE_ACCOUNT" = "tm-staging-runtime@tradementor-amar-20260813.iam.gserviceaccount.com"
 
-          mapfile -t ASTER_SECRET_NAMES < <(
-            gcloud secrets list --project "$GCP_PROJECT_ID" \
-              --filter='name~^tradementor-aster-' --format='value(name)' | sed '/^$/d' | sort
-          )
-          test "${#ASTER_SECRET_NAMES[@]}" -eq 4
-          ASTER_UIDS=""
-          for secret_name in "${ASTER_SECRET_NAMES[@]}"; do
-            test "${secret_name#tradementor-aster-}" != "$secret_name"
-            uid="${secret_name#tradementor-aster-}"
-            test -n "$uid"
-            ASTER_UIDS="${ASTER_UIDS}${ASTER_UIDS:+,}${uid}"
-          done
-
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import json
           import os
           from google.cloud import firestore
 
           db = firestore.Client(project="tradementor-amar-20260813")
-          uids = [value for value in os.environ.get("ASTER_UIDS", "").split(",") if value]
+          uids = [doc.id for doc in db.collection("asterStrategy2").stream()]
           if len(uids) != 4 or len(set(uids)) != 4:
               raise SystemExit(254)
           results = []
@@ -147,7 +134,7 @@ jobs:
           PY
           )"
 
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --set-env-vars "ASTER_UIDS=$ASTER_UIDS"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 11             --parallelism 11             --max-retries 0             --task-timeout 120s             --quiet
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 11             --parallelism 11             --max-retries 0             --task-timeout 120s             --quiet
           set +e
           EXECUTE_OUTPUT="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait 2>&1)"
           EXECUTE_RC=$?
