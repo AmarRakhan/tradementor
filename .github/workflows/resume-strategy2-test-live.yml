@@ -66,7 +66,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --location "$GCP_REGION" \
             --format=json > "$JOB_JSON"
-          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$SERVICE_URL/health")"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 "$SERVICE_URL/health")"
           python - "$SERVICE_JSON" "$JOB_JSON" "$SERVICE_URL" "$HEALTH" <<'PY'
           import json
           import sys
