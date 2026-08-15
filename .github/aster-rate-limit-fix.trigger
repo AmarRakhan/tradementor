@@ -1,1 +1,1 @@
-Deploy the verified Aster 24h ticker schema fix without changing runtime or Scheduler configuration.
+Deploy the tested resolved ownership-status fix to the production API and isolated Strategy-3 API. Preserve service accounts, environment variables, IAM, runtime flags, traffic safety, live bot state, and Scheduler configuration; run no canary and submit no orders.
