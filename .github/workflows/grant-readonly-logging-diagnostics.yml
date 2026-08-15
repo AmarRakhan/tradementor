@@ -1,0 +1,38 @@
+name: Grant read-only logging diagnostics
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/grant-readonly-logging-diagnostics.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  grant:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Grant Cloud Logging read-only access
+        shell: bash
+        run: |
+          set -euo pipefail
+          PRINCIPAL="$(gcloud config get-value account 2>/dev/null)"
+          test -n "$PRINCIPAL"
+          gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+            --member="serviceAccount:$PRINCIPAL" \
+            --role="roles/logging.viewer" \
+            --condition=None \
+            --quiet >/dev/null
+          echo "Granted roles/logging.viewer to the configured deploy service account."
