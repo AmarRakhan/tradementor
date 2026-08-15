@@ -1416,6 +1416,18 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     return {"status":"waiting","action":"OPEN_BASE","ordersSent":0,"reason":reason}
 
 
+def _strategy2_live_runtime_enabled() -> bool:
+    """Require every independent server gate before Strategy 2 can send orders."""
+    return all(
+        os.getenv(name, "false").lower() == "true"
+        for name in (
+            "TRADEMENTOR_ALLOW_LIVE",
+            "ASTER_LIVE_EXECUTION_ENABLED",
+            "ASTER_STRATEGY2_LIVE_ENABLED",
+        )
+    )
+
+
 def aster_strategy2_public(uid: str) -> dict[str, Any]:
     ref = aster_strategy2_reference(uid)
     raw = ref.get().to_dict() or {}
@@ -1424,7 +1436,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     universe=_server_universe_contract(ref,raw,int(settings.get("universeTopN",50)))
     counts=position_count_contract(owned,scope="strategy2-proven-owned")
     enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
-    runtime_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
+    runtime_enabled=_strategy2_live_runtime_enabled()
     account_snapshot=raw.get("accountSnapshot") if isinstance(raw.get("accountSnapshot"),dict) else {}
     captured=account_snapshot.get("capturedAt")
     if isinstance(captured,datetime):
@@ -1449,7 +1461,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     settings=Strategy2Config.from_mapping(raw.get("settings"));enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
     if not monitor and not dry_run:return {"status":"stopped","reason":"Strategy 2 monitoring staat uit"}
     live=settings.mode=="live" and not dry_run
-    if live and (not bool(raw.get("liveReady")) or not bool(raw.get("canaryValidated")) or os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true"):
+    if live and (not bool(raw.get("liveReady")) or not bool(raw.get("canaryValidated")) or not _strategy2_live_runtime_enabled()):
         reason="Strategy 2 live-uitvoering is niet volledig vrijgegeven: liveReady, canaryValidated of centrale poort ontbreekt"
         ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
@@ -2358,12 +2370,12 @@ def authenticated_user(authorization: str | None = Header(default=None)) -> dict
             app=auth_app,
             check_revoked=check_revoked_tokens(environment),
         )
-        if environment.strip().lower() == "strategy3-live" and not recent_id_token(
+        if environment.strip().lower() in {"strategy2-test-live", "strategy3-live"} and not recent_id_token(
             claims,
             now_epoch_seconds=time.time(),
             maximum_age_seconds=600,
         ):
-            raise ValueError("Strategy-3-live vereist een recent Firebase ID-token")
+            raise ValueError("De geïsoleerde liveomgeving vereist een recent Firebase ID-token")
         return claims
     except Exception as exc:
         raise HTTPException(401, "Ongeldige of verlopen gebruikerssessie") from exc
@@ -3440,7 +3452,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         if strategy_id=="aster-strategy-2":
             row["strategy2Tp"]=strategy2_position_tp_contract(row=row,
                 owned=strategy2_costs_by_key.get((symbol,side)),config=strategy2_settings,
-                state={**strategy2_state,"runtimeEnabled":os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"},
+                state={**strategy2_state,"runtimeEnabled":_strategy2_live_runtime_enabled()},
                 portfolio=strategy2_portfolio)
             if symbol in strategy2_cost_failures and row["strategy2Tp"]["status"]=="Niet betrouwbaar te bepalen":
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
@@ -3484,8 +3496,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         strategy3_config=strategy3_settings,
         runtime_gates={
             "asterLiveExecution": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
-            "strategy2Live": os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false").lower() == "true",
-            "strategy2Runtime": os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false").lower() == "true",
+            "strategy2Live": _strategy2_live_runtime_enabled(),
+            "strategy2Runtime": _strategy2_live_runtime_enabled(),
             "strategy3Live": os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false").lower() == "true",
             "strategy3Runtime": os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false").lower() == "true",
         },
@@ -3985,6 +3997,7 @@ def aster_strategy2_readiness(user: dict[str, Any] = Depends(authenticated_user)
 def run_aster_strategy2_canary(request:AsterCanaryRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     """One idempotent, explicitly confirmed OPEN -> confirmed fill -> CLOSE test."""
     if not request.confirm: raise HTTPException(422,"Bevestig de echte Aster-canary expliciet")
+    require_verified_email(user)
     if os.getenv("ASTER_CANARY_ENABLED","false").lower()!="true":
         raise HTTPException(423,"De afzonderlijke Aster-canarypoort staat centraal uit")
     uid=str(user["uid"]);strategy_ref=aster_strategy2_reference(uid);state=strategy_ref.get().to_dict() or {}
@@ -4047,9 +4060,10 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
     if settings.mode=="live":
+        require_verified_email(user)
         if not bool(existing.get("liveReady")) or not bool(existing.get("canaryValidated")):
             raise HTTPException(423,"Strategy 2 is nog niet LIVE READY; voer eerst de volledige readinesscontrole en canary uit")
-        if os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true":
+        if not _strategy2_live_runtime_enabled():
             raise HTTPException(423,"Strategy 2 productie-uitvoering staat centraal uit")
     now=datetime.now(timezone.utc)
     ref.set({"settings":settings.public_dict(),"phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
@@ -5014,22 +5028,39 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
             reference.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":datetime.now(timezone.utc)},merge=True)
             results.append({"uid":item.id,"status":"data-hold","reason":message})
         finally: reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
-    strategy2_controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
-    strategy2_results=[]
-    for item in strategy2_controls[:100]:
-        reference=aster_strategy2_reference(item.id)
-        if not _acquire_mexc_automation_lease(reference):
-            strategy2_results.append({"uid":item.id,"status":"lease-busy"});continue
-        try:strategy2_results.append({"uid":item.id,**_run_aster_strategy2_tick(item.id)})
-        except Exception as exc:
-            message=f"Veilige Strategy-2-schedulerfout: {exc}"
-            reference.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":datetime.now(timezone.utc)},merge=True)
-            strategy2_results.append({"uid":item.id,"status":"data-hold","reason":message})
-        finally:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+    strategy2_results=_run_strategy2_scheduler_batch()
     # Strategy 3 has its own service, data project and dedicated scheduler.
     # The production scheduler must never read or mutate isolated S3 state.
     return {"processed":len(results)+len(strategy2_results),"strategy1":results,
         "strategy2":strategy2_results,"strategy3":[],"strategy3Isolated":True}
+
+
+def _run_strategy2_scheduler_batch() -> list[dict[str, Any]]:
+    """Process only explicitly monitored Strategy-2 accounts, one safe action per account."""
+    controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
+    results=[]
+    for item in controls[:100]:
+        reference=aster_strategy2_reference(item.id)
+        if not _acquire_mexc_automation_lease(reference):
+            results.append({"uid":item.id,"status":"lease-busy"});continue
+        try:results.append({"uid":item.id,**_run_aster_strategy2_tick(item.id)})
+        except Exception as exc:
+            message=f"Veilige Strategy-2-schedulerfout: {exc}"
+            reference.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":datetime.now(timezone.utc)},merge=True)
+            results.append({"uid":item.id,"status":"data-hold","reason":message})
+        finally:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+    return results
+
+
+@app.post("/internal/aster-strategy2/tick")
+def run_aster_strategy2_test_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Dedicated Strategy-2-only scheduler target for the shared live test."""
+    verify_internal_cloud_request(authorization)
+    if not _strategy2_live_runtime_enabled():
+        return {"processed":0,"status":"centrally-disabled","strategy2":[]}
+    results=_run_strategy2_scheduler_batch()
+    return {"processed":len(results),"strategy1":[],"strategy2":results,
+        "strategy3":[],"strategy3Isolated":True}
 
 
 @app.post("/internal/aster-strategy3/tick")
