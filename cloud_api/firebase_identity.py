@@ -17,6 +17,7 @@ def check_revoked_tokens(environment: str) -> bool:
     return environment.strip().lower() not in {
         "staging",
         "live-canary",
+        "strategy2-test-live",
         "strategy3-live",
     }
 

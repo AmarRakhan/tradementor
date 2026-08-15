@@ -91,8 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token = await current.getIdToken(true);
       response = await verifiedSend(token);
       if (response.status === 401) {
-        await firebaseSignOut(firebaseAuth);
-        throw new Error("Je oude sessie is verwijderd. Log opnieuw in om verder te gaan.");
+        throw new Error("Je login is geldig, maar de persoonlijke cloudsessie kon nog niet worden bevestigd. Probeer het zo opnieuw.");
       }
     }
     if (!response.ok) throw new Error("De persoonlijke cloudsessie kon niet worden gecontroleerd.");

@@ -4,10 +4,17 @@ import { readFile } from "node:fs/promises";
 
 test("an upstream 401 is retried without destroying a valid Firebase session", async () => {
   const source = await readFile(new URL("../lib/cloud-client.ts", import.meta.url), "utf8");
+  const provider = await readFile(new URL("../components/auth-provider.tsx", import.meta.url), "utf8");
   assert.match(source, /response\.status === 401/);
   assert.match(source, /request\(true\)/);
   assert.doesNotMatch(source, /firebaseSignOut\(firebaseAuth\)/);
   assert.doesNotMatch(source, /window\.location\.reload\(\)/);
+  assert.match(provider, /response\.status === 401/);
+  assert.match(provider, /Je login is geldig/);
+  assert.doesNotMatch(
+    provider,
+    /if \(response\.status === 401\) \{\s*await firebaseSignOut\(firebaseAuth\)/,
+  );
 });
 
 test("Firebase login persistence is installed before auth listeners and sign-in", async () => {
