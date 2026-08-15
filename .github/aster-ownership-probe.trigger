@@ -1,1 +1,1 @@
-User-authorized read-only aggregate ownership diagnosis; no identifiers, symbols, values, secrets, or orders.
+User-authorized temporary read-only Cloud Run ownership probe; auto-delete after execution.
