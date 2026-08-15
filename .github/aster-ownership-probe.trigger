@@ -1,1 +1,1 @@
-User-authorized retry: read-only aggregate ownership counts via Cloud Run task status; explicit and fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
+User-authorized retry after workflow syntax correction: anonymous aggregate ownership counts only; read-only; explicit plus fallback auto-delete; no identifiers, symbols, values, secrets, orders, IAM, scheduler, or service changes.
