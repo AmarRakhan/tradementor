@@ -95,13 +95,33 @@ jobs:
                   "strategy3ValidKeys": len(s3_keys),
                   "crossStrategyCollisions": len((s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)),
               })
-          print("OWNERSHIP_RESULT " + json.dumps({"monitoredDocuments": len(controls), "records": results}, sort_keys=True))
+          payload = "OWNERSHIP_RESULT " + json.dumps({"monitoredDocuments": len(controls), "records": results}, sort_keys=True)
+          with open("/dev/termination-log", "w", encoding="utf-8") as handle:
+              handle.write(payload)
+          print("Aggregate ownership result stored in task termination status")
           PY
           )"
 
           gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --max-retries 0             --task-timeout 120s             --quiet
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --quiet
-          sleep 5
-          RESULT="$(gcloud logging read             "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:OWNERSHIP_RESULT"             --project "$GCP_PROJECT_ID"             --limit 5             --freshness 10m             --format='value(textPayload)')"
+          EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
+          test -n "$EXECUTION"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          RESULT="$(python -c 'import json,sys
+data=json.load(sys.stdin)
+def walk(value):
+    if isinstance(value, dict):
+        for item in value.values():
+            found=walk(item)
+            if found: return found
+    elif isinstance(value, list):
+        for item in value:
+            found=walk(item)
+            if found: return found
+    elif isinstance(value, str) and value.startswith("OWNERSHIP_RESULT "):
+        return value
+    return ""
+print(walk(data))' <<<"$TASKS_JSON")"
           test -n "$RESULT"
+          gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+          trap - EXIT
           printf '%s\n' "$RESULT"
