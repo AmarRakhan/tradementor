@@ -15,7 +15,7 @@ from typing import Any, Callable, Iterable
 UNIVERSE_SOURCE = "aster"
 QUOTE_ASSET = "USDT"
 MARKET_TYPE = "perpetual"
-RANKING_METHOD = "aster_24h_quote_volume_desc_then_trade_count_desc_then_spread_asc"
+RANKING_METHOD = "aster_24h_quote_volume_desc_then_trade_count_desc_then_available_spread_asc_then_symbol"
 DEFAULT_TTL_SECONDS = 300
 
 
@@ -77,7 +77,7 @@ class RankedAsterMarket:
     symbol: str
     quote_volume_24h: float
     trade_count_24h: int
-    spread_ratio: float
+    spread_ratio: float | None
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -151,17 +151,26 @@ def build_snapshot(
             continue
         last = _positive(ticker.get("lastPrice", ticker.get("price")))
         volume = _positive(ticker.get("quoteVolume", ticker.get("turnover")))
+        # Aster's real /fapi/v3/ticker/24hr payload does not expose bidPrice
+        # or askPrice.  Treat spread as optional ranking evidence instead of
+        # rejecting every otherwise complete, active perpetual contract.
         bid = _positive(ticker.get("bidPrice"))
         ask = _positive(ticker.get("askPrice"))
         try:
             trades = max(0, int(ticker.get("count", ticker.get("tradeCount", 0))))
         except (TypeError, ValueError):
             trades = 0
-        if not last or not volume or not bid or not ask or ask < bid:
+        if not last or not volume:
             continue
-        markets.append(RankedAsterMarket(symbol, volume, trades, (ask - bid) / last))
+        spread = (ask - bid) / last if bid and ask and ask >= bid else None
+        markets.append(RankedAsterMarket(symbol, volume, trades, spread))
         seen.add(symbol)
-    markets.sort(key=lambda item: (-item.quote_volume_24h, -item.trade_count_24h, item.spread_ratio, item.symbol))
+    markets.sort(key=lambda item: (
+        -item.quote_volume_24h,
+        -item.trade_count_24h,
+        item.spread_ratio if item.spread_ratio is not None else math.inf,
+        item.symbol,
+    ))
     reason = "" if markets else "Aster retourneerde geen complete actieve USDT-perpetualmarkten"
     return AsterUniverseSnapshot(
         requested,
