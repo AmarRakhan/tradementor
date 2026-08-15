@@ -1,0 +1,106 @@
+name: Diagnose Strategy 2 scheduler read-only
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/diagnose-strategy2-scheduler-read-only.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read scheduler state, attempts and service errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          SINCE="$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          JOB_JSON="$RUNNER_TEMP/scheduler.json"
+          SCHEDULER_LOGS="$RUNNER_TEMP/scheduler-logs.json"
+          SERVICE_LOGS="$RUNNER_TEMP/service-logs.json"
+
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$JOB_JSON"
+          gcloud logging read \
+            "resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"$SCHEDULER_JOB\" AND timestamp>=\"$SINCE\"" \
+            --project "$GCP_PROJECT_ID" --limit 100 --order desc --format=json > "$SCHEDULER_LOGS"
+          gcloud logging read \
+            "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$CLOUD_RUN_SERVICE\" AND timestamp>=\"$SINCE\"" \
+            --project "$GCP_PROJECT_ID" --limit 200 --order desc --format=json > "$SERVICE_LOGS"
+
+          python - "$JOB_JSON" "$SCHEDULER_LOGS" "$SERVICE_LOGS" "$NOW" <<'PY'
+          import json, sys
+
+          job = json.load(open(sys.argv[1], encoding="utf-8"))
+          scheduler_logs = json.load(open(sys.argv[2], encoding="utf-8"))
+          service_logs = json.load(open(sys.argv[3], encoding="utf-8"))
+
+          def scheduler_row(row):
+              payload = row.get("jsonPayload") or {}
+              status = payload.get("status") or {}
+              return {
+                  "timestamp": row.get("timestamp"),
+                  "severity": row.get("severity"),
+                  "eventType": payload.get("@type"),
+                  "debugInfo": payload.get("debugInfo"),
+                  "statusCode": status.get("code"),
+                  "statusMessage": status.get("message"),
+                  "targetType": payload.get("targetType"),
+                  "url": payload.get("url"),
+              }
+
+          def service_row(row):
+              request = row.get("httpRequest") or {}
+              payload = row.get("jsonPayload") or {}
+              text = row.get("textPayload")
+              message = payload.get("message") or payload.get("reason") or text
+              return {
+                  "timestamp": row.get("timestamp"),
+                  "severity": row.get("severity"),
+                  "method": request.get("requestMethod"),
+                  "status": request.get("status"),
+                  "url": request.get("requestUrl"),
+                  "message": str(message)[:500] if message else None,
+              }
+
+          scheduler_summary = [scheduler_row(row) for row in scheduler_logs]
+          scheduler_summary = [row for row in scheduler_summary if any(value is not None for value in row.values())][:30]
+          service_summary = [service_row(row) for row in service_logs]
+          service_summary = [row for row in service_summary if row["status"] or row["severity"] in {"ERROR", "CRITICAL", "ALERT", "EMERGENCY"}][:50]
+          result = {
+              "readOnly": True,
+              "observedAt": sys.argv[4],
+              "scheduler": {
+                  "name": job.get("name"),
+                  "state": job.get("state"),
+                  "schedule": job.get("schedule"),
+                  "timeZone": job.get("timeZone"),
+                  "lastAttemptTime": job.get("lastAttemptTime"),
+                  "scheduleTime": job.get("scheduleTime"),
+                  "status": job.get("status"),
+                  "uri": (job.get("httpTarget") or {}).get("uri"),
+                  "audience": ((job.get("httpTarget") or {}).get("oidcToken") or {}).get("audience"),
+              },
+              "schedulerEvents": scheduler_summary,
+              "serviceRequestsAndErrors": service_summary,
+          }
+          print("STRATEGY2_SCHEDULER_DIAGNOSTICS " + json.dumps(result, sort_keys=True, default=str))
+          PY
