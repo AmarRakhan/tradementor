@@ -106,21 +106,7 @@ jobs:
           EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
           test -n "$EXECUTION"
           TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          RESULT="$(python -c 'import json,sys
-data=json.load(sys.stdin)
-def walk(value):
-    if isinstance(value, dict):
-        for item in value.values():
-            found=walk(item)
-            if found: return found
-    elif isinstance(value, list):
-        for item in value:
-            found=walk(item)
-            if found: return found
-    elif isinstance(value, str) and value.startswith("OWNERSHIP_RESULT "):
-        return value
-    return ""
-print(walk(data))' <<<"$TASKS_JSON")"
+          RESULT="$(jq -r '.. | strings | select(startswith("OWNERSHIP_RESULT "))' <<<"$TASKS_JSON" | head -1)"
           test -n "$RESULT"
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
