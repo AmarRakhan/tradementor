@@ -34,6 +34,13 @@ control_plane.read_source_url = _test_runtime_read_source_url
 app = control_plane.app
 
 
+def _strategy_keys(state: dict[str, Any], strategy_id: str, engine_type: str) -> set[tuple[str, str]]:
+    rows = control_plane.proven_owned_rows(
+        state.get("ownedLegs", []), strategy_id=strategy_id, engine_type=engine_type,
+    )
+    return {(str(row["symbol"]).upper(), str(row["side"]).upper()) for row in rows}
+
+
 @app.get("/v1/me/aster/strategy2/diagnostics")
 def strategy2_token_diagnostics(
     user: dict[str, Any] = Depends(control_plane.authenticated_user),
@@ -45,15 +52,9 @@ def strategy2_token_diagnostics(
     s1 = control_plane.aster_automation_reference(uid).get().to_dict() or {}
     s3 = control_plane.aster_strategy3_reference(uid).get().to_dict() or {}
 
-    def owned_keys(state: dict[str, Any], strategy_id: str, engine_type: str) -> set[tuple[str, str]]:
-        rows = control_plane.proven_owned_rows(
-            state.get("ownedLegs", []), strategy_id=strategy_id, engine_type=engine_type,
-        )
-        return {(str(row["symbol"]).upper(), str(row["side"]).upper()) for row in rows}
-
-    s1_keys = owned_keys(s1, "aster-strategy-1", "strategy1") | owned_keys(s1, "strategy_1", "strategy_1")
-    s2_keys = owned_keys(s2, "aster-strategy-2", "strategy2")
-    s3_keys = owned_keys(s3, "aster-strategy-3", "strategy3")
+    s1_keys = _strategy_keys(s1, "aster-strategy-1", "strategy1") | _strategy_keys(s1, "strategy_1", "strategy_1")
+    s2_keys = _strategy_keys(s2, "aster-strategy-2", "strategy2")
+    s3_keys = _strategy_keys(s3, "aster-strategy-3", "strategy3")
     collision_keys = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
     last_tick = s2.get("lastTickAt")
     if isinstance(last_tick, datetime):
@@ -84,6 +85,39 @@ def strategy2_token_diagnostics(
             "heartbeatFresh": heartbeat_age is not None and heartbeat_age <= 180,
         },
     }
+
+
+@app.post("/v1/me/aster/strategy2/exclusive-handoff")
+def strategy2_exclusive_handoff(
+    user: dict[str, Any] = Depends(control_plane.authenticated_user),
+) -> dict[str, Any]:
+    """Disable legacy controls only after token-scoped S2 ownership proof."""
+    uid = str(user["uid"])
+    s1_ref = control_plane.aster_automation_reference(uid)
+    s2_ref = control_plane.aster_strategy2_reference(uid)
+    s3_ref = control_plane.aster_strategy3_reference(uid)
+    s1_snapshot, s2_snapshot, s3_snapshot = s1_ref.get(), s2_ref.get(), s3_ref.get()
+    if not s2_snapshot.exists:
+        raise control_plane.HTTPException(409, "Strategy-2-document ontbreekt")
+    s1, s2, s3 = s1_snapshot.to_dict() or {}, s2_snapshot.to_dict() or {}, s3_snapshot.to_dict() or {}
+    s1_keys = _strategy_keys(s1, "aster-strategy-1", "strategy1") | _strategy_keys(s1, "strategy_1", "strategy_1")
+    s2_keys = _strategy_keys(s2, "aster-strategy-2", "strategy2")
+    s3_keys = _strategy_keys(s3, "aster-strategy-3", "strategy3")
+    collisions = (s1_keys & s2_keys) | (s1_keys & s3_keys) | (s2_keys & s3_keys)
+    unassigned = int(control_plane.safe_float(s2.get("unassignedPositions")))
+    if not (s2.get("enabled") and s2.get("monitor") and s2.get("exclusiveOwnership")
+            and len(s2_keys) == 68 and not collisions and unassigned == 0):
+        raise control_plane.HTTPException(409, "Exclusieve Strategy-2-ownership is niet volledig bewezen")
+    now = datetime.now(timezone.utc)
+    reason = "Administratief uitgeschakeld na bewezen exclusieve Strategy-2-ownership"
+    batch = control_plane.db.batch()
+    batch.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
+        "lastReason": reason, "updatedAt": now}, merge=True)
+    batch.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
+        "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE", "lastReason": reason, "updatedAt": now}, merge=True)
+    batch.commit()
+    return {"completed": True, "uid": uid, "strategy2OwnedLegs": len(s2_keys),
+        "ordersSent": 0, "positionsChanged": 0, "schedulerChanged": False}
 
 
 def _live_gates_open() -> bool:
