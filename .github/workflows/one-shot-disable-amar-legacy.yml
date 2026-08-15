@@ -77,11 +77,10 @@ jobs:
                       out.add((symbol, side))
               return out
 
-          @firestore.transactional
-          def transfer(tx):
-              s1_snap = s1_ref.get(transaction=tx)
-              s2_snap = s2_ref.get(transaction=tx)
-              s3_snap = s3_ref.get(transaction=tx)
+          def transfer():
+              s1_snap = s1_ref.get()
+              s2_snap = s2_ref.get()
+              s3_snap = s3_ref.get()
               if not s2_snap.exists:
                   raise SystemExit(42)
               s1 = s1_snap.to_dict() or {}
@@ -101,14 +100,16 @@ jobs:
                   raise SystemExit(43)
               now = datetime.now(timezone.utc)
               reason = "Administratief uitgeschakeld na bewezen exclusieve Strategy-2-ownership"
-              tx.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
+              batch = db.batch()
+              batch.set(s1_ref, {"enabled": False, "monitor": False, "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
                               "lastReason": reason, "updatedAt": now}, merge=True)
-              tx.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
+              batch.set(s3_ref, {"enabled": False, "monitor": False, "rapidBuildRequested": False,
                               "phase": "DISABLED_FOR_STRATEGY2_EXCLUSIVE",
                               "lastReason": reason, "updatedAt": now}, merge=True)
+              batch.commit()
               return len(s2_keys)
 
-          owned = transfer(db.transaction())
+          owned = transfer()
           print(f"ADMIN_TRANSFER_OK uid={expected_uid} strategy2Owned={owned} ordersSent=0 schedulerChanged=0 deleted=0")
 
           deadline = time.time() + 210
