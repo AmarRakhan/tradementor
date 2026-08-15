@@ -47,7 +47,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <div className="test-environment-banner live-runtime-banner">
           <span className="runtime-name">AMAR CRYPTO BOT 2026</span>
-          <span className="runtime-status">STRATEGY 3 LIVE · ECHTE ORDERS ALLEEN NA JOUW BEVESTIGING</span>
+          <span className="runtime-status">PLATFORMSTATUS · STRATEGY 3-RUNTIME LIVE · DIT IS NIET JOUW ACCOUNTSTATUS</span>
           <AppVersionControl />
         </div>
         <PwaRegistration />

@@ -32,6 +32,17 @@ type AppSkin = "original" | "suriname-heritage";
 type ChartScope = TradingExchange | "portfolio";
 type PremiumSection = "dashboard" | "screener" | "bots" | "risk" | "portfolio" | "exchanges" | "wallet" | "academy" | "settings";
 
+const destinationIds = new Set<Destination>(["hyperliquid", "aster", "positions", "risk", "wallet", "admin"]);
+
+function destinationFromLocation(): Destination | null {
+  const route = window.location.hash.replace(/^#\/?/, "").split(/[/?]/, 1)[0];
+  return destinationIds.has(route as Destination) ? route as Destination : null;
+}
+
+function destinationHref(destination: Destination): string {
+  return `${window.location.pathname}${window.location.search}#/${destination}`;
+}
+
 function asterActionsAreFresh(snapshot: ExchangeSnapshot, cloudReady: boolean) {
   return Boolean(cloudReady && snapshot.serverConfirmed && snapshot.updatedAt && Date.now() - snapshot.updatedAt < 120_000 && !snapshot.error);
 }
@@ -106,20 +117,37 @@ function TradeMentorHome() {
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tradementor.activeDestination");
-    const route = window.location.hash.replace(/^#\/?/, "");
-    if (route === "positions") setActive("positions");
-    else if (saved === "hyperliquid" || saved === "aster" || saved === "positions" || saved === "risk" || saved === "wallet" || saved === "admin") setActive(saved);
+    const route = destinationFromLocation();
     const savedInterface = window.localStorage.getItem("tradementor.interfaceMode");
     if (savedInterface === "premium" || savedInterface === "legacy") setInterfaceMode(savedInterface);
     const savedHyperliquidVisibility = window.localStorage.getItem("tradementor.navigation.hyperliquid.visible");
+    let initial = route || (destinationIds.has(saved as Destination) ? saved as Destination : "hyperliquid");
     if (savedHyperliquidVisibility === "false") {
       setShowHyperliquidTab(false);
-      if (saved === "hyperliquid") setActive("aster");
+      if (initial === "hyperliquid") initial = "aster";
     }
+    setActive(initial);
+    window.localStorage.setItem("tradementor.activeDestination", initial);
+    if (route !== initial) window.history.replaceState({ destination: initial }, "", destinationHref(initial));
     const savedSkin = window.localStorage.getItem("tradementor.appSkin");
     const skin = savedSkin === "suriname-heritage" ? "suriname-heritage" : "original";
     setAppSkin(skin);
     document.documentElement.dataset.appSkin = skin;
+  }, []);
+
+  useEffect(() => {
+    const restoreDestination = () => {
+      const destination = destinationFromLocation();
+      if (!destination) return;
+      setActive(destination);
+      window.localStorage.setItem("tradementor.activeDestination", destination);
+    };
+    window.addEventListener("popstate", restoreDestination);
+    window.addEventListener("hashchange", restoreDestination);
+    return () => {
+      window.removeEventListener("popstate", restoreDestination);
+      window.removeEventListener("hashchange", restoreDestination);
+    };
   }, []);
 
   const changeAppSkin = (skin: AppSkin) => {
@@ -135,6 +163,7 @@ function TradeMentorHome() {
     if (!visible && active === "hyperliquid") {
       setActive("aster");
       window.localStorage.setItem("tradementor.activeDestination", "aster");
+      window.history.replaceState({ destination: "aster" }, "", destinationHref("aster"));
     }
   };
 
@@ -152,6 +181,7 @@ function TradeMentorHome() {
     if (active === "admin" && !adminDeviceAllowed) {
       setActive("wallet");
       window.localStorage.setItem("tradementor.activeDestination", "wallet");
+      window.history.replaceState({ destination: "wallet" }, "", destinationHref("wallet"));
     }
   }, [active, adminDeviceAllowed]);
 
@@ -181,9 +211,10 @@ function TradeMentorHome() {
   };
 
   const selectDestination = (destination: Destination) => {
+    if (destination === active && destinationFromLocation() === destination) return;
     setActive(destination);
     window.localStorage.setItem("tradementor.activeDestination", destination);
-    window.history.replaceState(null, "", destination === "positions" ? "#/positions" : window.location.pathname + window.location.search);
+    window.history.pushState({ destination }, "", destinationHref(destination));
   };
 
   const activeLabel = useMemo(
@@ -226,7 +257,7 @@ function TradeMentorHome() {
         <header className="topbar">
           <Brand />
           <div className="topbar-actions">
-            <span className={`environment ${cloudReady ? "connected" : ""}`}><i /> {cloudReady ? "LIVE DATA VERBONDEN" : "LIVE DATA CONTROLEREN"}</span>
+            <span className={`environment ${cloudReady ? "connected" : ""}`}><i /> {cloudReady ? "CLOUDSESSIE ACTIEF" : "CLOUDSESSIE CONTROLEREN"}</span>
             <button className="refresh-button" type="button" onClick={() => { refreshAll(); setRefreshedAt(new Date().toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })); }}>
               Vernieuwen
             </button>
@@ -374,16 +405,16 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <Metric label="PORTFOLIOWAARDE" value={view.equity} detail={view.metricDetail} />
         <Metric label="AVAILABLE TO TRADE" value={view.available} detail="Direct van de exchange" />
         <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
-        <Metric label="ACTIEVE POSITIES" value={String(view.positions.length || view.activeCount)} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
+        <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
         {(isHyperliquid || destination === "aster") && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail={destination === "aster" ? "Aster futures maintenance margin" : "Perps maintenance margin"} />}
         {destination === "aster" && <TodayRealizedMetric available={snapshot.data?.historyAvailable === true} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
         {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
       </section>}
 
       {!positionsOnly && <section className="direction-balance" aria-label="Long en short balans">
-        <DirectionBalanceCell label="LONG" count={longPositions.length} value={longPnl} />
-        <DirectionBalanceCell label="NETTO OPEN PNL" value={netOpenPnl} center />
-        <DirectionBalanceCell label="SHORT" count={shortPositions.length} value={shortPnl} />
+        <DirectionBalanceCell label="LONG" count={view.accountDataAvailable ? longPositions.length : null} value={view.accountDataAvailable ? longPnl : null} />
+        <DirectionBalanceCell label="NETTO OPEN PNL" value={view.accountDataAvailable ? netOpenPnl : null} center />
+        <DirectionBalanceCell label="SHORT" count={view.accountDataAvailable ? shortPositions.length : null} value={view.accountDataAvailable ? shortPnl : null} />
       </section>}
       {!positionsOnly && destination === "aster" && <AsterRecentTrades snapshot={snapshot} onRetry={onRefresh} />}
       {!positionsOnly && destination === "aster" && <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}><AsterPerformancePanel snapshot={snapshot.data} onChanged={onRefresh} /></fieldset>}
@@ -453,9 +484,9 @@ function PositionsPage({ snapshots, refreshedAt, cloudReady, onRefresh }: { snap
   </div>;
 }
 
-function DirectionBalanceCell({ label, count, value, center = false }: { label: string; count?: number; value: number; center?: boolean }) {
-  const tone = value > 0 ? "positive" : value < 0 ? "negative" : "neutral";
-  return <div className={`direction-balance-cell ${center ? "center" : ""} ${tone}`}><span>{count === undefined ? label : `${count} ${label}`}</span><strong>{formatSignedUsd(value)}</strong></div>;
+function DirectionBalanceCell({ label, count, value, center = false }: { label: string; count?: number | null; value: number | null; center?: boolean }) {
+  const tone = value === null ? "unknown" : value > 0 ? "positive" : value < 0 ? "negative" : "neutral";
+  return <div className={`direction-balance-cell ${center ? "center" : ""} ${tone}`}><span>{count === undefined ? label : `${count === null ? "—" : count} ${label}`}</span><strong>{value === null ? "—" : formatSignedUsd(value)}</strong></div>;
 }
 
 function WalletView({ refreshedAt, snapshots, interfaceMode, preferenceReady, preferenceMessage, onInterfaceModeChange, showHyperliquidTab = true, onShowHyperliquidTabChange = () => {}, appSkin = "original", onAppSkinChange = () => {} }: { refreshedAt: string; snapshots: ExchangeSnapshots; interfaceMode: InterfaceMode; preferenceReady: boolean; preferenceMessage: string; onInterfaceModeChange: (mode: InterfaceMode) => void; showHyperliquidTab?: boolean; onShowHyperliquidTabChange?: (visible: boolean) => void; appSkin?: AppSkin; onAppSkinChange?: (skin: AppSkin) => void }) {
@@ -530,10 +561,10 @@ function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRef
   const hyperliquid = exchangeView("hyperliquid", snapshots.hyperliquid);
   const aster = exchangeView("aster", snapshots.aster);
   const connectedViews = [hyperliquid, aster].filter((view) => view.connected && view.equityNumber !== null);
-  const totalEquity = connectedViews.reduce((sum, view) => sum + (view.equityNumber ?? 0), 0);
+  const totalEquity = connectedViews.length ? connectedViews.reduce((sum, view) => sum + (view.equityNumber ?? 0), 0) : null;
   const allPositions = [...hyperliquid.positions, ...aster.positions];
-  const totalPnl = allPositions.reduce((sum, position) => sum + position.pnl, 0);
-  const runningBots = Number(Boolean(hyperliquid.tradingEnabled)) + Number(Boolean(aster.tradingEnabled));
+  const totalPnl = connectedViews.length ? allPositions.reduce((sum, position) => sum + position.pnl, 0) : null;
+  const runningBots = hyperliquid.connected && aster.connected ? Number(Boolean(hyperliquid.tradingEnabled)) + Number(Boolean(aster.tradingEnabled)) : null;
 
   return <main className="premium-app-shell">
     <aside className="premium-sidebar" aria-label="Premium hoofdnavigatie">
@@ -542,7 +573,7 @@ function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRef
       <div className="premium-account"><span>{initials}</span><div><strong>Persoonlijk account</strong><small>{cloudReady ? "Cloud verbonden" : "Cloud controleren"}</small></div></div>
     </aside>
     <section className="premium-workspace">
-      <header className="premium-topbar"><div><span className="premium-breadcrumb">TRADEMENTOR · PREMIUM</span><strong>{premiumNavigation.find((item) => item.id === section)?.label}</strong></div><div><span className={`premium-cloud ${cloudReady ? "connected" : ""}`}><i />{cloudReady ? "LIVE DATA" : "CONTROLEREN"}</span><button type="button" onClick={onRefreshAll}>Vernieuwen</button><button className="premium-interface-switch" type="button" onClick={onUseLegacy} aria-label="Terug naar de vertrouwde webapp"><span className="desktop-label">Vertrouwde weergave</span><span className="mobile-label">Terug</span></button><span className="premium-avatar">{initials}</span></div></header>
+      <header className="premium-topbar"><div><span className="premium-breadcrumb">TRADEMENTOR · PREMIUM</span><strong>{premiumNavigation.find((item) => item.id === section)?.label}</strong></div><div><span className={`premium-cloud ${cloudReady ? "connected" : ""}`}><i />{cloudReady ? "CLOUDSESSIE" : "CONTROLEREN"}</span><button type="button" onClick={onRefreshAll}>Vernieuwen</button><button className="premium-interface-switch" type="button" onClick={onUseLegacy} aria-label="Terug naar de vertrouwde webapp"><span className="desktop-label">Vertrouwde weergave</span><span className="mobile-label">Terug</span></button><span className="premium-avatar">{initials}</span></div></header>
       <div className="premium-page">
         {section === "dashboard" && <PremiumDashboard totalEquity={totalEquity} totalPnl={totalPnl} positions={allPositions} runningBots={runningBots} hyperliquid={hyperliquid} aster={aster} refreshedAt={refreshedAt} />}
         {section === "screener" && <PremiumScreener scanner={scanner} error={scannerError} />}
@@ -565,20 +596,21 @@ function PremiumPageHeading({ eyebrow, title, detail }: { eyebrow: string; title
   return <header className="premium-page-heading"><span>{eyebrow}</span><h1>{title}</h1><p>{detail}</p></header>;
 }
 
-function PremiumDashboard({ totalEquity, totalPnl, positions, runningBots, hyperliquid, aster, refreshedAt }: { totalEquity: number; totalPnl: number; positions: PositionView[]; runningBots: number; hyperliquid: ReturnType<typeof exchangeView>; aster: ReturnType<typeof exchangeView>; refreshedAt: string }) {
+function PremiumDashboard({ totalEquity, totalPnl, positions, runningBots, hyperliquid, aster, refreshedAt }: { totalEquity: number | null; totalPnl: number | null; positions: PositionView[]; runningBots: number | null; hyperliquid: ReturnType<typeof exchangeView>; aster: ReturnType<typeof exchangeView>; refreshedAt: string }) {
   const longs = positions.filter((position) => position.side.toLowerCase() === "long");
   const shorts = positions.filter((position) => position.side.toLowerCase() === "short");
+  const accountDataAvailable = hyperliquid.accountDataAvailable || aster.accountDataAvailable;
   return <>
     <PremiumPageHeading eyebrow="PORTFOLIO COMMAND CENTER" title="Goed overzicht. Rustige beslissingen." detail="Actuele waarden komen rechtstreeks uit jouw gekoppelde exchanges." />
-    <section className="command-hero"><div className="command-value"><span>Portfolio Value</span><strong>{totalEquity > 0 ? formatUsd(totalEquity) : "Geen betrouwbare waarde"}</strong><small className={totalPnl >= 0 ? "profit" : "loss"}>Open resultaat {formatSignedUsd(totalPnl)}</small></div><div className="period-tabs"><button className="active" type="button">Actueel</button><button type="button" disabled>Vandaag</button><button type="button" disabled>Deze week</button><button type="button" disabled>Deze maand</button></div><div className="equity-unavailable"><i /><div><strong>Performancegrafiek</strong><span>Binnenkort beschikbaar zodra betrouwbare historische equity-snapshots zijn opgeslagen.</span></div></div></section>
-    <section className="premium-metric-grid"><PremiumStat label="ACTIEVE POSITIES" value={String(positions.length)} detail={`${longs.length} Long · ${shorts.length} Short`} /><PremiumStat label="BOTS ACTIEF" value={String(runningBots)} detail={runningBots ? "Live status uit exchange-controls" : "Geen actieve uitvoering"} /><PremiumStat label="OPEN PNL" value={formatSignedUsd(totalPnl)} detail="Niet dubbel opgeteld" tone={totalPnl >= 0 ? "profit" : "loss"} /><PremiumStat label="LAATSTE SYNC" value={refreshedAt} detail="Persoonlijke cloudcontrole" /></section>
-    <section className="premium-dashboard-lower"><article className="health-panel"><div><span>MARGIN HEALTH</span><strong>{hyperliquid.riskValue}</strong><small>Hyperliquid</small></div><div><span>ASTER RISK</span><strong>{aster.riskValue}</strong><small>{aster.riskDetail}</small></div></article><article className="exchange-status-panel"><div className="panel-title"><h2>Connected Exchanges</h2><span>{[hyperliquid, aster].filter((view) => view.connected).length}/2 verbonden</span></div><PremiumExchangeLine name="Hyperliquid" view={hyperliquid} /><PremiumExchangeLine name="Aster" view={aster} /></article><article className="bot-status-panel"><div className="panel-title"><h2>Bots actief</h2><span>Exchange-truth</span></div><PremiumBotLine name="DCA Pulse" active={hyperliquid.tradingEnabled} exchange="Hyperliquid" /><PremiumBotLine name="Dual Profit Harvest" active={aster.tradingEnabled} exchange="Aster" /></article></section>
+    <section className="command-hero"><div className="command-value"><span>Portfolio Value</span><strong>{totalEquity === null ? "Geen betrouwbare waarde" : formatUsd(totalEquity)}</strong><small className={totalPnl === null ? "" : totalPnl >= 0 ? "profit" : "loss"}>Open resultaat {totalPnl === null ? "—" : formatSignedUsd(totalPnl)}</small></div><div className="period-tabs"><button className="active" type="button">Actueel</button><button type="button" disabled>Vandaag</button><button type="button" disabled>Deze week</button><button type="button" disabled>Deze maand</button></div><div className="equity-unavailable"><i /><div><strong>Performancegrafiek</strong><span>Binnenkort beschikbaar zodra betrouwbare historische equity-snapshots zijn opgeslagen.</span></div></div></section>
+    <section className="premium-metric-grid"><PremiumStat label="ACTIEVE POSITIES" value={accountDataAvailable ? String(positions.length) : "—"} detail={accountDataAvailable ? `${longs.length} Long · ${shorts.length} Short` : "Geen betrouwbare account-snapshot"} /><PremiumStat label="BOTS ACTIEF" value={runningBots === null ? "—" : String(runningBots)} detail={runningBots === null ? "Niet voor beide exchanges bevestigd" : runningBots ? "Live status uit exchange-controls" : "Geen actieve uitvoering"} /><PremiumStat label="OPEN PNL" value={totalPnl === null ? "—" : formatSignedUsd(totalPnl)} detail={totalPnl === null ? "Geen betrouwbare account-snapshot" : "Niet dubbel opgeteld"} tone={totalPnl === null ? "" : totalPnl >= 0 ? "profit" : "loss"} /><PremiumStat label="LAATSTE SYNC" value={refreshedAt} detail="Persoonlijke cloudcontrole" /></section>
+    <section className="premium-dashboard-lower"><article className="health-panel"><div><span>MARGIN HEALTH</span><strong>{hyperliquid.riskValue}</strong><small>Hyperliquid</small></div><div><span>ASTER RISK</span><strong>{aster.riskValue}</strong><small>{aster.riskDetail}</small></div></article><article className="exchange-status-panel"><div className="panel-title"><h2>Connected Exchanges</h2><span>{[hyperliquid, aster].filter((view) => view.connected).length}/2 verbonden</span></div><PremiumExchangeLine name="Hyperliquid" view={hyperliquid} /><PremiumExchangeLine name="Aster" view={aster} /></article><article className="bot-status-panel"><div className="panel-title"><h2>Bots actief</h2><span>Exchange-truth</span></div><PremiumBotLine name="DCA Pulse" active={hyperliquid.tradingEnabled} known={hyperliquid.connected} exchange="Hyperliquid" /><PremiumBotLine name="Dual Profit Harvest" active={aster.tradingEnabled} known={aster.connected} exchange="Aster" /></article></section>
   </>;
 }
 
 function PremiumStat({ label, value, detail, tone = "" }: { label: string; value: string; detail: string; tone?: string }) { return <article className={`premium-stat ${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>; }
 function PremiumExchangeLine({ name, view }: { name: string; view: ReturnType<typeof exchangeView> }) { return <div className="premium-list-line"><span className="exchange-mini">{name.slice(0, 2).toUpperCase()}</span><div><strong>{name}</strong><small>{view.connected ? view.equity : view.statusText}</small></div><em className={view.connected ? "online" : ""}>{view.connected ? "Verbonden" : "Controle nodig"}</em></div>; }
-function PremiumBotLine({ name, active, exchange }: { name: string; active: boolean; exchange: string }) { return <div className="premium-list-line"><span className="bot-mini">◆</span><div><strong>{name}</strong><small>{exchange}</small></div><em className={active ? "online" : ""}>{active ? "Actief" : "Gestopt"}</em></div>; }
+function PremiumBotLine({ name, active, known, exchange }: { name: string; active: boolean; known: boolean; exchange: string }) { return <div className="premium-list-line"><span className="bot-mini">◆</span><div><strong>{name}</strong><small>{exchange}</small></div><em className={known && active ? "online" : ""}>{!known ? "Onbekend" : active ? "Actief" : "Gestopt"}</em></div>; }
 
 function PremiumScreener({ scanner, error }: { scanner: Record<string, unknown> | null; error: string }) {
   const settings = asRecord(scanner?.scannerSettings);
@@ -601,7 +633,7 @@ function PremiumBotCreator({ cloudReady, snapshots, onRefresh }: { cloudReady: b
   </>;
 }
 
-function PremiumExchanges({ snapshots, onRefresh }: { snapshots: ExchangeSnapshots; onRefresh: (exchange: Exclude<Destination, "wallet">) => void }) { return <><PremiumPageHeading eyebrow="EXCHANGES" title="Eén interface. Twee bronnen van waarheid." detail="Verbindingen en accountstatus komen uit dezelfde bestaande koppelingen." /><section className="premium-exchange-grid">{(["hyperliquid", "aster"] as const).map((id) => { const view = exchangeView(id, snapshots[id]); return <article key={id}><div className="premium-exchange-head"><span>{id.slice(0, 2).toUpperCase()}</span><em className={view.connected ? "online" : ""}>{view.statusText}</em></div><h2>{id === "hyperliquid" ? "Hyperliquid" : "Aster"}</h2><dl><div><dt>Equity</dt><dd>{view.equity}</dd></div><div><dt>Available</dt><dd>{view.available}</dd></div><div><dt>Open PnL</dt><dd>{view.openPnl}</dd></div><div><dt>Posities</dt><dd>{view.positions.length}</dd></div></dl><button type="button" onClick={() => onRefresh(id)}>Exchange vernieuwen</button></article>; })}</section></>; }
+function PremiumExchanges({ snapshots, onRefresh }: { snapshots: ExchangeSnapshots; onRefresh: (exchange: Exclude<Destination, "wallet">) => void }) { return <><PremiumPageHeading eyebrow="EXCHANGES" title="Eén interface. Twee bronnen van waarheid." detail="Verbindingen en accountstatus komen uit dezelfde bestaande koppelingen." /><section className="premium-exchange-grid">{(["hyperliquid", "aster"] as const).map((id) => { const view = exchangeView(id, snapshots[id]); return <article key={id}><div className="premium-exchange-head"><span>{id.slice(0, 2).toUpperCase()}</span><em className={view.connected ? "online" : ""}>{view.statusText}</em></div><h2>{id === "hyperliquid" ? "Hyperliquid" : "Aster"}</h2><dl><div><dt>Equity</dt><dd>{view.equity}</dd></div><div><dt>Available</dt><dd>{view.available}</dd></div><div><dt>Open PnL</dt><dd>{view.openPnl}</dd></div><div><dt>Posities</dt><dd>{view.accountDataAvailable ? view.positions.length : "—"}</dd></div></dl><button type="button" onClick={() => onRefresh(id)}>Exchange vernieuwen</button></article>; })}</section></>; }
 
 function PremiumUnavailable({ title }: { title: string }) { return <><PremiumPageHeading eyebrow="BINNENKORT BESCHIKBAAR" title={title} detail="Dit onderdeel zat nog niet als werkende functie in de huidige webapp." /><section className="premium-unavailable"><span>Binnenkort beschikbaar</span><h2>Geen nepknoppen of verzonnen gegevens</h2><p>De plaats in de navigatie is alvast zichtbaar. De functie wordt pas interactief wanneer de echte databron en veilige gebruikersflow beschikbaar zijn.</p></section></>; }
 
@@ -891,6 +923,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
   const metricDetail = snapshot.error || (snapshot.loading ? "Exchange wordt vernieuwd" : readOnlyRecognized ? "Trading en automatische orders staan uit" : connected ? "Actuele exchange-snapshot" : "Nog niet gekoppeld");
   return {
     connected,
+    accountDataAvailable,
     tradingEnabled,
     statusText,
     metricDetail,
