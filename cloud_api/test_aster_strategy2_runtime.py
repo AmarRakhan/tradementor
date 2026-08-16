@@ -275,6 +275,17 @@ def test_strategy2_off_keeps_existing_profitable_position_orderable_for_full_tp(
     assert contract["status"]=="TP bereikt" and contract["decision"]=="FULL_TP"
     assert selected and selected[1].kind=="FULL_TP" and selected[1].risk_reducing is True
 
+def test_transient_live_ready_false_does_not_revoke_completed_canary_tp_management():
+    now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
+    state={**_live_state(now),"liveReady":False,"canaryValidated":True}
+    owned=_tp_owned("BEATUSDT","SHORT",17,.889,now,fees=.10,funding=-.02)
+    row={"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":"17","quantity":17,
+        "entryPrice":.889,"markPrice":.647,"notionalUsd":11,"unrealizedPnl":4.11}
+    result=strategy2_position_tp_contract(row=row,owned=owned,config=cfg,state=state,
+        portfolio=PortfolioState(1000,1000,.1,100,100,200),now=now)
+    assert result["status"]=="TP bereikt" and result["decision"]=="FULL_TP"
+    assert "liveReady" not in result["blockReason"]
+
 def test_contract_uses_the_persisted_take_profit_instead_of_the_default():
     now=datetime(2026,8,14,18,0,tzinfo=timezone.utc)
     cfg=Strategy2Config.from_mapping({"mode":"live","takeProfit":.0175})

@@ -362,8 +362,8 @@ def strategy2_position_tp_contract(*,row:dict[str,Any],owned:OwnedLeg|None,confi
     if reliable and status=="TP bereikt":
         if config.mode!="live":block="TP bereikt, maar de opgeslagen Strategy-2-modus is paper"
         elif not bool(state.get("monitor")):block="TP bereikt, maar Strategy-2-monitoring staat uit"
-        elif not bool(state.get("liveReady")) or not bool(state.get("canaryValidated")):
-            block="TP bereikt, maar liveReady/canaryValidated is niet volledig bewezen"
+        elif not bool(state.get("canaryValidated")):
+            block="TP bereikt, maar canaryValidated is niet volledig bewezen"
         elif state.get("runtimeEnabled") is False:block="TP bereikt, maar de centrale Strategy-2-runtimepoort staat uit"
         elif str(state.get("phase","")).upper() in {"DATA_HOLD","RECONCILING","CANARY_HOLD"}:
             block=str(state.get("lastReason") or f"Strategy 2 staat in {state.get('phase')}")

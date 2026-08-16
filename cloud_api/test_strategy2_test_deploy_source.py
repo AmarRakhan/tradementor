@@ -46,6 +46,18 @@ def test_missing_linked_account_registration_never_enables_trading():
     assert "ref.set(" not in registration
 
 
+def test_completed_canary_authorization_survives_transient_readiness_and_open_orders():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    readiness = source[source.index('def aster_strategy2_readiness('):source.index('@app.post("/v1/me/aster/strategy2/canary")')]
+    assert 'if live and (not canary_authorized or not central_live_enabled)' in tick
+    assert '"liveReadyRecoveryReason":"COMPLETED_CANARY_AUTHORIZATION"' in tick
+    assert 'management_owned=[leg for leg in management_owned if (leg.symbol,leg.side) not in open_order_keys]' in tick
+    assert tick.index('if selected:') < tick.index('if orders:')
+    assert 'durable_live_ready=bool(raw.get("canaryValidated",False))' in readiness
+    assert '"liveReady":report["liveReady"]' not in readiness
+
+
 def test_isolated_strategy2_scheduler_route_exists_and_is_fail_closed():
     route = TEST_ENTRYPOINT.read_text(encoding="utf-8")
     workflow = WORKFLOW.read_text(encoding="utf-8")

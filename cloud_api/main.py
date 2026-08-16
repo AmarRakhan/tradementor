@@ -1483,10 +1483,20 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     settings=Strategy2Config.from_mapping(raw.get("settings"));enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
     if not monitor and not dry_run:return {"status":"stopped","reason":"Strategy 2 monitoring staat uit"}
     live=settings.mode=="live" and not dry_run
-    if live and (not bool(raw.get("liveReady")) or not bool(raw.get("canaryValidated")) or os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true"):
-        reason="Strategy 2 live-uitvoering is niet volledig vrijgegeven: liveReady, canaryValidated of centrale poort ontbreekt"
+    canary_authorized=bool(raw.get("canaryValidated"))
+    central_live_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
+    if live and (not canary_authorized or not central_live_enabled):
+        reason="Strategy 2 live-uitvoering is niet volledig vrijgegeven: canaryValidated of centrale poort ontbreekt"
         ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
+    # liveReady is durable account authorization, proven by the completed
+    # canary. A transient readiness check (for example while an exchange order
+    # is open) must never revoke it and deadlock the runtime before it can
+    # reconcile that order.
+    if live and canary_authorized and not bool(raw.get("liveReady")):
+        raw={**raw,"liveReady":True}
+        ref.set({"liveReady":True,"liveReadyRecoveredAt":now,
+            "liveReadyRecoveryReason":"COMPLETED_CANARY_AUTHORIZATION"},merge=True)
     secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live)
     try: hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
@@ -1494,9 +1504,6 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
-    if orders:
-        reason="Open Aster-orders worden eerst gereconcilieerd";ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
-        return {"status":"reconciling","reason":reason}
     owned=[]
     for item in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
         try:owned.append(owned_from_mapping(item))
@@ -1614,10 +1621,17 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     now_ms=int(now.timestamp()*1000)
     cost_evidence_limit_ms=cost_evidence_max_age_seconds(owned)*1000
     management_owned=[leg for leg in owned if leg.costs_updated_at_ms>0 and now_ms-leg.costs_updated_at_ms<=cost_evidence_limit_ms]
+    fresh_cost_keys={(leg.symbol,leg.side) for leg in management_owned}
+    open_order_keys={(str(order.get("symbol","")).upper(),str(order.get("positionSide","")).upper())
+        for order in orders if str(order.get("symbol","")).strip()}
+    # Never stack an automatic action on the same leg while Aster still has an
+    # open order for it. Other proven legs remain manageable; open orders only
+    # block new exposure account-wide.
+    management_owned=[leg for leg in management_owned if (leg.symbol,leg.side) not in open_order_keys]
     management_keys={(leg.symbol,leg.side) for leg in management_owned}
     management_positions=[row for row in strategy_positions if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in management_keys]
     cost_holds=[f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}"
-        for leg in owned if (leg.symbol,leg.side) not in management_keys]
+        for leg in owned if (leg.symbol,leg.side) not in fresh_cost_keys]
     protection_selected=portfolio_protection_decision(settings,portfolio,management_owned)
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
@@ -1738,6 +1752,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         reason="; ".join(cost_holds[:3])
         ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"data-hold","action":"HOLD","reason":reason,"ordersSent":0}
+    if orders:
+        reason=f"{len(orders)} open Aster-order(s) worden gereconcilieerd; nieuwe exposure wacht"
+        ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"reconciling","action":"HOLD","reason":reason,"ordersSent":0}
     if not enabled or not scanner_allowed(settings,portfolio,owned):
         reason="Strategy 2 staat veilig gestopt" if not enabled else "Geen beheeractie; pair- of risicolimiet bereikt"
         ref.set({"phase":"PROTECTIVE_ONLY" if not enabled else "WAITING","lastReason":reason},merge=True);return {"status":"waiting","action":"HOLD","reason":reason,"ordersSent":0}
@@ -4134,7 +4152,12 @@ def aster_strategy2_readiness(user: dict[str, Any] = Depends(authenticated_user)
         fills_readable=isinstance(fills,list),income_readable=isinstance(income,list),
         reconciliation_passed=recovery.allow_risk_increase and ownership_consistent,
         canary_validated=bool(raw.get("canaryValidated",False)))
-    aster_strategy2_reference(uid).set({"readiness":report,"liveReady":report["liveReady"],"readinessCheckedAt":datetime.now(timezone.utc)},merge=True)
+    # The report describes this instant. `liveReady` is durable authorization
+    # established by a completed canary and must not be cleared by transient
+    # conditions such as an open order or an in-progress reconciliation.
+    durable_live_ready=bool(raw.get("canaryValidated",False))
+    aster_strategy2_reference(uid).set({"readiness":report,"liveReady":durable_live_ready,
+        "readinessCheckedAt":datetime.now(timezone.utc)},merge=True)
     return report
 
 
