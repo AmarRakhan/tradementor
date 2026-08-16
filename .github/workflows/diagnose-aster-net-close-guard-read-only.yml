@@ -1,0 +1,106 @@
+name: Diagnose Aster net-close guard read-only
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diagnose-aster-net-close-guard-read-only.yml]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run isolated aggregate Firestore probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-close-probe-${GITHUB_RUN_ID: -6}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SERVICE="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE"
+          IMAGE="$(jq -r '.spec.template.spec.containers[0].image' "$SERVICE")"
+          RUNTIME_SERVICE_ACCOUNT="$(jq -r '.spec.template.spec.serviceAccountName' "$SERVICE")"
+          DEPLOYED_AT="$(jq -r '.metadata.annotations["serving.knative.dev/lastModifier"] // empty' "$SERVICE")"
+          REVISION="$(jq -r '.status.latestReadyRevisionName' "$SERVICE")"
+          REVISION_JSON="$RUNNER_TEMP/revision.json"
+          gcloud run revisions describe "$REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$REVISION_JSON"
+          DEPLOYED_AT="$(jq -r '.metadata.creationTimestamp' "$REVISION_JSON")"
+          test -n "$IMAGE"; test -n "$DEPLOYED_AT"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from google.cloud import firestore, secretmanager
+
+          db=firestore.Client(project=os.environ["GCP_PROJECT_ID"])
+          secrets=secretmanager.SecretManagerServiceClient()
+          deployed=datetime.fromisoformat(os.environ["DEPLOYED_AT"].replace("Z","+00:00"))
+          candidates={doc.id for doc in db.collection("users").stream()}
+          candidates.update(doc.id for doc in db.collection("asterStrategy2").stream())
+          uids=[]
+          for uid in candidates:
+              name=f"projects/{os.environ['GCP_PROJECT_ID']}/secrets/tradementor-aster-{uid}/versions/latest"
+              try: secrets.access_secret_version(request={"name":name})
+              except Exception: continue
+              uids.append(uid)
+          if len(set(uids))!=4: raise SystemExit("expected exactly four linked Aster accounts")
+
+          required={"accountUid","symbol","side","caller","proposedQuantity","grossPnl","entryFees",
+              "closeFee","funding","slippageBuffer","otherCosts","expectedNetResult","originalReason","blockReason"}
+          out={"accounts":4,"exclusiveAccounts":0,"enabledAccounts":0,"reconcilingAccounts":0,
+              "positionOwnershipMismatches":0,"blockedCloseAttempts":0,"blockedAuditRowsMissingFields":0,
+              "successfulAutomaticCloseEvents":0,"negativeStrategy2ClosedTrades":0}
+          close_events={"FULL_TP","PARTIAL_TP","EMERGENCY_REDUCE","CLOSE_PROTECTION"}
+          for uid in sorted(set(uids)):
+              ref=db.collection("asterStrategy2").document(uid);state=ref.get().to_dict() or {}
+              out["exclusiveAccounts"]+=int(bool(state.get("exclusiveOwnership")))
+              out["enabledAccounts"]+=int(bool(state.get("enabled")))
+              out["reconcilingAccounts"]+=int(str(state.get("phase","")).upper() in {"RECONCILING","RECOVERY","RECOVERING"})
+              account=state.get("accountSnapshot") if isinstance(state.get("accountSnapshot"),dict) else {}
+              active=int(account.get("accountActivePositions",account.get("activePositions",0)) or 0)
+              owned=len(state.get("ownedLegs") if isinstance(state.get("ownedLegs"),list) else [])
+              out["positionOwnershipMismatches"]+=int(active!=owned)
+              for snap in ref.collection("audit").stream():
+                  row=snap.to_dict() or {};ts=row.get("timestamp")
+                  if not hasattr(ts,"astimezone") or ts.astimezone(timezone.utc)<deployed: continue
+                  event=str(row.get("event",""))
+                  if event=="AUTOMATIC_ASTER_CLOSE_BLOCKED":
+                      out["blockedCloseAttempts"]+=1
+                      out["blockedAuditRowsMissingFields"]+=int(not required.issubset(row))
+                  elif event in close_events: out["successfulAutomaticCloseEvents"]+=1
+              for snap in db.collection("users").document(uid).collection("asterClosedTrades").stream():
+                  row=snap.to_dict() or {};ts=row.get("closedAt")
+                  if not hasattr(ts,"astimezone") or ts.astimezone(timezone.utc)<deployed: continue
+                  strategy=str(row.get("strategyId",row.get("strategy_id",""))).lower()
+                  source=str(row.get("source","")).lower()
+                  pnl=float(row.get("realizedPnlUsd",row.get("netPnlUsd",0)) or 0)
+                  if (strategy in {"strategy_2","aster-strategy-2"} or "aster-bot-harvest" in source) and pnl<0:
+                      out["negativeStrategy2ClosedTrades"]+=1
+          print("NET_CLOSE_GUARD_AGGREGATE "+json.dumps(out,sort_keys=True))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,DEPLOYED_AT=$DEPLOYED_AT" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          gcloud logging read "resource.type=cloud_run_job AND labels.run.googleapis.com/execution_name=$EXECUTION AND textPayload:NET_CLOSE_GUARD_AGGREGATE" \
+            --project "$GCP_PROJECT_ID" --limit 1 --format='value(textPayload)'
+          cleanup; trap - EXIT
