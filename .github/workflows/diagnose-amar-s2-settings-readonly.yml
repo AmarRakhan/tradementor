@@ -54,11 +54,25 @@ jobs:
           if not firebase_admin._apps:
               firebase_admin.initialize_app(options={"projectId":"tradementor-production"})
           db=firestore.Client(project=os.environ["GCP_PROJECT_ID"])
-          target=os.environ["TARGET_EMAIL_HASH"]; matches=[]; page=auth.list_users()
-          while page:
-              for u in page.users:
-                  if hashlib.sha256(((u.email or "").strip().lower()).encode()).hexdigest()==target: matches.append(u.uid)
-              page=page.get_next_page()
+          target=os.environ["TARGET_EMAIL_HASH"]; matches=[]
+          try:
+              page=auth.list_users()
+              while page:
+                  for u in page.users:
+                      if hashlib.sha256(((u.email or "").strip().lower()).encode()).hexdigest()==target: matches.append(u.uid)
+                  page=page.get_next_page()
+          except Exception:
+              pass
+          if not matches:
+              for collection_name in ("users","userProfiles","profiles","accounts"):
+                  try:
+                      for row in db.collection(collection_name).stream():
+                          data=row.to_dict() or {}
+                          email=str(data.get("email") or data.get("emailAddress") or "").strip().lower()
+                          if email and hashlib.sha256(email.encode()).hexdigest()==target: matches.append(row.id)
+                  except Exception:
+                      pass
+          matches=list(dict.fromkeys(matches))
           if len(matches)!=1:
               print("S2_DIAGNOSIS_JSON="+json.dumps({"diagnosis":"TARGET_MATCH_ERROR","matches":len(matches)}),flush=True); raise SystemExit(2)
           snap=db.collection("asterStrategy2").document(matches[0]).get(); state=snap.to_dict() or {}
@@ -84,7 +98,12 @@ jobs:
           EXECUTE_RC=$?
           set -e
           echo "JOB_EXECUTED_RC_$EXECUTE_RC" > "$RUNNER_TEMP/diag-stage"
-          RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" --project "$GCP_PROJECT_ID" --freshness 10m --limit 50 --order=asc --format='value(textPayload)' | sed -n 's/^S2_DIAGNOSIS_JSON=//p' | tail -1)"
+          RESULT=""
+          for ATTEMPT in 1 2 3 4 5 6; do
+            RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" --project "$GCP_PROJECT_ID" --freshness 10m --limit 50 --order=asc --format='value(textPayload)' | sed -n 's/^S2_DIAGNOSIS_JSON=//p' | tail -1)"
+            [ -n "$RESULT" ] && break
+            sleep 5
+          done
           test -n "$RESULT"
           echo SANITIZED_RESULT_READ > "$RUNNER_TEMP/diag-stage"
           BODY="$(jq -rn --arg r "$RESULT" '"READ_ONLY_S2_DIAGNOSIS\n\n```json\n"+$r+"\n```"')"
