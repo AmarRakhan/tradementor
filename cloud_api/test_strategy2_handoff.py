@@ -64,6 +64,26 @@ def test_snapshot_fingerprint_changes_when_exchange_snapshot_changes():
     assert before.snapshot_fingerprint!=after.snapshot_fingerprint
 
 
+def test_snapshot_fingerprint_ignores_unrelated_historical_fill_growth():
+    positions,fills=scenario(1,1)
+    before=build_handoff_proof(positions=positions,open_orders=[],fills=fills,config_version=1,captured_at_ms=1)
+    fills.extend([
+        {"id":"old-open","symbol":"OLDUSDT","positionSide":"LONG","side":"BUY","qty":"1","price":"90","time":1},
+        {"id":"old-close","symbol":"OLDUSDT","positionSide":"LONG","side":"SELL","qty":"1","price":"95","time":2},
+    ])
+    after=build_handoff_proof(positions=positions,open_orders=[],fills=fills,config_version=1,captured_at_ms=2)
+    assert before.complete and after.complete
+    assert before.snapshot_fingerprint==after.snapshot_fingerprint
+
+
+def test_duplicate_paginated_fill_is_counted_once_and_fingerprint_is_stable():
+    positions,fills=scenario(1,1)
+    before=build_handoff_proof(positions=positions,open_orders=[],fills=fills,config_version=1,captured_at_ms=1)
+    after=build_handoff_proof(positions=positions,open_orders=[],fills=[fills[0],dict(fills[0])],config_version=1,captured_at_ms=2)
+    assert before.complete and after.complete
+    assert before.snapshot_fingerprint==after.snapshot_fingerprint
+
+
 def test_accounts_are_isolated_and_produce_independent_proofs():
     a_positions,a_fills=scenario(37,19);b_positions,b_fills=scenario(68,34)
     a=build_handoff_proof(positions=a_positions,open_orders=[],fills=a_fills,config_version=1,captured_at_ms=1)

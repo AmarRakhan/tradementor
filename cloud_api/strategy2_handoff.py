@@ -70,9 +70,18 @@ def build_handoff_proof(*, positions: list[dict[str, Any]], open_orders: list[di
     """Prove every current exchange leg from the complete available fill set."""
     active = active_position_map(positions)
     fills_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    seen_fills: set[tuple[str, str, str]] = set()
     for row in fills:
         if _valid_fill(row):
-            fills_by_key.setdefault(_fill_key(row), []).append(row)
+            key = _fill_key(row)
+            fill_id = str(row.get("id", row.get("tradeId", "")))
+            identity = (key[0], key[1], fill_id)
+            # Paginated exchange history can repeat a boundary fill.  It is one
+            # exchange event and must not be counted twice in reconstruction.
+            if identity in seen_fills:
+                continue
+            seen_fills.add(identity)
+            fills_by_key.setdefault(key, []).append(row)
     missing: list[tuple[str, str]] = []
     owned: list[OwnedLeg] = []
     for key, position in sorted(active.items()):
@@ -93,12 +102,18 @@ def build_handoff_proof(*, positions: list[dict[str, Any]], open_orders: list[di
             role="HARVEST", fill_ids=fill_ids, created_at_ms=first_ms,
             last_order_at_ms=int(number(last.get("time", last.get("timestamp")))),
         ))
+    # Bind confirmation to the current ownership-relevant account state.  Do
+    # not include unrelated historical fills: Aster can add or re-page those
+    # between the diagnostic GET and confirmation POST while the current legs
+    # and their opening evidence remain exactly the same.
     canonical = {
         "positions": [{"symbol": key[0], "side": key[1],
             "quantity": abs(number(row.get("positionAmt"))), "entryPrice": number(row.get("entryPrice"))}
             for key, row in sorted(active.items())],
         "openOrders": sorted(str(row.get("orderId", row.get("clientOrderId", ""))) for row in open_orders),
-        "fillIds": sorted(str(row.get("id", row.get("tradeId", ""))) for row in fills if _valid_fill(row)),
+        "provenLegs": [{"symbol": leg.symbol, "side": leg.side, "quantity": leg.quantity,
+            "fillIds": sorted(leg.fill_ids)} for leg in sorted(owned, key=lambda leg: (leg.symbol, leg.side))],
+        "missingLegs": sorted([list(key) for key in missing]),
     }
     fingerprint = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return HandoffProof(frozenset(active), tuple(owned), tuple(missing), len(open_orders), fingerprint)
