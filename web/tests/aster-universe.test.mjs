@@ -21,7 +21,8 @@ test("web uses a numeric Aster USDT Top-N field without preset rounding",()=>{
   assert.match(source,/min="1" step="1"/);
   assert.doesNotMatch(source,/\["50","100","200"\]/);
   assert.doesNotMatch(source,/universeTopN:Math\.round/);
-  assert.match(source,/Gevraagd: \{requested\} · geschikt: \{eligible\} · geselecteerd: \{selected\}/);
+  assert.match(source,/Top‑N op Aster 24-uurs USDT-handelsvolume, na liquiditeits- en veiligheidsfilters/);
+  assert.match(source,/gevraagd: \{requested\} · geschikt: \{eligible\} · geselecteerd: \{selected\}/);
   assert.match(source,/Opgehaald: \{stamp\(data\.fetchedAt\)\} · geldig tot: \{stamp\(data\.expiresAt\)\}/);
   assert.match(source,/Data: \{data\.stale===true\?"verouderd":"actueel"\}/);
   assert.ok((source.match(/<AsterUniverseStatus/g)||[]).length>=4);

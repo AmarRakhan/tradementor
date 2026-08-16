@@ -13,8 +13,9 @@ def _contract(symbol: str, quote: str = "USDT"):
 
 
 def _ticker(symbol: str, volume: int):
-    return {"symbol":symbol,"lastPrice":"10","quoteVolume":str(volume),"count":10,
-        "bidPrice":"9.9","askPrice":"10.1"}
+    return {"symbol":symbol,"lastPrice":"10","quoteVolume":str(volume*1_000_000),"count":10,
+        "bidPrice":"9.99","askPrice":"10.01","priceChangePercent":"2",
+        "highPrice":"11","lowPrice":"9"}
 
 
 def test_selector_uses_aster_volume_and_excludes_other_quote_assets():

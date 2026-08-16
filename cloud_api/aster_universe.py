@@ -15,8 +15,21 @@ from typing import Any, Callable, Iterable
 UNIVERSE_SOURCE = "aster"
 QUOTE_ASSET = "USDT"
 MARKET_TYPE = "perpetual"
-RANKING_METHOD = "aster_24h_quote_volume_desc_then_trade_count_desc_then_available_spread_asc_then_symbol"
+RANKING_METHOD = "aster_24h_quote_volume_usdt_desc_then_symbol"
 DEFAULT_TTL_SECONDS = 300
+
+# Conservative entry-only defaults.  They are intentionally centralized and
+# apply before Top-N.  USD 1m/day is about USD 11.57/second: comfortably above
+# a Strategy-2 base order while still retaining a broad perpetual universe.
+# A 50% daily move or a 100% high/low range is treated as disorderly.  Spread
+# is capped at 50 bps only when Aster provides a synchronized bid and ask;
+# Aster's current bulk V3 24h response does not, so absence is reported rather
+# than fabricated. Existing-position management never consumes this policy.
+MIN_QUOTE_VOLUME_24H_USDT = 1_000_000.0
+MAX_SPREAD_RATIO = 0.005
+MAX_ABS_PRICE_CHANGE_24H_PCT = 50.0
+MAX_HIGH_LOW_RANGE_24H_RATIO = 1.0
+MAX_TICKER_AGE_SECONDS = 360
 
 
 def normalize_top_n(value: Any) -> int:
@@ -46,6 +59,29 @@ def _filter_map(row: dict[str, Any]) -> dict[str, dict[str, Any]]:
         for item in row.get("filters", ())
         if isinstance(item, dict)
     }
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _minimum_executable_notional(row: dict[str, Any], price: float) -> float | None:
+    """Compute the smallest market order from exchangeInfo without rounding risk."""
+    filters = _filter_map(row)
+    lot = filters.get("MARKET_LOT_SIZE", filters.get("LOT_SIZE", {}))
+    step = _positive(lot.get("stepSize"))
+    minimum_quantity = _positive(lot.get("minQty"))
+    notional = filters.get("MIN_NOTIONAL", filters.get("NOTIONAL", {}))
+    minimum_notional = _positive(notional.get("notional", notional.get("minNotional")))
+    if not step or not price or not minimum_notional:
+        return None
+    required = max(minimum_quantity, minimum_notional / price)
+    rounded_quantity = math.ceil((required / step) - 1e-12) * step
+    return rounded_quantity * price
 
 
 def eligible_contract(row: dict[str, Any]) -> bool:
@@ -78,6 +114,8 @@ class RankedAsterMarket:
     quote_volume_24h: float
     trade_count_24h: int
     spread_ratio: float | None
+    price_change_24h_pct: float
+    high_low_range_24h_ratio: float
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +123,8 @@ class RankedAsterMarket:
             "quoteVolume24h": self.quote_volume_24h,
             "tradeCount24h": self.trade_count_24h,
             "spreadRatio": self.spread_ratio,
+            "priceChange24hPct": self.price_change_24h_pct,
+            "highLowRange24hRatio": self.high_low_range_24h_ratio,
         }
 
 
@@ -96,6 +136,10 @@ class AsterUniverseSnapshot:
     expires_at: datetime
     stale: bool = False
     entry_block_reason: str = ""
+    discovered_market_count: int = 0
+    rejection_counts: tuple[tuple[str, int], ...] = ()
+    rejection_samples: tuple[tuple[str, str], ...] = ()
+    unavailable_filters: tuple[str, ...] = ()
 
     @property
     def selected(self) -> tuple[RankedAsterMarket, ...]:
@@ -123,6 +167,17 @@ class AsterUniverseSnapshot:
                 "Actuele Aster USDT-universumdata ontbreekt; nieuwe instappen zijn geblokkeerd"
                 if self.entry_blocked else ""
             ),
+            "discoveredMarketCount": self.discovered_market_count,
+            "rejectionCounts": dict(self.rejection_counts),
+            "rejectionSamples": dict(self.rejection_samples),
+            "unavailableFilters": list(self.unavailable_filters),
+            "thresholds": {
+                "minimumQuoteVolume24hUsdt": MIN_QUOTE_VOLUME_24H_USDT,
+                "maximumSpreadRatio": MAX_SPREAD_RATIO,
+                "maximumAbsolutePriceChange24hPct": MAX_ABS_PRICE_CHANGE_24H_PCT,
+                "maximumHighLowRange24hRatio": MAX_HIGH_LOW_RANGE_24H_RATIO,
+                "maximumTickerAgeSeconds": MAX_TICKER_AGE_SECONDS,
+            },
         }
 
 
@@ -133,9 +188,11 @@ def build_snapshot(
     *,
     fetched_at: datetime | None = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    base_notional: float | None = None,
 ) -> AsterUniverseSnapshot:
     requested = normalize_top_n(requested_top_n)
     now = (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    all_rows = [row for row in exchange_info.get("symbols", ()) if isinstance(row, dict)]
     contracts = {
         str(row.get("symbol", "")).upper(): row
         for row in exchange_info.get("symbols", ())
@@ -143,7 +200,19 @@ def build_snapshot(
     }
     markets: list[RankedAsterMarket] = []
     seen: set[str] = set()
-    for ticker in tickers_24h:
+    rejection_counts: dict[str, int] = {}
+    rejection_samples: dict[str, str] = {}
+    ticker_by_symbol = {str(row.get("symbol", "")).upper(): row for row in tickers_24h if isinstance(row, dict)}
+
+    def reject(symbol: str, reason: str) -> None:
+        rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+        rejection_samples.setdefault(symbol, reason)
+
+    for row in all_rows:
+        symbol = str(row.get("symbol", "")).upper()
+        if symbol and symbol not in contracts:
+            reject(symbol, "geen actieve verhandelbare Aster USDT-perpetual")
+    for ticker in ticker_by_symbol.values():
         if not isinstance(ticker, dict):
             continue
         symbol = str(ticker.get("symbol", "")).upper()
@@ -161,14 +230,39 @@ def build_snapshot(
         except (TypeError, ValueError):
             trades = 0
         if not last or not volume:
+            reject(symbol, "ontbrekende of ongeldige prijs/quotevolume")
             continue
         spread = (ask - bid) / last if bid and ask and ask >= bid else None
-        markets.append(RankedAsterMarket(symbol, volume, trades, spread))
+        change = _finite(ticker.get("priceChangePercent"))
+        high, low = _positive(ticker.get("highPrice")), _positive(ticker.get("lowPrice"))
+        if change is None or not high or not low or high < low:
+            reject(symbol, "onvolledige Aster 24-uurs koersdata")
+            continue
+        if volume < MIN_QUOTE_VOLUME_24H_USDT:
+            reject(symbol, "onvoldoende Aster 24-uurs quotevolume")
+            continue
+        if spread is not None and spread > MAX_SPREAD_RATIO:
+            reject(symbol, "bid/ask-spread boven veiligheidsgrens")
+            continue
+        if abs(change) > MAX_ABS_PRICE_CHANGE_24H_PCT:
+            reject(symbol, "abnormale 24-uurskoersbeweging")
+            continue
+        range_ratio = (high - low) / low
+        if range_ratio > MAX_HIGH_LOW_RANGE_24H_RATIO:
+            reject(symbol, "extreme 24-uurs high/low-volatiliteit")
+            continue
+        if base_notional is not None:
+            minimum = _minimum_executable_notional(contracts[symbol], last)
+            if minimum is None or minimum > float(base_notional) + 1e-9:
+                reject(symbol, "basisorder voldoet niet aan Aster minimum/precision")
+                continue
+        markets.append(RankedAsterMarket(symbol, volume, trades, spread, change, range_ratio))
         seen.add(symbol)
+    for symbol in contracts:
+        if symbol not in ticker_by_symbol:
+            reject(symbol, "actuele Aster ticker ontbreekt")
     markets.sort(key=lambda item: (
         -item.quote_volume_24h,
-        -item.trade_count_24h,
-        item.spread_ratio if item.spread_ratio is not None else math.inf,
         item.symbol,
     ))
     reason = "" if markets else "Aster retourneerde geen complete actieve USDT-perpetualmarkten"
@@ -179,6 +273,10 @@ def build_snapshot(
         now + timedelta(seconds=max(1, int(ttl_seconds))),
         False,
         reason,
+        len(contracts),
+        tuple(sorted(rejection_counts.items())),
+        tuple(list(sorted(rejection_samples.items()))[:100]),
+        ("listingdatum", "kortetermijnvolatiliteit", "bulk bid/ask-spread"),
     )
 
 
@@ -191,6 +289,10 @@ def stale_snapshot(snapshot: AsterUniverseSnapshot, *, now: datetime | None = No
         snapshot.expires_at,
         checked >= snapshot.expires_at,
         reason,
+        snapshot.discovered_market_count,
+        snapshot.rejection_counts,
+        snapshot.rejection_samples,
+        snapshot.unavailable_filters,
     )
 
 

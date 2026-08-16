@@ -1783,7 +1783,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
         market24=client.ticker_24h()
         changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in market24}
-        universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)
+        universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n,
+            base_notional=settings.base_notional)
         all_brackets=client.leverage_brackets()
     except (AsterApiError,ValueError) as exc:
         blocked=aster_usdt_universe_snapshot(settings.universe_top_n,client=client).public_dict()

@@ -5,7 +5,7 @@ import pytest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import Strategy2Config
 from aster_strategy3 import Strategy3Config
-from aster_universe import build_snapshot, normalize_top_n, stale_snapshot
+from aster_universe import build_snapshot, normalize_top_n, stale_snapshot, MIN_QUOTE_VOLUME_24H_USDT
 
 
 NOW = datetime(2026, 8, 14, 20, 0, tzinfo=timezone.utc)
@@ -29,9 +29,10 @@ def contract(symbol: str, *, status: str = "TRADING", contract_type: str = "PERP
     }
 
 
-def ticker(symbol: str, volume: float, *, count: int = 100, bid: float = 99, ask: float = 101):
-    return {"symbol": symbol, "lastPrice": "100", "quoteVolume": str(volume),
-            "count": count, "bidPrice": str(bid), "askPrice": str(ask)}
+def ticker(symbol: str, volume: float, *, count: int = 100, bid: float = 99.9, ask: float = 100.1):
+    return {"symbol": symbol, "lastPrice": "100", "quoteVolume": str(volume * 1_000_000),
+            "count": count, "bidPrice": str(bid), "askPrice": str(ask),
+            "priceChangePercent": "2", "highPrice": "110", "lowPrice": "90"}
 
 
 def test_every_positive_integer_is_preserved_and_fractional_values_are_rejected():
@@ -75,14 +76,14 @@ def test_only_active_valid_aster_usdt_perpetual_contracts_survive():
     assert [item.symbol for item in snapshot.eligible_markets] == ["GOODUSDT"]
 
 
-def test_ranking_uses_quote_volume_then_liquidity_then_symbol_deterministically():
+def test_ranking_uses_quote_volume_then_symbol_deterministically():
     symbols = ["VOLUMEUSDT", "COUNTUSDT", "TIGHTBUSDT", "TIGHTAUSDT"]
     rows = [contract(symbol) for symbol in symbols]
     tickers = [
-        ticker("VOLUMEUSDT", 2_000, count=1, bid=90, ask=110),
-        ticker("COUNTUSDT", 1_000, count=500, bid=90, ask=110),
-        ticker("TIGHTBUSDT", 1_000, count=100, bid=99.5, ask=100.5),
-        ticker("TIGHTAUSDT", 1_000, count=100, bid=99.5, ask=100.5),
+        ticker("VOLUMEUSDT", 2_000, count=1),
+        ticker("COUNTUSDT", 1_000, count=500),
+        ticker("TIGHTBUSDT", 1_000, count=100),
+        ticker("TIGHTAUSDT", 1_000, count=100),
     ]
     snapshot = build_snapshot({"symbols": rows}, tickers, 4, fetched_at=NOW)
     assert [item.symbol for item in snapshot.eligible_markets] == [
@@ -153,3 +154,69 @@ def test_all_three_entry_paths_consume_only_server_selected_symbols():
     source = open("main.py", encoding="utf-8").read()
     assert source.count('universe_contract["selectedSymbols"]') >= 3
     assert "preferred=(\"BTCUSDT\"" not in source
+
+
+def raw_ticker(symbol: str, *, volume=2_000_000, change=2, high=110, low=90,
+               bid=99.9, ask=100.1):
+    return {"symbol": symbol, "lastPrice": "100", "quoteVolume": str(volume),
+            "priceChangePercent": str(change), "highPrice": str(high), "lowPrice": str(low),
+            "bidPrice": str(bid), "askPrice": str(ask), "count": 100}
+
+
+def test_safety_filters_are_before_top_n_and_one_bad_symbol_is_isolated():
+    symbols = ["GOODAUSDT", "GOODBUSDT", "LOWUSDT", "WIDEUSDT", "WILDUSDT", "RANGEUSDT", "NOVOLUMEUSDT"]
+    rows = [contract(symbol) for symbol in symbols]
+    tickers = [
+        raw_ticker("GOODAUSDT", volume=3_000_000), raw_ticker("GOODBUSDT", volume=2_000_000),
+        raw_ticker("LOWUSDT", volume=MIN_QUOTE_VOLUME_24H_USDT - 1),
+        raw_ticker("WIDEUSDT", bid=99, ask=101), raw_ticker("WILDUSDT", change=51),
+        raw_ticker("RANGEUSDT", high=210, low=100),
+        {**raw_ticker("NOVOLUMEUSDT"), "quoteVolume": "NaN"},
+    ]
+    value = build_snapshot({"symbols": rows}, tickers, 200, fetched_at=NOW).public_dict()
+    assert value["selectedSymbols"] == ["GOODAUSDT", "GOODBUSDT"]
+    assert value["entryBlocked"] is False
+    assert sum(value["rejectionCounts"].values()) == 5
+
+
+def test_account_base_order_filter_rejects_unexecutable_precision_before_top_n():
+    expensive = contract("EXPENSIVEUSDT")
+    for item in expensive["filters"]:
+        if item["filterType"] in {"LOT_SIZE", "MARKET_LOT_SIZE"}:
+            item.update({"minQty": "1", "stepSize": "1"})
+        if item["filterType"] == "MIN_NOTIONAL":
+            item["notional"] = "100"
+    value = build_snapshot({"symbols": [expensive, contract("GOODUSDT")]},
+        [raw_ticker("EXPENSIVEUSDT", volume=9_000_000), raw_ticker("GOODUSDT", volume=2_000_000)],
+        1, fetched_at=NOW, base_notional=25).public_dict()
+    assert value["selectedSymbols"] == ["GOODUSDT"]
+    assert value["rejectionSamples"]["EXPENSIVEUSDT"] == "basisorder voldoet niet aan Aster minimum/precision"
+
+
+def test_531_mixed_markets_filter_then_select_top_200_deterministically():
+    rows, tickers = [], []
+    for rank in range(531):
+        symbol = f"X{rank:03d}USDT"
+        rows.append(contract(symbol, status="BREAK" if rank % 11 == 0 else "TRADING"))
+        tickers.append(raw_ticker(symbol, volume=10_000_000 - rank * 10_000,
+            change=60 if rank % 13 == 0 else 2))
+    snapshot = build_snapshot({"symbols": rows}, reversed(tickers), 200, fetched_at=NOW)
+    assert len(snapshot.selected) == 200
+    assert list(snapshot.selected) == sorted(snapshot.selected,
+        key=lambda item: (-item.quote_volume_24h, item.symbol))
+    assert all(item.quote_volume_24h >= MIN_QUOTE_VOLUME_24H_USDT for item in snapshot.selected)
+
+
+def test_unavailable_listing_short_term_and_bulk_spread_filters_are_reported_not_invented():
+    row = raw_ticker("BTCUSDT")
+    row.pop("bidPrice"); row.pop("askPrice")
+    value = build_snapshot({"symbols": [contract("BTCUSDT")]}, [row], 1, fetched_at=NOW).public_dict()
+    assert value["selectedSymbols"] == ["BTCUSDT"]
+    assert value["unavailableFilters"] == ["listingdatum", "kortetermijnvolatiliteit", "bulk bid/ask-spread"]
+
+
+def test_universe_change_cannot_modify_long_short_targets_or_close_logic():
+    runtime = open("aster_strategy2_runtime.py", encoding="utf-8").read()
+    assert "def balanced_entry_targets" in runtime
+    assert "universe" not in runtime.lower()
+    assert "require_profitable_automatic_close" not in open("aster_universe.py", encoding="utf-8").read()
