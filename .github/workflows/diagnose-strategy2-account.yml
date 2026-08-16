@@ -1,12 +1,11 @@
 name: Diagnose one Strategy 2 account read-only
 
 on:
-  workflow_dispatch:
-    inputs:
-      target_email:
-        description: Firebase account email to inspect read-only
-        required: true
-        type: string
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/diagnose-strategy2-account.yml"
 
 permissions:
   contents: read
@@ -21,7 +20,6 @@ jobs:
       GCP_PROJECT_ID: tradementor-amar-20260813
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
-      TARGET_EMAIL: ${{ inputs.target_email }}
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -64,8 +62,20 @@ jobs:
           project = "tradementor-amar-20260813"
           if not firebase_admin._apps:
               firebase_admin.initialize_app(options={"projectId": "tradementor-production"})
-          user = auth.get_user_by_email(os.environ["TARGET_EMAIL"])
           db = firestore.Client(project=project)
+          candidates = []
+          page = auth.list_users()
+          while page:
+              for candidate in page.users:
+                  snapshot = db.collection("asterStrategy2").document(candidate.uid).get()
+                  state = (snapshot.to_dict() or {}) if snapshot.exists else {}
+                  configured = bool(state.get("settings") or state.get("ownedLegs") or state.get("exclusiveOwnership"))
+                  if configured and not bool(state.get("canaryValidated")):
+                      candidates.append(candidate)
+              page = page.get_next_page()
+          if len(candidates) != 1:
+              raise SystemExit(f"ACCOUNT_SELECTION_BLOCKED_{len(candidates)}")
+          user = candidates[0]
           s2_snapshot = db.collection("asterStrategy2").document(user.uid).get()
           s2 = (s2_snapshot.to_dict() or {}) if s2_snapshot.exists else {}
           s1 = db.collection("asterAutomation").document(user.uid).get().to_dict() or {}
@@ -97,31 +107,29 @@ jobs:
           heartbeat_fresh = int(bool(last_tick and 0 <= (datetime.now(timezone.utc) - last_tick).total_seconds() <= 180))
           phase = str(s2.get("phase", "")).upper()
           ownership_ok = int(bool(s2_snapshot.exists and exclusive and not unassigned and not collisions and not legacy_active and phase not in {"RECONCILING", "RECOVERY", "RECOVERING"}))
-          audits = list(
-              db.collection("asterStrategy2").document(user.uid).collection("audit")
-              .where("event", "==", "ENTRY_CANDIDATE_REJECTED").limit(500).stream()
+          canary = (
+              db.collection("asterStrategy2").document(user.uid)
+              .collection("canaries").document("open-fill-close-v1").get().to_dict() or {}
           )
-          audits.sort(
-              key=lambda item: (
-                  (item.to_dict() or {}).get("timestamp").timestamp()
-                  if hasattr((item.to_dict() or {}).get("timestamp"), "timestamp") else 0
-              ),
-              reverse=True,
-          )
-          latest = {}
-          for audit in audits:
-              row = audit.to_dict() or {}
-              if str(row.get("event", "")).upper() == "ENTRY_CANDIDATE_REJECTED":
-                  latest = {
-                      "symbol": str(row.get("symbol", "")),
-                      "side": str(row.get("side", "")),
-                      "reason": str(row.get("reason", "")),
-                  }
-                  break
-          import json
-          payload = json.dumps(latest, ensure_ascii=True, separators=(",", ":"))
+          canary_status = str(canary.get("status", "")).upper()
+          canary_status_codes = {"": 0, "OPENING": 1, "OPENED": 2, "UNKNOWN": 3, "REJECTED": 4, "COMPLETED": 5}
+          metrics = [
+              int(s2_snapshot.exists),
+              int(bool(s2.get("canaryValidated"))),
+              int(bool(s2.get("liveReady"))),
+              int(bool(s2.get("enabled"))),
+              int(bool(s2.get("monitor"))),
+              exclusive,
+              unassigned,
+              collisions,
+              legacy_active,
+              heartbeat_fresh,
+              ownership_ok,
+              canary_status_codes.get(canary_status, 9),
+          ]
           index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
-          raise SystemExit((ord(payload[index]) + 1) if index < len(payload) else 1)
+          metric = metrics[index] if index < len(metrics) else 0
+          raise SystemExit(min(max(int(metric), 0), 249) + 1)
           PY
           )"
 
@@ -130,32 +138,16 @@ jobs:
             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
             --command python \
             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
-            --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL" \
-            --tasks 100 --parallelism 20 --max-retries 0 --task-timeout 120s --quiet
+            --tasks 12 --parallelism 12 --max-retries 0 --task-timeout 120s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
           EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' \
             --format='value(metadata.name)')"
-          gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"ACCOUNT_REJECTIONS\"" \
-            --project "$GCP_PROJECT_ID" --limit 5 --freshness 15m \
-            --format='value(textPayload,jsonPayload.message)' || true
           TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
           STATUS_FIELDS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index: .index, exitCode: ([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
           printf 'ACCOUNT_STATUS_FIELDS %s\n' "$STATUS_FIELDS"
-          python - "$STATUS_FIELDS" <<'PY'
-          import json, sys
-          rows = json.loads(sys.argv[1])
-          chars = []
-          for row in rows:
-              code = int(row.get("exitCode", 1))
-              if code <= 1:
-                  break
-              chars.append(chr(code - 1))
-          print("ACCOUNT_REJECTION_DECODED " + "".join(chars))
-          PY
