@@ -1,4 +1,5 @@
 name: Diagnose hashed Strategy 2 live blocker
+# Trigger exact Aster snapshot after connector-created file registration.
 
 on:
   push:
