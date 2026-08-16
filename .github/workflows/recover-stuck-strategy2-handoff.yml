@@ -61,7 +61,7 @@ jobs:
                   and len(rows)==33 and "overdracht is niet volledig bewijsbaar" in str(state.get("lastReason","")).lower()):
                   candidates.append((snap,state,rows))
           if len(candidates)!=1:
-              raise SystemExit(f"RECOVERY_BLOCKED_CANDIDATE_COUNT_{len(candidates)}")
+              raise SystemExit(20+min(len(candidates),9))
           snapshot,state,persisted_rows=candidates[0]
           uid=snapshot.id
           secret=load_aster_secret({"uid":uid})
@@ -69,18 +69,18 @@ jobs:
           positions=client.position_risk()
           open_orders=client.open_orders()
           if open_orders:
-              raise SystemExit("RECOVERY_BLOCKED_OPEN_ORDERS")
+              raise SystemExit(31)
           active={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in positions if abs(float(x.get("positionAmt") or 0))>0}
           persisted={(str(x.get("symbol","")).upper(),str(x.get("side","")).upper()) for x in persisted_rows}
           if len(active)!=33 or active!=persisted:
-              raise SystemExit("RECOVERY_BLOCKED_OWNERSHIP_MISMATCH")
+              raise SystemExit(32)
           fills=[]
           for symbol in sorted({key[0] for key in active}):
               fills.extend(paged_user_trades(client,symbol,start_time=None))
           proof=build_handoff_proof(positions=positions,open_orders=open_orders,fills=fills,
               config_version=int(state.get("configVersion",1) or 1),captured_at_ms=int(datetime.now(timezone.utc).timestamp()*1000))
           if not proof.complete or set(proof.active_keys)!=active or len(proof.owned_legs)!=33:
-              raise SystemExit("RECOVERY_BLOCKED_INCOMPLETE_FILL_PROOF")
+              raise SystemExit(33)
           s1_ref=db.collection("asterAutomation").document(uid)
           s2_ref=db.collection("asterStrategy2").document(uid)
           s3_ref=db.collection("asterStrategy3").document(uid)
@@ -95,11 +95,11 @@ jobs:
               if (not fresh_snap.exists or str(fresh.get("phase","")).upper()!="RECONCILING"
                   or not bool(fresh.get("exclusiveOwnership")) or bool(fresh.get("enabled"))
                   or int(fresh.get("unassignedPositions",0) or 0)!=0 or fresh_keys!=persisted):
-                  raise RuntimeError("RECOVERY_BLOCKED_STATE_CHANGED")
+                  raise SystemExit(34)
               s1=s1_ref.get(transaction=transaction).to_dict() or {}
               s3=s3_ref.get(transaction=transaction).to_dict() or {}
               if bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor")):
-                  raise RuntimeError("RECOVERY_BLOCKED_LEGACY_ACTIVE")
+                  raise SystemExit(35)
               transaction.set(s2_ref,{"ownedLegs":ownership_rows(proof),"exclusiveOwnership":True,
                   "unassignedPositions":0,"ownershipSnapshotFingerprint":proof.snapshot_fingerprint,
                   "ownershipTransferredAt":now,"phase":"PROTECTIVE_ONLY",
@@ -117,6 +117,10 @@ jobs:
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
           RESULT=$?
           set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json \
+            | jq -c '[.. | objects | .exitCode? | select(type == "number")]' \
+            | sed 's/^/RECOVERY_EXIT_CODES /'
           gcloud logging read \
             "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"RECOVERY_\"" \
             --project "$GCP_PROJECT_ID" --freshness 20m --limit 10 --order desc \
