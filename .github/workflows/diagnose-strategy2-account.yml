@@ -99,6 +99,28 @@ jobs:
           ownership_ok = int(bool(s2_snapshot.exists and exclusive and not unassigned and not collisions and not legacy_active and phase not in {"RECONCILING", "RECOVERY", "RECOVERING"}))
           health = db.collection("strategy2SchedulerHealth").document(user.uid).get().to_dict() or {}
           central_error = int(str(health.get("status", "")).lower() == "error")
+          if int(os.environ["CLOUD_RUN_TASK_INDEX"]) == 0:
+              audits = list(
+                  db.collection("asterStrategy2").document(user.uid).collection("audit")
+                  .order_by("timestamp", direction=firestore.Query.DESCENDING).limit(20).stream()
+              )
+              rejected = []
+              for audit in audits:
+                  row = audit.to_dict() or {}
+                  if str(row.get("event", "")).upper() != "ENTRY_CANDIDATE_REJECTED":
+                      continue
+                  stamp = row.get("timestamp")
+                  rejected.append({
+                      "event": "ENTRY_CANDIDATE_REJECTED",
+                      "symbol": str(row.get("symbol", "")),
+                      "side": str(row.get("side", "")),
+                      "reason": str(row.get("reason", "")),
+                      "timestamp": stamp.isoformat() if hasattr(stamp, "isoformat") else str(stamp or ""),
+                  })
+                  if len(rejected) >= 5:
+                      break
+              import json
+              print("ACCOUNT_REJECTIONS " + json.dumps(rejected, ensure_ascii=False), flush=True)
           metrics = [
               1,
               int(s2_snapshot.exists),
@@ -133,6 +155,10 @@ jobs:
           EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' \
             --format='value(metadata.name)')"
+          gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"ACCOUNT_REJECTIONS\"" \
+            --project "$GCP_PROJECT_ID" --limit 5 --freshness 15m \
+            --format='value(textPayload)' || true
           TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
           STATUS_FIELDS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index: .index, exitCode: ([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
