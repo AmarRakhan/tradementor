@@ -226,7 +226,8 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
                      action: str, id_prefix: str, confirm: bool,
                      close_evidence: CloseEvidence | None = None,
                      close_audit: Callable[[dict[str, Any]], None] | None = None,
-                     manual_loss_confirmation: bool = False) -> dict[str, Any]:
+                     manual_loss_confirmation: bool = False,
+                     before_submit: Callable[[AsterOrderIntent], None] | None = None) -> dict[str, Any]:
     if not confirm: raise ValueError("Persoonlijke bevestiging ontbreekt")
     # Aster stores margin/leverage per contract.  A freshly selected symbol can
     # therefore still carry an old or unsupported value.  Configure it before
@@ -240,6 +241,8 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
         accepted_leverage = configure_maximum_usable_leverage(client, plan)
     intent = AsterOrderIntent(client_order_id(id_prefix, action.lower(), side.value.lower()), plan.symbol,
                               side, plan.quantity, action)
+    if before_submit is not None:
+        before_submit(intent)
     result, recovered = client.submit_order_once(
         intent, config=AsterAutomationConfig(enabled=True, mode="live"), confirm=True,
         hedge_mode_confirmed=True, risk_approved=True,
