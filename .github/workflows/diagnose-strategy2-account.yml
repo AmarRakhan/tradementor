@@ -69,12 +69,8 @@ jobs:
               for candidate in page.users:
                   snapshot = db.collection("asterStrategy2").document(candidate.uid).get()
                   state = (snapshot.to_dict() or {}) if snapshot.exists else {}
-                  settings = state.get("settings") if isinstance(state.get("settings"), dict) else {}
-                  maximum = int(settings.get("maximumPositions", settings.get("maxActivePositions", 0)) or 0)
                   owned = state.get("ownedLegs") if isinstance(state.get("ownedLegs"), list) else []
-                  account = state.get("accountSnapshot") if isinstance(state.get("accountSnapshot"), dict) else {}
-                  active = int(account.get("accountActivePositions", account.get("activePositions", len(owned))) or len(owned))
-                  if maximum == 50 and active == 33 and bool(state.get("monitor")) and not bool(state.get("canaryValidated")):
+                  if len(owned) == 33 and bool(state.get("monitor")) and not bool(state.get("canaryValidated")):
                       candidates.append(candidate)
               page = page.get_next_page()
           task_index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
