@@ -1635,7 +1635,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     protection_selected=portfolio_protection_decision(settings,portfolio,management_owned)
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
-    selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions)
+    selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
     if selected:
@@ -1659,7 +1659,15 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             protection=replace(protection,leverage=configure_maximum_usable_leverage(client,protection))
             required=float(protection.notional_per_leg)/max(1,protection.leverage)
             if portfolio.strategy_margin+required>portfolio.equity*settings.strategy_budget:
-                return {"status":"waiting","action":"BLOCKED","reason":"Strategy Margin Budget blokkeert extra protection","ordersSent":0}
+                action_key=f"{leg.symbol}|{leg.side}|OPEN_PROTECTION"
+                blocked_management[action_key]=int(now.timestamp()*1000)+5*60*1000
+                reason="Strategy Margin Budget blokkeert extra protection; andere posities blijven beheerbaar"
+                ref.set({"blockedManagementActions":blocked_management,"phase":"PROTECTION","lastReason":reason,
+                         "lastTickAt":now,"updatedAt":now},merge=True)
+                ref.collection("audit").add({"event":"PROTECTION_BUDGET_SKIPPED","symbol":leg.symbol,
+                    "side":leg.side,"retryAfterSeconds":300,"timestamp":now})
+                return {"status":"waiting","action":"PROTECTION_BUDGET_SKIPPED","symbol":leg.symbol,
+                    "side":leg.side,"reason":reason,"ordersSent":0}
             if dry_run or not live:return {"status":"simulated","action":decision.kind,"symbol":leg.symbol,"side":decision.side,"ordersSent":0,"reason":decision.reason}
             opened=execute_aster_leg(client,protection,side=PositionSide(decision.side),action="OPEN",id_prefix=f"s2h-{uid[-4:]}-{int(time.time())}",confirm=True)
             rr=opened.get("result",{});q=safe_float(rr.get("executedQty")) or float(protection.quantity);p=safe_float(rr.get("avgPrice")) or price
@@ -1694,14 +1702,18 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}))
             try:
                 result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:
-                    (decision.risk_reducing and portfolio.margin_ratio<settings.emergency_margin_ratio) or
+                    decision.risk_reducing or
                     (portfolio.margin_ratio<settings.emergency_margin_ratio and
                      portfolio.drawdown<settings.emergency_drawdown and
                      portfolio.strategy_margin+margin<=portfolio.equity*settings.strategy_budget))
             except AsterCloseBlocked:
-                ref.set({"phase":"RUNNING","lastReason":BLOCK_MESSAGE,"lastTickAt":now,"updatedAt":now},merge=True)
+                action_key=f"{leg.symbol}|{leg.side}|{decision.kind}"
+                blocked_management[action_key]=int(now.timestamp()*1000)+5*60*1000
+                reason=f"{BLOCK_MESSAGE}; andere posities blijven beheerbaar"
+                ref.set({"blockedManagementActions":blocked_management,"phase":"PROTECTION" if portfolio.drawdown>=settings.caution_drawdown or portfolio.margin_ratio>=settings.caution_margin_ratio else "RUNNING",
+                         "lastReason":reason,"lastTickAt":now,"updatedAt":now},merge=True)
                 return {"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","symbol":leg.symbol,
-                    "side":leg.side,"ordersSent":0,"reason":BLOCK_MESSAGE}
+                    "side":leg.side,"ordersSent":0,"reason":reason}
             except Strategy2RiskBlocked as exc:
                 reason=str(exc)
                 ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now,"updatedAt":now},merge=True)

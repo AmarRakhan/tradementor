@@ -3,8 +3,8 @@ from aster_strategy2_state import OwnedLeg
 from aster_strategy2_runtime import *
 from datetime import datetime,timedelta,timezone
 
-def row(side="LONG",qty="1",entry="100",mark="100",pnl="0"):
-    return {"symbol":"BTCUSDT","positionSide":side,"positionAmt":qty,"entryPrice":entry,"markPrice":mark,"unRealizedProfit":pnl}
+def row(side="LONG",qty="1",entry="100",mark="100",pnl="0",symbol="BTCUSDT"):
+    return {"symbol":symbol,"positionSide":side,"positionAmt":qty,"entryPrice":entry,"markPrice":mark,"unRealizedProfit":pnl}
 
 def test_mapping_round_trip_keeps_ownership_identity():
     leg=OwnedLeg("s2","strategy2","BTCUSDT","LONG","c1",3,1,100,2,"PROTECTION",("i",),("f",),(),1,2,3,4)
@@ -174,6 +174,16 @@ def test_caution_opens_same_pair_protection_only_after_real_dca_loss():
     p=PortfolioState(960,1000,.2,100,0,100)
     chosen=same_pair_protection_decision(cfg,p,[leg],[row(mark="90",pnl="-10")])
     assert chosen and chosen[0].symbol=="BTCUSDT" and chosen[1].side=="SHORT" and chosen[1].kind=="OPEN_PROTECTION"
+
+def test_blocked_protection_leg_does_not_starve_other_losing_leg():
+    cfg=Strategy2Config(caution_drawdown=.03,defensive_drawdown=.06,emergency_drawdown=.10)
+    btc=OwnedLeg("s2","strategy2","BTCUSDT","LONG","btc",1,1,100,dca_count=1)
+    eth=OwnedLeg("s2","strategy2","ETHUSDT","LONG","eth",1,1,100,dca_count=1)
+    p=PortfolioState(960,1000,.2,200,0,200,available_balance=10)
+    positions=[row("LONG",symbol="BTCUSDT",entry="100",mark="80",pnl="-20"),
+               row("LONG",symbol="ETHUSDT",entry="100",mark="90",pnl="-10")]
+    chosen=same_pair_protection_decision(cfg,p,[btc,eth],positions,{("BTCUSDT","LONG","OPEN_PROTECTION")})
+    assert chosen and chosen[0].symbol=="ETHUSDT" and chosen[1].kind=="OPEN_PROTECTION"
 
 def test_tiny_spread_loss_does_not_open_hedge_before_dca():
     cfg=Strategy2Config(caution_drawdown=.03,defensive_drawdown=.06,emergency_drawdown=.10)

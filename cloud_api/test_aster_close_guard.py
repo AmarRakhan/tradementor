@@ -74,6 +74,21 @@ def test_all_strategy_close_decisions_use_the_same_close_guard():
     assert "close_evidence=evidence" in s2 and "close_evidence=evidence" in s3
 
 
+def test_strategy2_blocked_close_cannot_starve_other_position_management():
+    source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
+    tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    assert 'action_key=f"{leg.symbol}|{leg.side}|{decision.kind}"' in tick
+    assert 'blocked_management[action_key]=int(now.timestamp()*1000)+5*60*1000' in tick
+    assert 'reason=f"{BLOCK_MESSAGE}; andere posities blijven beheerbaar"' in tick
+    assert "same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)" in tick
+
+
+def test_emergency_risk_reduction_is_allowed_to_reach_the_net_profit_guard():
+    source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
+    tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    assert "risk_approved=lambda margin:\n                    decision.risk_reducing or" in tick
+
+
 def test_exclusive_strategy2_ownership_blocks_legacy_and_strategy3_before_client_creation():
     source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
     legacy=source[source.index("def _run_aster_automation_tick"):source.index("def mexc_automation_public")]

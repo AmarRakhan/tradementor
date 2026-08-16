@@ -249,7 +249,8 @@ def management_preempts_initial_build(config:Strategy2Config,owned:list[OwnedLeg
     """
     return decision.kind != "HOLD"
 
-def same_pair_protection_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg],positions:list[dict[str,Any]])->tuple[OwnedLeg,Decision]|None:
+def same_pair_protection_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg],positions:list[dict[str,Any]],
+                                  blocked_actions:set[tuple[str,str,str]]|None=None)->tuple[OwnedLeg,Decision]|None:
     """Open an opposite same-symbol leg only after risk has escalated.
 
     Normal harvest entries never create a mandatory same-pair hedge. Protection
@@ -258,11 +259,12 @@ def same_pair_protection_decision(config:Strategy2Config,portfolio:PortfolioStat
     """
     mode=risk_mode(config,portfolio)
     if not config.protection_enabled or mode=="NORMAL":return None
-    pos=active_position_map(positions);keys={(x.symbol,x.side) for x in owned}
+    pos=active_position_map(positions);keys={(x.symbol,x.side) for x in owned};blocked_actions=blocked_actions or set()
     candidates=[]
     for leg in owned:
         if leg.role=="PROTECTION":continue
         row=pos.get((leg.symbol,leg.side));opposite="SHORT" if leg.side=="LONG" else "LONG"
+        if (leg.symbol,leg.side,"OPEN_PROTECTION") in blocked_actions:continue
         if not row or (leg.symbol,opposite) in keys or (leg.symbol,opposite) in pos:continue
         loss=number(row.get("unRealizedProfit",row.get("unrealizedProfit")))
         if loss>=0 or (leg.dca_count<1 and mode=="CAUTION"):continue
