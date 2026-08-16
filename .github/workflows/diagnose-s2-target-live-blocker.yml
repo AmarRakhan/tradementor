@@ -42,7 +42,7 @@ jobs:
           PY
           )
           SCRIPT_B64="$(base64 -w0 <<'PY'
-          import hashlib,os
+          import hashlib,json
           from datetime import datetime,timezone
           import firebase_admin
           from firebase_admin import auth
@@ -86,21 +86,23 @@ jobs:
           canary_codes={"":0,"OPENING":1,"OPENED":2,"UNKNOWN":3,"REJECTED":4,"COMPLETED":5}
           intent=str(canary.get("intentPrefix",canary.get("intent_prefix","")))
           canary_orders=sum(str(x.get("clientOrderId","")).startswith(intent) for x in orders) if intent else 0
-          metrics=[0,len(users),int(snap.exists),int(bool(s2.get("enabled"))),int(bool(s2.get("monitor"))),
-              int(bool(s2.get("exclusiveOwnership"))),int(bool(s2.get("canaryValidated"))),int(bool(s2.get("liveReady"))),
-              phase_codes.get(str(s2.get("phase","")).upper(),9),len(s2.get("ownedLegs",[]) if isinstance(s2.get("ownedLegs"),list) else []),
-              len(rows),len(active),len(orders),len(active-persisted),len(persisted-active),stale_costs,
-              canary_codes.get(str(canary.get("status","")).upper(),9),int(bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor"))),
-              canary_orders,sum(bool(x.get("reduceOnly")) for x in orders)]
-          index=int(os.environ["CLOUD_RUN_TASK_INDEX"])
-          value=min(max(int(metrics[index] if index<len(metrics) else 0),0),249)
-          print(f"TARGET_METRIC index={index} value={value}",flush=True)
+          metrics={"targetCount":len(users),"document":int(snap.exists),"enabled":int(bool(s2.get("enabled"))),
+              "monitor":int(bool(s2.get("monitor"))),"exclusive":int(bool(s2.get("exclusiveOwnership"))),
+              "canaryValidated":int(bool(s2.get("canaryValidated"))),"liveReady":int(bool(s2.get("liveReady"))),
+              "phase":phase_codes.get(str(s2.get("phase","")).upper(),9),
+              "rawOwned":len(s2.get("ownedLegs",[]) if isinstance(s2.get("ownedLegs"),list) else []),
+              "provenOwned":len(rows),"active":len(active),"openOrders":len(orders),
+              "missingOwned":len(active-persisted),"staleOwned":len(persisted-active),"staleCosts":stale_costs,
+              "canaryStatus":canary_codes.get(str(canary.get("status","")).upper(),9),
+              "legacyActive":int(bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor"))),
+              "canaryOrders":canary_orders,"reduceOnlyOrders":sum(bool(x.get("reduceOnly")) for x in orders)}
+          print("TARGET_METRICS "+json.dumps(metrics,sort_keys=True),flush=True)
           PY
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "${VALUES[0]}" --service-account "${VALUES[1]}" --command python \
             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
-            --tasks 20 --parallelism 20 --max-retries 0 --task-timeout 180s --quiet
+            --tasks 1 --max-retries 0 --task-timeout 180s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
@@ -109,8 +111,8 @@ jobs:
           STATUS_FIELDS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index: .index, exitCode: ([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
           printf 'TARGET_STATUS_FIELDS %s\n' "$STATUS_FIELDS"
           gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND (textPayload:\"TARGET_\" OR jsonPayload.message:\"TARGET_\")" \
-            --project "$GCP_PROJECT_ID" --freshness 20m --limit 40 --order asc \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" \
+            --project "$GCP_PROJECT_ID" --freshness 20m --limit 80 --order asc \
             --format='value(textPayload,jsonPayload.message)' | sort -u
           cleanup
           trap - EXIT
