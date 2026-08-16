@@ -1,12 +1,12 @@
 name: Diagnose one Strategy 2 account read-only
 
 on:
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - ".github/strategy2-account-probe.trigger"
-      - ".github/workflows/diagnose-strategy2-account.yml"
+  workflow_dispatch:
+    inputs:
+      target_email:
+        description: Firebase account email to inspect read-only
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -21,7 +21,7 @@ jobs:
       GCP_PROJECT_ID: tradementor-amar-20260813
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
-      TARGET_EMAIL: Amar_rakhan@hotmail.com
+      TARGET_EMAIL: ${{ inputs.target_email }}
     steps:
       - uses: google-github-actions/auth@v2
         with:
