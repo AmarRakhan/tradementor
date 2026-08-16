@@ -1,11 +1,12 @@
 name: Diagnose one Strategy 2 account read-only
 
 on:
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - ".github/workflows/diagnose-strategy2-account.yml"
+  workflow_dispatch:
+    inputs:
+      target_email:
+        description: Firebase account email to inspect read-only
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -20,6 +21,7 @@ jobs:
       GCP_PROJECT_ID: tradementor-amar-20260813
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      TARGET_EMAIL: ${{ inputs.target_email }}
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -63,20 +65,7 @@ jobs:
           if not firebase_admin._apps:
               firebase_admin.initialize_app(options={"projectId": "tradementor-production"})
           db = firestore.Client(project=project)
-          candidates = []
-          page = auth.list_users()
-          while page:
-              for candidate in page.users:
-                  snapshot = db.collection("asterStrategy2").document(candidate.uid).get()
-                  state = (snapshot.to_dict() or {}) if snapshot.exists else {}
-                  configured = bool(state.get("settings") or state.get("ownedLegs") or state.get("exclusiveOwnership"))
-                  if configured and bool(state.get("exclusiveOwnership")) and not bool(state.get("canaryValidated")):
-                      candidates.append(candidate)
-              page = page.get_next_page()
-          if len(candidates) != 1:
-              task_index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
-              raise SystemExit(min(len(candidates), 249) + 1 if task_index == 1 else 1)
-          user = candidates[0]
+          user = auth.get_user_by_email(os.environ["TARGET_EMAIL"])
           s2_snapshot = db.collection("asterStrategy2").document(user.uid).get()
           s2 = (s2_snapshot.to_dict() or {}) if s2_snapshot.exists else {}
           s1 = db.collection("asterAutomation").document(user.uid).get().to_dict() or {}
@@ -116,7 +105,7 @@ jobs:
           canary_status_codes = {"": 0, "OPENING": 1, "OPENED": 2, "UNKNOWN": 3, "REJECTED": 4, "COMPLETED": 5}
           metrics = [
               0,
-              len(candidates),
+              1,
               int(s2_snapshot.exists),
               int(bool(s2.get("canaryValidated"))),
               int(bool(s2.get("liveReady"))),
@@ -139,6 +128,7 @@ jobs:
             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
             --command python \
             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL" \
             --tasks 12 --parallelism 12 --max-retries 0 --task-timeout 120s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
