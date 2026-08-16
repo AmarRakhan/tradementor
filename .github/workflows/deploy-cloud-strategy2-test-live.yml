@@ -1,5 +1,6 @@
 # Shared live test candidate 42 · all-user Strategy 2 ownership recovery
 # Triggered for Strategy 2 risk-start fix 098d660
+# Trigger available-margin fix 6f0fb12
 name: Deploy Strategy 2 Shared Live Test
 
 on:
