@@ -102,18 +102,16 @@ def build_handoff_proof(*, positions: list[dict[str, Any]], open_orders: list[di
             role="HARVEST", fill_ids=fill_ids, created_at_ms=first_ms,
             last_order_at_ms=int(number(last.get("time", last.get("timestamp")))),
         ))
-    # Bind confirmation to the current ownership-relevant account state.  Do
-    # not include unrelated historical fills: Aster can add or re-page those
-    # between the diagnostic GET and confirmation POST while the current legs
-    # and their opening evidence remain exactly the same.
+    # Bind confirmation to the mutable account state that could make a handoff
+    # unsafe: active leg identity/quantity and open orders.  Opening fills are
+    # fully re-proven on POST, but their pagination and aggregation are not part
+    # of the fingerprint because Aster can return equivalent evidence in a
+    # different shape between the diagnostic GET and confirmation POST.
     canonical = {
         "positions": [{"symbol": key[0], "side": key[1],
-            "quantity": abs(number(row.get("positionAmt"))), "entryPrice": number(row.get("entryPrice"))}
+            "quantity": abs(number(row.get("positionAmt")))}
             for key, row in sorted(active.items())],
         "openOrders": sorted(str(row.get("orderId", row.get("clientOrderId", ""))) for row in open_orders),
-        "provenLegs": [{"symbol": leg.symbol, "side": leg.side, "quantity": leg.quantity,
-            "fillIds": sorted(leg.fill_ids)} for leg in sorted(owned, key=lambda leg: (leg.symbol, leg.side))],
-        "missingLegs": sorted([list(key) for key in missing]),
     }
     fingerprint = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return HandoffProof(frozenset(active), tuple(owned), tuple(missing), len(open_orders), fingerprint)

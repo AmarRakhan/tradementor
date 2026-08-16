@@ -84,6 +84,20 @@ def test_duplicate_paginated_fill_is_counted_once_and_fingerprint_is_stable():
     assert before.snapshot_fingerprint==after.snapshot_fingerprint
 
 
+def test_equivalent_current_fill_aggregation_keeps_account_fingerprint_stable():
+    positions=[{"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100"}]
+    aggregated=[{"id":"a","symbol":"BTCUSDT","positionSide":"LONG","side":"BUY","qty":"1","price":"100","time":1}]
+    split=[
+        {"id":"b","symbol":"BTCUSDT","positionSide":"LONG","side":"BUY","qty":"0.4","price":"99","time":1},
+        {"id":"c","symbol":"BTCUSDT","positionSide":"LONG","side":"BUY","qty":"0.6","price":"101","time":2},
+    ]
+    before=build_handoff_proof(positions=positions,open_orders=[],fills=aggregated,config_version=1,captured_at_ms=1)
+    positions[0]["entryPrice"]="100.00000000"
+    after=build_handoff_proof(positions=positions,open_orders=[],fills=split,config_version=1,captured_at_ms=2)
+    assert before.complete and after.complete
+    assert before.snapshot_fingerprint==after.snapshot_fingerprint
+
+
 def test_accounts_are_isolated_and_produce_independent_proofs():
     a_positions,a_fills=scenario(37,19);b_positions,b_fills=scenario(68,34)
     a=build_handoff_proof(positions=a_positions,open_orders=[],fills=a_fills,config_version=1,captured_at_ms=1)
