@@ -1,4 +1,4 @@
-name: Inspect rrmk Strategy 2 recovery final
+name: Diagnose rrmk Aster secret access read-only
 
 on:
   push:
@@ -12,24 +12,66 @@ permissions:
   id-token: write
 
 jobs:
-  inspect:
+  diagnose:
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 8
+    timeout-minutes: 10
     env:
       GCP_PROJECT_ID: tradementor-amar-20260813
-      JOB_NAME: tm-s2-recover-v2-907988
-      EXECUTION_NAME: tm-s2-recover-v2-907988-rqgg7
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      TARGET_EMAIL: rrmk18@outlook.com
     steps:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Read exact final execution logs
+      - name: Resolve secret resource and inspect IAM without reading secret data
         shell: bash
         run: |
           set -euo pipefail
-          gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB_NAME\" AND labels.\"run.googleapis.com/execution_name\"=\"$EXECUTION_NAME\"" \
-            --project "$GCP_PROJECT_ID" --freshness 24h --limit 100 --order asc \
-            --format='value(timestamp,severity,textPayload,jsonPayload.message)'
+          JOB="tm-s2-secret-diag-${GITHUB_RUN_ID: -6}"
+          cleanup() { gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          readarray -t VALUES < <(python - "$SERVICE_JSON" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          spec=service["spec"]["template"]["spec"]
+          print(spec["containers"][0]["image"])
+          print(spec["serviceAccountName"])
+          PY
+          )
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import os
+          import firebase_admin
+          from firebase_admin import auth
+          from main import aster_secret_name
+          app=firebase_admin.initialize_app(options={"projectId":"tradementor-production"},name="rrmk-secret-diag")
+          user=auth.get_user_by_email(os.environ["TARGET_EMAIL"],app=app)
+          print("UID="+user.uid)
+          print("SECRET_RESOURCE="+aster_secret_name({"uid":user.uid}))
+          print("DIAG_OK ordersSent=0 stateWrites=0")
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "${VALUES[0]}" --service-account "${VALUES[1]}" --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,GOOGLE_CLOUD_QUOTA_PROJECT=tradementor-production" \
+            --tasks 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          sleep 5
+          OUTPUT="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" \
+            --project "$GCP_PROJECT_ID" --freshness 1h --limit 50 --order asc --format='value(textPayload)')"
+          echo "$OUTPUT"
+          RESOURCE="$(printf '%s\n' "$OUTPUT" | sed -n 's/^SECRET_RESOURCE=//p' | tail -1)"
+          test -n "$RESOURCE"
+          SECRET_PROJECT="$(printf '%s' "$RESOURCE" | cut -d/ -f2)"
+          SECRET_NAME="$(printf '%s' "$RESOURCE" | cut -d/ -f4)"
+          gcloud secrets describe "$SECRET_NAME" --project "$SECRET_PROJECT" --format='yaml(name,createTime,replication)'
+          gcloud secrets get-iam-policy "$SECRET_NAME" --project "$SECRET_PROJECT" --format='yaml(bindings)'
+          echo "RUNTIME_SERVICE_ACCOUNT=${VALUES[1]}"
+          cleanup
+          trap - EXIT
