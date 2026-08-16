@@ -97,55 +97,31 @@ jobs:
           heartbeat_fresh = int(bool(last_tick and 0 <= (datetime.now(timezone.utc) - last_tick).total_seconds() <= 180))
           phase = str(s2.get("phase", "")).upper()
           ownership_ok = int(bool(s2_snapshot.exists and exclusive and not unassigned and not collisions and not legacy_active and phase not in {"RECONCILING", "RECOVERY", "RECOVERING"}))
-          health = db.collection("strategy2SchedulerHealth").document(user.uid).get().to_dict() or {}
-          central_error = int(str(health.get("status", "")).lower() == "error")
-          if int(os.environ["CLOUD_RUN_TASK_INDEX"]) == 0:
-              audits = list(
-                  db.collection("asterStrategy2").document(user.uid).collection("audit")
-                  .limit(500).stream()
-              )
-              audits.sort(
-                  key=lambda item: (
-                      (item.to_dict() or {}).get("timestamp").timestamp()
-                      if hasattr((item.to_dict() or {}).get("timestamp"), "timestamp") else 0
-                  ),
-                  reverse=True,
-              )
-              rejected = []
-              for audit in audits:
-                  row = audit.to_dict() or {}
-                  if str(row.get("event", "")).upper() != "ENTRY_CANDIDATE_REJECTED":
-                      continue
-                  stamp = row.get("timestamp")
-                  rejected.append({
-                      "event": "ENTRY_CANDIDATE_REJECTED",
+          audits = list(
+              db.collection("asterStrategy2").document(user.uid).collection("audit")
+              .limit(500).stream()
+          )
+          audits.sort(
+              key=lambda item: (
+                  (item.to_dict() or {}).get("timestamp").timestamp()
+                  if hasattr((item.to_dict() or {}).get("timestamp"), "timestamp") else 0
+              ),
+              reverse=True,
+          )
+          latest = {}
+          for audit in audits:
+              row = audit.to_dict() or {}
+              if str(row.get("event", "")).upper() == "ENTRY_CANDIDATE_REJECTED":
+                  latest = {
                       "symbol": str(row.get("symbol", "")),
                       "side": str(row.get("side", "")),
                       "reason": str(row.get("reason", "")),
-                      "timestamp": stamp.isoformat() if hasattr(stamp, "isoformat") else str(stamp or ""),
-                  })
-                  if len(rejected) >= 5:
-                      break
-              import json
-              print("ACCOUNT_REJECTIONS " + json.dumps(rejected, ensure_ascii=False), flush=True)
-          metrics = [
-              1,
-              int(s2_snapshot.exists),
-              int(bool(s2.get("monitor"))),
-              int(bool(s2.get("enabled"))),
-              exclusive,
-              ownership_ok,
-              len(s2_keys),
-              unassigned,
-              collisions,
-              legacy_active,
-              heartbeat_fresh,
-              central_error,
-          ]
-          metric = metrics[int(os.environ["CLOUD_RUN_TASK_INDEX"])]
-          if metric < 0 or metric > 249:
-              raise SystemExit(254)
-          raise SystemExit(metric + 1)
+                  }
+                  break
+          import json
+          payload = json.dumps(latest, ensure_ascii=True, separators=(",", ":"))
+          index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
+          raise SystemExit((ord(payload[index]) + 1) if index < len(payload) else 1)
           PY
           )"
 
@@ -155,7 +131,7 @@ jobs:
             --command python \
             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL" \
-            --tasks 12 --parallelism 12 --max-retries 0 --task-timeout 120s --quiet
+            --tasks 100 --parallelism 100 --max-retries 0 --task-timeout 120s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
@@ -172,3 +148,14 @@ jobs:
           gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
           trap - EXIT
           printf 'ACCOUNT_STATUS_FIELDS %s\n' "$STATUS_FIELDS"
+          python - "$STATUS_FIELDS" <<'PY'
+          import json, sys
+          rows = json.loads(sys.argv[1])
+          chars = []
+          for row in rows:
+              code = int(row.get("exitCode", 1))
+              if code <= 1:
+                  break
+              chars.append(chr(code - 1))
+          print("ACCOUNT_REJECTION_DECODED " + "".join(chars))
+          PY
