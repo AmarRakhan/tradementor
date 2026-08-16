@@ -1,10 +1,13 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import type { ExchangeSnapshot } from "@/lib/use-exchange-data";
+import { authenticatedRequest } from "@/lib/cloud-client";
 import { pageActivity, reliableReturnPct, sortedActivity, stableActivityId } from "@/lib/recent-trades.mjs";
+import { authoritativePositionReturnPct, positionId, topProfitPositions } from "@/lib/top-profit-positions.mjs";
 
 type Activity = { id?: string; exchangeTradeId?: string; symbol?: string; side?: string; realizedPnlUsd?: number; unrealizedPnlUsd?: number | null; returnPct?: number | null; roePct?: number | null; roiPct?: number | null; timestampMs?: number; executedAt?: string };
+type OpenPosition = { id?: string; positionId?: string; symbol?: string; side?: string; quantity?: number; unrealizedPnl?: number | null; returnPct?: number | null; roePct?: number | null; roiPct?: number | null; openedAt?: string | number };
 const suffixes = ["USDT", "USDC", "USD"];
 function baseAsset(symbol = "") { const value = symbol.toUpperCase().replace(/[\/_-]/g, ""); return suffixes.reduce((v, suffix) => v.endsWith(suffix) ? v.slice(0, -suffix.length) : v, value) || "?"; }
 function amount(value: unknown, signed = false) { if (value === null || value === undefined || value === "") return "—"; const n = Number(value); if (!Number.isFinite(n)) return "—"; return `${signed && n > 0 ? "+" : ""}${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: Math.abs(n) < .01 && n !== 0 ? 4 : 2 }).format(n)}`; }
@@ -49,11 +52,32 @@ function RecentTradesCard({ title, rows, closed, liveState }: { title: string; r
   </article>;
 }
 
+function TopProfitRow({ position, onClosed }: { position: OpenPosition; onClosed: () => void }) {
+  const [confirming, setConfirming] = useState(false); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const requestKey = useRef("");
+  const pnl = Number(position.unrealizedPnl); const tone = pnl > 0 ? "profit" : pnl < 0 ? "loss" : "neutral"; const pct = authoritativePositionReturnPct(position); const asset = baseAsset(position.symbol);
+  async function closePosition() {
+    if (busy) return;
+    setBusy(true); setMessage("");
+    if (!requestKey.current) requestKey.current = crypto.randomUUID();
+    try {
+      await authenticatedRequest(`/api/exchanges/aster/positions/${encodeURIComponent(String(position.symbol))}/close`, { method: "POST", body: JSON.stringify({ confirm: true, side: String(position.side).toUpperCase(), expected_quantity: Number(position.quantity), idempotency_key: requestKey.current }) });
+      setMessage("Positie is door Aster volledig gesloten."); setConfirming(false); await onClosed();
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Sluiten is niet gelukt."); }
+    finally { setBusy(false); }
+  }
+  return <><div className="recent-trade-row top-profit-row" role="row"><div className="recent-pair" role="cell"><CoinIcon symbol={asset} /><span className="recent-pair-copy"><span className="recent-pair-title"><b>{asset}</b><span className={`recent-side ${String(position.side).toLowerCase()}`}>{String(position.side || "—").toUpperCase()}</span></span><small><time dateTime={String(position.openedAt || "")}>{dateTime(position.openedAt)}</time></small></span></div><button type="button" className={`market-close ${tone}`} disabled={busy} onClick={() => setConfirming(true)}>Market sluiten</button><strong role="cell" className={tone}>{percentage(pct)}</strong><strong role="cell" className={tone}>{amount(position.unrealizedPnl, true)}</strong></div>{confirming && <div className="market-close-modal" role="dialog" aria-modal="true"><div><h3>Positie market sluiten</h3><dl><dt>Coin</dt><dd>{asset}</dd><dt>Richting</dt><dd>{String(position.side).toUpperCase()}</dd><dt>Actuele grootte</dt><dd>{amount(position.quantity)}</dd><dt>Geschatte P&amp;L</dt><dd className={tone}>{amount(position.unrealizedPnl, true)}</dd></dl><p>De volledige resterende positie wordt tegen marktprijs gesloten.</p><strong>Weet je zeker dat je deze volledige positie market wilt sluiten?</strong><footer><button type="button" disabled={busy} onClick={() => setConfirming(false)}>Annuleren</button><button type="button" className={`market-close ${tone}`} disabled={busy} onClick={closePosition}>{busy ? "Sluiten…" : "Volledig market sluiten"}</button></footer>{message && <small>{message}</small>}</div></div>}{message && !confirming && <div className="market-close-message" role="status">{message}</div>}</>;
+}
+
+function TopProfitCard({ rows, liveState, onClosed }: { rows: OpenPosition[]; liveState: string; onClosed: () => void }) {
+  return <article className="recent-trades-card top-profit-card"><section className="recent-flip-face"><header><div><h2>Top 5 hoogste profit</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div></header><div className="recent-trades-head top-profit-head" role="row"><span>PAIR · TYPE · TIJD</span><span>ACTIE</span><span>%</span><span>P&amp;L</span></div><div className="recent-trades-body" role="rowgroup">{rows.length ? rows.map((position) => <TopProfitRow key={positionId(position)} position={position} onClosed={onClosed} />) : <div className="recent-trades-empty">Geen actuele open posities beschikbaar</div>}</div></section></article>;
+}
+
 export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSnapshot; onRetry: () => void }) {
   const activity = snapshot.data?.recentTradeActivity && typeof snapshot.data.recentTradeActivity === "object" ? snapshot.data.recentTradeActivity as Record<string, unknown> : {};
   const entries = useMemo(() => sortedActivity(Array.isArray(activity.entries) ? activity.entries : []) as Activity[], [activity.entries]);
   const exits = useMemo(() => sortedActivity(Array.isArray(activity.exits) ? activity.exits : []) as Activity[], [activity.exits]);
+  const positions = useMemo(() => topProfitPositions(Array.isArray(snapshot.data?.positions) ? snapshot.data.positions : []) as OpenPosition[], [snapshot.data?.positions]);
   const liveState = snapshot.error ? "Offline" : snapshot.loading ? "Reconnecting" : snapshot.updatedAt && Date.now() - snapshot.updatedAt < 45_000 ? "Live" : "Delayed";
   if (snapshot.error && !entries.length && !exits.length) return <section className="recent-trades-error"><span>Tradegegevens tijdelijk niet beschikbaar</span><button type="button" onClick={onRetry}>Opnieuw proberen</button></section>;
-  return <section className="aster-recent-trades" aria-label="Recente Aster trades"><RecentTradesCard title="Laatste 20 uitgestapte trades" rows={exits} closed liveState={liveState} /><RecentTradesCard title="Laatste 20 ingestapte trades" rows={entries} closed={false} liveState={liveState} /></section>;
+  return <section className="aster-recent-trades" aria-label="Recente Aster trades"><TopProfitCard rows={positions} liveState={liveState} onClosed={onRetry} /><RecentTradesCard title="Laatste 20 uitgestapte trades" rows={exits} closed liveState={liveState} /><RecentTradesCard title="Laatste 20 ingestapte trades" rows={entries} closed={false} liveState={liveState} /></section>;
 }

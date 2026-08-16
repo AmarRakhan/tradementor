@@ -339,6 +339,13 @@ class AsterCloseAllRequest(BaseModel):
     confirm_loss: bool = False
 
 
+class AsterManualCloseRequest(BaseModel):
+    confirm: bool
+    side: str = Field(pattern="^(LONG|SHORT)$")
+    expected_quantity: float = Field(gt=0)
+    idempotency_key: str = Field(min_length=16, max_length=120)
+
+
 class AsterCanaryRequest(BaseModel):
     confirm: bool
     notional_usd: float = Field(default=10.0, ge=5.0, le=12.0)
@@ -4362,6 +4369,72 @@ def close_all_aster_strategy(
     except Exception as exc: raise HTTPException(409,str(exc)) from exc
     aster_automation_reference(str(user["uid"])).set({"enabled":False,"monitor":True,"phase":"CLOSING_ALL","lastReason":"Alles sluiten persoonlijk bevestigd","updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"submitted":len(results),"message":"Alle Aster-legs zijn ter sluiting verzonden; monitoring controleert tot exchange-flat."}
+
+
+@app.post("/v1/me/aster/positions/{symbol}/close")
+def close_one_aster_position(
+    symbol: str, request: AsterManualCloseRequest,
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Close exactly one still-matching Aster hedge leg, never increasing risk."""
+    if not request.confirm:
+        raise HTTPException(422, "Bevestiging voor volledig market sluiten ontbreekt")
+    if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
+        raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
+    normalized_symbol = symbol.upper()
+    uid = str(user["uid"])
+    intent_hash = hashlib.sha256(f"{uid}:{request.idempotency_key}".encode()).hexdigest()
+    intent_ref = user_reference(user).collection("asterManualCloseIntents").document(intent_hash)
+    try:
+        intent_ref.create({
+            "status": "prepared", "symbol": normalized_symbol, "side": request.side,
+            "expectedQuantity": request.expected_quantity, "createdAt": datetime.now(timezone.utc),
+        })
+    except google_exceptions.AlreadyExists as exc:
+        raise HTTPException(409, "Deze sluitopdracht is al ontvangen; er wordt geen tweede order geplaatst") from exc
+
+    secret = load_aster_secret(user)
+    client = AsterV3Client(
+        signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=True,
+    )
+    try:
+        live_rows = client.position_risk()
+        position = next((row for row in live_rows
+            if str(row.get("symbol", "")).upper() == normalized_symbol
+            and str(row.get("positionSide", "")).upper() == request.side
+            and abs(safe_float(row.get("positionAmt"))) > 0), None)
+        if position is None:
+            raise HTTPException(409, "De geselecteerde positie bestaat niet meer; actuele posities worden opnieuw opgehaald")
+        live_quantity = abs(safe_float(position.get("positionAmt")))
+        tolerance = max(1e-12, request.expected_quantity * 1e-9)
+        if abs(live_quantity - request.expected_quantity) > tolerance:
+            raise HTTPException(409, "De positiegrootte is gewijzigd; controleer de actuele positie en bevestig opnieuw")
+        mark = safe_float(position.get("markPrice"))
+        if mark <= 0:
+            raise HTTPException(409, "Aster gaf geen betrouwbare actuele marktprijs; sluiten is gestopt")
+        plan = PairExecutionPlan(
+            normalized_symbol, Decimal(str(live_quantity)), Decimal(str(live_quantity * mark)),
+            max(1, int(safe_float(position.get("leverage")) or 1)),
+        )
+        id_prefix = f"tm-manual-{intent_hash[:18]}"
+        result = execute_aster_leg(
+            client, plan, side=PositionSide(request.side), action="CLOSE", id_prefix=id_prefix,
+            confirm=True, manual_loss_confirmation=True,
+        )
+        remaining = next((row for row in client.position_risk()
+            if str(row.get("symbol", "")).upper() == normalized_symbol
+            and str(row.get("positionSide", "")).upper() == request.side
+            and abs(safe_float(row.get("positionAmt"))) > tolerance), None)
+        if remaining is not None:
+            raise HTTPException(502, "Aster heeft de volledige sluiting nog niet bevestigd; er wordt niet opnieuw besteld")
+        intent_ref.set({"status": "confirmed_closed", "result": result, "completedAt": datetime.now(timezone.utc)}, merge=True)
+        return {"closed": True, "symbol": normalized_symbol, "side": request.side, "closedSize": live_quantity}
+    except HTTPException as exc:
+        intent_ref.set({"status": "failed_closed", "detail": str(exc.detail), "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        raise
+    except Exception as exc:
+        intent_ref.set({"status": "unknown_fail_closed", "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        raise HTTPException(502, "Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld") from exc
 
 
 @app.post("/v1/me/aster/simulate")

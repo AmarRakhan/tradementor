@@ -6,10 +6,11 @@ import { pageActivity, reliableReturnPct, sortedActivity } from "../lib/recent-t
 const component = await readFile(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 
-test("closed section, button and data are rendered before the open section", () => {
+test("top profit, closed and opened sections render in the required order", () => {
+  const top = component.indexOf('<TopProfitCard rows={positions}');
   const closed = component.indexOf('title="Laatste 20 uitgestapte trades" rows={exits}');
   const opened = component.indexOf('title="Laatste 20 ingestapte trades" rows={entries}');
-  assert.ok(closed >= 0 && opened > closed);
+  assert.ok(top >= 0 && closed > top && opened > closed);
 });
 
 test("real exchange time wins over a newer import/update time", () => {
@@ -52,4 +53,13 @@ test("mobile layout has two bounded value columns and reduced-motion fallback", 
   assert.match(css, /repeat\(2,minmax\(/);
   assert.match(css, /prefers-reduced-motion:reduce/);
   assert.doesNotMatch(css, /content:"IN"|content:"NU"/);
+});
+
+test("manual Aster close is confirmed, idempotent in the browser and refreshes exchange truth", () => {
+  assert.match(component, /Weet je zeker dat je deze volledige positie market wilt sluiten\?/);
+  assert.match(component, /if \(busy\) return/);
+  assert.match(component, /crypto\.randomUUID\(\)/);
+  assert.match(component, /expected_quantity/);
+  assert.match(component, /await onClosed\(\)/);
+  assert.match(component, />Annuleren</);
 });
