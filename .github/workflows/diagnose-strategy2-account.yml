@@ -99,7 +99,7 @@ jobs:
           ownership_ok = int(bool(s2_snapshot.exists and exclusive and not unassigned and not collisions and not legacy_active and phase not in {"RECONCILING", "RECOVERY", "RECOVERING"}))
           audits = list(
               db.collection("asterStrategy2").document(user.uid).collection("audit")
-              .limit(500).stream()
+              .where("event", "==", "ENTRY_CANDIDATE_REJECTED").limit(500).stream()
           )
           audits.sort(
               key=lambda item: (
