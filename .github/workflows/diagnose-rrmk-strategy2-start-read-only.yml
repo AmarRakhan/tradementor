@@ -43,9 +43,13 @@ jobs:
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import json, os
           from datetime import datetime, timezone
-          import firebase_admin
-          from firebase_admin import auth
-          from google.cloud import firestore
+          try:
+              import firebase_admin
+              from firebase_admin import auth
+              from google.cloud import firestore
+          except Exception as exc:
+              print("RRMK_DIAG_IMPORT_ERROR " + type(exc).__name__)
+              raise
           if not firebase_admin._apps:
               firebase_admin.initialize_app(options={"projectId": "tradementor-production"})
           user = auth.get_user_by_email(os.environ["TARGET_EMAIL"])
@@ -70,8 +74,10 @@ jobs:
           print("RRMK_STRATEGY2_STATE " + json.dumps(fields, sort_keys=True, ensure_ascii=True))
           PY
           )"
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,GOOGLE_CLOUD_QUOTA_PROJECT=tradementor-production,GOOGLE_CLOUD_PROJECT=tradementor-amar-20260813" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
           gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"RRMK_STRATEGY2_STATE\""             --project "$GCP_PROJECT_ID" --limit 5 --freshness 15m --format='value(textPayload,jsonPayload.message)'
           echo "RRMK_STRATEGY2_START_ERRORS_BEGIN"
           gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$CLOUD_RUN_SERVICE AND timestamp>=\"2026-08-16T12:10:00Z\" AND (severity>=ERROR OR textPayload:\"Traceback\" OR textPayload:\"Exception\")"             --project "$GCP_PROJECT_ID" --limit 100 --order=asc --format='value(timestamp,severity,textPayload,jsonPayload.message,httpRequest.status)'
