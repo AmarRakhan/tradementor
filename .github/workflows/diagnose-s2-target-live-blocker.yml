@@ -48,7 +48,7 @@ jobs:
           from main import load_aster_secret,local_eip712_signer,proven_owned_rows
           from aster_gateway import AsterV3Client
 
-          target_hash="c8255effcf423314de93ff79e178a99b6da93e3ed22246a09fbc43a45db8d54b"
+          target_hash="44246fcb6d4b8400bc3944e50d1b62682399fb50e5bad2ad7729eae09910b94c"
           db=firestore.Client(project="tradementor-amar-20260813")
           matches=[row for row in db.collection("asterStrategy2").stream()
               if hashlib.sha256(row.id.encode()).hexdigest()==target_hash]
