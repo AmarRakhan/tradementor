@@ -93,7 +93,7 @@ jobs:
               raise SystemExit("CLOSE_BLOCKED_MARK_PRICE")
           qty=Decimal("0.005")
           plan=PairExecutionPlan(symbol,qty,qty*mark,int(float(active[0].get("leverage") or 1)))
-          closed=execute_aster_leg(client,plan,side=PositionSide.LONG,action="CLOSE",id_prefix=prefix,confirm=True)
+          closed=execute_aster_leg(client,plan,side=PositionSide.LONG,action="CLOSE",id_prefix=prefix,confirm=True,manual_loss_confirmation=True)
           close_result=closed.get("result") or {}
           close_order_id=str(close_result.get("orderId",""))
           if not close_order_id:
