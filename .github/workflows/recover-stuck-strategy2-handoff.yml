@@ -1,0 +1,118 @@
+name: Recover one uniquely stuck Strategy 2 handoff
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/recover-stuck-strategy2-handoff.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 12
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Prove exchange truth and atomically refresh one handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-handoff-${GITHUB_RUN_ID: -6}"
+          cleanup() { gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          readarray -t VALUES < <(python - "$SERVICE_JSON" <<'PY'
+          import json,sys
+          spec=json.load(open(sys.argv[1],encoding="utf-8"))["spec"]["template"]["spec"]
+          print(spec["containers"][0]["image"])
+          print(spec["serviceAccountName"])
+          PY
+          )
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          from main import load_aster_secret,local_eip712_signer,proven_owned_rows
+          from aster_gateway import AsterV3Client
+          from aster_cost_evidence import paged_user_trades
+          from strategy2_handoff import build_handoff_proof,ownership_rows
+
+          db=firestore.Client(project="tradementor-amar-20260813")
+          candidates=[]
+          for snap in db.collection("asterStrategy2").stream():
+              state=snap.to_dict() or {}
+              rows=proven_owned_rows(state.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
+              if (str(state.get("phase","")).upper()=="RECONCILING"
+                  and bool(state.get("exclusiveOwnership")) and bool(state.get("monitor"))
+                  and not bool(state.get("enabled")) and int(state.get("unassignedPositions",0) or 0)==0
+                  and len(rows)==33 and "overdracht is niet volledig bewijsbaar" in str(state.get("lastReason","")).lower()):
+                  candidates.append((snap,state,rows))
+          if len(candidates)!=1:
+              raise SystemExit(f"RECOVERY_BLOCKED_CANDIDATE_COUNT_{len(candidates)}")
+          snapshot,state,persisted_rows=candidates[0]
+          uid=snapshot.id
+          secret=load_aster_secret({"uid":uid})
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+          positions=client.position_risk()
+          open_orders=client.open_orders()
+          if open_orders:
+              raise SystemExit("RECOVERY_BLOCKED_OPEN_ORDERS")
+          active={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in positions if abs(float(x.get("positionAmt") or 0))>0}
+          persisted={(str(x.get("symbol","")).upper(),str(x.get("side","")).upper()) for x in persisted_rows}
+          if len(active)!=33 or active!=persisted:
+              raise SystemExit("RECOVERY_BLOCKED_OWNERSHIP_MISMATCH")
+          fills=[]
+          for symbol in sorted({key[0] for key in active}):
+              fills.extend(paged_user_trades(client,symbol,start_time=None))
+          proof=build_handoff_proof(positions=positions,open_orders=open_orders,fills=fills,
+              config_version=int(state.get("configVersion",1) or 1),captured_at_ms=int(datetime.now(timezone.utc).timestamp()*1000))
+          if not proof.complete or set(proof.active_keys)!=active or len(proof.owned_legs)!=33:
+              raise SystemExit("RECOVERY_BLOCKED_INCOMPLETE_FILL_PROOF")
+          s1_ref=db.collection("asterAutomation").document(uid)
+          s2_ref=db.collection("asterStrategy2").document(uid)
+          s3_ref=db.collection("asterStrategy3").document(uid)
+          tx=db.transaction()
+          now=datetime.now(timezone.utc)
+          @firestore.transactional
+          def recover(transaction):
+              fresh_snap=s2_ref.get(transaction=transaction)
+              fresh=fresh_snap.to_dict() or {}
+              fresh_rows=proven_owned_rows(fresh.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
+              fresh_keys={(str(x.get("symbol","")).upper(),str(x.get("side","")).upper()) for x in fresh_rows}
+              if (not fresh_snap.exists or str(fresh.get("phase","")).upper()!="RECONCILING"
+                  or not bool(fresh.get("exclusiveOwnership")) or bool(fresh.get("enabled"))
+                  or int(fresh.get("unassignedPositions",0) or 0)!=0 or fresh_keys!=persisted):
+                  raise RuntimeError("RECOVERY_BLOCKED_STATE_CHANGED")
+              s1=s1_ref.get(transaction=transaction).to_dict() or {}
+              s3=s3_ref.get(transaction=transaction).to_dict() or {}
+              if bool(s1.get("enabled") or s1.get("monitor") or s3.get("enabled") or s3.get("monitor")):
+                  raise RuntimeError("RECOVERY_BLOCKED_LEGACY_ACTIVE")
+              transaction.set(s2_ref,{"ownedLegs":ownership_rows(proof),"exclusiveOwnership":True,
+                  "unassignedPositions":0,"ownershipSnapshotFingerprint":proof.snapshot_fingerprint,
+                  "ownershipTransferredAt":now,"phase":"PROTECTIVE_ONLY",
+                  "lastReason":"Exclusieve Strategy-2-overdracht opnieuw autoritatief bewezen; wacht op canary",
+                  "updatedAt":now},merge=True)
+          recover(tx)
+          print("RECOVERY_OK ordersSent=0 positionsChanged=0 schedulerChanged=false ownedLegs=33")
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "${VALUES[0]}" --service-account "${VALUES[1]}" --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --tasks 1 --max-retries 0 --task-timeout 240s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          cleanup
+          trap - EXIT
