@@ -1,1 +1,1 @@
-Filter latest Strategy 2 rejection audit read-only at 2026-08-16T01:02:00Z
+Post-deployment read-only Strategy-2 heartbeat, ownership and rejection-isolation verification for commit 75ffeff; no scheduler tick or writes.

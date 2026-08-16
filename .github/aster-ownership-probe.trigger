@@ -1,1 +1,1 @@
-User explicitly approved exact-four-account read-only Strategy-2 classification with paired numeric task index/exit code: enumerate migrated user and historical Aster control IDs internally, test only whether each exact Aster secret version is readable without decoding it, and never output identifiers, symbols, balances, secret payloads or orders.
+Post-deployment read-only Strategy-2 ownership and account-isolation verification for commit 75ffeff; no orders, position changes, scheduler execution or scheduler configuration changes.
