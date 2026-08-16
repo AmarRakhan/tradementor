@@ -1,4 +1,4 @@
-name: Recover rrmk stuck Strategy 2 canary v2
+name: Inspect rrmk Strategy 2 recovery v2
 
 on:
   push:
@@ -12,152 +12,24 @@ permissions:
   id-token: write
 
 jobs:
-  recover:
+  inspect:
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 12
+    timeout-minutes: 8
     env:
       GCP_PROJECT_ID: tradementor-amar-20260813
-      GCP_REGION: europe-west4
-      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
-      TARGET_EMAIL: rrmk18@outlook.com
+      JOB_NAME: tm-s2-recover-v2-761237
+      EXECUTION_NAME: tm-s2-recover-v2-761237-vqbbv
     steps:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Corrected fail-closed proof, atomic recovery and read-only verification
+      - name: Read exact v2 execution logs
         shell: bash
         run: |
           set -euo pipefail
-          JOB="tm-s2-recover-v2-${GITHUB_RUN_ID: -6}"
-          cleanup() { gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-          SERVICE_JSON="$RUNNER_TEMP/service.json"
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
-          readarray -t VALUES < <(python - "$SERVICE_JSON" <<'PY'
-          import json,sys
-          service=json.load(open(sys.argv[1],encoding="utf-8"))
-          spec=service["spec"]["template"]["spec"]
-          print(spec["containers"][0]["image"])
-          print(spec["serviceAccountName"])
-          PY
-          )
-          SCRIPT_B64="$(base64 -w0 <<'PY'
-          import os,time
-          from datetime import datetime,timezone,timedelta
-          import firebase_admin
-          from firebase_admin import auth
-          from google.cloud import firestore
-          from main import load_aster_secret,local_eip712_signer
-          from aster_gateway import AsterV3Client
-
-          auth_app=firebase_admin.initialize_app(
-              options={"projectId":"tradementor-production"},
-              name="rrmk-recovery-auth",
-          )
-          user=auth.get_user_by_email(os.environ["TARGET_EMAIL"],app=auth_app)
-          db=firestore.Client(project="tradementor-amar-20260813")
-          strategy_ref=db.collection("asterStrategy2").document(user.uid)
-          canary_ref=strategy_ref.collection("canaries").document("open-fill-close-v1")
-          snap=canary_ref.get()
-          canary=snap.to_dict() or {}
-          original_update_time=snap.update_time
-          status=str(canary.get("status","")).upper()
-          if status not in {"OPENING","OPENED","UNKNOWN"}:
-              raise SystemExit("RECOVERY_BLOCKED_STATUS_"+(status or "EMPTY"))
-          symbol=str(canary.get("symbol","")).upper()
-          prefix=str(canary.get("intentPrefix",""))
-          started=canary.get("startedAt")
-          if not symbol or not prefix or not isinstance(started,datetime) or original_update_time is None:
-              raise SystemExit("RECOVERY_BLOCKED_INCOMPLETE_IDENTITY")
-          started=started.replace(tzinfo=timezone.utc) if started.tzinfo is None else started.astimezone(timezone.utc)
-          secret=load_aster_secret({"uid":user.uid})
-          client=AsterV3Client(
-              signer_address=secret.signer_address,
-              sign_message=local_eip712_signer(secret),
-              live_authorized=False,
-          )
-          begin=int((started-timedelta(minutes=5)).timestamp()*1000)
-
-          positions=client.position_risk(symbol)
-          if any(abs(float(row.get("positionAmt") or 0))>0 for row in positions):
-              raise SystemExit("RECOVERY_BLOCKED_ACTIVE_POSITION")
-          open_orders=client.open_orders(symbol)
-          if open_orders:
-              raise SystemExit("RECOVERY_BLOCKED_OPEN_ORDER")
-          orders=client.all_orders(symbol,start_time=begin,limit=1000)
-          prefix_orders=[
-              row for row in orders
-              if str(row.get("clientOrderId",row.get("origClientOrderId",""))).startswith(prefix)
-          ]
-          if prefix_orders:
-              raise SystemExit("RECOVERY_BLOCKED_ORDER_EVIDENCE")
-          fills=client.user_trades(symbol,start_time=begin,limit=1000)
-          prefix_fills=[
-              row for row in fills
-              if str(row.get("clientOrderId",row.get("origClientOrderId",""))).startswith(prefix)
-          ]
-          if prefix_fills:
-              raise SystemExit("RECOVERY_BLOCKED_FILL_EVIDENCE")
-
-          recovered_at=datetime.now(timezone.utc)
-          transaction=db.transaction()
-          @firestore.transactional
-          def recover(tx):
-              fresh_snap=canary_ref.get(transaction=tx)
-              fresh=fresh_snap.to_dict() or {}
-              if fresh_snap.update_time!=original_update_time:
-                  raise RuntimeError("RECOVERY_BLOCKED_STATE_CHANGED")
-              if (
-                  str(fresh.get("status","")).upper()!=status
-                  or str(fresh.get("symbol","")).upper()!=symbol
-                  or str(fresh.get("intentPrefix",""))!=prefix
-                  or fresh.get("startedAt")!=canary.get("startedAt")
-              ):
-                  raise RuntimeError("RECOVERY_BLOCKED_STATE_CHANGED")
-              tx.set(canary_ref,{
-                  "status":"REJECTED",
-                  "recoveryReason":"Aster autoritatief: geen actieve positie, open order, intentPrefix-order of intentPrefix-fill; fail-closed recovery",
-                  "recoveredAt":recovered_at,
-                  "recoveredFromStatus":status,
-              },merge=True)
-          recover(transaction)
-          print("RECOVERY_OK ordersSent=0 status=REJECTED")
-
-          time.sleep(5)
-          strategy=strategy_ref.get().to_dict() or {}
-          verified=canary_ref.get().to_dict() or {}
-          verified_status=str(verified.get("status","")).upper()
-          canary_validated=bool(strategy.get("canaryValidated",False))
-          live_ready=bool(strategy.get("liveReady",False))
-          if verified_status!="REJECTED":
-              raise SystemExit("VERIFY_BLOCKED_CANARY_NOT_REJECTED")
-          if canary_validated:
-              raise SystemExit("VERIFY_BLOCKED_CANARY_VALIDATED_TRUE")
-          if live_ready:
-              raise SystemExit("VERIFY_BLOCKED_LIVE_READY_TRUE")
-          if client.open_orders(symbol):
-              raise SystemExit("VERIFY_BLOCKED_AUTOMATIC_OPEN_ORDER")
-          after_orders=client.all_orders(symbol,start_time=int(recovered_at.timestamp()*1000),limit=1000)
-          after_fills=client.user_trades(symbol,start_time=int(recovered_at.timestamp()*1000),limit=1000)
-          if after_orders or after_fills:
-              raise SystemExit("VERIFY_BLOCKED_AUTOMATIC_ORDER_OR_FILL")
-          print("VERIFY_OK canaryValidated=false liveReady=false retryAllowed=true ordersSent=0 automaticOrders=0")
-          PY
-          )"
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --image "${VALUES[0]}" --service-account "${VALUES[1]}" --command python \
-            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
-            --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL" --tasks 1 --max-retries 0 --task-timeout 180s --quiet
-          set +e
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
-          RESULT=$?
-          set -e
-          if [ "$RESULT" -ne 0 ]; then
-            echo "Recovery v2 failed closed; inspect Cloud Run logs; no order action was authorized" >&2
-            exit "$RESULT"
-          fi
-          cleanup
-          trap - EXIT
+          gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB_NAME\" AND labels.\"run.googleapis.com/execution_name\"=\"$EXECUTION_NAME\"" \
+            --project "$GCP_PROJECT_ID" --freshness 24h --limit 100 --order asc \
+            --format='value(timestamp,severity,textPayload,jsonPayload.message)'
