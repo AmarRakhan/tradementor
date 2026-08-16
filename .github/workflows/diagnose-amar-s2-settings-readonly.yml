@@ -54,20 +54,26 @@ jobs:
           if not firebase_admin._apps:
               firebase_admin.initialize_app(options={"projectId":"tradementor-production"})
           db=firestore.Client(project=os.environ["GCP_PROJECT_ID"])
-          candidates=[]
-          for row in db.collection("asterStrategy2").stream():
+          rows=list(db.collection("asterStrategy2").stream())
+          summaries=[]
+          for index,row in enumerate(rows,1):
               data=row.to_dict() or {}
-              legs=data.get("ownedLegs") if isinstance(data.get("ownedLegs"),list) else []
-              if len(legs)!=87 or not bool(data.get("monitor") or data.get("enabled")):
-                  continue
-              longs=sum(1 for x in legs if isinstance(x,dict) and str(x.get("side","")).upper()=="LONG")
-              shorts=sum(1 for x in legs if isinstance(x,dict) and str(x.get("side","")).upper()=="SHORT")
-              if longs==44 and shorts==43:
-                  candidates.append(row)
-          if len(candidates)!=1:
-              print("S2_DIAGNOSIS_JSON="+json.dumps({"diagnosis":"FINGERPRINT_MATCH_ERROR","matches":len(candidates)}),flush=True)
-              raise SystemExit(2)
-          snap=candidates[0].get(); state=snap.to_dict() or {}
+              raw_legs=data.get("ownedLegs")
+              leg_count=len(raw_legs) if isinstance(raw_legs,(list,dict)) else 0
+              numeric_hints={}
+              def collect_numbers(value,prefix="",depth=0):
+                  if depth>3 or not isinstance(value,dict): return
+                  for key,item in value.items():
+                      path=(prefix+"."+str(key)).strip(".")
+                      low=str(key).lower()
+                      if isinstance(item,(int,float)) and any(word in low for word in ("max","target","position","seat","slot")):
+                          numeric_hints[path]=item
+                      elif isinstance(item,dict):
+                          collect_numbers(item,path,depth+1)
+              collect_numbers(data)
+              summaries.append({"anonymousAccount":index,"ownedLegs":leg_count,"enabled":bool(data.get("enabled")),"monitor":bool(data.get("monitor")),"phase":str(data.get("phase",""))[:80],"lastAction":str(data.get("lastAction") or data.get("lastDecision") or "")[:120],"positionHints":numeric_hints})
+          print("S2_DIAGNOSIS_JSON="+json.dumps({"diagnosis":"ANONYMOUS_S2_SUMMARIES","accounts":summaries},sort_keys=True,default=str),flush=True)
+          raise SystemExit(0)
           blocked=re.compile(r"(secret|token|password|passphrase|api.?key|private.?key|credential|email|uid)",re.I)
           def clean(v,k="",d=0):
               if blocked.search(str(k)): return "<redacted>"
