@@ -113,6 +113,14 @@ jobs:
             --image "${VALUES[0]}" --service-account "${VALUES[1]}" --command python \
             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
             --tasks 1 --max-retries 0 --task-timeout 240s --quiet
+          set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          RESULT=$?
+          set -e
+          gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"RECOVERY_\"" \
+            --project "$GCP_PROJECT_ID" --freshness 20m --limit 10 --order desc \
+            --format='value(textPayload,jsonPayload.message)' || true
           cleanup
           trap - EXIT
+          exit "$RESULT"
