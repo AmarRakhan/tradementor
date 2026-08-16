@@ -184,3 +184,28 @@ def test_recent_activity_is_newest_first_even_when_aster_returns_shuffled_fills(
     assert [row["id"] for row in activity["exits"]] == ["5", "3"]
     assert [row["timestampMs"] for row in activity["entries"]] == [4_000, 2_000, 1_000]
     assert [row["timestampMs"] for row in activity["exits"]] == [5_000, 3_000]
+
+
+def test_recent_activity_uses_stable_id_tiebreak_and_does_not_truncate_history():
+    fills = [
+        {"id": f"{index:03d}", "orderId": f"{index:03d}", "symbol": "BTCUSDT", "positionSide": "LONG",
+         "side": "BUY", "qty": "1", "price": "10", "time": 1_000}
+        for index in range(125)
+    ]
+    activity = recent_trade_activity_from_fills(fills)
+    assert len(activity["entries"]) == 125
+    assert activity["entries"][0]["id"] == "124"
+    assert activity["entries"][-1]["id"] == "000"
+
+
+def test_recent_activity_only_exposes_authoritative_exchange_percentage():
+    fill = {"id": "1", "orderId": "1", "symbol": "SOLUSDT", "positionSide": "SHORT",
+            "side": "SELL", "qty": "2", "price": "20", "time": 1_000}
+    without_roe = recent_trade_activity_from_fills([fill], active_positions=[
+        {"symbol": "SOLUSDT", "positionSide": "SHORT", "positionAmt": "2", "unRealizedProfit": "4"},
+    ])["entries"][0]
+    assert "returnPct" not in without_roe
+    with_roe = recent_trade_activity_from_fills([fill], active_positions=[
+        {"symbol": "SOLUSDT", "positionSide": "SHORT", "positionAmt": "2", "unRealizedProfit": "4", "roe": "0.18"},
+    ])["entries"][0]
+    assert with_roe["returnPct"] == 18

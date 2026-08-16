@@ -203,6 +203,17 @@ def recent_trade_activity_from_fills(
         if symbol and side in {"LONG", "SHORT"}:
             positions[(symbol, side)] = raw
 
+    def authoritative_pct(source: dict[str, Any]) -> float | None:
+        """Use only an exchange-provided ROE/ROI value; never invent zero."""
+        for key in ("returnPct", "roePct", "roiPct", "roe", "roi"):
+            if source.get(key) in (None, ""):
+                continue
+            value = _number(source.get(key))
+            if key in {"roe", "roi"}:
+                value *= 100.0
+            return value
+        return None
+
     grouped: dict[str, dict[str, Any]] = {}
     for raw in fills:
         symbol = str(raw.get("symbol", "")).upper()
@@ -251,6 +262,9 @@ def recent_trade_activity_from_fills(
                 allocation = min(1.0, quantity / position_qty) if position_qty > 0 else 0.0
                 row["unrealizedPnlUsd"] = position_pnl * allocation
                 row["currentValueUsd"] = notional + row["unrealizedPnlUsd"]
+                pct = authoritative_pct(position)
+                if pct is not None:
+                    row["returnPct"] = pct
             else:
                 row["unrealizedPnlUsd"] = None
                 row["currentValueUsd"] = None
@@ -258,11 +272,14 @@ def recent_trade_activity_from_fills(
         else:
             row["costBasisUsd"] = notional - _number(row.get("realizedPnlUsd"))
             row["closedValueUsd"] = notional
+            pct = authoritative_pct(row)
+            if pct is not None:
+                row["returnPct"] = pct
             exits.append(row)
-    sorter = lambda row: int(row.get("timestampMs", 0))
+    sorter = lambda row: (int(row.get("timestampMs", 0)), str(row.get("id", "")))
     entries.sort(key=sorter, reverse=True)
     exits.sort(key=sorter, reverse=True)
-    return {"entries": entries[:20], "exits": exits[:20]}
+    return {"entries": entries, "exits": exits}
 
 
 def trade_events_from_fills(
