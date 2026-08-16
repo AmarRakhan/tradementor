@@ -58,7 +58,7 @@ jobs:
           for row in db.collection("asterStrategy2").stream():
               data=row.to_dict() or {}
               legs=data.get("ownedLegs") if isinstance(data.get("ownedLegs"),list) else []
-              if len(legs)!=87 or not bool(data.get("monitor")):
+              if len(legs)!=87 or not bool(data.get("monitor") or data.get("enabled")):
                   continue
               longs=sum(1 for x in legs if isinstance(x,dict) and str(x.get("side","")).upper()=="LONG")
               shorts=sum(1 for x in legs if isinstance(x,dict) and str(x.get("side","")).upper()=="SHORT")
