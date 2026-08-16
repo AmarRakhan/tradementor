@@ -1,6 +1,9 @@
 name: Read-only Amar Strategy 2 settings diagnosis
 
 on:
+  pull_request_target:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [".github/workflows/diagnose-amar-s2-settings-readonly.yml"]
   push:
     branches: [amar-crypto-bot-2026-cloud]
     paths: [".github/workflows/diagnose-amar-s2-settings-readonly.yml"]
