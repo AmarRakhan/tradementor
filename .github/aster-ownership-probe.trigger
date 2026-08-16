@@ -1,1 +1,1 @@
-Read-only Strategy-2 ownership verification after natural scheduler cycles on refill-recovery commit fed70fb; no manual tick, orders, position changes or scheduler changes.
+Read-only post-deployment verification of commit 66f8f0d after natural Strategy-2 scheduler cycles; inspect ownership and legacy isolation only, with no manual tick, orders, position changes or scheduler changes.
