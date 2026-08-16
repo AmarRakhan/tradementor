@@ -1,0 +1,68 @@
+name: Recover exact Strategy 2 orphan canary position
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [".github/workflows/recover-s2-target-canary.yml"]
+permissions: {contents: read, id-token: write}
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 12
+    env: {GCP_PROJECT_ID: tradementor-amar-20260813, GCP_REGION: europe-west4, CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api}
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Close only the proven orphan canary and complete it
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-canary-fix-${GITHUB_RUN_ID: -6}"; cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1||true; }; trap cleanup EXIT
+          S="$RUNNER_TEMP/s.json"; gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json >"$S"
+          readarray -t V < <(python - "$S" <<'PY'
+          import json,sys
+          x=json.load(open(sys.argv[1]))["spec"]["template"]["spec"];print(x["containers"][0]["image"]);print(x["serviceAccountName"])
+          PY
+          )
+          B="$(base64 -w0 <<'PY'
+          import hashlib,time
+          from datetime import datetime,timezone,timedelta
+          from decimal import Decimal
+          from google.cloud import firestore
+          from main import load_aster_secret,local_eip712_signer,proven_owned_rows
+          from aster_gateway import AsterV3Client,PositionSide
+          from aster_execution import PairExecutionPlan,execute_leg_once
+          db=firestore.Client(project="tradementor-amar-20260813");h="44246fcb6d4b8400bc3944e50d1b62682399fb50e5bad2ad7729eae09910b94c"
+          m=[x for x in db.collection("asterStrategy2").stream() if hashlib.sha256(x.id.encode()).hexdigest()==h]
+          if len(m)!=1: raise SystemExit(21)
+          uid=m[0].id; ref=m[0].reference; state=m[0].to_dict() or {}; cref=ref.collection("canaries").document("open-fill-close-v1"); can=cref.get().to_dict() or {}
+          symbol=str(can.get("symbol","")).upper();prefix=str(can.get("intentPrefix",""));status=str(can.get("status","")).upper();started=can.get("startedAt")
+          if status!="OPENED" or not symbol or not prefix or bool(state.get("canaryValidated")): raise SystemExit(22)
+          start=int(((started if isinstance(started,datetime) else datetime.now(timezone.utc)-timedelta(days=7))-timedelta(minutes=5)).timestamp()*1000)
+          sec=load_aster_secret({"uid":uid});c=AsterV3Client(signer_address=sec.signer_address,sign_message=local_eip712_signer(sec),live_authorized=True)
+          pos=[x for x in c.position_risk() if str(x.get("symbol","")).upper()==symbol and abs(float(x.get("positionAmt") or 0))>0]; oo=c.open_orders(); hist=c.all_orders(symbol,start_time=start,limit=1000)
+          io=[x for x in hist if str(x.get("clientOrderId",x.get("origClientOrderId",""))).startswith(prefix)]; ids={str(x.get("orderId","")) for x in io}; fills=c.user_trades(symbol,start_time=start,limit=1000); fi=[x for x in fills if str(x.get("orderId","")) in ids]
+          if len(pos)!=1 or len(io)!=1 or len(fi)!=1 or oo or str(io[0].get("status","")).upper()!="FILLED": raise SystemExit(23)
+          if any(str(x.get("orderId","")) not in ids for x in fills): raise SystemExit(24)
+          qty=abs(Decimal(str(pos[0].get("positionAmt")))); fqty=abs(Decimal(str(fi[0].get("qty",fi[0].get("quantity",0))))); side=PositionSide(str(pos[0].get("positionSide","")).upper())
+          if qty!=fqty or str(fi[0].get("positionSide","")).upper()!=side.value: raise SystemExit(25)
+          owned=proven_owned_rows(state.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2"); matching=[x for x in owned if str(x.get("symbol","")).upper()==symbol and str(x.get("side","")).upper()==side.value]
+          if len(matching)!=1: raise SystemExit(26)
+          prices={str(x.get("symbol","")).upper():Decimal(str(x.get("price",0))) for x in c.ticker_prices()}; price=prices.get(symbol,Decimal(str(pos[0].get("markPrice",0))))
+          plan=PairExecutionPlan(symbol,qty,qty*price,max(1,int(float(pos[0].get("leverage") or 1))))
+          closed=execute_leg_once(c,plan,side=side,action="CLOSE",id_prefix=prefix+"-recovery",confirm=True,manual_loss_confirmation=True)
+          if any(str(x.get("symbol","")).upper()==symbol and abs(float(x.get("positionAmt") or 0))>0 for x in c.position_risk()): raise SystemExit(27)
+          now=datetime.now(timezone.utc); fresh=ref.get().to_dict() or {}; freshc=cref.get().to_dict() or {}
+          if str(freshc.get("status","")).upper()!="OPENED" or str(freshc.get("intentPrefix",""))!=prefix: raise SystemExit(28)
+          kept=[x for x in fresh.get("ownedLegs",[]) if not (str(x.get("symbol","")).upper()==symbol and str(x.get("side","")).upper()==side.value)]
+          cref.set({"status":"COMPLETED","recoveryCloseOrder":closed.get("result",{}),"completedAt":now,"recoveryReason":"Proven orphan canary fill closed reduce-only"},merge=True)
+          ref.set({"ownedLegs":kept,"canaryValidated":True,"liveReady":True,"phase":"LIVE_READY","lastReason":"Canary hersteld en volledig gesloten","updatedAt":now},merge=True)
+          print("CANARY_RECOVERY_OK closeOrders=1 activeCanaryPosition=0 canaryValidated=true liveReady=true")
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "${V[0]}" --service-account "${V[1]}" --command python --args=-c,"import base64;exec(base64.b64decode('$B'))" --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID" --tasks 1 --max-retries 0 --task-timeout 240s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" --project "$GCP_PROJECT_ID" --freshness 20m --limit 80 --format='value(textPayload,jsonPayload.message)' | sort -u
