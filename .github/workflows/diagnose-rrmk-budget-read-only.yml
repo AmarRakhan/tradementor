@@ -65,4 +65,5 @@ jobs:
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$SA" --command python --args=-c,"import base64;exec(base64.b64decode('$B64'))" --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,GOOGLE_CLOUD_QUOTA_PROJECT=tradementor-production,GOOGLE_CLOUD_PROJECT=tradementor-amar-20260813" --tasks 1 --max-retries 0 --task-timeout 180s --quiet
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          sleep 8
           gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"RRMK_BUDGET_CHECK\"" --project "$GCP_PROJECT_ID" --freshness 15m --limit 5 --format='value(textPayload)'
