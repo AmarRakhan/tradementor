@@ -75,7 +75,7 @@ jobs:
               page = page.get_next_page()
           if len(candidates) != 1:
               task_index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
-              raise SystemExit(min(len(candidates), 249) + 1 if task_index == 0 else 1)
+              raise SystemExit(min(len(candidates), 249) + 1 if task_index == 1 else 1)
           user = candidates[0]
           s2_snapshot = db.collection("asterStrategy2").document(user.uid).get()
           s2 = (s2_snapshot.to_dict() or {}) if s2_snapshot.exists else {}
@@ -115,6 +115,8 @@ jobs:
           canary_status = str(canary.get("status", "")).upper()
           canary_status_codes = {"": 0, "OPENING": 1, "OPENED": 2, "UNKNOWN": 3, "REJECTED": 4, "COMPLETED": 5}
           metrics = [
+              0,
+              len(candidates),
               int(s2_snapshot.exists),
               int(bool(s2.get("canaryValidated"))),
               int(bool(s2.get("liveReady"))),
@@ -124,8 +126,6 @@ jobs:
               unassigned,
               collisions,
               legacy_active,
-              heartbeat_fresh,
-              ownership_ok,
               canary_status_codes.get(canary_status, 9),
           ]
           index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
