@@ -70,11 +70,12 @@ jobs:
                   snapshot = db.collection("asterStrategy2").document(candidate.uid).get()
                   state = (snapshot.to_dict() or {}) if snapshot.exists else {}
                   configured = bool(state.get("settings") or state.get("ownedLegs") or state.get("exclusiveOwnership"))
-                  if configured and not bool(state.get("canaryValidated")):
+                  if configured and bool(state.get("exclusiveOwnership")) and not bool(state.get("canaryValidated")):
                       candidates.append(candidate)
               page = page.get_next_page()
           if len(candidates) != 1:
-              raise SystemExit(f"ACCOUNT_SELECTION_BLOCKED_{len(candidates)}")
+              task_index = int(os.environ["CLOUD_RUN_TASK_INDEX"])
+              raise SystemExit(min(len(candidates), 249) + 1 if task_index == 0 else 1)
           user = candidates[0]
           s2_snapshot = db.collection("asterStrategy2").document(user.uid).get()
           s2 = (s2_snapshot.to_dict() or {}) if s2_snapshot.exists else {}
