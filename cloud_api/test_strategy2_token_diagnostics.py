@@ -40,7 +40,9 @@ def test_exclusive_handoff_is_token_scoped_fail_closed_and_order_free():
     assert "len(s2_keys) == 68" not in block
     assert 'os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP", "false")' in block
     assert "proof.complete" in block
-    assert "snapshotFingerprint" in block
+    assert block.count("_token_account_proof(uid)") == 1
+    assert "Aster-accountsnapshot is gewijzigd" not in block
+    assert "payload.get(\"snapshotFingerprint\"" not in block
     assert "if collisions" in block
     assert '"enabled": False, "monitor": False' in block
     assert "@control_plane.firestore.transactional" in block

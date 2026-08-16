@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Body, Depends, Header
+from fastapi import Depends, Header
 
 import main as control_plane
 from read_only_source import read_source_url as environment_read_source_url
@@ -122,18 +122,17 @@ def strategy2_token_diagnostics(
 
 @app.post("/v1/me/aster/strategy2/exclusive-handoff")
 def strategy2_exclusive_handoff(
-    payload: dict[str, Any] = Body(default={}),
     user: dict[str, Any] = Depends(control_plane.authenticated_user),
 ) -> dict[str, Any]:
-    """Atomically replace ownership only after token-scoped exchange proof."""
+    """Prove and atomically transfer one fresh token-scoped account snapshot."""
     uid = str(user["uid"])
     s1_ref = control_plane.aster_automation_reference(uid)
     s2_ref = control_plane.aster_strategy2_reference(uid)
     s3_ref = control_plane.aster_strategy3_reference(uid)
+    # This is the authoritative diagnostic and handoff snapshot.  A prior GET
+    # is presentation-only; comparing two exchange requests is unsafe because
+    # Aster may normalize equivalent position/fill data differently.
     proof = _token_account_proof(uid)
-    expected = str(payload.get("snapshotFingerprint", "")).strip()
-    if not expected or expected != proof.snapshot_fingerprint:
-        raise control_plane.HTTPException(409, "Aster-accountsnapshot is gewijzigd; controleer opnieuw")
     if proof.open_order_count:
         raise control_plane.HTTPException(409, "Open Aster-order aanwezig; overdracht veilig geblokkeerd")
     if not proof.complete:
