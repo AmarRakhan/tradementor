@@ -1,0 +1,140 @@
+name: Complete proven rrmk Strategy 2 canary
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [".github/workflows/complete-rrmk-strategy2-canary.yml"]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      TARGET_EMAIL: rrmk18@outlook.com
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Fail-closed close and complete proven canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-canary-close-${GITHUB_RUN_ID: -6}"
+          cleanup() { gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          readarray -t VALUES < <(python - "$SERVICE_JSON" <<'PY'
+          import json,sys
+          spec=json.load(open(sys.argv[1]))["spec"]["template"]["spec"]
+          print(spec["containers"][0]["image"])
+          print(spec["serviceAccountName"])
+          PY
+          )
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os,time
+          from datetime import datetime,timezone,timedelta
+          from decimal import Decimal
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+          from main import load_aster_secret,local_eip712_signer,execute_aster_leg,PairExecutionPlan,PositionSide
+          from aster_gateway import AsterV3Client
+
+          app=firebase_admin.initialize_app(options={"projectId":"tradementor-production"},name="rrmk-canary-close")
+          user=auth.get_user_by_email(os.environ["TARGET_EMAIL"],app=app)
+          db=firestore.Client(project="tradementor-amar-20260813")
+          strategy_ref=db.collection("asterStrategy2").document(user.uid)
+          canary_ref=strategy_ref.collection("canaries").document("open-fill-close-v1")
+          snap=canary_ref.get()
+          canary=snap.to_dict() or {}
+          status=str(canary.get("status","")).upper()
+          symbol=str(canary.get("symbol","")).upper()
+          prefix=str(canary.get("intentPrefix",""))
+          started=canary.get("startedAt")
+          if status!="OPENED" or symbol!="ETHUSDT" or not prefix.startswith("s2c-") or not isinstance(started,datetime):
+              raise SystemExit("CLOSE_BLOCKED_CANARY_IDENTITY")
+          started=started.replace(tzinfo=timezone.utc) if started.tzinfo is None else started.astimezone(timezone.utc)
+          secret=load_aster_secret({"uid":user.uid})
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True)
+          begin=int((started-timedelta(minutes=10)).timestamp()*1000)
+          positions=client.position_risk(symbol)
+          active=[x for x in positions if str(x.get("positionSide","")).upper()=="LONG" and abs(float(x.get("positionAmt") or 0))>0]
+          if len(active)!=1 or Decimal(str(active[0].get("positionAmt") or "0"))!=Decimal("0.005"):
+              raise SystemExit("CLOSE_BLOCKED_POSITION_MISMATCH")
+          if client.open_orders(symbol):
+              raise SystemExit("CLOSE_BLOCKED_OPEN_ORDER")
+          orders=client.all_orders(symbol,start_time=begin,limit=1000)
+          def cid(x): return str(x.get("clientOrderId",x.get("origClientOrderId","")))
+          prefix_orders=[x for x in orders if cid(x).startswith(prefix)]
+          opening=[x for x in prefix_orders if cid(x)==prefix+"-open-long" and str(x.get("status","")).upper()=="FILLED" and str(x.get("side","")).upper()=="BUY" and str(x.get("positionSide","")).upper()=="LONG"]
+          close_evidence=[x for x in prefix_orders if cid(x).startswith(prefix+"-close")]
+          if len(opening)!=1 or Decimal(str(opening[0].get("executedQty") or "0"))!=Decimal("0.005"):
+              raise SystemExit("CLOSE_BLOCKED_OPEN_EVIDENCE")
+          if close_evidence:
+              raise SystemExit("CLOSE_BLOCKED_EXISTING_CLOSE_EVIDENCE")
+          fills=client.user_trades(symbol,start_time=begin,limit=1000)
+          open_order_id=str(opening[0].get("orderId",""))
+          open_fills=[x for x in fills if str(x.get("orderId",""))==open_order_id]
+          if not open_fills or sum(Decimal(str(x.get("qty") or "0")) for x in open_fills)!=Decimal("0.005"):
+              raise SystemExit("CLOSE_BLOCKED_OPEN_FILL_EVIDENCE")
+          fresh=canary_ref.get().to_dict() or {}
+          if str(fresh.get("status","")).upper()!="OPENED" or str(fresh.get("symbol","")).upper()!=symbol or str(fresh.get("intentPrefix",""))!=prefix:
+              raise SystemExit("CLOSE_BLOCKED_STATE_CHANGED")
+          mark=Decimal(str(active[0].get("markPrice") or active[0].get("entryPrice") or "0"))
+          if mark<=0:
+              raise SystemExit("CLOSE_BLOCKED_MARK_PRICE")
+          qty=Decimal("0.005")
+          plan=PairExecutionPlan(symbol,qty,qty*mark,int(float(active[0].get("leverage") or 1)))
+          closed=execute_aster_leg(client,plan,side=PositionSide.LONG,action="CLOSE",id_prefix=prefix,confirm=True)
+          close_result=closed.get("result") or {}
+          close_order_id=str(close_result.get("orderId",""))
+          if not close_order_id:
+              raise SystemExit("CLOSE_UNCERTAIN_NO_ORDER_ID")
+          time.sleep(3)
+          after_positions=client.position_risk(symbol)
+          if any(abs(float(x.get("positionAmt") or 0))>0 for x in after_positions):
+              raise SystemExit("CLOSE_UNCERTAIN_POSITION_NOT_FLAT")
+          if client.open_orders(symbol):
+              raise SystemExit("CLOSE_UNCERTAIN_OPEN_ORDER")
+          after_fills=client.user_trades(symbol,start_time=begin,limit=1000)
+          close_fills=[x for x in after_fills if str(x.get("orderId",""))==close_order_id]
+          if not close_fills or sum(Decimal(str(x.get("qty") or "0")) for x in close_fills)!=qty:
+              raise SystemExit("CLOSE_UNCERTAIN_FILL_NOT_PROVEN")
+          completed_at=datetime.now(timezone.utc)
+          transaction=db.transaction()
+          @firestore.transactional
+          def complete(tx):
+              current=canary_ref.get(transaction=tx).to_dict() or {}
+              if str(current.get("status","")).upper()!="OPENED" or str(current.get("symbol","")).upper()!=symbol or str(current.get("intentPrefix",""))!=prefix:
+                  raise RuntimeError("COMPLETE_BLOCKED_STATE_CHANGED")
+              tx.set(canary_ref,{"status":"COMPLETED","orders":[opening[0],close_result],"completedAt":completed_at,"recoveredAt":completed_at,"recoveryReason":"Bewezen OPENED canary hervat: exacte reduce-only close en Aster sluitfill bevestigd","recoveredFromStatus":"OPENED"},merge=True)
+              tx.set(strategy_ref,{"canaryValidated":True,"liveReady":True,"phase":"LIVE_READY","lastReason":"Aster open-fill-close-canary volledig bevestigd","updatedAt":completed_at},merge=True)
+          complete(transaction)
+          time.sleep(5)
+          verified=canary_ref.get().to_dict() or {}
+          strategy=strategy_ref.get().to_dict() or {}
+          verify_positions=client.position_risk(symbol)
+          verify_orders=client.open_orders(symbol)
+          if str(verified.get("status","")).upper()!="COMPLETED" or not bool(strategy.get("canaryValidated")) or not bool(strategy.get("liveReady")):
+              raise SystemExit("VERIFY_BLOCKED_STATE")
+          if any(abs(float(x.get("positionAmt") or 0))>0 for x in verify_positions) or verify_orders:
+              raise SystemExit("VERIFY_BLOCKED_EXCHANGE_NOT_FLAT")
+          print("CANARY_COMPLETE_OK "+json.dumps({"symbol":symbol,"side":"LONG","closedQty":"0.005","closeOrderId":close_order_id,"status":"COMPLETED","canaryValidated":True,"liveReady":True,"enabled":bool(strategy.get("enabled")),"monitor":bool(strategy.get("monitor")),"phase":str(strategy.get("phase","")),"ordersSent":1},separators=(",",":")))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "${VALUES[0]}" --service-account "${VALUES[1]}" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL,GOOGLE_CLOUD_QUOTA_PROJECT=tradementor-production,GOOGLE_CLOUD_PROJECT=tradementor-amar-20260813" --tasks 1 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          RESULT=$?
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND labels.\"run.googleapis.com/execution_name\"=\"$EXECUTION\"" --project "$GCP_PROJECT_ID" --freshness 30m --limit 100 --order asc --format='value(timestamp,severity,textPayload,jsonPayload.message)'
+          exit "$RESULT"
