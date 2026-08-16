@@ -131,7 +131,7 @@ jobs:
             --command python \
             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL" \
-            --tasks 100 --parallelism 100 --max-retries 0 --task-timeout 120s --quiet
+            --tasks 100 --parallelism 20 --max-retries 0 --task-timeout 120s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
