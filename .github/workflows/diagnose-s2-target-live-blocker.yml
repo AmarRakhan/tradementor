@@ -1,5 +1,5 @@
 name: Diagnose hashed Strategy 2 live blocker
-# Trigger exact Aster snapshot after the account-specific secret IAM repair.
+# Recheck exact Aster snapshot after the account-specific IAM propagation window.
 
 on:
   push:
