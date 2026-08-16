@@ -100,7 +100,13 @@ jobs:
             --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,DEPLOYED_AT=$DEPLOYED_AT" \
             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
-          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
-          gcloud logging read "resource.type=cloud_run_job AND labels.run.googleapis.com/execution_name=$EXECUTION AND textPayload:NET_CLOSE_GUARD_AGGREGATE" \
-            --project "$GCP_PROJECT_ID" --limit 1 --format='value(textPayload)'
+          RESULT=""
+          for attempt in 1 2 3 4 5 6; do
+            RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:NET_CLOSE_GUARD_AGGREGATE" \
+              --project "$GCP_PROJECT_ID" --limit 1 --freshness=10m --format='value(textPayload)')"
+            test -n "$RESULT" && break
+            sleep 5
+          done
+          test -n "$RESULT"
+          printf '%s\n' "$RESULT"
           cleanup; trap - EXIT
