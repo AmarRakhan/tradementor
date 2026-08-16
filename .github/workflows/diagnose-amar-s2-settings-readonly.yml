@@ -63,7 +63,7 @@ jobs:
           if len(candidates)!=1:
               print("S2_DIAGNOSIS_JSON="+json.dumps({"diagnosis":"MAXIMUM_PAIRS_MATCH_ERROR","matches":len(candidates)}),flush=True)
               raise SystemExit(2)
-          snap=candidates[0].get(); state=snap.to_dict() or {}
+          snap=candidates[0]; state=snap.to_dict() or {}
           blocked=re.compile(r"(secret|token|password|passphrase|api.?key|private.?key|credential|email|uid)",re.I)
           def clean(v,k="",d=0):
               if blocked.search(str(k)): return "<redacted>"
