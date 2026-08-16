@@ -36,9 +36,9 @@ def test_extreme_opposite_exposure_converts_winner_to_protection():
     result=decide_leg(cfg(take_profit=.01),leg(unrealized_pnl=2),p)
     assert result.kind in {"PARTIAL_TP","ASSIGN_PROTECTION"} and result.retain_notional>0
 
-def test_defensive_mode_blocks_normal_dca():
+def test_defensive_mode_keeps_normal_dca_running():
     p=PortfolioState(920,1000,.55,100,100,200)
-    assert decide_leg(cfg(),leg(current_price=95),p).kind=="HOLD"
+    assert decide_leg(cfg(),leg(current_price=95),p).kind=="ADD_DCA"
 
 def test_budget_blocks_dca():
     p=PortfolioState(1000,1000,.1,250,250,500,strategy_margin=500)
@@ -62,6 +62,14 @@ def test_risk_modes_are_ordered():
     assert risk_mode(c,PortfolioState(960,1000,.4,0,0,0))=="CAUTION"
     assert risk_mode(c,PortfolioState(930,1000,.55,0,0,0))=="DEFENSIVE"
     assert risk_mode(c,PortfolioState(850,1000,.75,0,0,0))=="EMERGENCY"
+
+def test_defensive_mode_does_not_freeze_dca_but_emergency_does():
+    config=cfg(long_dca_distance=.02)
+    losing=leg(current_price=97,unrealized_pnl=-3)
+    defensive=PortfolioState(930,1000,.55,0,0,0,strategy_margin=0)
+    emergency=PortfolioState(850,1000,.75,0,0,0,strategy_margin=0)
+    assert decide_leg(config,losing,defensive).kind=="ADD_DCA"
+    assert decide_leg(config,losing,emergency).kind=="HOLD"
 
 def test_worst_case_validation_is_concrete():
     errors=validate_worst_case(cfg(base_notional=200,maximum_pairs=50,long_max_dca=8,short_max_dca=8,leverage=10,strategy_budget=.01),1000,10,50)

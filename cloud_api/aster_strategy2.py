@@ -216,7 +216,10 @@ def decide_leg(config: Strategy2Config, leg: LegState, portfolio: PortfolioState
         if retain > 0:
             return Decision("PARTIAL_TP", leg.side, notional=leg.size-retain, retain_notional=retain, role="HARVEST_PROTECTION", reason=f"Veilig deel oogsten; {retain:.2f} USD blijft als protection", risk_reducing=True)
         return Decision("FULL_TP", leg.side, notional=leg.size, role="HARVEST", reason="Netto TP bereikt en volledige sluiting is portfolioveilig", risk_reducing=True)
-    if mode in {"DEFENSIVE", "EMERGENCY"}: return Decision("HOLD", leg.side, role=leg.role, reason=f"{mode}: nieuwe normale DCA geblokkeerd", risk_reducing=True)
+    # CAUTION and DEFENSIVE are advisory/protection modes. They must not freeze
+    # ordinary Strategy-2 management account-wide. Only the configured
+    # EMERGENCY boundary is a hard stop for new exposure.
+    if mode == "EMERGENCY": return Decision("HOLD", leg.side, role=leg.role, reason="EMERGENCY: nieuwe DCA tijdelijk geblokkeerd", risk_reducing=True)
     if dca_due(config, leg):
         proposed = config.base_notional * config.dca_multiplier
         budget = portfolio.equity * config.strategy_budget

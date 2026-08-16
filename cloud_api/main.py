@@ -1679,7 +1679,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             context=ExecutionContext(settings.strategy_id,leg.cycle_id,settings.version,leg,True,True,
                 account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}))
             try:
-                result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:(decision.risk_reducing and portfolio.margin_ratio<settings.emergency_margin_ratio) or (portfolio.margin_ratio<settings.defensive_margin_ratio and portfolio.strategy_margin+margin<=portfolio.equity*settings.strategy_budget))
+                result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:
+                    (decision.risk_reducing and portfolio.margin_ratio<settings.emergency_margin_ratio) or
+                    (portfolio.margin_ratio<settings.emergency_margin_ratio and
+                     portfolio.drawdown<settings.emergency_drawdown and
+                     portfolio.strategy_margin+margin<=portfolio.equity*settings.strategy_budget))
             except AsterCloseBlocked:
                 ref.set({"phase":"RUNNING","lastReason":BLOCK_MESSAGE,"lastTickAt":now,"updatedAt":now},merge=True)
                 return {"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","symbol":leg.symbol,
