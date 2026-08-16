@@ -44,27 +44,17 @@ jobs:
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import hashlib,json
           from datetime import datetime,timezone
-          import firebase_admin
-          from firebase_admin import auth
           from google.cloud import firestore
           from main import load_aster_secret,local_eip712_signer,proven_owned_rows
           from aster_gateway import AsterV3Client
 
-          target_hash="f3effe9f65a3dbed9c5b037954a7d00e45beffbd248a64b0e9655ce5b0b21310"
-          if not firebase_admin._apps:
-              firebase_admin.initialize_app(options={"projectId":"tradementor-production"})
-          users=[]
-          page=auth.list_users()
-          while page:
-              for user in page.users:
-                  normalized=str(user.email or "").strip().lower()
-                  if hashlib.sha256(normalized.encode()).hexdigest()==target_hash:
-                      users.append(user)
-              page=page.get_next_page()
-          if len(users)!=1:
-              raise SystemExit(220+min(len(users),9))
-          uid=users[0].uid
+          target_hash="c8255effcf423314de93ff79e178a99b6da93e3ed22246a09fbc43a45db8d54b"
           db=firestore.Client(project="tradementor-amar-20260813")
+          matches=[row for row in db.collection("asterStrategy2").stream()
+              if hashlib.sha256(row.id.encode()).hexdigest()==target_hash]
+          if len(matches)!=1:
+              raise SystemExit(220+min(len(matches),9))
+          uid=matches[0].id
           snap=db.collection("asterStrategy2").document(uid).get()
           s2=(snap.to_dict() or {}) if snap.exists else {}
           s1=db.collection("asterAutomation").document(uid).get().to_dict() or {}
@@ -86,7 +76,7 @@ jobs:
           canary_codes={"":0,"OPENING":1,"OPENED":2,"UNKNOWN":3,"REJECTED":4,"COMPLETED":5}
           intent=str(canary.get("intentPrefix",canary.get("intent_prefix","")))
           canary_orders=sum(str(x.get("clientOrderId","")).startswith(intent) for x in orders) if intent else 0
-          metrics={"targetCount":len(users),"document":int(snap.exists),"enabled":int(bool(s2.get("enabled"))),
+          metrics={"targetCount":len(matches),"document":int(snap.exists),"enabled":int(bool(s2.get("enabled"))),
               "monitor":int(bool(s2.get("monitor"))),"exclusive":int(bool(s2.get("exclusiveOwnership"))),
               "canaryValidated":int(bool(s2.get("canaryValidated"))),"liveReady":int(bool(s2.get("liveReady"))),
               "phase":phase_codes.get(str(s2.get("phase","")).upper(),9),
