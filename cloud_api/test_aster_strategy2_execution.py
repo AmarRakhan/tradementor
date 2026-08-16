@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 import pytest
 from aster_strategy2_execution import *
 from aster_strategy2 import Decision
@@ -32,8 +33,13 @@ def test_missing_ownership_blocks_dca_and_close():
 
 def test_risk_denial_blocks_dca():
     client=Client()
-    with pytest.raises(ValueError):execute_decision(client,Decision("ADD_DCA","LONG",10),plan(),context(),risk_approved=lambda _:False)
+    with pytest.raises(Strategy2RiskBlocked):execute_decision(client,Decision("ADD_DCA","LONG",10),plan(),context(),risk_approved=lambda _:False)
     assert not client.calls
+
+def test_runtime_converts_risk_denial_to_waiting_without_http_failure():
+    source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
+    assert "except Strategy2RiskBlocked as exc:" in source
+    assert '"action":"RISK_BLOCKED"' in source
 
 def test_confirmed_close_has_strategy_cycle_version_intent():
     client=Client();result=execute_decision(client,Decision("FULL_TP","LONG",10),plan(),context(),risk_approved=lambda _:True)

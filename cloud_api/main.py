@@ -89,7 +89,7 @@ from aster_strategy_status import (operating_status_contract, ownership_reason_c
     position_count_contract, proven_owned_rows, reconciled_ownership_update)
 from aster_dashboard_status import build_aster_dashboard_status
 from aster_rapid_build import run_confirmed_batch
-from aster_strategy2_execution import ExecutionContext, execute_decision as execute_aster_strategy2_decision
+from aster_strategy2_execution import ExecutionContext, Strategy2RiskBlocked, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
 from aster_strategy2_runtime import next_management_decision, scanner_allowed, active_position_map, cost_evidence_max_age_seconds
 from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned
@@ -1684,6 +1684,13 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 ref.set({"phase":"RUNNING","lastReason":BLOCK_MESSAGE,"lastTickAt":now,"updatedAt":now},merge=True)
                 return {"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","symbol":leg.symbol,
                     "side":leg.side,"ordersSent":0,"reason":BLOCK_MESSAGE}
+            except Strategy2RiskBlocked as exc:
+                reason=str(exc)
+                ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now,"updatedAt":now},merge=True)
+                ref.collection("audit").add({"event":"MANAGEMENT_RISK_BLOCKED","symbol":leg.symbol,
+                    "side":leg.side,"action":decision.kind,"reason":reason,"timestamp":now})
+                return {"status":"waiting","action":"RISK_BLOCKED","symbol":leg.symbol,
+                    "side":leg.side,"ordersSent":0,"reason":reason}
             except Exception as exc:
                 if not is_definite_contract_rejection(exc):raise
                 action_key=f"{leg.symbol}|{leg.side}|{decision.kind}"

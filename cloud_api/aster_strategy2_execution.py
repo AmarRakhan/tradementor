@@ -15,6 +15,9 @@ from aster_close_guard import CloseEvidence
 from aster_strategy2 import Decision
 from aster_strategy2_state import OwnedLeg
 
+class Strategy2RiskBlocked(ValueError):
+    """A normal fail-closed portfolio decision, not an execution failure."""
+
 @dataclass(frozen=True)
 class ExecutionContext:
     strategy_id:str;cycle_id:str;config_version:int;ownership:OwnedLeg|None;exchange_reconciled:bool;confirm:bool
@@ -33,7 +36,7 @@ def execute_decision(client:Any,decision:Decision,plan:PairExecutionPlan,context
         raise RuntimeError("Strategy-2-ownership is niet bewezen; risicoverhogende of sluitactie geblokkeerd")
     side=PositionSide(decision.side)
     if decision.kind in {"ADD_DCA","PROTECTION_INCREASE"}:
-        if not risk_approved(float(plan.notional_per_leg)/max(1,plan.leverage)):raise ValueError("Portfolio Risk Engine blokkeert deze order")
+        if not risk_approved(float(plan.notional_per_leg)/max(1,plan.leverage)):raise Strategy2RiskBlocked("Portfolio Risk Engine blokkeert deze order")
         return [execute_leg_once(client,plan,side=side,action="OPEN",id_prefix=prefix,confirm=True)]
     close_notional=decision.notional
     if close_notional<=0:raise ValueError("Sluitbedrag ontbreekt")
