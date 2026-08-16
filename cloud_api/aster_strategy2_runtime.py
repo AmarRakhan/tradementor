@@ -239,6 +239,16 @@ def entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int
     remaining=max(0,(long_target-long_count)+(short_target-short_count))
     return min(1,remaining) if initial_build_complete else remaining
 
+def queued_entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int,
+                             *,orders_used:int=0,maximum_orders:int=15)->int:
+    """Entry allowance for the feature-flagged account queue.
+
+    The legacy helper above intentionally remains unchanged for immediate
+    rollback compatibility while the queue feature flag is disabled.
+    """
+    return min(entry_order_limit(initial_build_complete,owned,total),
+               max(0,int(maximum_orders)-max(0,int(orders_used))))
+
 def management_preempts_initial_build(config:Strategy2Config,owned:list[OwnedLeg],decision:Decision)->bool:
     """Existing-position management always precedes initial entry building.
 
