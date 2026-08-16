@@ -107,3 +107,10 @@ jobs:
           cleanup
           trap - EXIT
           printf 'RRMK_CANARY_FIELDS %s\n' "$STATUS_FIELDS"
+          mkdir -p .github/diagnostics
+          printf '%s\n' "$STATUS_FIELDS" > .github/diagnostics/rrmk-canary-result.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/diagnostics/rrmk-canary-result.json
+          git commit -m 'diagnose: record rrmk canary read-only result'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
