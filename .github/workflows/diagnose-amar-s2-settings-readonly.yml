@@ -76,7 +76,12 @@ jobs:
                   return [clean(x,k,d+1) for x in v[:25]] if len(v)<=25 else {"count":len(v),"sample":[clean(x,k,d+1) for x in v[:5]]}
               if isinstance(v,(str,int,float,bool)) or v is None: return v if len(str(v))<=500 else str(v)[:500]+"<truncated>"
               return str(v)[:500]
-          print("S2_DIAGNOSIS_JSON="+json.dumps({"diagnosis":"S2_ACCOUNT_STATE","documentExists":snap.exists,"state":clean(state)},sort_keys=True,default=str),flush=True)
+          selected={}
+          for key in ("settings","readiness","accountSnapshot","candidateScan","phase","enabled","monitor","exclusiveOwnership","unassignedPositions","liveReady","canaryValidated","lastAction","lastActionAt","lastReason","lastDecision","lastDecisionAt","lastEntryReason","lastEntryDecision","lastTickAt","updatedAt"):
+              if key in state: selected[key]=state.get(key)
+          selected["ownedLegsSummary"]=clean(state.get("ownedLegs"),"ownedLegs")
+          safe_keys=[str(k) for k in state.keys() if not blocked.search(str(k))]
+          print("S2_DIAGNOSIS_JSON="+json.dumps({"diagnosis":"S2_ACCOUNT_STATE","documentExists":snap.exists,"topLevelKeys":sorted(safe_keys),"state":clean(selected)},sort_keys=True,default=str),flush=True)
           PY
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,TARGET_EMAIL_HASH=$TARGET_EMAIL_HASH" --tasks 1 --max-retries 0 --task-timeout 120s --quiet >/dev/null
