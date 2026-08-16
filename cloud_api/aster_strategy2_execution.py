@@ -23,6 +23,7 @@ class ExecutionContext:
     strategy_id:str;cycle_id:str;config_version:int;ownership:OwnedLeg|None;exchange_reconciled:bool;confirm:bool
     account_uid:str="";close_fee_rate:float=.0005;slippage_rate:float=.001
     audit:Callable[[dict[str,Any]],None]|None=None
+    before_submit:Callable[[Any],None]|None=None
 
 def execute_decision(client:Any,decision:Decision,plan:PairExecutionPlan,context:ExecutionContext,*,risk_approved:Callable[[float],bool])->list[dict]:
     if not context.confirm:raise ValueError("Persoonlijke bevestiging ontbreekt")
@@ -37,7 +38,8 @@ def execute_decision(client:Any,decision:Decision,plan:PairExecutionPlan,context
     side=PositionSide(decision.side)
     if decision.kind in {"ADD_DCA","PROTECTION_INCREASE"}:
         if not risk_approved(float(plan.notional_per_leg)/max(1,plan.leverage)):raise Strategy2RiskBlocked("Portfolio Risk Engine blokkeert deze order")
-        return [execute_leg_once(client,plan,side=side,action="OPEN",id_prefix=prefix,confirm=True)]
+        return [execute_leg_once(client,plan,side=side,action="OPEN",id_prefix=prefix,confirm=True,
+            before_submit=context.before_submit)]
     close_notional=decision.notional
     if close_notional<=0:raise ValueError("Sluitbedrag ontbreekt")
     ratio=min(1.0,close_notional/max(context.ownership.quantity*float(plan.notional_per_leg/max(plan.quantity,Decimal('0.00000001'))),.00000001))
@@ -55,4 +57,4 @@ def execute_decision(client:Any,decision:Decision,plan:PairExecutionPlan,context
         costs_reliable=context.ownership.costs_updated_at_ms>0,
     )
     return [execute_leg_once(client,close_plan,side=side,action="CLOSE",id_prefix=prefix,confirm=True,
-        close_evidence=evidence,close_audit=context.audit)]
+        close_evidence=evidence,close_audit=context.audit,before_submit=context.before_submit)]
