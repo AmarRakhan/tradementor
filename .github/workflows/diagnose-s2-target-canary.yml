@@ -68,6 +68,10 @@ jobs:
           proof={"status":status,"activeOnCanarySymbol":len(active),"openIntentOrders":len(open_intent),
                  "historicalIntentOrders":len(intent_orders),"intentFills":len(intent_fills),
                  "intentOrderStatuses":sorted({str(x.get("status","")) for x in intent_orders}),
+                 "singleActiveLeg":len(active)==1,"singleIntentOrder":len(intent_orders)==1,"singleIntentFill":len(intent_fills)==1,
+                 "quantityMatches":len(active)==len(intent_fills)==1 and abs(abs(float(active[0].get("positionAmt") or 0))-abs(float(intent_fills[0].get("qty",intent_fills[0].get("quantity",0)) or 0)))<1e-12,
+                 "sideMatches":len(active)==len(intent_fills)==1 and str(active[0].get("positionSide","")).upper()==str(intent_fills[0].get("positionSide","")).upper(),
+                 "otherFillsSinceCanary":sum(str(x.get("orderId","")) not in intent_ids for x in fills),
                  "canaryValidated":int(bool(state.get("canaryValidated"))),"liveReady":int(bool(state.get("liveReady")))}
           print("CANARY_PROOF "+json.dumps(proof,sort_keys=True),flush=True)
           PY
