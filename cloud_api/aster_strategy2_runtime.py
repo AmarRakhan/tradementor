@@ -142,8 +142,9 @@ def portfolio_state(config:Strategy2Config,account:dict[str,Any],positions:list[
     strategy_exposure=sum(abs(number(pos.get((x.symbol,x.side),{}).get("positionAmt")))*number(pos.get((x.symbol,x.side),{}).get("markPrice")) for x in owned)
     strategy_margin=sum(abs(number(pos.get((x.symbol,x.side),{}).get("positionAmt")))*number(pos.get((x.symbol,x.side),{}).get("markPrice"))
         / max(1,number(pos.get((x.symbol,x.side),{}).get("leverage")) or config.leverage) for x in owned)
+    available=number(account.get("availableBalance"))
     return PortfolioState(equity,max(hwm,equity),maint/equity if equity>0 else 1.0,long_exposure,short_exposure,strategy_exposure,
-        exchange_reliable,ownership_reliable,open_orders_unknown,strategy_margin)
+        exchange_reliable,ownership_reliable,open_orders_unknown,strategy_margin,available)
 
 def initial_build_high_water_mark(*,account:dict[str,Any],positions:list[dict[str,Any]],owned:list[OwnedLeg],
                                   previous_hwm:float,initial_build_complete:bool)->float:
@@ -211,7 +212,7 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
 def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:
     harvest=[x for x in owned if x.role!="PROTECTION"]
     new_pair_margin=config.base_notional/max(1,config.leverage)
-    return risk_mode(config,portfolio)=="NORMAL" and len(harvest)<config.maximum_pairs and portfolio.strategy_margin+new_pair_margin<=portfolio.equity*config.strategy_budget
+    return risk_mode(config,portfolio)=="NORMAL" and len(harvest)<config.maximum_pairs and portfolio.available_balance>=new_pair_margin*1.05
 
 def balanced_entry_targets(total:int)->tuple[int,int]:
     """Return the closest possible LONG/SHORT split for a total position cap."""

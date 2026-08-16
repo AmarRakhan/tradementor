@@ -50,6 +50,8 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
         _number(row.get("positionInitialMargin", row.get("initialMargin")))
         for row in active
     )
+    if active and active_trade_capital <= 0:
+        active_trade_capital = _number(account.get("totalInitialMargin"))
     return {
         "equity": equity,
         "walletBalance": wallet,

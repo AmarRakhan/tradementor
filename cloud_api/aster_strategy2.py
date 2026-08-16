@@ -147,6 +147,8 @@ class PortfolioState:
     open_orders_unknown: bool = False
     # Actual margin reserved by Strategy 2. Exposure is leveraged notional.
     strategy_margin: float = 0.0
+    # Aster's authoritative free cross-margin after all current positions.
+    available_balance: float = 0.0
 
     @property
     def drawdown(self) -> float:

@@ -38,6 +38,12 @@ def test_dashboard_snapshot_sums_only_active_exchange_reported_position_margin()
     ])
     assert snapshot["activeTradeCapital"] == 35.5
 
+def test_dashboard_snapshot_falls_back_to_account_initial_margin_for_cross_positions():
+    snapshot = dashboard_snapshot({"totalInitialMargin":"214.76"}, [
+        {"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"1","initialMargin":"0"},
+    ])
+    assert snapshot["activeTradeCapital"] == 214.76
+
 
 def position(symbol, side, amount, entry=100, leverage=10):
     return {

@@ -101,10 +101,11 @@ def test_scanner_stops_at_pair_or_budget_limit():
     p=portfolio_state(cfg,{"totalMarginBalance":"1000"},[row()],[leg],1000)
     assert scanner_allowed(cfg,p,[leg]) is False
 
-def test_scanner_budget_uses_required_margin_instead_of_notional():
+def test_scanner_uses_authoritative_available_balance_with_buffer():
     config=Strategy2Config(base_notional=100,leverage=20,strategy_budget=.10,maximum_pairs=5)
-    portfolio=PortfolioState(1000,1000,.1,0,0,0,strategy_margin=80)
+    portfolio=PortfolioState(1000,1000,.1,0,0,0,strategy_margin=800,available_balance=6)
     assert scanner_allowed(config,portfolio,[]) is True
+    assert scanner_allowed(config,PortfolioState(1000,1000,.1,0,0,0,available_balance=5),[]) is False
 
 def test_initial_fifty_positions_target_exactly_twenty_five_per_side():
     assert balanced_entry_targets(50)==(25,25)

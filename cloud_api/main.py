@@ -1765,7 +1765,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     if dry_run or not live:
         return {"status":"simulated","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG","plannedOrders":order_limit,
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}
-    opened_legs=[];used_strategy_margin=portfolio.strategy_margin;candidate_failures=[];budget_blocked=False
+    opened_legs=[];remaining_available=portfolio.available_balance;candidate_failures=[];budget_blocked=False
     scan_checked=0;scan_skipped=0;advanced_after_rejection=False
     cooldowns=raw.get("entryCandidateCooldowns") if isinstance(raw.get("entryCandidateCooldowns"),dict) else {}
     cooldowns={str(key):value for key,value in cooldowns.items() if isinstance(value,dict)}
@@ -1803,9 +1803,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
                     accepted_leverage=accepted,existing_contract_notional=contract_exposure.get(candidate,0))
                 required=float(value.notional_per_leg)/max(1,value.leverage)
-                if used_strategy_margin+required>portfolio.equity*settings.strategy_budget:
+                if required*1.05>remaining_available:
                     budget_blocked=True
-                    candidate_failures.append(f"{candidate}: Strategy Margin Budget")
+                    candidate_failures.append(f"{candidate}: onvoldoende vrije Aster-margin inclusief 5% uitvoeringsbuffer")
                     break
                 try:
                     opened=execute_aster_leg(client,value,side=PositionSide(entry_side),action="OPEN",id_prefix=f"s2i-{uid[-4:]}-{int(time.time()*1000)}-{index}-{candidate[:5].lower()}",confirm=True)
@@ -1857,7 +1857,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             cycle_id=cycle,config_version=settings.version,symbol=symbol,side=entry_side,
             action="INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG")
         owned.append(OwnedLeg(settings.strategy_id,"strategy2",symbol,entry_side,cycle,settings.version,q,p,0,"HARVEST",(str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000)))
-        active_keys.add((symbol,entry_side));used_strategy_margin+=required;opened_legs.append({"symbol":symbol,"side":entry_side})
+        active_keys.add((symbol,entry_side));remaining_available=max(0.0,remaining_available-required);opened_legs.append({"symbol":symbol,"side":entry_side})
         # Persist after every confirmed fill: a later timeout must never erase
         # ownership of the positions already opened in this initial batch.
         audit_ref=ref.collection("audit").document();batch=db.batch();confirmed_at=datetime.now(timezone.utc)
