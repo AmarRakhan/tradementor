@@ -39,3 +39,43 @@ def test_production_scheduler_endpoint_never_processes_isolated_strategy3():
     assert "_run_aster_strategy2_tick" in block
     assert "_run_aster_strategy3_tick" not in block
     assert '"strategy3Isolated":True' in block
+
+
+def test_strategy2_queue_is_double_gated_and_old_runtime_remains_available():
+    source = (ROOT / "cloud_api/main.py").read_text(encoding="utf-8")
+    assert 'os.getenv(QUEUE_FEATURE_FLAG,"false").lower()=="true"' in source
+    assert 'bool(raw.get("orderQueueEnabled",False))' in source
+    assert 'reconcile_only=not queue_enabled' in source
+    assert 'drain_pending_only=not queue_enabled and has_pending_reopen' in source
+    assert 'if uses_queue_lease else _run_aster_strategy2_tick(item.id)' in source
+
+
+def test_queue_uses_fenced_account_lease_and_persistent_scan_counter():
+    source = (ROOT / "cloud_api/main.py").read_text(encoding="utf-8")
+    start = source.index("def _acquire_strategy2_queue_lease")
+    end = source.index("@app.post(\"/internal/mexc-automation/tick\")", start)
+    block = source[start:end]
+    assert '"token":token' in block
+    assert 'str(lease.get("token",""))!=token' in block
+    assert '"ordersUsed":used' in block
+    assert "used<MAX_ORDERS_PER_ACCOUNT_SCAN" in block
+    assert "new_used>MAX_ORDERS_PER_ACCOUNT_SCAN" in block
+    assert "_reserve_strategy2_queue_order(ref,scan_id,intent,details)" in block
+
+
+def test_pending_reopen_is_persisted_when_last_budget_slot_is_a_close():
+    source = (ROOT / "cloud_api/main.py").read_text(encoding="utf-8")
+    assert '"reason":"ORDER_BUDGET_EXHAUSTED"' in source
+    assert '"pendingReopens":pending_reopens' in source
+    assert 'action":"PENDING_REOPEN"' in source
+
+
+def test_restart_reconciliation_requires_terminal_fill_and_preserves_dca_metadata():
+    source = (ROOT / "cloud_api/main.py").read_text(encoding="utf-8")
+    start = source.index("def _reconcile_strategy2_queue_intent")
+    end = source.index("def _run_aster_strategy2_queue_scan", start)
+    block = source[start:end]
+    assert 'status!="FILLED"' in block
+    assert "if not matching_fills" in block
+    assert 'action_kind=="ADD_DCA"' in block
+    assert '"PROCESS_RESTART_AFTER_CONFIRMED_CLOSE"' in block
