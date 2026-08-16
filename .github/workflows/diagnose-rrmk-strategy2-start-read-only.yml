@@ -1,0 +1,78 @@
+name: Diagnose rrmk Strategy 2 start failure read-only
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/diagnose-rrmk-strategy2-start-read-only.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      TARGET_EMAIL: rrmk18@outlook.com
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read sanitized Strategy 2 state and start exception
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-start-diag-${GITHUB_RUN_ID: -6}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          IMAGE="$(jq -r '.spec.template.spec.containers[0].image' "$SERVICE_JSON")"
+          RUNTIME_SERVICE_ACCOUNT="$(jq -r '.spec.template.spec.serviceAccountName' "$SERVICE_JSON")"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+          if not firebase_admin._apps:
+              firebase_admin.initialize_app(options={"projectId": "tradementor-production"})
+          user = auth.get_user_by_email(os.environ["TARGET_EMAIL"])
+          db = firestore.Client(project="tradementor-amar-20260813")
+          snap = db.collection("asterStrategy2").document(user.uid).get()
+          state = snap.to_dict() or {}
+          settings = state.get("settings") if isinstance(state.get("settings"), dict) else {}
+          def clean(value):
+              if isinstance(value, datetime):
+                  value = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+                  return value.isoformat()
+              return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
+          fields = {
+              "exists": snap.exists, "enabled": bool(state.get("enabled")), "monitor": bool(state.get("monitor")),
+              "phase": clean(state.get("phase")), "mode": clean(settings.get("mode")),
+              "maximumPairs": clean(settings.get("maximumPairs")), "liveReady": bool(state.get("liveReady")),
+              "canaryValidated": bool(state.get("canaryValidated")), "exclusiveOwnership": bool(state.get("exclusiveOwnership")),
+              "lastTickAt": clean(state.get("lastTickAt")), "lastAction": clean(state.get("lastAction")),
+              "lastReason": clean(state.get("lastReason")), "lastError": clean(state.get("lastError")),
+              "startedAt": clean(state.get("startedAt")), "updatedAt": clean(state.get("updatedAt")),
+          }
+          print("RRMK_STRATEGY2_STATE " + json.dumps(fields, sort_keys=True, ensure_ascii=True))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE"             --service-account "$RUNTIME_SERVICE_ACCOUNT" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "TARGET_EMAIL=$TARGET_EMAIL" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"RRMK_STRATEGY2_STATE\""             --project "$GCP_PROJECT_ID" --limit 5 --freshness 15m --format='value(textPayload,jsonPayload.message)'
+          echo "RRMK_STRATEGY2_START_ERRORS_BEGIN"
+          gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$CLOUD_RUN_SERVICE AND timestamp>=\"2026-08-16T12:10:00Z\" AND (severity>=ERROR OR textPayload:\"Traceback\" OR textPayload:\"Exception\")"             --project "$GCP_PROJECT_ID" --limit 100 --order=asc --format='value(timestamp,severity,textPayload,jsonPayload.message,httpRequest.status)'
+          echo "RRMK_STRATEGY2_START_ERRORS_END"
