@@ -79,3 +79,13 @@ def test_restart_reconciliation_requires_terminal_fill_and_preserves_dca_metadat
     assert "if not matching_fills" in block
     assert 'action_kind=="ADD_DCA"' in block
     assert '"PROCESS_RESTART_AFTER_CONFIRMED_CLOSE"' in block
+
+
+def test_queue_candidate_deploy_has_zero_traffic_and_explicitly_disabled_flag():
+    workflow=(ROOT/".github/workflows/deploy-strategy2-queue-candidate.yml").read_text(encoding="utf-8")
+    assert 'refs/heads/codex/strategy2-account-order-queue' in workflow
+    assert '--no-traffic --tag "$CANDIDATE_TAG"' in workflow
+    assert 'ASTER_STRATEGY2_ORDER_QUEUE_ENABLED=false' in workflow
+    assert 'assert row.get("percent",0)==0' in workflow
+    assert 'assert job_before==job_after' in workflow
+    assert "/internal/aster-strategy2/tick" not in workflow
