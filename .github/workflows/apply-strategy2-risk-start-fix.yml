@@ -26,7 +26,7 @@ jobs:
         run: |
           echo "$PATCH_B64" | base64 -d | git apply --check
           echo "$PATCH_B64" | base64 -d | git apply
-          python -m pip install -q pytest
+          python -m pip install -q -r cloud_api/requirements.txt pytest
           cd cloud_api
           pytest -q test_aster_strategy2_execution.py test_aster_close_guard.py test_aster_strategy_status.py
           python -m py_compile aster_strategy2_execution.py main.py test_aster_strategy2_execution.py
