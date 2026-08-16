@@ -109,6 +109,7 @@ from aster_execution import execute_close_all as execute_aster_close_all
 from aster_execution import configure_maximum_usable_leverage
 from aster_execution import is_definite_contract_rejection
 from aster_execution import contract_brackets, planning_brackets
+from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_state import (
     account_values as aster_account_values, reconcile_aster_state,
     account_information_values as aster_account_information_values,
@@ -335,6 +336,7 @@ class AsterStrategyStopRequest(BaseModel):
 
 class AsterCloseAllRequest(BaseModel):
     confirm: bool
+    confirm_loss: bool = False
 
 
 class AsterCanaryRequest(BaseModel):
@@ -1184,6 +1186,9 @@ def _aster_owned_keys(uid: str) -> tuple[set[tuple[str, str]], set[tuple[str, st
 
 def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     """One fail-closed S3 tick; the exchange remains source of truth."""
+    strategy2_control=aster_strategy2_reference(uid).get().to_dict() or {}
+    if bool(strategy2_control.get("exclusiveOwnership",False)):
+        return {"status":"blocked","reason":"Exclusieve Strategy-2-ownership: Strategy 3 mag geen orders versturen","ordersSent":0}
     ref=aster_strategy3_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     persisted_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     canary_doc=ref.collection("canaries").document("s3-open-fill-close-v1").get().to_dict() or {}
@@ -1324,9 +1329,14 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 plan=plan_aster_pair(info[leg.symbol],planning_brackets(client,client.leverage_brackets(),leg.symbol,settings.leverage),mark,decision.notional)
                 plan=replace(plan,leverage=configure_maximum_usable_leverage(client,replace(plan,leverage=min(plan.leverage,settings.leverage))))
             if dry_run or not live:return {"status":"simulated","action":decision.kind,"ordersSent":0,"reason":decision.reason}
-            context=Strategy3ExecutionContext(leg.cycle_id,settings.version,leg,True,True,gates)
+            context=Strategy3ExecutionContext(leg.cycle_id,settings.version,leg,True,True,gates,
+                account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}))
             result=execute_strategy3_decision(client,decision,plan,context,risk_approved=lambda margin:
                 portfolio.margin_ratio<settings.defensive_margin_ratio and strategy_margin+margin<=equity*settings.strategy_budget)
+        except AsterCloseBlocked:
+            ref.set({"phase":"RUNNING","lastReason":BLOCK_MESSAGE,"lastTickAt":now},merge=True)
+            return {"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","symbol":leg.symbol,
+                "side":leg.side,"ordersSent":0,"reason":BLOCK_MESSAGE}
         except Exception as exc:
             # Aster -5018/-2027 and equivalent definite contract rejections
             # prove that no fill occurred.  For a risk-increasing DCA it is
@@ -1666,9 +1676,14 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 current=replace(current,leverage=min(current.leverage,settings.leverage))
                 current=replace(current,leverage=configure_maximum_usable_leverage(client,current))
             if dry_run or not live:return {"status":"simulated","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":0,"reason":decision.reason}
-            context=ExecutionContext(settings.strategy_id,leg.cycle_id,settings.version,leg,True,True)
+            context=ExecutionContext(settings.strategy_id,leg.cycle_id,settings.version,leg,True,True,
+                account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}))
             try:
                 result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:(decision.risk_reducing and portfolio.margin_ratio<settings.emergency_margin_ratio) or (portfolio.margin_ratio<settings.defensive_margin_ratio and portfolio.strategy_margin+margin<=portfolio.equity*settings.strategy_budget))
+            except AsterCloseBlocked:
+                ref.set({"phase":"RUNNING","lastReason":BLOCK_MESSAGE,"lastTickAt":now,"updatedAt":now},merge=True)
+                return {"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","symbol":leg.symbol,
+                    "side":leg.side,"ordersSent":0,"reason":BLOCK_MESSAGE}
             except Exception as exc:
                 if not is_definite_contract_rejection(exc):raise
                 action_key=f"{leg.symbol}|{leg.side}|{decision.kind}"
@@ -1886,6 +1901,9 @@ def _aster_brackets(rows: list[dict[str, Any]], symbol: str) -> list[dict[str, A
 
 def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, Any]:
     ref = aster_automation_reference(uid); control = ref.get().to_dict() or {}
+    strategy2_control=aster_strategy2_reference(uid).get().to_dict() or {}
+    if bool(strategy2_control.get("exclusiveOwnership",False)):
+        return {"status":"blocked","reason":"Exclusieve Strategy-2-ownership: legacyproces mag geen orders versturen","ordersSent":0}
     now_utc=datetime.now(timezone.utc);retry_at=control.get("nextRetryAt")
     if isinstance(retry_at,datetime) and retry_at>now_utc:
         return {"status":"backoff","reason":f"Aster API-rust tot {retry_at.isoformat()}"}
@@ -1993,7 +2011,16 @@ def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, 
             qty=abs(Decimal(str(row.get("positionAmt")))); lev=max(1,int(safe_float(row.get("leverage"))))
             current=PairExecutionPlan(action.symbol,qty,qty*Decimal(str(prices[action.symbol])),lev)
             side=PositionSide(action.side)
-            if action.kind=="CLOSE_LEG": execute_aster_leg(client,current,side=side,action="CLOSE",id_prefix=prefix,confirm=True)
+            incomplete_close_evidence=CloseEvidence(account_uid=uid,symbol=action.symbol,side=action.side,
+                caller=f"legacy:{action.kind}",reason=action.reason,quantity=float(qty),
+                entry_price=safe_float(row.get("entryPrice")),mark_price=prices[action.symbol],
+                gross_pnl=safe_float(row.get("unRealizedProfit",row.get("unrealizedProfit"))),
+                entry_fees=0,close_fee=float(current.notional_per_leg)*.0005,funding=0,
+                slippage_buffer=float(current.notional_per_leg)*.001,ownership_reliable=False,
+                fills_reliable=False,prices_reliable=prices[action.symbol]>0,costs_reliable=False)
+            close_audit=lambda event: ref.collection("audit").add({**event,"timestamp":now_utc})
+            if action.kind=="CLOSE_LEG": execute_aster_leg(client,current,side=side,action="CLOSE",id_prefix=prefix,confirm=True,
+                close_evidence=incomplete_close_evidence,close_audit=close_audit)
             elif action.kind=="ADD_DCA":
                 add=plan_aster_pair(rows[action.symbol],_aster_brackets(brackets,action.symbol),prices[action.symbol],action.notional)
                 added_margin=float(add.notional_per_leg)/max(1,add.leverage)
@@ -2009,7 +2036,8 @@ def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, 
                 reopen=plan_aster_pair(rows[action.symbol],_aster_brackets(brackets,action.symbol),prices[action.symbol],settings.base_notional)
                 opposite_side="SHORT" if action.side=="LONG" else "LONG";opp=next(x for x in active if str(x.get("symbol","")).upper()==action.symbol and str(x.get("positionSide","")).upper()==opposite_side)
                 oppq=abs(Decimal(str(opp.get("positionAmt"))));opplan=PairExecutionPlan(action.symbol,oppq,oppq*Decimal(str(prices[action.symbol])),max(1,int(safe_float(opp.get("leverage")))))
-                execute_aster_harvest(client,current,reopen,side=side,opposite_plan=opplan,id_prefix=prefix,confirm=True)
+                execute_aster_harvest(client,current,reopen,side=side,opposite_plan=opplan,id_prefix=prefix,confirm=True,
+                    close_evidence=incomplete_close_evidence,close_audit=close_audit)
                 side_meta=dict(meta.get(action.symbol,{}) or {});side_meta[action.side]=0;meta[action.symbol]=side_meta
                 side_times=dict(leg_last_order_at.get(action.symbol,{}) or {});side_times[action.side]=int(time.time()*1000);leg_last_order_at[action.symbol]=side_times
                 gross=max(0.0,safe_float(row.get("unRealizedProfit",row.get("unrealizedProfit"))))
@@ -2068,6 +2096,9 @@ def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, 
                     continue
             base["openedPairs"]=[x[0] for x in opened]
             base["candidateFailures"]=candidate_failures[:20]
+    except AsterCloseBlocked:
+        ref.set({"phase":"MONITORING","lastReason":BLOCK_MESSAGE,"lastTickAt":datetime.now(timezone.utc)},merge=True)
+        return {**base,"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","ordersSent":0,"reason":BLOCK_MESSAGE}
     except Exception as exc:
         ref.set({"phase":"PAUSED","lastReason":str(exc),"lastTickAt":datetime.now(timezone.utc)},merge=True)
         return {**base,"status":"paused","reason":str(exc)}
@@ -4267,7 +4298,8 @@ def close_all_aster_strategy(
     request: AsterCloseAllRequest,
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
-    if not request.confirm: raise HTTPException(422, "Tweede bevestiging voor Alles sluiten ontbreekt")
+    if not request.confirm or not request.confirm_loss:
+        raise HTTPException(422, "Aparte expliciete bevestiging voor mogelijk verlieslatend Alles sluiten ontbreekt")
     if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
         raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
     secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True)
@@ -4278,7 +4310,8 @@ def close_all_aster_strategy(
         symbol=str(row.get("symbol","")).upper();qty=abs(Decimal(str(row.get("positionAmt"))))
         plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(tickers.get(symbol) or row.get("markPrice") or 0)),max(1,int(safe_float(row.get("leverage")))))
         plans.append((plan,PositionSide(str(row.get("positionSide","")).upper())))
-    try: results=execute_aster_close_all(client,plans,id_prefix=f"tm-all-{str(user['uid'])[-6:]}-{int(time.time())}",confirm=True)
+    try: results=execute_aster_close_all(client,plans,id_prefix=f"tm-all-{str(user['uid'])[-6:]}-{int(time.time())}",
+        confirm=True,explicit_loss_confirmation=True)
     except Exception as exc: raise HTTPException(409,str(exc)) from exc
     aster_automation_reference(str(user["uid"])).set({"enabled":False,"monitor":True,"phase":"CLOSING_ALL","lastReason":"Alles sluiten persoonlijk bevestigd","updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"submitted":len(results),"message":"Alle Aster-legs zijn ter sluiting verzonden; monitoring controleert tot exchange-flat."}

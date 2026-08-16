@@ -23,10 +23,10 @@ class FakeClient:
 
 def plan(): return PairExecutionPlan("BTCUSDT", Decimal("1"), Decimal("10"), 10)
 def context(**changes):
-    values = dict(cycle_id="c1", config_version=3, ownership=None, exchange_reconciled=True, confirm=True, live_gate_open=True)
+    values = dict(cycle_id="c1", config_version=3, ownership=None, exchange_reconciled=True, confirm=True, live_gate_open=True,account_uid="uid")
     values.update(changes); return Strategy3ExecutionContext(**values)
 def owned(**changes):
-    values = dict(strategy_id="aster-strategy-3", engine_type="strategy3", symbol="BTCUSDT", side="LONG", cycle_id="c1", config_version=3, quantity=1, weighted_entry=10)
+    values = dict(strategy_id="aster-strategy-3", engine_type="strategy3", symbol="BTCUSDT", side="LONG", cycle_id="c1", config_version=3, quantity=1, weighted_entry=8,fill_ids=("f1",),fees=.01,costs_updated_at_ms=1)
     values.update(changes); return OwnedLeg(**values)
 
 

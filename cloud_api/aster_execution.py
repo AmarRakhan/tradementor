@@ -10,6 +10,7 @@ from aster_gateway import (
     AsterAutomationConfig, AsterOrderIntent, ContractRules, LeverageBracket,
     PositionSide, maximum_allowed_leverage,
 )
+from aster_close_guard import CloseEvidence, require_profitable_automatic_close
 
 
 @dataclass(frozen=True)
@@ -216,28 +217,24 @@ def execute_pair_once(client: Any, plan: PairExecutionPlan, *, id_prefix: str,
         results.append({"side": "SHORT", "result": short_result, "recovered": recovered, "leverage": leverage})
         return results
     except Exception as original:
-        compensation = AsterOrderIntent(
-            client_order_id(id_prefix, "undo", "long"), plan.symbol, PositionSide.LONG, plan.quantity, "CLOSE",
-        )
-        try:
-            close_result, close_recovered = client.submit_order_once(
-                compensation, config=config, confirm=True, hedge_mode_confirmed=True, risk_approved=True,
-            )
-        except Exception as compensation_error:
-            raise RuntimeError("SHORT mislukte en LONG-compensatiesluiting is onzeker; noodcontrole vereist") from compensation_error
         raise RuntimeError(
-            f"SHORT mislukte; LONG is direct gecompenseerd met order {close_result.get('orderId', '?')}"
+            "SHORT mislukte; LONG blijft open omdat automatische compensatiesluiting zonder bewezen nettowinst verboden is"
         ) from original
 
 
 def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide,
-                     action: str, id_prefix: str, confirm: bool) -> dict[str, Any]:
+                     action: str, id_prefix: str, confirm: bool,
+                     close_evidence: CloseEvidence | None = None,
+                     close_audit: Callable[[dict[str, Any]], None] | None = None,
+                     manual_loss_confirmation: bool = False) -> dict[str, Any]:
     if not confirm: raise ValueError("Persoonlijke bevestiging ontbreekt")
     # Aster stores margin/leverage per contract.  A freshly selected symbol can
     # therefore still carry an old or unsupported value.  Configure it before
     # every risk-increasing OPEN; a contract-specific rejection is safely
     # stepped down instead of stopping the complete Strategy-2 batch.
     accepted_leverage = plan.leverage
+    if action.upper() == "CLOSE" and not manual_loss_confirmation:
+        require_profitable_automatic_close(close_evidence, audit=close_audit)
     if action.upper() == "OPEN":
         client.change_margin_type(plan.symbol, "CROSSED")
         accepted_leverage = configure_maximum_usable_leverage(client, plan)
@@ -254,32 +251,28 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
 
 def execute_harvest_reset(client: Any, close_plan: PairExecutionPlan, reopen_plan: PairExecutionPlan,
                           *, side: PositionSide, opposite_plan: PairExecutionPlan,
-                          id_prefix: str, confirm: bool) -> list[dict[str, Any]]:
+                          id_prefix: str, confirm: bool, close_evidence: CloseEvidence | None = None,
+                          close_audit: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]]:
     """Close a profitable leg, reopen it, or flatten the opposite leg if reset fails."""
     closed = execute_leg_once(client, close_plan, side=side, action="CLOSE",
-                              id_prefix=f"{id_prefix}-harvest", confirm=confirm)
+                              id_prefix=f"{id_prefix}-harvest", confirm=confirm,
+                              close_evidence=close_evidence, close_audit=close_audit)
     try:
         reopened = execute_leg_once(client, reopen_plan, side=side, action="OPEN",
                                     id_prefix=f"{id_prefix}-reset", confirm=confirm)
         return [closed, reopened]
     except Exception as original:
-        opposite = PositionSide.SHORT if side is PositionSide.LONG else PositionSide.LONG
-        try:
-            flattened = execute_leg_once(client, opposite_plan, side=opposite, action="CLOSE",
-                                         id_prefix=f"{id_prefix}-failsafe", confirm=True)
-        except Exception as failsafe:
-            raise RuntimeError("Heropening en noodneutralisatie zijn onzeker; handmatige controle vereist") from failsafe
-        raise RuntimeError(
-            f"Heropening mislukte; overgebleven {opposite.value} is veilig gesloten "
-            f"met order {flattened['result'].get('orderId', '?')}"
-        ) from original
+        raise RuntimeError("Heropening mislukte; tegenhanger blijft open omdat verlieslatende noodneutralisatie verboden is") from original
 
 
 def execute_close_all(client: Any, plans: list[tuple[PairExecutionPlan, PositionSide]], *,
-                      id_prefix: str, confirm: bool) -> list[dict[str, Any]]:
-    if not confirm: raise ValueError("Tweede bevestiging voor Alles sluiten ontbreekt")
+                      id_prefix: str, confirm: bool,
+                      explicit_loss_confirmation: bool = False) -> list[dict[str, Any]]:
+    if not confirm or not explicit_loss_confirmation:
+        raise ValueError("Aparte expliciete bevestiging voor mogelijk verlieslatend Alles sluiten ontbreekt")
     results = []
     for index, (plan, side) in enumerate(plans, 1):
         results.append(execute_leg_once(client, plan, side=side, action="CLOSE",
-                                        id_prefix=f"{id_prefix}-{index}", confirm=True))
+                                        id_prefix=f"{id_prefix}-{index}", confirm=True,
+                                        manual_loss_confirmation=True))
     return results

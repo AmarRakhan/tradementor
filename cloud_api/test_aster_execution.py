@@ -3,6 +3,7 @@ import pytest
 from aster_execution import plan_pair, execute_pair_once, execute_leg_once, execute_harvest_reset, execute_close_all, is_definite_contract_rejection, contract_brackets, planning_brackets, client_order_id, maximum_notional_for_leverage
 from aster_gateway import LeverageBracket
 from aster_gateway import PositionSide
+from aster_close_guard import CloseEvidence
 
 
 SYMBOL={"symbol":"BTCUSDT","filters":[
@@ -12,6 +13,10 @@ SYMBOL={"symbol":"BTCUSDT","filters":[
     {"filterType":"MIN_NOTIONAL","notional":"5"},
 ]}
 BRACKETS=[{"notionalFloor":"0","notionalCap":"1000","initialLeverage":200,"maintMarginRatio":"0.004"}]
+
+def profitable(side="LONG"):
+    return CloseEvidence("uid","BTCUSDT",side,"test","profitable close",.00015,60000,65000,.75,.05,.05,0,.05,
+        ownership_reliable=True,fills_reliable=True,prices_reliable=True,costs_reliable=True)
 
 
 class Fake:
@@ -177,22 +182,23 @@ def test_missing_exchange_brackets_use_only_a_planning_ceiling():
     assert plan.leverage==50
 
 
-def test_half_open_pair_is_compensated():
+def test_half_open_pair_is_held_instead_of_loss_compensated():
     f=Fake(fail_short=True);p=plan_pair(SYMBOL,BRACKETS,65000,10)
-    with pytest.raises(RuntimeError,match="direct gecompenseerd"):
+    with pytest.raises(RuntimeError,match="blijft open"):
         execute_pair_once(f,p,id_prefix="tm-test",confirm=True,risk_approved=lambda _:True)
-    assert f.calls[-1]==("CLOSE","LONG")
+    assert f.calls[-1]==("OPEN","SHORT")
 
 
 def test_uncertain_compensation_escalates():
     f=Fake(fail_short=True,fail_close=True);p=plan_pair(SYMBOL,BRACKETS,65000,10)
-    with pytest.raises(RuntimeError,match="noodcontrole"):
+    with pytest.raises(RuntimeError,match="blijft open"):
         execute_pair_once(f,p,id_prefix="tm-test",confirm=True,risk_approved=lambda _:True)
 
 
 def test_harvest_closes_then_reopens_same_side():
     f=Fake();p=plan_pair(SYMBOL,BRACKETS,65000,10)
-    execute_harvest_reset(f,p,p,side=PositionSide.LONG,opposite_plan=p,id_prefix="tm-h",confirm=True)
+    execute_harvest_reset(f,p,p,side=PositionSide.LONG,opposite_plan=p,id_prefix="tm-h",confirm=True,
+        close_evidence=profitable())
     actions=[call for call in f.calls if call[0] in {"OPEN","CLOSE"}]
     assert actions[-2:]==[("CLOSE","LONG"),("OPEN","LONG")]
 
@@ -204,13 +210,16 @@ def test_failed_harvest_reset_flattens_opposite_side():
             if intent.action=="OPEN": raise RuntimeError("reset failed")
             return {"orderId":len(self.calls)},False
     f=ResetFail();p=plan_pair(SYMBOL,BRACKETS,65000,10)
-    with pytest.raises(RuntimeError,match="veilig gesloten"):
-        execute_harvest_reset(f,p,p,side=PositionSide.LONG,opposite_plan=p,id_prefix="tm-h",confirm=True)
-    assert f.calls[-1]==("CLOSE","SHORT")
+    with pytest.raises(RuntimeError,match="blijft open"):
+        execute_harvest_reset(f,p,p,side=PositionSide.LONG,opposite_plan=p,id_prefix="tm-h",confirm=True,
+            close_evidence=profitable())
+    assert f.calls[-1]==("OPEN","LONG")
 
 
 def test_close_all_requires_confirmation_and_closes_every_leg():
     f=Fake();p=plan_pair(SYMBOL,BRACKETS,65000,10)
     with pytest.raises(ValueError): execute_close_all(f,[(p,PositionSide.LONG)],id_prefix="tm-all",confirm=False)
-    result=execute_close_all(f,[(p,PositionSide.LONG),(p,PositionSide.SHORT)],id_prefix="tm-all",confirm=True)
+    with pytest.raises(ValueError): execute_close_all(f,[(p,PositionSide.LONG)],id_prefix="tm-all",confirm=True)
+    result=execute_close_all(f,[(p,PositionSide.LONG),(p,PositionSide.SHORT)],id_prefix="tm-all",confirm=True,
+        explicit_loss_confirmation=True)
     assert len(result)==2 and f.calls[-2:]==[("CLOSE","LONG"),("CLOSE","SHORT")]

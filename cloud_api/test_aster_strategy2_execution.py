@@ -11,7 +11,8 @@ class Client:
     def change_leverage(self,*a):return {}
 
 def plan():return PairExecutionPlan("BTCUSDT",Decimal(".1"),Decimal("10"),10)
-def context(owned=True,reconciled=True):return ExecutionContext("s2","c1",3,OwnedLeg("s2","strategy2","BTCUSDT","LONG","c1",3,.1,100) if owned else None,reconciled,True)
+def context(owned=True,reconciled=True):return ExecutionContext("s2","c1",3,OwnedLeg("s2","strategy2","BTCUSDT","LONG","c1",3,.1,90,
+    fill_ids=("f1",),fees=.01,funding=0,costs_updated_at_ms=1) if owned else None,reconciled,True,account_uid="uid")
 
 def test_unknown_fill_never_continues_or_resends():
     client=Client("NEW")

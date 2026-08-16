@@ -13,6 +13,7 @@ import hashlib
 from typing import Any, Callable
 
 from aster_execution import PairExecutionPlan, execute_leg_once
+from aster_close_guard import CloseEvidence
 from aster_gateway import PositionSide
 from aster_strategy2_state import OwnedLeg
 from aster_strategy3 import Decision
@@ -30,6 +31,10 @@ class Strategy3ExecutionContext:
     confirm: bool
     live_gate_open: bool
     strategy_id: str = STRATEGY3_ID
+    account_uid: str = ""
+    close_fee_rate: float = .0005
+    slippage_rate: float = .001
+    audit: Callable[[dict[str, Any]], None] | None = None
 
 
 def _prefix(context: Strategy3ExecutionContext, decision: Decision) -> str:
@@ -103,4 +108,14 @@ def execute_strategy3_decision(
         Decimal(str(decision.notional)),
         plan.leverage,
     )
-    return [execute_leg_once(client, close_plan, side=side, action="CLOSE", id_prefix=prefix, confirm=True)]
+    gross=((unit_price-owned.weighted_entry) if decision.side=="LONG" else
+           (owned.weighted_entry-unit_price))*float(close_plan.quantity)
+    evidence=CloseEvidence(account_uid=context.account_uid,symbol=plan.symbol,side=decision.side,
+        caller=f"strategy3:{decision.kind}",reason=decision.reason,quantity=float(close_plan.quantity),
+        entry_price=owned.weighted_entry,mark_price=unit_price,gross_pnl=gross,
+        entry_fees=owned.fees*ratio,close_fee=decision.notional*context.close_fee_rate,
+        funding=owned.funding*ratio,slippage_buffer=decision.notional*context.slippage_rate,
+        ownership_reliable=True,fills_reliable=bool(owned.fill_ids),prices_reliable=unit_price>0,
+        costs_reliable=owned.costs_updated_at_ms>0)
+    return [execute_leg_once(client, close_plan, side=side, action="CLOSE", id_prefix=prefix, confirm=True,
+        close_evidence=evidence,close_audit=context.audit)]
