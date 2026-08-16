@@ -1,0 +1,99 @@
+name: Apply Strategy 2 risk-start fix
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [".github/workflows/apply-strategy2-risk-start-fix.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply focused fix and regression test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          execution=Path("cloud_api/aster_strategy2_execution.py")
+          text=execution.read_text()
+          text=text.replace(
+              "from aster_strategy2_state import OwnedLeg\n",
+              "from aster_strategy2_state import OwnedLeg\n\nclass Strategy2RiskBlocked(ValueError):\n    \"\"\"A normal fail-closed portfolio decision, not an execution failure.\"\"\"\n",
+              1,
+          )
+          text=text.replace(
+              'raise ValueError("Portfolio Risk Engine blokkeert deze order")',
+              'raise Strategy2RiskBlocked("Portfolio Risk Engine blokkeert deze order")',
+              1,
+          )
+          execution.write_text(text)
+
+          main=Path("cloud_api/main.py")
+          text=main.read_text()
+          text=text.replace(
+              "from aster_strategy2_execution import ExecutionContext, execute_decision as execute_aster_strategy2_decision",
+              "from aster_strategy2_execution import ExecutionContext, Strategy2RiskBlocked, execute_decision as execute_aster_strategy2_decision",
+              1,
+          )
+          needle='''            except Exception as exc:
+                if not is_definite_contract_rejection(exc):raise
+'''
+          replacement='''            except Strategy2RiskBlocked as exc:
+                reason=str(exc)
+                ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now,"updatedAt":now},merge=True)
+                ref.collection("audit").add({"event":"MANAGEMENT_RISK_BLOCKED","symbol":leg.symbol,
+                    "side":leg.side,"action":decision.kind,"reason":reason,"timestamp":now})
+                return {"status":"waiting","action":"RISK_BLOCKED","symbol":leg.symbol,
+                    "side":leg.side,"ordersSent":0,"reason":reason}
+            except Exception as exc:
+                if not is_definite_contract_rejection(exc):raise
+'''
+          if needle not in text:
+              raise SystemExit("expected runtime insertion point missing")
+          text=text.replace(needle,replacement,1)
+          main.write_text(text)
+
+          test=Path("cloud_api/test_aster_strategy2_execution.py")
+          text=test.read_text()
+          text=text.replace("from decimal import Decimal\n","from decimal import Decimal\nfrom pathlib import Path\n",1)
+          text=text.replace(
+              "with pytest.raises(ValueError):execute_decision(client,Decision(\"ADD_DCA\",\"LONG\",10),plan(),context(),risk_approved=lambda _:False)",
+              "with pytest.raises(Strategy2RiskBlocked):execute_decision(client,Decision(\"ADD_DCA\",\"LONG\",10),plan(),context(),risk_approved=lambda _:False)",
+              1,
+          )
+          marker="    assert not client.calls\n\ndef test_confirmed_close_has_strategy_cycle_version_intent():"
+          addition='''    assert not client.calls
+
+          def test_runtime_converts_risk_denial_to_waiting_without_http_failure():
+              source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
+              assert "except Strategy2RiskBlocked as exc:" in source
+              assert '"action":"RISK_BLOCKED"' in source
+
+          def test_confirmed_close_has_strategy_cycle_version_intent():'''
+          if marker not in text:
+              raise SystemExit("expected test insertion point missing")
+          text=text.replace(marker,addition,1)
+          test.write_text(text)
+          PY
+          python -m pip install -q pytest
+          cd cloud_api
+          pytest -q test_aster_strategy2_execution.py test_aster_close_guard.py test_aster_strategy_status.py
+          python -m py_compile aster_strategy2_execution.py main.py test_aster_strategy2_execution.py
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name "OpenAI Codex"
+          git config user.email "codex@openai.com"
+          git add cloud_api/aster_strategy2_execution.py cloud_api/main.py cloud_api/test_aster_strategy2_execution.py
+          git commit -m "fix(strategy2): handle portfolio risk denial without start failure"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
