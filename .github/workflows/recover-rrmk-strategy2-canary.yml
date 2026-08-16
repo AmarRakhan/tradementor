@@ -19,6 +19,7 @@ jobs:
     env:
       GCP_PROJECT_ID: tradementor-amar-20260813
       EXECUTION_NAME: tm-s2-recover-139240-ftzgk
+      JOB_NAME: tm-s2-recover-139240
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -29,9 +30,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud logging read "resource.type=cloud_run_job AND labels.execution_name=\"$EXECUTION_NAME\"" \
-            --project "$GCP_PROJECT_ID" \
-            --freshness 24h \
-            --limit 100 \
-            --order asc \
-            --format='value(timestamp,severity,textPayload,jsonPayload.message)'
+          LOGS="$RUNNER_TEMP/logs.json"
+          gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB_NAME\"" \
+            --project "$GCP_PROJECT_ID" --freshness 24h --limit 200 --order asc --format=json > "$LOGS"
+          python - "$LOGS" "$EXECUTION_NAME" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding="utf-8"))
+          target=sys.argv[2]
+          matched=[]
+          for row in rows:
+              raw=json.dumps(row,sort_keys=True,default=str)
+              if target in raw:
+                  matched.append(row)
+                  payload=row.get("textPayload") or (row.get("jsonPayload") or {}).get("message") or raw
+                  print(payload)
+          print(f"EXECUTION_LOG_ROWS={len(matched)}")
+          if not matched:
+              raise SystemExit("RECOVERY_LOGS_NOT_FOUND")
+          PY
