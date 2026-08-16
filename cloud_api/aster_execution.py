@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_UP
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Callable
 
 from aster_gateway import (
@@ -18,6 +18,11 @@ class PairExecutionPlan:
     quantity: Decimal
     notional_per_leg: Decimal
     leverage: int
+    tick_size: Decimal = Decimal("0")
+    quantity_step: Decimal = Decimal("0")
+    minimum_quantity: Decimal = Decimal("0")
+    minimum_notional: Decimal = Decimal("0")
+    maximum_notional: Decimal = Decimal("0")
 
 
 def client_order_id(*parts: str) -> str:
@@ -130,31 +135,59 @@ def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, 
     return current
 
 
+def maximum_notional_for_leverage(brackets: list[LeverageBracket], leverage: int) -> Decimal:
+    """Largest contract notional whose bracket accepts ``leverage``.
+
+    A zero cap is Aster's unbounded final bracket and is preserved as zero.
+    """
+    eligible = [row.cap for row in brackets if row.maximum_leverage >= leverage]
+    if not eligible:
+        return Decimal("-1")
+    if any(cap <= 0 for cap in eligible):
+        return Decimal("0")
+    return max(eligible)
+
+
 def plan_pair(symbol_row: dict[str, Any], bracket_rows: list[dict[str, Any]],
-              price: float, notional_per_leg: float, maximum_oversize_ratio: float = .05) -> PairExecutionPlan:
+              price: float, notional_per_leg: float, *, accepted_leverage: int | None = None,
+              existing_contract_notional: float | Decimal = 0) -> PairExecutionPlan:
     if price <= 0 or notional_per_leg <= 0:
         raise ValueError("Prijs en positieomvang moeten positief zijn")
     rules = ContractRules.from_exchange_info(symbol_row)
     step = rules.market_quantity_step
-    requested = Decimal(str(notional_per_leg)) / Decimal(str(price))
+    configured_notional = Decimal(str(notional_per_leg))
+    market_price = Decimal(str(price))
+    requested = configured_notional / market_price
     if step > 0:
-        requested = (requested / step).to_integral_value(rounding=ROUND_UP) * step
+        requested = (requested / step).to_integral_value(rounding=ROUND_DOWN) * step
     minimum = max(rules.market_min_quantity, rules.min_quantity)
+    if step > 0:
+        minimum = (minimum / step).to_integral_value(rounding=ROUND_UP) * step
     if rules.min_notional > 0 and step > 0:
-        min_notional_quantity = (rules.min_notional / Decimal(str(price)) / step).to_integral_value(rounding=ROUND_UP) * step
+        min_notional_quantity = (rules.min_notional / market_price / step).to_integral_value(rounding=ROUND_UP) * step
         minimum = max(minimum, min_notional_quantity)
-    quantity = rules.market_quantity(max(requested, minimum), Decimal(str(price)))
-    actual_notional = quantity * Decimal(str(price))
-    maximum_notional = Decimal(str(notional_per_leg)) * Decimal(str(1 + maximum_oversize_ratio))
-    if actual_notional > maximum_notional:
+    minimum_executable_notional = minimum * market_price
+    if minimum_executable_notional > configured_notional:
         raise ValueError(
-            f"{symbol_row.get('symbol', '')}: minimale exchangeorder {actual_notional} USD "
+            f"{symbol_row.get('symbol', '')}: minimale exchangeorder {minimum_executable_notional} USD "
             f"overschrijdt ingesteld bedrag {notional_per_leg} USD"
         )
+    quantity = rules.market_quantity(max(requested, minimum), market_price)
+    actual_notional = quantity * market_price
+    if actual_notional > configured_notional:
+        raise ValueError(f"{rules.symbol}: uitvoerbare order {actual_notional} USD overschrijdt ingesteld bedrag {notional_per_leg} USD")
     brackets = [LeverageBracket.from_mapping(item) for item in bracket_rows]
-    leverage = maximum_allowed_leverage(quantity * Decimal(str(price)), brackets)
+    leverage = accepted_leverage or maximum_allowed_leverage(actual_notional, brackets)
+    maximum_notional = maximum_notional_for_leverage(brackets, leverage)
+    total_notional = abs(Decimal(str(existing_contract_notional))) + actual_notional
+    if maximum_notional < 0 or (maximum_notional > 0 and total_notional > maximum_notional):
+        raise ValueError(
+            f"{rules.symbol}: contractcapaciteit {maximum_notional} USD bij {leverage}x is lager "
+            f"dan totale geplande notional {total_notional} USD"
+        )
     return PairExecutionPlan(str(symbol_row.get("symbol", "")).upper(), quantity,
-                             actual_notional, leverage)
+                             actual_notional, leverage, rules.tick_size, step, minimum,
+                             rules.min_notional, maximum_notional)
 
 
 def execute_pair_once(client: Any, plan: PairExecutionPlan, *, id_prefix: str,

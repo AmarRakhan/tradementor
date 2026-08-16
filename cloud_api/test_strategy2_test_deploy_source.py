@@ -98,3 +98,50 @@ def test_strategy2_test_only_publication_cannot_deploy_other_cloud_environments(
     for deployment in NON_TEST_DEPLOYMENTS:
         workflow = deployment.read_text(encoding="utf-8")
         assert guard in workflow
+
+
+def test_strategy2_candidate_rejections_are_isolated_and_visible():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    assert 'entryCandidateCooldowns' in tick
+    assert 'fingerprint' in tick
+    assert 'advancedWithinTick' in tick
+    assert 'accountPositionCount' in tick
+    assert 'provenStrategy2LegCount' in tick
+    assert 'ENTRY_CANDIDATE_REJECTED' in tick
+    assert 'errorCode' in tick and 'action":"OPEN"' in tick
+    assert 'continue' in tick[tick.index('ENTRY_CANDIDATE_REJECTED'):]
+    assert 'except Exception as exc' in tick
+
+
+def test_confirmed_fill_and_strategy2_ownership_are_committed_atomically():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    start = tick.index('audit_ref=ref.collection("audit").document()')
+    end = tick.index('batch.commit()', start) + len('batch.commit()')
+    atomic = tick[start:end]
+    assert 'batch.set(ref,{"ownedLegs"' in atomic
+    assert 'batch.set(audit_ref' in atomic
+    assert atomic.count('batch.commit()') == 1
+
+
+def test_proven_refresh_race_is_reconciled_before_exclusive_completeness_check():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    recovery = tick.index("owned,recovered_ownership=recover_audited_ownership")
+    exclusive = tick.index('exclusive=os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP"')
+    assert recovery < exclusive
+    recovered_block = tick[recovery:exclusive]
+    assert "audit_events=audit_events,fills=fills" in recovered_block
+    assert "recovery_batch.set(ref" in recovered_block
+    assert '"OWNERSHIP_RECOVERED_FROM_AUDIT"' in recovered_block
+    assert "recovery_batch.commit()" in recovered_block
+
+
+def test_strategy2_candidate_logic_has_no_account_symbol_or_amount_exception():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    for forbidden in ('BULLAUSDT','CRDOUSDT','PLTRUSDT','hotmail.com','gmail.com'):
+        assert forbidden not in tick
+    assert 'settings.base_notional' in tick
+    assert 'maximum_pairs' in tick

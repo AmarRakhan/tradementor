@@ -1,6 +1,7 @@
 from decimal import Decimal
 import pytest
-from aster_execution import plan_pair, execute_pair_once, execute_leg_once, execute_harvest_reset, execute_close_all, is_definite_contract_rejection, contract_brackets, planning_brackets, client_order_id
+from aster_execution import plan_pair, execute_pair_once, execute_leg_once, execute_harvest_reset, execute_close_all, is_definite_contract_rejection, contract_brackets, planning_brackets, client_order_id, maximum_notional_for_leverage
+from aster_gateway import LeverageBracket
 from aster_gateway import PositionSide
 
 
@@ -26,12 +27,52 @@ class Fake:
 
 def test_plan_uses_exchange_minimums_and_max_leverage():
     p=plan_pair(SYMBOL,BRACKETS,65000,10)
-    assert p.quantity==Decimal("0.00016") and p.leverage==200
+    assert p.quantity==Decimal("0.00015") and p.notional_per_leg==Decimal("9.75000") and p.leverage==200
+    assert p.tick_size==Decimal("0.1") and p.quantity_step==Decimal("0.00001")
 
 
 def test_configured_twenty_five_is_not_halved_into_twelve_dollar_order():
     p=plan_pair(SYMBOL,BRACKETS,65000,25)
-    assert Decimal("25") <= p.notional_per_leg <= Decimal("26.25")
+    assert Decimal("24") < p.notional_per_leg <= Decimal("25")
+
+
+@pytest.mark.parametrize("amount",[11,25,70,13.37])
+def test_every_configured_amount_is_a_strict_cap(amount):
+    p=plan_pair(SYMBOL,BRACKETS,65000,amount)
+    assert p.notional_per_leg<=Decimal(str(amount))
+
+
+def test_minimum_notional_above_configured_amount_is_rejected():
+    row={**SYMBOL,"filters":[*SYMBOL["filters"][:-1],{"filterType":"MIN_NOTIONAL","notional":"26.43"}]}
+    with pytest.raises(ValueError,match="overschrijdt ingesteld bedrag"):
+        plan_pair(row,BRACKETS,1,25)
+
+
+def test_minimum_quantity_times_price_above_configured_amount_is_rejected():
+    row={**SYMBOL,"filters":[
+        SYMBOL["filters"][0],
+        {"filterType":"LOT_SIZE","minQty":"2.642","maxQty":"100","stepSize":".001"},
+        {"filterType":"MARKET_LOT_SIZE","minQty":"2.642","maxQty":"100","stepSize":".001"},
+        {"filterType":"MIN_NOTIONAL","notional":"1"}]}
+    with pytest.raises(ValueError,match="26.420"):
+        plan_pair(row,BRACKETS,10,25)
+
+
+def test_quantity_step_rounding_never_raises_risk():
+    row={**SYMBOL,"filters":[SYMBOL["filters"][0],
+        {"filterType":"LOT_SIZE","minQty":".1","maxQty":"100","stepSize":".1"},
+        {"filterType":"MARKET_LOT_SIZE","minQty":".1","maxQty":"100","stepSize":".1"},
+        {"filterType":"MIN_NOTIONAL","notional":"1"}]}
+    p=plan_pair(row,BRACKETS,3,11)
+    assert p.quantity==Decimal("3.6") and p.notional_per_leg==Decimal("10.8")
+
+
+def test_maximum_notional_is_validated_at_accepted_leverage_with_existing_exposure():
+    brackets=[{"notionalFloor":"0","notionalCap":"100","initialLeverage":20,"maintMarginRatio":".01"}]
+    with pytest.raises(ValueError,match="contractcapaciteit"):
+        plan_pair(SYMBOL,brackets,10,11,accepted_leverage=20,existing_contract_notional=95)
+    parsed=[LeverageBracket.from_mapping(x) for x in brackets]
+    assert maximum_notional_for_leverage(parsed,20)==Decimal("100")
 
 
 def test_exchange_minimum_may_never_silently_inflate_user_amount():

@@ -103,6 +103,7 @@ from aster_portfolio_replay import ReplayCandle, ReplaySeed, comparison_conclusi
 from aster_strategy import Account as AsterStrategyAccount, Leg as AsterStrategyLeg, Pair as AsterStrategyPair
 from aster_automation import TickMarket as AsterTickMarket, decide_tick as decide_aster_tick
 from aster_execution import PairExecutionPlan, plan_pair as plan_aster_pair, execute_pair_once as execute_aster_pair
+from aster_gateway import ContractRules
 from aster_execution import execute_leg_once as execute_aster_leg, execute_harvest_reset as execute_aster_harvest
 from aster_execution import execute_close_all as execute_aster_close_all
 from aster_execution import configure_maximum_usable_leverage
@@ -1460,7 +1461,9 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         "runtimeEnabled":runtime_enabled,"operation":operation,"positionCounts":counts,
         "configVersion": int(safe_float(raw.get("configVersion", settings.get("version", 1)))),
         "lastReason":str(raw.get("lastReason","Nog niet gestart")),"lastTickAt":raw.get("lastTickAt"),
-        "scheduler":strategy2_scheduler_status(raw),
+        "scheduler":strategy2_scheduler_status(raw),"candidateScan":raw.get("candidateScan",{}),
+        "accountPositionCount":int(safe_float(account_snapshot.get("accountPositionCount"))),
+        "provenStrategy2LegCount":counts["positionLegCount"],
         "activePairs":counts["uniqueMarketCount"],"activeLegs":counts["positionLegCount"],
         "longLegs":counts["longLegs"],"shortLegs":counts["shortLegs"]}}
 
@@ -1511,6 +1514,21 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 if s3_leg.strategy_id=="aster-strategy-3" and s3_leg.engine_type=="strategy3":
                     s3_keys.add((s3_leg.symbol,s3_leg.side));s3_legs.append(s3_leg)
             except (TypeError,ValueError):pass
+        # Repair a confirmed fill/audit refresh race before exclusive ownership
+        # completeness is evaluated.  Both evidence sources must match the
+        # active exchange leg; manual or otherwise unproven positions remain
+        # unknown and therefore fail closed below.  This path never sends an
+        # order and commits the recovered ownership rows with their audit rows.
+        owned,recovered_ownership=recover_audited_ownership(persisted=owned,positions=positions,
+            audit_events=audit_events,fills=fills,excluded_keys=s3_keys)
+        if recovered_ownership:
+            recovery_batch=db.batch();recovered_at=datetime.now(timezone.utc)
+            recovery_batch.set(ref,{"ownedLegs":[owned_to_mapping(x) for x in owned],"updatedAt":recovered_at},merge=True)
+            for item in recovered_ownership:
+                recovery_batch.set(ref.collection("audit").document(),
+                    {"event":"OWNERSHIP_RECOVERED_FROM_AUDIT",**item,"timestamp":recovered_at})
+            recovery_batch.commit()
+            refresh_symbols|={str(item.get("symbol","")).upper() for item in recovered_ownership}
         exclusive=os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP","false").lower()=="true"
         s1_raw=aster_automation_reference(uid).get().to_dict() or {};s1_legs=[]
         for item in s1_raw.get("ownedLegs",[]) if isinstance(s1_raw.get("ownedLegs"),list) else []:
@@ -1541,12 +1559,6 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             reason="Strategy-2-ownership botst met Strategy 3 en is niet eenduidig bewezen"
             ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
             return {"status":"reconciling","reason":reason,"ordersSent":0}
-        owned,recovered_ownership=recover_audited_ownership(persisted=owned,positions=positions,
-            audit_events=audit_events,fills=fills,excluded_keys=s3_keys)
-        if recovered_ownership:
-            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"updatedAt":now},merge=True)
-            for item in recovered_ownership:ref.collection("audit").add({"event":"OWNERSHIP_RECOVERED_FROM_AUDIT",**item,"timestamp":now})
-            refresh_symbols|={str(item.get("symbol","")).upper() for item in recovered_ownership}
         s1_keys=set() if exclusive else _explicit_strategy1_owned_keys(s1_raw)
         s2_keys={(leg.symbol,leg.side) for leg in owned}
         unknown=active_keys-(s1_keys|s2_keys|s3_keys)
@@ -1575,7 +1587,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     snapshot={"equity":portfolio.equity,"highWaterMark":portfolio.adjusted_high_water_mark,"drawdown":portfolio.drawdown,
         "marginRatio":portfolio.margin_ratio,"longExposure":portfolio.long_exposure,"shortExposure":portfolio.short_exposure,
         "strategyExposure":portfolio.strategy_exposure,"strategyMargin":portfolio.strategy_margin,
-        "activePairs":len({x.symbol for x in owned}),"capturedAt":now}
+        "activePairs":len({x.symbol for x in owned}),"accountPositionCount":len(active_position_map(positions)),
+        "provenStrategy2LegCount":len(owned),"capturedAt":now}
     ref.set({"accountSnapshot":snapshot,"adjustedHighWaterMark":portfolio.adjusted_high_water_mark,"ownedLegs":[owned_to_mapping(x) for x in owned],"lastTickAt":now},merge=True)
     blocked_dca_raw=raw.get("blockedDcaMinimums") if isinstance(raw.get("blockedDcaMinimums"),dict) else {}
     blocked_dca=(
@@ -1731,6 +1744,14 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         return {"status":"simulated","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG","plannedOrders":order_limit,
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}
     opened_legs=[];used_strategy_margin=portfolio.strategy_margin;candidate_failures=[];budget_blocked=False
+    scan_checked=0;scan_skipped=0;advanced_after_rejection=False
+    cooldowns=raw.get("entryCandidateCooldowns") if isinstance(raw.get("entryCandidateCooldowns"),dict) else {}
+    cooldowns={str(key):value for key,value in cooldowns.items() if isinstance(value,dict)}
+    contract_exposure={}
+    for position in positions:
+        position_symbol=str(position.get("symbol","")).upper()
+        contract_exposure[position_symbol]=contract_exposure.get(position_symbol,Decimal("0"))+abs(
+            Decimal(str(position.get("positionAmt",0)))*Decimal(str(position.get("markPrice",0))))
     for index in range(order_limit):
         entry_side=next_balanced_entry_side(owned,settings.maximum_pairs)
         if not entry_side:break
@@ -1738,15 +1759,27 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         candidates.sort(key=lambda symbol:changes.get(symbol,0),reverse=entry_side=="LONG")
         plan=None;symbol="";opened=None
         for candidate in candidates:
+            scan_checked+=1
             try:
-                value=plan_aster_pair(rows[candidate],planning_brackets(client,all_brackets,candidate,settings.leverage),prices[candidate],settings.base_notional)
+                candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)
+                rules=ContractRules.from_exchange_info(rows[candidate])
+                fingerprint=hashlib.sha256(json.dumps({"price":prices[candidate],"tick":str(rules.tick_size),
+                    "step":str(rules.market_quantity_step),"minQty":str(rules.market_min_quantity),
+                    "minNotional":str(rules.min_notional),"requestedLeverage":settings.leverage,
+                    "brackets":candidate_brackets},sort_keys=True,separators=(",",":" )).encode()).hexdigest()[:20]
+                cooldown_key=f"{candidate}|{entry_side}|OPEN"
+                prior=cooldowns.get(cooldown_key,{})
+                if safe_float(prior.get("until"))>now_ms and prior.get("fingerprint")==fingerprint:
+                    scan_skipped+=1
+                    candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
+                    continue
+                cooldowns.pop(cooldown_key,None)
+                value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
+                    existing_contract_notional=contract_exposure.get(candidate,0))
                 value=replace(value,leverage=min(value.leverage,settings.leverage))
                 accepted=configure_maximum_usable_leverage(client,value)
-                value=replace(value,leverage=accepted)
-                # The UI value is leveraged position notional, not margin and
-                # never a two-sided total.  Refuse a silent undersized order.
-                if float(value.notional_per_leg)+.01 < settings.base_notional:
-                    raise ValueError(f"{candidate}: geplande positie ${float(value.notional_per_leg):.2f} is kleiner dan ingestelde ${settings.base_notional:.2f}")
+                value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
+                    accepted_leverage=accepted,existing_contract_notional=contract_exposure.get(candidate,0))
                 required=float(value.notional_per_leg)/max(1,value.leverage)
                 if used_strategy_margin+required>portfolio.equity*settings.strategy_budget:
                     budget_blocked=True
@@ -1758,19 +1791,41 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                     if not is_definite_contract_rejection(exc):
                         raise
                     candidate_failures.append(f"{candidate}: {exc}")
+                    scan_skipped+=1;advanced_after_rejection=True
+                    attempts=int(safe_float(prior.get("attempts")))+1
+                    cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
+                    code=(re.search(r"-\d{4}",str(exc)) or [""])[0]
+                    cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
+                        "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
                     ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
-                        "reason":str(exc),"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
+                        "action":"OPEN","errorCode":code,"reason":str(exc),"cooldownSeconds":cooldown_seconds,
+                        "configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
                     continue
                 plan=value;symbol=candidate;break
             except ValueError as exc:
                 candidate_failures.append(f"{candidate}: {exc}")
+                scan_skipped+=1;advanced_after_rejection=True
+                attempts=int(safe_float(prior.get("attempts")))+1
+                cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
+                cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
+                    "attempts":attempts,"code":"VALIDATION","reason":str(exc),"side":entry_side,"action":"OPEN"}
+                ref.collection("audit").add({"event":"ENTRY_CANDIDATE_VALIDATION_SKIPPED","symbol":candidate,
+                    "side":entry_side,"action":"OPEN","errorCode":"VALIDATION","reason":str(exc),
+                    "cooldownSeconds":cooldown_seconds,"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
                 continue
             except Exception as exc:
                 if not is_definite_contract_rejection(exc):
                     raise
                 candidate_failures.append(f"{candidate}: {exc}")
+                scan_skipped+=1;advanced_after_rejection=True
+                attempts=int(safe_float(prior.get("attempts")))+1
+                cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
+                code=(re.search(r"-\d{4}",str(exc)) or [""])[0]
+                cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
+                    "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
                 ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
-                    "reason":str(exc),"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
+                    "action":"OPEN","errorCode":code,"reason":str(exc),"cooldownSeconds":cooldown_seconds,
+                    "configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
                 continue
         if not plan or opened is None:break
         required=float(plan.notional_per_leg)/max(1,plan.leverage)
@@ -1783,17 +1838,25 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         active_keys.add((symbol,entry_side));used_strategy_margin+=required;opened_legs.append({"symbol":symbol,"side":entry_side})
         # Persist after every confirmed fill: a later timeout must never erase
         # ownership of the positions already opened in this initial batch.
-        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"phase":"INITIAL_BUILD","lastReason":f"Initiële opbouw: {len(opened_legs)} positie(s) bevestigd","updatedAt":datetime.now(timezone.utc)},merge=True)
-        ref.collection("audit").add({"event":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG","symbol":symbol,"side":entry_side,"cycleId":cycle,
+        audit_ref=ref.collection("audit").document();batch=db.batch();confirmed_at=datetime.now(timezone.utc)
+        batch.set(ref,{"ownedLegs":[owned_to_mapping(x) for x in owned],"entryCandidateCooldowns":cooldowns,
+            "phase":"INITIAL_BUILD","lastReason":f"Initiële opbouw: {len(opened_legs)} positie(s) bevestigd","updatedAt":confirmed_at},merge=True)
+        batch.set(audit_ref,{"event":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG","symbol":symbol,"side":entry_side,"cycleId":cycle,
             "configuredBaseNotional":settings.base_notional,"filledNotional":q*p,"acceptedLeverage":opened.get("leverage",plan.leverage),"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
+        batch.commit()
     long_count,short_count=harvest_counts(owned);complete=long_count>=long_target and short_count>=short_target
     detail=("; ".join(candidate_failures[:3]) if candidate_failures else
         ("Strategy Margin Budget bereikt" if budget_blocked else f"{len(codes)} kandidaten gecontroleerd"))
     reason=(f"Gebalanceerde start compleet: {long_count} LONG / {short_count} SHORT" if complete else
         f"Initiële opbouw gepauzeerd op {long_count} LONG / {short_count} SHORT. {detail}")
-    ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"initialBuildComplete":complete,"phase":"RUNNING" if complete else "INITIAL_BUILD","lastReason":reason,"updatedAt":datetime.now(timezone.utc)},merge=True)
+    scan_status={"checked":scan_checked,"skipped":scan_skipped,"advancedWithinTick":advanced_after_rejection,
+        "reasons":candidate_failures[:5],"accountPositionCount":len(active_keys),"provenStrategy2LegCount":len(owned),"checkedAt":now}
+    ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"entryCandidateCooldowns":cooldowns,
+        "candidateScan":scan_status,"initialBuildComplete":complete,"phase":"RUNNING" if complete else "INITIAL_BUILD",
+        "lastReason":reason,"updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"status":"ok" if opened_legs else "waiting","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG",
-        "opened":opened_legs,"longCount":long_count,"shortCount":short_count,"targetLong":long_target,"targetShort":short_target,"ordersSent":len(opened_legs),"reason":reason}
+        "opened":opened_legs,"longCount":long_count,"shortCount":short_count,"targetLong":long_target,"targetShort":short_target,
+        "candidateScan":scan_status,"ordersSent":len(opened_legs),"reason":reason}
 
 
 def aster_automation_public(uid: str) -> dict[str, Any]:
