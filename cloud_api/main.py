@@ -1495,7 +1495,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     try:
         audit_events=[x.to_dict() or {} for x in ref.collection("audit").stream()]
         audited_symbols={str(x.get("symbol","")).upper() for x in audit_events
-            if str(x.get("event","")).upper()=="INITIAL_OPEN_LEG"
+            if str(x.get("event","")).upper() in {"INITIAL_OPEN_LEG","OPEN_LEG","OPEN_PROTECTION"}
             and str(x.get("strategyId",x.get("strategy_id","aster-strategy-2")))=="aster-strategy-2"}
         active_keys=set(active_position_map(positions));known_keys={(x.symbol,x.side) for x in owned}
         missing_symbols={symbol for symbol,side in active_keys if (symbol,side) not in known_keys}

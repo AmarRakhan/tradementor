@@ -35,8 +35,9 @@ def recover_audited_ownership(*,persisted:list[OwnedLeg],positions:list[dict[str
     result=list(persisted);known={(x.symbol,x.side) for x in result};recovered=[];active=active_position_map(positions)
     excluded_keys=excluded_keys or set()
     opens=[]
+    proven_open_events={"INITIAL_OPEN_LEG","OPEN_LEG","OPEN_PROTECTION"}
     for event in audit_events:
-        if str(event.get("event","")).upper()!="INITIAL_OPEN_LEG":continue
+        if str(event.get("event","")).upper() not in proven_open_events:continue
         event_strategy=str(event.get("strategyId",event.get("strategy_id",""))).strip()
         if require_event_strategy and event_strategy!=strategy_id:continue
         if event_strategy and event_strategy!=strategy_id:continue

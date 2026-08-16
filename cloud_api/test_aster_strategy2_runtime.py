@@ -19,6 +19,25 @@ def test_missing_ownership_recovers_only_with_matching_audit_and_exchange_fill()
     assert [(x.symbol,x.side,x.quantity,x.weighted_entry) for x in owned]==[("VIRTUALUSDT","LONG",2,5)]
     assert recovered==[{"symbol":"VIRTUALUSDT","side":"LONG","cycleId":"c1"}]
 
+def test_confirmed_normal_refill_recovers_after_refresh_timeout():
+    stamp=datetime(2026,8,16,1,0,0,tzinfo=timezone.utc)
+    positions=[{"symbol":"REFILLUSDT","positionSide":"SHORT","positionAmt":"3","entryPrice":"8"}]
+    audit=[{"event":"OPEN_LEG","strategyId":"aster-strategy-2","symbol":"REFILLUSDT",
+        "side":"SHORT","cycleId":"refill-c1","configVersion":7,"timestamp":stamp}]
+    fills=[{"symbol":"REFILLUSDT","positionSide":"SHORT","qty":"3","price":"8",
+        "time":int(stamp.timestamp()*1000),"id":"fill-refill"}]
+    owned,recovered=recover_audited_ownership(persisted=[],positions=positions,audit_events=audit,fills=fills)
+    assert len(owned)==1 and owned[0].cycle_id=="refill-c1"
+    assert recovered==[{"symbol":"REFILLUSDT","side":"SHORT","cycleId":"refill-c1"}]
+
+def test_open_audit_without_matching_fill_never_claims_ownership():
+    stamp=datetime(2026,8,16,1,0,0,tzinfo=timezone.utc)
+    positions=[{"symbol":"MANUALUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"9"}]
+    audit=[{"event":"OPEN_LEG","strategyId":"aster-strategy-2","symbol":"MANUALUSDT",
+        "side":"LONG","cycleId":"c","timestamp":stamp}]
+    owned,recovered=recover_audited_ownership(persisted=[],positions=positions,audit_events=audit,fills=[])
+    assert owned==[] and recovered==[]
+
 def test_missing_ownership_is_not_recovered_without_a_matching_fill():
     positions=[{"symbol":"ADAUSDT","positionSide":"SHORT","positionAmt":"20","entryPrice":".5"}]
     audit=[{"event":"INITIAL_OPEN_LEG","symbol":"ADAUSDT","side":"SHORT","cycleId":"c2","timestamp":1_000}]
