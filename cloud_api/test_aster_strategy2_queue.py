@@ -2,7 +2,7 @@ import random
 
 from aster_strategy2_queue import (
     MAX_ORDERS_PER_ACCOUNT_SCAN, PendingReopen, QueueAction, QueueState,
-    build_reopen, initial_build_actions, ordered_actions, pending_reopen_for,
+    build_reopen, build_shadow_plan, initial_build_actions, ordered_actions, pending_reopen_for,
 )
 from aster_strategy2_runtime import queued_entry_order_limit
 
@@ -119,3 +119,38 @@ def test_ten_thousand_deterministic_simulations_never_exceed_budget_or_cross_acc
         assert all(item.idempotency_key(account).startswith("s2q-") for item,_ in sent)
         if state.halted_uncertain:
             assert sent[-1][1]=="UNCERTAIN"
+
+
+def test_shadow_plan_is_read_only_prioritized_and_budgeted():
+    state=QueueState("private-account","shadow-1",orders_used=13,
+        confirmed_keys={action("DCA",4).idempotency_key("private-account")})
+    before=state.to_mapping()
+    plan=build_shadow_plan(state=state,risk=[action("RISK_REDUCE",1)],
+        profits=[action("TAKE_PROFIT_CLOSE",2)],pending_reopens=[action("REOPEN",3)],
+        dca=[action("DCA",4)],entries=[action("OPEN_BASE",5)])
+    assert state.to_mapping()==before
+    assert plan["readOnly"] is True and plan["wouldSendCount"]==2
+    assert [x["kind"] for x in plan["actions"]]==["RISK_REDUCE","REOPEN"]
+    assert plan["accountRef"]!="private-account" and plan["remainingBudget"]==2
+
+
+def test_shadow_plan_fail_closed_for_uncertain_account():
+    state=QueueState("a","s",halted_uncertain=True,uncertain_key="unknown")
+    plan=build_shadow_plan(state=state,risk=[action("RISK_REDUCE",1)],entries=[action("OPEN_BASE",2)])
+    assert plan["wouldSendCount"]==0 and plan["actions"]==[] and plan["haltedUncertain"] is True
+
+
+def test_ten_thousand_shadow_plans_never_mutate_or_exceed_account_budget():
+    rng=random.Random(20260818)
+    for simulation in range(10_000):
+        state=QueueState(f"shadow-{simulation%4}",f"scan-{simulation}",orders_used=rng.randrange(16),
+                         halted_uncertain=rng.randrange(500)==0)
+        before=state.to_mapping()
+        groups=[[action(kind,simulation*100+i) for i in range(rng.randrange(20))]
+                for kind in ("RISK_REDUCE","TAKE_PROFIT_CLOSE","REOPEN","DCA","OPEN_BASE")]
+        plan=build_shadow_plan(state=state,risk=groups[0],profits=groups[1],pending_reopens=groups[2],
+                               dca=groups[3],entries=groups[4])
+        assert state.to_mapping()==before
+        assert plan["wouldSendCount"]<=15-state.orders_used
+        assert plan["maximumOrders"]==15
+        if state.halted_uncertain:assert plan["wouldSendCount"]==0
