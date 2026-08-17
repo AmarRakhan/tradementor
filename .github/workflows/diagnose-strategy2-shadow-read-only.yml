@@ -1,0 +1,168 @@
+name: Strategy 2 Canary Shadow Snapshot Read Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type RUN_READ_ONLY_SHADOW"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-shadow-read-only
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      ACCOUNT_EMAIL_SHA256: 6368246d6bce5a3f828f28b960c8215b17e79b8ba94811df4f01f1b17a03282a
+    steps:
+      - name: Prove read-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_ACTOR" = "AmarRakhan"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "${{ inputs.confirmation }}" = "RUN_READ_ONLY_SHADOW"
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read masked Strategy 2 snapshot without exchange access
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-shadow-${GITHUB_RUN_ID: -6}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          readarray -t SERVICE_VALUES < <(python - "$SERVICE_JSON" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          spec=service["spec"]["template"]["spec"]
+          print(spec["containers"][0]["image"])
+          print(spec["serviceAccountName"])
+          PY
+          )
+          IMAGE="${SERVICE_VALUES[0]}"
+          RUNTIME_SERVICE_ACCOUNT="${SERVICE_VALUES[1]}"
+          test -n "$IMAGE" && test -n "$RUNTIME_SERVICE_ACCOUNT"
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json,os
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+
+          target=os.environ["ACCOUNT_EMAIL_SHA256"]
+          db=firestore.Client(project="tradementor-amar-20260813")
+          matched=set()
+          email_keys=("email","userEmail","emailAddress","accountEmail")
+          for collection in ("users","userProfiles","asterStrategy2"):
+              for document in db.collection(collection).stream():
+                  value=document.to_dict() or {}
+                  for key in email_keys:
+                      candidate=str(value.get(key,"")).strip().lower()
+                      if candidate and hashlib.sha256(candidate.encode()).hexdigest()==target:
+                          matched.add(document.id)
+          if len(matched)!=1:
+              import firebase_admin,google.auth
+              from firebase_admin import auth
+              credential,_=google.auth.default(quota_project_id="tradementor-production")
+              if not firebase_admin._apps:
+                  firebase_admin.initialize_app(credential,options={"projectId":"tradementor-production"})
+              matched=set()
+              page=auth.list_users()
+              while page:
+                  for user in page.users:
+                      candidate=str(user.email or "").strip().lower()
+                      if candidate and hashlib.sha256(candidate.encode()).hexdigest()==target:
+                          matched.add(user.uid)
+                  page=page.get_next_page()
+          if len(matched)!=1:raise SystemExit(f"MASKED_ACCOUNT_MATCH_COUNT_{len(matched)}")
+          uid=next(iter(matched))
+          def read(collection):
+              snap=db.collection(collection).document(uid).get()
+              return (snap.to_dict() or {}) if snap.exists else {}
+          s1,s2,s3=read("asterAutomation"),read("asterStrategy2"),read("asterStrategy3")
+          owned=s2.get("ownedLegs") if isinstance(s2.get("ownedLegs"),list) else []
+          queue=s2.get("orderQueueState") if isinstance(s2.get("orderQueueState"),dict) else {}
+          intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
+          pending=s2.get("pendingReopens") if isinstance(s2.get("pendingReopens"),list) else []
+          snapshot=s2.get("accountSnapshot") if isinstance(s2.get("accountSnapshot"),dict) else {}
+          settings=s2.get("settings") if isinstance(s2.get("settings"),dict) else {}
+          sides={"LONG":0,"SHORT":0}
+          for row in owned:
+              side=str(row.get("side","")).upper() if isinstance(row,dict) else ""
+              if side in sides:sides[side]+=1
+          result={
+              "readOnly":True,"accountRef":target[:12],
+              "strategy2":{"enabled":bool(s2.get("enabled")),"monitor":bool(s2.get("monitor")),
+                  "phase":str(s2.get("phase","")),"mode":str(settings.get("mode","")),
+                  "exclusiveOwnership":bool(s2.get("exclusiveOwnership")),
+                  "ownedLegs":len(owned),"longLegs":sides["LONG"],"shortLegs":sides["SHORT"],
+                  "unassignedPositions":int(s2.get("unassignedPositions",0) or 0),
+                  "orderQueueEnabled":bool(s2.get("orderQueueEnabled",False))},
+              "queue":{"scanId":str(queue.get("scanId","")),"ordersUsed":int(queue.get("ordersUsed",0) or 0),
+                  "haltedUncertain":bool(queue.get("haltedUncertain",False)),
+                  "hasCurrentIntent":bool(intent),"pendingReopenCount":len(pending)},
+              "snapshot":{"capturedAt":str(snapshot.get("capturedAt","")),
+                  "accountPositionCount":int(snapshot.get("accountPositionCount",snapshot.get("accountActivePositions",0)) or 0),
+                  "openOrderCount":int(snapshot.get("openOrderCount",0) or 0)},
+              "isolation":{"strategy1Active":bool(s1.get("enabled") or s1.get("monitor")),
+                  "strategy3Active":bool(s3.get("enabled") or s3.get("monitor"))},
+              "observedAt":datetime.now(timezone.utc).isoformat()
+          }
+          print("S2_SHADOW_SNAPSHOT "+json.dumps(result,sort_keys=True))
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --set-env-vars "ACCOUNT_EMAIL_SHA256=$ACCOUNT_EMAIL_SHA256" \
+            --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait \
+            > "$RUNNER_TEMP/shadow-execute.txt" 2>&1
+          EXECUTE_RC=$?
+          set -e
+          sleep 8
+          RESULT="$(gcloud logging read \
+            "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"S2_SHADOW_SNAPSHOT\"" \
+            --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)')"
+          if [[ "$EXECUTE_RC" -ne 0 || -z "$RESULT" ]]; then
+            gcloud logging read \
+              "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" \
+              --project "$GCP_PROJECT_ID" --freshness 10m --limit 30 --order desc \
+              --format='value(timestamp,severity,textPayload,jsonPayload.message)' \
+              | sed -E 's/[[:space:]]+/ /g' | tail -30
+            cat "$RUNNER_TEMP/shadow-execute.txt"
+            exit 1
+          fi
+          printf '%s\n' "$RESULT"
+          cleanup
+          trap - EXIT

@@ -90,7 +90,10 @@ def test_queue_candidate_deploy_has_zero_traffic_and_explicitly_disabled_flag():
     assert "push:" not in workflow
     assert 'test "$GITHUB_EVENT_NAME" = "workflow_dispatch"' in workflow
     assert 'test "${{ inputs.confirmation }}" = "DEPLOY_ZERO_TRAFFIC_CANDIDATE"' in workflow
-    assert 'refs/heads/codex/strategy2-account-order-queue' in workflow
+    assert 'refs/heads/amar-crypto-bot-2026-cloud' in workflow
+    assert "CANDIDATE_COMMIT: af765e0760aa541cac6366a7763b547faa1e6867" in workflow
+    assert 'ref: ${{ env.CANDIDATE_COMMIT }}' in workflow
+    assert 'test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"' in workflow
     assert '--no-traffic --tag "$CANDIDATE_TAG"' in workflow
     assert "CANDIDATE_TAG: q2c" in workflow
     assert 'x.get("tag")=="q2c"' in workflow
