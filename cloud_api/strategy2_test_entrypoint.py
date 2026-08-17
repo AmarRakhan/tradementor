@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, Header
@@ -12,6 +13,11 @@ import main as control_plane
 from read_only_source import read_source_url as environment_read_source_url
 from aster_cost_evidence import paged_user_trades
 from aster_gateway import AsterApiError, AsterV3Client
+from aster_strategy2_shadow import plan_validated_shadow
+from aster_strategy2_shadow_adapter import (
+    ReadOnlyAccountSnapshot, ShadowSnapshotRejected, validated_entry_symbols,
+    validated_shadow_inputs,
+)
 from strategy2_handoff import HandoffProof, build_handoff_proof, ownership_rows, proof_public
 
 
@@ -120,6 +126,70 @@ def strategy2_token_diagnostics(
     }
 
 
+@app.get("/v1/me/aster/strategy2/queue-shadow")
+def strategy2_queue_shadow(
+    user: dict[str, Any] = Depends(control_plane.authenticated_user),
+) -> dict[str, Any]:
+    """Plan existing-position actions from fresh reads; never write or trade."""
+    uid = str(user["uid"])
+    captured_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    state_snapshot = control_plane.aster_strategy2_reference(uid).get()
+    state = (state_snapshot.to_dict() or {}) if state_snapshot.exists else {}
+    secret = control_plane.load_aster_secret({"uid": uid})
+    client = AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=control_plane.local_eip712_signer(secret),
+        live_authorized=False,
+    )
+    try:
+        hedge_mode = client.position_mode()
+        account = client.account_information()
+        positions = tuple(client.position_risk())
+        open_orders = tuple(client.open_orders())
+        exchange_info = client.public_exchange_info()
+        prices = tuple(client.ticker_prices())
+        tickers_24h = tuple(client.ticker_24h())
+        brackets = tuple(client.leverage_brackets())
+        config = control_plane.Strategy2Config.from_mapping(state.get("settings"))
+        persisted_owned = tuple(
+            control_plane.owned_from_mapping(row)
+            for row in state.get("ownedLegs", [])
+        )
+        entry_symbols = validated_entry_symbols(
+            config=config, owned=persisted_owned, positions=positions,
+            account=account, exchange_info=exchange_info,
+            ticker_prices=prices, tickers_24h=tickers_24h,
+            leverage_brackets=brackets, captured_at_ms=captured_at_ms,
+        )
+        inputs = validated_shadow_inputs(ReadOnlyAccountSnapshot(
+            account_uid=uid,
+            scan_id=f"shadow-{captured_at_ms}",
+            captured_at_ms=captured_at_ms,
+            strategy_state=state,
+            hedge_mode=hedge_mode,
+            account=account,
+            positions=positions,
+            open_orders=open_orders,
+            exchange_reliable=True,
+            entry_symbols=entry_symbols,
+        ))
+    except (AsterApiError, ShadowSnapshotRejected, TypeError, ValueError) as exc:
+        raise control_plane.HTTPException(
+            409, f"Read-only queue-shadow veilig geblokkeerd: {exc}",
+        ) from exc
+    result = plan_validated_shadow(inputs)
+    return {
+        **result,
+        "scope": "proven-positions-and-validated-new-entries",
+        "newEntryPlanning": "READ_ONLY_CONTRACT_VALIDATED",
+        "ordersSent": 0,
+        "positionsChanged": 0,
+        "persistentWrites": 0,
+        "schedulerChanged": False,
+        "botStatusChanged": False,
+    }
+
+
 @app.post("/v1/me/aster/strategy2/exclusive-handoff")
 def strategy2_exclusive_handoff(
     user: dict[str, Any] = Depends(control_plane.authenticated_user),
@@ -187,6 +257,53 @@ def _live_gates_open() -> bool:
     )
 
 
+def _acquire_or_renew_strategy2_canary_handoff(
+    reference: Any,
+    account_binding: str,
+) -> bool:
+    """Atomically acquire or renew one account-bound canary handoff.
+
+    The ordinary Strategy-2 scheduler only understands ``leaseUntil``.  The
+    additional token proves that the active lease belongs to this exact
+    canary account, allowing the minute scheduler to renew its own handoff
+    without opening an overlap with the legacy runtime.
+    """
+    owner_token = f"strategy2-queue-canary:{account_binding}"
+    transaction = control_plane.db.transaction()
+
+    @control_plane.firestore.transactional
+    def acquire_or_renew(txn: Any) -> bool:
+        value = reference.get(transaction=txn).to_dict() or {}
+        now = datetime.now(timezone.utc)
+        legacy_until = value.get("leaseUntil")
+        canary_lease = value.get("orderQueueCanaryLease")
+        if not isinstance(canary_lease, dict):
+            canary_lease = {}
+        canary_until = canary_lease.get("until")
+        matching_canary = (
+            canary_lease.get("ownerToken") == owner_token
+            and isinstance(canary_until, datetime)
+            and canary_until > now
+        )
+        legacy_active = isinstance(legacy_until, datetime) and legacy_until > now
+        if legacy_active and not matching_canary:
+            return False
+
+        # Three minutes tolerates a delayed minute tick.  Every successful
+        # canary invocation renews both values in the same transaction.
+        renewed_until = now + timedelta(minutes=3)
+        txn.set(reference, {
+            "leaseUntil": renewed_until,
+            "orderQueueCanaryLease": {
+                "ownerToken": owner_token,
+                "until": renewed_until,
+            },
+        }, merge=True)
+        return True
+
+    return acquire_or_renew(transaction)
+
+
 @app.post("/internal/aster-strategy2/tick")
 def run_aster_strategy2_scheduler(
     authorization: str | None = Header(default=None),
@@ -227,3 +344,85 @@ def run_aster_strategy2_scheduler(
         "strategy3": [],
         "strategy3Isolated": True,
     }
+
+
+@app.post("/internal/aster-strategy2/queue-canary/tick")
+def run_aster_strategy2_queue_canary(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Run the queue for exactly one opted-in account without moving service traffic.
+
+    The account-bound handoff is renewed by each minute canary tick and is not
+    released after a scan.  The existing scheduler therefore skips exactly
+    this account while the canary owns it, including during reconciliation.
+    A foreign legacy lease is fail-closed: no order is sent and only the queue
+    lease acquired by this invocation is released.
+    """
+    control_plane.verify_internal_cloud_request(authorization)
+    if (
+        not _live_gates_open()
+        or os.getenv(control_plane.QUEUE_FEATURE_FLAG, "false").lower() != "true"
+    ):
+        return {"processed": 0, "status": "centrally-disabled", "ordersSent": 0}
+
+    target_ref = os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_SHA256", "").strip().lower()
+    target_uid = os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_UID", "").strip()
+    try:
+        canary_limit = int(os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_MAX_ORDERS", "1"))
+    except ValueError:
+        canary_limit = 0
+    if len(target_ref) != 64 or any(char not in "0123456789abcdef" for char in target_ref):
+        return {"processed": 0, "status": "canary-account-binding-invalid", "ordersSent": 0}
+    if not target_uid or hashlib.sha256(target_uid.encode()).hexdigest() != target_ref:
+        return {"processed": 0, "status": "canary-account-binding-invalid", "ordersSent": 0}
+    if not 1 <= canary_limit <= control_plane.MAX_ORDERS_PER_ACCOUNT_SCAN:
+        return {"processed": 0, "status": "canary-order-limit-invalid", "ordersSent": 0}
+
+    # The direct UID is supplied as a Cloud Run secret and cross-checked
+    # against the non-secret SHA binding before exactly one document is read.
+    # Never enumerate the Strategy-2 account directory for a canary.
+    reference = control_plane.aster_strategy2_reference(target_uid)
+    snapshot = reference.get()
+    if not snapshot.exists:
+        return {
+            "processed": 0,
+            "status": "canary-selection-failed",
+            "ordersSent": 0,
+            "selectedAccounts": 0,
+        }
+
+    raw = snapshot.to_dict() or {}
+    account_ref = target_ref[:12]
+    if (not bool(raw.get("enabled", False)) or not bool(raw.get("monitor", False))
+        or not bool(raw.get("orderQueueCanary", False))
+        or not control_plane._strategy2_order_queue_enabled(raw)):
+        return {
+            "processed": 0,
+            "status": "account-gate-disabled",
+            "ordersSent": 0,
+            "accountRef": account_ref,
+        }
+
+    queue_token = control_plane._acquire_strategy2_queue_lease(reference)
+    if not queue_token:
+        return {
+            "processed": 0,
+            "status": "queue-lease-busy",
+            "ordersSent": 0,
+            "accountRef": account_ref,
+        }
+    if not _acquire_or_renew_strategy2_canary_handoff(reference, target_ref):
+        control_plane._release_strategy2_queue_lease(reference, queue_token)
+        return {
+            "processed": 0,
+            "status": "legacy-lease-busy",
+            "ordersSent": 0,
+            "accountRef": account_ref,
+        }
+    try:
+        result = control_plane._run_aster_strategy2_queue_scan(
+            target_uid, maximum_orders=canary_limit,
+        )
+        return {"processed": 1, "status": "ok", "accountRef": account_ref, **result}
+    finally:
+        control_plane._release_strategy2_queue_lease(reference, queue_token)

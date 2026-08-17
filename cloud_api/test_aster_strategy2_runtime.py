@@ -10,6 +10,30 @@ def test_mapping_round_trip_keeps_ownership_identity():
     leg=OwnedLeg("s2","strategy2","BTCUSDT","LONG","c1",3,1,100,2,"PROTECTION",("i",),("f",),(),1,2,3,4)
     assert owned_from_mapping(owned_to_mapping(leg))==leg
 
+def fill(identity,side,qty,time,*,symbol="BTCUSDT",position_side="LONG",price="100"):
+    return {"id":identity,"symbol":symbol,"positionSide":position_side,"side":side,
+        "qty":str(qty),"price":price,"time":time}
+
+def test_current_cycle_fill_ids_replays_long_and_discards_completed_cycle():
+    leg=OwnedLeg("s2","strategy2","BTCUSDT","LONG","current",1,2,100)
+    fills=[fill("old-open","BUY",1,1),fill("old-close","SELL",1,2),
+        fill("new-open","BUY",3,3),fill("partial-close","SELL",1,4)]
+    assert current_cycle_fill_ids(leg=leg,fills=fills)==("new-open","partial-close")
+
+def test_current_cycle_fill_ids_replays_short_direction():
+    leg=OwnedLeg("s2","strategy2","BTCUSDT","SHORT","current",1,1.5,100)
+    fills=[fill("open","SELL",2,1,position_side="SHORT"),
+        fill("reduce","BUY",.5,2,position_side="SHORT")]
+    assert current_cycle_fill_ids(leg=leg,fills=fills)==("open","reduce")
+
+def test_current_cycle_fill_ids_fails_closed_for_incomplete_or_malformed_history():
+    leg=OwnedLeg("s2","strategy2","BTCUSDT","LONG","current",1,1,100)
+    assert current_cycle_fill_ids(leg=leg,fills=[fill("close","SELL",1,1)])==()
+    assert current_cycle_fill_ids(leg=leg,fills=[fill("open","BUY",2,1)])==()
+    assert current_cycle_fill_ids(leg=leg,fills=[fill("","BUY",1,1)])==()
+    duplicate=[fill("same","BUY",2,1),fill("same","SELL",1,2)]
+    assert current_cycle_fill_ids(leg=leg,fills=duplicate)==()
+
 def test_missing_ownership_recovers_only_with_matching_audit_and_exchange_fill():
     stamp=datetime(2026,8,10,15,43,8,tzinfo=timezone.utc)
     positions=[{"symbol":"VIRTUALUSDT","positionSide":"LONG","positionAmt":"2","entryPrice":"5"}]

@@ -7,10 +7,10 @@ fails closed for the affected symbol.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable
 
-from aster_strategy2_runtime import enrich_confirmed_costs
+from aster_strategy2_runtime import current_cycle_fill_ids, enrich_confirmed_costs
 from aster_strategy2_state import OwnedLeg, number
 
 
@@ -96,10 +96,11 @@ def _matching_fill(row: dict[str, Any], leg: OwnedLeg, *, enforce_owned_since: b
     return int(number(row.get("time", row.get("timestamp")))) >= leg.created_at_ms
 
 
-def read_symbol_cost_evidence(client: Any, symbol: str, legs: Iterable[OwnedLeg]) -> SymbolCostEvidence:
+def read_symbol_cost_evidence(client: Any, symbol: str, legs: Iterable[OwnedLeg], *,
+                              complete_fill_history: bool = False) -> SymbolCostEvidence:
     values = list(legs)
     start_time = min((leg.created_at_ms for leg in values if leg.created_at_ms > 0), default=0) or None
-    trades = paged_user_trades(client, symbol, start_time=start_time)
+    trades = paged_user_trades(client, symbol, start_time=None if complete_fill_history else start_time)
     missing = [leg for leg in values if not any(_matching_fill(row, leg, enforce_owned_since=True) for row in trades)]
     if missing and start_time is not None:
         # Ownership transfers can happen after the exchange opening fill.  Use
@@ -121,7 +122,7 @@ def read_symbol_cost_evidence(client: Any, symbol: str, legs: Iterable[OwnedLeg]
 
 
 def refresh_owned_costs(client: Any, owned: list[OwnedLeg], symbols: Iterable[str], *,
-                        checked_at_ms: int) -> tuple[list[OwnedLeg], dict[str, str]]:
+                        checked_at_ms: int, recover_fill_ids: bool = False) -> tuple[list[OwnedLeg], dict[str, str]]:
     """Refresh only symbols with complete evidence; preserve all others unchanged."""
     result = list(owned)
     failures: dict[str, str] = {}
@@ -133,7 +134,8 @@ def refresh_owned_costs(client: Any, owned: list[OwnedLeg], symbols: Iterable[st
         if not legs:
             continue
         try:
-            evidence = read_symbol_cost_evidence(client, symbol, legs)
+            evidence = read_symbol_cost_evidence(client, symbol, legs,
+                complete_fill_history=recover_fill_ids and any(not leg.fill_ids for leg in legs))
         except Exception as exc:
             failures[symbol] = str(exc)
             continue
@@ -141,6 +143,14 @@ def refresh_owned_costs(client: Any, owned: list[OwnedLeg], symbols: Iterable[st
             result, list(evidence.trades), list(evidence.income),
             refreshed_symbols={symbol}, checked_at_ms=checked_at_ms,
         )
+        if recover_fill_ids:
+            enriched=[]
+            for leg in result:
+                if leg.symbol!=symbol or leg.fill_ids:
+                    enriched.append(leg);continue
+                proven=current_cycle_fill_ids(leg=leg,fills=list(evidence.trades))
+                enriched.append(replace(leg,fill_ids=proven) if proven else leg)
+            result=enriched
     return result, failures
 
 

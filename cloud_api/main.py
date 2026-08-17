@@ -97,7 +97,8 @@ from aster_strategy2_runtime import enrich_confirmed_costs
 from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
 from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
-from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, entry_order_limit, management_preempts_initial_build
+from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, entry_order_limit, queued_entry_order_limit, management_preempts_initial_build
+from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
 from aster_strategy2_runtime import initial_build_high_water_mark
 from aster_portfolio_replay import ReplayCandle, ReplaySeed, comparison_conclusion, config_with_overrides, run_portfolio_replay
 from aster_strategy import Account as AsterStrategyAccount, Leg as AsterStrategyLeg, Pair as AsterStrategyPair
@@ -134,6 +135,10 @@ from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
 from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
 from read_only_source import read_source_url
+
+
+class Strategy2OrderBudgetExhausted(RuntimeError):
+    """The persistent account-scan budget is full before another POST."""
 
 
 if not firebase_admin._apps:
@@ -1471,6 +1476,8 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     exchange_data_fresh=bool(isinstance(captured,datetime) and timedelta(0)<=datetime.now(timezone.utc)-captured<=timedelta(seconds=120))
     operation=operating_status_contract(enabled=enabled,monitor=monitor,runtime_enabled=runtime_enabled,
         owned_leg_count=counts["positionLegCount"],universe=universe,exchange_data_fresh=exchange_data_fresh)
+    queue_enabled=(os.getenv(QUEUE_FEATURE_FLAG,"false").lower()=="true" and bool(raw.get("orderQueueEnabled",False)))
+    queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
         "displayPhase":"UIT" if not enabled else str(raw.get("phase","DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": enabled,
@@ -1482,11 +1489,17 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         "accountPositionCount":int(safe_float(account_snapshot.get("accountPositionCount"))),
         "provenStrategy2LegCount":counts["positionLegCount"],
         "activePairs":counts["uniqueMarketCount"],"activeLegs":counts["positionLegCount"],
-        "longLegs":counts["longLegs"],"shortLegs":counts["shortLegs"]}}
+        "longLegs":counts["longLegs"],"shortLegs":counts["shortLegs"],
+        "orderQueue":{"enabled":queue_enabled,"maximumOrdersPerScan":MAX_ORDERS_PER_ACCOUNT_SCAN,
+            "scanId":str(queue_state.get("scanId","")),"ordersUsed":int(safe_float(queue_state.get("ordersUsed"))),
+            "haltedUncertain":bool(queue_state.get("haltedUncertain",False)),
+            "pendingReopenCount":len(queue_state.get("pendingReopens",[])) if isinstance(queue_state.get("pendingReopens"),list) else 0}}}
 
 
-def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
+def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
+                              before_order:Any=None)->dict[str,Any]:
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
+    pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
     settings=Strategy2Config.from_mapping(raw.get("settings"));enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
     if not monitor and not dry_run:return {"status":"stopped","reason":"Strategy 2 monitoring staat uit"}
     live=settings.mode=="live" and not dry_run
@@ -1597,8 +1610,13 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     if not recovery.allow_risk_increase:
         ref.set({"phase":"RECONCILING","lastReason":"; ".join(recovery.reasons),"lastTickAt":now},merge=True)
         return {"status":"reconciling","reason":"; ".join(recovery.reasons),"ordersSent":0}
+    missing_fill_keys={(leg.symbol,leg.side) for leg in recovery.legs if not leg.fill_ids}
     owned,cost_failures=refresh_owned_costs(client,list(recovery.legs),refresh_symbols,
-        checked_at_ms=int(now.timestamp()*1000))
+        checked_at_ms=int(now.timestamp()*1000),recover_fill_ids=True)
+    recovered_fill_legs=[leg for leg in owned if (leg.symbol,leg.side) in missing_fill_keys and leg.fill_ids]
+    for leg in recovered_fill_legs:
+        ref.collection("audit").add({"event":"FILL_EVIDENCE_RECOVERED","symbol":leg.symbol,
+            "side":leg.side,"cycleId":leg.cycle_id,"fillCount":len(leg.fill_ids),"timestamp":now})
     posmap=active_position_map(positions)
     confirmed_flat=[x for x in owned if (x.symbol,x.side) not in posmap]
     for leg in confirmed_flat:ref.collection("audit").add({"event":"CONFIRMED_FLAT","symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,"timestamp":now})
@@ -1642,6 +1660,59 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     protection_selected=portfolio_protection_decision(settings,portfolio,management_owned)
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
+    # A carried reopen is the highest non-emergency action. It can only follow
+    # reliable exchange reconciliation and never preempts fresh risk reduction.
+    if not protection_selected and pending_reopens and enabled:
+        if order_budget is not None and order_budget<1:
+            return {"status":"budget-exhausted","action":"PENDING_REOPEN","ordersSent":0}
+        pending=dict(pending_reopens[0]);symbol=str(pending.get("symbol","")).upper();side=str(pending.get("side","")).upper()
+        if not symbol or side not in {"LONG","SHORT"}:
+            pending_reopens.pop(0);ref.set({"pendingReopens":pending_reopens,"updatedAt":now},merge=True)
+            return {"status":"waiting","action":"INVALID_PENDING_REOPEN","ordersSent":0}
+        if int(safe_float(pending.get("cooldownUntilMs")))>int(now.timestamp()*1000):
+            return {"status":"waiting","action":"PENDING_REOPEN_COOLDOWN","symbol":symbol,"side":side,"ordersSent":0}
+        if (symbol,side) in posmap:
+            # Exchange truth already contains the replacement. Do not submit a
+            # duplicate; leave reconciliation/ownership recovery authoritative.
+            pending_reopens.pop(0);ref.set({"pendingReopens":pending_reopens,"updatedAt":now},merge=True)
+            return {"status":"reconciling","action":"PENDING_REOPEN_ALREADY_PRESENT","ordersSent":0}
+        try:
+            info={str(x.get("symbol","")).upper():x for x in client.public_exchange_info().get("symbols",[])}
+            prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
+            reopen=plan_aster_pair(info[symbol],_aster_brackets(client.leverage_brackets(symbol),symbol),prices[symbol],settings.base_notional)
+            reopen=replace(reopen,leverage=min(reopen.leverage,settings.leverage))
+            reopen=replace(reopen,leverage=configure_maximum_usable_leverage(client,reopen))
+            required=float(reopen.notional_per_leg)/max(1,reopen.leverage)
+            if required*1.05>portfolio.available_balance or portfolio.strategy_margin+required>portfolio.equity*settings.strategy_budget:
+                pending["attempts"]=int(safe_float(pending.get("attempts")))+1
+                pending["reason"]="ACTUAL_MARGIN_OR_STRATEGY_BUDGET"
+                pending_reopens[0]=pending
+                ref.set({"pendingReopens":pending_reopens,"phase":"WAITING",
+                    "lastReason":f"{symbol} {side}: pending heropening wacht op voldoende actuele margin","updatedAt":now},merge=True)
+                return {"status":"waiting","action":"PENDING_REOPEN_MARGIN","ordersSent":0}
+            if dry_run or not live:
+                return {"status":"simulated","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":0}
+            package=str(pending.get("packageId",pending.get("package_id","pending")))
+            reopened=execute_aster_leg(client,reopen,side=PositionSide(side),action="OPEN",
+                id_prefix=f"s2q-r-{hashlib.sha256((uid+package).encode()).hexdigest()[:12]}",confirm=True,
+                before_submit=(lambda intent:before_order(intent,{"kind":"PENDING_REOPEN","cycleId":str(pending.get("closedCycleId","")),"packageId":package})) if before_order else None)
+            rr=reopened.get("result",{});rq=safe_float(rr.get("executedQty"));rp=safe_float(rr.get("avgPrice"))
+            if rq<=0 or rp<=0:raise RuntimeError("Bevestigde pending heropening mist werkelijk gevulde hoeveelheid of prijs")
+            cycle=f"reopen-{str(pending.get('closedCycleId',pending.get('closed_cycle_id','cycle')))}"
+            replacement=OwnedLeg(settings.strategy_id,"strategy2",symbol,side,cycle,settings.version,rq,rp,0,"HARVEST",
+                (str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000),last_order_at_ms=int(time.time()*1000))
+            pending_reopens.pop(0);owned.append(replacement)
+            batch=db.batch();batch.set(ref,{"ownedLegs":[owned_to_mapping(x) for x in owned],"pendingReopens":pending_reopens,
+                "phase":"RUNNING","lastReason":f"{symbol} {side}: uitgestelde heropening bevestigd","updatedAt":now},merge=True)
+            batch.set(ref.collection("audit").document(),{"event":"PENDING_REOPEN_CONFIRMED","symbol":symbol,"side":side,
+                "cycleId":cycle,"packageId":package,"timestamp":now});batch.commit()
+            return {"status":"ok","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":1}
+        except Exception as exc:
+            if not is_definite_contract_rejection(exc):raise
+            pending["attempts"]=int(safe_float(pending.get("attempts")))+1;pending["reason"]=str(exc)
+            pending["cooldownUntilMs"]=int(now.timestamp()*1000)+30*60*1000;pending_reopens[0]=pending
+            ref.set({"pendingReopens":pending_reopens,"phase":"WAITING","lastReason":f"{symbol} {side}: heropening definitief afgewezen; cooldown actief","updatedAt":now},merge=True)
+            return {"status":"waiting","action":"PENDING_REOPEN_REJECTED","ordersSent":0,"reason":str(exc)}
     selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
@@ -1676,7 +1747,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 return {"status":"waiting","action":"PROTECTION_BUDGET_SKIPPED","symbol":leg.symbol,
                     "side":leg.side,"reason":reason,"ordersSent":0}
             if dry_run or not live:return {"status":"simulated","action":decision.kind,"symbol":leg.symbol,"side":decision.side,"ordersSent":0,"reason":decision.reason}
-            opened=execute_aster_leg(client,protection,side=PositionSide(decision.side),action="OPEN",id_prefix=f"s2h-{uid[-4:]}-{int(time.time())}",confirm=True)
+            protection_prefix=(f"s2q-h-{hashlib.sha256((uid+leg.cycle_id+leg.symbol+str(decision.side)).encode()).hexdigest()[:12]}"
+                if before_order else f"s2h-{uid[-4:]}-{int(time.time())}")
+            opened=execute_aster_leg(client,protection,side=PositionSide(decision.side),action="OPEN",
+                id_prefix=protection_prefix,confirm=True,
+                before_submit=(lambda intent:before_order(intent,{"kind":"OPEN_PROTECTION","cycleId":leg.cycle_id})) if before_order else None)
             rr=opened.get("result",{});q=safe_float(rr.get("executedQty")) or float(protection.quantity);p=safe_float(rr.get("avgPrice")) or price
             _record_aster_order_attribution(ref,rr,strategy_id=settings.strategy_id,strategy_name="Dual Profit Harvest DCA",
                 cycle_id=leg.cycle_id,config_version=settings.version,symbol=leg.symbol,side=str(decision.side),action="OPEN_PROTECTION")
@@ -1685,6 +1760,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             ref.collection("audit").add({"event":"OPEN_PROTECTION","symbol":leg.symbol,"side":decision.side,"timestamp":now})
             return {"status":"ok","action":decision.kind,"symbol":leg.symbol,"side":decision.side,"ordersSent":1}
         if decision.kind!="HOLD":
+            if order_budget is not None and order_budget<1:
+                return {"status":"budget-exhausted","action":decision.kind,"ordersSent":0}
             row=posmap[(leg.symbol,leg.side)];price=safe_float(row.get("markPrice"));qty=abs(Decimal(str(row.get("positionAmt"))))
             current=PairExecutionPlan(leg.symbol,qty,qty*Decimal(str(price)),max(1,int(safe_float(row.get("leverage")))))
             if decision.kind in {"ADD_DCA","PROTECTION_INCREASE"}:
@@ -1706,7 +1783,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                 current=replace(current,leverage=configure_maximum_usable_leverage(client,current))
             if dry_run or not live:return {"status":"simulated","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":0,"reason":decision.reason}
             context=ExecutionContext(settings.strategy_id,leg.cycle_id,settings.version,leg,True,True,
-                account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}))
+                account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}),
+                before_submit=(lambda intent:before_order(intent,{"kind":decision.kind,"cycleId":leg.cycle_id})) if before_order else None)
             try:
                 result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:
                     decision.risk_reducing or
@@ -1749,22 +1827,48 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
             else:
                 closed_result=result[0].get("result",{});closed_qty=safe_float(closed_result.get("executedQty")) or float(current.quantity)
                 remaining=max(0.0,leg.quantity-closed_qty);owned=[replace(x,quantity=remaining) if x==leg and remaining>1e-12 else x for x in owned if x!=leg or remaining>1e-12]
-                if decision.kind=="FULL_TP" and enabled and settings.auto_restart:
+                if decision.kind=="FULL_TP" and enabled and settings.auto_restart and (order_budget is None or order_budget>=2):
                     info={str(x.get("symbol","")).upper():x for x in client.public_exchange_info().get("symbols",[])}
                     reopen=plan_aster_pair(info[leg.symbol],_aster_brackets(client.leverage_brackets(leg.symbol),leg.symbol),price,settings.base_notional)
                     reopen=replace(reopen,leverage=min(reopen.leverage,settings.leverage))
                     reopen=replace(reopen,leverage=configure_maximum_usable_leverage(client,reopen))
                     reopen_margin=float(reopen.notional_per_leg)/max(1,reopen.leverage)
                     if portfolio.strategy_margin+reopen_margin>portfolio.equity*settings.strategy_budget:
-                        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"phase":"WAITING","lastReason":"TP gesloten; herstart geblokkeerd door actueel Strategy Margin Budget","updatedAt":now},merge=True)
+                        pending_reopens.append({"symbol":leg.symbol,"side":leg.side,"closedCycleId":leg.cycle_id,
+                            "packageId":hashlib.sha256(f"{uid}|{leg.cycle_id}|{leg.symbol}|{leg.side}".encode()).hexdigest()[:24],
+                            "notional":settings.base_notional,"createdAt":now,"reason":"ACTUAL_MARGIN_OR_STRATEGY_BUDGET",
+                            "attempts":0,"cooldownUntilMs":0})
+                        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"pendingReopens":pending_reopens,
+                            "phase":"WAITING","lastReason":"TP gesloten; herstart geblokkeerd door actueel Strategy Margin Budget","updatedAt":now},merge=True)
                         return {"status":"waiting","action":"FULL_TP","symbol":leg.symbol,"side":leg.side,"ordersSent":len(result),"reason":"Herstart geblokkeerd door actueel Strategy Margin Budget"}
                     reopen_cycle=f"c{int(time.time())}"
-                    reopened=execute_aster_leg(client,reopen,side=PositionSide(leg.side),action="OPEN",id_prefix=f"s2r-{uid[-4:]}-{int(time.time())}",confirm=True)
+                    package_id=hashlib.sha256(f"{uid}|{leg.cycle_id}|{leg.symbol}|{leg.side}".encode()).hexdigest()[:24]
+                    try:
+                        reopened=execute_aster_leg(client,reopen,side=PositionSide(leg.side),action="OPEN",
+                            id_prefix=f"s2q-r-{package_id[:12]}",confirm=True,
+                            before_submit=(lambda intent:before_order(intent,{"kind":"AUTO_RESTART","cycleId":reopen_cycle,"packageId":package_id})) if before_order else None)
+                    except Exception as exc:
+                        if not is_definite_contract_rejection(exc):raise
+                        pending_reopens.append({"symbol":leg.symbol,"side":leg.side,"closedCycleId":leg.cycle_id,
+                            "packageId":package_id,"notional":settings.base_notional,"createdAt":now,
+                            "reason":str(exc),"attempts":1,"cooldownUntilMs":int(now.timestamp()*1000)+30*60*1000})
+                        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"pendingReopens":pending_reopens,
+                            "phase":"WAITING","lastReason":f"{leg.symbol} {leg.side}: sluiting bevestigd; heropening definitief afgewezen","updatedAt":now},merge=True)
+                        ref.collection("audit").add({"event":"AUTO_RESTART_REJECTED_AFTER_CONFIRMED_CLOSE","symbol":leg.symbol,
+                            "side":leg.side,"cycleId":leg.cycle_id,"packageId":package_id,"reason":str(exc),"timestamp":now})
+                        return {"status":"waiting","action":"FULL_TP","symbol":leg.symbol,"side":leg.side,
+                            "ordersSent":len(result)+1,"reason":"Sluiting behouden; heropening staat met cooldown in de wachtrij"}
                     result.append(reopened);rr=reopened.get("result",{});rq=safe_float(rr.get("executedQty")) or float(reopen.quantity);rp=safe_float(rr.get("avgPrice")) or price
                     _record_aster_order_attribution(ref,rr,strategy_id=settings.strategy_id,strategy_name="Dual Profit Harvest DCA",
                         cycle_id=reopen_cycle,config_version=settings.version,symbol=leg.symbol,side=leg.side,action="AUTO_RESTART")
                     owned.append(OwnedLeg(settings.strategy_id,"strategy2",leg.symbol,leg.side,reopen_cycle,settings.version,rq,rp,0,"HARVEST",(str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000)))
-            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"phase":"RUNNING","lastReason":decision.reason,"updatedAt":now},merge=True)
+                elif decision.kind=="FULL_TP" and enabled and settings.auto_restart:
+                    pending_reopens.append({"symbol":leg.symbol,"side":leg.side,"closedCycleId":leg.cycle_id,
+                        "packageId":hashlib.sha256(f"{uid}|{leg.cycle_id}|{leg.symbol}|{leg.side}".encode()).hexdigest()[:24],
+                        "notional":settings.base_notional,"createdAt":now,"createdScanId":str(raw.get("orderQueueState",{}).get("scanId","")),
+                        "reason":"ORDER_BUDGET_EXHAUSTED","attempts":0,"cooldownUntilMs":0})
+            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"pendingReopens":pending_reopens,
+                "phase":"RUNNING","lastReason":decision.reason,"updatedAt":now},merge=True)
             ref.collection("audit").add({"event":decision.kind,"symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,"timestamp":now})
             return {"status":"ok","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":len(result)}
     if cost_holds:
@@ -1803,7 +1907,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
         ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"data-hold","reason":reason,"ordersSent":0,"universe":universe_contract}
     codes=[symbol for symbol in universe_contract["selectedSymbols"] if symbol in rows and symbol in prices]
-    order_limit=entry_order_limit(initial_build_complete,owned,settings.maximum_pairs)
+    order_limit=(queued_entry_order_limit(initial_build_complete,owned,settings.maximum_pairs,
+        orders_used=MAX_ORDERS_PER_ACCOUNT_SCAN-max(0,int(order_budget)))
+        if order_budget is not None else entry_order_limit(initial_build_complete,owned,settings.maximum_pairs))
     if dry_run or not live:
         return {"status":"simulated","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG","plannedOrders":order_limit,
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}
@@ -1850,7 +1956,12 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
                     candidate_failures.append(f"{candidate}: onvoldoende vrije Aster-margin inclusief 5% uitvoeringsbuffer")
                     break
                 try:
-                    opened=execute_aster_leg(client,value,side=PositionSide(entry_side),action="OPEN",id_prefix=f"s2i-{uid[-4:]}-{int(time.time()*1000)}-{index}-{candidate[:5].lower()}",confirm=True)
+                    scan_key=str(raw.get("orderQueueState",{}).get("scanId",""))
+                    entry_prefix=(f"s2q-i-{hashlib.sha256((uid+scan_key+candidate+entry_side+str(index)).encode()).hexdigest()[:12]}"
+                        if before_order else f"s2i-{uid[-4:]}-{int(time.time()*1000)}-{index}-{candidate[:5].lower()}")
+                    opened=execute_aster_leg(client,value,side=PositionSide(entry_side),action="OPEN",
+                        id_prefix=entry_prefix,confirm=True,
+                        before_submit=(lambda intent:before_order(intent,{"kind":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG"})) if before_order else None)
                 except Exception as exc:
                     if not is_definite_contract_rejection(exc):
                         raise
@@ -5241,6 +5352,196 @@ def _acquire_mexc_automation_lease(reference) -> bool:
     return acquire(transaction)
 
 
+def _strategy2_order_queue_enabled(raw:dict[str,Any])->bool:
+    """Two-key, server-side and per-account gate; both default to off."""
+    return os.getenv(QUEUE_FEATURE_FLAG,"false").lower()=="true" and bool(raw.get("orderQueueEnabled",False))
+
+
+def _acquire_strategy2_queue_lease(reference)->str|None:
+    """Acquire an account-scoped fenced lease without changing bot state."""
+    transaction=db.transaction();token=python_secrets.token_hex(16)
+    @firestore.transactional
+    def acquire(txn):
+        value=reference.get(transaction=txn).to_dict() or {};now=datetime.now(timezone.utc)
+        lease=value.get("orderQueueLease") if isinstance(value.get("orderQueueLease"),dict) else {}
+        until=lease.get("until")
+        if isinstance(until,datetime):
+            until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        if isinstance(until,datetime) and until>now:return None
+        txn.set(reference,{"orderQueueLease":{"token":token,"until":now+timedelta(minutes=3),"acquiredAt":now}},merge=True)
+        return token
+    return acquire(transaction)
+
+
+def _release_strategy2_queue_lease(reference,token:str)->None:
+    transaction=db.transaction()
+    @firestore.transactional
+    def release(txn):
+        value=reference.get(transaction=txn).to_dict() or {}
+        lease=value.get("orderQueueLease") if isinstance(value.get("orderQueueLease"),dict) else {}
+        if str(lease.get("token",""))!=token:return False
+        txn.set(reference,{"orderQueueLease":{"token":"","until":datetime.now(timezone.utc),"releasedAt":datetime.now(timezone.utc)}},merge=True)
+        return True
+    release(transaction)
+
+
+def _reserve_strategy2_queue_order(reference,scan_id:str,intent:AsterOrderIntent,
+    details:dict[str,Any]|None=None,maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN)->None:
+    """Persist intent and consume one slot immediately before Aster submission."""
+    transaction=db.transaction();now=datetime.now(timezone.utc)
+    reservation_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))
+    @firestore.transactional
+    def reserve(txn):
+        value=reference.get(transaction=txn).to_dict() or {}
+        state=value.get("orderQueueState") if isinstance(value.get("orderQueueState"),dict) else {}
+        if str(state.get("scanId",""))!=scan_id:
+            raise RuntimeError("Strategy-2 scan-id veranderde tijdens orderreservering")
+        used=int(safe_float(state.get("ordersUsed")))
+        if used>=reservation_limit:raise Strategy2OrderBudgetExhausted(
+            f"Strategy-2 accountscan heeft {reservation_limit} Aster-orders bereikt")
+        current={"clientOrderId":intent.intent_id,"symbol":intent.symbol,"side":intent.position_side.value,
+            "action":intent.action,"quantity":str(intent.quantity),"reservedAt":now,"scanId":scan_id}
+        current.update(details or {})
+        txn.set(reference,{"orderQueueState":{**state,"ordersUsed":used+1,"currentIntent":current,"updatedAt":now}},merge=True)
+    reserve(transaction)
+
+
+def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent:dict[str,Any])->tuple[bool,str]:
+    """Resolve a reserved intent from Aster truth without ever submitting it."""
+    symbol=str(intent.get("symbol","")).upper();side=str(intent.get("side","")).upper()
+    client_order_id=str(intent.get("clientOrderId",""));action=str(intent.get("action","")).upper()
+    action_kind=str(intent.get("kind",action)).upper()
+    if not symbol or side not in {"LONG","SHORT"} or not client_order_id:
+        return False,"Persistente intent mist betrouwbare identiteit"
+    secret=load_aster_secret({"uid":uid})
+    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+    try:order=client.query_order(symbol,client_order_id)
+    except AsterApiError as exc:
+        # -2013 proves Aster has no such order. The slot remains consumed, but
+        # execution may safely continue because no POST is repeated blindly.
+        if "-2013" in str(exc) or "Order does not exist" in str(exc):return True,"INTENT_NOT_FOUND_BEFORE_SUBMIT"
+        return False,str(exc)
+    status=str(order.get("status","")).upper()
+    if status in {"CANCELED","REJECTED","EXPIRED"}:return True,f"INTENT_{status}"
+    if status!="FILLED":return False,f"Intentstatus is {status or 'ONBEKEND'}"
+    executed_quantity=safe_float(order.get("executedQty"))
+    if executed_quantity<=0:return False,"FILLED intent mist werkelijk uitgevoerde hoeveelheid"
+    try:trades=paged_user_trades(client,symbol)
+    except (AsterApiError,ValueError) as exc:return False,str(exc)
+    order_id=str(order.get("orderId",""));matching_fills=[fill for fill in trades
+        if (order_id and str(fill.get("orderId",""))==order_id) or
+           str(fill.get("clientOrderId",fill.get("clientOrderID","")))==client_order_id]
+    if not matching_fills:return False,"FILLED intent is nog niet betrouwbaar zichtbaar in fillhistorie"
+    fill_ids=tuple(str(fill.get("id",fill.get("tradeId",""))) for fill in matching_fills
+        if fill.get("id",fill.get("tradeId")) is not None)
+    try:positions=client.position_risk()
+    except (AsterApiError,ValueError) as exc:return False,str(exc)
+    pos=active_position_map(positions);row=pos.get((symbol,side));owned=[]
+    for item in raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []:
+        try:owned.append(owned_from_mapping(item))
+        except (TypeError,ValueError):pass
+    existing=next((leg for leg in owned if (leg.symbol,leg.side)==(symbol,side)),None)
+    pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
+    if action=="OPEN":
+        if row is None:return False,"Aster meldt FILLED OPEN maar de positie ontbreekt"
+        quantity=abs(safe_float(row.get("positionAmt")));entry=safe_float(row.get("entryPrice"))
+        if quantity<=0 or entry<=0:return False,"FILLED OPEN heeft geen betrouwbare positiehoeveelheid of entry"
+        if existing:
+            owned=[replace(leg,quantity=quantity,weighted_entry=entry,
+                dca_count=leg.dca_count+(1 if action_kind=="ADD_DCA" else 0),
+                role="PROTECTION" if action_kind in {"OPEN_PROTECTION","PROTECTION_INCREASE"} else leg.role,
+                intent_ids=tuple(dict.fromkeys((*leg.intent_ids,client_order_id))),
+                fill_ids=tuple(dict.fromkeys((*leg.fill_ids,*fill_ids))),last_order_at_ms=int(time.time()*1000))
+                if leg==existing else leg for leg in owned]
+        else:
+            owned.append(OwnedLeg("aster-strategy-2","strategy2",symbol,side,f"recovered-{client_order_id}",
+                int(safe_float(raw.get("configVersion"))) or 1,quantity,entry,0,
+                "PROTECTION" if action_kind=="OPEN_PROTECTION" else "HARVEST",(client_order_id,),fill_ids,(),
+                int(time.time()*1000),last_order_at_ms=int(time.time()*1000)))
+    elif action=="CLOSE":
+        if row is None:
+            owned=[leg for leg in owned if (leg.symbol,leg.side)!=(symbol,side)]
+            settings=Strategy2Config.from_mapping(raw.get("settings"))
+            if existing and bool(raw.get("enabled",False)) and settings.auto_restart:
+                package=hashlib.sha256(f"{uid}|{existing.cycle_id}|{symbol}|{side}".encode()).hexdigest()[:24]
+                if not any(str(item.get("packageId",""))==package for item in pending_reopens if isinstance(item,dict)):
+                    pending_reopens.append({"symbol":symbol,"side":side,"closedCycleId":existing.cycle_id,
+                        "packageId":package,"notional":settings.base_notional,"createdAt":datetime.now(timezone.utc),
+                        "reason":"PROCESS_RESTART_AFTER_CONFIRMED_CLOSE","attempts":0,"cooldownUntilMs":0})
+        elif existing:
+            quantity=abs(safe_float(row.get("positionAmt")));entry=safe_float(row.get("entryPrice"))
+            owned=[replace(leg,quantity=quantity,weighted_entry=entry,last_order_at_ms=int(time.time()*1000))
+                if leg==existing else leg for leg in owned]
+    else:return False,f"Onbekende persistente actie {action}"
+    now=datetime.now(timezone.utc);batch=db.batch()
+    batch.set(reference,{"ownedLegs":[owned_to_mapping(x) for x in owned],"pendingReopens":pending_reopens,"updatedAt":now},merge=True)
+    batch.set(reference.collection("audit").document(),{"event":"QUEUE_INTENT_RECONCILED","symbol":symbol,"side":side,
+        "action":action,"clientOrderId":client_order_id,"status":status,"timestamp":now});batch.commit()
+    return True,"INTENT_FILLED_RECONCILED"
+
+
+def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False,
+    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN)->dict[str,Any]:
+    """Run one durable, account-local scan with a hard Aster request budget."""
+    scan_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))
+    ref=aster_strategy2_reference(uid);now=datetime.now(timezone.utc)
+    scan_id=now.strftime("%Y%m%dT%H%M")
+    raw=ref.get().to_dict() or {};prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+    current_intent=prior.get("currentIntent") if isinstance(prior.get("currentIntent"),dict) else {}
+    if current_intent:
+        reconciled,reconcile_reason=_reconcile_strategy2_queue_intent(uid,ref,raw,current_intent)
+        if not reconciled:
+            prior={**prior,"haltedUncertain":True,"uncertainReason":reconcile_reason,"updatedAt":now}
+            ref.set({"orderQueueState":prior,"phase":"RECONCILING",
+                "lastReason":"Onzekere Strategy-2-order wacht op betrouwbare Aster-reconciliatie"},merge=True)
+            return {"status":"uncertain-hold","ordersSent":0,"reason":reconcile_reason}
+        prior={**prior,"currentIntent":{},"haltedUncertain":False,"reconcileReason":reconcile_reason,"updatedAt":now}
+        ref.set({"orderQueueState":prior},merge=True);raw=ref.get().to_dict() or {}
+    if bool(prior.get("haltedUncertain",False)):
+        # The normal tick's exchange reconciliation remains active, but order
+        # execution must not resume until a later explicit reconciliation path
+        # clears this durable marker.
+        return {"status":"uncertain-hold","ordersSent":0,"scanId":str(prior.get("scanId","")),
+            "reason":"Onzekere Aster-order moet eerst worden gereconcilieerd"}
+    if reconcile_only:
+        return {"status":"reconciled","ordersSent":0,"scanId":str(prior.get("scanId","")),
+            "reason":str(prior.get("reconcileReason","Geen openstaande queue-intent"))}
+    used=int(safe_float(prior.get("ordersUsed"))) if str(prior.get("scanId",""))==scan_id else 0
+    starting_used=used
+    state={"scanId":scan_id,"ordersUsed":used,"maximumOrders":scan_limit,
+        "haltedUncertain":False,"startedAt":prior.get("startedAt") if used else now,
+        "pendingReopens":raw.get("pendingReopens",[])}
+    ref.set({"orderQueueState":state},merge=True)
+    results=[]
+    while used<scan_limit:
+        try:
+            result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,
+                before_order=lambda intent,details=None:_reserve_strategy2_queue_order(
+                    ref,scan_id,intent,details,maximum_orders=scan_limit))
+        except Strategy2OrderBudgetExhausted:
+            latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
+            used=int(safe_float(latest_state.get("ordersUsed")));break
+        except AsterSubmissionUncertain as exc:
+            latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
+            used=int(safe_float(latest_state.get("ordersUsed")))
+            state.update({"ordersUsed":used,"currentIntent":latest_state.get("currentIntent",{}),"haltedUncertain":True,
+                "uncertainReason":str(exc),"updatedAt":datetime.now(timezone.utc)})
+            ref.set({"orderQueueState":state,"phase":"RECONCILING",
+                "lastReason":"Onzekere Aster-order; alleen deze accountwachtrij is gestopt"},merge=True)
+            results.append({"status":"uncertain","ordersSent":1});break
+        latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
+        new_used=int(safe_float(latest_state.get("ordersUsed")));sent=max(0,new_used-used)
+        if new_used>scan_limit:raise RuntimeError("Strategy-2 queue adapter overschreed het accountbudget")
+        used=new_used;state.update({"ordersUsed":used,"currentIntent":{},"updatedAt":datetime.now(timezone.utc),
+            "pendingReopens":ref.get().to_dict().get("pendingReopens",[])})
+        ref.set({"orderQueueState":state},merge=True);results.append(result)
+        if drain_pending_only and not state.get("pendingReopens"):break
+        if sent==0:break
+    return {"status":"ok" if results and any(int(safe_float(x.get("ordersSent"))) for x in results) else "waiting",
+        "scanId":scan_id,"ordersSent":used-starting_used,"ordersUsed":used,"maximumOrders":scan_limit,
+        "actions":results}
+
+
 @app.post("/internal/mexc-automation/tick")
 def run_mexc_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_cloud_request(authorization)
@@ -5286,14 +5587,27 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
     strategy2_results=[]
     for item in strategy2_controls[:100]:
         reference=aster_strategy2_reference(item.id)
-        if not _acquire_mexc_automation_lease(reference):
+        raw=item.to_dict() or {};queue_enabled=_strategy2_order_queue_enabled(raw)
+        queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+        has_unresolved_intent=bool(queue_state.get("currentIntent")) or bool(queue_state.get("haltedUncertain",False))
+        has_pending_reopen=bool(raw.get("pendingReopens"))
+        queue_recovery_required=has_unresolved_intent or has_pending_reopen
+        uses_queue_lease=queue_enabled or queue_recovery_required
+        queue_token=_acquire_strategy2_queue_lease(reference) if uses_queue_lease else None
+        if uses_queue_lease and not queue_token:
             strategy2_results.append({"uid":item.id,"status":"lease-busy"});continue
-        try:strategy2_results.append({"uid":item.id,**_run_aster_strategy2_tick(item.id)})
+        if not uses_queue_lease and not _acquire_mexc_automation_lease(reference):
+            strategy2_results.append({"uid":item.id,"status":"lease-busy"});continue
+        try:strategy2_results.append({"uid":item.id,**(_run_aster_strategy2_queue_scan(item.id,
+            reconcile_only=not queue_enabled and has_unresolved_intent,
+            drain_pending_only=not queue_enabled and has_pending_reopen) if uses_queue_lease else _run_aster_strategy2_tick(item.id))})
         except Exception as exc:
             message=f"Veilige Strategy-2-schedulerfout: {exc}"
             reference.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":datetime.now(timezone.utc)},merge=True)
             strategy2_results.append({"uid":item.id,"status":"data-hold","reason":message})
-        finally:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+        finally:
+            if uses_queue_lease:_release_strategy2_queue_lease(reference,str(queue_token))
+            else:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
     # Strategy 3 has its own service, data project and dedicated scheduler.
     # The production scheduler must never read or mutate isolated S3 state.
     return {"processed":len(results)+len(strategy2_results),"strategy1":results,

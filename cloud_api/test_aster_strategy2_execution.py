@@ -44,3 +44,8 @@ def test_runtime_converts_risk_denial_to_waiting_without_http_failure():
 def test_confirmed_close_has_strategy_cycle_version_intent():
     client=Client();result=execute_decision(client,Decision("FULL_TP","LONG",10),plan(),context(),risk_approved=lambda _:True)
     assert result and "s2-s2-c1-v3" in client.calls[0]
+
+def test_queue_reserves_exact_intent_immediately_before_submission():
+    reserved=[];base=context();queued=ExecutionContext(**{**base.__dict__,"before_submit":lambda intent:reserved.append(intent.intent_id)})
+    client=Client();execute_decision(client,Decision("ADD_DCA","LONG",10),plan(),queued,risk_approved=lambda _:True)
+    assert reserved==client.calls and len(reserved)==1
