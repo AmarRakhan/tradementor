@@ -5342,6 +5342,48 @@ def run_aster_strategy3_scheduler(authorization: str | None = Header(default=Non
     return {"processed": len(strategy3_results), "strategy3": strategy3_results}
 
 
+@app.post("/internal/aster-strategy3/tick")
+def run_aster_strategy3_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Run only the normal Strategy-3 loop; rapid build and other engines stay isolated."""
+    verify_internal_cloud_request(authorization)
+    live_gates = (
+        os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true"
+        and os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false").lower() == "true"
+        and os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false").lower() == "true"
+    )
+    if not live_gates:
+        return {"processed": 0, "status": "centrally-disabled", "strategy3": []}
+
+    controls = list(db.collection("asterStrategy3").where("monitor", "==", True).stream())
+    strategy3_results = []
+    for item in controls[:100]:
+        reference = aster_strategy3_reference(item.id)
+        if not _acquire_mexc_automation_lease(reference):
+            strategy3_results.append({"uid": item.id, "status": "lease-busy"})
+            continue
+        try:
+            state = item.to_dict() or {}
+            if bool(state.get("rapidBuildRequested")):
+                reference.set({
+                    "rapidBuildRequested": False,
+                    "rapidBuildBlockedReason": "Dedicated live scheduler allows normal one-action ticks only",
+                    "updatedAt": datetime.now(timezone.utc),
+                }, merge=True)
+            strategy3_results.append({"uid": item.id, **_run_aster_strategy3_tick(item.id)})
+        except Exception as exc:
+            message = f"Veilige Strategy-3-schedulerfout: {exc}"
+            reference.set({
+                "phase": "DATA_HOLD",
+                "rapidBuildRequested": False,
+                "lastReason": message,
+                "lastTickAt": datetime.now(timezone.utc),
+            }, merge=True)
+            strategy3_results.append({"uid": item.id, "status": "data-hold", "reason": message})
+        finally:
+            reference.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
+    return {"processed": len(strategy3_results), "strategy3": strategy3_results}
+
+
 @app.post("/internal/aster-automation/{uid}/simulate")
 def run_aster_internal_simulation(uid: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_cloud_request(authorization)
