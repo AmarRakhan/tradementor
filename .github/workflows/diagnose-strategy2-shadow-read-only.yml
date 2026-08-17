@@ -133,12 +133,24 @@ jobs:
             --set-env-vars "ACCOUNT_EMAIL_SHA256=$ACCOUNT_EMAIL_SHA256" \
             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
-          sleep 5
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait \
+            > "$RUNNER_TEMP/shadow-execute.txt" 2>&1
+          EXECUTE_RC=$?
+          set -e
+          sleep 8
           RESULT="$(gcloud logging read \
             "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"S2_SHADOW_SNAPSHOT\"" \
             --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)')"
-          test -n "$RESULT"
+          if [[ "$EXECUTE_RC" -ne 0 || -z "$RESULT" ]]; then
+            gcloud logging read \
+              "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" \
+              --project "$GCP_PROJECT_ID" --freshness 10m --limit 30 --order desc \
+              --format='value(timestamp,severity,textPayload,jsonPayload.message)' \
+              | sed -E 's/[[:space:]]+/ /g' | tail -30
+            cat "$RUNNER_TEMP/shadow-execute.txt"
+            exit 1
+          fi
           printf '%s\n' "$RESULT"
           cleanup
           trap - EXIT
