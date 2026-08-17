@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Depends, Header
@@ -257,6 +257,53 @@ def _live_gates_open() -> bool:
     )
 
 
+def _acquire_or_renew_strategy2_canary_handoff(
+    reference: Any,
+    account_binding: str,
+) -> bool:
+    """Atomically acquire or renew one account-bound canary handoff.
+
+    The ordinary Strategy-2 scheduler only understands ``leaseUntil``.  The
+    additional token proves that the active lease belongs to this exact
+    canary account, allowing the minute scheduler to renew its own handoff
+    without opening an overlap with the legacy runtime.
+    """
+    owner_token = f"strategy2-queue-canary:{account_binding}"
+    transaction = control_plane.db.transaction()
+
+    @control_plane.firestore.transactional
+    def acquire_or_renew(txn: Any) -> bool:
+        value = reference.get(transaction=txn).to_dict() or {}
+        now = datetime.now(timezone.utc)
+        legacy_until = value.get("leaseUntil")
+        canary_lease = value.get("orderQueueCanaryLease")
+        if not isinstance(canary_lease, dict):
+            canary_lease = {}
+        canary_until = canary_lease.get("until")
+        matching_canary = (
+            canary_lease.get("ownerToken") == owner_token
+            and isinstance(canary_until, datetime)
+            and canary_until > now
+        )
+        legacy_active = isinstance(legacy_until, datetime) and legacy_until > now
+        if legacy_active and not matching_canary:
+            return False
+
+        # Three minutes tolerates a delayed minute tick.  Every successful
+        # canary invocation renews both values in the same transaction.
+        renewed_until = now + timedelta(minutes=3)
+        txn.set(reference, {
+            "leaseUntil": renewed_until,
+            "orderQueueCanaryLease": {
+                "ownerToken": owner_token,
+                "until": renewed_until,
+            },
+        }, merge=True)
+        return True
+
+    return acquire_or_renew(transaction)
+
+
 @app.post("/internal/aster-strategy2/tick")
 def run_aster_strategy2_scheduler(
     authorization: str | None = Header(default=None),
@@ -305,10 +352,11 @@ def run_aster_strategy2_queue_canary(
 ) -> dict[str, Any]:
     """Run the queue for exactly one opted-in account without moving service traffic.
 
-    The legacy account lease is deliberately left to expire instead of being
-    released.  The existing scheduler therefore skips this account while a
-    canary scan may still be reconciling Aster truth.  A busy legacy lease is
-    fail-closed: the canary sends no order and releases only its queue lease.
+    The account-bound handoff is renewed by each minute canary tick and is not
+    released after a scan.  The existing scheduler therefore skips exactly
+    this account while the canary owns it, including during reconciliation.
+    A foreign legacy lease is fail-closed: no order is sent and only the queue
+    lease acquired by this invocation is released.
     """
     control_plane.verify_internal_cloud_request(authorization)
     if (
@@ -365,7 +413,7 @@ def run_aster_strategy2_queue_canary(
             "ordersSent": 0,
             "accountRef": account_ref,
         }
-    if not control_plane._acquire_mexc_automation_lease(reference):
+    if not _acquire_or_renew_strategy2_canary_handoff(reference, target_ref):
         control_plane._release_strategy2_queue_lease(reference, queue_token)
         return {
             "processed": 0,
