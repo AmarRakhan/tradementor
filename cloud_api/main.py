@@ -1610,8 +1610,13 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not recovery.allow_risk_increase:
         ref.set({"phase":"RECONCILING","lastReason":"; ".join(recovery.reasons),"lastTickAt":now},merge=True)
         return {"status":"reconciling","reason":"; ".join(recovery.reasons),"ordersSent":0}
+    missing_fill_keys={(leg.symbol,leg.side) for leg in recovery.legs if not leg.fill_ids}
     owned,cost_failures=refresh_owned_costs(client,list(recovery.legs),refresh_symbols,
-        checked_at_ms=int(now.timestamp()*1000))
+        checked_at_ms=int(now.timestamp()*1000),recover_fill_ids=True)
+    recovered_fill_legs=[leg for leg in owned if (leg.symbol,leg.side) in missing_fill_keys and leg.fill_ids]
+    for leg in recovered_fill_legs:
+        ref.collection("audit").add({"event":"FILL_EVIDENCE_RECOVERED","symbol":leg.symbol,
+            "side":leg.side,"cycleId":leg.cycle_id,"fillCount":len(leg.fill_ids),"timestamp":now})
     posmap=active_position_map(positions)
     confirmed_flat=[x for x in owned if (x.symbol,x.side) not in posmap]
     for leg in confirmed_flat:ref.collection("audit").add({"event":"CONFIRMED_FLAT","symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,"timestamp":now})

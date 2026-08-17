@@ -142,3 +142,49 @@ def test_migrated_leg_falls_back_to_full_history_without_importing_old_cycle_cos
     assert refreshed[0].fees==.04 and refreshed[0].funding==-.01
     assert [call[0] for call in client.calls].count("trades")==2
     assert client.calls[-1][1]["start_time"]==1_000
+
+def test_fill_evidence_recovery_is_explicitly_opt_in_and_quantity_proven():
+    class History:
+        def user_trades(self,symbol,**kwargs):
+            return [{"id":"open","symbol":symbol,"positionSide":"LONG","side":"BUY",
+                "qty":"2","price":"50","time":100}]
+        def income_history(self,**kwargs):return []
+    leg=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","cycle",1,2,50)
+    unchanged,failures=refresh_owned_costs(History(),[leg],{"BTCUSDT"},checked_at_ms=1_000)
+    recovered,failures2=refresh_owned_costs(History(),[leg],{"BTCUSDT"},checked_at_ms=1_000,
+        recover_fill_ids=True)
+    assert not failures and not failures2
+    assert unchanged[0].fill_ids==()
+    assert recovered[0].fill_ids==("open",)
+
+def test_fill_evidence_recovery_preserves_guard_when_history_does_not_match_quantity():
+    class Incomplete:
+        def user_trades(self,symbol,**kwargs):
+            return [{"id":"partial","symbol":symbol,"positionSide":"LONG","side":"BUY",
+                "qty":"1","price":"50","time":100}]
+        def income_history(self,**kwargs):return []
+    leg=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","cycle",1,2,50)
+    recovered,failures=refresh_owned_costs(Incomplete(),[leg],{"BTCUSDT"},checked_at_ms=1_000,
+        recover_fill_ids=True)
+    assert not failures
+    assert recovered[0].fill_ids==()
+
+def test_fill_recovery_reads_complete_history_after_ownership_transfer():
+    class Transferred:
+        def __init__(self):self.trade_calls=[]
+        def user_trades(self,symbol,**kwargs):
+            self.trade_calls.append(kwargs)
+            return [
+                {"id":"open","symbol":symbol,"positionSide":"LONG","side":"BUY",
+                    "qty":"1","price":"50","time":100},
+                {"id":"dca","symbol":symbol,"positionSide":"LONG","side":"BUY",
+                    "qty":"1","price":"40","time":200},
+            ]
+        def income_history(self,**kwargs):return []
+    client=Transferred()
+    leg=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","transferred",1,2,45,
+        created_at_ms=150)
+    recovered,failures=refresh_owned_costs(client,[leg],{"BTCUSDT"},checked_at_ms=1_000,
+        recover_fill_ids=True)
+    assert not failures and recovered[0].fill_ids==("open","dca")
+    assert client.trade_calls==[{"start_time":None,"limit":1000}]

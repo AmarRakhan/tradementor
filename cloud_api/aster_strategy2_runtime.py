@@ -78,6 +78,41 @@ def owned_to_mapping(leg:OwnedLeg)->dict[str,Any]:
     for key in ("intent_ids","fill_ids","open_order_ids"):value[key]=list(value[key])
     return value
 
+def current_cycle_fill_ids(*,leg:OwnedLeg,fills:list[dict[str,Any]])->tuple[str,...]:
+    """Prove the fill IDs belonging to the currently open hedge-mode cycle.
+
+    History is replayed from flat. A truncated, malformed or internally
+    inconsistent history never produces evidence. Older completed cycles are
+    discarded only after their replayed quantity returns exactly to zero.
+    """
+    matching=[]
+    for row in fills:
+        if str(row.get("symbol","")).upper()!=leg.symbol or str(row.get("positionSide","")).upper()!=leg.side:
+            continue
+        fill_id=str(row.get("id",row.get("tradeId",""))).strip()
+        side=str(row.get("side","")).upper()
+        quantity=number(row.get("qty",row.get("quantity")))
+        price=number(row.get("price"));timestamp=int(number(row.get("time",row.get("timestamp"))))
+        if not fill_id or side not in {"BUY","SELL"} or quantity<=0 or price<=0 or timestamp<=0:
+            return ()
+        matching.append((timestamp,fill_id,side,quantity))
+    matching.sort(key=lambda item:(item[0],item[1]))
+    if not matching:return ()
+    exposure=0.0;cycle=[];seen=set()
+    for _,fill_id,side,quantity in matching:
+        if fill_id in seen:return ()
+        seen.add(fill_id)
+        increases=(leg.side=="LONG" and side=="BUY") or (leg.side=="SHORT" and side=="SELL")
+        updated=exposure+(quantity if increases else -quantity)
+        tolerance=max(1e-8,abs(exposure)*1e-7,abs(quantity)*1e-7)
+        if updated < -tolerance:return ()
+        exposure=0.0 if abs(updated)<=tolerance else updated
+        cycle.append(fill_id)
+        if exposure==0.0:cycle=[]
+    final_tolerance=max(1e-8,abs(leg.quantity)*1e-7)
+    if not math.isclose(exposure,leg.quantity,rel_tol=1e-7,abs_tol=final_tolerance):return ()
+    return tuple(cycle)
+
 def transfer_active_ownership_to_strategy2(*,positions:list[dict[str,Any]],strategy2_legs:list[OwnedLeg],
                                            strategy3_legs:list[OwnedLeg]|None=None,
                                            strategy1_legs:list[OwnedLeg]|None=None
