@@ -1,0 +1,38 @@
+name: Cloud Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "cloud_api/**"
+      - ".github/workflows/cloud-backend-ci.yml"
+      - ".github/workflows/deploy-cloud-*.yml"
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "cloud_api/**"
+      - ".github/workflows/cloud-backend-ci.yml"
+      - ".github/workflows/deploy-cloud-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run backend tests only
+        working-directory: cloud_api
+        run: pytest -q

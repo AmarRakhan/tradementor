@@ -103,13 +103,11 @@ def test_push_deploy_verifies_route_without_interrupting_an_enabled_scheduler():
 
 
 def test_strategy2_test_only_publication_cannot_deploy_other_cloud_environments():
-    guard = (
-        "github.event_name != 'push' || "
-        "!contains(github.event.head_commit.message, '[strategy2-test-only]')"
-    )
     for deployment in NON_TEST_DEPLOYMENTS:
         workflow = deployment.read_text(encoding="utf-8")
-        assert guard in workflow
+        trigger = workflow.split("permissions:", 1)[0]
+        assert "workflow_dispatch:" in trigger
+        assert "push:" not in trigger
 
 
 def test_strategy2_candidate_rejections_are_isolated_and_visible():
