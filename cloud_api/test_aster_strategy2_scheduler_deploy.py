@@ -109,11 +109,13 @@ def test_single_account_queue_canary_is_double_gated_and_fences_legacy_runtime()
     block=source[start:]
     assert 'os.getenv(control_plane.QUEUE_FEATURE_FLAG, "false").lower() != "true"' in block
     assert 'ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_SHA256' in block
+    assert 'ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_UID' in block
     assert 'ASTER_STRATEGY2_QUEUE_CANARY_MAX_ORDERS' in block
-    assert '.select([])' in block
-    assert 'hashlib.sha256(item.id.encode()).hexdigest() == target_ref' in block
+    assert 'hashlib.sha256(target_uid.encode()).hexdigest() != target_ref' in block
+    assert 'aster_strategy2_reference(target_uid)' in block
+    assert '.where(' not in block and '.stream()' not in block and '.select(' not in block
     assert 'bool(raw.get("orderQueueCanary", False))' in block
-    assert 'len(selected) != 1' in block
+    assert 'if not snapshot.exists' in block
     assert "control_plane._strategy2_order_queue_enabled(" in block
     assert block.index("_acquire_strategy2_queue_lease") < block.index("_acquire_or_renew_strategy2_canary_handoff")
     assert block.index("_acquire_or_renew_strategy2_canary_handoff") < block.index("_run_aster_strategy2_queue_scan")
@@ -149,7 +151,7 @@ def test_single_account_canary_does_not_change_generic_scheduler_or_other_strate
     assert "update-traffic" not in block
     assert "gcloud scheduler" not in block.lower()
     assert "_run_aster_strategy3_tick" not in block and "_run_aster_automation_tick" not in block
-    assert '"selectedAccounts": len(selected)' in block
+    assert '"selectedAccounts": 0' in block
 
 
 def test_queue_scan_has_a_canary_cap_below_the_global_hard_limit():
