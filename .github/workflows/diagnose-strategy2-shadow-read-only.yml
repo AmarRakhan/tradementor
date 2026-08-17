@@ -74,23 +74,21 @@ jobs:
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import hashlib,json,os
           from datetime import datetime,timezone
-          import firebase_admin
-          from firebase_admin import auth
           from google.cloud import firestore
 
           target=os.environ["ACCOUNT_EMAIL_SHA256"]
-          if not firebase_admin._apps:
-              firebase_admin.initialize_app(options={"projectId":"tradementor-production"})
           db=firestore.Client(project="tradementor-amar-20260813")
-          matched=[]
-          page=auth.list_users()
-          while page:
-              for user in page.users:
-                  digest=hashlib.sha256(str(user.email or "").strip().lower().encode()).hexdigest()
-                  if digest==target:matched.append(user.uid)
-              page=page.get_next_page()
-          if len(matched)!=1:raise SystemExit("MASKED_ACCOUNT_MATCH_NOT_UNIQUE")
-          uid=matched[0]
+          matched=set()
+          email_keys=("email","userEmail","emailAddress","accountEmail")
+          for collection in ("users","userProfiles","asterStrategy2"):
+              for document in db.collection(collection).stream():
+                  value=document.to_dict() or {}
+                  for key in email_keys:
+                      candidate=str(value.get(key,"")).strip().lower()
+                      if candidate and hashlib.sha256(candidate.encode()).hexdigest()==target:
+                          matched.add(document.id)
+          if len(matched)!=1:raise SystemExit("MASKED_FIRESTORE_ACCOUNT_MATCH_NOT_UNIQUE")
+          uid=next(iter(matched))
           def read(collection):
               snap=db.collection(collection).document(uid).get()
               return (snap.to_dict() or {}) if snap.exists else {}
