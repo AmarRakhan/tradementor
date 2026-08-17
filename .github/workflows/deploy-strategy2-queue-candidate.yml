@@ -1,0 +1,142 @@
+name: Deploy Strategy 2 Queue Candidate No Traffic
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY_ZERO_TRAFFIC_CANDIDATE"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-test-live-control
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+  SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+  CANDIDATE_TAG: queue-candidate
+  CANDIDATE_COMMIT: 6c502ea86109d149b503ae3fe9acbbacaa6c5245
+
+jobs:
+  test-build-no-traffic:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_COMMIT }}
+
+      - name: Prove isolated candidate scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "${{ inputs.confirmation }}" = "DEPLOY_ZERO_TRAFFIC_CANDIDATE"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
+          test "$SCHEDULER_JOB" = "tradementor-strategy2-test-live-tick"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Run complete backend suite
+        working-directory: cloud_api
+        run: |
+          pip install -r requirements.txt pytest
+          pytest -q
+
+      - name: Authenticate to isolated Google Cloud test project
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture immutable pre-deploy boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-before.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/scheduler-before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"));job=json.load(open(sys.argv[2],encoding="utf-8"))
+          spec=service["spec"]["template"]["spec"]
+          assert spec["serviceAccountName"]
+          assert job["schedule"]=="* * * * *"
+          assert job["state"] in {"ENABLED","PAUSED"}
+          print(spec["serviceAccountName"])
+          PY
+          RUNTIME_SERVICE_ACCOUNT="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$RUNTIME_SERVICE_ACCOUNT"
+          echo "RUNTIME_SERVICE_ACCOUNT=$RUNTIME_SERVICE_ACCOUNT" >> "$GITHUB_ENV"
+
+      - name: Build exact candidate image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy2-test-live-api:$CANDIDATE_COMMIT"
+          docker build --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy tagged revision with zero traffic and queue disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" \
+            --command uvicorn --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --update-env-vars "ASTER_STRATEGY2_ORDER_QUEUE_ENABLED=false" \
+            --no-traffic --tag "$CANDIDATE_TAG" --quiet
+
+      - name: Verify tagged health, zero traffic and unchanged scheduler
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-after.json"
+          CANDIDATE_URL="$(python - "$RUNNER_TEMP/service-after.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          row=next(x for x in service["status"]["traffic"] if x.get("tag")=="queue-candidate")
+          assert row.get("percent",0)==0
+          print(row["url"])
+          PY
+          )"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "$CANDIDATE_URL/health")"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-after.json" "$RUNNER_TEMP/scheduler-before.json" "$RUNNER_TEMP/scheduler-after.json" "$HEALTH" <<'PY'
+          import json,sys
+          before,after,job_before,job_after=map(lambda p:json.load(open(p,encoding="utf-8")),sys.argv[1:5])
+          health=json.loads(sys.argv[5]);revision=after["status"]["latestCreatedRevisionName"]
+          template=after["spec"]["template"]["spec"]
+          env={x["name"]:x.get("value") for x in template["containers"][0]["env"]}
+          assert health["status"]=="ready"
+          assert env["ASTER_STRATEGY2_ORDER_QUEUE_ENABLED"]=="false"
+          assert before["spec"]["template"]["spec"]["serviceAccountName"]==template["serviceAccountName"]
+          assert job_before==job_after
+          tagged=next(x for x in after["status"]["traffic"] if x.get("tag")=="queue-candidate")
+          assert tagged["revisionName"]==revision and tagged.get("percent",0)==0
+          PY
+          echo "CANDIDATE_URL=$CANDIDATE_URL" >> "$GITHUB_ENV"
+
+      - name: Publish candidate URL
+        run: echo "$CANDIDATE_URL"
