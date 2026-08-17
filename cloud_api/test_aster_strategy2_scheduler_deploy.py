@@ -58,9 +58,12 @@ def test_queue_uses_fenced_account_lease_and_persistent_scan_counter():
     assert '"token":token' in block
     assert 'str(lease.get("token",""))!=token' in block
     assert '"ordersUsed":used' in block
-    assert "used<MAX_ORDERS_PER_ACCOUNT_SCAN" in block
-    assert "new_used>MAX_ORDERS_PER_ACCOUNT_SCAN" in block
-    assert "_reserve_strategy2_queue_order(ref,scan_id,intent,details)" in block
+    assert "used<scan_limit" in block
+    assert "new_used>scan_limit" in block
+    assert "min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN)" in block
+    assert "reservation_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))" in block
+    assert "used>=reservation_limit" in block
+    assert "maximum_orders=scan_limit" in block
 
 
 def test_pending_reopen_is_persisted_when_last_budget_slot_is_a_close():
@@ -105,12 +108,17 @@ def test_single_account_queue_canary_is_double_gated_and_fences_legacy_runtime()
     start=source.index('@app.post("/internal/aster-strategy2/queue-canary/tick")')
     block=source[start:]
     assert 'os.getenv(control_plane.QUEUE_FEATURE_FLAG, "false").lower() != "true"' in block
+    assert 'ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_SHA256' in block
+    assert 'ASTER_STRATEGY2_QUEUE_CANARY_MAX_ORDERS' in block
+    assert '.select([])' in block
+    assert 'hashlib.sha256(item.id.encode()).hexdigest() == target_ref' in block
     assert 'bool(raw.get("orderQueueCanary", False))' in block
     assert 'len(selected) != 1' in block
     assert "control_plane._strategy2_order_queue_enabled(" in block
     assert block.index("_acquire_strategy2_queue_lease") < block.index("_acquire_mexc_automation_lease")
     assert block.index("_acquire_mexc_automation_lease") < block.index("_run_aster_strategy2_queue_scan")
     assert "_release_strategy2_queue_lease(reference, queue_token)" in block
+    assert "maximum_orders=canary_limit" in block
     assert 'reference.set({"leaseUntil"' not in block
     assert 'enabled": False' not in block and 'monitor": False' not in block
 
@@ -123,3 +131,15 @@ def test_single_account_canary_does_not_change_generic_scheduler_or_other_strate
     assert "gcloud scheduler" not in block.lower()
     assert "_run_aster_strategy3_tick" not in block and "_run_aster_automation_tick" not in block
     assert '"selectedAccounts": len(selected)' in block
+
+
+def test_queue_scan_has_a_canary_cap_below_the_global_hard_limit():
+    source=(ROOT/"cloud_api/main.py").read_text(encoding="utf-8")
+    start=source.index("def _run_aster_strategy2_queue_scan")
+    end=source.index('@app.post("/internal/mexc-automation/tick")',start)
+    block=source[start:end]
+    assert "maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN" in block
+    assert "scan_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))" in block
+    assert "while used<scan_limit" in block
+    assert "order_budget=scan_limit-used" in block
+    assert "new_used>scan_limit" in block
