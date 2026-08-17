@@ -96,9 +96,20 @@ jobs:
           print(f"RUNTIME_SERVICE_ACCOUNT={runtime_service_account}")
           print(f"SERVICE_URL={service_url}")
           PY
-          # Fail before building or promoting when Scheduler API/IAM cannot
-          # even read the production location.
-          gcloud scheduler jobs list --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --limit=1 >/dev/null
+          # Fail before building or promoting unless the exact existing
+          # production Scheduler job is readable and currently enabled.
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format=json > "$RUNNER_TEMP/scheduler-before.json"
+          python - "$RUNNER_TEMP/scheduler-before.json" "$SCHEDULER_JOB" <<'PY'
+          import json
+          import sys
+
+          job = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert job["name"].endswith("/jobs/" + sys.argv[2])
+          assert job["state"] == "ENABLED"
+          PY
 
       - name: Build and push backend image
         shell: bash
@@ -151,21 +162,9 @@ jobs:
         shell: bash
         run: |
           TARGET="$SERVICE_URL/internal/aster-automation/tick"
-          if gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
-            gcloud scheduler jobs pause "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION"
-          else
-            # A newly created job can briefly exist before it is paused. Its
-            # bootstrap target is therefore the read-only health endpoint and
-            # can never place or close an order.
-            gcloud scheduler jobs create http "$SCHEDULER_JOB" \
-              --project "$GCP_PROJECT_ID" \
-              --location "$GCP_REGION" \
-              --schedule "* * * * *" \
-              --time-zone "Etc/UTC" \
-              --uri "$SERVICE_URL/health" \
-              --http-method GET
-            gcloud scheduler jobs pause "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION"
-          fi
+          gcloud scheduler jobs pause "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION"
           gcloud scheduler jobs update http "$SCHEDULER_JOB" \
             --project "$GCP_PROJECT_ID" \
             --location "$GCP_REGION" \
