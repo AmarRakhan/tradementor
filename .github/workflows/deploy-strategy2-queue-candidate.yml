@@ -131,7 +131,7 @@ jobs:
           assert health["status"]=="ready"
           assert env["ASTER_STRATEGY2_ORDER_QUEUE_ENABLED"]=="false"
           assert before["spec"]["template"]["spec"]["serviceAccountName"]==template["serviceAccountName"]
-          assert job_before==job_after
+          for dynamic_key in ("status","scheduleTime","lastAttemptTime"):\n              job_before.pop(dynamic_key,None);job_after.pop(dynamic_key,None)\n          assert job_before==job_after
           tagged=next(x for x in after["status"]["traffic"] if x.get("tag")=="q2c")
           assert tagged["revisionName"]==revision and tagged.get("percent",0)==0
           PY
