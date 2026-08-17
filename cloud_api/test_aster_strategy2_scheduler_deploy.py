@@ -94,7 +94,9 @@ def test_queue_candidate_deploy_has_zero_traffic_and_explicitly_disabled_flag():
     assert "queue-candidate" not in workflow
     assert 'ASTER_STRATEGY2_ORDER_QUEUE_ENABLED=false' in workflow
     assert 'assert row.get("percent",0)==0' in workflow
-    assert 'assert job_before==job_after' in workflow
+    assert "scheduler_config(job_before)==scheduler_config(job_after)" in workflow
+    assert '"lastAttemptTime"' not in workflow
+    assert "assert job_before==job_after" not in workflow
     assert "/internal/aster-strategy2/tick" not in workflow
 
 
