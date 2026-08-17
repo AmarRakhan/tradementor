@@ -57,9 +57,22 @@ jobs:
         shell: bash
         run: |
           REQUIRED_PERMISSIONS="cloudscheduler.jobs.enable,cloudscheduler.jobs.fullView,cloudscheduler.jobs.get,cloudscheduler.jobs.pause,cloudscheduler.jobs.update,cloudscheduler.locations.get,cloudscheduler.locations.list"
-          gcloud projects test-iam-permissions "$GCP_PROJECT_ID" \
-            --permissions="$REQUIRED_PERMISSIONS" \
-            --format=json > "$RUNNER_TEMP/scheduler-permissions.json"
+          python - "$RUNNER_TEMP/scheduler-permissions-request.json" "$REQUIRED_PERMISSIONS" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump({"permissions": sys.argv[2].split(",")}, handle)
+          PY
+          ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $ACCESS_TOKEN" \
+            --header "Content-Type: application/json; charset=utf-8" \
+            --data-binary @"$RUNNER_TEMP/scheduler-permissions-request.json" \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/$GCP_PROJECT_ID:testIamPermissions" \
+            > "$RUNNER_TEMP/scheduler-permissions.json"
+          unset ACCESS_TOKEN
           python - "$RUNNER_TEMP/scheduler-permissions.json" "$REQUIRED_PERMISSIONS" <<'PY'
           import json
           import sys
