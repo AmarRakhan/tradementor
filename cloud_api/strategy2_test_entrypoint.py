@@ -13,6 +13,11 @@ import main as control_plane
 from read_only_source import read_source_url as environment_read_source_url
 from aster_cost_evidence import paged_user_trades
 from aster_gateway import AsterApiError, AsterV3Client
+from aster_strategy2_shadow import plan_validated_shadow
+from aster_strategy2_shadow_adapter import (
+    ReadOnlyAccountSnapshot, ShadowSnapshotRejected, validated_entry_symbols,
+    validated_shadow_inputs,
+)
 from strategy2_handoff import HandoffProof, build_handoff_proof, ownership_rows, proof_public
 
 
@@ -118,6 +123,70 @@ def strategy2_token_diagnostics(
             "heartbeatAgeSeconds": heartbeat_age,
             "heartbeatFresh": heartbeat_age is not None and heartbeat_age <= 180,
         },
+    }
+
+
+@app.get("/v1/me/aster/strategy2/queue-shadow")
+def strategy2_queue_shadow(
+    user: dict[str, Any] = Depends(control_plane.authenticated_user),
+) -> dict[str, Any]:
+    """Plan existing-position actions from fresh reads; never write or trade."""
+    uid = str(user["uid"])
+    captured_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    state_snapshot = control_plane.aster_strategy2_reference(uid).get()
+    state = (state_snapshot.to_dict() or {}) if state_snapshot.exists else {}
+    secret = control_plane.load_aster_secret({"uid": uid})
+    client = AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=control_plane.local_eip712_signer(secret),
+        live_authorized=False,
+    )
+    try:
+        hedge_mode = client.position_mode()
+        account = client.account_information()
+        positions = tuple(client.position_risk())
+        open_orders = tuple(client.open_orders())
+        exchange_info = client.public_exchange_info()
+        prices = tuple(client.ticker_prices())
+        tickers_24h = tuple(client.ticker_24h())
+        brackets = tuple(client.leverage_brackets())
+        config = control_plane.Strategy2Config.from_mapping(state.get("settings"))
+        persisted_owned = tuple(
+            control_plane.owned_from_mapping(row)
+            for row in state.get("ownedLegs", [])
+        )
+        entry_symbols = validated_entry_symbols(
+            config=config, owned=persisted_owned, positions=positions,
+            account=account, exchange_info=exchange_info,
+            ticker_prices=prices, tickers_24h=tickers_24h,
+            leverage_brackets=brackets, captured_at_ms=captured_at_ms,
+        )
+        inputs = validated_shadow_inputs(ReadOnlyAccountSnapshot(
+            account_uid=uid,
+            scan_id=f"shadow-{captured_at_ms}",
+            captured_at_ms=captured_at_ms,
+            strategy_state=state,
+            hedge_mode=hedge_mode,
+            account=account,
+            positions=positions,
+            open_orders=open_orders,
+            exchange_reliable=True,
+            entry_symbols=entry_symbols,
+        ))
+    except (AsterApiError, ShadowSnapshotRejected, TypeError, ValueError) as exc:
+        raise control_plane.HTTPException(
+            409, f"Read-only queue-shadow veilig geblokkeerd: {exc}",
+        ) from exc
+    result = plan_validated_shadow(inputs)
+    return {
+        **result,
+        "scope": "proven-positions-and-validated-new-entries",
+        "newEntryPlanning": "READ_ONLY_CONTRACT_VALIDATED",
+        "ordersSent": 0,
+        "positionsChanged": 0,
+        "persistentWrites": 0,
+        "schedulerChanged": False,
+        "botStatusChanged": False,
     }
 
 
