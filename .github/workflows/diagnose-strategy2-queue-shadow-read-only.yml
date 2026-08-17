@@ -77,7 +77,10 @@ jobs:
           from firebase_admin import auth
 
           target=os.environ["ACCOUNT_EMAIL_SHA256"]
-          credential,_=google.auth.default(quota_project_id="tradementor-production")
+          credential,_=google.auth.default()
+          if "[DEFAULT]" not in firebase_admin._apps:
+              firebase_admin.initialize_app(credential,
+                  options={"projectId":os.environ["GOOGLE_CLOUD_PROJECT"]})
           identity_app=(firebase_admin.get_app("shadow-identity")
               if "shadow-identity" in firebase_admin._apps else
               firebase_admin.initialize_app(credential,
