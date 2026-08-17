@@ -366,35 +366,33 @@ def run_aster_strategy2_queue_canary(
         return {"processed": 0, "status": "centrally-disabled", "ordersSent": 0}
 
     target_ref = os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_SHA256", "").strip().lower()
+    target_uid = os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_UID", "").strip()
     try:
         canary_limit = int(os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_MAX_ORDERS", "1"))
     except ValueError:
         canary_limit = 0
     if len(target_ref) != 64 or any(char not in "0123456789abcdef" for char in target_ref):
         return {"processed": 0, "status": "canary-account-binding-invalid", "ordersSent": 0}
+    if not target_uid or hashlib.sha256(target_uid.encode()).hexdigest() != target_ref:
+        return {"processed": 0, "status": "canary-account-binding-invalid", "ordersSent": 0}
     if not 1 <= canary_limit <= control_plane.MAX_ORDERS_PER_ACCOUNT_SCAN:
         return {"processed": 0, "status": "canary-order-limit-invalid", "ordersSent": 0}
 
-    references = (
-        control_plane.db.collection("asterStrategy2")
-        .where("monitor", "==", True)
-        .select([])
-        .stream()
-    )
-    selected = [item for item in references
-        if hashlib.sha256(item.id.encode()).hexdigest() == target_ref]
-    if len(selected) != 1:
+    # The direct UID is supplied as a Cloud Run secret and cross-checked
+    # against the non-secret SHA binding before exactly one document is read.
+    # Never enumerate the Strategy-2 account directory for a canary.
+    reference = control_plane.aster_strategy2_reference(target_uid)
+    snapshot = reference.get()
+    if not snapshot.exists:
         return {
             "processed": 0,
             "status": "canary-selection-failed",
             "ordersSent": 0,
-            "selectedAccounts": len(selected),
+            "selectedAccounts": 0,
         }
 
-    item = selected[0]
-    reference = control_plane.aster_strategy2_reference(item.id)
-    raw = reference.get().to_dict() or {}
-    account_ref = hashlib.sha256(item.id.encode()).hexdigest()[:12]
+    raw = snapshot.to_dict() or {}
+    account_ref = target_ref[:12]
     if (not bool(raw.get("enabled", False)) or not bool(raw.get("monitor", False))
         or not bool(raw.get("orderQueueCanary", False))
         or not control_plane._strategy2_order_queue_enabled(raw)):
@@ -423,7 +421,7 @@ def run_aster_strategy2_queue_canary(
         }
     try:
         result = control_plane._run_aster_strategy2_queue_scan(
-            item.id, maximum_orders=canary_limit,
+            target_uid, maximum_orders=canary_limit,
         )
         return {"processed": 1, "status": "ok", "accountRef": account_ref, **result}
     finally:
