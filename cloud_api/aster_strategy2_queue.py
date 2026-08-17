@@ -170,3 +170,53 @@ def initial_build_actions(*, missing_long: int, missing_short: int, symbols: Ite
         short_left -= side == "SHORT"
         index += 1
     return result
+
+
+def build_shadow_plan(*, state: QueueState, risk: Iterable[QueueAction] = (),
+                      profits: Iterable[QueueAction] = (),
+                      pending_reopens: Iterable[QueueAction] = (),
+                      dca: Iterable[QueueAction] = (),
+                      entries: Iterable[QueueAction] = ()) -> dict[str, Any]:
+    """Return a strictly side-effect-free view of one account queue scan.
+
+    The caller supplies already validated snapshot-derived candidates.  This
+    function performs no exchange, database, lock or clock access and never
+    mutates ``state``.  It is therefore safe for shadow comparison while the
+    live account remains on the old runtime.
+    """
+    ordered = ordered_actions(risk=risk, profits=profits,
+                              pending_reopens=pending_reopens, dca=dca,
+                              entries=entries)
+    remaining = state.remaining
+    selected: list[QueueAction] = []
+    if not state.halted_uncertain:
+        for item in ordered:
+            if len(selected) >= remaining:
+                break
+            key = item.idempotency_key(state.account_uid)
+            if key in state.confirmed_keys:
+                continue
+            selected.append(item)
+    counts = {kind: 0 for kind in ("RISK_REDUCE", "REOPEN", "TAKE_PROFIT_CLOSE", "DCA", "OPEN_BASE")}
+    for item in selected:
+        counts[item.kind] += 1
+    account_ref = hashlib.sha256(state.account_uid.encode()).hexdigest()[:12]
+    return {
+        "readOnly": True,
+        "accountRef": account_ref,
+        "scanId": state.scan_id,
+        "ordersAlreadyUsed": state.orders_used,
+        "maximumOrders": MAX_ORDERS_PER_ACCOUNT_SCAN,
+        "remainingBudget": remaining,
+        "haltedUncertain": state.halted_uncertain,
+        "candidateCount": len(ordered),
+        "wouldSendCount": len(selected),
+        "counts": counts,
+        "actions": [{
+            "priority": int(item.priority), "kind": item.kind,
+            "symbol": item.symbol, "side": item.side,
+            "cycleId": item.cycle_id,
+            "packageId": item.package_id,
+            "idempotencyKey": item.idempotency_key(state.account_uid),
+        } for item in selected],
+    }
