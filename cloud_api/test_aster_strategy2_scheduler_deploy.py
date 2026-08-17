@@ -115,12 +115,31 @@ def test_single_account_queue_canary_is_double_gated_and_fences_legacy_runtime()
     assert 'bool(raw.get("orderQueueCanary", False))' in block
     assert 'len(selected) != 1' in block
     assert "control_plane._strategy2_order_queue_enabled(" in block
-    assert block.index("_acquire_strategy2_queue_lease") < block.index("_acquire_mexc_automation_lease")
-    assert block.index("_acquire_mexc_automation_lease") < block.index("_run_aster_strategy2_queue_scan")
+    assert block.index("_acquire_strategy2_queue_lease") < block.index("_acquire_or_renew_strategy2_canary_handoff")
+    assert block.index("_acquire_or_renew_strategy2_canary_handoff") < block.index("_run_aster_strategy2_queue_scan")
     assert "_release_strategy2_queue_lease(reference, queue_token)" in block
     assert "maximum_orders=canary_limit" in block
     assert 'reference.set({"leaseUntil"' not in block
     assert 'enabled": False' not in block and 'monitor": False' not in block
+
+
+def test_single_account_canary_handoff_is_tokenized_renewable_and_fail_closed():
+    source=(ROOT/"cloud_api/strategy2_test_entrypoint.py").read_text(encoding="utf-8")
+    start=source.index("def _acquire_or_renew_strategy2_canary_handoff")
+    end=source.index('@app.post("/internal/aster-strategy2/tick")', start)
+    block=source[start:end]
+    assert 'owner_token = f"strategy2-queue-canary:{account_binding}"' in block
+    assert 'canary_lease.get("ownerToken") == owner_token' in block
+    assert 'canary_until > now' in block
+    assert 'legacy_active and not matching_canary' in block
+    assert '"leaseUntil": renewed_until' in block
+    assert '"orderQueueCanaryLease": {' in block
+    assert '"ownerToken": owner_token' in block
+    assert '"until": renewed_until' in block
+    assert 'timedelta(minutes=3)' in block
+    assert "txn.set(reference" in block
+    assert block.index('if legacy_active and not matching_canary') < block.index('txn.set(reference')
+    assert block.count('txn.set(reference') == 1
 
 
 def test_single_account_canary_does_not_change_generic_scheduler_or_other_strategies():
