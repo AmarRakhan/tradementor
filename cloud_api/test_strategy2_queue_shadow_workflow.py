@@ -9,7 +9,9 @@ def test_queue_shadow_workflow_is_one_masked_account_and_manual_only():
     assert "workflow_dispatch:" in WORKFLOW
     assert "RUN_QUEUE_SHADOW_READ_ONLY" in WORKFLOW
     assert "ACCOUNT_EMAIL_SHA256: 6368246d6bce" in WORKFLOW
-    assert "auth.list_users()" in WORKFLOW
+    assert 'name="shadow-identity"' in WORKFLOW
+    assert "auth.list_users(app=identity_app)" in WORKFLOW
+    assert "firebase_admin.initialize_app(credential,options={\"projectId\":\"tradementor-production\"})" not in WORKFLOW
     assert "len(set(matched))!=1" in WORKFLOW
     assert "refs/heads/codex/strategy2-account-order-queue" in WORKFLOW
 
