@@ -87,7 +87,21 @@ jobs:
                       candidate=str(value.get(key,"")).strip().lower()
                       if candidate and hashlib.sha256(candidate.encode()).hexdigest()==target:
                           matched.add(document.id)
-          if len(matched)!=1:raise SystemExit("MASKED_FIRESTORE_ACCOUNT_MATCH_NOT_UNIQUE")
+          if len(matched)!=1:
+              import firebase_admin,google.auth
+              from firebase_admin import auth
+              credential,_=google.auth.default(quota_project_id="tradementor-production")
+              if not firebase_admin._apps:
+                  firebase_admin.initialize_app(credential,options={"projectId":"tradementor-production"})
+              matched=set()
+              page=auth.list_users()
+              while page:
+                  for user in page.users:
+                      candidate=str(user.email or "").strip().lower()
+                      if candidate and hashlib.sha256(candidate.encode()).hexdigest()==target:
+                          matched.add(user.uid)
+                  page=page.get_next_page()
+          if len(matched)!=1:raise SystemExit(f"MASKED_ACCOUNT_MATCH_COUNT_{len(matched)}")
           uid=next(iter(matched))
           def read(collection):
               snap=db.collection(collection).document(uid).get()
