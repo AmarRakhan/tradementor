@@ -26,7 +26,7 @@ jobs:
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
       EXPECTED_REVISION: tradementor-strategy2-test-live-api-00042-pur
-      ACCOUNT_EMAIL_SHA256: 6368246d6bce5a3f828f28b960c8215b17e79b8ba94811df4f01f1b17a03282a
+      ACCOUNT_UID_SHA256: 44246fcb6d4b8400bc3944e50d1b62682399fb50e5bad2ad7729eae09910b94c
     steps:
       - name: Prove exact read-only scope
         shell: bash
@@ -74,25 +74,16 @@ jobs:
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import hashlib,json,os
           import firebase_admin,google.auth
-          from firebase_admin import auth
+          from google.cloud import firestore
 
-          target=os.environ["ACCOUNT_EMAIL_SHA256"]
+          target=os.environ["ACCOUNT_UID_SHA256"]
           credential,_=google.auth.default()
           if "[DEFAULT]" not in firebase_admin._apps:
               firebase_admin.initialize_app(credential,
                   options={"projectId":os.environ["GOOGLE_CLOUD_PROJECT"]})
-          identity_app=(firebase_admin.get_app("shadow-identity")
-              if "shadow-identity" in firebase_admin._apps else
-              firebase_admin.initialize_app(credential,
-                  options={"projectId":"tradementor-production"},name="shadow-identity"))
-          matched=[]
-          page=auth.list_users(app=identity_app)
-          while page:
-              for user in page.users:
-                  email=str(user.email or "").strip().lower()
-                  if email and hashlib.sha256(email.encode()).hexdigest()==target:
-                      matched.append(user.uid)
-              page=page.get_next_page()
+          db=firestore.Client(project=os.environ["GOOGLE_CLOUD_PROJECT"])
+          matched=[row.id for row in db.collection("asterStrategy2").select([]).stream()
+              if hashlib.sha256(row.id.encode()).hexdigest()==target]
           if len(set(matched))!=1:raise SystemExit(f"MASKED_ACCOUNT_MATCH_COUNT_{len(set(matched))}")
 
           from strategy2_test_entrypoint import strategy2_queue_shadow
@@ -113,7 +104,7 @@ jobs:
           gcloud run jobs deploy "$JOB" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,FIREBASE_AUTH_PROJECT_ID=tradementor-production,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,ASTER_STRATEGY2_ORDER_QUEUE_ENABLED=false,ACCOUNT_EMAIL_SHA256=$ACCOUNT_EMAIL_SHA256" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,ASTER_STRATEGY2_ORDER_QUEUE_ENABLED=false,ACCOUNT_UID_SHA256=$ACCOUNT_UID_SHA256" \
             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
           set +e
