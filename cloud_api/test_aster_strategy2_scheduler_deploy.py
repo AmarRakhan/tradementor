@@ -89,6 +89,9 @@ def test_queue_candidate_deploy_has_zero_traffic_and_explicitly_disabled_flag():
     assert 'test "${{ inputs.confirmation }}" = "DEPLOY_ZERO_TRAFFIC_CANDIDATE"' in workflow
     assert 'refs/heads/codex/strategy2-account-order-queue' in workflow
     assert '--no-traffic --tag "$CANDIDATE_TAG"' in workflow
+    assert "CANDIDATE_TAG: q2c" in workflow
+    assert 'x.get("tag")=="q2c"' in workflow
+    assert "queue-candidate" not in workflow
     assert 'ASTER_STRATEGY2_ORDER_QUEUE_ENABLED=false' in workflow
     assert 'assert row.get("percent",0)==0' in workflow
     assert 'assert job_before==job_after' in workflow
