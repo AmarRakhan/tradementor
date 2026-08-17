@@ -22,7 +22,7 @@ env:
   ARTIFACT_REPOSITORY: tradementor
   CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
   SCHEDULER_JOB: tradementor-strategy2-test-live-tick
-  CANDIDATE_TAG: queue-candidate
+  CANDIDATE_TAG: q2c
 
 jobs:
   test-build-no-traffic:
@@ -116,7 +116,7 @@ jobs:
           CANDIDATE_URL="$(python - "$RUNNER_TEMP/service-after.json" <<'PY'
           import json,sys
           service=json.load(open(sys.argv[1],encoding="utf-8"))
-          row=next(x for x in service["status"]["traffic"] if x.get("tag")=="queue-candidate")
+          row=next(x for x in service["status"]["traffic"] if x.get("tag")=="q2c")
           assert row.get("percent",0)==0
           print(row["url"])
           PY
@@ -132,7 +132,7 @@ jobs:
           assert env["ASTER_STRATEGY2_ORDER_QUEUE_ENABLED"]=="false"
           assert before["spec"]["template"]["spec"]["serviceAccountName"]==template["serviceAccountName"]
           assert job_before==job_after
-          tagged=next(x for x in after["status"]["traffic"] if x.get("tag")=="queue-candidate")
+          tagged=next(x for x in after["status"]["traffic"] if x.get("tag")=="q2c")
           assert tagged["revisionName"]==revision and tagged.get("percent",0)==0
           PY
           echo "CANDIDATE_URL=$CANDIDATE_URL" >> "$GITHUB_ENV"
