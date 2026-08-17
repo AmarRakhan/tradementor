@@ -5380,9 +5380,11 @@ def _release_strategy2_queue_lease(reference,token:str)->None:
     release(transaction)
 
 
-def _reserve_strategy2_queue_order(reference,scan_id:str,intent:AsterOrderIntent,details:dict[str,Any]|None=None)->None:
+def _reserve_strategy2_queue_order(reference,scan_id:str,intent:AsterOrderIntent,
+    details:dict[str,Any]|None=None,maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN)->None:
     """Persist intent and consume one slot immediately before Aster submission."""
     transaction=db.transaction();now=datetime.now(timezone.utc)
+    reservation_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))
     @firestore.transactional
     def reserve(txn):
         value=reference.get(transaction=txn).to_dict() or {}
@@ -5390,7 +5392,8 @@ def _reserve_strategy2_queue_order(reference,scan_id:str,intent:AsterOrderIntent
         if str(state.get("scanId",""))!=scan_id:
             raise RuntimeError("Strategy-2 scan-id veranderde tijdens orderreservering")
         used=int(safe_float(state.get("ordersUsed")))
-        if used>=MAX_ORDERS_PER_ACCOUNT_SCAN:raise Strategy2OrderBudgetExhausted("Strategy-2 accountscan heeft 15 Aster-orders bereikt")
+        if used>=reservation_limit:raise Strategy2OrderBudgetExhausted(
+            f"Strategy-2 accountscan heeft {reservation_limit} Aster-orders bereikt")
         current={"clientOrderId":intent.intent_id,"symbol":intent.symbol,"side":intent.position_side.value,
             "action":intent.action,"quantity":str(intent.quantity),"reservedAt":now,"scanId":scan_id}
         current.update(details or {})
@@ -5472,8 +5475,10 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
     return True,"INTENT_FILLED_RECONCILED"
 
 
-def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False)->dict[str,Any]:
+def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False,
+    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN)->dict[str,Any]:
     """Run one durable, account-local scan with a hard Aster request budget."""
+    scan_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))
     ref=aster_strategy2_reference(uid);now=datetime.now(timezone.utc)
     scan_id=now.strftime("%Y%m%dT%H%M")
     raw=ref.get().to_dict() or {};prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
@@ -5498,15 +5503,16 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
             "reason":str(prior.get("reconcileReason","Geen openstaande queue-intent"))}
     used=int(safe_float(prior.get("ordersUsed"))) if str(prior.get("scanId",""))==scan_id else 0
     starting_used=used
-    state={"scanId":scan_id,"ordersUsed":used,"maximumOrders":MAX_ORDERS_PER_ACCOUNT_SCAN,
+    state={"scanId":scan_id,"ordersUsed":used,"maximumOrders":scan_limit,
         "haltedUncertain":False,"startedAt":prior.get("startedAt") if used else now,
         "pendingReopens":raw.get("pendingReopens",[])}
     ref.set({"orderQueueState":state},merge=True)
     results=[]
-    while used<MAX_ORDERS_PER_ACCOUNT_SCAN:
+    while used<scan_limit:
         try:
-            result=_run_aster_strategy2_tick(uid,order_budget=MAX_ORDERS_PER_ACCOUNT_SCAN-used,
-                before_order=lambda intent,details=None:_reserve_strategy2_queue_order(ref,scan_id,intent,details))
+            result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,
+                before_order=lambda intent,details=None:_reserve_strategy2_queue_order(
+                    ref,scan_id,intent,details,maximum_orders=scan_limit))
         except Strategy2OrderBudgetExhausted:
             latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
             used=int(safe_float(latest_state.get("ordersUsed")));break
@@ -5520,14 +5526,14 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
             results.append({"status":"uncertain","ordersSent":1});break
         latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
         new_used=int(safe_float(latest_state.get("ordersUsed")));sent=max(0,new_used-used)
-        if new_used>MAX_ORDERS_PER_ACCOUNT_SCAN:raise RuntimeError("Strategy-2 queue adapter overschreed het accountbudget")
+        if new_used>scan_limit:raise RuntimeError("Strategy-2 queue adapter overschreed het accountbudget")
         used=new_used;state.update({"ordersUsed":used,"currentIntent":{},"updatedAt":datetime.now(timezone.utc),
             "pendingReopens":ref.get().to_dict().get("pendingReopens",[])})
         ref.set({"orderQueueState":state},merge=True);results.append(result)
         if drain_pending_only and not state.get("pendingReopens"):break
         if sent==0:break
     return {"status":"ok" if results and any(int(safe_float(x.get("ordersSent"))) for x in results) else "waiting",
-        "scanId":scan_id,"ordersSent":used-starting_used,"ordersUsed":used,"maximumOrders":MAX_ORDERS_PER_ACCOUNT_SCAN,
+        "scanId":scan_id,"ordersSent":used-starting_used,"ordersUsed":used,"maximumOrders":scan_limit,
         "actions":results}
 
 
