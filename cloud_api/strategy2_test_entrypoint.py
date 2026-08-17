@@ -317,16 +317,24 @@ def run_aster_strategy2_queue_canary(
     ):
         return {"processed": 0, "status": "centrally-disabled", "ordersSent": 0}
 
-    controls = list(
+    target_ref = os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_SHA256", "").strip().lower()
+    try:
+        canary_limit = int(os.getenv("ASTER_STRATEGY2_QUEUE_CANARY_MAX_ORDERS", "1"))
+    except ValueError:
+        canary_limit = 0
+    if len(target_ref) != 64 or any(char not in "0123456789abcdef" for char in target_ref):
+        return {"processed": 0, "status": "canary-account-binding-invalid", "ordersSent": 0}
+    if not 1 <= canary_limit <= control_plane.MAX_ORDERS_PER_ACCOUNT_SCAN:
+        return {"processed": 0, "status": "canary-order-limit-invalid", "ordersSent": 0}
+
+    references = (
         control_plane.db.collection("asterStrategy2")
         .where("monitor", "==", True)
+        .select([])
         .stream()
     )
-    selected = []
-    for item in controls[:100]:
-        raw = item.to_dict() or {}
-        if bool(raw.get("orderQueueCanary", False)):
-            selected.append((item, raw))
+    selected = [item for item in references
+        if hashlib.sha256(item.id.encode()).hexdigest() == target_ref]
     if len(selected) != 1:
         return {
             "processed": 0,
@@ -335,12 +343,13 @@ def run_aster_strategy2_queue_canary(
             "selectedAccounts": len(selected),
         }
 
-    item, raw = selected[0]
+    item = selected[0]
     reference = control_plane.aster_strategy2_reference(item.id)
+    raw = reference.get().to_dict() or {}
     account_ref = hashlib.sha256(item.id.encode()).hexdigest()[:12]
-    if not bool(raw.get("enabled", False)) or not control_plane._strategy2_order_queue_enabled(
-        raw
-    ):
+    if (not bool(raw.get("enabled", False)) or not bool(raw.get("monitor", False))
+        or not bool(raw.get("orderQueueCanary", False))
+        or not control_plane._strategy2_order_queue_enabled(raw)):
         return {
             "processed": 0,
             "status": "account-gate-disabled",
@@ -365,7 +374,9 @@ def run_aster_strategy2_queue_canary(
             "accountRef": account_ref,
         }
     try:
-        result = control_plane._run_aster_strategy2_queue_scan(item.id)
+        result = control_plane._run_aster_strategy2_queue_scan(
+            item.id, maximum_orders=canary_limit,
+        )
         return {"processed": 1, "status": "ok", "accountRef": account_ref, **result}
     finally:
         control_plane._release_strategy2_queue_lease(reference, queue_token)
