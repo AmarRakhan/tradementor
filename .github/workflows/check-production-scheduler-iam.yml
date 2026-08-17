@@ -1,0 +1,106 @@
+name: Check Production Scheduler IAM
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type CHECK_PRODUCTION_SCHEDULER_IAM"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-scheduler-iam-preflight
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  SCHEDULER_JOB: tradementor-aster-automation-tick
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  scheduler-iam-preflight:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Authorize read-only IAM preflight
+        shell: bash
+        run: |
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "${{ inputs.confirmation }}" = "CHECK_PRODUCTION_SCHEDULER_IAM"
+
+      - name: Verify immutable repository scope
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$GCP_REGION" = "europe-west4"
+          test "$SCHEDULER_JOB" = "tradementor-aster-automation-tick"
+
+      - name: Authenticate to Google Cloud without stored keys
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Check exact Scheduler permissions without changing IAM
+        shell: bash
+        run: |
+          REQUIRED_PERMISSIONS="cloudscheduler.jobs.enable,cloudscheduler.jobs.fullView,cloudscheduler.jobs.get,cloudscheduler.jobs.pause,cloudscheduler.jobs.update,cloudscheduler.locations.get,cloudscheduler.locations.list"
+          gcloud projects test-iam-permissions "$GCP_PROJECT_ID" \
+            --permissions="$REQUIRED_PERMISSIONS" \
+            --format=json > "$RUNNER_TEMP/scheduler-permissions.json"
+          python - "$RUNNER_TEMP/scheduler-permissions.json" "$REQUIRED_PERMISSIONS" <<'PY'
+          import json
+          import sys
+
+          result = json.load(open(sys.argv[1], encoding="utf-8"))
+          granted = set(result.get("permissions", []))
+          required = set(sys.argv[2].split(","))
+          missing = sorted(required - granted)
+
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump({"granted": sorted(granted), "missing": missing}, handle, indent=2)
+
+          summary = open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8")
+          summary.write("## Production Scheduler IAM preflight\n\n")
+          summary.write("This check was read-only and did not change IAM or Scheduler state.\n\n")
+          summary.write(f"- Granted required permissions: {len(granted & required)}/{len(required)}\n")
+          summary.write(f"- Missing permissions: {', '.join(missing) if missing else 'none'}\n")
+          summary.close()
+
+          if missing:
+              raise SystemExit("Missing required Scheduler permissions: " + ", ".join(missing))
+          PY
+
+      - name: Verify the exact Scheduler job is readable
+        shell: bash
+        run: |
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format=json > "$RUNNER_TEMP/scheduler-job.json"
+          python - "$RUNNER_TEMP/scheduler-job.json" "$SCHEDULER_JOB" <<'PY'
+          import json
+          import os
+          import sys
+
+          job = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected_job = sys.argv[2]
+          assert job["name"].endswith("/jobs/" + expected_job)
+          assert job["state"] in {"ENABLED", "PAUSED"}
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"- Exact job readable: {expected_job}\n")
+              summary.write(f"- Current state: {job['state']}\n")
+          PY
