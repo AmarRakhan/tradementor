@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -227,3 +228,75 @@ def run_aster_strategy2_scheduler(
         "strategy3": [],
         "strategy3Isolated": True,
     }
+
+
+@app.post("/internal/aster-strategy2/queue-canary/tick")
+def run_aster_strategy2_queue_canary(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Run the queue for exactly one opted-in account without moving service traffic.
+
+    The legacy account lease is deliberately left to expire instead of being
+    released.  The existing scheduler therefore skips this account while a
+    canary scan may still be reconciling Aster truth.  A busy legacy lease is
+    fail-closed: the canary sends no order and releases only its queue lease.
+    """
+    control_plane.verify_internal_cloud_request(authorization)
+    if (
+        not _live_gates_open()
+        or os.getenv(control_plane.QUEUE_FEATURE_FLAG, "false").lower() != "true"
+    ):
+        return {"processed": 0, "status": "centrally-disabled", "ordersSent": 0}
+
+    controls = list(
+        control_plane.db.collection("asterStrategy2")
+        .where("monitor", "==", True)
+        .stream()
+    )
+    selected = []
+    for item in controls[:100]:
+        raw = item.to_dict() or {}
+        if bool(raw.get("orderQueueCanary", False)):
+            selected.append((item, raw))
+    if len(selected) != 1:
+        return {
+            "processed": 0,
+            "status": "canary-selection-failed",
+            "ordersSent": 0,
+            "selectedAccounts": len(selected),
+        }
+
+    item, raw = selected[0]
+    reference = control_plane.aster_strategy2_reference(item.id)
+    account_ref = hashlib.sha256(item.id.encode()).hexdigest()[:12]
+    if not bool(raw.get("enabled", False)) or not control_plane._strategy2_order_queue_enabled(
+        raw
+    ):
+        return {
+            "processed": 0,
+            "status": "account-gate-disabled",
+            "ordersSent": 0,
+            "accountRef": account_ref,
+        }
+
+    queue_token = control_plane._acquire_strategy2_queue_lease(reference)
+    if not queue_token:
+        return {
+            "processed": 0,
+            "status": "queue-lease-busy",
+            "ordersSent": 0,
+            "accountRef": account_ref,
+        }
+    if not control_plane._acquire_mexc_automation_lease(reference):
+        control_plane._release_strategy2_queue_lease(reference, queue_token)
+        return {
+            "processed": 0,
+            "status": "legacy-lease-busy",
+            "ordersSent": 0,
+            "accountRef": account_ref,
+        }
+    try:
+        result = control_plane._run_aster_strategy2_queue_scan(item.id)
+        return {"processed": 1, "status": "ok", "accountRef": account_ref, **result}
+    finally:
+        control_plane._release_strategy2_queue_lease(reference, queue_token)
