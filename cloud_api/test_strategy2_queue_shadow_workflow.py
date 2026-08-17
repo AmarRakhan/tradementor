@@ -8,13 +8,17 @@ WORKFLOW = (Path(__file__).resolve().parents[1] / ".github" / "workflows" /
 def test_queue_shadow_workflow_is_one_masked_account_and_manual_only():
     assert "workflow_dispatch:" in WORKFLOW
     assert "RUN_QUEUE_SHADOW_READ_ONLY" in WORKFLOW
-    assert "ACCOUNT_EMAIL_SHA256: 6368246d6bce" in WORKFLOW
+    assert "ACCOUNT_UID_SHA256: 44246fcb6d4b" in WORKFLOW
     assert 'options={"projectId":os.environ["GOOGLE_CLOUD_PROJECT"]}' in WORKFLOW
-    assert 'name="shadow-identity"' in WORKFLOW
-    assert "auth.list_users(app=identity_app)" in WORKFLOW
-    assert "firebase_admin.initialize_app(credential,options={\"projectId\":\"tradementor-production\"})" not in WORKFLOW
+    assert 'db.collection("asterStrategy2").select([]).stream()' in WORKFLOW
     assert "len(set(matched))!=1" in WORKFLOW
     assert "refs/heads/codex/strategy2-account-order-queue" in WORKFLOW
+
+
+def test_queue_shadow_workflow_never_enumerates_auth_or_reads_email():
+    for forbidden in ("ACCOUNT_EMAIL_SHA256", "list_users", "get_user_by_email",
+                      "shadow-identity", "tradementor-production", "user.email"):
+        assert forbidden not in WORKFLOW
 
 
 def test_queue_shadow_workflow_pins_zero_traffic_candidate_revision():
