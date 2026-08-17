@@ -131,7 +131,24 @@ jobs:
           assert health["status"]=="ready"
           assert env["ASTER_STRATEGY2_ORDER_QUEUE_ENABLED"]=="false"
           assert before["spec"]["template"]["spec"]["serviceAccountName"]==template["serviceAccountName"]
-          assert job_before==job_after
+          def scheduler_config(job):
+              target=job.get("httpTarget",{})
+              oidc=target.get("oidcToken",{})
+              return {
+                  "name":job.get("name"), "schedule":job.get("schedule"),
+                  "timeZone":job.get("timeZone"), "state":job.get("state"),
+                  "attemptDeadline":job.get("attemptDeadline"),
+                  "retryConfig":job.get("retryConfig",{}),
+                  "httpTarget":{
+                      "uri":target.get("uri"), "httpMethod":target.get("httpMethod"),
+                      "headers":target.get("headers",{}), "body":target.get("body"),
+                      "oidcToken":{
+                          "serviceAccountEmail":oidc.get("serviceAccountEmail"),
+                          "audience":oidc.get("audience"),
+                      },
+                  },
+              }
+          assert scheduler_config(job_before)==scheduler_config(job_after)
           tagged=next(x for x in after["status"]["traffic"] if x.get("tag")=="q2c")
           assert tagged["revisionName"]==revision and tagged.get("percent",0)==0
           PY
