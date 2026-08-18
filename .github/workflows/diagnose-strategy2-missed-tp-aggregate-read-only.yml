@@ -142,7 +142,7 @@ jobs:
           PY
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$SA" \
-            --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false" \
+            --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false" \
             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 420s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait > "$RUNNER_TEMP/run.txt" 2>&1
