@@ -92,7 +92,7 @@ from aster_rapid_build import run_confirmed_batch
 from aster_strategy2_execution import ExecutionContext, Strategy2RiskBlocked, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
 from aster_strategy2_runtime import next_management_decision, scanner_allowed, active_position_map, cost_evidence_max_age_seconds
-from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned
+from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned, isolate_unproven_ownership
 from aster_strategy2_runtime import enrich_confirmed_costs
 from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
 from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
@@ -1599,10 +1599,19 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         s1_keys=set() if exclusive else _explicit_strategy1_owned_keys(s1_raw)
         s2_keys={(leg.symbol,leg.side) for leg in owned}
         unknown=active_keys-(s1_keys|s2_keys|s3_keys)
-        if unknown:
-            reason="Actieve Aster-exposure zonder bewezen Strategy-ownership"
-            ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now,"unassignedPositions":len(unknown)},merge=True)
-            return {"status":"reconciling","reason":reason,"ordersSent":0}
+        proven_owned,_,stored_only_s2=isolate_unproven_ownership(persisted=owned,positions=positions)
+        ownership_isolated=bool(unknown or stored_only_s2)
+        if ownership_isolated:
+            reason="Onbewezen exposure per leg geïsoleerd; alleen bewezen Strategy-2-posities blijven risicoreducerend beheerbaar"
+            previous_unassigned=int(safe_float(raw.get("unassignedPositions")))
+            previous_stored=int(safe_float(raw.get("storedOnlyStrategy2Legs")))
+            ref.set({"phase":"PROTECTIVE_ONLY","lastReason":reason,"lastTickAt":now,
+                "unassignedPositions":len(unknown),"storedOnlyStrategy2Legs":len(stored_only_s2)},merge=True)
+            if previous_unassigned!=len(unknown) or previous_stored!=len(stored_only_s2):
+                ref.collection("audit").add({"event":"OWNERSHIP_MISMATCH_ISOLATED",
+                    "exchangeOnlyCount":len(unknown),"storedOnlyCount":len(stored_only_s2),"timestamp":now})
+        owned=proven_owned
+        s2_keys={(leg.symbol,leg.side) for leg in owned}
         strategy_rows=[row for key,row in active_position_map(positions).items() if key in s2_keys]
         recovery=reconcile_owned_legs(persisted=owned,positions=strategy_rows,open_orders=orders,fills=fills,exchange_reliable=True)
     except (AsterApiError,ValueError) as exc:
@@ -1665,7 +1674,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     pending_reopen_cooldown_until=(int(safe_float(pending_reopens[0].get("cooldownUntilMs")))
         if pending_reopens and isinstance(pending_reopens[0],dict) else 0)
     pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms
-    if not protection_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
+    if not ownership_isolated and not protection_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
         if order_budget is not None and order_budget<1:
             return {"status":"budget-exhausted","action":"PENDING_REOPEN","ordersSent":0}
         pending=dict(pending_reopens[0]);symbol=str(pending.get("symbol","")).upper();side=str(pending.get("side","")).upper()
@@ -1719,6 +1728,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             # actions or normal new-entry candidates below.
     selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
+        selected=None
+    if ownership_isolated and selected and not selected[1].risk_reducing:
         selected=None
     if selected:
         leg,decision=selected
@@ -1884,6 +1895,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         reason=f"{len(orders)} open Aster-order(s) worden gereconcilieerd; nieuwe exposure wacht"
         ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"reconciling","action":"HOLD","reason":reason,"ordersSent":0}
+    if ownership_isolated:
+        reason="Onbewezen ownership blijft per leg geïsoleerd; nieuwe exposure, DCA en reopen wachten"
+        ref.set({"phase":"PROTECTIVE_ONLY","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"ownership-isolated","action":"HOLD","reason":reason,"ordersSent":0}
     if not enabled or not scanner_allowed(settings,portfolio,owned):
         reason="Strategy 2 staat veilig gestopt" if not enabled else "Geen beheeractie; pair- of risicolimiet bereikt"
         ref.set({"phase":"PROTECTIVE_ONLY" if not enabled else "WAITING","lastReason":reason},merge=True);return {"status":"waiting","action":"HOLD","reason":reason,"ordersSent":0}
