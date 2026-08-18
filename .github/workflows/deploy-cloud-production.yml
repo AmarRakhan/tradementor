@@ -1,11 +1,6 @@
 name: Deploy Cloud Production Backend
 
 on:
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - .github/workflows/deploy-cloud-production.yml
   workflow_dispatch:
     inputs:
       confirmation:
@@ -28,31 +23,21 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  SOURCE_COMMIT: 6b7e3c32b78b2781722cd9451df1f2ff280b08b5
 
 jobs:
   test-and-deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'Trigger approved pinned production deployment') }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 30
     steps:
-      - name: Check out exact approved source
+      - name: Check out exact branch source
         uses: actions/checkout@v4
-        with:
-          ref: ${{ env.SOURCE_COMMIT }}
 
-      - name: Authorize approved production deployment
+      - name: Authorize manual production deployment
         shell: bash
         run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
-          else
-            test "$GITHUB_EVENT_NAME" = "push"
-            test "${{ github.event.head_commit.message }}" = "Trigger approved pinned production deployment"
-          fi
-          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
 
       - name: Verify immutable repository scope
         shell: bash
@@ -114,7 +99,7 @@ jobs:
         shell: bash
         run: |
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$SOURCE_COMMIT"
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$GITHUB_SHA"
           docker build --tag "$IMAGE" cloud_api
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
@@ -122,7 +107,7 @@ jobs:
       - name: Deploy candidate without production traffic
         shell: bash
         run: |
-          REVISION_SUFFIX="gh-${SOURCE_COMMIT:0:8}-${GITHUB_RUN_ATTEMPT}"
+          REVISION_SUFFIX="gh-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
           TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --no-traffic             --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-candidate.json"
