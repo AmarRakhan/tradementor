@@ -43,6 +43,8 @@ def test_account_tick_keeps_only_risk_reducing_management_during_mismatch():
     end = MAIN.index("def aster_automation_public", start)
     tick = MAIN[start:end]
     assert "proven_owned,_,stored_only_s2=isolate_unproven_ownership" in tick
+    assert "if missing or transfer_errors or len(transferred)!=len(active_keys)" not in tick
+    assert "if transfer_errors:" in tick
     assert "if ownership_isolated and selected and not selected[1].risk_reducing" in tick
     assert "if not ownership_isolated and not protection_selected and pending_reopens" in tick
     assert 'return {"status":"ownership-isolated","action":"HOLD"' in tick
