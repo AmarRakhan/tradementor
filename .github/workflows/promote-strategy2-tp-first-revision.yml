@@ -1,0 +1,103 @@
+name: Promote Strategy 2 TP First Revision
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type PROMOTE_S2_TP_FIRST_00061"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-test-live-control
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+  SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+  TARGET_REVISION: tradementor-strategy2-test-live-api-00061-cid
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Prove exact promotion scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "${{ inputs.confirmation }}" = "PROMOTE_S2_TP_FIRST_00061"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture immutable boundary and verify candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-before.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/scheduler-before.json" "$TARGET_REVISION" <<'PY'
+          import json,sys
+          service,scheduler=map(lambda p:json.load(open(p,encoding="utf-8")),sys.argv[1:3]);target=sys.argv[3]
+          revisions={row.get("revisionName") for row in service["status"]["traffic"]}
+          assert target in revisions
+          assert service["spec"]["template"]["spec"]["serviceAccountName"]
+          assert scheduler["state"]=="ENABLED"
+          assert scheduler["schedule"]=="* * * * *"
+          PY
+          CANDIDATE_URL="https://q2c---tradementor-strategy2-test-live-api-mumsywcfmq-ez.a.run.app"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          health=json.loads(sys.argv[1])
+          assert health["status"]=="ready"
+          assert health["environment"]=="strategy2-test-live"
+          PY
+
+      - name: Promote exact revision to all traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$TARGET_REVISION=100" --quiet
+
+      - name: Verify traffic and unchanged boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-after.json"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "$SERVICE_URL/health")"
+          OPENAPI="$(curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "$SERVICE_URL/openapi.json")"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-after.json" "$RUNNER_TEMP/scheduler-before.json" "$RUNNER_TEMP/scheduler-after.json" "$TARGET_REVISION" "$SERVICE_URL" "$HEALTH" "$OPENAPI" <<'PY'
+          import json,sys
+          before,after,sb,sa=map(lambda p:json.load(open(p,encoding="utf-8")),sys.argv[1:5])
+          target,url=sys.argv[5:7];health=json.loads(sys.argv[7]);openapi=json.loads(sys.argv[8])
+          assert after["status"]["traffic"]==[{"percent":100,"revisionName":target}]
+          assert before["spec"]["template"]["spec"]["serviceAccountName"]==after["spec"]["template"]["spec"]["serviceAccountName"]
+          def sched(x):
+              t=x.get("httpTarget",{});o=t.get("oidcToken",{})
+              return (x.get("schedule"),x.get("timeZone"),x.get("state"),x.get("attemptDeadline"),x.get("retryConfig"),
+                      t.get("uri"),t.get("httpMethod"),t.get("headers"),t.get("body"),o.get("serviceAccountEmail"),o.get("audience"))
+          assert sched(sb)==sched(sa)
+          assert sa["state"]=="ENABLED"
+          assert sa["httpTarget"]["uri"]==url+"/internal/aster-strategy2/tick"
+          assert health["status"]=="ready" and health["environment"]=="strategy2-test-live"
+          assert "/internal/aster-strategy2/tick" in openapi["paths"]
+          print("S2_TP_FIRST_PROMOTED",target,"traffic=100 scheduler=ENABLED boundary=unchanged")
+          PY
