@@ -112,6 +112,8 @@ jobs:
           intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
           pending=s2.get("pendingReopens") if isinstance(s2.get("pendingReopens"),list) else []
           candidate_scan=s2.get("candidateScan") if isinstance(s2.get("candidateScan"),dict) else {}
+          universe=s2.get("universe") if isinstance(s2.get("universe"),dict) else {}
+          cooldowns=s2.get("entryCandidateCooldowns") if isinstance(s2.get("entryCandidateCooldowns"),dict) else {}
           snapshot=s2.get("accountSnapshot") if isinstance(s2.get("accountSnapshot"),dict) else {}
           settings=s2.get("settings") if isinstance(s2.get("settings"),dict) else {}
           def number(value,default=0.0):
@@ -130,6 +132,24 @@ jobs:
           for row in owned:
               side=str(row.get("side","")).upper() if isinstance(row,dict) else ""
               if side in sides:sides[side]+=1
+          maximum_pairs=int(number(settings.get("maximumPairs"),5))
+          target_long=(maximum_pairs+1)//2
+          target_short=maximum_pairs//2
+          now_ms=int(datetime.now(timezone.utc).timestamp()*1000)
+          active_cooldowns=[]
+          for key,row in cooldowns.items():
+              if not isinstance(row,dict) or number(row.get("until"))<=now_ms:continue
+              active_cooldowns.append({"candidate":str(key),"code":str(row.get("code","")),
+                  "reason":str(row.get("reason",""))[:180],"untilMs":int(number(row.get("until")))})
+          audits=[]
+          for doc in s2 and db.collection("asterStrategy2").document(uid).collection("audit").stream() or []:
+              row=doc.to_dict() or {};stamp=row.get("timestamp")
+              stamp_key=stamp.timestamp() if hasattr(stamp,"timestamp") else 0
+              if str(row.get("event","")) in {"ENTRY_CANDIDATE_REJECTED","ENTRY_CANDIDATE_VALIDATION_SKIPPED"}:
+                  audits.append((stamp_key,{"event":str(row.get("event","")),"symbol":str(row.get("symbol","")),
+                      "side":str(row.get("side","")),"errorCode":str(row.get("errorCode","")),
+                      "reason":str(row.get("reason",""))[:180],"timestamp":str(stamp)}))
+          audits=[row for _stamp,row in sorted(audits,key=lambda item:item[0],reverse=True)[:10]]
           result={
               "readOnly":True,"accountRef":target[:12],
               "strategy2":{"enabled":bool(s2.get("enabled")),"monitor":bool(s2.get("monitor")),
@@ -142,11 +162,25 @@ jobs:
                   "haltedUncertain":bool(queue.get("haltedUncertain",False)),
                   "hasCurrentIntent":bool(intent),"pendingReopenCount":len(pending),
                   "pendingReasons":[str(row.get("reason","")) for row in pending[:3] if isinstance(row,dict)]},
+              "capacity":{"maximumPairs":maximum_pairs,"ownedLegs":len(owned),
+                  "freeSeats":max(0,maximum_pairs-len(owned)),"longCount":sides["LONG"],
+                  "longTarget":target_long,"shortCount":sides["SHORT"],"shortTarget":target_short,
+                  "nextNeededSide":"LONG" if sides["LONG"]<target_long and sides["LONG"]<=sides["SHORT"] else
+                      ("SHORT" if sides["SHORT"]<target_short else "NONE")},
+              "universe":{"requestedTopN":int(universe.get("requestedTopN",0) or 0),
+                  "selectedMarketCount":int(universe.get("selectedMarketCount",0) or 0),
+                  "eligibleMarketCount":int(universe.get("eligibleMarketCount",0) or 0),
+                  "entryBlocked":bool(universe.get("entryBlocked",True)),
+                  "entryBlockReason":str(universe.get("entryBlockReason","")),
+                  "fetchedAt":str(universe.get("fetchedAt","")),"expiresAt":str(universe.get("expiresAt",""))},
               "candidateScan":{"checked":int(candidate_scan.get("checked",0) or 0),
                   "skipped":int(candidate_scan.get("skipped",0) or 0),
                   "advancedWithinTick":bool(candidate_scan.get("advancedWithinTick",False)),
+                  "checkedAt":str(candidate_scan.get("checkedAt","")),
                   "reasons":[str(x) for x in candidate_scan.get("reasons",[])[:5]]
                       if isinstance(candidate_scan.get("reasons"),list) else []},
+              "activeCandidateCooldowns":active_cooldowns[:20],
+              "recentCandidateRejections":audits,
               "snapshot":{"capturedAt":str(snapshot.get("capturedAt","")),
                   "accountPositionCount":int(snapshot.get("accountPositionCount",snapshot.get("accountActivePositions",0)) or 0),
                   "openOrderCount":int(snapshot.get("openOrderCount",0) or 0),
