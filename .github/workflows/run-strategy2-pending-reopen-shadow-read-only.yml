@@ -74,11 +74,15 @@ jobs:
           REVISION_JSON="$RUNNER_TEMP/revision.json"
           gcloud run revisions describe "$REVISION" --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" --format=json > "$REVISION_JSON"
-          IMAGE="$(python - "$REVISION_JSON" "$EXPECTED_COMMIT" <<'PY'
+          TAGGED_IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/tradementor/strategy2-test-live-api:$EXPECTED_COMMIT"
+          EXPECTED_DIGEST="$(gcloud artifacts docker images describe "$TAGGED_IMAGE" \
+            --project "$GCP_PROJECT_ID" --format='value(image_summary.digest)')"
+          test -n "$EXPECTED_DIGEST"
+          IMAGE="$(python - "$REVISION_JSON" "$EXPECTED_DIGEST" <<'PY'
           import json,sys
           revision=json.load(open(sys.argv[1],encoding="utf-8"));expected=sys.argv[2]
           image=revision["spec"]["containers"][0]["image"]
-          assert image.endswith(":"+expected), image
+          assert image.endswith("@"+expected), (image,expected)
           print(image)
           PY
           )"
