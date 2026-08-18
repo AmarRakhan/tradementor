@@ -13,7 +13,7 @@ def _tick_source() -> str:
 
 def _pending_reopen_block() -> str:
     tick = _tick_source()
-    start = tick.index("pending_reopen_cooldown_until=")
+    start = tick.index("management_selected=next_management_decision")
     end = tick.index("selected=protection_selected", start)
     return tick[start:end]
 
@@ -45,7 +45,7 @@ def test_definitive_pending_reopen_rejection_is_preserved_without_starving_scan(
 
 def test_pending_reopen_skip_does_not_reserve_order_budget_or_remove_item():
     block = _pending_reopen_block()
-    cooldown_gate = block[:block.index("if not ownership_isolated and not protection_selected")]
+    cooldown_gate = block[:block.index("if not ownership_isolated and not protection_selected and not take_profit_selected")]
     assert "before_order" not in cooldown_gate
     assert "pending_reopens.pop(0)" not in cooldown_gate
     assert "ordersUsed" not in cooldown_gate
