@@ -99,6 +99,7 @@ jobs:
           queue=s2.get("orderQueueState") if isinstance(s2.get("orderQueueState"),dict) else {}
           intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
           pending=s2.get("pendingReopens") if isinstance(s2.get("pendingReopens"),list) else []
+          candidate_scan=s2.get("candidateScan") if isinstance(s2.get("candidateScan"),dict) else {}
           snapshot=s2.get("accountSnapshot") if isinstance(s2.get("accountSnapshot"),dict) else {}
           settings=s2.get("settings") if isinstance(s2.get("settings"),dict) else {}
           def number(value,default=0.0):
@@ -127,7 +128,13 @@ jobs:
                   "orderQueueEnabled":bool(s2.get("orderQueueEnabled",False))},
               "queue":{"scanId":str(queue.get("scanId","")),"ordersUsed":int(queue.get("ordersUsed",0) or 0),
                   "haltedUncertain":bool(queue.get("haltedUncertain",False)),
-                  "hasCurrentIntent":bool(intent),"pendingReopenCount":len(pending)},
+                  "hasCurrentIntent":bool(intent),"pendingReopenCount":len(pending),
+                  "pendingReasons":[str(row.get("reason","")) for row in pending[:3] if isinstance(row,dict)]},
+              "candidateScan":{"checked":int(candidate_scan.get("checked",0) or 0),
+                  "skipped":int(candidate_scan.get("skipped",0) or 0),
+                  "advancedWithinTick":bool(candidate_scan.get("advancedWithinTick",False)),
+                  "reasons":[str(x) for x in candidate_scan.get("reasons",[])[:5]]
+                      if isinstance(candidate_scan.get("reasons"),list) else []},
               "snapshot":{"capturedAt":str(snapshot.get("capturedAt","")),
                   "accountPositionCount":int(snapshot.get("accountPositionCount",snapshot.get("accountActivePositions",0)) or 0),
                   "openOrderCount":int(snapshot.get("openOrderCount",0) or 0),
