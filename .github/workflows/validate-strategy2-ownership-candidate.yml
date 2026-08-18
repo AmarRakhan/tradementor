@@ -56,7 +56,7 @@ jobs:
           pytest -q \
             test_strategy2_ownership_isolation.py \
             test_strategy2_pending_reopen_flow.py \
-            test_strategy2_queue.py \
+            test_aster_strategy2_queue.py \
             test_strategy2_dynamic_leverage_guard.py \
             test_aster_strategy2_runtime.py
       - name: Prove no deployment surface exists in this workflow
