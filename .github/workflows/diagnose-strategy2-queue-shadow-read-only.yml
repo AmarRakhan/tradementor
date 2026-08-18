@@ -25,7 +25,7 @@ jobs:
       GCP_PROJECT_ID: tradementor-amar-20260813
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
-      EXPECTED_REVISION: tradementor-strategy2-test-live-api-00061-cid
+      EXPECTED_REVISION: tradementor-strategy2-test-live-api-00042-pur
       ACCOUNT_UID_SHA256: 44246fcb6d4b8400bc3944e50d1b62682399fb50e5bad2ad7729eae09910b94c
     steps:
       - name: Prove exact read-only scope
@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_ACTOR" = "AmarRakhan"
-          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GITHUB_REF" = "refs/heads/codex/strategy2-account-order-queue"
           test "${{ inputs.confirmation }}" = "RUN_QUEUE_SHADOW_READ_ONLY"
 
       - uses: google-github-actions/auth@v2
