@@ -1741,7 +1741,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
-    if (ownership_isolated or risk_reducing_only) and selected and not selected[1].risk_reducing:
+    if ownership_isolated and selected and not selected[1].risk_reducing:
+        selected=None
+    if risk_reducing_only and selected and not selected[1].risk_reducing:
         selected=None
     if selected:
         leg,decision=selected
