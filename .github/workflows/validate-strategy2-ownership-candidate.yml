@@ -62,7 +62,7 @@ jobs:
       - name: Prove no deployment surface exists in this workflow
         run: |
           set -euo pipefail
-          test "\${{ github.ref }}" = "refs/heads/codex/strategy2-pending-reopen-flow-clean"
+          test "${{ github.ref }}" = "refs/heads/codex/strategy2-pending-reopen-flow-clean"
           ! grep -Eq 'gcloud run (deploy|services update)|gcloud scheduler|docker push|kubectl' \
             .github/workflows/validate-strategy2-ownership-candidate.yml
           grep -q 'MAX_ORDERS_PER_ACCOUNT_SCAN = 15' cloud_api/aster_strategy2_queue.py
