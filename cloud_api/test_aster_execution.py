@@ -1,6 +1,9 @@
 from decimal import Decimal
+from dataclasses import replace
 import pytest
-from aster_execution import plan_pair, execute_pair_once, execute_leg_once, execute_harvest_reset, execute_close_all, is_definite_contract_rejection, contract_brackets, planning_brackets, client_order_id, maximum_notional_for_leverage
+from aster_execution import (NewPositionLeverageBlocked, plan_pair, execute_pair_once, execute_leg_once,
+    execute_harvest_reset, execute_close_all, is_definite_contract_rejection, contract_brackets,
+    planning_brackets, client_order_id, maximum_notional_for_leverage)
 from aster_gateway import LeverageBracket
 from aster_gateway import PositionSide
 from aster_close_guard import CloseEvidence
@@ -28,6 +31,120 @@ class Fake:
         if self.fail_short and intent.action=="OPEN" and intent.position_side.value=="SHORT": raise RuntimeError("short failed")
         if self.fail_close and intent.action=="CLOSE": raise RuntimeError("close failed")
         return {"orderId":len(self.calls)},False
+
+
+class ExactLeverageFake(Fake):
+    def __init__(self, maximum=100, applied=None, fail_set=False, brackets_available=True, positions=None):
+        super().__init__();self.maximum=maximum;self.applied=applied;self.fail_set=fail_set
+        self.brackets_available=brackets_available;self.before_submit=None;self.positions=positions or []
+    def leverage_brackets(self, symbol):
+        if not self.brackets_available:return []
+        return [{"symbol":symbol,"brackets":[{"notionalFloor":"0","notionalCap":"1000000",
+            "initialLeverage":self.maximum,"maintMarginRatio":".004"}]}]
+    def change_leverage(self, symbol, leverage):
+        self.calls.append(("leverage",symbol,leverage))
+        if self.fail_set:raise RuntimeError("setter failed")
+        return {"symbol":symbol,"leverage":leverage if self.applied is None else self.applied}
+    def position_risk(self, symbol):
+        return list(self.positions)
+
+
+@pytest.mark.parametrize("configured,maximum",[(50,50),(50,100),(70,100),(37,80)])
+def test_new_position_uses_exact_dynamic_configured_leverage(configured,maximum):
+    client=ExactLeverageFake(maximum=maximum);plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=configured)
+    result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="exact",confirm=True,
+        new_position_leverage=configured)
+    assert result["leverage"]==configured
+    assert ("leverage","BTCUSDT",configured) in client.calls
+    assert len([call for call in client.calls if call[0]=="leverage"])==1
+
+
+@pytest.mark.parametrize("configured,maximum",[(50,20),(70,50)])
+def test_new_position_below_configured_max_skips_without_fallback_or_order(configured,maximum):
+    client=ExactLeverageFake(maximum=maximum);plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=configured)
+    with pytest.raises(NewPositionLeverageBlocked) as error:
+        execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="skip",confirm=True,
+            new_position_leverage=configured)
+    assert error.value.reason_code=="SYMBOL_MAX_LEVERAGE_BELOW_CONFIGURED"
+    assert not any(call[0] in {"OPEN","leverage"} for call in client.calls)
+
+
+def test_new_position_missing_leverage_data_fails_closed_before_order():
+    client=ExactLeverageFake(brackets_available=False);plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=50)
+    with pytest.raises(NewPositionLeverageBlocked) as error:
+        execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="missing",confirm=True,
+            new_position_leverage=50)
+    assert error.value.reason_code=="SYMBOL_LEVERAGE_DATA_UNAVAILABLE"
+    assert not any(call[0]=="OPEN" for call in client.calls)
+
+
+def test_new_position_set_or_verification_failure_never_submits():
+    plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=50)
+    for client,reason in ((ExactLeverageFake(fail_set=True),"SYMBOL_LEVERAGE_SET_FAILED"),
+                          (ExactLeverageFake(applied=20),"SYMBOL_LEVERAGE_VERIFICATION_FAILED")):
+        with pytest.raises(NewPositionLeverageBlocked) as error:
+            execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="failed",confirm=True,
+                new_position_leverage=50)
+        assert error.value.reason_code==reason
+        assert not any(call[0]=="OPEN" for call in client.calls)
+
+
+def test_configured_leverage_out_of_range_fails_closed():
+    client=ExactLeverageFake();plan=plan_pair(SYMBOL,BRACKETS,65000,10)
+    with pytest.raises(NewPositionLeverageBlocked) as error:
+        execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="range",confirm=True,
+            new_position_leverage=0)
+    assert error.value.reason_code=="CONFIGURED_LEVERAGE_OUT_OF_RANGE"
+    assert not any(call[0] in {"leverage","OPEN"} for call in client.calls)
+
+
+def test_one_accounts_leverage_failure_cannot_block_another_account_client():
+    plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=50)
+    blocked=ExactLeverageFake(maximum=20);allowed=ExactLeverageFake(maximum=100)
+    with pytest.raises(NewPositionLeverageBlocked):
+        execute_leg_once(blocked,plan,side=PositionSide.LONG,action="OPEN",id_prefix="account-a",confirm=True,
+            new_position_leverage=50)
+    result=execute_leg_once(allowed,plan,side=PositionSide.LONG,action="OPEN",id_prefix="account-b",confirm=True,
+        new_position_leverage=50)
+    assert result["leverage"]==50
+    assert any(call[0]=="OPEN" for call in allowed.calls)
+
+
+def test_existing_lower_leverage_position_is_never_modified_for_new_leg():
+    existing={"symbol":"BTCUSDT","positionSide":"SHORT","positionAmt":"1","leverage":"20"}
+    client=ExactLeverageFake(maximum=100,positions=[existing])
+    plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=50)
+    with pytest.raises(NewPositionLeverageBlocked) as error:
+        execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="existing",confirm=True,
+            new_position_leverage=50)
+    assert error.value.reason_code=="SYMBOL_LEVERAGE_VERIFICATION_FAILED"
+    assert not any(call[0] in {"leverage","OPEN"} for call in client.calls)
+
+
+def test_existing_exact_contract_leverage_is_verified_without_rewriting_it():
+    existing={"symbol":"BTCUSDT","positionSide":"SHORT","positionAmt":"1","leverage":"50"}
+    client=ExactLeverageFake(maximum=100,positions=[existing])
+    plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=50)
+    result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="existing-exact",confirm=True,
+        new_position_leverage=50)
+    assert result["leverage"]==50
+    assert not any(call[0]=="leverage" for call in client.calls)
+
+
+def test_leverage_skip_happens_before_queue_budget_reservation():
+    client=ExactLeverageFake(maximum=20);plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=50)
+    reserved=[]
+    with pytest.raises(NewPositionLeverageBlocked):
+        execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="budget",confirm=True,
+            new_position_leverage=50,before_submit=lambda _intent:reserved.append(True))
+    assert reserved==[]
+
+
+def test_existing_dca_keeps_existing_execution_path_and_notional():
+    client=Fake();plan=plan_pair(SYMBOL,BRACKETS,65000,25);original=plan.notional_per_leg
+    execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="dca",confirm=True)
+    assert plan.notional_per_leg==original
+    assert any(call[0]=="OPEN" for call in client.calls)
 
 
 def test_plan_uses_exchange_minimums_and_max_leverage():

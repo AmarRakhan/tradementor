@@ -108,7 +108,7 @@ from aster_gateway import ContractRules
 from aster_execution import execute_leg_once as execute_aster_leg, execute_harvest_reset as execute_aster_harvest
 from aster_execution import execute_close_all as execute_aster_close_all
 from aster_execution import configure_maximum_usable_leverage
-from aster_execution import is_definite_contract_rejection
+from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rejection
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_state import (
@@ -1680,8 +1680,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             info={str(x.get("symbol","")).upper():x for x in client.public_exchange_info().get("symbols",[])}
             prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
             reopen=plan_aster_pair(info[symbol],_aster_brackets(client.leverage_brackets(symbol),symbol),prices[symbol],settings.base_notional)
-            reopen=replace(reopen,leverage=min(reopen.leverage,settings.leverage))
-            reopen=replace(reopen,leverage=configure_maximum_usable_leverage(client,reopen))
+            reopen=replace(reopen,leverage=settings.leverage)
             required=float(reopen.notional_per_leg)/max(1,reopen.leverage)
             if required*1.05>portfolio.available_balance or portfolio.strategy_margin+required>portfolio.equity*settings.strategy_budget:
                 pending["attempts"]=int(safe_float(pending.get("attempts")))+1
@@ -1695,6 +1694,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             package=str(pending.get("packageId",pending.get("package_id","pending")))
             reopened=execute_aster_leg(client,reopen,side=PositionSide(side),action="OPEN",
                 id_prefix=f"s2q-r-{hashlib.sha256((uid+package).encode()).hexdigest()[:12]}",confirm=True,
+                new_position_leverage=settings.leverage,
                 before_submit=(lambda intent:before_order(intent,{"kind":"PENDING_REOPEN","cycleId":str(pending.get("closedCycleId","")),"packageId":package})) if before_order else None)
             rr=reopened.get("result",{});rq=safe_float(rr.get("executedQty"));rp=safe_float(rr.get("avgPrice"))
             if rq<=0 or rp<=0:raise RuntimeError("Bevestigde pending heropening mist werkelijk gevulde hoeveelheid of prijs")
@@ -1708,7 +1708,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 "cycleId":cycle,"packageId":package,"timestamp":now});batch.commit()
             return {"status":"ok","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":1}
         except Exception as exc:
-            if not is_definite_contract_rejection(exc):raise
+            if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):raise
             pending["attempts"]=int(safe_float(pending.get("attempts")))+1;pending["reason"]=str(exc)
             pending["cooldownUntilMs"]=int(now.timestamp()*1000)+30*60*1000;pending_reopens[0]=pending
             ref.set({"pendingReopens":pending_reopens,"phase":"WAITING","lastReason":f"{symbol} {side}: heropening definitief afgewezen; cooldown actief","updatedAt":now},merge=True)
@@ -1830,8 +1830,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 if decision.kind=="FULL_TP" and enabled and settings.auto_restart and (order_budget is None or order_budget>=2):
                     info={str(x.get("symbol","")).upper():x for x in client.public_exchange_info().get("symbols",[])}
                     reopen=plan_aster_pair(info[leg.symbol],_aster_brackets(client.leverage_brackets(leg.symbol),leg.symbol),price,settings.base_notional)
-                    reopen=replace(reopen,leverage=min(reopen.leverage,settings.leverage))
-                    reopen=replace(reopen,leverage=configure_maximum_usable_leverage(client,reopen))
+                    reopen=replace(reopen,leverage=settings.leverage)
                     reopen_margin=float(reopen.notional_per_leg)/max(1,reopen.leverage)
                     if portfolio.strategy_margin+reopen_margin>portfolio.equity*settings.strategy_budget:
                         pending_reopens.append({"symbol":leg.symbol,"side":leg.side,"closedCycleId":leg.cycle_id,
@@ -1846,9 +1845,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     try:
                         reopened=execute_aster_leg(client,reopen,side=PositionSide(leg.side),action="OPEN",
                             id_prefix=f"s2q-r-{package_id[:12]}",confirm=True,
+                            new_position_leverage=settings.leverage,
                             before_submit=(lambda intent:before_order(intent,{"kind":"AUTO_RESTART","cycleId":reopen_cycle,"packageId":package_id})) if before_order else None)
                     except Exception as exc:
-                        if not is_definite_contract_rejection(exc):raise
+                        if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):raise
                         pending_reopens.append({"symbol":leg.symbol,"side":leg.side,"closedCycleId":leg.cycle_id,
                             "packageId":package_id,"notional":settings.base_notional,"createdAt":now,
                             "reason":str(exc),"attempts":1,"cooldownUntilMs":int(now.timestamp()*1000)+30*60*1000})
@@ -1856,8 +1856,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                             "phase":"WAITING","lastReason":f"{leg.symbol} {leg.side}: sluiting bevestigd; heropening definitief afgewezen","updatedAt":now},merge=True)
                         ref.collection("audit").add({"event":"AUTO_RESTART_REJECTED_AFTER_CONFIRMED_CLOSE","symbol":leg.symbol,
                             "side":leg.side,"cycleId":leg.cycle_id,"packageId":package_id,"reason":str(exc),"timestamp":now})
+                        sent_count=len(result) if isinstance(exc,NewPositionLeverageBlocked) else len(result)+1
                         return {"status":"waiting","action":"FULL_TP","symbol":leg.symbol,"side":leg.side,
-                            "ordersSent":len(result)+1,"reason":"Sluiting behouden; heropening staat met cooldown in de wachtrij"}
+                            "ordersSent":sent_count,"reason":"Sluiting behouden; heropening staat met cooldown in de wachtrij"}
                     result.append(reopened);rr=reopened.get("result",{});rq=safe_float(rr.get("executedQty")) or float(reopen.quantity);rp=safe_float(rr.get("avgPrice")) or price
                     _record_aster_order_attribution(ref,rr,strategy_id=settings.strategy_id,strategy_name="Dual Profit Harvest DCA",
                         cycle_id=reopen_cycle,config_version=settings.version,symbol=leg.symbol,side=leg.side,action="AUTO_RESTART")
@@ -1946,10 +1947,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 cooldowns.pop(cooldown_key,None)
                 value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
                     existing_contract_notional=contract_exposure.get(candidate,0))
-                value=replace(value,leverage=min(value.leverage,settings.leverage))
-                accepted=configure_maximum_usable_leverage(client,value)
-                value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
-                    accepted_leverage=accepted,existing_contract_notional=contract_exposure.get(candidate,0))
+                value=replace(value,leverage=settings.leverage)
                 required=float(value.notional_per_leg)/max(1,value.leverage)
                 if required*1.05>remaining_available:
                     budget_blocked=True
@@ -1961,15 +1959,17 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         if before_order else f"s2i-{uid[-4:]}-{int(time.time()*1000)}-{index}-{candidate[:5].lower()}")
                     opened=execute_aster_leg(client,value,side=PositionSide(entry_side),action="OPEN",
                         id_prefix=entry_prefix,confirm=True,
+                        new_position_leverage=settings.leverage,
                         before_submit=(lambda intent:before_order(intent,{"kind":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG"})) if before_order else None)
                 except Exception as exc:
-                    if not is_definite_contract_rejection(exc):
+                    if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):
                         raise
                     candidate_failures.append(f"{candidate}: {exc}")
                     scan_skipped+=1;advanced_after_rejection=True
                     attempts=int(safe_float(prior.get("attempts")))+1
                     cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
-                    code=(re.search(r"-\d{4}",str(exc)) or [""])[0]
+                    code=(exc.reason_code if isinstance(exc,NewPositionLeverageBlocked)
+                        else (re.search(r"-\d{4}",str(exc)) or [""])[0])
                     cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
                         "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
                     ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
