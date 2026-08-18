@@ -43,7 +43,7 @@ def test_shadow_boundary_blocks_every_external_mutation_class():
             call("anything")
 
 
-def test_shadow_orders_risk_then_carried_pending_reopen_and_caps_at_fifteen():
+def test_shadow_orders_risk_then_profit_then_carried_pending_reopen_and_caps_at_fifteen():
     config = Strategy2Config(mode="live", base_notional=25, take_profit=.005,
                              maximum_pairs=20, long_dca_distance=.02)
     owned = (
@@ -68,7 +68,8 @@ def test_shadow_orders_risk_then_carried_pending_reopen_and_caps_at_fifteen():
     assert plan["externalWrites"] == plan["exchangeSubmissions"] == 0
     assert plan["wouldSendCount"] <= 15
     assert plan["actions"][0]["kind"] == "RISK_REDUCE"
-    assert plan["actions"][1]["kind"] == "REOPEN"
+    assert plan["actions"][1]["kind"] == "TAKE_PROFIT_CLOSE"
+    assert plan["actions"][2]["kind"] == "REOPEN"
 
 
 def test_shadow_orders_profit_before_dca_before_new_entries():
