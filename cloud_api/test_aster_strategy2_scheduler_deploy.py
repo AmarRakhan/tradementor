@@ -14,8 +14,12 @@ def test_production_deploy_configures_scheduler_paused_then_verifies_and_resumes
     assert '--oidc-service-account-email "$RUNTIME_SERVICE_ACCOUNT"' in workflow
     assert '--oidc-token-audience "$SERVICE_URL"' in workflow
     assert 'job["state"] == "PAUSED"' in workflow
-    assert '--uri "$SERVICE_URL/health"' in workflow
-    assert '--http-method GET' in workflow
+    assert 'gcloud scheduler jobs describe "$SCHEDULER_JOB"' in workflow
+    assert 'assert job["state"] == "ENABLED"' in workflow
+    assert "scheduler jobs list" not in workflow
+    assert "scheduler jobs create" not in workflow
+    assert '--uri "$SERVICE_URL/health"' not in workflow
+    assert '--http-method GET' not in workflow
     assert 'gcloud scheduler jobs pause "$SCHEDULER_JOB"' in workflow
     assert "--paused" not in workflow
     assert workflow.index("Configure paused one-minute") < workflow.index("Verify paused scheduler")
