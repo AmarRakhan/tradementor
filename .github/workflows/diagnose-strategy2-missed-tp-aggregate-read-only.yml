@@ -96,6 +96,13 @@ jobs:
                   try:owned.append(owned_from_mapping(r))
                   except:pass
               om={(x.symbol,x.side):x for x in owned};sy={x.symbol for x in owned};blocked=decisions=closed=0;cats={}
+              pending=st.get("pendingReopens") if isinstance(st.get("pendingReopens"),list) else []
+              pending_cooldown=sum(1 for x in pending if isinstance(x,dict) and int(n(x.get("cooldownUntilMs")))>int(now.timestamp()*1000))
+              pending_categories={}
+              for x in pending:
+                  if isinstance(x,dict):
+                      pc=cat(x);pending_categories[pc]=pending_categories.get(pc,0)+1
+              last_reason_category=cat({"reason":st.get("lastReason","")}) if st.get("lastReason") else ""
               for d in ref.collection("audit").stream():
                   r=d.to_dict() or {};ts=utc(r.get("timestamp"))
                   if ts is None or ts<cut:continue
@@ -119,7 +126,8 @@ jobs:
                       if leg:
                           p=leg_projection(leg,r);net=p.unrealized_pnl+p.funding-p.fees-estimated_close_fee(r);target=p.size*cfg.take_profit
                           above+=int(net>=target);below+=int(n(r.get("unRealizedProfit",r.get("unrealizedProfit")))>0 and net<target)
-                  mm=ak!=set(om);end=int(now.timestamp()*1000);stage="ORDER_HISTORY"
+                  exchange_only=len(ak-set(om));stored_only=len(set(om)-ak);mm=bool(exchange_only or stored_only)
+                  end=int(now.timestamp()*1000);stage="ORDER_HISTORY"
                   for s in sy:
                       try:orders=cl.all_orders(s,start_time=cutms,end_time=end,limit=200)
                       except:continue
@@ -127,14 +135,18 @@ jobs:
                           if int(n(r.get("updateTime",r.get("time"))))<cutms:continue
                           cid=str(r.get("clientOrderId",r.get("origClientOrderId","")));reduce=bool(r.get("reduceOnly")) or str(r.get("closePosition","")).lower()=="true"
                           manual+=int(cid.startswith("tm-manual-"));auto+=int(reduce and cid.startswith(("s2q-","s2h-","s2c-")))
-              except Exception as exc:err=True;errcat=type(exc).__name__
+              except Exception as exc:err=True;errcat=type(exc).__name__;exchange_only=stored_only=0
               ta=age(st.get("lastTickAt"));stale=ta is None or ta>300
               vals=(above,below,blocked,decisions,manual,auto,closed,int(mm),int(stale))
               for key,val in zip(fleet,vals):fleet[key]+=val
               out.append({"accountRef":hashlib.sha256(uid.encode()).hexdigest()[:12],"enabled":bool(st.get("enabled")),"monitor":bool(st.get("monitor")),"phase":str(st.get("phase","")),
                   "tpPercent":round(cfg.take_profit*100,6),"tickAgeSeconds":ta,"schedulerFresh":not stale,"activePositions":active,"ownedLegs":len(om),
-                  "ownershipMismatch":mm,"exchangeReadError":err,"exchangeErrorStage":stage if err else "","exchangeErrorCategory":errcat,
-                  "aboveNetTp":above,"visibleProfitBelowNetTp":below,"blocked":blocked,
+                  "ownershipMismatch":mm,"exchangeOnlyPositions":exchange_only,"storedOnlyLegs":stored_only,
+                  "exchangeReadError":err,"exchangeErrorStage":stage if err else "","exchangeErrorCategory":errcat,
+                  "pendingReopenCount":len(pending),"pendingReopenCooldownCount":pending_cooldown,
+                  "pendingReopenCategories":pending_categories,"lastReasonCategory":last_reason_category,
+                  "aboveNetTp":above,"aboveNetTpBehindPending":above if pending else 0,
+                  "visibleProfitBelowNetTp":below,"blocked":blocked,
                   "blockedCategories":cats,"autoDecisions":decisions,"manualOrders":manual,"autoOrders":auto,"closedRows":closed})
           out.sort(key=lambda x:x["accountRef"])
           print("S2_TP_AGGREGATE "+json.dumps({"readOnly":True,"windowMinutes":60,"accounts":out,"fleet":fleet,
