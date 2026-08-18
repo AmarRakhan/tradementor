@@ -1,0 +1,68 @@
+name: Validate Strategy 2 ownership candidate
+
+on:
+  push:
+    branches:
+      - codex/strategy2-pending-reopen-flow-clean
+    paths:
+      - "cloud_api/**"
+      - ".github/workflows/validate-strategy2-ownership-candidate.yml"
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type VALIDATE_S2_OWNERSHIP_CANDIDATE"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-strategy2-ownership-candidate
+  cancel-in-progress: false
+
+jobs:
+  full-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Run complete backend suite
+        working-directory: cloud_api
+        run: pytest -q
+
+  focused-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Prove ownership, queue, pending reopen, leverage and DCA contracts
+        working-directory: cloud_api
+        run: |
+          pytest -q \
+            test_strategy2_ownership_isolation.py \
+            test_strategy2_pending_reopen_flow.py \
+            test_strategy2_queue.py \
+            test_strategy2_dynamic_leverage_guard.py \
+            test_aster_strategy2_runtime.py
+      - name: Prove no deployment surface exists in this workflow
+        run: |
+          set -euo pipefail
+          test "\${{ github.ref }}" = "refs/heads/codex/strategy2-pending-reopen-flow-clean"
+          ! grep -Eq 'gcloud run (deploy|services update)|gcloud scheduler|docker push|kubectl' \
+            .github/workflows/validate-strategy2-ownership-candidate.yml
+          grep -q 'MAX_ORDERS_PER_ACCOUNT_SCAN = 15' cloud_api/aster_strategy2_queue.py
