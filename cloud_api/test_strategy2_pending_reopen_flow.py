@@ -38,7 +38,7 @@ def test_definitive_pending_reopen_rejection_is_preserved_without_starving_scan(
 
 def test_pending_reopen_skip_does_not_reserve_order_budget_or_remove_item():
     block = _pending_reopen_block()
-    cooldown_gate = block[:block.index("if not protection_selected")]
+    cooldown_gate = block[:block.index("if not ownership_isolated and not protection_selected")]
     assert "before_order" not in cooldown_gate
     assert "pending_reopens.pop(0)" not in cooldown_gate
     assert "ordersUsed" not in cooldown_gate
