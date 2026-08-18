@@ -89,7 +89,7 @@ jobs:
           before,after,sb,sa=map(lambda p:json.load(open(p,encoding="utf-8")),sys.argv[1:5])
           target,url=sys.argv[5:7];health=json.loads(sys.argv[7]);openapi=json.loads(sys.argv[8])
           active=[row for row in after["status"]["traffic"] if int(row.get("percent",0) or 0)>0]
-          assert active==[{"percent":100,"revisionName":target}]
+          assert len(active)==1\n          assert active[0].get("revisionName")==target\n          assert int(active[0].get("percent",0) or 0)==100
           assert before["spec"]["template"]["spec"]["serviceAccountName"]==after["spec"]["template"]["spec"]["serviceAccountName"]
           def sched(x):
               t=x.get("httpTarget",{});o=t.get("oidcToken",{})
