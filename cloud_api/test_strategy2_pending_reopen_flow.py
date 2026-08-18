@@ -22,9 +22,16 @@ def test_pending_reopen_cooldown_does_not_return_before_normal_candidates():
     tick = _tick_source()
     block = _pending_reopen_block()
     assert "pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms" in block
-    assert "pending_reopens and pending_reopen_attempt_ready and enabled" in block
+    assert "not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled" in block
     assert "PENDING_REOPEN_COOLDOWN" not in block
     assert tick.index("selected=protection_selected") < tick.index("for candidate in candidates")
+
+
+def test_take_profit_is_selected_before_pending_reopen():
+    block = _pending_reopen_block()
+    assert "management_selected=next_management_decision" in block
+    assert 'management_selected[1].kind in {"FULL_TP","PARTIAL_TP"}' in block
+    assert "not take_profit_selected" in block
 
 
 def test_definitive_pending_reopen_rejection_is_preserved_without_starving_scan():
