@@ -1,0 +1,134 @@
+name: Run Strategy 2 Leverage Guard Canary Once
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type RUN_LEVGUARD_CANARY_ONCE"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-test-live-control
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+  SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+  CANDIDATE_TAG: levguard
+  MAXIMUM_ORDERS: "15"
+
+jobs:
+  one-account-canary:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Prove exact one-account canary scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "${{ inputs.confirmation }}" = "RUN_LEVGUARD_CANARY_ONCE"
+          test "$MAXIMUM_ORDERS" = "15"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify candidate binding and capture boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-before.json"
+          CANDIDATE_URL="$(python - "$RUNNER_TEMP/service-before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          tagged=next(row for row in service["status"]["traffic"] if row.get("tag")=="levguard")
+          assert tagged.get("percent",0)==0
+          revision=tagged["revisionName"]
+          candidate=next(row for row in service["status"]["traffic"] if row.get("revisionName")==revision)
+          print(tagged["url"])
+          PY
+          )"
+          REVISION="$(python - "$RUNNER_TEMP/service-before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          print(next(row for row in service["status"]["traffic"] if row.get("tag")=="levguard")["revisionName"])
+          PY
+          )"
+          gcloud run revisions describe "$REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/revision.json"
+          python - "$RUNNER_TEMP/revision.json" <<'PY'
+          import json,sys
+          revision=json.load(open(sys.argv[1],encoding="utf-8"))
+          rows={row["name"]:row for row in revision["spec"]["containers"][0].get("env",[])}
+          def configured(name):
+              row=rows.get(name,{})
+              return bool(row.get("value") or row.get("valueFrom"))
+          assert rows["ASTER_STRATEGY2_ORDER_QUEUE_ENABLED"].get("value")=="true"
+          assert rows["ASTER_STRATEGY2_QUEUE_CANARY_MAX_ORDERS"].get("value")=="15"
+          assert configured("ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_UID")
+          assert configured("ASTER_STRATEGY2_QUEUE_CANARY_ACCOUNT_SHA256")
+          assert rows["ASTER_LIVE_EXECUTION_ENABLED"].get("value")=="true"
+          assert rows["ASTER_STRATEGY2_LIVE_ENABLED"].get("value")=="true"
+          PY
+          echo "CANDIDATE_URL=$CANDIDATE_URL" >> "$GITHUB_ENV"
+
+      - name: Execute exactly one bound-account canary scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-identity-token --audiences="$CANDIDATE_URL" --include-email)"
+          RESULT="$(curl --fail --silent --show-error --max-time 600 \
+            -X POST -H "Authorization: Bearer $TOKEN" \
+            "$CANDIDATE_URL/internal/aster-strategy2/queue-canary/tick")"
+          python - "$RESULT" <<'PY'
+          import json,sys
+          result=json.loads(sys.argv[1])
+          assert result.get("processed")==1, result
+          assert result.get("status") not in {
+              "centrally-disabled","canary-account-binding-invalid","canary-order-limit-invalid",
+              "canary-selection-failed","account-gate-disabled","legacy-lease-busy","queue-lease-busy",
+          }, result
+          assert 0 <= int(result.get("ordersSent",0)) <= 15
+          if "maximumOrders" in result:
+              assert int(result["maximumOrders"])==15
+          result.pop("accountRef",None)
+          result.pop("scanId",None)
+          print("LEVGUARD_CANARY_RESULT "+json.dumps(result,sort_keys=True))
+          PY
+
+      - name: Prove traffic and scheduler remained unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-after.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-after.json" "$RUNNER_TEMP/scheduler-before.json" "$RUNNER_TEMP/scheduler-after.json" <<'PY'
+          import json,sys
+          before,after,job_before,job_after=map(lambda path:json.load(open(path,encoding="utf-8")),sys.argv[1:])
+          def traffic(service):
+              return sorted((row.get("revisionName"),row.get("tag"),row.get("percent",0),row.get("url")) for row in service["status"]["traffic"])
+          def scheduler(job):
+              target=job.get("httpTarget",{});oidc=target.get("oidcToken",{})
+              return (job.get("name"),job.get("schedule"),job.get("timeZone"),job.get("state"),
+                  job.get("attemptDeadline"),job.get("retryConfig",{}),target.get("uri"),
+                  target.get("httpMethod"),target.get("headers",{}),target.get("body"),
+                  oidc.get("serviceAccountEmail"),oidc.get("audience"))
+          assert traffic(before)==traffic(after)
+          assert scheduler(job_before)==scheduler(job_after)
+          tagged=next(row for row in after["status"]["traffic"] if row.get("tag")=="levguard")
+          assert tagged.get("percent",0)==0
+          PY
