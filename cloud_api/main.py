@@ -1671,12 +1671,16 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     protection_selected=portfolio_protection_decision(settings,portfolio,management_owned)
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
-    # A carried reopen is the highest non-emergency action. It can only follow
-    # reliable exchange reconciliation and never preempts fresh risk reduction.
+    # A proven take-profit close always preempts carried risk-increasing work.
+    # Cache the management choice so a pending reopen can never delay FULL_TP
+    # or PARTIAL_TP, while risk reduction/protection remains first.
+    management_selected=next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions)
+    take_profit_selected=(management_selected if management_selected and
+        management_selected[1].kind in {"FULL_TP","PARTIAL_TP"} else None)
     pending_reopen_cooldown_until=(int(safe_float(pending_reopens[0].get("cooldownUntilMs")))
         if pending_reopens and isinstance(pending_reopens[0],dict) else 0)
     pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms
-    if not ownership_isolated and not protection_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
+    if not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
         if order_budget is not None and order_budget<1:
             return {"status":"budget-exhausted","action":"PENDING_REOPEN","ordersSent":0}
         pending=dict(pending_reopens[0]);symbol=str(pending.get("symbol","")).upper();side=str(pending.get("side","")).upper()
@@ -1728,7 +1732,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             # account tick.  Keep the exact reopen queued with its cooldown,
             # consume no order slot, and continue with other proven management
             # actions or normal new-entry candidates below.
-    selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
+    selected=protection_selected or management_selected or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
     if ownership_isolated and selected and not selected[1].risk_reducing:

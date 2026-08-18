@@ -130,12 +130,12 @@ def ordered_actions(*, risk: Iterable[QueueAction] = (), profits: Iterable[Queue
                     entries: Iterable[QueueAction] = ()) -> list[QueueAction]:
     """Return the exact cross-category safety order.
 
-    A reopen carried over because the prior scan had only one slot left is the
-    highest non-emergency action in the next scan. Fresh risk reduction always
-    remains first. Other profitable closes then precede DCA and new entries.
+    Fresh risk reduction remains first. Every proven take-profit close then
+    precedes carried reopens, DCA and new entries so a blocked risk-increasing
+    action can never delay profit harvesting.
     Within a category the caller's stable ranking is retained.
     """
-    groups = (risk, pending_reopens, profits, dca, entries)
+    groups = (risk, profits, pending_reopens, dca, entries)
     return [action for group in groups for action in group]
 
 
