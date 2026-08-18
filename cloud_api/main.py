@@ -1496,8 +1496,12 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "pendingReopenCount":len(queue_state.get("pendingReopens",[])) if isinstance(queue_state.get("pendingReopens"),list) else 0}}}
 
 
+class Strategy2PendingReopenDeferred(Exception):
+    """Internal control flow: keep a reopen queued and continue safe management."""
+
+
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
-                              before_order:Any=None)->dict[str,Any]:
+                              before_order:Any=None,risk_reducing_only:bool=False)->dict[str,Any]:
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
     settings=Strategy2Config.from_mapping(raw.get("settings"));enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
@@ -1697,10 +1701,14 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             if required*1.05>portfolio.available_balance or portfolio.strategy_margin+required>portfolio.equity*settings.strategy_budget:
                 pending["attempts"]=int(safe_float(pending.get("attempts")))+1
                 pending["reason"]="ACTUAL_MARGIN_OR_STRATEGY_BUDGET"
+                # Yield this scan to proven risk-reducing management. A short
+                # cooldown prevents the same zero-order reopen from monopolising
+                # every queue iteration while TP closes remain eligible.
+                pending["cooldownUntilMs"]=now_ms+60*1000
                 pending_reopens[0]=pending
                 ref.set({"pendingReopens":pending_reopens,"phase":"WAITING",
-                    "lastReason":f"{symbol} {side}: pending heropening wacht op voldoende actuele margin","updatedAt":now},merge=True)
-                return {"status":"waiting","action":"PENDING_REOPEN_MARGIN","ordersSent":0}
+                    "lastReason":f"{symbol} {side}: pending heropening wacht op margin; risicoreducerend beheer gaat door","updatedAt":now},merge=True)
+                raise Strategy2PendingReopenDeferred()
             if dry_run or not live:
                 return {"status":"simulated","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":0}
             package=str(pending.get("packageId",pending.get("package_id","pending")))
@@ -1719,6 +1727,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             batch.set(ref.collection("audit").document(),{"event":"PENDING_REOPEN_CONFIRMED","symbol":symbol,"side":side,
                 "cycleId":cycle,"packageId":package,"timestamp":now});batch.commit()
             return {"status":"ok","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":1}
+        except Strategy2PendingReopenDeferred:
+            pass
         except Exception as exc:
             if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):raise
             pending["attempts"]=int(safe_float(pending.get("attempts")))+1;pending["reason"]=str(exc)
@@ -1731,7 +1741,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
-    if ownership_isolated and selected and not selected[1].risk_reducing:
+    if (ownership_isolated or risk_reducing_only) and selected and not selected[1].risk_reducing:
         selected=None
     if selected:
         leg,decision=selected
@@ -1901,6 +1911,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         reason="Onbewezen ownership blijft per leg geïsoleerd; nieuwe exposure, DCA en reopen wachten"
         ref.set({"phase":"PROTECTIVE_ONLY","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"ownership-isolated","action":"HOLD","reason":reason,"ordersSent":0}
+    if risk_reducing_only:
+        reason="Pending-herstel beperkt deze scan tot bewezen risicoreducerend beheer"
+        ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now},merge=True)
+        return {"status":"waiting","action":"HOLD","reason":reason,"ordersSent":0}
     if not enabled or not scanner_allowed(settings,portfolio,owned):
         reason="Strategy 2 staat veilig gestopt" if not enabled else "Geen beheeractie; pair- of risicolimiet bereikt"
         ref.set({"phase":"PROTECTIVE_ONLY" if not enabled else "WAITING","lastReason":reason},merge=True);return {"status":"waiting","action":"HOLD","reason":reason,"ordersSent":0}
@@ -5537,6 +5551,7 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     while used<scan_limit:
         try:
             result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,
+                risk_reducing_only=drain_pending_only,
                 before_order=lambda intent,details=None:_reserve_strategy2_queue_order(
                     ref,scan_id,intent,details,maximum_orders=scan_limit))
         except Strategy2OrderBudgetExhausted:
