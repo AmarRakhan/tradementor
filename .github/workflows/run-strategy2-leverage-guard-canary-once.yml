@@ -90,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TOKEN="$(gcloud auth print-identity-token --audiences="$CANDIDATE_URL" --include-email)"
+          TOKEN="$(gcloud auth print-identity-token --impersonate-service-account='${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}' --audiences="$CANDIDATE_URL" --include-email)"
           RESULT="$(curl --fail --silent --show-error --max-time 600 \
             -X POST -H "Authorization: Bearer $TOKEN" \
             "$CANDIDATE_URL/internal/aster-strategy2/queue-canary/tick")"
