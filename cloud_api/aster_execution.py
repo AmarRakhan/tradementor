@@ -13,6 +13,15 @@ from aster_gateway import (
 from aster_close_guard import CloseEvidence, require_profitable_automatic_close
 
 
+class NewPositionLeverageBlocked(ValueError):
+    """Fail-closed, candidate-local rejection before an OPEN reaches Aster."""
+
+    def __init__(self, reason_code: str, symbol: str):
+        self.reason_code = reason_code
+        self.symbol = symbol.upper()
+        super().__init__(f"{self.symbol}: {reason_code}")
+
+
 @dataclass(frozen=True)
 class PairExecutionPlan:
     symbol: str
@@ -107,6 +116,57 @@ def configure_maximum_usable_leverage(client: Any, plan: PairExecutionPlan) -> i
                 raise
             last_error = exc
     raise RuntimeError(f"{plan.symbol}: geen door Aster geaccepteerde leverage gevonden") from last_error
+
+
+def require_exact_new_position_leverage(client: Any, plan: PairExecutionPlan,
+                                        configured_leverage: int) -> int:
+    """Set and verify the exact configured leverage for one brand-new S2 leg.
+
+    The private bracket read and setter are account scoped.  No synthetic
+    bracket, lower fallback or order submission is allowed from this guard.
+    """
+    try:
+        requested = int(configured_leverage)
+    except (TypeError, ValueError) as exc:
+        raise NewPositionLeverageBlocked("CONFIGURED_LEVERAGE_OUT_OF_RANGE", plan.symbol) from exc
+    if requested < 1 or requested > 200:
+        raise NewPositionLeverageBlocked("CONFIGURED_LEVERAGE_OUT_OF_RANGE", plan.symbol)
+    try:
+        rows = contract_brackets(client, [], plan.symbol)
+        brackets = [LeverageBracket.from_mapping(row) for row in rows]
+        maximum = maximum_allowed_leverage(plan.notional_per_leg, brackets)
+    except Exception as exc:
+        raise NewPositionLeverageBlocked("SYMBOL_LEVERAGE_DATA_UNAVAILABLE", plan.symbol) from exc
+    if maximum < requested:
+        raise NewPositionLeverageBlocked("SYMBOL_MAX_LEVERAGE_BELOW_CONFIGURED", plan.symbol)
+    try:
+        position_rows = client.position_risk(plan.symbol)
+        if not isinstance(position_rows, list) or any(not isinstance(row, dict) for row in position_rows):
+            raise ValueError("invalid position-risk response")
+        active_rows = [row for row in position_rows
+            if str(row.get("symbol", "")).upper() == plan.symbol.upper()
+            and abs(float(row.get("positionAmt", 0))) > 0]
+        active_leverages = {int(row.get("leverage")) for row in active_rows}
+    except Exception as exc:
+        raise NewPositionLeverageBlocked("SYMBOL_LEVERAGE_DATA_UNAVAILABLE", plan.symbol) from exc
+    if active_rows:
+        if active_leverages != {requested}:
+            raise NewPositionLeverageBlocked("SYMBOL_LEVERAGE_VERIFICATION_FAILED", plan.symbol)
+        # Aster leverage is contract-wide. Never rewrite it underneath an
+        # existing leg; reliable exchange truth already proves the exact value.
+        return requested
+    try:
+        response = client.change_leverage(plan.symbol, requested)
+    except Exception as exc:
+        raise NewPositionLeverageBlocked("SYMBOL_LEVERAGE_SET_FAILED", plan.symbol) from exc
+    try:
+        applied = int(response.get("leverage"))
+        response_symbol = str(response.get("symbol", plan.symbol)).upper()
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise NewPositionLeverageBlocked("SYMBOL_LEVERAGE_VERIFICATION_FAILED", plan.symbol) from exc
+    if applied != requested or response_symbol != plan.symbol.upper():
+        raise NewPositionLeverageBlocked("SYMBOL_LEVERAGE_VERIFICATION_FAILED", plan.symbol)
+    return requested
 
 
 def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -227,7 +287,8 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
                      close_evidence: CloseEvidence | None = None,
                      close_audit: Callable[[dict[str, Any]], None] | None = None,
                      manual_loss_confirmation: bool = False,
-                     before_submit: Callable[[AsterOrderIntent], None] | None = None) -> dict[str, Any]:
+                     before_submit: Callable[[AsterOrderIntent], None] | None = None,
+                     new_position_leverage: int | None = None) -> dict[str, Any]:
     if not confirm: raise ValueError("Persoonlijke bevestiging ontbreekt")
     # Aster stores margin/leverage per contract.  A freshly selected symbol can
     # therefore still carry an old or unsupported value.  Configure it before
@@ -238,7 +299,8 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
         require_profitable_automatic_close(close_evidence, audit=close_audit)
     if action.upper() == "OPEN":
         client.change_margin_type(plan.symbol, "CROSSED")
-        accepted_leverage = configure_maximum_usable_leverage(client, plan)
+        accepted_leverage = (require_exact_new_position_leverage(client, plan, new_position_leverage)
+            if new_position_leverage is not None else configure_maximum_usable_leverage(client, plan))
     intent = AsterOrderIntent(client_order_id(id_prefix, action.lower(), side.value.lower()), plan.symbol,
                               side, plan.quantity, action)
     if before_submit is not None:
