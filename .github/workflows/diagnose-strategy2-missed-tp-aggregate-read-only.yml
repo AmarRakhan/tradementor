@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 15
     env:
       GCP_PROJECT_ID: tradementor-amar-20260813
+      GOOGLE_CLOUD_PROJECT: tradementor-amar-20260813
       GCP_REGION: europe-west4
       CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
       SCHEDULER_JOB: tradementor-strategy2-test-live-tick
@@ -108,16 +109,17 @@ jobs:
                   if ts is None or ts<cut:continue
                   closed+=1;s=str(r.get("symbol","")).upper()
                   if s:sy.add(s)
-              above=below=manual=auto=active=0;mm=False;err=False
+              above=below=manual=auto=active=0;mm=False;err=False;stage="SECRET";errcat=""
               try:
-                  sec=app.load_aster_secret({"uid":uid});cl=AsterV3Client(signer_address=sec.signer_address,sign_message=app.local_eip712_signer(sec),live_authorized=False)
+                  sec=app.load_aster_secret({"uid":uid});stage="CLIENT"
+                  cl=AsterV3Client(signer_address=sec.signer_address,sign_message=app.local_eip712_signer(sec),live_authorized=False);stage="POSITIONS"
                   pos=[r for r in cl.position_risk() if abs(n(r.get("positionAmt",r.get("quantity"))))>0];active=len(pos);ak=set()
                   for r in pos:
                       k=(str(r.get("symbol","")).upper(),str(r.get("positionSide","")).upper());ak.add(k);sy.add(k[0]);leg=om.get(k)
                       if leg:
                           p=leg_projection(leg,r);net=p.unrealized_pnl+p.funding-p.fees-estimated_close_fee(r);target=p.size*cfg.take_profit
                           above+=int(net>=target);below+=int(n(r.get("unRealizedProfit",r.get("unrealizedProfit")))>0 and net<target)
-                  mm=ak!=set(om);end=int(now.timestamp()*1000)
+                  mm=ak!=set(om);end=int(now.timestamp()*1000);stage="ORDER_HISTORY"
                   for s in sy:
                       try:orders=cl.all_orders(s,start_time=cutms,end_time=end,limit=200)
                       except:continue
@@ -125,13 +127,14 @@ jobs:
                           if int(n(r.get("updateTime",r.get("time"))))<cutms:continue
                           cid=str(r.get("clientOrderId",r.get("origClientOrderId","")));reduce=bool(r.get("reduceOnly")) or str(r.get("closePosition","")).lower()=="true"
                           manual+=int(cid.startswith("tm-manual-"));auto+=int(reduce and cid.startswith(("s2q-","s2h-","s2c-")))
-              except:err=True
+              except Exception as exc:err=True;errcat=type(exc).__name__
               ta=age(st.get("lastTickAt"));stale=ta is None or ta>300
               vals=(above,below,blocked,decisions,manual,auto,closed,int(mm),int(stale))
               for key,val in zip(fleet,vals):fleet[key]+=val
               out.append({"accountRef":hashlib.sha256(uid.encode()).hexdigest()[:12],"enabled":bool(st.get("enabled")),"monitor":bool(st.get("monitor")),"phase":str(st.get("phase","")),
                   "tpPercent":round(cfg.take_profit*100,6),"tickAgeSeconds":ta,"schedulerFresh":not stale,"activePositions":active,"ownedLegs":len(om),
-                  "ownershipMismatch":mm,"exchangeReadError":err,"aboveNetTp":above,"visibleProfitBelowNetTp":below,"blocked":blocked,
+                  "ownershipMismatch":mm,"exchangeReadError":err,"exchangeErrorStage":stage if err else "","exchangeErrorCategory":errcat,
+                  "aboveNetTp":above,"visibleProfitBelowNetTp":below,"blocked":blocked,
                   "blockedCategories":cats,"autoDecisions":decisions,"manualOrders":manual,"autoOrders":auto,"closedRows":closed})
           out.sort(key=lambda x:x["accountRef"])
           print("S2_TP_AGGREGATE "+json.dumps({"readOnly":True,"windowMinutes":60,"accounts":out,"fleet":fleet,
