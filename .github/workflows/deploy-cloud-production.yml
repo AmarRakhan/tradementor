@@ -21,7 +21,6 @@ env:
   GCP_REGION: europe-west4
   ARTIFACT_REPOSITORY: tradementor
   CLOUD_RUN_SERVICE: tradementor-api
-  SCHEDULER_JOB: tradementor-aster-automation-tick
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
 
@@ -48,7 +47,6 @@ jobs:
           test "$GCP_PROJECT_ID" = "tradementor-production"
           test "$GCP_REGION" = "europe-west4"
           test "$CLOUD_RUN_SERVICE" = "tradementor-api"
-          test "$SCHEDULER_JOB" = "tradementor-aster-automation-tick"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -95,20 +93,6 @@ jobs:
           assert runtime_service_account and service_url.startswith("https://")
           print(f"RUNTIME_SERVICE_ACCOUNT={runtime_service_account}")
           print(f"SERVICE_URL={service_url}")
-          PY
-          # Fail before building or promoting unless the exact existing
-          # production Scheduler job is readable and currently enabled.
-          gcloud scheduler jobs describe "$SCHEDULER_JOB" \
-            --project "$GCP_PROJECT_ID" \
-            --location "$GCP_REGION" \
-            --format=json > "$RUNNER_TEMP/scheduler-before.json"
-          python - "$RUNNER_TEMP/scheduler-before.json" "$SCHEDULER_JOB" <<'PY'
-          import json
-          import sys
-
-          job = json.load(open(sys.argv[1], encoding="utf-8"))
-          assert job["name"].endswith("/jobs/" + sys.argv[2])
-          assert job["state"] == "ENABLED"
           PY
 
       - name: Build and push backend image
@@ -158,47 +142,6 @@ jobs:
           assert health["multiUser"] is True
           PY
 
-      - name: Configure paused one-minute Strategy 1 and 2 scheduler
-        shell: bash
-        run: |
-          TARGET="$SERVICE_URL/internal/aster-automation/tick"
-          gcloud scheduler jobs pause "$SCHEDULER_JOB" \
-            --project "$GCP_PROJECT_ID" \
-            --location "$GCP_REGION"
-          gcloud scheduler jobs update http "$SCHEDULER_JOB" \
-            --project "$GCP_PROJECT_ID" \
-            --location "$GCP_REGION" \
-            --schedule "* * * * *" \
-            --time-zone "Etc/UTC" \
-            --uri "$TARGET" \
-            --http-method POST \
-            --oidc-service-account-email "$RUNTIME_SERVICE_ACCOUNT" \
-            --oidc-token-audience "$SERVICE_URL"
-
-      - name: Verify paused scheduler target identity and isolation
-        shell: bash
-        run: |
-          JOB_DESCRIPTION="$RUNNER_TEMP/strategy2-production-scheduler.json"
-          gcloud scheduler jobs describe "$SCHEDULER_JOB" \
-            --project "$GCP_PROJECT_ID" \
-            --location "$GCP_REGION" \
-            --format=json > "$JOB_DESCRIPTION"
-          python - "$JOB_DESCRIPTION" "$SERVICE_URL" "$RUNTIME_SERVICE_ACCOUNT" <<'PY'
-          import json
-          import sys
-
-          job = json.load(open(sys.argv[1], encoding="utf-8"))
-          service_url, runtime_service_account = sys.argv[2:]
-          assert job["state"] == "PAUSED"
-          assert job["schedule"] == "* * * * *"
-          assert job["timeZone"] == "Etc/UTC"
-          assert job["httpTarget"]["uri"] == service_url + "/internal/aster-automation/tick"
-          assert job["httpTarget"]["httpMethod"] == "POST"
-          assert job["httpTarget"]["oidcToken"]["audience"] == service_url
-          assert job["httpTarget"]["oidcToken"]["serviceAccountEmail"] == runtime_service_account
-          assert "/internal/aster-strategy3/tick" not in job["httpTarget"]["uri"]
-          PY
-
       - name: Promote verified revision
         shell: bash
         run: |
@@ -214,14 +157,6 @@ jobs:
           assert health["status"] == "ready"
           assert health["multiUser"] is True
           PY
-
-      - name: Resume verified Strategy 1 and 2 scheduler
-        shell: bash
-        run: |
-          gcloud scheduler jobs resume "$SCHEDULER_JOB" \
-            --project "$GCP_PROJECT_ID" \
-            --location "$GCP_REGION"
-          test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "ENABLED"
 
       - name: Verify Cloud Run IAM is unchanged
         shell: bash
