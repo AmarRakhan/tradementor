@@ -46,3 +46,12 @@ def test_queue_shadow_validates_new_entries_using_reads_only():
     assert "ticker_24h()" in rendered
     assert "leverage_brackets()" in rendered
     assert "READ_ONLY_CONTRACT_VALIDATED" in rendered
+
+
+def test_queue_shadow_refreshes_only_bounded_profitable_cost_evidence():
+    rendered = ast.unparse(_route_function())
+    assert "refresh_owned_costs" in rendered
+    assert "profitable_symbols[:8]" in rendered
+    assert "recover_fill_ids=True" in rendered
+    assert "ownershipIsolated" in rendered
+    assert ".submit_order(" not in rendered
