@@ -23,7 +23,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
   SCHEDULER_JOB: tradementor-strategy2-test-live-tick
   CANDIDATE_TAG: q2c
-  CANDIDATE_COMMIT: af765e0760aa541cac6366a7763b547faa1e6867
+  CANDIDATE_COMMIT: ffd65866675cb1cbb7e2d1eb68017b4a6e2fc259
 
 jobs:
   test-build-no-traffic:
@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GITHUB_REF" = "refs/heads/codex/strategy2-tp-first"
           test "${{ inputs.confirmation }}" = "DEPLOY_ZERO_TRAFFIC_CANDIDATE"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
           test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
