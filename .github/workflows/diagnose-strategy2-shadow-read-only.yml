@@ -46,6 +46,33 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Prove scheduler routing without changing traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-route.json"
+          gcloud scheduler jobs describe "tradementor-strategy2-test-live-tick" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-route.json"
+          python - "$RUNNER_TEMP/service-route.json" "$RUNNER_TEMP/scheduler-route.json" <<'PY'
+          import json,sys,urllib.parse
+          service,scheduler=map(lambda p:json.load(open(p,encoding="utf-8")),sys.argv[1:])
+          uri=str(scheduler.get("httpTarget",{}).get("uri",""))
+          base=str(service.get("status",{}).get("url",""))
+          traffic=service.get("status",{}).get("traffic",[])
+          kind="base-service" if base and uri.startswith(base) else "unknown"
+          tag="";revision=""
+          for row in traffic:
+              url=str(row.get("url",""))
+              if url and uri.startswith(url):
+                  kind="tagged-revision" if row.get("tag") else "revision-url"
+                  tag=str(row.get("tag",""));revision=str(row.get("revisionName",""))
+                  break
+          if kind=="base-service":
+              live=[row for row in traffic if int(row.get("percent",0) or 0)>0]
+              revision=str(live[0].get("revisionName","")) if len(live)==1 else ""
+          print("S2_SCHEDULER_ROUTE "+json.dumps({"readOnly":True,"routeKind":kind,
+              "tag":tag,"revision":revision,"schedulerState":str(scheduler.get("state",""))},sort_keys=True))
+          PY
+
       - name: Read masked Strategy 2 snapshot without exchange access
         shell: bash
         run: |
@@ -99,6 +126,18 @@ jobs:
           queue=s2.get("orderQueueState") if isinstance(s2.get("orderQueueState"),dict) else {}
           intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
           pending=s2.get("pendingReopens") if isinstance(s2.get("pendingReopens"),list) else []
+          attributions=s2.get("orderAttributions") if isinstance(s2.get("orderAttributions"),list) else []
+          recent_orders=[]
+          cutoff=datetime.now(timezone.utc).timestamp()-2*60*60
+          for row in attributions:
+              if not isinstance(row,dict):continue
+              stamp=row.get("recordedAt")
+              stamp_key=stamp.timestamp() if hasattr(stamp,"timestamp") else 0
+              if stamp_key<cutoff:continue
+              recent_orders.append((stamp_key,{"symbol":str(row.get("symbol","")),"side":str(row.get("side","")),
+                  "action":str(row.get("action","")),"recordedAt":str(stamp),
+                  "configVersion":int(row.get("configVersion",0) or 0)}))
+          recent_orders=[row for _stamp,row in sorted(recent_orders,key=lambda item:item[0],reverse=True)[:30]]
           candidate_scan=s2.get("candidateScan") if isinstance(s2.get("candidateScan"),dict) else {}
           universe=s2.get("universe") if isinstance(s2.get("universe"),dict) else {}
           cooldowns=s2.get("entryCandidateCooldowns") if isinstance(s2.get("entryCandidateCooldowns"),dict) else {}
@@ -169,6 +208,7 @@ jobs:
                       if isinstance(candidate_scan.get("reasons"),list) else []},
               "activeCandidateCooldowns":active_cooldowns[:20],
               "recentCandidateRejections":audits,
+              "recentAttributedOrders":recent_orders,
               "snapshot":{"capturedAt":str(snapshot.get("capturedAt","")),
                   "accountPositionCount":int(snapshot.get("accountPositionCount",snapshot.get("accountActivePositions",0)) or 0),
                   "openOrderCount":int(snapshot.get("openOrderCount",0) or 0),
