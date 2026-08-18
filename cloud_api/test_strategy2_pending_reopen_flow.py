@@ -59,7 +59,8 @@ def test_pending_reopen_margin_is_deferred_so_tp_selection_can_continue():
 def test_pending_recovery_mode_allows_tp_but_blocks_risk_increase_and_entries():
     tick = _tick_source()
     assert "before_order:Any=None,risk_reducing_only:bool=False" in tick
-    assert "(ownership_isolated or risk_reducing_only) and selected and not selected[1].risk_reducing" in tick
+    assert "if ownership_isolated and selected and not selected[1].risk_reducing" in tick
+    assert "if risk_reducing_only and selected and not selected[1].risk_reducing" in tick
     recovery_hold = tick.index("if risk_reducing_only:")
     scanner = tick.index("if not enabled or not scanner_allowed", recovery_hold)
     assert recovery_hold < scanner
