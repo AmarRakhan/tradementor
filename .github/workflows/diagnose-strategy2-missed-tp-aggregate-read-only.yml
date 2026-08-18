@@ -1,0 +1,159 @@
+name: Diagnose Strategy 2 missed TP aggregate read only
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DIAGNOSE_S2_TP_AGGREGATE_READ_ONLY"
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: tradementor-strategy2-tp-aggregate-read-only
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+    steps:
+      - name: Prove aggregate-only read scope
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_ACTOR" = "AmarRakhan"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "${{ inputs.confirmation }}" = "DIAGNOSE_S2_TP_AGGREGATE_READ_ONLY"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect masked four-account TP evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-tp-agg-${GITHUB_RUN_ID: -6}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-before.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service-before.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1]))["spec"]["template"]["spec"]
+          print(s["containers"][0]["image"]);print(s["serviceAccountName"])
+          PY
+          )
+          IMAGE="${V[0]}";SA="${V[1]}";test -n "$IMAGE";test -n "$SA"
+          SCRIPT="$(base64 -w0 <<'PY'
+          import hashlib,json,os
+          from datetime import datetime,timedelta,timezone
+          from google.cloud import firestore,secretmanager
+          import main as app
+          from aster_gateway import AsterV3Client
+          from aster_strategy2 import Strategy2Config
+          from aster_strategy2_runtime import estimated_close_fee,leg_projection
+          from aster_strategy2_state import owned_from_mapping
+          P=os.environ["GCP_PROJECT_ID"];db=firestore.Client(project=P);sm=secretmanager.SecretManagerServiceClient()
+          now=datetime.now(timezone.utc);cut=now-timedelta(hours=1);cutms=int(cut.timestamp()*1000)
+          def utc(v):
+              if not isinstance(v,datetime):return None
+              return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+          def n(v,d=0.0):
+              try:return float(v)
+              except:return d
+          def age(v):
+              v=utc(v);return None if v is None else max(0,int((now-v).total_seconds()))
+          def cat(r):
+              t=" ".join(str(r.get(k,"")) for k in ("blockReason","reason","originalReason")).lower()
+              if any(x in t for x in ("onbetrouw","ontbre","missing","uncertain","bewijs")):return "EVIDENCE_UNRELIABLE"
+              if any(x in t for x in ("netto","positive","positief","winst")):return "NET_RESULT_GUARD"
+              if any(x in t for x in ("ownership","toewij","eigendom")):return "OWNERSHIP"
+              if any(x in t for x in ("budget","margin")):return "MARGIN_OR_BUDGET"
+              if any(x in t for x in ("lease","queue","cooldown")):return "QUEUE_OR_LEASE"
+              return "OTHER"
+          ids={x.id for x in db.collection("asterStrategy2").stream()}|{x.id for x in db.collection("users").stream()}
+          u=[]
+          for uid in ids:
+              try:sm.access_secret_version(request={"name":f"projects/{P}/secrets/tradementor-aster-{uid}/versions/latest"});u.append(uid)
+              except:pass
+          u=sorted(set(u))
+          if len(u)!=4:raise SystemExit(f"EXPECTED_4_GOT_{len(u)}")
+          ce={"FULL_TP","PARTIAL_TP","TAKE_PROFIT_CLOSE","EMERGENCY_REDUCE","CLOSE_PROTECTION"}
+          fleet={k:0 for k in ("aboveNetTp","visibleProfitBelowNetTp","blocked","autoDecisions","manualOrders","autoOrders","closedRows","ownershipMismatch","staleTick")}
+          out=[]
+          for uid in u:
+              ref=db.collection("asterStrategy2").document(uid);st=ref.get().to_dict() or {};cfg=Strategy2Config.from_mapping(st.get("settings"))
+              owned=[]
+              for r in st.get("ownedLegs",[]) if isinstance(st.get("ownedLegs"),list) else []:
+                  try:owned.append(owned_from_mapping(r))
+                  except:pass
+              om={(x.symbol,x.side):x for x in owned};sy={x.symbol for x in owned};blocked=decisions=closed=0;cats={}
+              for d in ref.collection("audit").stream():
+                  r=d.to_dict() or {};ts=utc(r.get("timestamp"))
+                  if ts is None or ts<cut:continue
+                  s=str(r.get("symbol","")).upper()
+                  if s:sy.add(s)
+                  e=str(r.get("event","")).upper()
+                  if e=="AUTOMATIC_ASTER_CLOSE_BLOCKED":blocked+=1;c=cat(r);cats[c]=cats.get(c,0)+1
+                  elif e in ce:decisions+=1
+              for d in db.collection("users").document(uid).collection("asterClosedTrades").stream():
+                  r=d.to_dict() or {};ts=utc(r.get("closedAt"))
+                  if ts is None or ts<cut:continue
+                  closed+=1;s=str(r.get("symbol","")).upper()
+                  if s:sy.add(s)
+              above=below=manual=auto=active=0;mm=False;err=False
+              try:
+                  sec=app.load_aster_secret({"uid":uid});cl=AsterV3Client(signer_address=sec.signer_address,sign_message=app.local_eip712_signer(sec),live_authorized=False)
+                  pos=[r for r in cl.position_risk() if abs(n(r.get("positionAmt",r.get("quantity"))))>0];active=len(pos);ak=set()
+                  for r in pos:
+                      k=(str(r.get("symbol","")).upper(),str(r.get("positionSide","")).upper());ak.add(k);sy.add(k[0]);leg=om.get(k)
+                      if leg:
+                          p=leg_projection(leg,r);net=p.unrealized_pnl+p.funding-p.fees-estimated_close_fee(r);target=p.size*cfg.take_profit
+                          above+=int(net>=target);below+=int(n(r.get("unRealizedProfit",r.get("unrealizedProfit")))>0 and net<target)
+                  mm=ak!=set(om);end=int(now.timestamp()*1000)
+                  for s in sy:
+                      try:orders=cl.all_orders(s,start_time=cutms,end_time=end,limit=200)
+                      except:continue
+                      for r in orders:
+                          if int(n(r.get("updateTime",r.get("time"))))<cutms:continue
+                          cid=str(r.get("clientOrderId",r.get("origClientOrderId","")));reduce=bool(r.get("reduceOnly")) or str(r.get("closePosition","")).lower()=="true"
+                          manual+=int(cid.startswith("tm-manual-"));auto+=int(reduce and cid.startswith(("s2q-","s2h-","s2c-")))
+              except:err=True
+              ta=age(st.get("lastTickAt"));stale=ta is None or ta>300
+              vals=(above,below,blocked,decisions,manual,auto,closed,int(mm),int(stale))
+              for key,val in zip(fleet,vals):fleet[key]+=val
+              out.append({"accountRef":hashlib.sha256(uid.encode()).hexdigest()[:12],"enabled":bool(st.get("enabled")),"monitor":bool(st.get("monitor")),"phase":str(st.get("phase","")),
+                  "tpPercent":round(cfg.take_profit*100,6),"tickAgeSeconds":ta,"schedulerFresh":not stale,"activePositions":active,"ownedLegs":len(om),
+                  "ownershipMismatch":mm,"exchangeReadError":err,"aboveNetTp":above,"visibleProfitBelowNetTp":below,"blocked":blocked,
+                  "blockedCategories":cats,"autoDecisions":decisions,"manualOrders":manual,"autoOrders":auto,"closedRows":closed})
+          out.sort(key=lambda x:x["accountRef"])
+          print("S2_TP_AGGREGATE "+json.dumps({"readOnly":True,"windowMinutes":60,"accounts":out,"fleet":fleet,
+              "ordersSent":0,"positionsChanged":0,"writes":0,"uiHistoryLimitation":"Minute Top-5 values are not persisted."},sort_keys=True))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$SA" \
+            --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false" \
+            --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 420s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait > "$RUNNER_TEMP/run.txt" 2>&1
+          sleep 8
+          R="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"S2_TP_AGGREGATE\"" --project "$GCP_PROJECT_ID" --freshness 15m --limit 1 --order desc --format='value(textPayload)')"
+          test -n "$R";printf '%s\n' "$R"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-after.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-after.json" "$RUNNER_TEMP/scheduler-before.json" "$RUNNER_TEMP/scheduler-after.json" <<'PY'
+          import json,sys
+          a,b,c,d=map(lambda p:json.load(open(p)),sys.argv[1:])
+          def tr(x):return sorted((r.get("revisionName"),r.get("tag"),int(r.get("percent",0) or 0)) for r in x["status"]["traffic"])
+          def sc(x):
+              t=x.get("httpTarget",{});o=t.get("oidcToken",{})
+              return (x.get("schedule"),x.get("state"),t.get("uri"),t.get("httpMethod"),o.get("serviceAccountEmail"),o.get("audience"))
+          assert tr(a)==tr(b);assert sc(c)==sc(d);print("S2_TP_BOUNDARY traffic=unchanged scheduler=unchanged")
+          PY
+          cleanup;trap - EXIT
