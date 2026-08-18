@@ -95,7 +95,7 @@ jobs:
               for r in st.get("ownedLegs",[]) if isinstance(st.get("ownedLegs"),list) else []:
                   try:owned.append(owned_from_mapping(r))
                   except:pass
-              om={(x.symbol,x.side):x for x in owned};sy={x.symbol for x in owned};blocked=decisions=closed=0;cats={}
+              om={(x.symbol,x.side):x for x in owned};sy={x.symbol for x in owned};blocked=decisions=closed=0;cats={};open_audits=[]
               pending=st.get("pendingReopens") if isinstance(st.get("pendingReopens"),list) else []
               pending_cooldown=sum(1 for x in pending if isinstance(x,dict) and int(n(x.get("cooldownUntilMs")))>int(now.timestamp()*1000))
               pending_categories={}
@@ -109,6 +109,9 @@ jobs:
                   s=str(r.get("symbol","")).upper()
                   if s:sy.add(s)
                   e=str(r.get("event","")).upper()
+                  if e in {"INITIAL_OPEN_LEG","OPEN_LEG","OPEN_PROTECTION"}:
+                      side=str(r.get("side","")).upper();ms=int(ts.timestamp()*1000)
+                      if s and side in {"LONG","SHORT"}:open_audits.append((s,side,ms))
                   if e=="AUTOMATIC_ASTER_CLOSE_BLOCKED":blocked+=1;c=cat(r);cats[c]=cats.get(c,0)+1
                   elif e in ce:decisions+=1
               for d in db.collection("users").document(uid).collection("asterClosedTrades").stream():
@@ -126,7 +129,19 @@ jobs:
                       if leg:
                           p=leg_projection(leg,r);net=p.unrealized_pnl+p.funding-p.fees-estimated_close_fee(r);target=p.size*cfg.take_profit
                           above+=int(net>=target);below+=int(n(r.get("unRealizedProfit",r.get("unrealizedProfit")))>0 and net<target)
-                  exchange_only=len(ak-set(om));stored_only=len(set(om)-ak);mm=bool(exchange_only or stored_only)
+                  exchange_only_keys=ak-set(om);stored_only_keys=set(om)-ak
+                  exchange_only=len(exchange_only_keys);stored_only=len(stored_only_keys);mm=bool(exchange_only or stored_only)
+                  same_symbol_opposite=sum(1 for s,side in exchange_only_keys if any(os==s and od!=side for os,od in stored_only_keys))
+                  audited_exchange_only=sum(1 for key in exchange_only_keys if any((s,side)==key for s,side,ms in open_audits))
+                  recoverable_exchange_only=0
+                  for s,side in exchange_only_keys:
+                      stamps=[ms for os,od,ms in open_audits if (os,od)==(s,side)]
+                      if not stamps:continue
+                      try:trades=cl.user_trades(s,limit=500)
+                      except:continue
+                      if any(str(x.get("positionSide","")).upper()==side and
+                          any(abs(int(n(x.get("time",x.get("timestamp"))))-ms)<=300000 for ms in stamps) for x in trades):
+                          recoverable_exchange_only+=1
                   end=int(now.timestamp()*1000);stage="ORDER_HISTORY"
                   for s in sy:
                       try:orders=cl.all_orders(s,start_time=cutms,end_time=end,limit=200)
@@ -135,13 +150,18 @@ jobs:
                           if int(n(r.get("updateTime",r.get("time"))))<cutms:continue
                           cid=str(r.get("clientOrderId",r.get("origClientOrderId","")));reduce=bool(r.get("reduceOnly")) or str(r.get("closePosition","")).lower()=="true"
                           manual+=int(cid.startswith("tm-manual-"));auto+=int(reduce and cid.startswith(("s2q-","s2h-","s2c-")))
-              except Exception as exc:err=True;errcat=type(exc).__name__;exchange_only=stored_only=0
+              except Exception as exc:
+                  err=True;errcat=type(exc).__name__;exchange_only=stored_only=0
+                  same_symbol_opposite=audited_exchange_only=recoverable_exchange_only=0
               ta=age(st.get("lastTickAt"));stale=ta is None or ta>300
               vals=(above,below,blocked,decisions,manual,auto,closed,int(mm),int(stale))
               for key,val in zip(fleet,vals):fleet[key]+=val
               out.append({"accountRef":hashlib.sha256(uid.encode()).hexdigest()[:12],"enabled":bool(st.get("enabled")),"monitor":bool(st.get("monitor")),"phase":str(st.get("phase","")),
                   "tpPercent":round(cfg.take_profit*100,6),"tickAgeSeconds":ta,"schedulerFresh":not stale,"activePositions":active,"ownedLegs":len(om),
                   "ownershipMismatch":mm,"exchangeOnlyPositions":exchange_only,"storedOnlyLegs":stored_only,
+                  "sameSymbolOppositeSideMismatch":same_symbol_opposite,
+                  "exchangeOnlyWithStrategy2OpenAudit":audited_exchange_only,
+                  "exchangeOnlyRecoverableFromAuditAndFill":recoverable_exchange_only,
                   "exchangeReadError":err,"exchangeErrorStage":stage if err else "","exchangeErrorCategory":errcat,
                   "pendingReopenCount":len(pending),"pendingReopenCooldownCount":pending_cooldown,
                   "pendingReopenCategories":pending_categories,"lastReasonCategory":last_reason_category,
