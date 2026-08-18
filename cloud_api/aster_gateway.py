@@ -290,6 +290,7 @@ class AsterV3Client:
         live_authorized: bool = False,
         rest_guard: AsterRestGuard | None = None,
         shared_public_cache: bool | None = None,
+        before_order_submit: Callable[[AsterOrderIntent], None] | None = None,
     ) -> None:
         self._signer_address = signer_address
         self._sign_message = sign_message
@@ -297,6 +298,7 @@ class AsterV3Client:
         self._live_authorized = live_authorized
         self._rest_guard = rest_guard or _SHARED_REST_GUARD
         self._shared_public_cache = transport is None if shared_public_cache is None else shared_public_cache
+        self._before_order_submit = before_order_submit
         self._http = httpx.Client(base_url=ASTER_FUTURES_REST, timeout=15.0, transport=transport)
 
     def _decode_response(self, response: httpx.Response, *, invalid_message: str) -> Any:
@@ -413,6 +415,19 @@ class AsterV3Client:
         )
         return payload if isinstance(payload, list) else []
 
+    def cancel_order(self, symbol: str, *, order_id: int | str | None = None,
+                     client_order_id: str | None = None) -> dict[str, Any]:
+        """Cancel exactly one exchange-confirmed order; never use a broad cancel."""
+        if order_id is None and not client_order_id:
+            raise AsterValidationError("Order-id voor annuleren ontbreekt")
+        params: dict[str, Any] = {"symbol": symbol.upper()}
+        if order_id is not None: params["orderId"] = order_id
+        else: params["origClientOrderId"] = client_order_id
+        payload = self.signed_request("DELETE", "/fapi/v3/order", params)
+        if not isinstance(payload, dict):
+            raise AsterApiError("Aster-annulering heeft een ongeldig formaat")
+        return payload
+
     def all_orders(
         self, symbol: str, *, start_time: int | None = None,
         end_time: int | None = None, limit: int = 500,
@@ -515,6 +530,8 @@ class AsterV3Client:
         payload = build_hedge_order_payload(
             intent, hedge_mode_confirmed=hedge_mode_confirmed, risk_approved=risk_approved,
         )
+        if self._before_order_submit is not None:
+            self._before_order_submit(intent)
         try:
             response = self.signed_request("POST", "/fapi/v3/order", payload)
             if not isinstance(response, dict) or response.get("orderId") is None:

@@ -130,6 +130,7 @@ from hyperliquid_scanner import (
 from portfolio_risk import (
     ExchangeRiskSnapshot, PortfolioRiskLimits, evaluate_risk_increase,
 )
+from portfolio_growth import estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
@@ -341,7 +342,18 @@ class AsterStrategyStopRequest(BaseModel):
 
 class AsterCloseAllRequest(BaseModel):
     confirm: bool
-    confirm_loss: bool = False
+    quote_id: str = Field(min_length=16, max_length=120)
+    idempotency_key: str = Field(min_length=16, max_length=120)
+
+
+class PortfolioGrowthBaselineRequest(BaseModel):
+    amount: float = Field(gt=0, le=1_000_000_000)
+    currency: str = Field(pattern="^USD$")
+    confirm: bool
+
+
+class PortfolioGrowthResetRequest(PortfolioGrowthBaselineRequest):
+    reason: str = Field(min_length=10, max_length=500)
 
 
 class AsterManualCloseRequest(BaseModel):
@@ -1046,6 +1058,23 @@ def aster_strategy3_reference(uid: str):
     return db.collection("asterStrategy3").document(uid)
 
 
+def portfolio_growth_reference(uid: str):
+    return db.collection("users").document(uid).collection("portfolioGrowth").document("aster")
+
+
+def _aster_close_all_active(uid: str) -> bool:
+    value=portfolio_growth_reference(uid).get().to_dict() or {};lock=value.get("closeLock")
+    if not isinstance(lock,dict) or not bool(lock.get("active")):return False
+    until=lock.get("until")
+    return not isinstance(until,datetime) or until>datetime.now(timezone.utc)
+
+
+def _block_order_during_close_all(uid:str):
+    def guard(_intent:AsterOrderIntent)->None:
+        if _aster_close_all_active(uid):raise AsterValidationError("Accountgebonden Alles-sluiten-lock blokkeert deze order")
+    return guard
+
+
 def ensure_aster_strategy2_control(uid: str) -> dict[str, Any]:
     """Register every linked user with Strategy 2 without enabling trading.
 
@@ -1198,6 +1227,8 @@ def _aster_owned_keys(uid: str) -> tuple[set[tuple[str, str]], set[tuple[str, st
 
 def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     """One fail-closed S3 tick; the exchange remains source of truth."""
+    if _aster_close_all_active(uid):
+        return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
     strategy2_control=aster_strategy2_reference(uid).get().to_dict() or {}
     if bool(strategy2_control.get("exclusiveOwnership",False)):
         return {"status":"blocked","reason":"Exclusieve Strategy-2-ownership: Strategy 3 mag geen orders versturen","ordersSent":0}
@@ -1215,7 +1246,7 @@ def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
     if live and (not gates or not raw.get("canaryValidated") or not raw.get("liveReady")):
         return {"status":"blocked","reason":"Strategy 3 live-gates of canary zijn niet volledig vrijgegeven","ordersSent":0}
     secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,
-        sign_message=local_eip712_signer(secret),live_authorized=live)
+        sign_message=local_eip712_signer(secret),live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
     try:hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True)
@@ -1498,6 +1529,8 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
 
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
                               before_order:Any=None)->dict[str,Any]:
+    if _aster_close_all_active(uid):
+        return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
     settings=Strategy2Config.from_mapping(raw.get("settings"));enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
@@ -1517,7 +1550,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         raw={**raw,"liveReady":True}
         ref.set({"liveReady":True,"liveReadyRecoveredAt":now,
             "liveReadyRecoveryReason":"COMPLETED_CANARY_AUTHORIZATION"},merge=True)
-    secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live)
+    secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
     try: hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True);return {"status":"data-hold","reason":str(exc)}
@@ -2085,6 +2118,8 @@ def _aster_brackets(rows: list[dict[str, Any]], symbol: str) -> list[dict[str, A
 
 
 def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, Any]:
+    if _aster_close_all_active(uid):
+        return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
     ref = aster_automation_reference(uid); control = ref.get().to_dict() or {}
     strategy2_control=aster_strategy2_reference(uid).get().to_dict() or {}
     if bool(strategy2_control.get("exclusiveOwnership",False)):
@@ -2095,7 +2130,7 @@ def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, 
     settings = AsterStrategySettings.from_mapping({**(control.get("settings") or {}),"enabled":bool(control.get("enabled",False))})
     secret = load_aster_secret({"uid": uid})
     live = os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true" and not dry_run
-    client = AsterV3Client(signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=live)
+    client = AsterV3Client(signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
     try:
         hedge = client.position_mode(); account_info = client.account_information(); raw_positions = client.position_risk()
         raw_orders = client.open_orders()
@@ -4161,7 +4196,7 @@ def run_aster_strategy3_canary(request:AsterCanaryRequest,user:dict[str,Any]=Dep
     existing=canary_ref.get().to_dict() or {};action=existing_canary_action(existing.get("status"))
     if action=="replay":return {"completed":True,"replayed":True,"orders":existing.get("orders",[]),"symbol":existing.get("symbol")}
     if action=="block":raise HTTPException(409,"Een eerdere Strategy-3-canary is actief of onzeker; geen tweede order verzonden")
-    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True)
+    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True,before_order_submit=_block_order_during_close_all(str(user["uid"])))
     try:hedge=client.position_mode();positions=client.position_risk();orders=client.open_orders();account=client.account_information()
     except (AsterApiError,ValueError) as exc:raise HTTPException(409,f"Canary-preflight kon Aster niet betrouwbaar lezen: {exc}") from exc
     if not hedge or orders:raise HTTPException(409,"Canary geblokkeerd: Hedge Mode of open-orderstatus is niet veilig")
@@ -4334,7 +4369,7 @@ def run_aster_strategy2_canary(request:AsterCanaryRequest,user:dict[str,Any]=Dep
         action="proceed"  # constructor rejected locally before any HTTP order request
     if action=="replay": return {"completed":True,"replayed":True,"orders":existing.get("orders",[]),"symbol":existing.get("symbol")}
     if action=="block": raise HTTPException(409,"Een eerdere canary is nog actief of onzeker; geen tweede order verzonden")
-    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True)
+    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True,before_order_submit=_block_order_during_close_all(str(user["uid"])))
     hedge=client.position_mode();positions=client.position_risk();orders=client.open_orders()
     if not hedge or orders: raise HTTPException(409,"Canary geblokkeerd: Hedge Mode of open-orderstatus is niet veilig")
     account=client.account_information();equity,_,available,_,maint=aster_account_information_values(account)
@@ -4483,28 +4518,171 @@ def stop_aster_strategy(
     return {"stopped": True, **aster_automation_public(str(user["uid"]))}
 
 
+def _portfolio_growth_client(user:dict[str,Any],*,live:bool)->AsterV3Client:
+    secret=load_aster_secret(user)
+    return AsterV3Client(signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),live_authorized=live)
+
+
+def _portfolio_growth_estimate(user:dict[str,Any],*,persist_quote:bool=True)->dict[str,Any]:
+    uid=str(user["uid"]);ref=portfolio_growth_reference(uid);stored=ref.get().to_dict() or {}
+    baseline=safe_float(stored.get("baseline"));set_at=stored.get("baselineSetAt")
+    if baseline<=0 or not isinstance(set_at,datetime):
+        return {"setupRequired":True,"currency":"USD","reliable":False,"closeEnabled":False,
+            "blockReason":"Stel eerst een persoonlijke startwaarde in"}
+    client=_portfolio_growth_client(user,live=False)
+    try:
+        account=client.account_information();positions=client.position_risk()
+        income=client.income_history(start_time=utc_ms(set_at),limit=1000)
+        fees=client.fee_details("BTC_USDT")
+        taker=abs(safe_float(fees.get("realTakerFee",fees.get("originalTakerFee"))))
+        if taker>0.05:taker/=100
+        if taker<=0 or taker>0.05:raise ValueError("Aster-takerfee is niet betrouwbaar bevestigd")
+        slippage=safe_float(os.getenv("ASTER_CLOSE_ALL_SLIPPAGE_RATE","0.001"))
+        if slippage<=0 or slippage>0.05:raise ValueError("Slippagebuffer is niet conservatief geconfigureerd")
+        equity,_,_,_,_=aster_account_information_values(account)
+        cashflow=external_cashflow_since(income,utc_ms(set_at))
+        estimate=estimate_close_value(baseline=baseline,exchange_equity=equity,positions=positions,
+            external_cashflow=cashflow,taker_fee_rate=taker,slippage_rate=slippage,
+            other_costs=0,equity_includes_unrealized=("totalMarginBalance" in account and "totalUnrealizedProfit" in account),
+            funding_in_equity=("totalMarginBalance" in account and "totalWalletBalance" in account),data_fresh=True,
+            cashflow_complete=len(income)<1000)
+        payload={"setupRequired":False,"currency":"USD",**estimate.public(),"generatedAt":datetime.now(timezone.utc).isoformat(),
+            "evidence":{"equitySource":"totalMarginBalance","unrealizedIncluded":True,"fundingTreatment":"settled funding included in wallet/equity; no not-yet-due funding deducted",
+                "cashflowRows":len(income),"feeRate":taker,"slippageRate":slippage}}
+    except Exception as exc:
+        return {"setupRequired":False,"currency":"USD","baseline":baseline,"reliable":False,"closeEnabled":False,
+            "blockReason":f"Actuele exchangegegevens niet betrouwbaar: {str(exc)[:180]}"}
+    if persist_quote:
+        quote_id=python_secrets.token_urlsafe(24);expires=datetime.now(timezone.utc)+timedelta(seconds=45)
+        ref.collection("quotes").document(quote_id).set({"uid":uid,"payload":payload,"expiresAt":expires,"createdAt":datetime.now(timezone.utc)})
+        payload={**payload,"quoteId":quote_id,"quoteExpiresAt":expires.isoformat()}
+    return payload
+
+
+@app.get("/v1/me/aster/portfolio-growth")
+def get_aster_portfolio_growth(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    return _portfolio_growth_estimate(user)
+
+
+@app.post("/v1/me/aster/portfolio-growth/baseline")
+def set_aster_portfolio_growth_baseline(request:PortfolioGrowthBaselineRequest,
+    user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    if not request.confirm:raise HTTPException(422,"Bevestig de eerste startwaarde expliciet")
+    uid=str(user["uid"]);ref=portfolio_growth_reference(uid);transaction=db.transaction();now=datetime.now(timezone.utc)
+    @firestore.transactional
+    def save(txn):
+        current=ref.get(transaction=txn)
+        if current.exists and safe_float((current.to_dict() or {}).get("baseline"))>0:
+            raise HTTPException(409,"De startwaarde bestaat al; gebruik de expliciete resetprocedure")
+        data={"uid":uid,"baseline":request.amount,"currency":"USD","baselineSetAt":now,"baselineSource":"OWNER_INITIAL",
+            "updatedAt":now}
+        txn.set(ref,data,merge=True);txn.set(ref.collection("audit").document(),{"event":"BASELINE_INITIALIZED","uid":uid,
+            "newBaseline":request.amount,"currency":"USD","actorUid":uid,"timestamp":now})
+    save(transaction)
+    return {"saved":True,**_portfolio_growth_estimate(user)}
+
+
+@app.post("/v1/me/aster/portfolio-growth/reset")
+def reset_aster_portfolio_growth_baseline(request:PortfolioGrowthResetRequest,
+    user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    if not request.confirm:raise HTTPException(422,"Bevestig de handmatige reset expliciet")
+    uid=str(user["uid"]);ref=portfolio_growth_reference(uid);transaction=db.transaction();now=datetime.now(timezone.utc)
+    @firestore.transactional
+    def reset(txn):
+        current=ref.get(transaction=txn).to_dict() or {};old=safe_float(current.get("baseline"))
+        txn.set(ref,{"uid":uid,"baseline":request.amount,"currency":"USD","baselineSetAt":now,
+            "baselineSource":"OWNER_RESET","updatedAt":now},merge=True)
+        txn.set(ref.collection("audit").document(),{"event":"BASELINE_RESET","uid":uid,"oldBaseline":old,
+            "newBaseline":request.amount,"reason":request.reason,"actorUid":uid,"timestamp":now})
+    reset(transaction)
+    return {"reset":True,**_portfolio_growth_estimate(user)}
+
+
 @app.post("/v1/me/aster/automation/close-all")
 def close_all_aster_strategy(
     request: AsterCloseAllRequest,
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
-    if not request.confirm or not request.confirm_loss:
-        raise HTTPException(422, "Aparte expliciete bevestiging voor mogelijk verlieslatend Alles sluiten ontbreekt")
+    if not request.confirm:
+        raise HTTPException(422, "Bevestig Alles sluiten expliciet")
     if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
         raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
-    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True)
-    positions=[x for x in client.position_risk() if abs(safe_float(x.get("positionAmt")))>0]
-    tickers={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
-    plans=[]
-    for row in positions:
-        symbol=str(row.get("symbol","")).upper();qty=abs(Decimal(str(row.get("positionAmt"))))
-        plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(tickers.get(symbol) or row.get("markPrice") or 0)),max(1,int(safe_float(row.get("leverage")))))
-        plans.append((plan,PositionSide(str(row.get("positionSide","")).upper())))
-    try: results=execute_aster_close_all(client,plans,id_prefix=f"tm-all-{str(user['uid'])[-6:]}-{int(time.time())}",
-        confirm=True,explicit_loss_confirmation=True)
-    except Exception as exc: raise HTTPException(409,str(exc)) from exc
-    aster_automation_reference(str(user["uid"])).set({"enabled":False,"monitor":True,"phase":"CLOSING_ALL","lastReason":"Alles sluiten persoonlijk bevestigd","updatedAt":datetime.now(timezone.utc)},merge=True)
-    return {"submitted":len(results),"message":"Alle Aster-legs zijn ter sluiting verzonden; monitoring controleert tot exchange-flat."}
+    uid=str(user["uid"]);growth=portfolio_growth_reference(uid);quote_ref=growth.collection("quotes").document(request.quote_id)
+    action_hash=hashlib.sha256(f"{uid}:{request.idempotency_key}".encode()).hexdigest();action_ref=growth.collection("actions").document(action_hash)
+    transaction=db.transaction();now=datetime.now(timezone.utc);lock_token=python_secrets.token_hex(16)
+    @firestore.transactional
+    def reserve(txn):
+        existing=action_ref.get(transaction=txn)
+        if existing.exists:return (existing.to_dict() or {}).get("status","UNKNOWN")
+        quote=quote_ref.get(transaction=txn);quote_data=quote.to_dict() or {}
+        if not quote.exists or quote_data.get("uid")!=uid:raise HTTPException(409,"De persoonlijke sluitpreview bestaat niet")
+        expires_at=quote_data.get("expiresAt")
+        if isinstance(expires_at,datetime) and expires_at.tzinfo is None:
+            expires_at=expires_at.replace(tzinfo=timezone.utc)
+        if not isinstance(expires_at,datetime) or expires_at<=now:
+            raise HTTPException(409,"De sluitpreview is verlopen; vernieuw eerst de actuele berekening")
+        preview=quote_data.get("payload") if isinstance(quote_data.get("payload"),dict) else {}
+        if not preview.get("closeEnabled") or not preview.get("reliable"):
+            raise HTTPException(409,"De bewaarde sluitpreview is niet aantoonbaar positief en betrouwbaar")
+        lock=(growth.get(transaction=txn).to_dict() or {}).get("closeLock")
+        if isinstance(lock,dict) and lock.get("active"):raise HTTPException(409,"Voor dit account loopt al een sluitactie")
+        txn.set(action_ref,{"uid":uid,"status":"RESERVED","quoteId":request.quote_id,"preview":preview,"createdAt":now})
+        txn.set(growth,{"closeLock":{"active":True,"token":lock_token,"actionId":action_hash,"until":now+timedelta(hours=24)}},merge=True)
+        pause={"enabled":False,"monitor":True,"closeAllPause":True,"phase":"CLOSING_ALL","lastReason":"Persoonlijk Alles sluiten actief","updatedAt":now}
+        txn.set(aster_automation_reference(uid),pause,merge=True);txn.set(aster_strategy2_reference(uid),pause,merge=True);txn.set(aster_strategy3_reference(uid),pause,merge=True)
+        return "RESERVED"
+    status=reserve(transaction)
+    if status!="RESERVED":return {"actionId":action_hash,"status":status,"duplicate":True}
+    client=_portfolio_growth_client(user,live=True);submitted=[]
+    try:
+        open_orders=client.open_orders();unknown=[row for row in open_orders if is_exposure_order(row) is None]
+        if unknown:raise RuntimeError("Open order(s) kunnen niet veilig als instap of bescherming worden geclassificeerd")
+        for order in [row for row in open_orders if is_exposure_order(row) is True]:
+            client.cancel_order(str(order.get("symbol","")),order_id=order.get("orderId"),client_order_id=order.get("clientOrderId"))
+        preview=_portfolio_growth_estimate(user,persist_quote=False)
+        if not preview.get("reliable") or not preview.get("closeEnabled") or safe_float(preview.get("difference"))<=0:
+            raise RuntimeError("De opnieuw berekende netto sluitwaarde is niet meer betrouwbaar positief")
+        positions=[x for x in client.position_risk() if abs(safe_float(x.get("positionAmt")))>0]
+        for index,row in enumerate(positions,1):
+            symbol=str(row.get("symbol","")).upper();qty=abs(Decimal(str(row.get("positionAmt"))));mark=safe_float(row.get("markPrice"))
+            if not symbol or qty<=0 or mark<=0:raise RuntimeError("Positie bevat geen betrouwbare sluitgegevens")
+            plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(mark)),max(1,int(safe_float(row.get("leverage")) or 1)))
+            result=execute_aster_leg(client,plan,side=PositionSide(str(row.get("positionSide","")).upper()),action="CLOSE",
+                id_prefix=f"tm-ca-{action_hash[:14]}-{index}",confirm=True,manual_loss_confirmation=True)
+            submitted.append(result)
+        remaining=[x for x in client.position_risk() if abs(safe_float(x.get("positionAmt")))>0]
+        if remaining:
+            detail=", ".join(f"{str(x.get('symbol','?'))}:{str(x.get('positionSide','?'))}:{abs(safe_float(x.get('positionAmt'))):g}" for x in remaining[:20])
+            raise RuntimeError(f"Aster bevestigt nog {len(remaining)} open positie(s) [{detail}]; geen nieuwe basis opgeslagen")
+        for order in client.open_orders():
+            client.cancel_order(str(order.get("symbol","")),order_id=order.get("orderId"),client_order_id=order.get("clientOrderId"))
+        remaining_orders=client.open_orders()
+        if remaining_orders:
+            detail=", ".join(f"{str(x.get('symbol','?'))}:{str(x.get('orderId',x.get('clientOrderId','?')))}" for x in remaining_orders[:20])
+            raise RuntimeError(f"Aster bevestigt nog {len(remaining_orders)} open order(s) [{detail}]; geen nieuwe basis opgeslagen")
+        final_account=client.account_information();final_equity=aster_account_information_values(final_account)[0]
+        if final_equity<=0:raise RuntimeError("De werkelijk gerealiseerde eindwaarde is niet betrouwbaar bevestigd")
+        finish=db.transaction();finished_at=datetime.now(timezone.utc)
+        @firestore.transactional
+        def complete(txn):
+            current=growth.get(transaction=txn).to_dict() or {};old=safe_float(current.get("baseline"));lock=current.get("closeLock") or {}
+            if lock.get("token")!=lock_token:raise RuntimeError("Accountlock is tijdens afronding gewijzigd")
+            txn.set(growth,{"baseline":final_equity,"baselineSetAt":finished_at,"baselineSource":"CONFIRMED_CLOSE_ALL",
+                "updatedAt":finished_at,"closeLock":{"active":False,"token":"","actionId":action_hash,"releasedAt":finished_at}},merge=True)
+            actual_fees=sum(abs(safe_float(((item.get("result") or {}) if isinstance(item,dict) else {}).get("commission"))) for item in submitted)
+            audit={"event":"CLOSE_ALL_CONFIRMED_FLAT","uid":uid,"actionId":action_hash,"oldBaseline":old,"newBaseline":final_equity,
+                "estimatedDifference":safe_float(preview.get("difference")),"expectedFees":safe_float(preview.get("expectedFees")),
+                "confirmedReportedFees":actual_fees,"slippageBuffer":safe_float(preview.get("slippageBuffer")),
+                "ordersSubmitted":len(submitted),"timestamp":finished_at}
+            txn.set(growth.collection("audit").document(),audit);txn.set(action_ref,{"status":"COMPLETED","result":audit,"completedAt":finished_at},merge=True)
+        complete(finish)
+        return {"actionId":action_hash,"status":"COMPLETED","closedPositions":len(submitted),"newBaseline":final_equity,
+            "botPaused":True,"message":"Alle posities en orders zijn exchange-bevestigd weg; het account blijft bewust gepauzeerd."}
+    except Exception as exc:
+        action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE","submitted":len(submitted),
+            "reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
+        raise HTTPException(409,f"Alles sluiten is fail-closed gestopt; account blijft gepauzeerd: {str(exc)[:300]}") from exc
 
 
 @app.post("/v1/me/aster/positions/{symbol}/close")
@@ -4532,6 +4710,7 @@ def close_one_aster_position(
     secret = load_aster_secret(user)
     client = AsterV3Client(
         signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=True,
+        before_order_submit=_block_order_during_close_all(uid),
     )
     try:
         live_rows = client.position_risk()

@@ -18,7 +18,7 @@ const n=(v:string,f=0)=>Number.isFinite(Number(v))?Number(v):f;
 export function AsterDryRunControl({ snapshot=null, onChanged=()=>{} }:{snapshot?:Record<string,unknown>|null;onChanged?:()=>void}) {
   const [fields,setFields]=useState(defaults); const [open,setOpen]=useState(false);
   const [busy,setBusy]=useState(false); const [message,setMessage]=useState("");
-  const [confirmStart,setConfirmStart]=useState(false); const [confirmClose,setConfirmClose]=useState(false);
+  const [confirmStart,setConfirmStart]=useState(false);
   const [tone,setTone]=useState<"ok"|"warn"|"error">("warn");
   useEffect(()=>{ if(open)return; const raw=snapshot?.automationSettings; if(!raw||typeof raw!=="object")return;
     const s=raw as Record<string,unknown>; const pct=(k:string,d:number)=>String(Number(s[k]??d)*100);
@@ -42,7 +42,6 @@ export function AsterDryRunControl({ snapshot=null, onChanged=()=>{} }:{snapshot
       kind==="start"?"Live monitoring gestart. Orders worden per LONG/SHORT-paar bevestigd.":kind==="stop"?"Veilig gestopt; bescherming blijft actief.":"Persoonlijke Aster-instellingen opgeslagen."); onChanged();
   }catch(e){setTone("error");setMessage(e instanceof Error?e.message:"Opdracht mislukt.");}finally{setBusy(false)} }
   const active=Boolean(snapshot?.automationEnabled);
-  async function closeAll(){setBusy(true);setMessage("");try{const r=await authenticatedRequest("/api/exchanges/aster/automation/close-all",{method:"POST",body:JSON.stringify({confirm:true,confirm_loss:true})}) as Record<string,unknown>;setTone("warn");setMessage(String(r.message||"Alle posities worden gesloten en gecontroleerd."));setConfirmClose(false);onChanged();}catch(e){setTone("error");setMessage(e instanceof Error?e.message:"Alles sluiten is mislukt.");}finally{setBusy(false)}}
   return <article className="strategy-card strategy-control-card">
     <div className="strategy-title-row"><div><span className="kicker">ASTER MULTI-PAIR</span><h2>Profit Harvest Hedge</h2></div><span className={`strategy-state ${active?"on":""}`}>{active?"ACTIEF":"GESTOPT"}</span></div>
     <p>$10 LONG + $10 SHORT per pair · DCA 2%/5% · netto oogst 0,5% · Cross · maximale contractleverage.</p>
@@ -61,9 +60,8 @@ export function AsterDryRunControl({ snapshot=null, onChanged=()=>{} }:{snapshot
         <F l="Nieuwe risico's blokkeren (%)" v={fields.blockRisk} c={v=>setFields({...fields,blockRisk:v})}/><F l="Risico verlagen (%)" v={fields.reduceRisk} c={v=>setFields({...fields,reduceRisk:v})}/><F l="Noodrem (%)" v={fields.emergencyRisk} c={v=>setFields({...fields,emergencyRisk:v})}/>
       </div>
       <p className="inline-warning">Live start opent marktorders met echt geld. Alles sluiten blijft dubbel bevestigd en apart vergrendeld.</p>
-      <div className="strategy-actions"><button disabled={busy} onClick={()=>act("save")}>Opslaan</button><button disabled={busy} onClick={()=>act("simulate")}>Veilig simuleren</button>{active?<button className="stop-action" disabled={busy} onClick={()=>act("stop")}>Veilig stoppen</button>:<button className="start-action" disabled={busy||fields.mode!=="live"} onClick={()=>setConfirmStart(true)}>Live bot starten</button>}<button className="stop-action" disabled={busy} onClick={()=>setConfirmClose(true)}>Alles sluiten</button></div>
+      <div className="strategy-actions"><button disabled={busy} onClick={()=>act("save")}>Opslaan</button><button disabled={busy} onClick={()=>act("simulate")}>Veilig simuleren</button>{active?<button className="stop-action" disabled={busy} onClick={()=>act("stop")}>Veilig stoppen</button>:<button className="start-action" disabled={busy||fields.mode!=="live"} onClick={()=>setConfirmStart(true)}>Live bot starten</button>}</div>
       {confirmStart&&<div className="confirmation-panel"><strong>Echt geld bevestigen</strong><p>Open maximaal {fields.pairs} pairs met $ {fields.base} LONG én $ {fields.base} SHORT per pair. Marketorders, Cross Margin en maximale contractleverage.</p><div className="strategy-actions"><button onClick={()=>setConfirmStart(false)}>Annuleren</button><button className="start-action" disabled={busy} onClick={()=>{setConfirmStart(false);act("start")}}>Bevestig en start live</button></div></div>}
-      {confirmClose&&<div className="confirmation-panel"><strong>Alle Aster-posities sluiten?</strong><p>Dit realiseert ook open verliezen. De opdracht kan na verzending niet worden teruggedraaid.</p><div className="strategy-actions"><button onClick={()=>setConfirmClose(false)}>Annuleren</button><button className="stop-action" disabled={busy} onClick={closeAll}>Ja, sluit alles</button></div></div>}
     </div>}{message&&<p className={`strategy-message ${tone}`}>{message}</p>}
   </article>;
 }

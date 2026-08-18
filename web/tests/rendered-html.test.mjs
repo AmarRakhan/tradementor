@@ -391,16 +391,22 @@ test("Aster calendar shows daily portfolio change without inventing missing hist
   assert.match(panel, /change >= 0 \? "profit" : "loss"/);
 });
 
-test("Aster summary keeps realized profit and closed trade count in separate equal metric cells", async () => {
-  const [page, styles] = await Promise.all([
+test("Aster summary places Portfolio Groei between realized profit and closed trade count", async () => {
+  const [page, card, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/portfolio-growth-card.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
   ]);
   assert.match(page, /className="metric realized-trades"/);
-  assert.match(page, /className="metric metric-reserved"/);
+  assert.match(page, /<PortfolioGrowthCard onChanged=\{onChanged\}/);
   assert.match(page, /TRADES GESLOTEN/);
   assert.doesNotMatch(page, /realized-today-values/);
-  assert.match(styles, /\.metric-reserved\s*\{[^}]*min-height:\s*92px/i);
+  assert.match(card, /PORTFOLIO GROEI/);
+  assert.match(card, /Netto winst bij alles sluiten/);
+  assert.match(card, /ALLES SLUITEN/);
+  assert.match(card, /quote_id:data\.quoteId/);
+  assert.match(styles, /\.portfolio-growth\.profit\{[^}]*border:/i);
+  assert.match(styles, /\.portfolio-close-all:disabled/);
 });
 
 test("application zoom is blocked while deliberate chart gestures remain available", async () => {

@@ -10,6 +10,7 @@ import { AsterDryRunControl } from "@/components/aster-dry-run-control";
 import { AsterStrategy2Maker } from "@/components/aster-strategy2-maker";
 import { AsterPerformancePanel } from "@/components/aster-performance-panel";
 import { AsterRecentTrades } from "@/components/aster-recent-trades";
+import { PortfolioGrowthCard } from "@/components/portfolio-growth-card";
 import { PositionCloseControl } from "@/components/position-close-control";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useExchangeData, type ExchangeSnapshot, type ExchangeSnapshots } from "@/lib/use-exchange-data";
@@ -411,7 +412,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
         <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
         {(isHyperliquid || destination === "aster") && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail={destination === "aster" ? "Aster futures maintenance margin" : "Perps maintenance margin"} />}
-        {destination === "aster" && <TodayRealizedMetric available={snapshot.data?.historyAvailable === true} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
+        {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} available={snapshot.data?.historyAvailable === true} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
         {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
       </section>}
 
@@ -960,7 +961,7 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   return <article className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>;
 }
 
-function TodayRealizedMetric({ trades, available }: { trades: ClosedTradeView[]; available: boolean }) {
+function TodayRealizedMetric({ trades, available, onChanged }: { trades: ClosedTradeView[]; available: boolean; onChanged:()=>void }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -969,7 +970,7 @@ function TodayRealizedMetric({ trades, available }: { trades: ClosedTradeView[];
   const { today } = realizedCalendar(trades.map((trade) => ({ closedAt: trade.closedAt, realizedPnlUsd: trade.pnl })), now);
   return <>
     <article className={`metric realized-today ${available && today.total > 0 ? "positive" : available && today.total < 0 ? "negative" : ""}`}><span>GESLOTEN RESULTAAT VANDAAG</span><strong className="realized-amount">{available ? formatSignedUsd(today.total) : "—"}</strong><small>{available ? "Lokale dag 00:00–23:59" : "Aster-geschiedenis tijdelijk niet bevestigd"}</small></article>
-    <article className="metric metric-reserved" aria-hidden="true" />
+    <PortfolioGrowthCard onChanged={onChanged} />
     <article className="metric realized-trades"><span>TRADES GESLOTEN</span><strong>{available ? today.trades : "—"}</strong><small>{available ? "Vandaag bevestigd door Aster" : "Aster-geschiedenis tijdelijk niet bevestigd"}</small></article>
   </>;
 }

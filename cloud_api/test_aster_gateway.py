@@ -257,3 +257,18 @@ def test_history_reads_reject_malformed_records_instead_of_treating_them_as_empt
         client.user_trades("BTCUSDT")
     with pytest.raises(AsterApiError):
         client.income_history(symbol="BTCUSDT")
+
+
+def test_account_close_lock_is_checked_immediately_before_order_post():
+    seen=[]
+    def guard(intent):
+        seen.append(intent.intent_id)
+        raise AsterValidationError("account close lock")
+    client=AsterV3Client(signer_address="0xagent",sign_message=lambda _:"sig",
+        transport=httpx.MockTransport(lambda request: pytest.fail("POST must remain blocked")),
+        live_authorized=True,before_order_submit=guard)
+    intent=AsterOrderIntent("tm-open-lock-1","BTCUSDT",PositionSide.LONG,Decimal("0.01"),"OPEN")
+    with pytest.raises(AsterValidationError,match="account close lock"):
+        client.submit_order_once(intent,config=AsterAutomationConfig(enabled=True,mode="live"),
+            confirm=True,hedge_mode_confirmed=True,risk_approved=True)
+    assert seen == ["tm-open-lock-1"]
