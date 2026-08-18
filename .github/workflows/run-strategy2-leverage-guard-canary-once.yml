@@ -64,6 +64,12 @@ jobs:
           print(tagged["url"])
           PY
           )"
+          TOKEN_AUDIENCE="$(python - "$RUNNER_TEMP/service-before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          print(service["status"]["url"])
+          PY
+          )"
           REVISION="$(python - "$RUNNER_TEMP/service-before.json" <<'PY'
           import json,sys
           service=json.load(open(sys.argv[1],encoding="utf-8"))
@@ -87,6 +93,7 @@ jobs:
           PY
           echo "CANDIDATE_URL=$CANDIDATE_URL" >> "$GITHUB_ENV"
           echo "candidate_url=$CANDIDATE_URL" >> "$GITHUB_OUTPUT"
+          echo "token_audience=$TOKEN_AUDIENCE" >> "$GITHUB_OUTPUT"
 
       - name: Mint exact Cloud Run audience token
         id: canary_auth
@@ -95,7 +102,7 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
           token_format: id_token
-          id_token_audience: ${{ steps.boundaries.outputs.candidate_url }}
+          id_token_audience: ${{ steps.boundaries.outputs.token_audience }}
           id_token_include_email: true
 
       - name: Execute exactly one bound-account canary scan
