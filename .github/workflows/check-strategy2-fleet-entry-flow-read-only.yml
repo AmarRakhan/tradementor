@@ -1,0 +1,130 @@
+name: Check Strategy 2 Fleet Entry Flow Read Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type CHECK_S2_FLEET_READ_ONLY"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-fleet-read-only
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+    steps:
+      - name: Prove read-only fleet scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_ACTOR" = "AmarRakhan"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "${{ inputs.confirmation }}" = "CHECK_S2_FLEET_READ_ONLY"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Inspect masked active Strategy 2 fleet without exchange access
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-fleet-${GITHUB_RUN_ID: -6}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t SERVICE_VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          spec=service["spec"]["template"]["spec"]
+          print(spec["containers"][0]["image"])
+          print(spec["serviceAccountName"])
+          PY
+          )
+          IMAGE="${SERVICE_VALUES[0]}"
+          RUNTIME_SERVICE_ACCOUNT="${SERVICE_VALUES[1]}"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          db=firestore.Client(project="tradementor-amar-20260813")
+          now=datetime.now(timezone.utc)
+          def number(value,default=0.0):
+              try:return float(value)
+              except (TypeError,ValueError):return default
+          def age_seconds(value):
+              if not isinstance(value,datetime):return None
+              value=value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+              return max(0,int((now-value).total_seconds()))
+          rows=[]
+          for doc in db.collection("asterStrategy2").stream():
+              state=doc.to_dict() or {}
+              if not bool(state.get("enabled") or state.get("monitor")):continue
+              settings=state.get("settings") if isinstance(state.get("settings"),dict) else {}
+              snapshot=state.get("accountSnapshot") if isinstance(state.get("accountSnapshot"),dict) else {}
+              scan=state.get("candidateScan") if isinstance(state.get("candidateScan"),dict) else {}
+              pending=state.get("pendingReopens") if isinstance(state.get("pendingReopens"),list) else []
+              queue=state.get("orderQueueState") if isinstance(state.get("orderQueueState"),dict) else {}
+              owned=state.get("ownedLegs") if isinstance(state.get("ownedLegs"),list) else []
+              maximum=int(number(settings.get("maximumPairs"),5))
+              equity=number(snapshot.get("equity"));margin=number(snapshot.get("strategyMargin"))
+              leverage=max(1,int(number(settings.get("leverage"),10)))
+              next_margin=number(settings.get("baseNotional"),10)/leverage
+              cap=equity*number(settings.get("strategyBudget"),.5)
+              tick_age=age_seconds(state.get("lastTickAt"))
+              scan_age=age_seconds(scan.get("checkedAt"))
+              free=max(0,maximum-len(owned))
+              budget_ok=equity>0 and margin+next_margin<=cap
+              entry_starved=bool(free>0 and budget_ok and pending and (scan_age is None or scan_age>600))
+              rows.append({
+                  "accountRef":hashlib.sha256(doc.id.encode()).hexdigest()[:12],
+                  "enabled":bool(state.get("enabled")),"monitor":bool(state.get("monitor")),
+                  "phase":str(state.get("phase","")),"lastTickAgeSeconds":tick_age,
+                  "schedulerFresh":bool(tick_age is not None and tick_age<=300),
+                  "ownedLegs":len(owned),"maximumPairs":maximum,"freeSeats":free,
+                  "budgetPass":budget_ok,"pendingReopenCount":len(pending),
+                  "pendingReasons":[str(x.get("reason","")) for x in pending[:2] if isinstance(x,dict)],
+                  "candidateScanAgeSeconds":scan_age,
+                  "candidateChecked":int(number(scan.get("checked"))),
+                  "candidateSkipped":int(number(scan.get("skipped"))),
+                  "entryFlowStarvedByPending":entry_starved,
+                  "queueHaltedUncertain":bool(queue.get("haltedUncertain",False)),
+                  "lastReason":str(state.get("lastReason",""))[:220],
+              })
+          rows.sort(key=lambda row:row["accountRef"])
+          print("S2_FLEET_READ_ONLY "+json.dumps({
+              "readOnly":True,"activeAccounts":len(rows),
+              "freshSchedulers":sum(1 for row in rows if row["schedulerFresh"]),
+              "starvedAccounts":sum(1 for row in rows if row["entryFlowStarvedByPending"]),
+              "accounts":rows,"observedAt":now.isoformat()
+          },sort_keys=True))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait             > "$RUNNER_TEMP/execute.txt" 2>&1
+          sleep 8
+          RESULT="$(gcloud logging read             "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"S2_FLEET_READ_ONLY\""             --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)')"
+          test -n "$RESULT"
+          printf '%s\n' "$RESULT"
+          cleanup
+          trap - EXIT
