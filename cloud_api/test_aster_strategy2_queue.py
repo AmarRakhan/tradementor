@@ -58,10 +58,21 @@ def test_seven_close_reopen_packages_then_one_close_leaves_pending_eighth_reopen
     assert ordered[0].kind=="REOPEN"
 
 
+def test_six_profit_closes_are_never_behind_one_pending_reopen():
+    state=QueueState("a","s")
+    plan=ordered_actions(
+        profits=[action("TAKE_PROFIT_CLOSE",i) for i in range(6)],
+        pending_reopens=[action("REOPEN",99)],
+    )
+    sent=execute(state,plan)
+    assert [item.kind for item,_ in sent[:6]]==["TAKE_PROFIT_CLOSE"]*6
+    assert sent[6][0].kind=="REOPEN"
+
+
 def test_exact_priority_order():
     values=ordered_actions(risk=[action("RISK_REDUCE",1)],profits=[action("TAKE_PROFIT_CLOSE",2)],
         pending_reopens=[action("REOPEN",3)],dca=[action("DCA",4)],entries=[action("OPEN_BASE",5)])
-    assert [x.kind for x in values]==["RISK_REDUCE","REOPEN","TAKE_PROFIT_CLOSE","DCA","OPEN_BASE"]
+    assert [x.kind for x in values]==["RISK_REDUCE","TAKE_PROFIT_CLOSE","REOPEN","DCA","OPEN_BASE"]
 
 
 def test_uncertain_order_15_halts_only_that_account():
@@ -130,7 +141,7 @@ def test_shadow_plan_is_read_only_prioritized_and_budgeted():
         dca=[action("DCA",4)],entries=[action("OPEN_BASE",5)])
     assert state.to_mapping()==before
     assert plan["readOnly"] is True and plan["wouldSendCount"]==2
-    assert [x["kind"] for x in plan["actions"]]==["RISK_REDUCE","REOPEN"]
+    assert [x["kind"] for x in plan["actions"]]==["RISK_REDUCE","TAKE_PROFIT_CLOSE"]
     assert plan["accountRef"]!="private-account" and plan["remainingBudget"]==2
 
 
