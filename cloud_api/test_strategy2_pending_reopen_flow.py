@@ -44,12 +44,30 @@ def test_pending_reopen_skip_does_not_reserve_order_budget_or_remove_item():
     assert "ordersUsed" not in cooldown_gate
 
 
-def test_global_margin_or_strategy_budget_still_fails_closed():
+def test_pending_reopen_margin_is_deferred_so_tp_selection_can_continue():
+    tick = _tick_source()
     block = _pending_reopen_block()
-    assert "required*1.05>portfolio.available_balance" in block
-    assert "portfolio.strategy_margin+required>portfolio.equity*settings.strategy_budget" in block
-    assert 'action":"PENDING_REOPEN_MARGIN"' in block
-    assert '"ordersSent":0' in block
+    margin = block[block.index("required*1.05>portfolio.available_balance"):]
+    assert "portfolio.strategy_margin+required>portfolio.equity*settings.strategy_budget" in margin
+    assert 'pending["cooldownUntilMs"]=now_ms+60*1000' in margin
+    assert "raise Strategy2PendingReopenDeferred()" in margin
+    assert "except Strategy2PendingReopenDeferred:" in margin
+    assert 'action":"PENDING_REOPEN_MARGIN"' not in margin
+    assert tick.index("except Strategy2PendingReopenDeferred:") < tick.index("selected=protection_selected")
+
+
+def test_pending_recovery_mode_allows_tp_but_blocks_risk_increase_and_entries():
+    tick = _tick_source()
+    assert "before_order:Any=None,risk_reducing_only:bool=False" in tick
+    assert "if ownership_isolated and selected and not selected[1].risk_reducing" in tick
+    assert "if risk_reducing_only and selected and not selected[1].risk_reducing" in tick
+    recovery_hold = tick.index("if risk_reducing_only:")
+    scanner = tick.index("if not enabled or not scanner_allowed", recovery_hold)
+    assert recovery_hold < scanner
+    queue_start = MAIN.index("def _run_aster_strategy2_queue_scan")
+    queue_end = MAIN.index("@app.post", queue_start)
+    queue = MAIN[queue_start:queue_end]
+    assert "risk_reducing_only=drain_pending_only" in queue
 
 
 def test_existing_position_dca_path_remains_outside_pending_reopen_change():
