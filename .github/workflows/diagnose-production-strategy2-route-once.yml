@@ -1,0 +1,100 @@
+name: Diagnose Production Strategy 2 Runtime Route Once
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/workflows/diagnose-production-strategy2-route-once.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: diagnose-production-strategy2-route-read-only
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  SCHEDULER_JOB: tradementor-aster-automation-tick
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove read-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GITHUB_EVENT_NAME" = "push"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read exact production route and runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          SINCE="$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
+          set +e
+          gcloud logging read "resource.type=\"cloud_scheduler_job\" AND resource.labels.job_id=\"$SCHEDULER_JOB\" AND timestamp>=\"$SINCE\"" --project "$GCP_PROJECT_ID" --limit 100 --order desc --format=json > "$RUNNER_TEMP/scheduler-logs.json"
+          SCHED_RC=$?
+          gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$CLOUD_RUN_SERVICE\" AND timestamp>=\"$SINCE\"" --project "$GCP_PROJECT_ID" --limit 300 --order desc --format=json > "$RUNNER_TEMP/service-logs.json"
+          SERVICE_RC=$?
+          set -e
+          test -s "$RUNNER_TEMP/scheduler-logs.json" || echo '[]' > "$RUNNER_TEMP/scheduler-logs.json"
+          test -s "$RUNNER_TEMP/service-logs.json" || echo '[]' > "$RUNNER_TEMP/service-logs.json"
+          python - "$RUNNER_TEMP/scheduler.json" "$RUNNER_TEMP/service.json" "$RUNNER_TEMP/scheduler-logs.json" "$RUNNER_TEMP/service-logs.json" "$SCHED_RC" "$SERVICE_RC" <<'PY'
+          import json,sys
+          job=json.load(open(sys.argv[1],encoding="utf-8"))
+          service=json.load(open(sys.argv[2],encoding="utf-8"))
+          scheduler_logs=json.load(open(sys.argv[3],encoding="utf-8"))
+          service_logs=json.load(open(sys.argv[4],encoding="utf-8"))
+          template=service["spec"]["template"]
+          spec=template["spec"]
+          container=spec["containers"][0]
+          env={row["name"]:row.get("value") for row in container.get("env",[]) if row.get("name") in {
+              "ASTER_LIVE_EXECUTION_ENABLED","ASTER_STRATEGY2_LIVE_ENABLED",
+              "ASTER_STRATEGY2_ORDER_QUEUE_ENABLED","TRADEMENTOR_ALLOW_LIVE",
+              "ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP"}}
+          traffic=[{"revisionName":x.get("revisionName"),"percent":x.get("percent"),"tag":x.get("tag")}
+                   for x in service.get("status",{}).get("traffic",[])]
+          scheduler_events=[]
+          for row in scheduler_logs:
+              payload=row.get("jsonPayload") or {}
+              scheduler_events.append({"timestamp":row.get("timestamp"),"severity":row.get("severity"),
+                  "url":payload.get("url"),"debugInfo":payload.get("debugInfo"),
+                  "status":payload.get("status")})
+          requests=[]
+          for row in service_logs:
+              req=row.get("httpRequest") or {}
+              url=str(req.get("requestUrl") or "")
+              if "/internal/" in url:
+                  requests.append({"timestamp":row.get("timestamp"),"method":req.get("requestMethod"),
+                      "status":req.get("status"),"url":url.split("?")[0]})
+          result={"readOnly":True,"scheduler":{"state":job.get("state"),"schedule":job.get("schedule"),
+              "uri":(job.get("httpTarget") or {}).get("uri"),
+              "audience":((job.get("httpTarget") or {}).get("oidcToken") or {}).get("audience"),
+              "lastAttemptTime":job.get("lastAttemptTime"),"status":job.get("status")},
+              "service":{"latestReadyRevision":service.get("status",{}).get("latestReadyRevisionName"),
+              "latestCreatedRevision":service.get("status",{}).get("latestCreatedRevisionName"),
+              "traffic":traffic,"image":container.get("image"),"command":container.get("command"),
+              "args":container.get("args"),"selectedEnv":env},
+              "schedulerEvents":scheduler_events[:30],"internalRequests":requests[:80],
+              "schedulerLogReadAllowed":sys.argv[5]=="0","serviceLogReadAllowed":sys.argv[6]=="0",
+              "ordersSent":0,"writes":0,"trafficChanged":False,"schedulerChanged":False}
+          print("S2_PRODUCTION_ROUTE_DIAGNOSTICS "+json.dumps(result,sort_keys=True))
+          PY
