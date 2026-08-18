@@ -1,0 +1,133 @@
+name: Activate Strategy 2 Leverage Guard on Testapp
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type ACTIVATE_LEVGUARD_TESTAPP"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-test-live-control
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+  SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+  CANDIDATE_TAG: levguard
+  CANDIDATE_COMMIT: 47ff3f375b74051318f0a7cf5ba778f580f06b15
+
+jobs:
+  activate-testapp:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Prove exact testapp-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "${{ inputs.confirmation }}" = "ACTIVATE_LEVGUARD_TESTAPP"
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$GCP_REGION" = "europe-west4"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
+          test "$SCHEDULER_JOB" = "tradementor-strategy2-test-live-tick"
+          test "$CANDIDATE_COMMIT" = "47ff3f375b74051318f0a7cf5ba778f580f06b15"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture boundaries and prove exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-before.json"
+          python - "$RUNNER_TEMP/service-before.json" "$CANDIDATE_COMMIT" <<'PY' > "$RUNNER_TEMP/boundaries.env"
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          commit=sys.argv[2]
+          tagged=next(row for row in service["status"]["traffic"] if row.get("tag")=="levguard")
+          assert tagged.get("percent",0)==0, tagged
+          candidate=tagged["revisionName"]
+          live=[row for row in service["status"]["traffic"] if int(row.get("percent",0))>0]
+          assert len(live)==1 and int(live[0]["percent"])==100, live
+          previous=live[0]["revisionName"]
+          assert candidate!=previous
+          revision=service.get("spec",{}).get("template",{}).get("metadata",{}).get("name")
+          print(f"CANDIDATE_REVISION={candidate}")
+          print(f"PREVIOUS_LIVE_REVISION={previous}")
+          PY
+          cat "$RUNNER_TEMP/boundaries.env" >> "$GITHUB_ENV"
+          source "$RUNNER_TEMP/boundaries.env"
+          gcloud run revisions describe "$CANDIDATE_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          python - "$RUNNER_TEMP/candidate.json" "$CANDIDATE_COMMIT" <<'PY'
+          import json,sys
+          revision=json.load(open(sys.argv[1],encoding="utf-8"))
+          commit=sys.argv[2]
+          image=revision["spec"]["containers"][0]["image"]
+          assert f"strategy2-test-live-api:{commit}" in image or "strategy2-test-live-api@sha256:" in image, image
+          rows={row["name"]:row for row in revision["spec"]["containers"][0].get("env",[])}
+          assert rows["ASTER_STRATEGY2_ORDER_QUEUE_ENABLED"].get("value")=="true"
+          assert rows["ASTER_STRATEGY2_QUEUE_CANARY_MAX_ORDERS"].get("value")=="15"
+          assert rows["ASTER_LIVE_EXECUTION_ENABLED"].get("value")=="true"
+          assert rows["ASTER_STRATEGY2_LIVE_ENABLED"].get("value")=="true"
+          PY
+
+      - name: Activate exact candidate on testapp
+        id: promote
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --to-revisions "$CANDIDATE_REVISION=100"             --quiet
+
+      - name: Verify testapp health and unchanged scheduler
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-after.json"
+          SERVICE_URL="$(python - "$RUNNER_TEMP/service-after.json" "$CANDIDATE_REVISION" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"));candidate=sys.argv[2]
+          live=[row for row in service["status"]["traffic"] if int(row.get("percent",0))>0]
+          assert len(live)==1 and live[0]["revisionName"]==candidate and int(live[0]["percent"])==100, live
+          print(service["status"]["url"])
+          PY
+          )"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$RUNNER_TEMP/scheduler-before.json" "$RUNNER_TEMP/scheduler-after.json" "$HEALTH" <<'PY'
+          import json,sys
+          before,after=map(lambda path:json.load(open(path,encoding="utf-8")),sys.argv[1:3])
+          health=json.loads(sys.argv[3]);assert health["status"]=="ready",health
+          def config(job):
+              target=job.get("httpTarget",{});oidc=target.get("oidcToken",{})
+              return (job.get("name"),job.get("schedule"),job.get("timeZone"),job.get("state"),
+                  job.get("attemptDeadline"),job.get("retryConfig",{}),target.get("uri"),
+                  target.get("httpMethod"),target.get("headers",{}),target.get("body"),
+                  oidc.get("serviceAccountEmail"),oidc.get("audience"))
+          assert config(before)==config(after)
+          PY
+          echo "LEVGUARD_TESTAPP_ACTIVE revision=$CANDIDATE_REVISION traffic=100 health=ready scheduler=unchanged"
+
+      - name: Roll back testapp automatically on verification failure
+        if: failure() && steps.promote.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --to-revisions "$PREVIOUS_LIVE_REVISION=100"             --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --format="value(status.traffic[0].revisionName,status.traffic[0].percent)"
