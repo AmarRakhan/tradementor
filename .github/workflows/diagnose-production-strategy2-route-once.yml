@@ -46,7 +46,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler.json"
+          set +e
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler.json" 2>"$RUNNER_TEMP/scheduler.error"
+          SCHED_DESCRIBE_RC=$?
+          set -e
+          test -s "$RUNNER_TEMP/scheduler.json" || echo '{}' > "$RUNNER_TEMP/scheduler.json"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
           SINCE="$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
           set +e
