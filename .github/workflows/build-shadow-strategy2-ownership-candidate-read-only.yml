@@ -32,14 +32,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 2792dda05e3102250049d44e5665e4e6bedaf4ca
+          ref: a80b7e000190878da876244b6cd309d2d31afa8a
 
       - name: Prove exact test-only scope
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
-          test "$(git rev-parse HEAD)" = "2792dda05e3102250049d44e5665e4e6bedaf4ca"
+          test "$(git rev-parse HEAD)" = "a80b7e000190878da876244b6cd309d2d31afa8a"
           test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
           test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
 
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy2-test-live-api:2792dda05e3102250049d44e5665e4e6bedaf4ca"
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy2-test-live-api:a80b7e000190878da876244b6cd309d2d31afa8a"
           docker build --tag "$IMAGE" cloud_api
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
