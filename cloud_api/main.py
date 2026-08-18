@@ -1662,15 +1662,16 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         protection_selected=None
     # A carried reopen is the highest non-emergency action. It can only follow
     # reliable exchange reconciliation and never preempts fresh risk reduction.
-    if not protection_selected and pending_reopens and enabled:
+    pending_reopen_cooldown_until=(int(safe_float(pending_reopens[0].get("cooldownUntilMs")))
+        if pending_reopens and isinstance(pending_reopens[0],dict) else 0)
+    pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms
+    if not protection_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
         if order_budget is not None and order_budget<1:
             return {"status":"budget-exhausted","action":"PENDING_REOPEN","ordersSent":0}
         pending=dict(pending_reopens[0]);symbol=str(pending.get("symbol","")).upper();side=str(pending.get("side","")).upper()
         if not symbol or side not in {"LONG","SHORT"}:
             pending_reopens.pop(0);ref.set({"pendingReopens":pending_reopens,"updatedAt":now},merge=True)
             return {"status":"waiting","action":"INVALID_PENDING_REOPEN","ordersSent":0}
-        if int(safe_float(pending.get("cooldownUntilMs")))>int(now.timestamp()*1000):
-            return {"status":"waiting","action":"PENDING_REOPEN_COOLDOWN","symbol":symbol,"side":side,"ordersSent":0}
         if (symbol,side) in posmap:
             # Exchange truth already contains the replacement. Do not submit a
             # duplicate; leave reconciliation/ownership recovery authoritative.
@@ -1712,7 +1713,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             pending["attempts"]=int(safe_float(pending.get("attempts")))+1;pending["reason"]=str(exc)
             pending["cooldownUntilMs"]=int(now.timestamp()*1000)+30*60*1000;pending_reopens[0]=pending
             ref.set({"pendingReopens":pending_reopens,"phase":"WAITING","lastReason":f"{symbol} {side}: heropening definitief afgewezen; cooldown actief","updatedAt":now},merge=True)
-            return {"status":"waiting","action":"PENDING_REOPEN_REJECTED","ordersSent":0,"reason":str(exc)}
+            # A symbol-local reopen rejection must not monopolise the complete
+            # account tick.  Keep the exact reopen queued with its cooldown,
+            # consume no order slot, and continue with other proven management
+            # actions or normal new-entry candidates below.
     selected=protection_selected or next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions) or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None

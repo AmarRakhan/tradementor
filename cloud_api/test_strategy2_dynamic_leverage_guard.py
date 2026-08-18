@@ -22,7 +22,7 @@ def test_every_strategy2_brand_new_entry_route_uses_the_central_guard():
 
 def test_new_entry_routes_never_use_lower_leverage_fallback():
     tick = _tick_source()
-    for marker in ("pending_reopens and enabled", 'decision.kind=="FULL_TP"', "for candidate in candidates"):
+    for marker in ("pending_reopens and pending_reopen_attempt_ready and enabled", 'decision.kind=="FULL_TP"', "for candidate in candidates"):
         assert marker in tick
     assert "reopen=replace(reopen,leverage=min(reopen.leverage,settings.leverage))" not in tick
     assert "accepted=configure_maximum_usable_leverage(client,value)" not in tick
@@ -65,4 +65,3 @@ def test_no_static_symbol_leverage_table_or_lower_candidate_list_in_new_guard():
     assert "contract_brackets(client, [], plan.symbol)" in guard
     assert "(200, 150, 125" not in guard
     assert "min(" not in guard
-
