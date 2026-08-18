@@ -59,7 +59,7 @@ jobs:
           from aster_gateway import AsterV3Client
           from aster_strategy2 import Strategy2Config
           from aster_strategy2_runtime import estimated_close_fee,leg_projection
-          from aster_strategy2_state import owned_from_mapping
+          from aster_strategy2_runtime import owned_from_mapping
           P=os.environ["GCP_PROJECT_ID"];db=firestore.Client(project=P);sm=secretmanager.SecretManagerServiceClient()
           now=datetime.now(timezone.utc);cut=now-timedelta(hours=1);cutms=int(cut.timestamp()*1000)
           def utc(v):
