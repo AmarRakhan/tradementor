@@ -101,6 +101,18 @@ jobs:
           pending=s2.get("pendingReopens") if isinstance(s2.get("pendingReopens"),list) else []
           snapshot=s2.get("accountSnapshot") if isinstance(s2.get("accountSnapshot"),dict) else {}
           settings=s2.get("settings") if isinstance(s2.get("settings"),dict) else {}
+          def number(value,default=0.0):
+              try:return float(value)
+              except (TypeError,ValueError):return default
+          equity=number(snapshot.get("equity"))
+          available=number(snapshot.get("availableBalance"))
+          strategy_margin=number(snapshot.get("strategyMargin"))
+          base_notional=number(settings.get("baseNotional"),10.0)
+          leverage=max(1,int(number(settings.get("leverage"),10)))
+          budget_fraction=number(settings.get("strategyBudget"),0.5)
+          next_margin=base_notional/leverage
+          budget_cap=equity*budget_fraction
+          budget_headroom=budget_cap-strategy_margin
           sides={"LONG":0,"SHORT":0}
           for row in owned:
               side=str(row.get("side","")).upper() if isinstance(row,dict) else ""
@@ -118,7 +130,18 @@ jobs:
                   "hasCurrentIntent":bool(intent),"pendingReopenCount":len(pending)},
               "snapshot":{"capturedAt":str(snapshot.get("capturedAt","")),
                   "accountPositionCount":int(snapshot.get("accountPositionCount",snapshot.get("accountActivePositions",0)) or 0),
-                  "openOrderCount":int(snapshot.get("openOrderCount",0) or 0)},
+                  "openOrderCount":int(snapshot.get("openOrderCount",0) or 0),
+                  "equity":round(equity,4),"availableBalance":round(available,4),
+                  "strategyMargin":round(strategy_margin,4),
+                  "marginRatio":round(number(snapshot.get("marginRatio")),6)},
+              "budgetDiagnosis":{"baseNotional":round(base_notional,4),"configuredLeverage":leverage,
+                  "strategyBudgetFraction":round(budget_fraction,6),
+                  "strategyBudgetCap":round(budget_cap,4),"strategyMargin":round(strategy_margin,4),
+                  "nextEntryMargin":round(next_margin,4),"headroomBeforeNextEntry":round(budget_headroom,4),
+                  "passesBudgetCheck":bool(equity>0 and strategy_margin+next_margin<=budget_cap),
+                  "exactFormula":"strategyMargin + baseNotional/leverage <= equity * strategyBudget"},
+              "runtime":{"phase":str(s2.get("phase","")),"lastReason":str(s2.get("lastReason","")),
+                  "lastAction":str(s2.get("lastAction","")),"lastTickAt":str(s2.get("lastTickAt",""))},
               "isolation":{"strategy1Active":bool(s1.get("enabled") or s1.get("monitor")),
                   "strategy3Active":bool(s3.get("enabled") or s3.get("monitor"))},
               "observedAt":datetime.now(timezone.utc).isoformat()
