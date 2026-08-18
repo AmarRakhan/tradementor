@@ -42,7 +42,7 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-          test "$GITHUB_REF" = "refs/heads/codex/strategy2-pending-reopen-flow-clean"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
           test "${{ inputs.confirmation }}" = "DEPLOY_PENDING_REOPEN_ZERO_TRAFFIC"
           test "$(git rev-parse HEAD)" = "$CANDIDATE_COMMIT"
           test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
