@@ -1579,11 +1579,13 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 return {"status":"reconciling","reason":reason,"ordersSent":0}
             transferred,missing,transfer_errors=transfer_active_ownership_to_strategy2(positions=positions,
                 strategy2_legs=owned,strategy3_legs=s3_legs,strategy1_legs=s1_legs)
-            if missing or transfer_errors or len(transferred)!=len(active_keys):
-                reason="Exclusieve Strategy-2-overdracht is niet volledig bewijsbaar"
+            if transfer_errors:
+                reason="Exclusieve Strategy-2-overdracht bevat tegenstrijdig ownershipbewijs"
                 ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now,
                     "unassignedPositions":len(missing)},merge=True)
                 return {"status":"reconciling","reason":reason,"ordersSent":0}
+            # Missing active keys remain explicitly unclaimed. They are isolated
+            # below; only the transferred, proven subset may be managed.
             previous={(leg.symbol,leg.side,leg.strategy_id,leg.engine_type,leg.quantity,leg.weighted_entry) for leg in owned}
             current={(leg.symbol,leg.side,leg.strategy_id,leg.engine_type,leg.quantity,leg.weighted_entry) for leg in transferred}
             owned=transferred;s3_keys=set()
