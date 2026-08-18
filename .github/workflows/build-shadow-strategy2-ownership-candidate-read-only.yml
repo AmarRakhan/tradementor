@@ -131,21 +131,27 @@ jobs:
               if ref in refs:matches[ref]=row.id
           if set(matches)!=refs:raise SystemExit("MASKED_ACCOUNT_MATCH_FAILED")
           from strategy2_test_entrypoint import strategy2_queue_shadow
-          results={}
+          results={};errors={}
           for ref in sorted(refs):
-              result=strategy2_queue_shadow({"uid":matches[ref]})
-              assert result.get("readOnly") is True
-              assert result.get("ordersSent")==0
-              assert result.get("positionsChanged")==0
-              assert result.get("persistentWrites")==0
-              assert result.get("schedulerChanged") is False
-              assert result.get("botStatusChanged") is False
-              assert result.get("externalWrites")==0
-              assert result.get("exchangeSubmissions")==0
-              assert int(result.get("maximumOrders",0))==15
-              assert 0<=int(result.get("wouldSendCount",0))<=15
-              result.pop("scanId",None)
-              results[ref]=result
+              try:
+                  result=strategy2_queue_shadow({"uid":matches[ref]})
+                  result.pop("scanId",None)
+                  print("S2_ACCOUNT_SHADOW "+json.dumps({"accountRef":ref,"result":result},sort_keys=True))
+                  assert result.get("readOnly") is True
+                  assert result.get("ordersSent")==0
+                  assert result.get("positionsChanged")==0
+                  assert result.get("persistentWrites")==0
+                  assert result.get("schedulerChanged") is False
+                  assert result.get("botStatusChanged") is False
+                  assert result.get("externalWrites")==0
+                  assert result.get("exchangeSubmissions")==0
+                  assert int(result.get("maximumOrders",0))==15
+                  assert 0<=int(result.get("wouldSendCount",0))<=15
+                  results[ref]=result
+              except Exception as exc:
+                  errors[ref]={"type":type(exc).__name__,"message":str(exc)[:500]}
+                  print("S2_ACCOUNT_SHADOW_ERROR "+json.dumps({"accountRef":ref,**errors[ref]},sort_keys=True))
+          if errors:raise SystemExit("ACCOUNT_SHADOW_FAILED")
           print("S2_COMBINED_SHADOW "+json.dumps({"readOnly":True,"accounts":results,
               "ordersSent":0,"writes":0,"positionsChanged":0},sort_keys=True))
           PY
@@ -157,7 +163,11 @@ jobs:
           set -e
           sleep 8
           RESULT="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"S2_COMBINED_SHADOW\""             --project "$GCP_PROJECT_ID" --freshness 15m --limit 1 --order desc --format='value(textPayload)')"
-          if [[ "$RC" -ne 0 || -z "$RESULT" ]]; then cat "$RUNNER_TEMP/shadow.txt"; exit 1; fi
+          if [[ "$RC" -ne 0 || -z "$RESULT" ]]; then
+            cat "$RUNNER_TEMP/shadow.txt"
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"S2_ACCOUNT_SHADOW\""               --project "$GCP_PROJECT_ID" --freshness 15m --limit 20 --order asc --format='value(textPayload)'
+            exit 1
+          fi
           printf '%s\n' "$RESULT"
           cleanup
           trap - EXIT
