@@ -1,0 +1,179 @@
+name: Build and shadow Strategy 2 ownership candidate
+
+on:
+  push:
+    branches:
+      - codex/strategy2-pending-reopen-flow-clean
+    paths:
+      - ".github/workflows/build-shadow-strategy2-ownership-candidate.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-strategy2-test-live-control
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GOOGLE_CLOUD_PROJECT: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+  SCHEDULER_JOB: tradementor-strategy2-test-live-tick
+  CANDIDATE_TAG: prflow
+
+jobs:
+  build-zero-traffic-and-shadow:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prove exact test-only scope
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/codex/strategy2-pending-reopen-flow-clean"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Run complete and focused suites
+        working-directory: cloud_api
+        run: |
+          pip install -r requirements.txt pytest
+          pytest -q
+          pytest -q test_strategy2_ownership_isolation.py test_strategy2_pending_reopen_flow.py test_aster_strategy2_queue.py test_strategy2_dynamic_leverage_guard.py test_aster_strategy2_runtime.py
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture production and scheduler boundary
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-before.json"
+          RUNTIME_SERVICE_ACCOUNT="$(python - "$RUNNER_TEMP/service-before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1]))
+          print(service["spec"]["template"]["spec"]["serviceAccountName"])
+          PY
+          )"
+          test -n "$RUNTIME_SERVICE_ACCOUNT"
+          echo "RUNTIME_SERVICE_ACCOUNT=$RUNTIME_SERVICE_ACCOUNT" >> "$GITHUB_ENV"
+
+      - name: Build exact candidate image
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy2-test-live-api:$GITHUB_SHA"
+          docker build --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy candidate with zero traffic
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --command uvicorn             --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080"             --service-account "$RUNTIME_SERVICE_ACCOUNT"             --no-traffic             --tag "$CANDIDATE_TAG"             --quiet
+
+      - name: Prove zero traffic and unchanged live revision and scheduler
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-candidate.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-candidate.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$RUNNER_TEMP/scheduler-before.json" "$RUNNER_TEMP/scheduler-candidate.json" <<'PY'
+          import json,sys
+          before,after,sb,sa=map(lambda p:json.load(open(p)),sys.argv[1:])
+          def positive(x):return sorted((r.get("revisionName"),int(r.get("percent",0))) for r in x["status"]["traffic"] if int(r.get("percent",0))>0)
+          def scheduler(x):
+              t=x.get("httpTarget",{});o=t.get("oidcToken",{})
+              return (x.get("schedule"),x.get("timeZone"),x.get("state"),t.get("uri"),t.get("httpMethod"),o.get("serviceAccountEmail"),o.get("audience"))
+          assert positive(before)==positive(after)
+          assert scheduler(sb)==scheduler(sa)
+          candidate=next(r for r in after["status"]["traffic"] if r.get("tag")=="prflow")
+          assert int(candidate.get("percent",0) or 0)==0
+          print("S2_CANDIDATE_BOUNDARY candidateTraffic=0 liveTraffic=unchanged scheduler=unchanged")
+          PY
+
+      - name: Run both account shadows in one read-only job
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-own-shadow-${GITHUB_RUN_ID: -6}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json,os
+          import firebase_admin,google.auth
+          from google.cloud import firestore
+          refs={"dbcf1033833a","6011ff585af2"}
+          credential,_=google.auth.default()
+          if "[DEFAULT]" not in firebase_admin._apps:
+              firebase_admin.initialize_app(credential,options={"projectId":os.environ["GOOGLE_CLOUD_PROJECT"]})
+          db=firestore.Client(project=os.environ["GOOGLE_CLOUD_PROJECT"])
+          matches={}
+          for row in db.collection("asterStrategy2").select([]).stream():
+              ref=hashlib.sha256(row.id.encode()).hexdigest()[:12]
+              if ref in refs:matches[ref]=row.id
+          if set(matches)!=refs:raise SystemExit("MASKED_ACCOUNT_MATCH_FAILED")
+          from strategy2_test_entrypoint import strategy2_queue_shadow
+          results={}
+          for ref in sorted(refs):
+              result=strategy2_queue_shadow({"uid":matches[ref]})
+              assert result.get("readOnly") is True
+              assert result.get("ordersSent")==0
+              assert result.get("positionsChanged")==0
+              assert result.get("persistentWrites")==0
+              assert result.get("schedulerChanged") is False
+              assert result.get("botStatusChanged") is False
+              assert result.get("externalWrites")==0
+              assert result.get("exchangeSubmissions")==0
+              assert int(result.get("maximumOrders",0))==15
+              assert 0<=int(result.get("wouldSendCount",0))<=15
+              result.pop("scanId",None)
+              results[ref]=result
+          print("S2_COMBINED_SHADOW "+json.dumps({"readOnly":True,"accounts":results,
+              "ordersSent":0,"writes":0,"positionsChanged":0},sort_keys=True))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT"             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY2_ORDER_QUEUE_ENABLED=false"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait > "$RUNNER_TEMP/shadow.txt" 2>&1
+          RC=$?
+          set -e
+          sleep 8
+          RESULT="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"S2_COMBINED_SHADOW\""             --project "$GCP_PROJECT_ID" --freshness 15m --limit 1 --order desc --format='value(textPayload)')"
+          if [[ "$RC" -ne 0 || -z "$RESULT" ]]; then cat "$RUNNER_TEMP/shadow.txt"; exit 1; fi
+          printf '%s\n' "$RESULT"
+          cleanup
+          trap - EXIT
+
+      - name: Prove post-shadow boundaries
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler-after.json"
+          python - "$RUNNER_TEMP/service-candidate.json" "$RUNNER_TEMP/service-after.json" "$RUNNER_TEMP/scheduler-candidate.json" "$RUNNER_TEMP/scheduler-after.json" <<'PY'
+          import json,sys
+          a,b,c,d=map(lambda p:json.load(open(p)),sys.argv[1:])
+          def traffic(x):return sorted((r.get("revisionName"),r.get("tag"),int(r.get("percent",0) or 0)) for r in x["status"]["traffic"])
+          def scheduler(x):
+              t=x.get("httpTarget",{});o=t.get("oidcToken",{})
+              return (x.get("schedule"),x.get("timeZone"),x.get("state"),t.get("uri"),t.get("httpMethod"),o.get("serviceAccountEmail"),o.get("audience"))
+          assert traffic(a)==traffic(b)
+          assert scheduler(c)==scheduler(d)
+          assert next(r for r in b["status"]["traffic"] if r.get("tag")=="prflow").get("percent",0)==0
+          print("S2_FINAL_BOUNDARY traffic=unchanged scheduler=unchanged candidateTraffic=0 ordersSent=0 writes=0 positionsChanged=0")
+          PY

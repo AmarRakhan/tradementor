@@ -46,12 +46,43 @@ def snapshot(**changes):
     {"exchange_reliable": False},
     {"hedge_mode": False},
     {"open_orders": ({"orderId": "open"},)},
-    {"positions": ()},
 ])
 def test_unreliable_exchange_truth_fails_closed(changes):
     with pytest.raises(ShadowSnapshotRejected):
         validated_shadow_inputs(snapshot(**changes))
 
+
+
+def test_mismatched_ownership_isolates_unknown_legs_and_keeps_proven_tp_closable():
+    stored_only = OwnedLeg(
+        "aster-strategy-2", "strategy2", "SOLUSDT", "SHORT", "stored", 1,
+        1, 100, costs_updated_at_ms=NOW,
+    )
+    state = snapshot().strategy_state | {
+        "ownedLegs": [owned_to_mapping(owned()), owned_to_mapping(stored_only)],
+        "pendingReopens": [{
+            "symbol": "REOPENUSDT", "side": "SHORT", "closedCycleId": "closed",
+            "packageId": "package", "notional": 25, "createdScanId": "prior",
+        }],
+    }
+    unknown = {
+        "symbol": "ETHUSDT", "positionSide": "SHORT", "positionAmt": "-1",
+        "entryPrice": "100", "markPrice": "95", "unRealizedProfit": "5",
+        "leverage": "10",
+    }
+    value = validated_shadow_inputs(snapshot(
+        strategy_state=state,
+        positions=(position(), unknown),
+        entry_symbols=("NEWUSDT",),
+    ))
+    assert value.ownership_isolated is True
+    assert [(leg.symbol, leg.side) for leg in value.owned] == [("BTCUSDT", "LONG")]
+    plan = plan_validated_shadow(value)
+    assert [action["kind"] for action in plan["actions"]] == ["TAKE_PROFIT_CLOSE"]
+    assert plan["counts"]["DCA"] == 0
+    assert plan["counts"]["REOPEN"] == 0
+    assert plan["counts"]["OPEN_BASE"] == 0
+    assert plan["externalWrites"] == plan["exchangeSubmissions"] == 0
 
 def test_stale_fees_and_funding_block_profit_close_only():
     value = validated_shadow_inputs(snapshot(leg=owned(costs_updated_at_ms=1)))

@@ -16,7 +16,7 @@ from aster_strategy2 import Strategy2Config
 from aster_strategy2_queue import PendingReopen
 from aster_strategy2_runtime import (
     active_position_map, cost_evidence_max_age_seconds, owned_from_mapping,
-    next_balanced_entry_side, portfolio_state,
+    isolate_unproven_ownership, next_balanced_entry_side, portfolio_state,
 )
 from aster_strategy2_shadow import ShadowInputs
 from aster_strategy2_state import OwnedLeg
@@ -176,9 +176,11 @@ def validated_shadow_inputs(snapshot: ReadOnlyAccountSnapshot) -> ShadowInputs:
     config = Strategy2Config.from_mapping(state.get("settings"))
     owned = _owned_rows(state)
     active = active_position_map(list(snapshot.positions))
-    owned_keys = {(leg.symbol, leg.side) for leg in owned}
-    if set(active) != owned_keys:
-        raise ShadowSnapshotRejected("Aster-posities en Strategy-2 ownership komen niet exact overeen")
+    owned, exchange_only, stored_only = isolate_unproven_ownership(
+        persisted=list(owned), positions=list(snapshot.positions),
+    )
+    owned = tuple(owned)
+    ownership_isolated = bool(exchange_only or stored_only)
 
     maximum_age_ms = cost_evidence_max_age_seconds(list(owned)) * 1000
     fresh_cost_keys = frozenset(
@@ -202,4 +204,5 @@ def validated_shadow_inputs(snapshot: ReadOnlyAccountSnapshot) -> ShadowInputs:
         entry_symbols=snapshot.entry_symbols, orders_used=orders_used,
         halted_uncertain=bool(queue.get("haltedUncertain", False)),
         close_evidence_keys=fresh_cost_keys,
+        ownership_isolated=ownership_isolated,
     )

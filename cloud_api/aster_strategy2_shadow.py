@@ -58,6 +58,7 @@ class ShadowInputs:
     orders_used: int = 0
     halted_uncertain: bool = False
     close_evidence_keys: frozenset[tuple[str, str]] | None = None
+    ownership_isolated: bool = False
 
 
 def _management_actions(value: ShadowInputs) -> tuple[list[QueueAction], list[QueueAction]]:
@@ -123,8 +124,16 @@ def plan_validated_shadow(value: ShadowInputs) -> dict:
             notional=decision.notional, reason=decision.reason,
         ))
     profits, dca = _management_actions(value)
-    pending = [build_reopen(item, sequence=index)
-               for index, item in enumerate(value.pending_reopens)]
+    # Mirror the live per-leg isolation boundary: an ownership mismatch may
+    # never increase exposure, but exact proven legs remain closable.
+    if value.ownership_isolated:
+        dca = []
+        pending = []
+        entries = []
+    else:
+        pending = [build_reopen(item, sequence=index)
+                   for index, item in enumerate(value.pending_reopens)]
+        entries = _entry_actions(value)
     state = QueueState(
         value.account_uid, value.scan_id,
         orders_used=value.orders_used,
@@ -132,7 +141,7 @@ def plan_validated_shadow(value: ShadowInputs) -> dict:
     )
     result = build_shadow_plan(
         state=state, risk=risk, profits=profits,
-        pending_reopens=pending, dca=dca, entries=_entry_actions(value),
+        pending_reopens=pending, dca=dca, entries=entries,
     )
     result["validatedInput"] = True
     result["externalWrites"] = 0

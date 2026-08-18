@@ -11,7 +11,7 @@ from fastapi import Depends, Header
 
 import main as control_plane
 from read_only_source import read_source_url as environment_read_source_url
-from aster_cost_evidence import paged_user_trades
+from aster_cost_evidence import paged_user_trades, refresh_owned_costs
 from aster_gateway import AsterApiError, AsterV3Client
 from aster_strategy2_shadow import plan_validated_shadow
 from aster_strategy2_shadow_adapter import (
@@ -155,8 +155,34 @@ def strategy2_queue_shadow(
             control_plane.owned_from_mapping(row)
             for row in state.get("ownedLegs", [])
         )
+        proven_owned, exchange_only, stored_only = control_plane.isolate_unproven_ownership(
+            persisted=list(persisted_owned), positions=list(positions),
+        )
+        active = control_plane.active_position_map(list(positions))
+        profitable_symbols = sorted({
+            leg.symbol for leg in proven_owned
+            if control_plane.safe_float(
+                active.get((leg.symbol, leg.side), {}).get(
+                    "unRealizedProfit",
+                    active.get((leg.symbol, leg.side), {}).get("unrealizedProfit"),
+                )
+            ) > 0
+        })
+        refreshed_owned, cost_failures = refresh_owned_costs(
+            client, proven_owned, profitable_symbols[:8],
+            checked_at_ms=captured_at_ms, recover_fill_ids=True,
+        )
+        refreshed_by_key = {(leg.symbol, leg.side): leg for leg in refreshed_owned}
+        shadow_owned = tuple(
+            refreshed_by_key.get((leg.symbol, leg.side), leg)
+            for leg in persisted_owned
+        )
+        shadow_state = {
+            **state,
+            "ownedLegs": [control_plane.owned_to_mapping(leg) for leg in shadow_owned],
+        }
         entry_symbols = validated_entry_symbols(
-            config=config, owned=persisted_owned, positions=positions,
+            config=config, owned=shadow_owned, positions=positions,
             account=account, exchange_info=exchange_info,
             ticker_prices=prices, tickers_24h=tickers_24h,
             leverage_brackets=brackets, captured_at_ms=captured_at_ms,
@@ -165,7 +191,7 @@ def strategy2_queue_shadow(
             account_uid=uid,
             scan_id=f"shadow-{captured_at_ms}",
             captured_at_ms=captured_at_ms,
-            strategy_state=state,
+            strategy_state=shadow_state,
             hedge_mode=hedge_mode,
             account=account,
             positions=positions,
@@ -181,6 +207,11 @@ def strategy2_queue_shadow(
     return {
         **result,
         "scope": "proven-positions-and-validated-new-entries",
+        "ownershipIsolated": inputs.ownership_isolated,
+        "exchangeOnlyCount": len(exchange_only),
+        "storedOnlyCount": len(stored_only),
+        "profitableEvidenceRefreshCount": len(profitable_symbols[:8]),
+        "costEvidenceFailureCount": len(cost_failures),
         "newEntryPlanning": "READ_ONLY_CONTRACT_VALIDATED",
         "ordersSent": 0,
         "positionsChanged": 0,

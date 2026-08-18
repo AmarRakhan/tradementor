@@ -151,6 +151,18 @@ def transfer_active_ownership_to_strategy2(*,positions:list[dict[str,Any]],strat
         errors.append('duplicate-transfer-output')
     return transferred,missing,sorted(set(errors))
 
+def isolate_unproven_ownership(*,persisted:list[OwnedLeg],positions:list[dict[str,Any]]) -> tuple[list[OwnedLeg],set[tuple[str,str]],set[tuple[str,str]]]:
+    """Keep management scoped to exchange-confirmed owned legs.
+
+    Exchange-only positions remain unclaimed. Persisted legs absent from a
+    reliable exchange snapshot are quarantined instead of blocking management
+    of every other proven leg. This pure helper never mutates state or orders.
+    """
+    active_keys=set(active_position_map(positions))
+    persisted_keys={(leg.symbol,leg.side) for leg in persisted}
+    proven=[leg for leg in persisted if (leg.symbol,leg.side) in active_keys]
+    return proven,active_keys-persisted_keys,persisted_keys-active_keys
+
 def active_position_map(rows:list[dict[str,Any]])->dict[tuple[str,str],dict[str,Any]]:
     return {(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()):x for x in rows
         if abs(number(x.get("positionAmt")))>0 and str(x.get("positionSide","")).upper() in {"LONG","SHORT"}}
