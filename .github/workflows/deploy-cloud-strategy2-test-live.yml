@@ -112,16 +112,18 @@ jobs:
 
       - name: Deploy isolated Strategy 2 test service
         run: |
-          REVISION_SUFFIX="mg-${GITHUB_RUN_ID: -6}"
+          REVISION_SUFFIX="mg-${GITHUB_RUN_NUMBER}"
+          echo "REVISION_SUFFIX=$REVISION_SUFFIX" >> "$GITHUB_ENV"
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE" \
             --revision-suffix "$REVISION_SUFFIX" \
+            --tag "$REVISION_SUFFIX" \
             --command "uvicorn" \
             --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false,MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA,TRADEMENTOR_DEPLOY_NONCE=$GITHUB_RUN_ID,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false,MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE" \
             --allow-unauthenticated
 
       - name: Verify service boundary
@@ -129,11 +131,24 @@ jobs:
         run: |
           SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
           SERVICE_DESCRIPTION="$RUNNER_TEMP/strategy2-test-service.json"
-          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 "$SERVICE_URL/health")"
           gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json > "$SERVICE_DESCRIPTION"
+          TAG_URL="$(python - "$SERVICE_DESCRIPTION" <<'PY'
+          import json
+          import os
+          import sys
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected = f'{os.environ["CLOUD_RUN_SERVICE"]}-{os.environ["REVISION_SUFFIX"]}'
+          assert service["status"]["latestReadyRevisionName"] == expected
+          assert service["status"]["latestCreatedRevisionName"] == expected
+          tagged = [row for row in service["status"]["traffic"] if row.get("tag") == os.environ["REVISION_SUFFIX"]]
+          assert len(tagged) == 1 and tagged[0]["revisionName"] == expected
+          print(tagged[0]["url"])
+          PY
+          )"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 -H 'Cache-Control: no-cache, no-store' "$TAG_URL/health?commit=$GITHUB_SHA")"
           python - "$HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
           import json
           import os
@@ -157,6 +172,7 @@ jobs:
           assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"
           assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
           assert variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]
+          assert variables["TRADEMENTOR_DEPLOY_NONCE"] == os.environ["GITHUB_RUN_ID"]
           assert variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[3]
           PY
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
