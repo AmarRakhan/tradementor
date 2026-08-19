@@ -54,8 +54,9 @@ def test_deployment_proves_exact_commit_and_money_grabber_routes():
     assert 'TRADEMENTOR_DEPLOY_NONCE=$GITHUB_RUN_ID' in workflow
     assert 'service["status"]["latestReadyRevisionName"] == expected' in workflow
     assert 'service["status"]["latestCreatedRevisionName"] == expected' in workflow
-    assert 'stable[0].get("latestRevision") is True' in workflow
-    assert 'stable[0].get("percent") == 100' in workflow
+    assert '"$SERVICE_URL/health?commit=$GITHUB_SHA"' in workflow
+    assert 'stable_health["sourceCommit"] == os.environ["GITHUB_SHA"]' in workflow
+    assert 'stable_health["imageSourceCommit"] == os.environ["GITHUB_SHA"]' in workflow
     assert 'variables["TRADEMENTOR_DEPLOY_NONCE"] == os.environ["GITHUB_RUN_ID"]' in workflow
     assert '"/v1/me/aster/strategy2/money-grabber/activation-preview"' in workflow
     assert '"/v1/me/aster/strategy2/money-grabber/start-round"' in workflow
@@ -125,7 +126,7 @@ def test_push_deploy_verifies_route_without_interrupting_an_enabled_scheduler():
     assert 'assert job["state"] == initial_state' in workflow
     assert '= "$SCHEDULER_INITIAL_STATE"' in workflow
     assert 'MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE' in workflow
-    assert 'variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[3]' in workflow
+    assert 'variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[4]' in workflow
     assert "gcloud scheduler jobs update" not in workflow
     assert "gcloud scheduler jobs create" not in workflow
     assert "gcloud scheduler jobs pause" not in workflow

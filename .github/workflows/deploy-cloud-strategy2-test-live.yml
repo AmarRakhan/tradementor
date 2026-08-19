@@ -147,22 +147,21 @@ jobs:
           expected = f'{os.environ["CLOUD_RUN_SERVICE"]}-{os.environ["REVISION_SUFFIX"]}'
           assert service["status"]["latestReadyRevisionName"] == expected
           assert service["status"]["latestCreatedRevisionName"] == expected
-          stable = [row for row in service["status"]["traffic"] if not row.get("tag")]
-          assert len(stable) == 1 and stable[0].get("latestRevision") is True
-          assert stable[0].get("percent") == 100
           tagged = [row for row in service["status"]["traffic"] if row.get("tag") == os.environ["REVISION_SUFFIX"]]
           assert len(tagged) == 1 and tagged[0]["revisionName"] == expected
           print(tagged[0]["url"])
           PY
           )"
           HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 -H 'Cache-Control: no-cache, no-store' "$TAG_URL/health?commit=$GITHUB_SHA")"
-          python - "$HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
+          STABLE_HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 -H 'Cache-Control: no-cache, no-store' "$SERVICE_URL/health?commit=$GITHUB_SHA")"
+          python - "$HEALTH" "$STABLE_HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
           import json
           import os
           import sys
 
           health = json.loads(sys.argv[1])
-          service = json.load(open(sys.argv[2], encoding="utf-8"))
+          stable_health = json.loads(sys.argv[2])
+          service = json.load(open(sys.argv[3], encoding="utf-8"))
           variables = {
               item["name"]: item.get("value")
               for item in service["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -171,6 +170,8 @@ jobs:
           assert health["status"] == "ready"
           assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
           assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
+          assert stable_health["sourceCommit"] == os.environ["GITHUB_SHA"]
+          assert stable_health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
           assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
           assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
           assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "true"
@@ -180,7 +181,7 @@ jobs:
           assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
           assert variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]
           assert variables["TRADEMENTOR_DEPLOY_NONCE"] == os.environ["GITHUB_RUN_ID"]
-          assert variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[3]
+          assert variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[4]
           PY
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
 
