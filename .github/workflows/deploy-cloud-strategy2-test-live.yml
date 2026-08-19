@@ -102,9 +102,13 @@ jobs:
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
           TEST_COMMIT="$(git rev-parse HEAD)"
           IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy2-test-live-api:$TEST_COMMIT"
-          docker build --tag "$IMAGE" cloud_api
-          docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build --build-arg "SOURCE_COMMIT=$TEST_COMMIT" --tag "$IMAGE" cloud_api
+          PUSH_OUTPUT="$(docker push "$IMAGE" 2>&1)"
+          printf '%s\n' "$PUSH_OUTPUT"
+          DIGEST="$(printf '%s\n' "$PUSH_OUTPUT" | sed -n 's/.*digest: \(sha256:[0-9a-f]*\).*/\1/p' | tail -1)"
+          test -n "$DIGEST"
+          IMAGE_REPOSITORY="${IMAGE%:*}"
+          echo "IMAGE=$IMAGE_REPOSITORY@$DIGEST" >> "$GITHUB_ENV"
 
       - name: Deploy isolated Strategy 2 test service
         run: |
@@ -144,6 +148,7 @@ jobs:
           assert health["environment"] == "strategy2-test-live"
           assert health["status"] == "ready"
           assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
+          assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
           assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
           assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
           assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "true"
