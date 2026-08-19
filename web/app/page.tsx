@@ -25,6 +25,7 @@ import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
 import { AsterBotStatus } from "@/components/aster-bot-status";
+import { BotHealthCard } from "@/components/bot-health-card";
 
 type Destination = "hyperliquid" | "aster" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -405,6 +406,8 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
           <div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div>
         </div>
       </section>}
+
+      {!positionsOnly && destination === "aster" && <BotHealthCard />}
 
       {!positionsOnly && <section className="metric-strip" aria-label="Portefeuilleoverzicht">
         <Metric label="PORTFOLIOWAARDE" value={view.equity} detail={view.metricDetail} />

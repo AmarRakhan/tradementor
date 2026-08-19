@@ -135,6 +135,7 @@ from portfolio_risk import (
 )
 from portfolio_growth import estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
+from reliability_monitor import event_key as reliability_event_key, event_payload as reliability_event_payload, counts as reliability_counts, overall as reliability_overall
 from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
 from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
@@ -2549,6 +2550,21 @@ def _admin_user_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def _reliability_ref(uid:str,event_id:str):
+    return db.collection("botReliability").document(uid).collection("events").document(event_id)
+
+def _record_reliability(uid:str,*,component:str,error_code:str,category:str,cause:str,original_status:str,recovery_action:str,status:str):
+    event_id=reliability_event_key(uid,component,category,error_code); ref=_reliability_ref(uid,event_id); existing=ref.get().to_dict() or {}
+    ref.set(reliability_event_payload(uid=uid,component=component,error_code=error_code,category=category,cause=cause,original_status=original_status,recovery_action=recovery_action,status=status,existing=existing,software_version=os.getenv("TRADEMENTOR_SOURCE_COMMIT", "")),merge=True)
+    return event_id
+
+def _today_reliability(uid:str):
+    start=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0); rows=[]
+    for doc in db.collection("botReliability").document(uid).collection("events").stream():
+        row=doc.to_dict() or {}; seen=row.get("lastDetectedAt")
+        if isinstance(seen,datetime) and seen>=start: rows.append({"eventId":doc.id,**row})
+    return rows
+
 def _record_admin_event(*,actor:str,uid:str,action:str,result:str,reason:str="",incident_id:str="") -> None:
     db.collection("adminAudit").add({"timestamp":datetime.now(timezone.utc),"actor":actor,"uid":uid,"environment":_admin_environment(),
         "action":action,"reason":safe_feedback_text(reason)[:1000],"result":result,"incidentId":incident_id,
@@ -2936,6 +2952,18 @@ def _admin_serialized(snapshot) -> dict[str, Any]:
         if hasattr(item,"isoformat"):value[key]=item.isoformat()
     return value
 
+
+
+@app.get("/v1/me/bot-health")
+def bot_health(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    uid=str(user["uid"]); state=aster_strategy2_reference(uid).get().to_dict() or {}; rows=_today_reliability(uid); mine=reliability_counts(rows)
+    active=tracked=platform_auto=platform_open=0
+    for doc in db.collection("asterStrategy2").stream():
+        tracked+=1; value=doc.to_dict() or {}; active+=int(bool(value.get("enabled") or value.get("monitor")))
+        events=_today_reliability(doc.id); c=reliability_counts(events); platform_auto+=c["autoRecovered"]; platform_open+=c["open"]+c["safetyHolds"]
+    ordered=sorted(rows,key=lambda x:x.get("lastDetectedAt") or datetime.min.replace(tzinfo=timezone.utc),reverse=True)
+    return {"status":reliability_overall(rows),"lastSuccessfulScan":state.get("lastTickAt"),"yourBot":mine,
+        "platform":{"activeBots":active,"trackedBots":tracked,"autoRecovered":platform_auto,"openIncidents":platform_open},"incidents":ordered[:100]}
 
 @app.get("/v1/admin/health/accounts")
 def admin_health_accounts(x_admin_device:str|None=Header(default=None,alias="X-TradeMentor-Admin-Device"),user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
@@ -5937,6 +5965,7 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
             ref.collection("audit").add({"event":"QUEUE_CONTRACT_REJECTION_ISOLATED",
                 "symbol":str(rejected.get("symbol","")),"side":str(rejected.get("side","")),
                 "reason":str(exc),"timestamp":datetime.now(timezone.utc)})
+            _record_reliability(uid,component="aster-strategy2-queue",error_code="-5018" if "5018" in str(exc) else "CONTRACT_REJECTION",category="contract_limit",cause=str(exc),original_status=str(latest.get("phase","")),recovery_action="contract geïsoleerd; volgende scan gaat verder",status="AUTO_RECOVERED")
             results.append({"status":"contract-skipped","ordersSent":0,"reason":str(exc)});break
         latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
         new_used=int(safe_float(latest_state.get("ordersUsed")));sent=max(0,new_used-used)
