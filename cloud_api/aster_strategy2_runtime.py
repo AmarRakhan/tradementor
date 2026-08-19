@@ -259,10 +259,11 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
 def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:
     harvest=[x for x in owned if x.role!="PROTECTION"]
     new_pair_margin=config.base_notional/max(1,config.leverage)
-    # A drawdown warning must remain visible without turning into a permanent
-    # account-wide entry lock. Only EMERGENCY blocks growth; candidate/order
-    # failures are isolated later in the scan.
-    return risk_mode(config,portfolio)!="EMERGENCY" and len(harvest)<config.maximum_pairs and portfolio.available_balance>=new_pair_margin*1.05
+    # Drawdown remains visible to protection and existing-position management,
+    # but it must not permanently freeze balanced new entries by itself.
+    # Only an actual emergency margin ratio blocks new exposure here.
+    margin_emergency=portfolio.margin_ratio>=config.emergency_margin_ratio
+    return not margin_emergency and len(harvest)<config.maximum_pairs and portfolio.available_balance>=new_pair_margin*1.05
 
 def balanced_entry_targets(total:int)->tuple[int,int]:
     """Return the closest possible LONG/SHORT split for a total position cap."""
