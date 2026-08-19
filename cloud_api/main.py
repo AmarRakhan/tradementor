@@ -5920,6 +5920,24 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
             ref.set({"orderQueueState":state,"phase":"RECONCILING",
                 "lastReason":"Onzekere Aster-order; alleen deze accountwachtrij is gestopt"},merge=True)
             results.append({"status":"uncertain","ordersSent":1});break
+        except Exception as exc:
+            # Aster can reject a fully identified contract synchronously after
+            # the queue slot was reserved (for example -5018 max notional).
+            # That is symbol-local, not an account-wide DATA_HOLD. Clear only
+            # the rejected intent and let the next scheduler scan continue.
+            if not is_definite_contract_rejection(exc):
+                raise
+            latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
+            used=int(safe_float(latest_state.get("ordersUsed")))
+            rejected=latest_state.get("currentIntent") if isinstance(latest_state.get("currentIntent"),dict) else {}
+            state.update({"ordersUsed":used,"currentIntent":{},"haltedUncertain":False,
+                "updatedAt":datetime.now(timezone.utc)})
+            ref.set({"orderQueueState":state,"phase":"WAITING",
+                "lastReason":f"Contract lokaal overgeslagen: {exc}"},merge=True)
+            ref.collection("audit").add({"event":"QUEUE_CONTRACT_REJECTION_ISOLATED",
+                "symbol":str(rejected.get("symbol","")),"side":str(rejected.get("side","")),
+                "reason":str(exc),"timestamp":datetime.now(timezone.utc)})
+            results.append({"status":"contract-skipped","ordersSent":0,"reason":str(exc)});break
         latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
         new_used=int(safe_float(latest_state.get("ordersUsed")));sent=max(0,new_used-used)
         if new_used>scan_limit:raise RuntimeError("Strategy-2 queue adapter overschreed het accountbudget")
