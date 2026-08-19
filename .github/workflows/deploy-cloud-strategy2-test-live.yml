@@ -10,6 +10,12 @@ on:
         description: "Type DEPLOY_STRATEGY2_TEST_LIVE"
         required: true
         type: string
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "cloud_api/**"
+      - ".github/workflows/deploy-cloud-strategy2-test-live.yml"
 
 permissions:
   contents: read
@@ -41,11 +47,20 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Authorize manual Strategy 2 test deployment
+      - name: Authorize controlled Strategy 2 test deployment
         shell: bash
         run: |
-          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-          test "${{ inputs.confirmation }}" = "DEPLOY_STRATEGY2_TEST_LIVE"
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              test "${{ inputs.confirmation }}" = "DEPLOY_STRATEGY2_TEST_LIVE"
+              ;;
+            push)
+              test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
 
       - name: Verify immutable test scope
         shell: bash
