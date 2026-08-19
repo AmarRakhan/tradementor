@@ -49,6 +49,7 @@ def test_deployment_proves_exact_commit_and_money_grabber_routes():
     assert 'variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]' in workflow
     assert '--revision-suffix "$REVISION_SUFFIX"' in workflow
     assert '--tag "$REVISION_SUFFIX"' in workflow
+    assert 'gcloud run services update-traffic "$CLOUD_RUN_SERVICE"' in workflow
     assert "--to-latest" in workflow
     assert 'TRADEMENTOR_DEPLOY_NONCE=$GITHUB_RUN_ID' in workflow
     assert 'service["status"]["latestReadyRevisionName"] == expected' in workflow
