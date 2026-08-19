@@ -376,6 +376,12 @@ class AsterCanaryRequest(BaseModel):
     notional_usd: float = Field(default=10.0, ge=5.0, le=12.0)
 
 
+class AsterStrategy2CanaryRequest(BaseModel):
+    """Separately bounded Strategy-2 open/fill/close canary."""
+    confirm: bool
+    notional_usd: float = Field(default=20.0, ge=5.0, le=20.0)
+
+
 class AsterRapidBuildRequest(BaseModel):
     confirm: bool = False
 
@@ -4531,7 +4537,7 @@ def aster_strategy2_readiness(user: dict[str, Any] = Depends(authenticated_user)
 
 
 @app.post("/v1/me/aster/strategy2/canary")
-def run_aster_strategy2_canary(request:AsterCanaryRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+def run_aster_strategy2_canary(request:AsterStrategy2CanaryRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     """One idempotent, explicitly confirmed OPEN -> confirmed fill -> CLOSE test."""
     if not request.confirm: raise HTTPException(422,"Bevestig de echte Aster-canary expliciet")
     if os.getenv("ASTER_CANARY_ENABLED","false").lower()!="true":
@@ -4566,7 +4572,7 @@ def run_aster_strategy2_canary(request:AsterCanaryRequest,user:dict[str,Any]=Dep
             rejected_minimums.append(f"{symbol}: {exc}");continue
         symbol_row=candidate;plan=candidate_plan;break
     if plan is None or symbol_row is None:
-        raise HTTPException(409,"Geen vlak Aster-contract gevonden waarvan het exchange-minimum binnen US$ 10 past")
+        raise HTTPException(409,f"Geen vlak Aster-contract gevonden waarvan het exchange-minimum binnen US$ {request.notional_usd:.2f} past")
     symbol=plan.symbol
     intent_prefix=f"s2c-{uid[-4:]}-{int(time.time())}"
     canary_ref.set({"status":"OPENING","symbol":symbol,"notionalUsd":request.notional_usd,"intentPrefix":intent_prefix,"startedAt":datetime.now(timezone.utc)})
