@@ -120,6 +120,7 @@ jobs:
             --image "$IMAGE" \
             --revision-suffix "$REVISION_SUFFIX" \
             --tag "$REVISION_SUFFIX" \
+            --to-latest \
             --command "uvicorn" \
             --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
@@ -143,6 +144,9 @@ jobs:
           expected = f'{os.environ["CLOUD_RUN_SERVICE"]}-{os.environ["REVISION_SUFFIX"]}'
           assert service["status"]["latestReadyRevisionName"] == expected
           assert service["status"]["latestCreatedRevisionName"] == expected
+          stable = [row for row in service["status"]["traffic"] if not row.get("tag")]
+          assert len(stable) == 1 and stable[0]["revisionName"] == expected
+          assert stable[0].get("percent") == 100
           tagged = [row for row in service["status"]["traffic"] if row.get("tag") == os.environ["REVISION_SUFFIX"]]
           assert len(tagged) == 1 and tagged[0]["revisionName"] == expected
           print(tagged[0]["url"])

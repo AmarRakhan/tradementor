@@ -49,9 +49,11 @@ def test_deployment_proves_exact_commit_and_money_grabber_routes():
     assert 'variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]' in workflow
     assert '--revision-suffix "$REVISION_SUFFIX"' in workflow
     assert '--tag "$REVISION_SUFFIX"' in workflow
+    assert "--to-latest" in workflow
     assert 'TRADEMENTOR_DEPLOY_NONCE=$GITHUB_RUN_ID' in workflow
     assert 'service["status"]["latestReadyRevisionName"] == expected' in workflow
     assert 'service["status"]["latestCreatedRevisionName"] == expected' in workflow
+    assert 'stable[0].get("percent") == 100' in workflow
     assert 'variables["TRADEMENTOR_DEPLOY_NONCE"] == os.environ["GITHUB_RUN_ID"]' in workflow
     assert '"/v1/me/aster/strategy2/money-grabber/activation-preview"' in workflow
     assert '"/v1/me/aster/strategy2/money-grabber/start-round"' in workflow
