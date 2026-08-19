@@ -6,7 +6,6 @@ WORKFLOWS = {
     "deploy-cloud-production.yml": "DEPLOY_PRODUCTION_BACKEND",
     "deploy-cloud-staging.yml": "DEPLOY_CLOUD_STAGING",
     "deploy-cloud-live-canary.yml": "DEPLOY_LIVE_CANARY",
-    "deploy-cloud-strategy2-test-live.yml": "DEPLOY_STRATEGY2_TEST_LIVE",
 }
 
 
@@ -39,3 +38,18 @@ def test_push_cloud_backend_workflow_can_only_run_tests():
         "workflow_dispatch:",
     ):
         assert forbidden not in workflow
+
+
+def test_strategy2_test_backend_has_a_narrow_automatic_push_trigger():
+    workflow = (ROOT / ".github" / "workflows" / "deploy-cloud-strategy2-test-live.yml").read_text(
+        encoding="utf-8"
+    )
+    trigger = workflow.split("permissions:", 1)[0]
+    assert "workflow_dispatch:" in trigger
+    assert "push:" in trigger
+    assert "- amar-crypto-bot-2026-cloud" in trigger
+    assert '      - "cloud_api/**"' in trigger
+    assert '      - ".github/workflows/deploy-cloud-strategy2-test-live.yml"' in trigger
+    assert "pull_request:" not in trigger
+    assert 'test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"' in workflow
+    assert 'test "${{ inputs.confirmation }}" = "DEPLOY_STRATEGY2_TEST_LIVE"' in workflow

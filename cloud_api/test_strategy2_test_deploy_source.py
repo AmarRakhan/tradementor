@@ -20,6 +20,17 @@ def test_version_42_workflow_builds_the_exact_triggering_cloud_branch_commit():
     assert "test-aster-position-capacity-v41" not in workflow
 
 
+def test_strategy2_test_auto_publish_is_branch_and_path_scoped():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    trigger = workflow.split("permissions:", 1)[0]
+    assert "push:" in trigger
+    assert "- amar-crypto-bot-2026-cloud" in trigger
+    assert '      - "cloud_api/**"' in trigger
+    assert "pull_request:" not in trigger
+    assert 'case "$GITHUB_EVENT_NAME" in' in workflow
+    assert 'test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"' in workflow
+
+
 def test_strategy2_start_and_status_read_the_same_firestore_document():
     source = MAIN.read_text(encoding="utf-8")
     bridge = (ROOT / "cloud_api" / "read_only_source.py").read_text(encoding="utf-8")
