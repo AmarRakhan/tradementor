@@ -1987,9 +1987,12 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"reconciling","action":"HOLD","reason":reason,"ordersSent":0}
     if ownership_isolated:
-        reason="Onbewezen ownership blijft per leg geïsoleerd; nieuwe exposure, DCA en reopen wachten"
-        ref.set({"phase":"PROTECTIVE_ONLY","lastReason":reason,"lastTickAt":now},merge=True)
-        return {"status":"ownership-isolated","action":"HOLD","reason":reason,"ordersSent":0}
+        # Unknown/manual exchange legs stay quarantined forever unless explicit
+        # ownership evidence appears.  They must not deadlock the whole account:
+        # proven S2 risk reduction remains available above and the scanner may
+        # continue with unrelated fresh pairs.  DCA/reopen stay fail-closed.
+        reason="Onbewezen ownership per leg geïsoleerd; onbekende positie overgeslagen, normale nieuwe instappers mogen door"
+        ref.set({"phase":"RUNNING" if enabled else "PROTECTIVE_ONLY","lastReason":reason,"lastTickAt":now},merge=True)
     if not enabled or not scanner_allowed(settings,portfolio,owned):
         reason="Strategy 2 staat veilig gestopt" if not enabled else "Geen beheeractie; pair- of risicolimiet bereikt"
         ref.set({"phase":"PROTECTIVE_ONLY" if not enabled else "WAITING","lastReason":reason},merge=True);return {"status":"waiting","action":"HOLD","reason":reason,"ordersSent":0}
