@@ -1,5 +1,10 @@
 from dataclasses import replace
 from hypothesis import given, strategies as st
+
+
+def test_property_test_dependency_is_declared_for_clean_ci_runners():
+    requirements=(__import__("pathlib").Path(__file__).with_name("requirements.txt")).read_text()
+    assert "hypothesis==6.165.10" in requirements
 import pytest
 
 from money_grabber import Intent,ProtectedPair,apply_protection_fill,normal_action_allowed
