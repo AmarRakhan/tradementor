@@ -9,6 +9,9 @@ const strategy2Paths = new Set([
   "/v1/me/aster/strategy2/stop",
   "/v1/me/aster/strategy2/diagnostics",
   "/v1/me/aster/strategy2/exclusive-handoff",
+  "/v1/me/aster/strategy2/money-grabber/activation-preview",
+  "/v1/me/aster/strategy2/money-grabber/start-round",
+  "/v1/me/aster/strategy2/money-grabber/shadow",
 ]);
 
 /**

@@ -99,6 +99,9 @@ from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, entry_order_limit, queued_entry_order_limit, management_preempts_initial_build
 from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
+from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
+from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
+from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
 from aster_strategy2_runtime import initial_build_high_water_mark
 from aster_portfolio_replay import ReplayCandle, ReplaySeed, comparison_conclusion, config_with_overrides, run_portfolio_replay
 from aster_strategy import Account as AsterStrategyAccount, Leg as AsterStrategyLeg, Pair as AsterStrategyPair
@@ -338,6 +341,11 @@ class AsterStrategyStartRequest(BaseModel):
 
 class AsterStrategyStopRequest(BaseModel):
     confirm: bool
+
+
+class MoneyGrabberRoundStartRequest(BaseModel):
+    confirm: bool
+    preview_fingerprint: str = Field(min_length=16, max_length=128)
 
 
 class AsterCloseAllRequest(BaseModel):
@@ -1509,6 +1517,8 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         owned_leg_count=counts["positionLegCount"],universe=universe,exchange_data_fresh=exchange_data_fresh)
     queue_enabled=(os.getenv(QUEUE_FEATURE_FLAG,"false").lower()=="true" and bool(raw.get("orderQueueEnabled",False)))
     queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+    mg_round=raw.get("moneyGrabberRound") if isinstance(raw.get("moneyGrabberRound"),dict) else None
+    mg_pairs=raw.get("moneyGrabberPairs") if isinstance(raw.get("moneyGrabberPairs"),list) else []
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
         "displayPhase":"UIT" if not enabled else str(raw.get("phase","DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": enabled,
@@ -1521,6 +1531,12 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         "provenStrategy2LegCount":counts["positionLegCount"],
         "activePairs":counts["uniqueMarketCount"],"activeLegs":counts["positionLegCount"],
         "longLegs":counts["longLegs"],"shortLegs":counts["shortLegs"],
+        "moneyGrabber":{"enabled":bool(settings.get("moneyGrabberEnabled",False)),
+            "activated":bool(raw.get("moneyGrabberActivated",False)),"round":mg_round,"pairs":mg_pairs,
+            "freeSymbols":max(0,counts["uniqueMarketCount"]-len(mg_pairs)),
+            "partialSymbols":sum(str(x.get("status",""))=="PARTIAL_PROTECTION" for x in mg_pairs if isinstance(x,dict)),
+            "lockedSymbols":sum(str(x.get("status",""))=="LOCKED" for x in mg_pairs if isinstance(x,dict)),
+            "recoverySymbols":sum(str(x.get("status",""))=="RECOVERY" for x in mg_pairs if isinstance(x,dict))},
         "orderQueue":{"enabled":queue_enabled,"maximumOrdersPerScan":MAX_ORDERS_PER_ACCOUNT_SCAN,
             "scanId":str(queue_state.get("scanId","")),"ordersUsed":int(safe_float(queue_state.get("ordersUsed"))),
             "haltedUncertain":bool(queue_state.get("haltedUncertain",False)),
@@ -1676,6 +1692,36 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         "activePairs":len({x.symbol for x in owned}),"accountPositionCount":len(active_position_map(positions)),
         "provenStrategy2LegCount":len(owned),"capturedAt":now}
     ref.set({"accountSnapshot":snapshot,"adjustedHighWaterMark":portfolio.adjusted_high_water_mark,"ownedLegs":[owned_to_mapping(x) for x in owned],"lastTickAt":now},merge=True)
+    # Money Grabber scheduler integration starts in mandatory shadow mode. It
+    # is account-scoped, only exists after explicit round activation, and can
+    # never submit through this path. The separate execution gate remains OFF.
+    mg_round_raw=raw.get("moneyGrabberRound")
+    if settings.money_grabber_enabled and bool(raw.get("moneyGrabberActivated")) and isinstance(mg_round_raw,dict):
+        try:
+            mg_round=money_round_from_mapping(mg_round_raw)
+            mg_pairs=tuple(money_pair_from_mapping(x) for x in raw.get("moneyGrabberPairs",[]) if isinstance(x,dict))
+            mg_positions=[]
+            owned_map={(x.symbol,x.side):x for x in owned}
+            for row in strategy_positions:
+                symbol=str(row.get("symbol","")).upper();side=str(row.get("positionSide","")).upper();leg=owned_map.get((symbol,side))
+                mark=safe_float(row.get("markPrice"));qty=abs(safe_float(row.get("positionAmt")));notional=qty*mark
+                if not leg or notional<=0:continue
+                mg_positions.append(MoneyGrabberPosition(symbol,side,notional,leg.weighted_entry,mark,
+                    safe_float(row.get("unRealizedProfit",row.get("unrealizedPnl"))),leg.funding,leg.fees,
+                    notional*.0005,notional*.001,leg.costs_updated_at_ms>0))
+            mg_gross=sum(x.notional for x in mg_positions)
+            mg_open_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in owned_keys]
+            mg_scan=MoneyGrabberScanSnapshot(uid,f"scheduler-{int(now.timestamp()*1000)}",mg_round,mg_pairs,tuple(mg_positions),
+                NetValueEvidence(portfolio.equity,expected_exit_fees=mg_gross*.0005,slippage_buffer=mg_gross*.001,
+                    fresh=True,reliable=not cost_failures,captured_at_ms=int(now.timestamp()*1000)),
+                hedge,not ownership_isolated,True,not mg_open_orders,True,portfolio.available_balance>0,max(.01,mg_gross*.00025))
+            mg_shadow=money_grabber_shadow_report(plan_money_grabber_scan(settings,mg_scan))
+            ref.set({"moneyGrabberSchedulerShadow":mg_shadow,"moneyGrabberShadowAt":now,
+                "moneyGrabberExecutionEnabled":False},merge=True)
+        except (KeyError,TypeError,ValueError) as exc:
+            ref.set({"moneyGrabberSchedulerShadow":{"readOnly":True,"ordersSent":0,"wouldSendCount":0,
+                "reasons":[f"Money Grabber-state vereist herstel: {exc}"]},"moneyGrabberShadowAt":now,
+                "moneyGrabberExecutionEnabled":False},merge=True)
     blocked_dca_raw=raw.get("blockedDcaMinimums") if isinstance(raw.get("blockedDcaMinimums"),dict) else {}
     blocked_dca=(
         {(str(x).split("|",1)[0],str(x).split("|",1)[1]) for x in blocked_dca_raw.get("legs",[]) if "|" in str(x)}
@@ -4039,6 +4085,136 @@ def get_aster_strategy2_replay(replay_id: str, user: dict[str, Any] = Depends(au
     row = aster_strategy2_reference(str(user["uid"])).collection("portfolioReplays").document(replay_id).get().to_dict()
     if not row: raise HTTPException(404, "Replay bestaat niet")
     return _public_replay(row, replay_id)
+
+
+def _money_grabber_activation_preview(uid: str, user: dict[str, Any]) -> dict[str, Any]:
+    """Build a fresh, read-only activation contract; this function cannot submit an order."""
+    ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {}
+    settings=Strategy2Config.from_mapping(raw.get("settings"))
+    if not settings.money_grabber_enabled:
+        raise HTTPException(409,"Zet Money Grabber eerst aan en sla de Strategy-2-configuratie op")
+    secret=load_aster_secret(user)
+    client=AsterV3Client(signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),live_authorized=False)
+    try:
+        hedge=client.position_mode();account=client.account_information()
+        positions=client.position_risk();orders=client.open_orders();info=client.public_exchange_info()
+    except (AsterApiError,ValueError) as exc:
+        raise HTTPException(409,f"Money Grabber-preview kon Aster niet betrouwbaar lezen: {exc}") from exc
+    owned_rows=proven_owned_rows(raw.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
+    owned_keys={(str(x.get("symbol","")).upper(),str(x.get("side","")).upper()) for x in owned_rows}
+    active=[x for x in positions if abs(safe_float(x.get("positionAmt")))>0]
+    active_keys={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in active}
+    unknown=sorted(active_keys-owned_keys)
+    strategy_positions=[x for x in active if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in owned_keys]
+    relevant_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in owned_keys]
+    symbols={str(x.get("symbol","")).upper() for x in strategy_positions}
+    contract_symbols={str(x.get("symbol","")).upper() for x in info.get("symbols",[]) if isinstance(x,dict)} if isinstance(info,dict) else set()
+    unsafe_contracts=sorted(symbols-contract_symbols)
+    equity,_,available,_,maintenance=aster_account_information_values(account)
+    gross=sum(abs(safe_float(x.get("positionAmt")))*safe_float(x.get("markPrice")) for x in strategy_positions)
+    expected_exit_fees=gross*.0005;spread_slippage=gross*.001
+    evidence=NetValueEvidence(visible_equity=equity,expected_exit_fees=expected_exit_fees,
+        slippage_buffer=spread_slippage,fresh=True,reliable=equity>0,captured_at_ms=int(time.time()*1000))
+    try:net_start=evidence.expected_net_close_value()
+    except ValueError:net_start=0.0
+    partial=full=0;protection_notional=0.0
+    for row in strategy_positions:
+        entry=safe_float(row.get("entryPrice"));mark=safe_float(row.get("markPrice"));side=str(row.get("positionSide","")).upper()
+        move=max(0,(entry-mark)/entry if side=="LONG" and entry>0 else (mark-entry)/entry if side=="SHORT" and entry>0 else 0)
+        notional=abs(safe_float(row.get("positionAmt")))*mark
+        if move>=settings.money_grabber_full_threshold:full+=1;protection_notional+=notional*settings.money_grabber_full_ratio
+        elif move>=settings.money_grabber_first_threshold:partial+=1;protection_notional+=notional*settings.money_grabber_first_ratio
+    estimated_margin=protection_notional/max(1,settings.leverage)
+    reserve=max(0,available-estimated_margin)
+    blockers=[]
+    if not hedge:blockers.append("Aster Hedge Mode staat uit")
+    if unknown:blockers.append("Niet alle actieve posities hebben bewezen Strategy-2-ownership")
+    if relevant_orders:blockers.append("Er staan relevante Strategy-2-orders open")
+    if unsafe_contracts:blockers.append("Contractregels ontbreken voor bescherming")
+    if available<estimated_margin:blockers.append("Beschikbare beschermingsmargin is onvoldoende")
+    if equity<=0 or net_start<=0:blockers.append("Netto startwaarde is niet betrouwbaar positief")
+    captured_at=datetime.now(timezone.utc)
+    material=json.dumps({"uid":uid,"keys":sorted(active_keys),
+        "orders":sorted(str(x.get("orderId",x.get("clientOrderId",""))) for x in relevant_orders),
+        "owned":sorted(owned_keys),"unsafeContracts":unsafe_contracts,
+        "hedge":hedge,"target":settings.money_grabber_round_target},sort_keys=True)
+    fingerprint=hashlib.sha256(material.encode()).hexdigest()
+    preview={"readOnly":True,"ordersSent":0,"capturedAt":captured_at,"expiresAt":captured_at+timedelta(minutes=2),
+        "fingerprint":fingerprint,"activationAllowed":not blockers,"blockers":blockers,
+        "exchangeEquity":equity,"expectedNetStartValue":net_start,"roundTargetPercent":settings.money_grabber_round_target*100,
+        "targetNetValue":net_start*(1+settings.money_grabber_round_target),"strategy2Positions":len(strategy_positions),
+        "aboveFirstThreshold":partial+full,"aboveFullThreshold":full,"estimatedProtectionMargin":estimated_margin,
+        "availableProtectionReserve":reserve,"unreliableOwnership":[{"symbol":x[0],"side":x[1]} for x in unknown],
+        "unsafeContracts":unsafe_contracts,"hedgeModeConfirmed":hedge,"openRelevantOrders":len(relevant_orders),
+        "maintenanceMargin":maintenance,"evidence":{"visibleEquity":equity,"expectedExitFees":expected_exit_fees,
+            "slippageBuffer":spread_slippage,"capturedAtMs":evidence.captured_at_ms,"fresh":True,"reliable":not blockers}}
+    ref.set({"moneyGrabberActivationPreview":preview,"updatedAt":captured_at},merge=True)
+    return preview
+
+
+@app.get("/v1/me/aster/strategy2/money-grabber/activation-preview")
+def money_grabber_activation_preview(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    return _money_grabber_activation_preview(str(user["uid"]),user)
+
+
+@app.post("/v1/me/aster/strategy2/money-grabber/start-round")
+def start_money_grabber(request:MoneyGrabberRoundStartRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    if not request.confirm:raise HTTPException(422,"Bevestig de Money Grabber-ronde expliciet")
+    uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
+    if isinstance(existing.get("moneyGrabberRound"),dict) and str(existing["moneyGrabberRound"].get("status","")) not in {"","CLOSED"}:
+        raise HTTPException(409,"Er is al een actieve Money Grabber-ronde")
+    fresh=_money_grabber_activation_preview(uid,user)
+    if fresh["fingerprint"]!=request.preview_fingerprint:
+        raise HTTPException(409,"De exchange-state is gewijzigd; controleer de nieuwe activatiepreview")
+    if not fresh["activationAllowed"]:raise HTTPException(409,"Money Grabber-activatie is fail-closed geblokkeerd")
+    settings=Strategy2Config.from_mapping((ref.get().to_dict() or {}).get("settings"));round_id="mgr-"+python_secrets.token_urlsafe(12)
+    ev=fresh["evidence"]
+    domain=start_money_grabber_round(account_id=uid,round_id=round_id,target_ratio=settings.money_grabber_round_target,
+        evidence=NetValueEvidence(visible_equity=fresh["exchangeEquity"],expected_exit_fees=ev["expectedExitFees"],
+            slippage_buffer=ev["slippageBuffer"],fresh=True,reliable=True,captured_at_ms=ev["capturedAtMs"]),
+        activation_confirmed=True,ownership_reliable=True,hedge_mode=True,orders_known=True,contracts_known=True,
+        protection_margin_sufficient=True,now_ms=int(time.time()*1000))
+    stored={"accountId":uid,"roundId":domain.round_id,"status":domain.status,"startNetValue":domain.start_net_value,
+        "targetRatio":domain.target_ratio,"targetNetValue":domain.target_net_value,"startedAtMs":domain.started_at_ms,
+        "consecutiveTargetProofs":0,"closeIntentId":"","activationFingerprint":fresh["fingerprint"]}
+    ref.set({"moneyGrabberRound":stored,"moneyGrabberPairs":[],"moneyGrabberActivated":True,
+        "lastReason":"Money Grabber-ronde bevestigd en actief","updatedAt":datetime.now(timezone.utc)},merge=True)
+    ref.collection("audit").add({"event":"MONEY_GRABBER_ROUND_STARTED","roundId":round_id,
+        "startNetValue":domain.start_net_value,"targetNetValue":domain.target_net_value,"timestamp":datetime.now(timezone.utc)})
+    return {"started":True,"ordersSent":0,"round":stored,**aster_strategy2_public(uid)}
+
+
+@app.get("/v1/me/aster/strategy2/money-grabber/shadow")
+def money_grabber_shadow(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    """Plan one fresh account scan without database writes or an order-capable client."""
+    uid=str(user["uid"]);raw=aster_strategy2_reference(uid).get().to_dict() or {}
+    settings=Strategy2Config.from_mapping(raw.get("settings"));round_raw=raw.get("moneyGrabberRound")
+    if not settings.money_grabber_enabled or not isinstance(round_raw,dict):
+        return {"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":"Money Grabber staat uit of heeft geen actieve ronde"}
+    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),live_authorized=False)
+    try:
+        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
+    except (AsterApiError,ValueError) as exc:raise HTTPException(409,f"Money Grabber-shadow kon Aster niet betrouwbaar lezen: {exc}") from exc
+    owned=proven_owned_rows(raw.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
+    owned_by_key={(str(x.get("symbol","")).upper(),str(x.get("side","")).upper()):x for x in owned}
+    active=[]
+    for row in positions:
+        symbol=str(row.get("symbol","")).upper();side=str(row.get("positionSide","")).upper();qty=abs(safe_float(row.get("positionAmt")))
+        owner=owned_by_key.get((symbol,side));mark=safe_float(row.get("markPrice"));entry=safe_float(row.get("entryPrice"))
+        if qty<=0 or not owner:continue
+        notional=qty*mark;active.append(MoneyGrabberPosition(symbol,side,notional,entry,mark,
+            safe_float(row.get("unRealizedProfit",row.get("unrealizedPnl"))),safe_float(owner.get("funding")),
+            safe_float(owner.get("fees")),notional*.0005,notional*.001,True))
+    equity,_,_,_,_=aster_account_information_values(account);gross=sum(x.notional for x in active)
+    pairs=tuple(money_pair_from_mapping(x) for x in raw.get("moneyGrabberPairs",[]) if isinstance(x,dict))
+    round_state=money_round_from_mapping(round_raw)
+    relevant_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in owned_by_key]
+    snapshot=MoneyGrabberScanSnapshot(uid,"shadow-"+str(int(time.time()*1000)),round_state,pairs,tuple(active),
+        NetValueEvidence(equity,expected_exit_fees=gross*.0005,slippage_buffer=gross*.001,fresh=True,reliable=True,captured_at_ms=int(time.time()*1000)),
+        hedge,True,True,not relevant_orders,True,True,max(.01,gross*.00025))
+    return money_grabber_shadow_report(plan_money_grabber_scan(settings,snapshot))
 
 
 @app.put("/v1/me/aster/strategy2/settings")
