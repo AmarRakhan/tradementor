@@ -31,6 +31,19 @@ def test_strategy2_test_auto_publish_is_branch_and_path_scoped():
     assert 'test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"' in workflow
 
 
+def test_deployment_proves_exact_commit_and_money_grabber_routes():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    source = MAIN.read_text(encoding="utf-8")
+    assert '"sourceCommit": os.getenv("TRADEMENTOR_SOURCE_COMMIT") or None' in source
+    assert 'TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA' in workflow
+    assert 'health["sourceCommit"] == os.environ["GITHUB_SHA"]' in workflow
+    assert 'variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]' in workflow
+    assert '--revision-suffix "$REVISION_SUFFIX"' in workflow
+    assert '"/v1/me/aster/strategy2/money-grabber/activation-preview"' in workflow
+    assert '"/v1/me/aster/strategy2/money-grabber/start-round"' in workflow
+    assert '"/v1/me/aster/strategy2/money-grabber/shadow"' in workflow
+
+
 def test_strategy2_start_and_status_read_the_same_firestore_document():
     source = MAIN.read_text(encoding="utf-8")
     bridge = (ROOT / "cloud_api" / "read_only_source.py").read_text(encoding="utf-8")

@@ -108,14 +108,16 @@ jobs:
 
       - name: Deploy isolated Strategy 2 test service
         run: |
+          REVISION_SUFFIX="mg-${GITHUB_RUN_ID: -6}"
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE" \
+            --revision-suffix "$REVISION_SUFFIX" \
             --command "uvicorn" \
             --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false,MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false,MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE" \
             --allow-unauthenticated
 
       - name: Verify service boundary
@@ -130,6 +132,7 @@ jobs:
             --format=json > "$SERVICE_DESCRIPTION"
           python - "$HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
           import json
+          import os
           import sys
 
           health = json.loads(sys.argv[1])
@@ -140,6 +143,7 @@ jobs:
           }
           assert health["environment"] == "strategy2-test-live"
           assert health["status"] == "ready"
+          assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
           assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
           assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
           assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "true"
@@ -147,6 +151,7 @@ jobs:
           assert variables["ASTER_STRATEGY3_LIVE_ENABLED"] == "false"
           assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"
           assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
+          assert variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]
           assert variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[3]
           PY
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
@@ -195,6 +200,9 @@ jobs:
           assert "/internal/aster-strategy3/tick" not in job["httpTarget"]["uri"]
           assert "/internal/aster-strategy2/tick" in openapi["paths"]
           assert "post" in openapi["paths"]["/internal/aster-strategy2/tick"]
+          assert "get" in openapi["paths"]["/v1/me/aster/strategy2/money-grabber/activation-preview"]
+          assert "post" in openapi["paths"]["/v1/me/aster/strategy2/money-grabber/start-round"]
+          assert "get" in openapi["paths"]["/v1/me/aster/strategy2/money-grabber/shadow"]
           PY
           test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "$SCHEDULER_INITIAL_STATE"
 
