@@ -48,6 +48,14 @@ class Strategy2Config:
     max_protection_ratio: float = .50
     max_net_exposure_ratio: float = .30
     max_gross_exposure_ratio: float = 1.00
+    money_grabber_enabled: bool = False
+    money_grabber_round_target: float = .05
+    money_grabber_auto_close: bool = True
+    money_grabber_first_threshold: float = .02
+    money_grabber_first_ratio: float = .50
+    money_grabber_full_threshold: float = .04
+    money_grabber_full_ratio: float = 1.00
+    money_grabber_pair_close_enabled: bool = True
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "Strategy2Config":
@@ -57,6 +65,12 @@ class Strategy2Config:
             except (TypeError, ValueError): value = default
             return value if math.isfinite(value) else default
         def i(key: str, default: int) -> int: return int(f(key, default))
+        def money_number(key: str, default: float) -> float:
+            if key not in raw: return default
+            try: value = float(raw[key])
+            except (TypeError, ValueError) as exc: raise ValueError(f"{key} moet een geldig getal zijn") from exc
+            if not math.isfinite(value): raise ValueError(f"{key} moet een eindig getal zijn")
+            return value
         def levels(key: str) -> tuple[float, ...]:
             values = raw.get(key, ())
             return tuple(float(x) for x in values) if isinstance(values, (list, tuple)) else ()
@@ -78,6 +92,14 @@ class Strategy2Config:
             defensive_margin_ratio=f("defensiveMarginRatio", .50), emergency_margin_ratio=f("emergencyMarginRatio", .70),
             max_protection_ratio=f("maxProtectionRatio", .50), max_net_exposure_ratio=f("maxNetExposureRatio", .30),
             max_gross_exposure_ratio=f("maxGrossExposureRatio", 1.0),
+            money_grabber_enabled=bool(raw.get("moneyGrabberEnabled", False)),
+            money_grabber_round_target=money_number("moneyGrabberRoundTarget", .05),
+            money_grabber_auto_close=bool(raw.get("moneyGrabberAutoClose", True)),
+            money_grabber_first_threshold=money_number("moneyGrabberFirstThreshold", .02),
+            money_grabber_first_ratio=money_number("moneyGrabberFirstRatio", .50),
+            money_grabber_full_threshold=money_number("moneyGrabberFullThreshold", .04),
+            money_grabber_full_ratio=money_number("moneyGrabberFullRatio", 1.00),
+            money_grabber_pair_close_enabled=bool(raw.get("moneyGrabberPairCloseEnabled", True)),
         )
         return value.validated()
 
@@ -99,10 +121,13 @@ class Strategy2Config:
         if not 0 < self.caution_drawdown < self.defensive_drawdown < self.emergency_drawdown < 1: raise ValueError("Drawdown-drempels moeten oplopen")
         if not 0 < self.caution_margin_ratio < self.defensive_margin_ratio < self.emergency_margin_ratio < 1: raise ValueError("Margin-drempels moeten oplopen")
         if not 0 <= self.max_protection_ratio <= 1: raise ValueError("Maximum Protection moet tussen 0 en 100% liggen")
+        if not 0 < self.money_grabber_round_target <= .50: raise ValueError("Money Grabber-rondedoel moet tussen 0 en 50% liggen")
+        if not 0 < self.money_grabber_first_threshold < self.money_grabber_full_threshold <= .80: raise ValueError("De volledige Money Grabber-beschermingsgrens moet groter zijn dan de eerste grens")
+        if not 0 < self.money_grabber_first_ratio <= self.money_grabber_full_ratio <= 1: raise ValueError("De volledige Money Grabber-beschermingsratio mag niet kleiner zijn dan de eerste ratio")
         return self
 
     def public_dict(self) -> dict[str, Any]:
-        return {"strategyId":self.strategy_id,"name":self.name,"version":self.version,"mode":self.mode,
+        return ({"strategyId":self.strategy_id,"name":self.name,"version":self.version,"mode":self.mode,
             "baseNotional":self.base_notional,"takeProfit":self.take_profit,"autoRestart":self.auto_restart,
             "dcaEnabled":self.dca_enabled,"dcaMode":self.dca_mode,"longDcaDistance":self.long_dca_distance,
             "shortDcaDistance":self.short_dca_distance,"longMaxDca":self.long_max_dca,"shortMaxDca":self.short_max_dca,
@@ -115,6 +140,14 @@ class Strategy2Config:
             "defensiveMarginRatio":self.defensive_margin_ratio,"emergencyMarginRatio":self.emergency_margin_ratio,
             "maxProtectionRatio":self.max_protection_ratio,"maxNetExposureRatio":self.max_net_exposure_ratio,
             "maxGrossExposureRatio":self.max_gross_exposure_ratio}
+            | {"moneyGrabberEnabled":self.money_grabber_enabled,
+            "moneyGrabberRoundTarget":self.money_grabber_round_target,
+            "moneyGrabberAutoClose":self.money_grabber_auto_close,
+            "moneyGrabberFirstThreshold":self.money_grabber_first_threshold,
+            "moneyGrabberFirstRatio":self.money_grabber_first_ratio,
+            "moneyGrabberFullThreshold":self.money_grabber_full_threshold,
+            "moneyGrabberFullRatio":self.money_grabber_full_ratio,
+            "moneyGrabberPairCloseEnabled":self.money_grabber_pair_close_enabled})
 
 
 @dataclass(frozen=True)
