@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-cloud-strategy2-test-live.yml"
 MAIN = ROOT / "cloud_api" / "main.py"
+DOCKERFILE = ROOT / "cloud_api" / "Dockerfile"
 TEST_ENTRYPOINT = ROOT / "cloud_api" / "strategy2_test_entrypoint.py"
 NON_TEST_DEPLOYMENTS = (
     ROOT / ".github" / "workflows" / "deploy-cloud-production.yml",
@@ -34,9 +35,17 @@ def test_strategy2_test_auto_publish_is_branch_and_path_scoped():
 def test_deployment_proves_exact_commit_and_money_grabber_routes():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     source = MAIN.read_text(encoding="utf-8")
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     assert '"sourceCommit": os.getenv("TRADEMENTOR_SOURCE_COMMIT") or None' in source
+    assert '"imageSourceCommit": os.getenv("TRADEMENTOR_IMAGE_SOURCE_COMMIT") or None' in source
+    assert "ARG SOURCE_COMMIT=unknown" in dockerfile
+    assert "ENV TRADEMENTOR_IMAGE_SOURCE_COMMIT=$SOURCE_COMMIT" in dockerfile
+    assert '--build-arg "SOURCE_COMMIT=$TEST_COMMIT"' in workflow
+    assert 'IMAGE_REPOSITORY="${IMAGE%:*}"' in workflow
+    assert 'IMAGE=$IMAGE_REPOSITORY@$DIGEST' in workflow
     assert 'TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA' in workflow
     assert 'health["sourceCommit"] == os.environ["GITHUB_SHA"]' in workflow
+    assert 'health["imageSourceCommit"] == os.environ["GITHUB_SHA"]' in workflow
     assert 'variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]' in workflow
     assert '--revision-suffix "$REVISION_SUFFIX"' in workflow
     assert '"/v1/me/aster/strategy2/money-grabber/activation-preview"' in workflow

@@ -2795,6 +2795,7 @@ def health() -> dict[str, Any]:
         "dataProject": data_project_id or None,
         "identityProject": auth_project_id or data_project_id or None,
         "sourceCommit": os.getenv("TRADEMENTOR_SOURCE_COMMIT") or None,
+        "imageSourceCommit": os.getenv("TRADEMENTOR_IMAGE_SOURCE_COMMIT") or None,
         "ordersEnabled": False,
         "multiUser": True,
     }
