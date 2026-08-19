@@ -131,14 +131,17 @@ def test_scanner_uses_authoritative_available_balance_with_buffer():
     assert scanner_allowed(config,portfolio,[]) is True
     assert scanner_allowed(config,PortfolioState(1000,1000,.1,0,0,0,available_balance=5),[]) is False
 
-def test_scanner_keeps_filling_in_caution_and_defensive_but_stops_in_emergency():
+def test_scanner_keeps_filling_during_drawdown_but_stops_at_margin_emergency():
     config=Strategy2Config(base_notional=10,leverage=10,maximum_pairs=5)
     caution=PortfolioState(960,1000,.40,0,0,0,available_balance=100)
     defensive=PortfolioState(930,1000,.55,0,0,0,available_balance=100)
-    emergency=PortfolioState(850,1000,.75,0,0,0,available_balance=100)
+    drawdown_emergency=PortfolioState(850,1000,.40,0,0,0,available_balance=100)
+    margin_emergency=PortfolioState(1000,1000,.75,0,0,0,available_balance=100)
     assert scanner_allowed(config,caution,[]) is True
     assert scanner_allowed(config,defensive,[]) is True
-    assert scanner_allowed(config,emergency,[]) is False
+    assert risk_mode(config,drawdown_emergency)=="EMERGENCY"
+    assert scanner_allowed(config,drawdown_emergency,[]) is True
+    assert scanner_allowed(config,margin_emergency,[]) is False
 
 def test_initial_fifty_positions_target_exactly_twenty_five_per_side():
     assert balanced_entry_targets(50)==(25,25)
