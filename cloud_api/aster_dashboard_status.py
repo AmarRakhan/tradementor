@@ -300,8 +300,12 @@ def _strategy2_entry_checks(*, snapshot: dict[str, Any], state: dict[str, Any],
         ("OPEN_ORDERS", int(_number(snapshot.get("openOrders"))) == 0, "WAIT", "Geen open Aster-orders", "Open Aster-order moet eerst worden gereconcilieerd"),
         ("STRATEGY2_TARGET", len(s2_owned & active_keys) < config.maximum_pairs, "BLOCK", "Strategy-2-doel heeft vrije ruimte", "Ingesteld Strategy-2-positiedoel is bereikt"),
         ("STRATEGY2_ACCOUNT_STATE", equity > 0, "UNKNOWN", "Strategy-2-accountstaat is beschikbaar", "Strategy-2-accountstaat ontbreekt"),
-        ("STRATEGY2_RISK_MODE", equity > 0 and margin_ratio < config.emergency_margin_ratio and drawdown < config.emergency_drawdown,
-         "BLOCK", "Strategy 2 staat niet in noodmodus", "Strategy 2 is tijdelijk geblokkeerd door noodmodus"),
+        # Keep historical drawdown visible to protection/management, but do not
+        # let it freeze fresh balanced entries. Runtime scanner_allowed applies
+        # the same app-wide admission rule: only actual emergency margin blocks.
+        ("STRATEGY2_RISK_MODE", equity > 0 and margin_ratio < config.emergency_margin_ratio,
+         "BLOCK", "Actuele margin laat gecontroleerde Strategy-2-instap toe",
+         "Strategy 2 blokkeert nieuwe exposure door actuele noodmargin"),
         ("STRATEGY2_BUDGET", equity > 0 and strategy_margin + next_margin <= equity * config.strategy_budget,
          "BLOCK", "Strategy-2-budget heeft ruimte", "Strategy-2-budget is bereikt"),
         ("STRATEGY2_MARKET_DATA", not bool(universe.get("entryBlocked", True)), "UNKNOWN",
