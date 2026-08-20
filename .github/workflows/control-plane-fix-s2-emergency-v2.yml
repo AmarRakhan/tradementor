@@ -1,6 +1,9 @@
 name: Control Plane Fix Strategy 2 Emergency V2
 
 on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/control-plane-fix-s2-emergency-v2.yml]
   issues:
     types: [opened, edited, reopened]
 
@@ -9,7 +12,7 @@ permissions:
 
 jobs:
   patch-test-commit:
-    if: github.event.issue.title == '[CONTROL-PLANE] fix-s2-emergency-v2'
+    if: github.event_name == 'push' || github.event.issue.title == '[CONTROL-PLANE] fix-s2-emergency-v2'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
