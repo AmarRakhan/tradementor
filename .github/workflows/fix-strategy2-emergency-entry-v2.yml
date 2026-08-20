@@ -1,0 +1,96 @@
+name: Fix Strategy 2 emergency entry V2
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/fix-strategy2-emergency-entry-v2.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Align dashboard entry contract with Strategy 2 runtime
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_dashboard_status.py')
+          s=p.read_text()
+          old='''        ("STRATEGY2_RISK_MODE", equity > 0 and margin_ratio < config.emergency_margin_ratio and drawdown < config.emergency_drawdown,\n         "BLOCK", "Strategy 2 staat niet in noodmodus", "Strategy 2 is tijdelijk geblokkeerd door noodmodus"),\n        ("STRATEGY2_BUDGET", equity > 0 and strategy_margin + next_margin <= equity * config.strategy_budget,\n         "BLOCK", "Strategy-2-budget heeft ruimte", "Strategy-2-budget is bereikt"),'''
+          new='''        # Entry exposure follows the runtime scanner contract: historical drawdown\n        # remains a protection/management signal but does not by itself freeze\n        # balanced fresh entries. Only actual emergency maintenance margin does.\n        ("STRATEGY2_RISK_MODE", equity > 0 and margin_ratio < config.emergency_margin_ratio,\n         "BLOCK", "Actuele margin laat gecontroleerde Strategy-2-instap toe",\n         "Strategy 2 blokkeert nieuwe exposure door actuele noodmargin"),\n        ("STRATEGY2_AVAILABLE_MARGIN", equity > 0 and _number(account_state.get("availableBalance")) >= next_margin * 1.05,\n         "BLOCK", "Voldoende actuele Aster available balance voor de volgende instap",\n         "Onvoldoende actuele Aster available balance voor de volgende instap"),'''
+          if old not in s:
+              raise SystemExit('expected dashboard block not found')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Add regression tests
+        shell: bash
+        run: |
+          cat >> cloud_api/test_aster_dashboard_status.py <<'PY'
+
+
+def test_strategy2_historical_drawdown_does_not_block_entries_when_margin_is_healthy():
+    from datetime import datetime, timezone
+    from aster_dashboard_status import build_aster_dashboard_status
+    from aster_strategy2 import Strategy2Config
+    from aster_strategy3 import Strategy3Config
+    now=datetime.now(timezone.utc)
+    positions=[{"symbol":"BTCUSDT","side":"LONG","quantity":1,"notionalUsd":10}]
+    snapshot={"capturedAt":now,"activePositions":1,"openOrders":0,"marginRatio":.2321,"positions":positions}
+    leg={"strategy_id":"aster-strategy-2","engine_type":"strategy2","symbol":"BTCUSDT","side":"LONG"}
+    s2={"enabled":True,"monitor":True,"phase":"INITIAL_BUILD","lastTickAt":now,"canaryValidated":True,"liveReady":True,
+        "ownedLegs":[leg],"accountSnapshot":{"equity":346.10,"marginRatio":.2321,"drawdown":.20,"highWaterMark":432.0,
+        "strategyMargin":100,"availableBalance":177.74},"universe":{"entryBlocked":False,"selectedSymbols":["BTCUSDT","ETHUSDT"]}}
+    s3={"enabled":False,"monitor":False,"ownedLegs":[]}
+    result=build_aster_dashboard_status(snapshot=snapshot,strategy2_state=s2,strategy3_state=s3,
+        strategy2_config=Strategy2Config(mode="live",maximum_pairs=80,base_notional=10,leverage=50),
+        strategy3_config=Strategy3Config(),runtime_gates={"asterLiveExecution":True,"strategy2Live":True,"strategy2Runtime":True,
+        "strategy3Live":False,"strategy3Runtime":False},evaluated_at=now)
+    assert result["strategy2NewEntry"]["status"] == "ALLOWED"
+    checks={x["code"]:x for x in result["strategy2NewEntry"]["checks"]}
+    assert checks["STRATEGY2_RISK_MODE"]["status"] == "PASS"
+    assert checks["STRATEGY2_AVAILABLE_MARGIN"]["status"] == "PASS"
+
+
+def test_strategy2_emergency_margin_still_blocks_new_exposure():
+    from datetime import datetime, timezone
+    from aster_dashboard_status import build_aster_dashboard_status
+    from aster_strategy2 import Strategy2Config
+    from aster_strategy3 import Strategy3Config
+    now=datetime.now(timezone.utc)
+    positions=[{"symbol":"BTCUSDT","side":"LONG","quantity":1,"notionalUsd":10}]
+    snapshot={"capturedAt":now,"activePositions":1,"openOrders":0,"marginRatio":.71,"positions":positions}
+    leg={"strategy_id":"aster-strategy-2","engine_type":"strategy2","symbol":"BTCUSDT","side":"LONG"}
+    s2={"enabled":True,"monitor":True,"phase":"INITIAL_BUILD","lastTickAt":now,"canaryValidated":True,"liveReady":True,
+        "ownedLegs":[leg],"accountSnapshot":{"equity":346.10,"marginRatio":.71,"drawdown":0,"strategyMargin":100,
+        "availableBalance":177.74},"universe":{"entryBlocked":False,"selectedSymbols":["BTCUSDT","ETHUSDT"]}}
+    s3={"enabled":False,"monitor":False,"ownedLegs":[]}
+    result=build_aster_dashboard_status(snapshot=snapshot,strategy2_state=s2,strategy3_state=s3,
+        strategy2_config=Strategy2Config(mode="live",maximum_pairs=80,base_notional=10,leverage=50),
+        strategy3_config=Strategy3Config(),runtime_gates={"asterLiveExecution":True,"strategy2Live":True,"strategy2Runtime":True,
+        "strategy3Live":False,"strategy3Runtime":False},evaluated_at=now)
+    assert result["strategy2NewEntry"]["status"] == "BLOCKED"
+    assert result["strategy2NewEntry"]["reasonCode"] == "STRATEGY2_RISK_MODE"
+PY
+      - name: Install and test
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          cd cloud_api
+          pytest -q
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name 'TradeMentor Control Plane'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_dashboard_status.py cloud_api/test_aster_dashboard_status.py
+          git commit -m 'Align Strategy 2 emergency entry gate with live runtime'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
