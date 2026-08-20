@@ -5,7 +5,8 @@ import pytest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import Strategy2Config
 from aster_strategy3 import Strategy3Config
-from aster_universe import build_snapshot, normalize_top_n, stale_snapshot, MIN_QUOTE_VOLUME_24H_USDT
+from aster_universe import (MIN_QUOTE_VOLUME_24H_USDT, build_snapshot, entry_fill_symbols,
+                            normalize_top_n, side_entry_candidates, stale_snapshot)
 
 
 NOW = datetime(2026, 8, 14, 20, 0, tzinfo=timezone.utc)
@@ -74,6 +75,19 @@ def test_only_active_valid_aster_usdt_perpetual_contracts_survive():
     tickers = [ticker(str(row["symbol"]), 1_000_000) for row in rows]
     snapshot = build_snapshot({"symbols": rows}, tickers, 150, fetched_at=NOW)
     assert [item.symbol for item in snapshot.eligible_markets] == ["GOODUSDT"]
+
+
+def test_entry_fill_falls_back_beyond_ranked_universe_without_losing_priority():
+    rows={symbol:contract(symbol) for symbol in ("PREFERREDUSDT","LOWVOLUMEUSDT","OPPOSITEUSDT")}
+    rows["INVALIDUSDT"]=contract("INVALIDUSDT",status="BREAK")
+    assert entry_fill_symbols(["PREFERREDUSDT"],rows,rows)==[
+        "PREFERREDUSDT","LOWVOLUMEUSDT","OPPOSITEUSDT"]
+
+
+def test_long_and_short_are_independent_seats_for_the_same_symbol():
+    symbols=["PAIRUSDT","OTHERUSDT"];active={("PAIRUSDT","LONG")}
+    assert side_entry_candidates(symbols,active,"LONG")==["OTHERUSDT"]
+    assert side_entry_candidates(symbols,active,"SHORT")==["PAIRUSDT","OTHERUSDT"]
 
 
 def test_ranking_uses_quote_volume_then_symbol_deterministically():

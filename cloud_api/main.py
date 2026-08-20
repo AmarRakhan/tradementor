@@ -39,7 +39,7 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
 from pydantic import BaseModel, Field
-from aster_universe import AsterUniverseSnapshot, build_snapshot as build_aster_universe_snapshot, normalize_top_n, server_snapshot_contract, stale_snapshot as stale_aster_universe_snapshot
+from aster_universe import AsterUniverseSnapshot, build_snapshot as build_aster_universe_snapshot, entry_fill_symbols, normalize_top_n, server_snapshot_contract, side_entry_candidates, stale_snapshot as stale_aster_universe_snapshot
 from trading_cycle import cycle_payload_values, cycle_start_decision
 from close_all import execute_close_all
 from position_close import ALLOWED_CLOSE_PERCENTAGES, close_size
@@ -2017,11 +2017,12 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now,"universe":blocked},merge=True)
         return {"status":"data-hold","reason":str(exc),"ordersSent":0,"universe":blocked}
     universe_contract=universe.public_dict();ref.set({"universe":universe_contract},merge=True)
-    if universe.entry_blocked:
-        reason=universe_contract["entryBlockReason"]
+    codes=entry_fill_symbols(universe_contract["selectedSymbols"],rows,prices)
+    preferred_codes=set(universe_contract["selectedSymbols"])
+    if not codes:
+        reason=universe_contract["entryBlockReason"] or "Geen technisch uitvoerbare actuele Aster USDT-perpetuals"
         ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"data-hold","reason":reason,"ordersSent":0,"universe":universe_contract}
-    codes=[symbol for symbol in universe_contract["selectedSymbols"] if symbol in rows and symbol in prices]
     orders_used=(MAX_ORDERS_PER_ACCOUNT_SCAN-max(0,int(order_budget))) if order_budget is not None else 0
     order_limit=queued_entry_order_limit(initial_build_complete,owned,settings.maximum_pairs,
         orders_used=orders_used,maximum_orders=MAX_ORDERS_PER_ACCOUNT_SCAN)
@@ -2040,8 +2041,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     for index in range(order_limit):
         entry_side=next_balanced_entry_side(owned,settings.maximum_pairs)
         if not entry_side:break
-        candidates=[symbol for symbol in codes if (symbol,entry_side) not in active_keys]
-        candidates.sort(key=lambda symbol:changes.get(symbol,0),reverse=entry_side=="LONG")
+        candidates=side_entry_candidates(codes,active_keys,entry_side)
+        candidates.sort(key=lambda symbol:(symbol not in preferred_codes,
+            -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))
         plan=None;symbol="";opened=None
         for candidate in candidates:
             scan_checked+=1
@@ -2064,9 +2066,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 value=replace(value,leverage=settings.leverage)
                 required=float(value.notional_per_leg)/max(1,value.leverage)
                 if required*1.05>remaining_available:
-                    budget_blocked=True
+                    budget_blocked=True;scan_skipped+=1;advanced_after_rejection=True
                     candidate_failures.append(f"{candidate}: onvoldoende vrije Aster-margin inclusief 5% uitvoeringsbuffer")
-                    break
+                    continue
                 try:
                     scan_key=str(raw.get("orderQueueState",{}).get("scanId",""))
                     entry_prefix=(f"s2q-i-{hashlib.sha256((uid+scan_key+candidate+entry_side+str(index)).encode()).hexdigest()[:12]}"

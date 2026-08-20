@@ -108,6 +108,29 @@ def eligible_contract(row: dict[str, Any]) -> bool:
     ))
 
 
+def entry_fill_symbols(preferred_symbols: Iterable[str], rows: dict[str, dict[str, Any]],
+                       priced_symbols: Iterable[str]) -> list[str]:
+    """Prefer the ranked universe, then fall back to every executable contract.
+
+    Entry-ranking policy must not turn into a capacity ceiling.  A requested
+    Strategy-2 leg count is filled from the complete current Aster USDT
+    perpetual set when the preferred Top-N cannot supply enough contracts.
+    """
+    priced = {str(symbol).upper() for symbol in priced_symbols}
+    executable = {symbol for symbol, row in rows.items()
+                  if symbol in priced and eligible_contract(row)}
+    preferred = list(dict.fromkeys(str(symbol).upper() for symbol in preferred_symbols
+                                   if str(symbol).upper() in executable))
+    return preferred + sorted(executable.difference(preferred))
+
+
+def side_entry_candidates(symbols: Iterable[str], active_keys: set[tuple[str, str]], side: str) -> list[str]:
+    """Treat LONG and SHORT as separate seats for the same contract."""
+    normalized_side = str(side).upper()
+    return [str(symbol).upper() for symbol in symbols
+            if (str(symbol).upper(), normalized_side) not in active_keys]
+
+
 @dataclass(frozen=True)
 class RankedAsterMarket:
     symbol: str
