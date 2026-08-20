@@ -1,0 +1,2 @@
+Trigger redeploy of Strategy-2 test-live service from amar-crypto-bot-2026-cloud with the current flat stale-ownership reconciliation fix.
+No runtime logic changes in this marker file.
