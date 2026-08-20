@@ -1,112 +1,15 @@
 name: Control Plane Fix Strategy 2 Emergency V2
 
 on:
-  push:
-    branches: [main]
-    paths: [.github/workflows/control-plane-fix-s2-emergency-v2.yml]
-  issues:
-    types: [opened, edited, reopened]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: write
+  contents: read
 
 jobs:
-  patch-test-commit:
-    if: github.event_name == 'push' || github.event.issue.title == '[CONTROL-PLANE] fix-s2-emergency-v2'
+  superseded:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: amar-crypto-bot-2026-cloud
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Align Strategy 2 dashboard gate with live runtime
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('cloud_api/aster_dashboard_status.py')
-          s = p.read_text()
-          old = '("STRATEGY2_RISK_MODE", equity > 0 and margin_ratio < config.emergency_margin_ratio and drawdown < config.emergency_drawdown,'
-          new = '("STRATEGY2_RISK_MODE", equity > 0 and margin_ratio < config.emergency_margin_ratio,'
-          if old in s:
-              p.write_text(s.replace(old, new, 1))
-          elif new not in s:
-              raise SystemExit('expected Strategy 2 risk gate not found')
-          PY
-      - name: Add focused regression tests once
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('cloud_api/test_aster_dashboard_status.py')
-          s = p.read_text()
-          marker = 'test_strategy2_historical_drawdown_does_not_block_entries_when_margin_is_healthy'
-          if marker not in s:
-              s += r'''
-
-
-def test_strategy2_historical_drawdown_does_not_block_entries_when_margin_is_healthy():
-    from datetime import datetime, timezone
-    from aster_dashboard_status import build_aster_dashboard_status
-    from aster_strategy2 import Strategy2Config
-    from aster_strategy3 import Strategy3Config
-    now = datetime.now(timezone.utc)
-    positions = [{"symbol":"BTCUSDT","side":"LONG","quantity":1,"notionalUsd":10}]
-    snapshot = {"capturedAt":now,"activePositions":1,"openOrders":0,"marginRatio":.2321,"positions":positions}
-    leg = {"strategy_id":"aster-strategy-2","engine_type":"strategy2","symbol":"BTCUSDT","side":"LONG"}
-    s2 = {"enabled":True,"monitor":True,"phase":"INITIAL_BUILD","lastTickAt":now,"canaryValidated":True,"liveReady":True,
-          "ownedLegs":[leg],"accountSnapshot":{"equity":346.10,"marginRatio":.2321,"drawdown":.20,"highWaterMark":432.0,
-          "strategyMargin":100},"universe":{"entryBlocked":False,"selectedSymbols":["BTCUSDT","ETHUSDT"]}}
-    s3 = {"enabled":False,"monitor":False,"ownedLegs":[]}
-    result = build_aster_dashboard_status(snapshot=snapshot,strategy2_state=s2,strategy3_state=s3,
-        strategy2_config=Strategy2Config(mode="live",maximum_pairs=80,base_notional=10,leverage=50),
-        strategy3_config=Strategy3Config(),runtime_gates={"asterLiveExecution":True,"strategy2Live":True,"strategy2Runtime":True,
-        "strategy3Live":False,"strategy3Runtime":False},evaluated_at=now)
-    checks = {x["code"]:x for x in result["strategy2NewEntry"]["checks"]}
-    assert checks["STRATEGY2_RISK_MODE"]["status"] == "PASS"
-    assert checks["STRATEGY2_BUDGET"]["status"] == "PASS"
-
-
-def test_strategy2_emergency_margin_still_blocks_new_exposure():
-    from datetime import datetime, timezone
-    from aster_dashboard_status import build_aster_dashboard_status
-    from aster_strategy2 import Strategy2Config
-    from aster_strategy3 import Strategy3Config
-    now = datetime.now(timezone.utc)
-    positions = [{"symbol":"BTCUSDT","side":"LONG","quantity":1,"notionalUsd":10}]
-    snapshot = {"capturedAt":now,"activePositions":1,"openOrders":0,"marginRatio":.71,"positions":positions}
-    leg = {"strategy_id":"aster-strategy-2","engine_type":"strategy2","symbol":"BTCUSDT","side":"LONG"}
-    s2 = {"enabled":True,"monitor":True,"phase":"INITIAL_BUILD","lastTickAt":now,"canaryValidated":True,"liveReady":True,
-          "ownedLegs":[leg],"accountSnapshot":{"equity":346.10,"marginRatio":.71,"drawdown":0,"strategyMargin":100},
-          "universe":{"entryBlocked":False,"selectedSymbols":["BTCUSDT","ETHUSDT"]}}
-    s3 = {"enabled":False,"monitor":False,"ownedLegs":[]}
-    result = build_aster_dashboard_status(snapshot=snapshot,strategy2_state=s2,strategy3_state=s3,
-        strategy2_config=Strategy2Config(mode="live",maximum_pairs=80,base_notional=10,leverage=50),
-        strategy3_config=Strategy3Config(),runtime_gates={"asterLiveExecution":True,"strategy2Live":True,"strategy2Runtime":True,
-        "strategy3Live":False,"strategy3Runtime":False},evaluated_at=now)
-    assert result["strategy2NewEntry"]["status"] == "BLOCKED"
-    assert result["strategy2NewEntry"]["reasonCode"] == "STRATEGY2_RISK_MODE"
-'''
-              p.write_text(s)
-          PY
-      - name: Install and run all backend tests
-        run: |
-          pip install -r cloud_api/requirements.txt pytest
-          cd cloud_api
-          pytest -q
-      - name: Commit app-wide fix to target branch
-        shell: bash
-        run: |
-          git config user.name 'TradeMentor Control Plane'
-          git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/aster_dashboard_status.py cloud_api/test_aster_dashboard_status.py
-          if git diff --cached --quiet; then
-            echo 'No source change required'
-          else
-            git commit -m 'Align Strategy 2 emergency entry gate app-wide'
-            git push origin HEAD:amar-crypto-bot-2026-cloud
-          fi
+      - run: |
+          echo 'Superseded: the app-wide Strategy 2 emergency-entry fix is now committed directly on amar-crypto-bot-2026-cloud.'
+          echo 'Do not use this workflow to rewrite application source.'
