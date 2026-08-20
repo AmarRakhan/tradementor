@@ -1,0 +1,64 @@
+name: Verify Strategy 2 test-live redeploy 20260820
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/verify-strategy2-test-live-redeploy-20260820.yml]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
+      CLOUD_RUN_SERVICE: tradementor-strategy2-test-live-api
+      EXPECTED_SOURCE: 1c75d64a8d79fd11284bbb4611aefd21b2a34360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Wait for exact Strategy 2 test-live revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-strategy2-test-live-api"
+          for i in $(seq 1 60); do
+            URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+            HEALTH="$(curl --silent --show-error --fail -H 'Cache-Control: no-cache, no-store' "$URL/health" || true)"
+            SOURCE="$(python - "$HEALTH" <<'PY'
+          import json,sys
+          try: print(json.loads(sys.argv[1]).get('sourceCommit',''))
+          except Exception: print('')
+          PY
+          )"
+            if [ "$SOURCE" = "$EXPECTED_SOURCE" ]; then
+              REV="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+              printf 'verifiedAt=%s\nsource=%s\nrevision=%s\nservice=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SOURCE" "$REV" "$CLOUD_RUN_SERVICE" > /tmp/verify.txt
+              break
+            fi
+            sleep 15
+          done
+          test -s /tmp/verify.txt
+      - name: Record verification
+        shell: bash
+        run: |
+          mkdir -p .control-plane
+          cp /tmp/verify.txt .control-plane/strategy2-test-live-flat-fix-verified.txt
+          git config user.name "TradeMentor Control Plane"
+          git config user.email "actions@users.noreply.github.com"
+          git add .control-plane/strategy2-test-live-flat-fix-verified.txt
+          git commit -m "Verify Strategy 2 test-live flat ownership fix"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
