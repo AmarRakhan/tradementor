@@ -9,6 +9,9 @@ on:
         default: "all"
         type: choice
         options: [all, production, staging]
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.control-plane/diagnose-request.json]
 
 permissions:
   contents: read
@@ -23,7 +26,31 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - name: Authenticate read-only diagnostic identity
+      - name: Check out diagnostic request
+        uses: actions/checkout@v4
+
+      - name: Resolve and validate scope
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            SCOPE="$(python - <<'PY'
+          import json
+          with open('.control-plane/diagnose-request.json', encoding='utf-8') as f:
+              request = json.load(f)
+          scope = request.get('scope', 'all')
+          if scope not in {'all', 'production', 'staging'}:
+              raise SystemExit('invalid diagnostic scope')
+          print(scope)
+          PY
+          )"
+          else
+            SCOPE="${{ inputs.scope }}"
+          fi
+          echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate diagnostic identity
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -48,42 +75,19 @@ jobs:
             echo "generatedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "project=$GCP_PROJECT_ID"
             echo "region=$GCP_REGION"
-            echo "scope=${{ inputs.scope }}"
+            echo "scope=${{ steps.request.outputs.scope }}"
+            echo "trigger=$GITHUB_EVENT_NAME"
+            echo "requestCommit=$GITHUB_SHA"
           } > control-plane-report/summary.txt
+          gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > control-plane-report/cloud-run-services.json
+          gcloud run revisions list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > control-plane-report/cloud-run-revisions.json
+          gcloud scheduler jobs list --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > control-plane-report/scheduler-jobs.json
+          gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' --project "$GCP_PROJECT_ID" --freshness=60m --limit=100 --format=json > control-plane-report/recent-cloud-run-errors.json
 
-          gcloud run services list \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format=json > control-plane-report/cloud-run-services.json
-
-          gcloud run revisions list \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format=json > control-plane-report/cloud-run-revisions.json
-
-          gcloud scheduler jobs list \
-            --project "$GCP_PROJECT_ID" \
-            --location "$GCP_REGION" \
-            --format=json > control-plane-report/scheduler-jobs.json
-
-          gcloud logging read \
-            'resource.type="cloud_run_revision" AND severity>=ERROR' \
-            --project "$GCP_PROJECT_ID" \
-            --freshness=60m \
-            --limit=100 \
-            --format=json > control-plane-report/recent-cloud-run-errors.json
-
-      - name: Prove report contains no mutation capability
+      - name: Record safety contract
         shell: bash
         run: |
-          set -euo pipefail
-          printf '%s\n' \
-            'mode=READ_ONLY' \
-            'orders=DISALLOWED' \
-            'deploy=DISALLOWED' \
-            'schedulerMutation=DISALLOWED' \
-            'trafficMutation=DISALLOWED' \
-            > control-plane-report/safety.txt
+          printf '%s\n' 'mode=READ_ONLY' 'orders=DISALLOWED' 'deploy=DISALLOWED' 'schedulerMutation=DISALLOWED' 'trafficMutation=DISALLOWED' > control-plane-report/safety.txt
 
       - name: Upload diagnostic report
         uses: actions/upload-artifact@v4
