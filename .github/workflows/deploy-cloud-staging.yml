@@ -1,0 +1,133 @@
+# Staging may read existing account snapshots only through the API allowlist.
+name: Deploy Cloud Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY_CLOUD_STAGING"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-cloud-staging
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-staging-api
+  FIREBASE_AUTH_PROJECT_ID: tradementor-production
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Authorize manual staging deployment
+        shell: bash
+        run: |
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "${{ inputs.confirmation }}" = "DEPLOY_CLOUD_STAGING"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run backend tests
+        working-directory: cloud_api
+        run: pytest -q
+
+      - name: Authenticate to isolated Google Cloud staging
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify immutable safety scope
+        shell: bash
+        run: |
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$FIREBASE_AUTH_PROJECT_ID" = "tradementor-production"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-staging-api"
+
+      - name: Classify recent staging connection failures
+        shell: bash
+        run: |
+          RAW="$(gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-staging-api" AND severity>=ERROR' \
+            --project "$GCP_PROJECT_ID" \
+            --freshness 30m \
+            --limit 20 \
+            --format='value(textPayload,jsonPayload.message)' 2>&1 || true)"
+          python - "$RAW" <<'PY'
+          import sys
+
+          value = sys.argv[1].lower()
+          if "secret manager api has not been used" in value or "secretmanager.googleapis.com" in value and "disabled" in value:
+              result = "SECRET_MANAGER_API_DISABLED"
+          elif "secretmanager" in value and ("permission" in value or "denied" in value or "403" in value):
+              result = "SECRET_MANAGER_PERMISSION_DENIED"
+          elif "firestore" in value and ("permission" in value or "denied" in value or "403" in value):
+              result = "FIRESTORE_PERMISSION_DENIED"
+          elif "permission_denied" in value or "permission denied" in value:
+              result = "UNCLASSIFIED_PERMISSION_DENIED"
+          elif "logging.logentries.list" in value or "does not have permission" in value:
+              result = "LOG_ACCESS_UNAVAILABLE"
+          elif value.strip():
+              result = "OTHER_RUNTIME_ERROR"
+          else:
+              result = "NO_RECENT_RUNTIME_ERROR"
+          print(f"staging_connection_diagnostic={result}")
+          PY
+
+      - name: Build and push staging container
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/staging-api:${GITHUB_SHA}"
+          docker build --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy staging with all trading disabled
+        run: |
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
+            --allow-unauthenticated
+
+      - name: Verify deployed safety state
+        run: |
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          HEALTH="$(curl --fail --silent --show-error "$SERVICE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json
+          import sys
+
+          health = json.loads(sys.argv[1])
+          assert health["environment"] == "staging"
+          assert health["ordersEnabled"] is False
+          assert health["dataProject"] == "tradementor-amar-20260813"
+          assert health["identityProject"] == "tradementor-production"
+          PY
