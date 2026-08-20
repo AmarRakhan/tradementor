@@ -1,0 +1,4 @@
+verifiedAt=2026-08-20T12:38:03Z
+service=tradementor-staging-api
+image=europe-west4-docker.pkg.dev/tradementor-amar-20260813/tradementor/staging-api:s2-flat-stale-32369673676
+health={"status":"ready","environment":"staging","dataProject":"tradementor-amar-20260813","identityProject":"tradementor-production","sourceCommit":null,"imageSourceCommit":"unknown","ordersEnabled":false,"multiUser":true}
