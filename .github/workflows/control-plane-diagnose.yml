@@ -1,0 +1,93 @@
+name: Control Plane Diagnose
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Diagnostic scope"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, production, staging]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Authenticate read-only diagnostic identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Enforce immutable diagnostic scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$GCP_REGION" = "europe-west4"
+
+      - name: Collect read-only cloud diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p control-plane-report
+          {
+            echo "generatedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "project=$GCP_PROJECT_ID"
+            echo "region=$GCP_REGION"
+            echo "scope=${{ inputs.scope }}"
+          } > control-plane-report/summary.txt
+
+          gcloud run services list \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json > control-plane-report/cloud-run-services.json
+
+          gcloud run revisions list \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json > control-plane-report/cloud-run-revisions.json
+
+          gcloud scheduler jobs list \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format=json > control-plane-report/scheduler-jobs.json
+
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND severity>=ERROR' \
+            --project "$GCP_PROJECT_ID" \
+            --freshness=60m \
+            --limit=100 \
+            --format=json > control-plane-report/recent-cloud-run-errors.json
+
+      - name: Prove report contains no mutation capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            'mode=READ_ONLY' \
+            'orders=DISALLOWED' \
+            'deploy=DISALLOWED' \
+            'schedulerMutation=DISALLOWED' \
+            'trafficMutation=DISALLOWED' \
+            > control-plane-report/safety.txt
+
+      - name: Upload diagnostic report
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-diagnostic-${{ github.run_id }}
+          path: control-plane-report/
+          retention-days: 7
