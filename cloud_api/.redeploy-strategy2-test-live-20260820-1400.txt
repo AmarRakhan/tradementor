@@ -1,0 +1,2 @@
+Trigger redeploy of Strategy-2 test-live service so the current branch, including the flat stale-ownership reconciliation fix, is built and deployed.
+No runtime logic is changed by this marker file.
