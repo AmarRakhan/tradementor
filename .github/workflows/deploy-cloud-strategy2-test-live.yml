@@ -10,6 +10,12 @@ on:
         description: "Type DEPLOY_STRATEGY2_TEST_LIVE"
         required: true
         type: string
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "cloud_api/**"
+      - ".github/workflows/deploy-cloud-strategy2-test-live.yml"
 
 permissions:
   contents: read
@@ -41,11 +47,20 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Authorize manual Strategy 2 test deployment
+      - name: Authorize controlled Strategy 2 test deployment
         shell: bash
         run: |
-          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-          test "${{ inputs.confirmation }}" = "DEPLOY_STRATEGY2_TEST_LIVE"
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              test "${{ inputs.confirmation }}" = "DEPLOY_STRATEGY2_TEST_LIVE"
+              ;;
+            push)
+              test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
 
       - name: Verify immutable test scope
         shell: bash
@@ -87,44 +102,76 @@ jobs:
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
           TEST_COMMIT="$(git rev-parse HEAD)"
           IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy2-test-live-api:$TEST_COMMIT"
-          docker build --tag "$IMAGE" cloud_api
-          docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          docker build --build-arg "SOURCE_COMMIT=$TEST_COMMIT" --tag "$IMAGE" cloud_api
+          PUSH_OUTPUT="$(docker push "$IMAGE" 2>&1)"
+          printf '%s\n' "$PUSH_OUTPUT"
+          DIGEST="$(printf '%s\n' "$PUSH_OUTPUT" | sed -n 's/.*digest: \(sha256:[0-9a-f]*\).*/\1/p' | tail -1)"
+          test -n "$DIGEST"
+          IMAGE_REPOSITORY="${IMAGE%:*}"
+          echo "IMAGE=$IMAGE_REPOSITORY@$DIGEST" >> "$GITHUB_ENV"
 
       - name: Deploy isolated Strategy 2 test service
         run: |
+          REVISION_SUFFIX="mg-${GITHUB_RUN_NUMBER}"
+          echo "REVISION_SUFFIX=$REVISION_SUFFIX" >> "$GITHUB_ENV"
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE" \
+            --revision-suffix "$REVISION_SUFFIX" \
+            --tag "$REVISION_SUFFIX" \
             --command "uvicorn" \
             --args "strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080" \
             --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false,MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-test-live,TRADEMENTOR_ENVIRONMENT=strategy2-test-live,TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA,TRADEMENTOR_DEPLOY_NONCE=$GITHUB_RUN_ID,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=true,ASTER_LIVE_EXECUTION_ENABLED=true,ASTER_STRATEGY2_LIVE_ENABLED=true,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=true,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false,MEXC_INTERNAL_AUDIENCE=$STRATEGY2_INTERNAL_AUDIENCE" \
             --allow-unauthenticated
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --to-latest
 
       - name: Verify service boundary
         shell: bash
         run: |
           SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
           SERVICE_DESCRIPTION="$RUNNER_TEMP/strategy2-test-service.json"
-          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 "$SERVICE_URL/health")"
           gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json > "$SERVICE_DESCRIPTION"
-          python - "$HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
+          TAG_URL="$(python - "$SERVICE_DESCRIPTION" <<'PY'
           import json
+          import os
+          import sys
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected = f'{os.environ["CLOUD_RUN_SERVICE"]}-{os.environ["REVISION_SUFFIX"]}'
+          assert service["status"]["latestReadyRevisionName"] == expected
+          assert service["status"]["latestCreatedRevisionName"] == expected
+          tagged = [row for row in service["status"]["traffic"] if row.get("tag") == os.environ["REVISION_SUFFIX"]]
+          assert len(tagged) == 1 and tagged[0]["revisionName"] == expected
+          print(tagged[0]["url"])
+          PY
+          )"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 -H 'Cache-Control: no-cache, no-store' "$TAG_URL/health?commit=$GITHUB_SHA")"
+          STABLE_HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 5 --retry-max-time 60 -H 'Cache-Control: no-cache, no-store' "$SERVICE_URL/health?commit=$GITHUB_SHA")"
+          python - "$HEALTH" "$STABLE_HEALTH" "$SERVICE_DESCRIPTION" "$SERVICE_URL" <<'PY'
+          import json
+          import os
           import sys
 
           health = json.loads(sys.argv[1])
-          service = json.load(open(sys.argv[2], encoding="utf-8"))
+          stable_health = json.loads(sys.argv[2])
+          service = json.load(open(sys.argv[3], encoding="utf-8"))
           variables = {
               item["name"]: item.get("value")
               for item in service["spec"]["template"]["spec"]["containers"][0]["env"]
           }
           assert health["environment"] == "strategy2-test-live"
           assert health["status"] == "ready"
+          assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
+          assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
+          assert stable_health["sourceCommit"] == os.environ["GITHUB_SHA"]
+          assert stable_health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
           assert variables["TRADEMENTOR_ALLOW_LIVE"] == "true"
           assert variables["ASTER_LIVE_EXECUTION_ENABLED"] == "true"
           assert variables["ASTER_STRATEGY2_LIVE_ENABLED"] == "true"
@@ -132,7 +179,9 @@ jobs:
           assert variables["ASTER_STRATEGY3_LIVE_ENABLED"] == "false"
           assert variables["ASTER_STRATEGY3_RUNTIME_ENABLED"] == "false"
           assert variables["MEXC_LIVE_EXECUTION_ENABLED"] == "false"
-          assert variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[3]
+          assert variables["TRADEMENTOR_SOURCE_COMMIT"] == os.environ["GITHUB_SHA"]
+          assert variables["TRADEMENTOR_DEPLOY_NONCE"] == os.environ["GITHUB_RUN_ID"]
+          assert variables["MEXC_INTERNAL_AUDIENCE"] == sys.argv[4]
           PY
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
 
@@ -180,6 +229,9 @@ jobs:
           assert "/internal/aster-strategy3/tick" not in job["httpTarget"]["uri"]
           assert "/internal/aster-strategy2/tick" in openapi["paths"]
           assert "post" in openapi["paths"]["/internal/aster-strategy2/tick"]
+          assert "get" in openapi["paths"]["/v1/me/aster/strategy2/money-grabber/activation-preview"]
+          assert "post" in openapi["paths"]["/v1/me/aster/strategy2/money-grabber/start-round"]
+          assert "get" in openapi["paths"]["/v1/me/aster/strategy2/money-grabber/shadow"]
           PY
           test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "$SCHEDULER_INITIAL_STATE"
 
