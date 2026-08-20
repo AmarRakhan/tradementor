@@ -125,6 +125,12 @@ def transfer_active_ownership_to_strategy2(*,positions:list[dict[str,Any]],strat
     Strategy 1. Duplicate claims inside one source are rejected.  This pure
     function never sends orders and never mutates persisted state.
     """
+    active=active_position_map(positions)
+    # A reliable empty exchange snapshot is authoritative: there is no active
+    # ownership to transfer. Historical/duplicate stale claims must not keep a
+    # flat account in RECONCILING; the caller will persist the empty result.
+    if not active:
+        return [],[],[]
     sources=(('strategy2',strategy2_legs),('strategy3',strategy3_legs or []),('strategy1',strategy1_legs or []))
     indexed:dict[str,dict[tuple[str,str],OwnedLeg]]={};errors=[]
     for name,legs in sources:
@@ -136,7 +142,7 @@ def transfer_active_ownership_to_strategy2(*,positions:list[dict[str,Any]],strat
             else:
                 by_key[key]=leg
         indexed[name]=by_key
-    active=active_position_map(positions);transferred=[];missing=[]
+    transferred=[];missing=[]
     for key,row in sorted(active.items()):
         source=next((indexed[name][key] for name,_ in sources if key in indexed[name]),None)
         quantity=abs(number(row.get('positionAmt')));entry=number(row.get('entryPrice'))
