@@ -1,0 +1,50 @@
+name: Verify Critical Workflow Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+  push:
+    branches:
+      - main
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - '.github/workflows/deploy-cloud-production.yml'
+      - '.github/workflows/deploy-cloud-staging.yml'
+      - '.github/workflows/deploy-cloud-strategy2-test-live.yml'
+      - '.github/workflows/check-strategy2-fleet-entry-flow-read-only.yml'
+      - '.github/workflows/verify-critical-workflow-sync.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compare-critical-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch both control refs
+        run: |
+          git fetch origin main:refs/remotes/origin/main amar-crypto-bot-2026-cloud:refs/remotes/origin/amar-crypto-bot-2026-cloud
+      - name: Fail on critical workflow drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            .github/workflows/deploy-cloud-production.yml
+            .github/workflows/deploy-cloud-staging.yml
+            .github/workflows/deploy-cloud-strategy2-test-live.yml
+            .github/workflows/check-strategy2-fleet-entry-flow-read-only.yml
+          )
+          for file in "${files[@]}"; do
+            git cat-file -e "origin/main:$file"
+            git cat-file -e "origin/amar-crypto-bot-2026-cloud:$file"
+            if ! diff -u <(git show "origin/main:$file") <(git show "origin/amar-crypto-bot-2026-cloud:$file"); then
+              echo "CRITICAL_WORKFLOW_DRIFT=$file" >&2
+              exit 1
+            fi
+          done
+          echo 'critical_workflow_sync=OK'
