@@ -97,7 +97,7 @@ from aster_strategy2_runtime import enrich_confirmed_costs
 from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
 from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
-from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, entry_order_limit, queued_entry_order_limit, management_preempts_initial_build
+from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, queued_entry_order_limit, management_preempts_initial_build
 from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -2022,9 +2022,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"data-hold","reason":reason,"ordersSent":0,"universe":universe_contract}
     codes=[symbol for symbol in universe_contract["selectedSymbols"] if symbol in rows and symbol in prices]
-    order_limit=(queued_entry_order_limit(initial_build_complete,owned,settings.maximum_pairs,
-        orders_used=MAX_ORDERS_PER_ACCOUNT_SCAN-max(0,int(order_budget)))
-        if order_budget is not None else entry_order_limit(initial_build_complete,owned,settings.maximum_pairs))
+    orders_used=(MAX_ORDERS_PER_ACCOUNT_SCAN-max(0,int(order_budget))) if order_budget is not None else 0
+    order_limit=queued_entry_order_limit(initial_build_complete,owned,settings.maximum_pairs,
+        orders_used=orders_used,maximum_orders=MAX_ORDERS_PER_ACCOUNT_SCAN)
     if dry_run or not live:
         return {"status":"simulated","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG","plannedOrders":order_limit,
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}

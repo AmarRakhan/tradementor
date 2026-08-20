@@ -147,13 +147,13 @@ def test_initial_fifty_positions_target_exactly_twenty_five_per_side():
     assert balanced_entry_targets(50)==(25,25)
     assert entry_order_limit(False,[],50)==50
 
-def test_initial_build_bypasses_one_per_tick_but_refill_does_not():
+def test_initial_build_and_refill_expose_the_full_seat_shortage():
     owned=[]
     for index in range(10):
         owned.append(OwnedLeg("s2","strategy2",f"L{index}USDT","LONG",f"l{index}",1,1,100))
         owned.append(OwnedLeg("s2","strategy2",f"S{index}USDT","SHORT",f"s{index}",1,1,100))
     assert entry_order_limit(False,owned,50)==30
-    assert entry_order_limit(True,owned,50)==1
+    assert entry_order_limit(True,owned,50)==30
 
 def test_tp_and_dca_always_preempt_incomplete_balanced_initial_build():
     config=Strategy2Config(maximum_pairs=50)

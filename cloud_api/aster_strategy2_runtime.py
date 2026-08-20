@@ -289,17 +289,19 @@ def next_balanced_entry_side(owned:list[OwnedLeg],total:int)->str|None:
     return "SHORT" if short_count<short_target else None
 
 def entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int)->int:
+    """Expose the complete seat shortage; queue budget limits actual sends.
+
+    ``initial_build_complete`` remains part of the public signature for stored
+    runtime compatibility, but a later refill can have more than one missing
+    seat.  Collapsing that shortage to one prevented a scan from using the
+    account-scoped order budget that already safely caps exchange requests.
+    """
     long_target,short_target=balanced_entry_targets(total);long_count,short_count=harvest_counts(owned)
-    remaining=max(0,(long_target-long_count)+(short_target-short_count))
-    return min(1,remaining) if initial_build_complete else remaining
+    return max(0,(long_target-long_count)+(short_target-short_count))
 
 def queued_entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int,
                              *,orders_used:int=0,maximum_orders:int=15)->int:
-    """Entry allowance for the feature-flagged account queue.
-
-    The legacy helper above intentionally remains unchanged for immediate
-    rollback compatibility while the queue feature flag is disabled.
-    """
+    """Cap the complete seat shortage to the remaining account-scan budget."""
     return min(entry_order_limit(initial_build_complete,owned,total),
                max(0,int(maximum_orders)-max(0,int(orders_used))))
 

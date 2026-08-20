@@ -38,6 +38,11 @@ def test_feature_flagged_entry_limit_respects_orders_already_used():
     assert queued_entry_order_limit(False,[],100,orders_used=15)==0
 
 
+def test_completed_build_refill_uses_all_remaining_queue_slots():
+    assert queued_entry_order_limit(True,[],100,orders_used=0)==15
+    assert queued_entry_order_limit(True,[],100,orders_used=6)==9
+
+
 def test_fifteen_profit_closes_can_use_full_budget():
     state=QueueState("a","s")
     sent=execute(state,[action("TAKE_PROFIT_CLOSE",i) for i in range(20)])
