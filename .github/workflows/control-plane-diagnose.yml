@@ -1,40 +1,31 @@
 name: Control Plane Diagnose
 
 on:
-  push:
-    branches: [amar-crypto-bot-2026-cloud]
-    paths: [.control-plane/diagnose-request.json]
+  issues:
+    types: [opened]
 
 permissions:
   contents: read
   id-token: write
 
-env:
-  GCP_PROJECT_ID: tradementor-amar-20260813
-  GCP_REGION: europe-west4
-
 jobs:
   diagnose:
+    if: startsWith(github.event.issue.title, '[CONTROL-PLANE] diagnose ')
     runs-on: ubuntu-latest
     environment: staging
+    env:
+      GCP_PROJECT_ID: tradementor-amar-20260813
+      GCP_REGION: europe-west4
     steps:
-      - name: Check out diagnostic request
-        uses: actions/checkout@v4
-      - name: Validate diagnostic request
+      - name: Resolve diagnostic scope
         id: request
         shell: bash
+        env:
+          TITLE: ${{ github.event.issue.title }}
         run: |
           set -euo pipefail
-          SCOPE="$(python - <<'PY'
-          import json
-          with open('.control-plane/diagnose-request.json', encoding='utf-8') as f:
-              request = json.load(f)
-          scope = request.get('scope', 'all')
-          if scope not in {'all', 'production', 'staging'}:
-              raise SystemExit('invalid diagnostic scope')
-          print(scope)
-          PY
-          )"
+          SCOPE="${TITLE##*diagnose }"
+          case "$SCOPE" in all|production|staging) ;; *) exit 2 ;; esac
           echo "scope=$SCOPE" >> "$GITHUB_OUTPUT"
       - name: Authenticate diagnostic identity
         uses: google-github-actions/auth@v2
@@ -50,7 +41,7 @@ jobs:
           test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
           test "$GCP_REGION" = "europe-west4"
           mkdir -p control-plane-report
-          printf 'generatedAt=%s\nproject=%s\nregion=%s\nscope=%s\nrequestCommit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GCP_PROJECT_ID" "$GCP_REGION" "${{ steps.request.outputs.scope }}" "$GITHUB_SHA" > control-plane-report/summary.txt
+          printf 'generatedAt=%s\nproject=%s\nregion=%s\nscope=%s\nissue=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GCP_PROJECT_ID" "$GCP_REGION" "${{ steps.request.outputs.scope }}" "${{ github.event.issue.number }}" > control-plane-report/summary.txt
           gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > control-plane-report/cloud-run-services.json
           gcloud run revisions list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > control-plane-report/cloud-run-revisions.json
           gcloud scheduler jobs list --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > control-plane-report/scheduler-jobs.json
