@@ -1,0 +1,4 @@
+verifiedAt=2026-08-20T14:05:10Z
+source=1c75d64a8d79fd11284bbb4611aefd21b2a34360
+revision=tradementor-strategy2-test-live-api-mg-66
+service=tradementor-strategy2-test-live-api
