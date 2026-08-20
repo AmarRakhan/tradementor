@@ -1,0 +1,131 @@
+name: Fix S2 Flat Stale Ownership
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/fix-s2-flat-stale-ownership.yml]
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: fix-s2-flat-stale-ownership
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-staging-api
+  FIREBASE_AUTH_PROJECT_ID: tradementor-production
+
+jobs:
+  patch-test-deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Patch empty authoritative exchange ownership transfer
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_strategy2_runtime.py')
+          s=p.read_text()
+          old="""    sources=(('strategy2',strategy2_legs),('strategy3',strategy3_legs or []),('strategy1',strategy1_legs or []))\n    indexed:dict[str,dict[tuple[str,str],OwnedLeg]]={};errors=[]\n"""
+          new="""    active=active_position_map(positions)\n    # A reliable empty exchange snapshot is authoritative: there is no active\n    # ownership to transfer. Historical/duplicate stale claims must not keep a\n    # flat account in RECONCILING; the caller will persist the empty result.\n    if not active:\n        return [],[],[]\n    sources=(('strategy2',strategy2_legs),('strategy3',strategy3_legs or []),('strategy1',strategy1_legs or []))\n    indexed:dict[str,dict[tuple[str,str],OwnedLeg]]={};errors=[]\n"""
+          if new in s:
+              print('patch already present')
+          else:
+              if old not in s:
+                  raise SystemExit('expected ownership transfer block not found')
+              s=s.replace(old,new,1)
+              s=s.replace('    active=active_position_map(positions);transferred=[];missing=[]\n','    transferred=[];missing=[]\n',1)
+              p.write_text(s)
+          PY
+
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Regression check flat account with duplicate stale claims
+        working-directory: cloud_api
+        run: |
+          python - <<'PY'
+          from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
+          from aster_strategy2_state import OwnedLeg
+          leg=OwnedLeg(strategy_id='aster-strategy-2',engine_type='strategy2',symbol='BTCUSDT',side='LONG',cycle_id='old',config_version=1,quantity=1,weighted_entry=1)
+          transferred,missing,errors=transfer_active_ownership_to_strategy2(positions=[],strategy2_legs=[leg,leg])
+          assert transferred == []
+          assert missing == []
+          assert errors == []
+          PY
+
+      - name: Run full backend tests
+        working-directory: cloud_api
+        run: pytest -q
+
+      - name: Commit proven fix
+        shell: bash
+        run: |
+          git config user.name "TradeMentor Control Plane"
+          git config user.email "actions@users.noreply.github.com"
+          if git diff --quiet -- cloud_api/aster_strategy2_runtime.py; then
+            echo "No source change needed"
+          else
+            git add cloud_api/aster_strategy2_runtime.py
+            git commit -m "Fix flat Strategy-2 stale ownership reconciliation"
+            git push origin HEAD:amar-crypto-bot-2026-cloud
+          fi
+
+      - name: Authenticate staging deploy identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push staging container
+        shell: bash
+        run: |
+          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-staging-api"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/staging-api:s2-flat-stale-${GITHUB_RUN_ID}"
+          docker build --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy staging with trading disabled
+        run: |
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
+            --allow-unauthenticated
+
+      - name: Verify staging health
+        run: |
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          HEALTH="$(curl --fail --silent --show-error "$SERVICE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1])
+          assert h['environment']=='staging'
+          assert h['ordersEnabled'] is False
+          assert h['dataProject']=='tradementor-amar-20260813'
+          print('staging verified', h)
+          PY
