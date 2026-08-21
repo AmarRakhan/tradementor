@@ -1,4 +1,4 @@
-const CLOUD_API = process.env.CLOUD_API_URL || "https://tradementor-api-604335232956.europe-west4.run.app";
+const CLOUD_API = "https://tradementor-api-604335232956.europe-west4.run.app";
 
 export async function proxyCloud(request: Request, pathname: string, method: "GET" | "POST" | "PUT", bodyOverride?: string) {
   const authorization = request.headers.get("authorization");
