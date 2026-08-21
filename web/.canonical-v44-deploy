@@ -1,0 +1,4 @@
+canonical-service=amar-bot-v44-direct-install
+canonical-backend=https://tradementor-api-604335232956.europe-west4.run.app
+webapp-version=44
+purpose=Trigger and document the shared v44 deployment pipeline.
