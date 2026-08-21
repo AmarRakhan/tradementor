@@ -11,46 +11,77 @@ permissions:
   issues: write
 
 env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  RECOVERY_SERVICE: tradementor-strategy2-recovery-api
   RECOVERY_URL: https://tradementor-strategy2-recovery-api-cyyaq5otyq-ez.a.run.app
-  INTERNAL_AUDIENCE: https://tradementor-api-604335232956.europe-west4.run.app
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
 
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Mark started
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK3 STARTED commit=$GITHUB_SHA"
-      - id: gcp_auth
-        continue-on-error: true
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK4 STARTED commit=$GITHUB_SHA"
+      - id: gcp_access
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Align only recovery internal audience and preserve disabled trading gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          BEFORE="$RUNNER_TEMP/before.json"
+          AFTER="$RUNNER_TEMP/after.json"
+          gcloud run services describe "$RECOVERY_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$BEFORE"
+          python - "$BEFORE" <<'PY'
+          import json,sys
+          value=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=value['spec']['template']['spec']
+          env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
+          assert env.get('TRADEMENTOR_ALLOW_LIVE')=='false'
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='false'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='false'
+          assert env.get('ASTER_STRATEGY3_LIVE_ENABLED')=='false'
+          assert env.get('ASTER_STRATEGY3_RUNTIME_ENABLED')=='false'
+          PY
+          gcloud run services update "$RECOVERY_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --update-env-vars "MEXC_INTERNAL_AUDIENCE=$RECOVERY_URL" --quiet
+          gcloud run services describe "$RECOVERY_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$AFTER"
+          python - "$AFTER" "$RECOVERY_URL" <<'PY'
+          import json,sys
+          value=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=value['spec']['template']['spec']
+          env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
+          assert env.get('MEXC_INTERNAL_AUDIENCE')==sys.argv[2]
+          assert env.get('TRADEMENTOR_ALLOW_LIVE')=='false'
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='false'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='false'
+          assert env.get('ASTER_STRATEGY3_LIVE_ENABLED')=='false'
+          assert env.get('ASTER_STRATEGY3_RUNTIME_ENABLED')=='false'
+          PY
+      - id: gcp_id
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
           token_format: id_token
-          id_token_audience: ${{ env.INTERNAL_AUDIENCE }}
+          id_token_audience: ${{ env.RECOVERY_URL }}
           id_token_include_email: true
-      - name: Probe disabled Strategy 2 tick with auth-action ID token
-        if: steps.gcp_auth.outcome == 'success'
+      - name: Probe disabled Strategy 2 scheduler
         env:
           GH_TOKEN: ${{ github.token }}
-          ID_TOKEN: ${{ steps.gcp_auth.outputs.id_token }}
+          ID_TOKEN: ${{ steps.gcp_id.outputs.id_token }}
         shell: bash
         run: |
-          set +e
-          HTTP="000"; CURL_RC=99; BODY=""
-          if [ -n "$ID_TOKEN" ]; then
-            HTTP="$(curl -sS --max-time 30 -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $ID_TOKEN" "$RECOVERY_URL/internal/aster-strategy2/tick")"
-            CURL_RC=$?
-            BODY="$(head -c 1800 /tmp/response.json 2>/dev/null | tr '\n' ' ')"
-          fi
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK3 auth=${{ steps.gcp_auth.outcome }} token_present=$([ -n "$ID_TOKEN" ] && echo yes || echo no) curl_rc=$CURL_RC http=$HTTP response=$BODY"
-      - name: Report auth failure
-        if: steps.gcp_auth.outcome != 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK3 auth=${{ steps.gcp_auth.outcome }}"
+          set -euo pipefail
+          HTTP="$(curl -sS --max-time 30 -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $ID_TOKEN" "$RECOVERY_URL/internal/aster-strategy2/tick")"
+          BODY="$(head -c 1800 /tmp/response.json | tr '\n' ' ')"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK4 http=$HTTP response=$BODY gates=DISABLED audience=$RECOVERY_URL"
+          test "$HTTP" = "200"
+          grep -q 'centrally-disabled' /tmp/response.json
