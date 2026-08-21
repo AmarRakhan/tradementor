@@ -24,23 +24,42 @@ jobs:
       - name: Mark probe started
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE STARTED commit=$GITHUB_SHA"
-      - uses: google-github-actions/auth@v2
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE2 STARTED commit=$GITHUB_SHA"
+      - id: gcp_auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - name: Probe production services read only
+      - name: Report authentication outcome
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          AUTH_OUTCOME: ${{ steps.gcp_auth.outcome }}
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE2 auth=$AUTH_OUTCOME"
+      - id: setup_gcloud
+        if: steps.gcp_auth.outcome == 'success'
+        continue-on-error: true
+        uses: google-github-actions/setup-gcloud@v2
+      - id: cloud_probe
+        if: steps.gcp_auth.outcome == 'success' && steps.setup_gcloud.outcome == 'success'
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           SERVICE="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName,status.url)')"
           SCHEDULER="$(gcloud scheduler jobs describe tradementor-aster-automation-tick --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state,schedule,httpTarget.uri)')"
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE SUCCESS service=$SERVICE scheduler=$SCHEDULER"
-      - name: Mark probe failed
-        if: failure()
+          printf '%s\n' "$SERVICE" > /tmp/service.txt
+          printf '%s\n' "$SCHEDULER" > /tmp/scheduler.txt
+      - name: Report cloud probe outcome
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE FAILED commit=$GITHUB_SHA"
+          AUTH_OUTCOME: ${{ steps.gcp_auth.outcome }}
+          GCLOUD_OUTCOME: ${{ steps.setup_gcloud.outcome }}
+          PROBE_OUTCOME: ${{ steps.cloud_probe.outcome }}
+        shell: bash
+        run: |
+          SERVICE="$(cat /tmp/service.txt 2>/dev/null || true)"
+          SCHEDULER="$(cat /tmp/scheduler.txt 2>/dev/null || true)"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE2 auth=$AUTH_OUTCOME setup=$GCLOUD_OUTCOME probe=$PROBE_OUTCOME service=$SERVICE scheduler=$SCHEDULER"
