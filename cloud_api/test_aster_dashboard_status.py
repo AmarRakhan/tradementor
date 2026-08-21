@@ -210,4 +210,5 @@ def test_contract_module_is_read_only_and_endpoint_is_get_only():
     for forbidden in ("AsterV3Client", "firestore", "execute_", ".set({", ".add({"):
         assert forbidden not in contract_source
     assert '@app.get("/v1/me/aster/status")' in main_source
-    assert '"botStatusDashboard": dashboard_status' in main_source
+    status_route = main_source[main_source.index('def aster_status('):main_source.index('@app.get("/v1/me/aster/trade-events")')]
+    assert '"botStatusDashboard": dashboard_status' not in status_route

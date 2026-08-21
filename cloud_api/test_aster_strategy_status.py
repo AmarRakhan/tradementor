@@ -114,3 +114,5 @@ def test_public_dashboard_status_never_refreshes_every_position_cost_from_aster(
     assert "_read_strategy_cost_evidence(" not in route
     assert "refresh_owned_costs(" not in route
     assert "strategy2_costs_by_key=dict(strategy2_owned_by_key)" in route
+    assert "aster_strategy3_reference" not in route
+    assert "aster_automation_public" not in route

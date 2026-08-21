@@ -113,5 +113,5 @@ def test_status_projection_and_history_refresh_are_strictly_read_only():
     assert "refresh_owned_costs" in helper
     assert "execute_" not in helper and ".set(" not in helper and "new_order" not in helper
     status_route = main_source[main_source.index('def aster_status('):main_source.index('@app.get("/v1/me/aster/trade-events")')]
-    assert 'row["strategy3Tp"]=strategy3_position_tp_contract' in status_route
-    assert "live_authorized=False" in status_route
+    assert 'row["strategy3Tp"]=strategy3_position_tp_contract' not in status_route
+    assert "aster_strategy3_reference" not in status_route

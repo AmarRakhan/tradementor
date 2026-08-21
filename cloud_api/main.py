@@ -1601,13 +1601,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         for symbol in sorted(recovery_symbols):
             starts=[leg.created_at_ms for leg in owned if leg.symbol==symbol and leg.created_at_ms>0]
             fills.extend(paged_user_trades(client,symbol,start_time=min(starts) if starts else None))
-        s3_raw=aster_strategy3_reference(uid).get().to_dict() or {};s3_keys=set();s3_legs=[]
-        for item in s3_raw.get("ownedLegs",[]) if isinstance(s3_raw.get("ownedLegs"),list) else []:
-            try:
-                s3_leg=owned_from_mapping(item)
-                if s3_leg.strategy_id=="aster-strategy-3" and s3_leg.engine_type=="strategy3":
-                    s3_keys.add((s3_leg.symbol,s3_leg.side));s3_legs.append(s3_leg)
-            except (TypeError,ValueError):pass
+        # Strategy 3 is retired. Stale Strategy-3 documents must never participate
+        # in Strategy-2 ownership, TP management, or entry gating.
+        s3_keys:set[tuple[str,str]]=set();s3_legs:list[OwnedLeg]=[]
         # Repair a confirmed fill/audit refresh race before exclusive ownership
         # completeness is evaluated.  Both evidence sources must match the
         # active exchange leg; manual or otherwise unproven positions remain
@@ -1624,16 +1620,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             recovery_batch.commit()
             refresh_symbols|={str(item.get("symbol","")).upper() for item in recovered_ownership}
         exclusive=os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP","false").lower()=="true"
-        s1_raw=aster_automation_reference(uid).get().to_dict() or {};s1_legs=[]
-        for item in s1_raw.get("ownedLegs",[]) if isinstance(s1_raw.get("ownedLegs"),list) else []:
-            try:s1_legs.append(owned_from_mapping(item))
-            except (TypeError,ValueError):pass
+        # Strategy 1 and Strategy 3 are retired app-wide. Their persisted rows
+        # are historical only and may not gate or claim current Strategy-2 legs.
+        s1_legs:list[OwnedLeg]=[]
         if exclusive:
-            legacy_active=bool(s1_raw.get("monitor") or s1_raw.get("enabled") or s3_raw.get("monitor") or s3_raw.get("enabled"))
-            if legacy_active:
-                reason="Exclusieve Strategy-2-overdracht wacht tot Strategy 1 en 3 centraal zijn uitgeschakeld"
-                ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
-                return {"status":"reconciling","reason":reason,"ordersSent":0}
             transferred,missing,transfer_errors=transfer_active_ownership_to_strategy2(positions=positions,
                 strategy2_legs=owned,strategy3_legs=s3_legs,strategy1_legs=s1_legs)
             if transfer_errors:
@@ -1655,7 +1645,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             reason="Strategy-2-ownership botst met Strategy 3 en is niet eenduidig bewezen"
             ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
             return {"status":"reconciling","reason":reason,"ordersSent":0}
-        s1_keys=set() if exclusive else _explicit_strategy1_owned_keys(s1_raw)
+        s1_keys:set[tuple[str,str]]=set()
         s2_keys={(leg.symbol,leg.side) for leg in owned}
         unknown=active_keys-(s1_keys|s2_keys|s3_keys)
         proven_owned,_,stored_only_s2=isolate_unproven_ownership(persisted=owned,positions=positions)
@@ -3770,7 +3760,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     automation = automation_ref.get().to_dict() or {}
     snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
     captured_at = snapshot.get("capturedAt")
-    snapshot_stale = not isinstance(captured_at, datetime) or datetime.now(timezone.utc) - captured_at > timedelta(seconds=90)
+    snapshot_stale = not isinstance(captured_at, datetime) or datetime.now(timezone.utc) - captured_at > timedelta(seconds=30)
     if snapshot_stale:
         try:
             read_client = AsterV3Client(
@@ -3789,16 +3779,12 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             # Preserve the last exchange-confirmed snapshot rather than showing
             # invented zeroes when Aster is temporarily unavailable.
             pass
-    exchange_state = automation.get("exchangeState") if isinstance(automation.get("exchangeState"), dict) else {}
-    pair_count = len(exchange_state.get("pairs") or [])
-    hedge_mode = bool(snapshot.get("hedgeMode", exchange_state.get("hedgeModeConfirmed", True)))
-    leg_meta = automation.get("legMeta") if isinstance(automation.get("legMeta"), dict) else {}
-    leg_last_order_at = automation.get("legLastOrderAt") if isinstance(automation.get("legLastOrderAt"), dict) else {}
-    strategy_settings = AsterStrategySettings.from_mapping(automation.get("settings") or {})
+    hedge_mode = bool(snapshot.get("hedgeMode", True))
+    leg_meta: dict[str, Any] = {}
+    leg_last_order_at: dict[str, Any] = {}
+    strategy_settings = AsterStrategySettings.from_mapping({})
     strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
-    strategy3_state = aster_strategy3_reference(uid).get().to_dict() or {}
-    for state, reference in ((strategy2_state, aster_strategy2_reference(uid)),
-                             (strategy3_state, aster_strategy3_reference(uid))):
+    for state, reference in ((strategy2_state, aster_strategy2_reference(uid)),):
         try:
             latest = next(iter(reference.collection("audit").order_by(
                 "timestamp", direction=firestore.Query.DESCENDING).limit(1).stream()), None)
@@ -3812,8 +3798,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             pass
     owned_legs_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     strategy2_owned_by_key:dict[tuple[str,str],OwnedLeg]={}
-    strategy3_owned_by_key:dict[tuple[str,str],OwnedLeg]={}
-    for strategy_state in (strategy2_state, strategy3_state):
+    for strategy_state in (strategy2_state,):
         for item in strategy_state.get("ownedLegs", []) if isinstance(strategy_state.get("ownedLegs"), list) else []:
             if not isinstance(item, dict):
                 continue
@@ -3829,11 +3814,6 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 try:
                     parsed=owned_from_mapping(item)
                     if parsed.strategy_id=="aster-strategy-2" and parsed.engine_type=="strategy2":strategy2_owned_by_key[key]=parsed
-                except (TypeError,ValueError):pass
-            elif strategy_state is strategy3_state:
-                try:
-                    parsed=owned_from_mapping(item)
-                    if parsed.strategy_id=="aster-strategy-3" and parsed.engine_type=="strategy3":strategy3_owned_by_key[key]=parsed
                 except (TypeError,ValueError):pass
     evidence_now=datetime.now(timezone.utc)
     def recent_portfolio_snapshot(value:Any)->bool:
@@ -3856,19 +3836,6 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     # The strategy runtimes already persist this evidence under ownedLegs; the
     # browser consumes it fail-closed until a scheduler refreshes it.
     strategy2_costs_by_key=dict(strategy2_owned_by_key);strategy2_cost_failures:dict[str,str]={}
-    strategy3_canary=aster_strategy3_reference(uid).collection("canaries").document("s3-open-fill-close-v1").get().to_dict() or {}
-    strategy3_persisted_settings=strategy3_state.get("settings") if isinstance(strategy3_state.get("settings"),dict) else {}
-    strategy3_settings=replace(Strategy3Config.from_mapping(strategy3_persisted_settings),
-        mode=strategy3_persisted_runtime_mode(strategy3_persisted_settings,strategy3_canary))
-    strategy3_snapshot=strategy3_state.get("accountSnapshot") if isinstance(strategy3_state.get("accountSnapshot"),dict) else {}
-    strategy3_portfolio=None
-    if safe_float(strategy3_snapshot.get("equity"))>0 and recent_portfolio_snapshot(strategy3_snapshot.get("capturedAt")):
-        strategy3_portfolio=Strategy3PortfolioState(
-            safe_float(strategy3_snapshot.get("equity")),safe_float(strategy3_snapshot.get("highWaterMark")),
-            safe_float(strategy3_snapshot.get("marginRatio")),safe_float(strategy3_snapshot.get("longExposure")),
-            safe_float(strategy3_snapshot.get("shortExposure")),safe_float(strategy3_snapshot.get("strategyMargin")))
-    strategy3_costs_by_key:dict[tuple[str,str],OwnedLeg]=dict(strategy3_owned_by_key);strategy3_cost_failures:dict[str,str]={}
-    strategy3_peaks=strategy3_state.get("trailingPeaks") if isinstance(strategy3_state.get("trailingPeaks"),dict) else {}
     positions = []
     for raw in snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []:
         row = dict(raw) if isinstance(raw, dict) else {}
@@ -3888,11 +3855,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         row["openedAt"] = int(safe_float(owned_leg.get("created_at_ms"))) or row.get("openedAt")
         strategy_id = str(owned_leg.get("strategy_id", owned_leg.get("strategyId", ""))).strip()
         row["strategyId"] = strategy_id
-        row["strategyName"] = (
-            "Strategy 3 · Dual Harvest Adaptive Shield" if "3" in strategy_id
-            else "Strategy 2 · Dual Profit Harvest DCA" if "2" in strategy_id
-            else ""
-        )
+        row["strategyName"] = "Strategy 2 · Dual Profit Harvest DCA" if strategy_id == "aster-strategy-2" else ""
         if strategy_id=="aster-strategy-2":
             row["strategy2Tp"]=strategy2_position_tp_contract(row=row,
                 owned=strategy2_costs_by_key.get((symbol,side)),config=strategy2_settings,
@@ -3900,28 +3863,15 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 portfolio=strategy2_portfolio)
             if symbol in strategy2_cost_failures and row["strategy2Tp"]["status"]=="Niet betrouwbaar te bepalen":
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
-        elif strategy_id=="aster-strategy-3":
-            row["strategy3Tp"]=strategy3_position_tp_contract(row=row,
-                owned=strategy3_costs_by_key.get((symbol,side)),config=strategy3_settings,
-                # The public status service is in a different Cloud project
-                # from the isolated Strategy-3 runtime. Never report this
-                # process' intentionally-disabled S3 flags as the live gate.
-                state={**strategy3_state,"runtimeEnabled":strategy3_state.get("runtimeEnabled")
-                    if isinstance(strategy3_state.get("runtimeEnabled"),bool) else None},
-                portfolio=strategy3_portfolio,
-                trailing_peak_return=(safe_float(strategy3_peaks.get(f"{symbol}|{side}"))
-                    if f"{symbol}|{side}" in strategy3_peaks else None))
-            if symbol in strategy3_cost_failures and row["strategy3Tp"]["status"]=="Niet betrouwbaar te bepalen":
-                row["strategy3Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy3_cost_failures[symbol]}"
         positions.append(row)
     closed_trades = _stored_aster_closed_trades(user)
     status = {
         "configured": True, "credentialsVerified": True, "hedgeMode": hedge_mode,
-        "equity": safe_float(snapshot.get("equity", automation.get("cycleStartEquity"))),
-        "walletBalance": safe_float(snapshot.get("walletBalance", automation.get("cycleStartEquity"))),
+        "equity": safe_float(snapshot.get("equity")),
+        "walletBalance": safe_float(snapshot.get("walletBalance")),
         "availableBalance": safe_float(snapshot.get("availableBalance")),
         "unrealizedPnl": safe_float(snapshot.get("unrealizedPnl")),
-        "activePositions": int(safe_float(snapshot.get("activePositions", pair_count * 2))),
+        "activePositions": len(positions),
         "activeTradeCapital": safe_float(snapshot.get("activeTradeCapital")),
         "financialDataContract": snapshot.get("financialDataContract") if isinstance(snapshot.get("financialDataContract"), dict) else {},
         "maintenanceMargin": safe_float(snapshot.get("maintenanceMargin")),
@@ -3932,26 +3882,9 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "maximumLeverage": int(safe_float(snapshot.get("maximumLeverage"))),
         "liveReady": hedge_mode, "snapshotAt": snapshot.get("capturedAt"),
     }
-    dashboard_status = build_aster_dashboard_status(
-        snapshot=snapshot,
-        strategy2_state=strategy2_state,
-        strategy3_state=strategy3_state,
-        strategy2_config=strategy2_settings,
-        strategy3_config=strategy3_settings,
-        runtime_gates={
-            "asterLiveExecution": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
-            "strategy2Live": os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false").lower() == "true",
-            "strategy2Runtime": os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false").lower() == "true",
-            "strategy3Live": os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false").lower() == "true",
-            "strategy3Runtime": os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false").lower() == "true",
-        },
-    )
     return {
         **status,
-        "botStatusDashboard": dashboard_status,
-        **aster_automation_public(uid),
         **aster_strategy2_public(uid),
-        **aster_strategy3_public(uid),
         "apiWalletAddress": secret.signer_address,
         "signerAddressSuffix": str(control.get("signerAddressSuffix", secret.signer_address[-6:])),
         # Credential replacement never preserves an enabled switch.
@@ -6020,17 +5953,9 @@ def run_mexc_automation_internal_simulation(uid: str, authorization: str | None 
 @app.post("/internal/aster-automation/tick")
 def run_aster_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_cloud_request(authorization)
-    controls=list(db.collection("asterAutomation").where("monitor","==",True).stream());results=[]
-    for item in controls[:100]:
-        reference=aster_automation_reference(item.id)
-        if not _acquire_mexc_automation_lease(reference):
-            results.append({"uid":item.id,"status":"lease-busy"});continue
-        try: results.append(_run_aster_automation_tick(item.id))
-        except Exception as exc:
-            message=f"Veilige schedulerfout: {exc}"
-            reference.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":datetime.now(timezone.utc)},merge=True)
-            results.append({"uid":item.id,"status":"data-hold","reason":message})
-        finally: reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+    # Strategy 1 is retired app-wide. Historical asterAutomation documents are
+    # read-only legacy state and are never scheduled or allowed to place orders.
+    results=[]
     strategy2_controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
     strategy2_results=[]
 
