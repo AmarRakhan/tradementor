@@ -11,11 +11,10 @@ permissions:
   issues: write
 
 env:
-  GCP_PROJECT_ID: tradementor-production
-  GCP_REGION: europe-west4
+  RECOVERY_URL: https://tradementor-strategy2-recovery-api-cyyaq5otyq-ez.a.run.app
+  INTERNAL_AUDIENCE: https://tradementor-api-604335232956.europe-west4.run.app
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  INTERNAL_AUDIENCE: https://tradementor-api-604335232956.europe-west4.run.app
 
 jobs:
   probe:
@@ -25,34 +24,33 @@ jobs:
       - name: Mark started
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK2 STARTED commit=$GITHUB_SHA"
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK3 STARTED commit=$GITHUB_SHA"
       - id: gcp_auth
         continue-on-error: true
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-      - id: setup_gcloud
+          token_format: id_token
+          id_token_audience: ${{ env.INTERNAL_AUDIENCE }}
+          id_token_include_email: true
+      - name: Probe disabled Strategy 2 tick with auth-action ID token
         if: steps.gcp_auth.outcome == 'success'
-        continue-on-error: true
-        uses: google-github-actions/setup-gcloud@v2
-      - name: Probe disabled Strategy 2 tick
-        if: steps.gcp_auth.outcome == 'success' && steps.setup_gcloud.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
+          ID_TOKEN: ${{ steps.gcp_auth.outputs.id_token }}
         shell: bash
         run: |
           set +e
-          URL="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)' 2>/tmp/url.err)"
-          URL_RC=$?
-          TOKEN="$(gcloud auth print-identity-token --audiences="$INTERNAL_AUDIENCE" 2>/tmp/token.err)"
-          TOKEN_RC=$?
           HTTP="000"; CURL_RC=99; BODY=""
-          if [ "$URL_RC" -eq 0 ] && [ "$TOKEN_RC" -eq 0 ] && [ -n "$URL" ] && [ -n "$TOKEN" ]; then
-            HTTP="$(curl -sS --max-time 30 -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" "$URL/internal/aster-strategy2/tick")"
+          if [ -n "$ID_TOKEN" ]; then
+            HTTP="$(curl -sS --max-time 30 -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $ID_TOKEN" "$RECOVERY_URL/internal/aster-strategy2/tick")"
             CURL_RC=$?
             BODY="$(head -c 1800 /tmp/response.json 2>/dev/null | tr '\n' ' ')"
           fi
-          URL_ERR="$(tr '\n' ' ' < /tmp/url.err 2>/dev/null | head -c 400)"
-          TOKEN_ERR="$(tr '\n' ' ' < /tmp/token.err 2>/dev/null | head -c 500)"
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK2 auth=${{ steps.gcp_auth.outcome }} setup=${{ steps.setup_gcloud.outcome }} url_rc=$URL_RC token_rc=$TOKEN_RC curl_rc=$CURL_RC http=$HTTP url_err=$URL_ERR token_err=$TOKEN_ERR response=$BODY"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK3 auth=${{ steps.gcp_auth.outcome }} token_present=$([ -n "$ID_TOKEN" ] && echo yes || echo no) curl_rc=$CURL_RC http=$HTTP response=$BODY"
+      - name: Report auth failure
+        if: steps.gcp_auth.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK3 auth=${{ steps.gcp_auth.outcome }}"
