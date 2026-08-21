@@ -1,0 +1,46 @@
+name: Probe Production Recovery Path
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/probe-production-recovery-path.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mark probe started
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE STARTED commit=$GITHUB_SHA"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Probe production services read only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName,status.url)')"
+          SCHEDULER="$(gcloud scheduler jobs describe tradementor-aster-automation-tick --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state,schedule,httpTarget.uri)')"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE SUCCESS service=$SERVICE scheduler=$SCHEDULER"
+      - name: Mark probe failed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE FAILED commit=$GITHUB_SHA"
