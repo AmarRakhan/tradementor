@@ -1,0 +1,80 @@
+name: Probe Production Strategy 2 State
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/probe-production-strategy2-state.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read Strategy 2 state through isolated runtime identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_SA="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          IMAGE="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].image)')"
+          JOB="tm-s2-state-${GITHUB_RUN_ID: -6}"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          from google.cloud import firestore
+          import os
+          db=firestore.Client(project='tradementor-production')
+          def states(name):
+              return [(d.to_dict() or {}) for d in db.collection(name).stream()]
+          s2=states('asterStrategy2'); s1=states('asterAutomation'); s3=states('asterStrategy3')
+          metrics=[
+              len(s2),
+              sum(1 for x in s2 if x.get('enabled') or x.get('monitor')),
+              sum(len(x.get('ownedLegs') or []) for x in s2),
+              sum(1 for x in s2 if x.get('liveReady')),
+              sum(1 for x in s2 if x.get('canaryValidated')),
+              sum(1 for x in s1 if x.get('enabled') or x.get('monitor')),
+              sum(1 for x in s3 if x.get('enabled') or x.get('monitor')),
+              sum(1 for x in s2 if x.get('monitor')),
+          ]
+          i=int(os.environ['CLOUD_RUN_TASK_INDEX'])
+          raise SystemExit(min(max(int(metrics[i]),0),249)+1)
+          PY
+          )"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 8 --parallelism 8 --max-retries 0 --task-timeout 120s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          METRICS="$(python - "$TASKS" <<'PY'
+          import json,sys
+          rows=json.loads(sys.argv[1]); values={}
+          for row in rows:
+              idx=row.get('index')
+              codes=[v.get('exitCode') for v in row.get('status',{}).get('containers',[]) if isinstance(v,dict) and isinstance(v.get('exitCode'),int)]
+              if isinstance(idx,int) and codes: values[idx]=max(0,codes[0]-1)
+          names=['documents','active','ownedLegs','liveReady','canaryValidated','legacyStrategy1Active','legacyStrategy3Active','monitoring']
+          print(','.join(f'{names[i]}={values.get(i,-1)}' for i in range(len(names))))
+          PY
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE $METRICS"
+          cleanup
+          trap - EXIT
