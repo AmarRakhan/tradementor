@@ -1,0 +1,8 @@
+# Canonical shared v44 Cloud Run source build uses npm/package-lock.json.
+# Exclude pnpm metadata so Google Buildpacks cannot silently switch package managers.
+pnpm-lock.yaml
+pnpm-workspace.yaml
+node_modules
+.next
+dist
+.wrangler
