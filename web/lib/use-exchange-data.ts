@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "./cloud-client";
-import { loadAsterSnapshot, mergeCompleteAsterSnapshot, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
+import { mergeCompleteAsterSnapshot, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
 import { createLatestAsterRequestGate } from "./aster-strategy2-server-status.mjs";
 
 export type ExchangeId = "hyperliquid" | "aster";
@@ -11,14 +11,6 @@ export type ExchangeSnapshots = Record<ExchangeId, ExchangeSnapshot>;
 
 const emptySnapshot = (): ExchangeSnapshot => ({ loading: false, data: null, error: "", updatedAt: null, source: "none", serverConfirmed: false });
 const inFlight = new Map<string, Promise<{ data: Record<string, unknown>; timings: Record<string, number> }>>();
-
-function cachedAster(uid: string): ExchangeSnapshot {
-  if (typeof window === "undefined" || !uid) return emptySnapshot();
-  const started = performance.now();
-  const cached = loadAsterSnapshot(window.localStorage, uid);
-  if (!cached) return emptySnapshot();
-  return { loading: false, data: cached.data, error: "", updatedAt: cached.updatedAt, source: "cache", serverConfirmed: false, timings: { cacheReadMs: Math.round(performance.now() - started) } };
-}
 
 async function timedRead(path: string) {
   const started = performance.now();
@@ -56,7 +48,7 @@ function fetchAsterSnapshot(uid: string, generation: number) {
 }
 
 export function useExchangeData(cloudReady: boolean, uid: string) {
-  const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAster(uid) } }));
+  const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: emptySnapshot() } }));
   const mounted = useRef(true);
   const asterRequestGate = useRef({ uid, gate: createLatestAsterRequestGate() });
 
@@ -74,7 +66,7 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
   useEffect(() => {
     if (state.uid === uid) return;
     asterRequestGate.current = { uid, gate: createLatestAsterRequestGate() };
-    setState({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAster(uid) } });
+    setState({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: emptySnapshot() } });
   }, [state.uid, uid]);
 
   const snapshots = useMemo(() => state.uid === uid ? state.snapshots : { hyperliquid: emptySnapshot(), aster: emptySnapshot() }, [state, uid]);
