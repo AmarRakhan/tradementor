@@ -1,0 +1,43 @@
+name: Probe Recovery Strategy 2 Tick Disabled
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/probe-recovery-strategy2-tick-disabled.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  INTERNAL_AUDIENCE: https://tradementor-api-604335232956.europe-west4.run.app
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Call Strategy 2 scheduler with recovery live gates disabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          TOKEN="$(gcloud auth print-identity-token --audiences="$INTERNAL_AUDIENCE")"
+          set +e
+          HTTP="$(curl -sS -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" "$URL/internal/aster-strategy2/tick")"
+          CURL_RC=$?
+          set -e
+          BODY="$(head -c 1800 /tmp/response.json | tr '\n' ' ')"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK curl_rc=$CURL_RC http=$HTTP response=$BODY"
