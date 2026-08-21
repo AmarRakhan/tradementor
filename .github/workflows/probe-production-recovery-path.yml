@@ -21,47 +21,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - id: gcp_auth
-        uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Probe production and recovery Cloud Run configuration
+      - name: Read recovery service gates and audience
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set +e
-          timeout 20s gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/prod.json 2> /tmp/prod.err
-          PROD_RC=$?
-          timeout 20s gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/recovery.json 2> /tmp/recovery.err
-          REC_RC=$?
-          REPORT="$(python - "$PROD_RC" "$REC_RC" /tmp/prod.json /tmp/recovery.json /tmp/prod.err /tmp/recovery.err <<'PY'
+          set -euo pipefail
+          gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/recovery.json
+          REPORT="$(python - /tmp/recovery.json <<'PY'
           import json,sys
-          prod_rc,rec_rc=int(sys.argv[1]),int(sys.argv[2])
-          def read_json(path):
-              try:return json.load(open(path,encoding='utf-8'))
-              except Exception:return {}
-          def service_summary(value):
-              spec=value.get('spec',{}).get('template',{}).get('spec',{})
-              env={x.get('name'):x.get('value') for x in spec.get('containers',[{}])[0].get('env',[])} if spec.get('containers') else {}
-              return {
-                'revision':value.get('status',{}).get('latestReadyRevisionName'),
-                'url':value.get('status',{}).get('url'),
-                'runtimeSA':spec.get('serviceAccountName'),
-                'TRADEMENTOR_ALLOW_LIVE':env.get('TRADEMENTOR_ALLOW_LIVE'),
-                'ASTER_LIVE_EXECUTION_ENABLED':env.get('ASTER_LIVE_EXECUTION_ENABLED'),
-                'ASTER_STRATEGY2_LIVE_ENABLED':env.get('ASTER_STRATEGY2_LIVE_ENABLED'),
-                'ASTER_STRATEGY3_LIVE_ENABLED':env.get('ASTER_STRATEGY3_LIVE_ENABLED'),
-                'ASTER_STRATEGY3_RUNTIME_ENABLED':env.get('ASTER_STRATEGY3_RUNTIME_ENABLED'),
-                'TRADEMENTOR_ENVIRONMENT':env.get('TRADEMENTOR_ENVIRONMENT'),
-              }
-          prod=service_summary(read_json(sys.argv[3])) if prod_rc==0 else {}
-          rec=service_summary(read_json(sys.argv[4])) if rec_rc==0 else {}
-          prod_err=open(sys.argv[5],encoding='utf-8',errors='ignore').read()[:350].replace('\n',' ')
-          rec_err=open(sys.argv[6],encoding='utf-8',errors='ignore').read()[:350].replace('\n',' ')
-          print(json.dumps({'prod_rc':prod_rc,'prod':prod,'prod_err':prod_err,'recovery_rc':rec_rc,'recovery':rec,'recovery_err':rec_err},separators=(',',':')))
+          value=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=value['spec']['template']['spec']
+          env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
+          keys=['MEXC_INTERNAL_AUDIENCE','TRADEMENTOR_ENVIRONMENT','TRADEMENTOR_ALLOW_LIVE','ASTER_LIVE_EXECUTION_ENABLED','ASTER_STRATEGY2_LIVE_ENABLED','ASTER_STRATEGY3_LIVE_ENABLED','ASTER_STRATEGY3_RUNTIME_ENABLED']
+          result={'revision':value['status'].get('latestReadyRevisionName'),'url':value['status'].get('url'),**{k:env.get(k) for k in keys}}
+          print(json.dumps(result,separators=(',',':')))
           PY
           )"
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE5 $REPORT"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_CONFIG_PROBE $REPORT"
