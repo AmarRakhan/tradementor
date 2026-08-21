@@ -24,6 +24,7 @@ def test_dashboard_snapshot_uses_current_official_account_totals():
     assert snapshot["positions"][0]["notionalUsd"] == 130.0
     assert snapshot["activeTradeCapital"] == 6.5
     assert snapshot["positions"][0]["initialMarginUsd"] == 6.5
+    assert round(snapshot["positions"][0]["returnPct"], 6) == round(2 / 6.5 * 100, 6)
     assert snapshot["positions"][0]["dataSource"] == "ASTER_API"
     assert snapshot["financialDataContract"]["sourceOfTruth"] == "ASTER_API"
     assert snapshot["financialDataContract"]["positionDisplayReturnIsTakeProfitStatus"] is False
