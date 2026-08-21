@@ -77,7 +77,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
             },
             "calculated": {
                 "marginRatio": "totalMaintMargin / totalMarginBalance",
-                "positionDisplayReturnPct": "unRealizedProfit / abs(positionAmt * markPrice) * 100",
+                "positionDisplayReturnPct": "Aster returnPct/roePct/roiPct or unRealizedProfit / positionInitialMargin * 100",
             },
             "positionDisplayReturnIsTakeProfitStatus": False,
         },
@@ -92,7 +92,13 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
             "initialMarginUsd": _number(row.get("positionInitialMargin", row.get("initialMargin"))),
             "dataSource": "ASTER_API",
             "leverage": max(1, int(_number(row.get("leverage")) or 1)),
-            **({"returnPct": _number(row.get("returnPct"))} if row.get("returnPct") not in (None, "") else {}),
+            "returnPct": (
+                _number(row.get("returnPct")) if row.get("returnPct") not in (None, "") else
+                _number(row.get("roePct")) if row.get("roePct") not in (None, "") else
+                _number(row.get("roiPct")) if row.get("roiPct") not in (None, "") else
+                (_number(row.get("unRealizedProfit", row.get("unrealizedProfit"))) / _number(row.get("positionInitialMargin", row.get("initialMargin"))) * 100
+                 if _number(row.get("positionInitialMargin", row.get("initialMargin"))) > 0 else 0.0)
+            ),
             **({"roePct": _number(row.get("roePct"))} if row.get("roePct") not in (None, "") else {}),
             **({"roiPct": _number(row.get("roiPct"))} if row.get("roiPct") not in (None, "") else {}),
         } for row in active],
