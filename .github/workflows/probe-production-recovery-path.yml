@@ -24,7 +24,7 @@ jobs:
       - name: Mark probe started
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE3 STARTED commit=$GITHUB_SHA"
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE4 STARTED commit=$GITHUB_SHA"
       - id: gcp_auth
         continue-on-error: true
         uses: google-github-actions/auth@v2
@@ -35,19 +35,19 @@ jobs:
         if: steps.gcp_auth.outcome == 'success'
         continue-on-error: true
         uses: google-github-actions/setup-gcloud@v2
-      - name: Probe Cloud Run and Scheduler separately
+      - name: Probe Cloud Run and Scheduler with hard timeouts
         if: steps.gcp_auth.outcome == 'success' && steps.setup_gcloud.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set +e
-          gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName,status.url)' > /tmp/service.out 2> /tmp/service.err
+          timeout 20s gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName,status.url)' > /tmp/service.out 2> /tmp/service.err
           SERVICE_RC=$?
-          gcloud scheduler jobs describe tradementor-aster-automation-tick --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state,schedule,httpTarget.uri)' > /tmp/scheduler.out 2> /tmp/scheduler.err
+          timeout 20s gcloud scheduler jobs describe tradementor-aster-automation-tick --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state,schedule,httpTarget.uri)' > /tmp/scheduler.out 2> /tmp/scheduler.err
           SCHEDULER_RC=$?
           SERVICE="$(tr '\n' ' ' < /tmp/service.out | head -c 300)"
           SERVICE_ERR="$(tr '\n' ' ' < /tmp/service.err | head -c 500)"
           SCHEDULER="$(tr '\n' ' ' < /tmp/scheduler.out | head -c 300)"
           SCHEDULER_ERR="$(tr '\n' ' ' < /tmp/scheduler.err | head -c 500)"
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE3 auth=${{ steps.gcp_auth.outcome }} setup=${{ steps.setup_gcloud.outcome }} service_rc=$SERVICE_RC service=$SERVICE service_err=$SERVICE_ERR scheduler_rc=$SCHEDULER_RC scheduler=$SCHEDULER scheduler_err=$SCHEDULER_ERR"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RECOVERY_PROBE4 auth=${{ steps.gcp_auth.outcome }} setup=${{ steps.setup_gcloud.outcome }} service_rc=$SERVICE_RC service=$SERVICE service_err=$SERVICE_ERR scheduler_rc=$SCHEDULER_RC scheduler=$SCHEDULER scheduler_err=$SCHEDULER_ERR"
