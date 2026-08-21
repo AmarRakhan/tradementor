@@ -1,0 +1,29 @@
+name: Verify Aster status web fix
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/verify-web-aster-status-fix.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Prove retired Strategy 3 is absent from Aster status route
+        run: |
+          grep -q 'proxyCloud(request, "/v1/me/aster/status", "GET")' web/app/api/exchanges/aster/route.ts
+          ! grep -Eq 'proxyStrategy3Live|mergeAsterProjectStatus|aster-strategy-3|strategy3' web/app/api/exchanges/aster/route.ts
+      - name: Install and test web app
+        working-directory: web
+        run: |
+          npm ci
+          npm test
