@@ -1,0 +1,78 @@
+name: Diagnose Production Runtime Read Only
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diagnose-production-runtime-read-only.yml]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-runtime-diagnose
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  SCHEDULER_JOB: tradementor-aster-automation-tick
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove read-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read production runtime and scheduler
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/scheduler.json"
+          SERVICE_URL="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          print(json.load(open(sys.argv[1],encoding='utf-8'))['status']['url'])
+          PY
+          )"
+          curl --fail --silent --show-error -H 'Cache-Control: no-cache, no-store' "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/service.json" "$RUNNER_TEMP/scheduler.json" "$RUNNER_TEMP/health.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          scheduler=json.load(open(sys.argv[2],encoding='utf-8'))
+          health=json.load(open(sys.argv[3],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
+          report={
+            'serviceUrl':service['status']['url'],
+            'latestReadyRevision':service['status'].get('latestReadyRevisionName'),
+            'latestCreatedRevision':service['status'].get('latestCreatedRevisionName'),
+            'health':health,
+            'runtimeFlags':{k:env.get(k) for k in ['TRADEMENTOR_ALLOW_LIVE','ASTER_LIVE_EXECUTION_ENABLED','ASTER_STRATEGY2_LIVE_ENABLED','ASTER_STRATEGY3_LIVE_ENABLED','ASTER_STRATEGY3_RUNTIME_ENABLED']},
+            'scheduler':{
+              'state':scheduler.get('state'),
+              'schedule':scheduler.get('schedule'),
+              'uri':scheduler.get('httpTarget',{}).get('uri'),
+              'method':scheduler.get('httpTarget',{}).get('httpMethod'),
+              'lastAttemptTime':scheduler.get('lastAttemptTime'),
+              'status':scheduler.get('status'),
+            },
+          }
+          print('PROD_RUNTIME_REPORT '+json.dumps(report,sort_keys=True,default=str))
+          PY
