@@ -1,0 +1,159 @@
+name: Deploy Shared V44 Testapp
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-shared-v44-testapp.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: shared-v44-testapp
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out canonical branch
+        uses: actions/checkout@v4
+
+      - name: Verify canonical repository scope
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$CLOUD_RUN_SERVICE" = "amar-bot-v44-direct-install"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run complete web build and regression suite
+        working-directory: web
+        run: npm test
+
+      - name: Verify v44 production-data contract
+        shell: bash
+        run: |
+          grep -q 'amar-bot-shell-v44' web/public/sw.js
+          grep -q 'tradementor-api-604335232956.europe-west4.run.app' web/lib/cloud-proxy.ts
+          grep -q 'proxyCloud(request, "/v1/me/aster/status", "GET")' web/app/api/exchanges/aster/route.ts
+          ! grep -Eqi 'proxyStrategy3Live|mergeAsterProjectStatus' web/app/api/exchanges/aster/route.ts
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture canonical service and IAM
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/service-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          live=[row for row in service["status"].get("traffic",[]) if int(row.get("percent",0))==100]
+          assert len(live)==1, live
+          print(f'BEFORE_REVISION={live[0]["revisionName"]}')
+          print(f'CANONICAL_URL={service["status"]["url"]}')
+          PY
+
+      - name: Deploy candidate without traffic
+        shell: bash
+        run: |
+          TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          SUFFIX="v44-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --source web \
+            --revision-suffix "$SUFFIX" \
+            --no-traffic \
+            --tag "$TAG" \
+            --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-candidate.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          before=json.load(open(sys.argv[1],encoding="utf-8")); after=json.load(open(sys.argv[2],encoding="utf-8")); tag=sys.argv[3]
+          b=before["spec"]["template"]["spec"]; a=after["spec"]["template"]["spec"]
+          assert b.get("serviceAccountName")==a.get("serviceAccountName")
+          assert b.get("timeoutSeconds")==a.get("timeoutSeconds")
+          assert b.get("containerConcurrency")==a.get("containerConcurrency")
+          assert b["containers"][0].get("env",[])==a["containers"][0].get("env",[])
+          row=next(x for x in after["status"]["traffic"] if x.get("tag")==tag)
+          print(f'CANDIDATE_REVISION={row["revisionName"]}')
+          print(f'CANDIDATE_URL={row["url"]}')
+          PY
+
+      - name: Verify candidate before traffic
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/" > "$RUNNER_TEMP/root.html"
+          grep -q 'Webapp versie 44' "$RUNNER_TEMP/root.html"
+          curl --fail --silent --show-error "$CANDIDATE_URL/offline.html" > /dev/null
+          curl --fail --silent --show-error "$CANDIDATE_URL/manifest.webmanifest" > /dev/null
+          curl --fail --silent --show-error "$CANDIDATE_URL/sw.js" | grep -q 'amar-bot-shell-v44'
+
+      - name: Promote verified candidate to canonical shared testapp
+        id: promote
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Verify canonical URL after promotion
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANONICAL_URL/" > "$RUNNER_TEMP/canonical.html"
+          grep -q 'Webapp versie 44' "$RUNNER_TEMP/canonical.html"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          python - "$RUNNER_TEMP/service-after.json" "$CANDIDATE_REVISION" <<'PY'
+          import json, sys
+          service=json.load(open(sys.argv[1],encoding="utf-8")); candidate=sys.argv[2]
+          live=[row for row in service["status"].get("traffic",[]) if int(row.get("percent",0))==100]
+          assert len(live)==1 and live[0].get("revisionName")==candidate, live
+          PY
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json, sys
+          assert json.load(open(sys.argv[1],encoding="utf-8")) == json.load(open(sys.argv[2],encoding="utf-8"))
+          PY
+
+      - name: Rollback canonical traffic on failed post-promotion verification
+        if: failure() && steps.promote.outcome == 'success'
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --to-revisions "$BEFORE_REVISION=100"
