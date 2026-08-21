@@ -22,6 +22,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import firebase_admin
 import httpx
@@ -1789,26 +1790,28 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 pending["reason"]="ACTUAL_MARGIN_OR_STRATEGY_BUDGET"
                 pending_reopens[0]=pending
                 ref.set({"pendingReopens":pending_reopens,"phase":"WAITING",
-                    "lastReason":f"{symbol} {side}: pending heropening wacht op voldoende actuele margin","updatedAt":now},merge=True)
-                return {"status":"waiting","action":"PENDING_REOPEN_MARGIN","ordersSent":0}
-            if dry_run or not live:
-                return {"status":"simulated","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":0}
-            package=str(pending.get("packageId",pending.get("package_id","pending")))
-            reopened=execute_aster_leg(client,reopen,side=PositionSide(side),action="OPEN",
-                id_prefix=f"s2q-r-{hashlib.sha256((uid+package).encode()).hexdigest()[:12]}",confirm=True,
-                new_position_leverage=settings.leverage,
-                before_submit=(lambda intent:before_order(intent,{"kind":"PENDING_REOPEN","cycleId":str(pending.get("closedCycleId","")),"packageId":package})) if before_order else None)
-            rr=reopened.get("result",{});rq=safe_float(rr.get("executedQty"));rp=safe_float(rr.get("avgPrice"))
-            if rq<=0 or rp<=0:raise RuntimeError("Bevestigde pending heropening mist werkelijk gevulde hoeveelheid of prijs")
-            cycle=f"reopen-{str(pending.get('closedCycleId',pending.get('closed_cycle_id','cycle')))}"
-            replacement=OwnedLeg(settings.strategy_id,"strategy2",symbol,side,cycle,settings.version,rq,rp,0,"HARVEST",
-                (str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000),last_order_at_ms=int(time.time()*1000))
-            pending_reopens.pop(0);owned.append(replacement)
-            batch=db.batch();batch.set(ref,{"ownedLegs":[owned_to_mapping(x) for x in owned],"pendingReopens":pending_reopens,
-                "phase":"RUNNING","lastReason":f"{symbol} {side}: uitgestelde heropening bevestigd","updatedAt":now},merge=True)
-            batch.set(ref.collection("audit").document(),{"event":"PENDING_REOPEN_CONFIRMED","symbol":symbol,"side":side,
-                "cycleId":cycle,"packageId":package,"timestamp":now});batch.commit()
-            return {"status":"ok","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":1}
+                    "lastReason":f"{symbol} {side}: pending heropening wacht op voldoende actuele margin; vrije stoelen blijven doorstromen","updatedAt":now},merge=True)
+                # A carried reopen is optional replacement work. It may wait
+                # for its own margin/budget without monopolising this scan.
+            else:
+                if dry_run or not live:
+                    return {"status":"simulated","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":0}
+                package=str(pending.get("packageId",pending.get("package_id","pending")))
+                reopened=execute_aster_leg(client,reopen,side=PositionSide(side),action="OPEN",
+                    id_prefix=f"s2q-r-{hashlib.sha256((uid+package).encode()).hexdigest()[:12]}",confirm=True,
+                    new_position_leverage=settings.leverage,
+                    before_submit=(lambda intent:before_order(intent,{"kind":"PENDING_REOPEN","cycleId":str(pending.get("closedCycleId","")),"packageId":package})) if before_order else None)
+                rr=reopened.get("result",{});rq=safe_float(rr.get("executedQty"));rp=safe_float(rr.get("avgPrice"))
+                if rq<=0 or rp<=0:raise RuntimeError("Bevestigde pending heropening mist werkelijk gevulde hoeveelheid of prijs")
+                cycle=f"reopen-{str(pending.get('closedCycleId',pending.get('closed_cycle_id','cycle')))}"
+                replacement=OwnedLeg(settings.strategy_id,"strategy2",symbol,side,cycle,settings.version,rq,rp,0,"HARVEST",
+                    (str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000),last_order_at_ms=int(time.time()*1000))
+                pending_reopens.pop(0);owned.append(replacement)
+                batch=db.batch();batch.set(ref,{"ownedLegs":[owned_to_mapping(x) for x in owned],"pendingReopens":pending_reopens,
+                    "phase":"RUNNING","lastReason":f"{symbol} {side}: uitgestelde heropening bevestigd","updatedAt":now},merge=True)
+                batch.set(ref.collection("audit").document(),{"event":"PENDING_REOPEN_CONFIRMED","symbol":symbol,"side":side,
+                    "cycleId":cycle,"packageId":package,"timestamp":now});batch.commit()
+                return {"status":"ok","action":"PENDING_REOPEN","symbol":symbol,"side":side,"ordersSent":1}
         except Exception as exc:
             if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):raise
             pending["attempts"]=int(safe_float(pending.get("attempts")))+1;pending["reason"]=str(exc)
@@ -1981,8 +1984,13 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             return {"status":"ok","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":len(result)}
     if cost_holds:
         reason="; ".join(cost_holds[:3])
-        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
-        return {"status":"data-hold","action":"HOLD","reason":reason,"ordersSent":0}
+        seat_shortage=len([leg for leg in owned if leg.role!="PROTECTION"])<settings.maximum_pairs
+        if not enabled or not seat_shortage:
+            ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
+            return {"status":"data-hold","action":"HOLD","reason":reason,"ordersSent":0}
+        # Cost/funding evidence is leg-local. Stale managed legs stay blocked,
+        # but unrelated free seats may still fill toward the user's target.
+        ref.set({"lastReason":f"{reason}; vrije stoelen blijven doorstromen","lastTickAt":now},merge=True)
     if orders:
         reason=f"{len(orders)} open Aster-order(s) worden gereconcilieerd; nieuwe exposure wacht"
         ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
@@ -6025,29 +6033,38 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
         finally: reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
     strategy2_controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
     strategy2_results=[]
-    for item in strategy2_controls[:100]:
-        reference=aster_strategy2_reference(item.id)
-        raw=item.to_dict() or {};queue_enabled=_strategy2_order_queue_enabled(raw)
+
+    def run_strategy2_account(uid:str)->dict[str,Any]:
+        reference=aster_strategy2_reference(uid)
+        raw=reference.get().to_dict() or {};queue_enabled=_strategy2_order_queue_enabled(raw)
         queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
         has_unresolved_intent=bool(queue_state.get("currentIntent")) or bool(queue_state.get("haltedUncertain",False))
         has_pending_reopen=bool(raw.get("pendingReopens"))
         queue_recovery_required=has_unresolved_intent or has_pending_reopen
         uses_queue_lease=queue_enabled or queue_recovery_required
         queue_token=_acquire_strategy2_queue_lease(reference) if uses_queue_lease else None
-        if uses_queue_lease and not queue_token:
-            strategy2_results.append({"uid":item.id,"status":"lease-busy"});continue
-        if not uses_queue_lease and not _acquire_mexc_automation_lease(reference):
-            strategy2_results.append({"uid":item.id,"status":"lease-busy"});continue
-        try:strategy2_results.append({"uid":item.id,**(_run_aster_strategy2_queue_scan(item.id,
-            reconcile_only=not queue_enabled and has_unresolved_intent,
-            drain_pending_only=not queue_enabled and has_pending_reopen) if uses_queue_lease else _run_aster_strategy2_tick(item.id))})
+        if uses_queue_lease and not queue_token:return {"uid":uid,"status":"lease-busy"}
+        if not uses_queue_lease and not _acquire_mexc_automation_lease(reference):return {"uid":uid,"status":"lease-busy"}
+        try:
+            result=(_run_aster_strategy2_queue_scan(uid,
+                reconcile_only=not queue_enabled and has_unresolved_intent,
+                drain_pending_only=not queue_enabled and has_pending_reopen)
+                if uses_queue_lease else _run_aster_strategy2_tick(uid))
+            return {"uid":uid,**result}
         except Exception as exc:
             message=f"Veilige Strategy-2-schedulerfout: {exc}"
             reference.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":datetime.now(timezone.utc)},merge=True)
-            strategy2_results.append({"uid":item.id,"status":"data-hold","reason":message})
+            return {"uid":uid,"status":"data-hold","reason":message}
         finally:
             if uses_queue_lease:_release_strategy2_queue_lease(reference,str(queue_token))
             else:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+
+    strategy2_uids=[item.id for item in strategy2_controls[:100]]
+    if strategy2_uids:
+        workers=min(4,len(strategy2_uids))
+        with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="s2-scheduler") as pool:
+            futures=[pool.submit(run_strategy2_account,uid) for uid in strategy2_uids]
+            for future in as_completed(futures):strategy2_results.append(future.result())
     # Strategy 3 has its own service, data project and dedicated scheduler.
     # The production scheduler must never read or mutate isolated S3 state.
     return {"processed":len(results)+len(strategy2_results),"strategy1":results,

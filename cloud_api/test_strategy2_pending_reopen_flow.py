@@ -51,12 +51,12 @@ def test_pending_reopen_skip_does_not_reserve_order_budget_or_remove_item():
     assert "ordersUsed" not in cooldown_gate
 
 
-def test_global_margin_or_strategy_budget_still_fails_closed():
+def test_pending_reopen_margin_wait_never_blocks_free_seat_filling():
     block = _pending_reopen_block()
     assert "required*1.05>portfolio.available_balance" in block
     assert "portfolio.strategy_margin+required>portfolio.equity*settings.strategy_budget" in block
-    assert 'action":"PENDING_REOPEN_MARGIN"' in block
-    assert '"ordersSent":0' in block
+    assert "vrije stoelen blijven doorstromen" in block
+    assert 'action":"PENDING_REOPEN_MARGIN"' not in block
 
 
 def test_existing_position_dca_path_remains_outside_pending_reopen_change():
@@ -70,3 +70,10 @@ def test_existing_position_dca_path_remains_outside_pending_reopen_change():
 
 def test_queue_hard_limit_remains_fifteen():
     assert "MAX_ORDERS_PER_ACCOUNT_SCAN = 15" in (ROOT / "aster_strategy2_queue.py").read_text(encoding="utf-8")
+
+
+def test_stale_cost_evidence_is_leg_local_while_user_seats_are_missing():
+    tick = _tick_source()
+    block = tick[tick.index("if cost_holds:"):tick.index("if orders:", tick.index("if cost_holds:"))]
+    assert 'seat_shortage=len([leg for leg in owned if leg.role!="PROTECTION"])<settings.maximum_pairs' in block
+    assert "vrije stoelen blijven doorstromen" in block

@@ -47,7 +47,7 @@ def test_strategy2_queue_is_double_gated_and_old_runtime_remains_available():
     assert 'bool(raw.get("orderQueueEnabled",False))' in source
     assert 'reconcile_only=not queue_enabled' in source
     assert 'drain_pending_only=not queue_enabled and has_pending_reopen' in source
-    assert 'if uses_queue_lease else _run_aster_strategy2_tick(item.id)' in source
+    assert 'if uses_queue_lease else _run_aster_strategy2_tick(uid)' in source
 
 
 def test_queue_uses_fenced_account_lease_and_persistent_scan_counter():
@@ -167,3 +167,11 @@ def test_queue_scan_has_a_canary_cap_below_the_global_hard_limit():
     assert "while used<scan_limit" in block
     assert "order_budget=scan_limit-used" in block
     assert "new_used>scan_limit" in block
+
+
+def test_strategy2_scheduler_runs_accounts_concurrently():
+    source = (ROOT / "cloud_api/main.py").read_text(encoding="utf-8")
+    assert "ThreadPoolExecutor(max_workers=workers" in source
+    assert "workers=min(4,len(strategy2_uids))" in source
+    assert "pool.submit(run_strategy2_account,uid)" in source
+    assert "_acquire_strategy2_queue_lease(reference)" in source
