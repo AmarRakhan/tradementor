@@ -15,18 +15,15 @@ const strategy2Paths = new Set([
 ]);
 
 /**
- * Route only Strategy 2's authenticated endpoints to the configured API.
- * The generic site proxy remains read-only; server-side readiness, canary,
- * ownership and live-enable checks stay authoritative for every live action.
+ * Route only Strategy 2's authenticated endpoints to the production API.
+ * Server-side readiness, canary, ownership and live-enable checks stay
+ * authoritative for every live action.
  */
 export async function proxyStrategy2Live(request: Request, pathname: string, method: "GET" | "POST" | "PUT") {
   if (!strategy2Paths.has(pathname)) {
     return Response.json({ detail: "Onbekende Strategy-2-route" }, { status: 404, headers: noStore });
   }
-  const liveApi = process.env.CLOUD_API_URL?.replace(/\/$/, "");
-  if (!liveApi) {
-    return Response.json({ detail: "De Strategy-2-liveomgeving is nog niet gekoppeld" }, { status: 503, headers: noStore });
-  }
+  const liveApi = "https://tradementor-api-604335232956.europe-west4.run.app";
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) {
     return Response.json({ detail: "Firebase ID-token ontbreekt" }, { status: 401, headers: noStore });
