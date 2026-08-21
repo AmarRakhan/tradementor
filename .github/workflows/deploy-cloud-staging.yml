@@ -18,10 +18,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GCP_PROJECT_ID: tradementor-amar-20260813
+  GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
   ARTIFACT_REPOSITORY: tradementor
-  CLOUD_RUN_SERVICE: tradementor-staging-api
+  CLOUD_RUN_SERVICE: tradementor-api-staging
   FIREBASE_AUTH_PROJECT_ID: tradementor-production
 
 jobs:
@@ -64,15 +64,15 @@ jobs:
       - name: Verify immutable safety scope
         shell: bash
         run: |
-          test "$GCP_PROJECT_ID" = "tradementor-amar-20260813"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
           test "$FIREBASE_AUTH_PROJECT_ID" = "tradementor-production"
-          test "$CLOUD_RUN_SERVICE" = "tradementor-staging-api"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-api-staging"
 
       - name: Classify recent staging connection failures
         shell: bash
         run: |
           RAW="$(gcloud logging read \
-            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-staging-api" AND severity>=ERROR' \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api-staging" AND severity>=ERROR' \
             --project "$GCP_PROJECT_ID" \
             --freshness 30m \
             --limit 20 \
@@ -128,6 +128,6 @@ jobs:
           health = json.loads(sys.argv[1])
           assert health["environment"] == "staging"
           assert health["ordersEnabled"] is False
-          assert health["dataProject"] == "tradementor-amar-20260813"
+          assert health["dataProject"] == "tradementor-production"
           assert health["identityProject"] == "tradementor-production"
           PY
