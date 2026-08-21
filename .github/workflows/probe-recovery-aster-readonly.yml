@@ -32,6 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_ASTER_READONLY2 STARTED commit=$GITHUB_SHA"
           RUNTIME_SA="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
           IMAGE="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].image)')"
           JOB="tm-s2-aster-${GITHUB_RUN_ID: -6}"
@@ -62,14 +63,22 @@ jobs:
           )"
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,FIREBASE_AUTH_PROJECT_ID=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=strategy2-recovery-readonly" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet >/tmp/deploy.out 2>/tmp/deploy.err
+          DEPLOY_RC=$?
+          set -e
+          if [ "$DEPLOY_RC" -ne 0 ]; then
+            ERR="$(tr '\n' ' ' < /tmp/deploy.err | head -c 800)"
+            gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_ASTER_READONLY2 DEPLOY_FAILED rc=$DEPLOY_RC err=$ERR"
+            exit 0
+          fi
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/tmp/exec.out 2>/tmp/exec.err
           EXEC_RC=$?
           set -e
-          sleep 3
-          RESULT="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"ASTER_READONLY\"" --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)')"
-          if [ -z "$RESULT" ]; then RESULT="NO_RESULT exec_rc=$EXEC_RC err=$(tr '\n' ' ' < /tmp/exec.err | head -c 500)"; fi
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_ASTER_READONLY $RESULT"
+          sleep 4
+          RESULT="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"ASTER_READONLY\"" --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)' 2>/tmp/log.err || true)"
+          if [ -z "$RESULT" ]; then RESULT="NO_RESULT exec_rc=$EXEC_RC exec_err=$(tr '\n' ' ' < /tmp/exec.err | head -c 500) log_err=$(tr '\n' ' ' < /tmp/log.err | head -c 500)"; fi
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_ASTER_READONLY2 $RESULT"
           cleanup
           trap - EXIT
