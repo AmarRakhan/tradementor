@@ -66,15 +66,17 @@ test("logout/login and a full browser restart wait for GET and then restore AAN"
   assert.equal(freshServer.label, "AAN");
 });
 
-test("start, status GET and refresh share one configured Strategy-2 test API", async () => {
+test("start, status GET and refresh share one configured Strategy-2 production API", async () => {
   const [genericProxy, strategy2Proxy, route, hook] = await Promise.all([
     readFile(new URL("../lib/cloud-proxy.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/secure-strategy2-live.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/aster/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/use-exchange-data.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(genericProxy, /process\.env\.CLOUD_API_URL/);
-  assert.match(strategy2Proxy, /process\.env\.CLOUD_API_URL/);
+  assert.doesNotMatch(genericProxy, /process\.env\.CLOUD_API_URL/);
+  assert.doesNotMatch(strategy2Proxy, /process\.env\.CLOUD_API_URL/);
+  assert.match(genericProxy, /tradementor-api-604335232956\.europe-west4\.run\.app/);
+  assert.match(strategy2Proxy, /tradementor-api-604335232956\.europe-west4\.run\.app/);
   assert.match(route, /proxyCloud\(request, "\/v1\/me\/aster\/status", "GET"\)/);
   assert.match(hook, /timedRead\("\/api\/exchanges\/aster"\)/);
   assert.match(hook, /confirmMutation\(\)/);
