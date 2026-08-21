@@ -32,6 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE_PROBE STARTED commit=$GITHUB_SHA"
           RUNTIME_SA="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
           IMAGE="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].image)')"
           JOB="tm-s2-state-${GITHUB_RUN_ID: -6}"
@@ -58,23 +59,29 @@ jobs:
           )"
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 8 --parallelism 8 --max-retries 0 --task-timeout 120s --quiet
           set +e
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 8 --parallelism 8 --max-retries 0 --task-timeout 120s --quiet > /tmp/deploy.out 2> /tmp/deploy.err
+          DEPLOY_RC=$?
+          set -e
+          if [ "$DEPLOY_RC" -ne 0 ]; then
+            ERR="$(tr '\n' ' ' < /tmp/deploy.err | head -c 600)"
+            gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE_PROBE DEPLOY_FAILED rc=$DEPLOY_RC err=$ERR"
+            exit 0
+          fi
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/tmp/execute.out 2>/tmp/execute.err
+          EXECUTE_RC=$?
           set -e
           EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
-          TASKS="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          METRICS="$(python - "$TASKS" <<'PY'
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          STATUS_FIELDS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index: .index, exitCode: ([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
+          METRICS="$(python - "$STATUS_FIELDS" <<'PY'
           import json,sys
-          rows=json.loads(sys.argv[1]); values={}
-          for row in rows:
-              idx=row.get('index')
-              codes=[v.get('exitCode') for v in row.get('status',{}).get('containers',[]) if isinstance(v,dict) and isinstance(v.get('exitCode'),int)]
-              if isinstance(idx,int) and codes: values[idx]=max(0,codes[0]-1)
+          rows=json.loads(sys.argv[1]); values={int(r['index']):max(0,int(r['exitCode'])-1) for r in rows if int(r.get('exitCode',-1))>=1}
           names=['documents','active','ownedLegs','liveReady','canaryValidated','legacyStrategy1Active','legacyStrategy3Active','monitoring']
           print(','.join(f'{names[i]}={values.get(i,-1)}' for i in range(len(names))))
           PY
           )"
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE $METRICS"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE execute_rc=$EXECUTE_RC $METRICS"
           cleanup
           trap - EXIT
