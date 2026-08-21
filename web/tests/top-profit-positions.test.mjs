@@ -19,8 +19,10 @@ test("equal P&L has stable immutable-id ordering independent of input order", ()
   assert.deepEqual(topProfitPositions(rows.reverse()).map((row) => row.id), ["a", "b"]);
 });
 
-test("return percentage uses only authoritative supplied fields and preserves missing values", () => {
-  assert.equal(authoritativePositionReturnPct({ roePct: -2.5 }), -2.5);
-  assert.equal(authoritativePositionReturnPct({ roiPct: 0 }), 0);
-  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, entryPrice: 10, markPrice: 11 }), null);
+test("return percentage prefers supplied fields and falls back to the financial display contract", () => {
+  assert.equal(authoritativePositionReturnPct({ roePct: -2.5, unrealizedPnl: 10, notionalUsd: 100 }), -2.5);
+  assert.equal(authoritativePositionReturnPct({ roiPct: 0, unrealizedPnl: 10, notionalUsd: 100 }), 0);
+  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, notionalUsd: 200 }), 2);
+  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, quantity: 2, markPrice: 100 }), 2);
+  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, quantity: 2 }), null);
 });
