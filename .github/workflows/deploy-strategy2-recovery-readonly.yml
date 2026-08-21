@@ -1,0 +1,122 @@
+name: Deploy Strategy 2 Recovery Read Only
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/deploy-strategy2-recovery-readonly.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-strategy2-recovery-readonly
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  PROD_SERVICE: tradementor-api
+  RECOVERY_SERVICE: tradementor-strategy2-recovery-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  recovery-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Run focused Strategy 2 safety tests
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          cd cloud_api
+          pytest -q test_aster_dashboard_status.py test_aster_strategy_status.py test_aster_strategy3_status.py
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Resolve production runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_SERVICE_ACCOUNT="$(gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$RUNTIME_SERVICE_ACCOUNT"
+          echo "RUNTIME_SERVICE_ACCOUNT=$RUNTIME_SERVICE_ACCOUNT" >> "$GITHUB_ENV"
+      - name: Build and push read-only recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/strategy2-recovery-api:$GITHUB_SHA"
+          docker build --build-arg "SOURCE_COMMIT=$GITHUB_SHA" --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Deploy isolated recovery service with trading disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$RECOVERY_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --command uvicorn \
+            --args 'strategy2_test_entrypoint:app,--host,0.0.0.0,--port,8080' \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=strategy2-recovery-readonly,TRADEMENTOR_ENVIRONMENT=strategy2-recovery-readonly,FIREBASE_AUTH_PROJECT_ID=$GCP_PROJECT_ID,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true,ASTER_CANARY_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,ASTER_STRATEGY3_RUNTIME_ENABLED=false,ASTER_STRATEGY3_CANARY_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false,MEXC_AUTOMATION_EXECUTION_ENABLED=false" \
+            --allow-unauthenticated
+          SERVICE_URL="$(gcloud run services describe "$RECOVERY_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 3 "$SERVICE_URL/health")"
+          echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+          echo "HEALTH=$HEALTH" >> "$GITHUB_ENV"
+      - name: Inspect Strategy 2 production state without exchange access
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-recovery-${GITHUB_RUN_ID: -6}"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json
+          from google.cloud import firestore
+          db=firestore.Client(project='tradementor-production')
+          def collect(name):
+              docs=0; active=0; owned=0; phases={}
+              for doc in db.collection(name).stream():
+                  docs+=1
+                  state=doc.to_dict() or {}
+                  if state.get('enabled') or state.get('monitor'): active+=1
+                  rows=state.get('ownedLegs') if isinstance(state.get('ownedLegs'),list) else []
+                  owned+=len(rows)
+                  phase=str(state.get('phase',''))
+                  if phase: phases[phase]=phases.get(phase,0)+1
+              return {'documents':docs,'active':active,'ownedLegs':owned,'phases':phases}
+          print('RECOVERY_STATE '+json.dumps({
+              'strategy2':collect('asterStrategy2'),
+              'legacyStrategy1':collect('asterAutomation'),
+              'legacyStrategy3':collect('asterStrategy3')
+          },sort_keys=True))
+          PY
+          )"
+          cleanup() { gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          sleep 5
+          STATE="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"RECOVERY_STATE\"" --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)')"
+          test -n "$STATE"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="STRATEGY2_RECOVERY_READONLY: service=$SERVICE_URL | health=$HEALTH | $STATE | orders=DISABLED | scheduler=NOT_CREATED"
+          cleanup
+          trap - EXIT
