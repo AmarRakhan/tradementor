@@ -1,33 +1,14 @@
-name: Lock Strategy 3 runtime
+name: Retired - Strategy 3 runtime lock
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - ".github/workflows/lock-strategy3-runtime.yml"
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  lock:
+  retired:
     runs-on: ubuntu-latest
-    environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - name: Lock runtime until the one-minute scheduler is verified
-        run: |
-          gcloud run services update tradementor-strategy3-live-api \
-            --project tradementor-amar-20260813 \
-            --region europe-west4 \
-            --update-env-vars ASTER_STRATEGY3_RUNTIME_ENABLED=false
-          VALUE="$(gcloud run services describe tradementor-strategy3-live-api --project tradementor-amar-20260813 --region europe-west4 --format='value(spec.template.spec.containers[0].env[?name=ASTER_STRATEGY3_RUNTIME_ENABLED].value)')"
-          test "$VALUE" = "false"
+      - name: Strategy 3 is retired
+        run: echo "Strategy 3 runtime management is retired; no cloud action is performed."
