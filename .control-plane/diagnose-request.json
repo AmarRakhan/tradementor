@@ -1,6 +1,6 @@
 {
   "scope": "all",
   "requestedBy": "chatgpt-control-plane",
-  "purpose": "registered-trigger-end-to-end-test",
-  "requestedAt": "2026-08-20T11:06:00+02:00"
+  "purpose": "urgent-runtime-incident-data-not-loading-and-exits-not-executing",
+  "requestedAt": "2026-08-21T08:58:00+02:00"
 }
