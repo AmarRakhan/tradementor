@@ -1,0 +1,75 @@
+name: Probe Recovery Aster Read Only
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/probe-recovery-aster-readonly.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read Aster for active Strategy 2 accounts without orders
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_SA="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          IMAGE="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].image)')"
+          JOB="tm-s2-aster-${GITHUB_RUN_ID: -6}"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json
+          from google.cloud import firestore
+          import main
+          from aster_gateway import AsterV3Client
+          db=firestore.Client(project='tradementor-production')
+          rows=[]
+          for doc in db.collection('asterStrategy2').stream():
+              state=doc.to_dict() or {}
+              if not (state.get('enabled') or state.get('monitor')): continue
+              ref=hashlib.sha256(doc.id.encode()).hexdigest()[:10]
+              try:
+                  secret=main.load_aster_secret({'uid':doc.id})
+                  client=AsterV3Client(signer_address=secret.signer_address,sign_message=main.local_eip712_signer(secret),live_authorized=False)
+                  account=client.account_information()
+                  positions=client.position_risk()
+                  open_orders=client.open_orders()
+                  hedge=client.position_mode()
+                  active=sum(1 for p in positions if abs(main.safe_float(p.get('positionAmt',p.get('positionAmount'))))>0)
+                  rows.append({'accountRef':ref,'ok':True,'activePositions':active,'openOrders':len(open_orders),'hedgeMode':bool(hedge),'equityPositive':main.safe_float(account.get('totalMarginBalance',account.get('totalWalletBalance'))) > 0})
+              except Exception as exc:
+                  rows.append({'accountRef':ref,'ok':False,'error':str(exc)[:180]})
+          print('ASTER_READONLY '+json.dumps({'accounts':len(rows),'ok':sum(1 for r in rows if r.get('ok')),'failed':sum(1 for r in rows if not r.get('ok')),'activePositions':sum(int(r.get('activePositions',0)) for r in rows),'openOrders':sum(int(r.get('openOrders',0)) for r in rows),'rows':rows},sort_keys=True))
+          PY
+          )"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/tmp/exec.out 2>/tmp/exec.err
+          EXEC_RC=$?
+          set -e
+          sleep 3
+          RESULT="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"ASTER_READONLY\"" --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)')"
+          if [ -z "$RESULT" ]; then RESULT="NO_RESULT exec_rc=$EXEC_RC err=$(tr '\n' ' ' < /tmp/exec.err | head -c 500)"; fi
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_ASTER_READONLY $RESULT"
+          cleanup
+          trap - EXIT
