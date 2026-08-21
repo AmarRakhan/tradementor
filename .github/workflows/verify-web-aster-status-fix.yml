@@ -1,5 +1,6 @@
 name: Verify Aster status web fix
 on:
+  workflow_dispatch:
   push:
     branches: [amar-crypto-bot-2026-cloud]
     paths: [.github/workflows/verify-web-aster-status-fix.yml]
