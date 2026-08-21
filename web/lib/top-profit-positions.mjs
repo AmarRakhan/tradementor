@@ -13,7 +13,15 @@ export function authoritativePositionReturnPct(row) {
     const value = finite(row[key]);
     if (value !== null) return value;
   }
-  return null;
+
+  const pnl = finite(row.unrealizedPnl);
+  let notional = finite(row.notionalUsd);
+  if (notional === null) {
+    const quantity = finite(row.quantity ?? row.positionAmt);
+    const markPrice = finite(row.markPrice);
+    if (quantity !== null && markPrice !== null) notional = Math.abs(quantity * markPrice);
+  }
+  return pnl !== null && notional !== null && notional > 0 ? pnl / notional * 100 : null;
 }
 
 export function topProfitPositions(rows, limit = 5) {
