@@ -22,22 +22,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: google-github-actions/auth@v2
+      - name: Mark started
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK2 STARTED commit=$GITHUB_SHA"
+      - id: gcp_auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - name: Call Strategy 2 scheduler with recovery live gates disabled
+      - id: setup_gcloud
+        if: steps.gcp_auth.outcome == 'success'
+        continue-on-error: true
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Probe disabled Strategy 2 tick
+        if: steps.gcp_auth.outcome == 'success' && steps.setup_gcloud.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -euo pipefail
-          URL="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
-          TOKEN="$(gcloud auth print-identity-token --audiences="$INTERNAL_AUDIENCE")"
           set +e
-          HTTP="$(curl -sS -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" "$URL/internal/aster-strategy2/tick")"
-          CURL_RC=$?
-          set -e
-          BODY="$(head -c 1800 /tmp/response.json | tr '\n' ' ')"
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK curl_rc=$CURL_RC http=$HTTP response=$BODY"
+          URL="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)' 2>/tmp/url.err)"
+          URL_RC=$?
+          TOKEN="$(gcloud auth print-identity-token --audiences="$INTERNAL_AUDIENCE" 2>/tmp/token.err)"
+          TOKEN_RC=$?
+          HTTP="000"; CURL_RC=99; BODY=""
+          if [ "$URL_RC" -eq 0 ] && [ "$TOKEN_RC" -eq 0 ] && [ -n "$URL" ] && [ -n "$TOKEN" ]; then
+            HTTP="$(curl -sS --max-time 30 -o /tmp/response.json -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" "$URL/internal/aster-strategy2/tick")"
+            CURL_RC=$?
+            BODY="$(head -c 1800 /tmp/response.json 2>/dev/null | tr '\n' ' ')"
+          fi
+          URL_ERR="$(tr '\n' ' ' < /tmp/url.err 2>/dev/null | head -c 400)"
+          TOKEN_ERR="$(tr '\n' ' ' < /tmp/token.err 2>/dev/null | head -c 500)"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="RECOVERY_S2_DISABLED_TICK2 auth=${{ steps.gcp_auth.outcome }} setup=${{ steps.setup_gcloud.outcome }} url_rc=$URL_RC token_rc=$TOKEN_RC curl_rc=$CURL_RC http=$HTTP url_err=$URL_ERR token_err=$TOKEN_ERR response=$BODY"
