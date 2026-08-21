@@ -23,6 +23,9 @@ env:
   ARTIFACT_REPOSITORY: tradementor
   CLOUD_RUN_SERVICE: tradementor-api-staging
   FIREBASE_AUTH_PROJECT_ID: tradementor-production
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  GCP_DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  GCP_RUNTIME_SERVICE_ACCOUNT: 604335232956-compute@developer.gserviceaccount.com
 
 jobs:
   test-and-deploy:
@@ -55,8 +58,8 @@ jobs:
       - name: Authenticate to isolated Google Cloud staging
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v2
@@ -67,6 +70,7 @@ jobs:
           test "$GCP_PROJECT_ID" = "tradementor-production"
           test "$FIREBASE_AUTH_PROJECT_ID" = "tradementor-production"
           test "$CLOUD_RUN_SERVICE" = "tradementor-api-staging"
+          test "$GCP_RUNTIME_SERVICE_ACCOUNT" = "604335232956-compute@developer.gserviceaccount.com"
 
       - name: Classify recent staging connection failures
         shell: bash
@@ -113,7 +117,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE" \
-            --service-account "${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
+            --service-account "$GCP_RUNTIME_SERVICE_ACCOUNT" \
             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID,TRADEMENTOR_READ_SOURCE_URL=https://tradementor-api-604335232956.europe-west4.run.app,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
             --allow-unauthenticated
 
