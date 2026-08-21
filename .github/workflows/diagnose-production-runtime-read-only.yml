@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  statuses: write
 
 concurrency:
   group: tradementor-production-runtime-diagnose
@@ -28,7 +29,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Prove read-only scope
+      - name: Prove read-only cloud scope
         shell: bash
         run: |
           set -euo pipefail
@@ -42,6 +43,8 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - name: Read production runtime and scheduler
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
@@ -52,27 +55,25 @@ jobs:
           PY
           )"
           curl --fail --silent --show-error -H 'Cache-Control: no-cache, no-store' "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
-          python - "$RUNNER_TEMP/service.json" "$RUNNER_TEMP/scheduler.json" "$RUNNER_TEMP/health.json" <<'PY'
-          import json,sys
+          readarray -t FIELDS < <(python - "$RUNNER_TEMP/service.json" "$RUNNER_TEMP/scheduler.json" "$RUNNER_TEMP/health.json" <<'PY'
+          import json,sys,urllib.parse
           service=json.load(open(sys.argv[1],encoding='utf-8'))
           scheduler=json.load(open(sys.argv[2],encoding='utf-8'))
           health=json.load(open(sys.argv[3],encoding='utf-8'))
           spec=service['spec']['template']['spec']
           env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
-          report={
-            'serviceUrl':service['status']['url'],
-            'latestReadyRevision':service['status'].get('latestReadyRevisionName'),
-            'latestCreatedRevision':service['status'].get('latestCreatedRevisionName'),
-            'health':health,
-            'runtimeFlags':{k:env.get(k) for k in ['TRADEMENTOR_ALLOW_LIVE','ASTER_LIVE_EXECUTION_ENABLED','ASTER_STRATEGY2_LIVE_ENABLED','ASTER_STRATEGY3_LIVE_ENABLED','ASTER_STRATEGY3_RUNTIME_ENABLED']},
-            'scheduler':{
-              'state':scheduler.get('state'),
-              'schedule':scheduler.get('schedule'),
-              'uri':scheduler.get('httpTarget',{}).get('uri'),
-              'method':scheduler.get('httpTarget',{}).get('httpMethod'),
-              'lastAttemptTime':scheduler.get('lastAttemptTime'),
-              'status':scheduler.get('status'),
-            },
-          }
-          print('PROD_RUNTIME_REPORT '+json.dumps(report,sort_keys=True,default=str))
+          uri=scheduler.get('httpTarget',{}).get('uri','')
+          path=urllib.parse.urlparse(uri).path
+          print(f"health={health.get('status')} orders={health.get('ordersEnabled')} live={env.get('ASTER_LIVE_EXECUTION_ENABLED')} s2={env.get('ASTER_STRATEGY2_LIVE_ENABLED')}")
+          print(f"state={scheduler.get('state')} schedule={scheduler.get('schedule')} path={path}")
+          print(f"latest={service['status'].get('latestReadyRevisionName')}")
           PY
+          )
+          post_status() {
+            local context="$1" description="$2"
+            jq -n --arg state success --arg context "$context" --arg description "$description" '{state:$state,context:$context,description:$description}' > "$RUNNER_TEMP/status.json"
+            curl --fail --silent --show-error -X POST -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/status.json" "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" >/dev/null
+          }
+          post_status 'prod/runtime' "${FIELDS[0]}"
+          post_status 'prod/scheduler' "${FIELDS[1]}"
+          post_status 'prod/revision' "${FIELDS[2]}"
