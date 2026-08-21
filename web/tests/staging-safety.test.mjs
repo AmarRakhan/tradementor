@@ -4,9 +4,9 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("the cloud target is explicit, overrideable and authenticated", async () => {
+test("the cloud target is pinned to production and authenticated", async () => {
   const source = await read("lib/cloud-proxy.ts");
-  assert.match(source, /process\.env\.CLOUD_API_URL/);
+  assert.doesNotMatch(source, /process\.env\.CLOUD_API_URL/);
   assert.match(source, /tradementor-api-604335232956\.europe-west4\.run\.app/);
   assert.match(source, /authorization\?\.startsWith\("Bearer "\)/);
   assert.match(source, /status: 401/);
@@ -77,7 +77,8 @@ test("Strategy 2 production proxy is narrowly scoped and preserves Firebase iden
   assert.match(proxy, /const strategy2Paths = new Set/);
   assert.match(proxy, /authorization\?\.startsWith\("Bearer "\)/);
   assert.match(proxy, /Authorization: authorization/);
-  assert.match(proxy, /CLOUD_API_URL/);
+  assert.doesNotMatch(proxy, /process\.env\.CLOUD_API_URL/);
+  assert.match(proxy, /tradementor-api-604335232956\.europe-west4\.run\.app/);
   assert.match(start, /proxyStrategy2Live/);
   assert.match(readiness, /proxyStrategy2Live/);
 });
