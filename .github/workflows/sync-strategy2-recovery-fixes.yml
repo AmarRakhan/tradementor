@@ -1,0 +1,66 @@
+name: Sync Proven Strategy 2 Recovery Fixes
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/sync-strategy2-recovery-fixes.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-proven-strategy2-recovery
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out current target branch
+        uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend test dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Apply the previously proven recovery diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q 'ThreadPoolExecutor(max_workers=workers' cloud_api/main.py \
+             && grep -q 'vrije stoelen blijven doorstromen' cloud_api/main.py; then
+            echo 'Recovery diff is already present; nothing to apply.'
+          else
+            git apply --check tools/backend-recovery-20260821.patch
+            git apply tools/backend-recovery-20260821.patch
+          fi
+          git diff --check
+
+      - name: Re-run the proven Aster and Strategy 2 suite
+        working-directory: cloud_api
+        run: pytest -q test_aster*.py test_strategy2*.py
+
+      - name: Persist only the proven backend files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'TradeMentor Recovery'
+          git config user.email 'noreply@tradementor.local'
+          git add -- cloud_api/main.py cloud_api/test_aster_strategy2_scheduler_deploy.py cloud_api/test_strategy2_pending_reopen_flow.py
+          if git diff --cached --quiet; then
+            echo 'No backend changes remain to commit.'
+            exit 0
+          fi
+          git commit -m 'Persist Strategy 2 recovery fixes'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
