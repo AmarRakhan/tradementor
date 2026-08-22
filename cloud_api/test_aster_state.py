@@ -24,7 +24,7 @@ def test_dashboard_snapshot_uses_current_official_account_totals():
     assert snapshot["positions"][0]["notionalUsd"] == 130.0
     assert snapshot["activeTradeCapital"] == 6.5
     assert snapshot["positions"][0]["initialMarginUsd"] == 6.5
-    assert round(snapshot["positions"][0]["returnPct"], 6) == round(2 / 6.5 * 100, 6)
+    assert "returnPct" not in snapshot["positions"][0]
     assert snapshot["positions"][0]["dataSource"] == "ASTER_API"
     assert snapshot["financialDataContract"]["sourceOfTruth"] == "ASTER_API"
     assert snapshot["financialDataContract"]["positionDisplayReturnIsTakeProfitStatus"] is False
@@ -39,14 +39,15 @@ def test_dashboard_snapshot_sums_only_active_exchange_reported_position_margin()
     ])
     assert snapshot["activeTradeCapital"] == 35.5
 
-def test_dashboard_snapshot_derives_return_from_entry_notional_and_leverage_when_margin_missing():
+def test_dashboard_snapshot_does_not_invent_return_when_margin_missing():
     snapshot = dashboard_snapshot({}, [{
         "symbol":"LINKUSDT","positionSide":"LONG","positionAmt":"2",
         "entryPrice":"10","markPrice":"11","unRealizedProfit":"1","leverage":"20",
     }])
     row=snapshot["positions"][0]
     assert row["initialMarginUsd"] == 0.0
-    assert row["returnPct"] == 100.0
+    assert "returnPct" not in row
+    assert row["notionalUsd"] == 22.0
 
 
 def test_dashboard_snapshot_falls_back_to_account_initial_margin_for_cross_positions():
@@ -164,3 +165,14 @@ def test_account_information_uses_exchange_authoritative_maintenance_totals():
         "totalMaintMargin": "1.175",
     })
     assert values == (117.5, 120.0, 91.25, -2.5, 1.175)
+
+
+def test_dashboard_snapshot_does_not_invent_leveraged_return_percent():
+    snapshot = dashboard_snapshot({}, [{
+        "symbol":"WLDUSDT","positionSide":"SHORT","positionAmt":"-88",
+        "entryPrice":"0.4056","markPrice":"0.3964576",
+        "unRealizedProfit":"0.8045312","leverage":"50",
+    }])
+    row=snapshot["positions"][0]
+    assert "returnPct" not in row
+    assert row["notionalUsd"] > 0

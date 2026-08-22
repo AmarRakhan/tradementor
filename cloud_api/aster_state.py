@@ -108,7 +108,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
             "initialMarginUsd": _number(row.get("positionInitialMargin", row.get("initialMargin"))),
             "dataSource": "ASTER_API",
             "leverage": max(1, int(_number(row.get("leverage")) or 1)),
-            "returnPct": _position_return_pct(row),
+            **({"returnPct": _number(row.get("returnPct"))} if row.get("returnPct") not in (None, "") else {}),
             **({"roePct": _number(row.get("roePct"))} if row.get("roePct") not in (None, "") else {}),
             **({"roiPct": _number(row.get("roiPct"))} if row.get("roiPct") not in (None, "") else {}),
         } for row in active],

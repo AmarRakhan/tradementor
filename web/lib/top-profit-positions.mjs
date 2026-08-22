@@ -15,8 +15,8 @@ export function authoritativePositionReturnPct(row) {
   }
 
   const pnl = finite(row.unrealizedPnl ?? row.unRealizedProfit);
-  const initialMargin = finite(row.initialMarginUsd ?? row.positionInitialMargin ?? row.initialMargin);
-  return pnl !== null && initialMargin !== null && initialMargin > 0 ? pnl / initialMargin * 100 : null;
+  const notional = finite(row.notionalUsd ?? row.positionNotional ?? row.size);
+  return pnl !== null && notional !== null && notional > 0 ? pnl / notional * 100 : null;
 }
 
 export function topProfitPositions(rows, limit = 5) {

@@ -22,7 +22,7 @@ test("equal P&L has stable immutable-id ordering independent of input order", ()
 test("Top 5 percentage uses Aster position return data", () => {
   assert.equal(authoritativePositionReturnPct({ roePct: -2.5, unrealizedPnl: 10, initialMarginUsd: 2 }), -2.5);
   assert.equal(authoritativePositionReturnPct({ roiPct: 0, unrealizedPnl: 10, initialMarginUsd: 2 }), 0);
-  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, initialMarginUsd: 2 }), 200);
-  assert.equal(authoritativePositionReturnPct({ unRealizedProfit: 1.5, positionInitialMargin: 0.5 }), 300);
-  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, notionalUsd: 200 }), null);
+  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, notionalUsd: 200 }), 2);
+  assert.equal(authoritativePositionReturnPct({ unRealizedProfit: 1.5, size: 50 }), 3);
+  assert.equal(authoritativePositionReturnPct({ unrealizedPnl: 4, initialMarginUsd: 2 }), null);
 });
