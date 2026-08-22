@@ -1783,8 +1783,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     cooldowns.pop(cooldown_key,None)
                     if settings.trend_bollinger_entry_enabled:
                         try:
-                            candle_rows=client.klines(candidate,"15m",60)
-                            closes=[safe_float(row[4]) for row in candle_rows if isinstance(row,list) and len(row)>=5 and safe_float(row[4])>0]
+                            candle_rows=client.klines(candidate,"15m",61)
+                            closes=[safe_float(row[4]) for row in candle_rows[:-1] if isinstance(row,list) and len(row)>=5 and safe_float(row[4])>0]
                             entry_check=trend_bollinger_entry_check(closes,prices[candidate],entry_side)
                         except (AsterApiError,ValueError) as exc:
                             scan_skipped+=1;advanced_after_rejection=True

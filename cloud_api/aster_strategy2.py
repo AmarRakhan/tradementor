@@ -164,24 +164,23 @@ def _ema(values: list[float], period: int) -> float:
 
 def trend_bollinger_entry_check(closes: list[float], price: float, side: Side) -> dict[str, Any] | None:
     values = [float(value) for value in closes if math.isfinite(float(value)) and float(value) > 0]
-    if len(values) < 50 or not math.isfinite(price) or price <= 0 or side not in {"LONG", "SHORT"}:
+    if len(values) < 51 or not math.isfinite(price) or price <= 0 or side not in {"LONG", "SHORT"}:
         return None
     ema20, ema50 = _ema(values, 20), _ema(values, 50)
+    previous_middle = fmean(values[-21:-1])
     window = values[-20:]
     middle = fmean(window)
     deviation = pstdev(window)
     upper, lower = middle + 2.0 * deviation, middle - 2.0 * deviation
+    previous_close, latest_close = values[-2], values[-1]
     trend = "UP" if ema20 > ema50 else "DOWN" if ema20 < ema50 else "NEUTRAL"
-    if trend == "UP":
-        eligible = price <= middle if side == "LONG" else price > upper
-        reason = "price<=middle" if side == "LONG" else "price>upper"
-    elif trend == "DOWN":
-        eligible = price < lower if side == "LONG" else price >= middle
-        reason = "price<lower" if side == "LONG" else "price>=middle"
+    if side == "LONG":
+        eligible = trend == "UP" and previous_close <= previous_middle and latest_close > middle
+        reason = "uptrend+middle_cross_up"
     else:
-        eligible = price < lower if side == "LONG" else price > upper
-        reason = "price<lower" if side == "LONG" else "price>upper"
-    return {"eligible": eligible, "trend": trend, "price": price, "middle": middle, "upper": upper, "lower": lower, "reason": reason}
+        eligible = trend == "DOWN" and previous_close >= previous_middle and latest_close < middle
+        reason = "downtrend+middle_cross_down"
+    return {"eligible": eligible, "trend": trend, "price": price, "previousClose": previous_close, "latestClose": latest_close, "previousMiddle": previous_middle, "middle": middle, "upper": upper, "lower": lower, "reason": reason}
 
 
 @dataclass(frozen=True)

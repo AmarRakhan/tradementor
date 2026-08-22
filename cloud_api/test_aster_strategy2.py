@@ -126,23 +126,23 @@ def test_trend_bollinger_setting_defaults_off_and_missing_is_off():
     assert Strategy2Config.from_mapping({"trendBollingerEntryEnabled":False}).public_dict()["trendBollingerEntryEnabled"] is False
 
 
-def test_trend_bollinger_entry_allowed_matrix():
-    up=[float(x) for x in range(1,61)]
-    down=[float(x) for x in range(200,140,-1)]
-    neutral=[100.0]*60
-    up_probe=trend_bollinger_entry_check(up,1.0,"LONG"); assert up_probe and up_probe["trend"]=="UP"
-    assert trend_bollinger_entry_check(up,up_probe["middle"],"LONG")["eligible"] is True
-    assert trend_bollinger_entry_check(up,up_probe["upper"]+1,"SHORT")["eligible"] is True
-    down_probe=trend_bollinger_entry_check(down,1.0,"LONG"); assert down_probe and down_probe["trend"]=="DOWN"
-    assert trend_bollinger_entry_check(down,down_probe["lower"]-1,"LONG")["eligible"] is True
-    assert trend_bollinger_entry_check(down,down_probe["middle"],"SHORT")["eligible"] is True
-    neutral_probe=trend_bollinger_entry_check(neutral,99,"LONG"); assert neutral_probe and neutral_probe["trend"]=="NEUTRAL"
-    assert neutral_probe["eligible"] is True
-    assert trend_bollinger_entry_check(neutral,101,"SHORT")["eligible"] is True
+def test_trend_bollinger_requires_trend_aligned_middle_cross():
+    up=[float(x) for x in range(1,50)]+[50.0,35.0,55.0]
+    long_probe=trend_bollinger_entry_check(up,55.0,"LONG")
+    assert long_probe and long_probe["trend"]=="UP" and long_probe["eligible"] is True
+    assert trend_bollinger_entry_check(up,55.0,"SHORT")["eligible"] is False
 
+    down=[float(x) for x in range(200,151,-1)]+[151.0,165.0,145.0]
+    short_probe=trend_bollinger_entry_check(down,145.0,"SHORT")
+    assert short_probe and short_probe["trend"]=="DOWN" and short_probe["eligible"] is True
+    assert trend_bollinger_entry_check(down,145.0,"LONG")["eligible"] is False
+
+    neutral=[100.0]*52
+    assert trend_bollinger_entry_check(neutral,100.0,"LONG")["eligible"] is False
+    assert trend_bollinger_entry_check(neutral,100.0,"SHORT")["eligible"] is False
 
 def test_trend_bollinger_insufficient_data_skips_candidate():
-    assert trend_bollinger_entry_check([100.0]*49,100.0,"LONG") is None
+    assert trend_bollinger_entry_check([100.0]*50,100.0,"LONG") is None
 
 
 def test_trend_bollinger_filter_is_only_on_new_seat_entry_path():
@@ -150,9 +150,10 @@ def test_trend_bollinger_filter_is_only_on_new_seat_entry_path():
     source=(Path(__file__).resolve().parent/"main.py").read_text(encoding="utf-8")
     tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     gate=tick.index("if settings.trend_bollinger_entry_enabled:")
-    candle=tick.index('client.klines(candidate,"15m",60)')
+    candle=tick.index('client.klines(candidate,"15m",61)')
     open_plan=tick.index("value=plan_aster_pair",gate)
     assert gate < candle < open_plan
+    assert "candle_rows[:-1]" in tick[gate:open_plan]
     assert 'if not bool(entry_check["eligible"]):' in tick[gate:open_plan]
     assert "continue" in tick[tick.index('if not bool(entry_check["eligible"]):',gate):open_plan]
     assert tick.index("REOPEN",0,gate) < gate
