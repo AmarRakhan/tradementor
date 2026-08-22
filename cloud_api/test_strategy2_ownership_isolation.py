@@ -40,11 +40,12 @@ def test_exact_symbol_and_side_are_required_for_proven_ownership():
 
 def test_account_tick_keeps_only_risk_reducing_management_during_mismatch():
     start = MAIN.index("def _run_aster_strategy2_tick")
-    end = MAIN.index("def aster_automation_public", start)
+    end = MAIN.index("def _aster_brackets", start)
     tick = MAIN[start:end]
     assert "proven_owned,_,stored_only_s2=isolate_unproven_ownership" in tick
     assert "if missing or transfer_errors or len(transferred)!=len(active_keys)" not in tick
-    assert "if transfer_errors:" in tick
+    assert "LEGACY_OWNERSHIP_NORMALIZED_TO_STRATEGY2" in tick
+    assert "normalization_errors" in tick
     assert "if ownership_isolated and selected and not selected[1].risk_reducing" in tick
     assert "if not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens" in tick
     assert 'return {"status":"ownership-isolated","action":"HOLD"' not in tick

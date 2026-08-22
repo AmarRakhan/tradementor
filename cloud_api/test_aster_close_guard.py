@@ -76,7 +76,7 @@ def test_all_strategy_close_decisions_use_the_same_close_guard():
 
 def test_strategy2_blocked_close_cannot_starve_other_position_management():
     source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
-    tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     assert 'action_key=f"{leg.symbol}|{leg.side}|{decision.kind}"' in tick
     assert 'blocked_management[action_key]=int(now.timestamp()*1000)+5*60*1000' in tick
     assert 'reason=f"{BLOCK_MESSAGE}; andere posities blijven beheerbaar"' in tick
@@ -85,14 +85,13 @@ def test_strategy2_blocked_close_cannot_starve_other_position_management():
 
 def test_emergency_risk_reduction_is_allowed_to_reach_the_net_profit_guard():
     source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
-    tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     assert "risk_approved=lambda margin:\n                    decision.risk_reducing or" in tick
 
 
-def test_exclusive_strategy2_ownership_blocks_legacy_and_strategy3_before_client_creation():
+def test_retired_strategy1_and_strategy3_runtimes_are_absent_from_active_backend():
     source=(Path(__file__).parent/"main.py").read_text(encoding="utf-8")
-    legacy=source[source.index("def _run_aster_automation_tick"):source.index("def mexc_automation_public")]
-    s3=source[source.index("def _run_aster_strategy3_tick"):source.index("def _run_aster_strategy2_tick")]
-    for block in (legacy,s3):
-        assert block.index('exclusiveOwnership') < block.index("load_aster_secret")
-        assert '"ordersSent":0' in block
+    assert "def _run_aster_automation_tick" not in source
+    assert "def _run_aster_strategy3_tick" not in source
+    assert '/v1/me/aster/automation/start' not in source
+    assert '/v1/me/aster/strategy3/start' not in source

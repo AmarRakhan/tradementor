@@ -8,7 +8,7 @@ EXECUTION = (ROOT / "aster_execution.py").read_text(encoding="utf-8")
 
 def _tick_source() -> str:
     start = MAIN.index("def _run_aster_strategy2_tick")
-    end = MAIN.index("def aster_automation_public", start)
+    end = MAIN.index("def _aster_brackets", start)
     return MAIN[start:end]
 
 

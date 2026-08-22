@@ -9,7 +9,6 @@ TEST_ENTRYPOINT = ROOT / "cloud_api" / "strategy2_test_entrypoint.py"
 NON_TEST_DEPLOYMENTS = (
     ROOT / ".github" / "workflows" / "deploy-cloud-production.yml",
     ROOT / ".github" / "workflows" / "deploy-cloud-staging.yml",
-    ROOT / ".github" / "workflows" / "deploy-cloud-live-canary.yml",
 )
 
 
@@ -91,7 +90,7 @@ def test_missing_linked_account_registration_never_enables_trading():
 
 def test_completed_canary_authorization_survives_transient_readiness_and_open_orders():
     source = MAIN.read_text(encoding="utf-8")
-    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     readiness = source[source.index('def aster_strategy2_readiness('):source.index('@app.post("/v1/me/aster/strategy2/canary")')]
     assert 'if live and (not canary_authorized or not central_live_enabled)' in tick
     assert '"liveReadyRecoveryReason":"COMPLETED_CANARY_AUTHORIZATION"' in tick
@@ -157,7 +156,7 @@ def test_strategy2_test_only_publication_cannot_deploy_other_cloud_environments(
 
 def test_strategy2_candidate_rejections_are_isolated_and_visible():
     source = MAIN.read_text(encoding="utf-8")
-    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     assert 'entryCandidateCooldowns' in tick
     assert 'fingerprint' in tick
     assert 'advancedWithinTick' in tick
@@ -171,7 +170,7 @@ def test_strategy2_candidate_rejections_are_isolated_and_visible():
 
 def test_confirmed_fill_and_strategy2_ownership_are_committed_atomically():
     source = MAIN.read_text(encoding="utf-8")
-    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     start = tick.index('audit_ref=ref.collection("audit").document()')
     end = tick.index('batch.commit()', start) + len('batch.commit()')
     atomic = tick[start:end]
@@ -182,11 +181,11 @@ def test_confirmed_fill_and_strategy2_ownership_are_committed_atomically():
 
 def test_proven_refresh_race_is_reconciled_before_exclusive_completeness_check():
     source = MAIN.read_text(encoding="utf-8")
-    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     recovery = tick.index("owned,recovered_ownership=recover_audited_ownership")
-    exclusive = tick.index('exclusive=os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP"')
-    assert recovery < exclusive
-    recovered_block = tick[recovery:exclusive]
+    normalization = tick.index("LEGACY_OWNERSHIP_NORMALIZED_TO_STRATEGY2")
+    assert recovery < normalization
+    recovered_block = tick[recovery:normalization]
     assert "audit_events=audit_events,fills=fills" in recovered_block
     assert "recovery_batch.set(ref" in recovered_block
     assert '"OWNERSHIP_RECOVERED_FROM_AUDIT"' in recovered_block
@@ -195,7 +194,7 @@ def test_proven_refresh_race_is_reconciled_before_exclusive_completeness_check()
 
 def test_strategy2_candidate_logic_has_no_account_symbol_or_amount_exception():
     source = MAIN.read_text(encoding="utf-8")
-    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def aster_automation_public")]
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     for forbidden in ('BULLAUSDT','CRDOUSDT','PLTRUSDT','hotmail.com','gmail.com'):
         assert forbidden not in tick
     assert 'settings.base_notional' in tick

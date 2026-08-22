@@ -12,10 +12,28 @@ export function isValidAsterSnapshotData(value) {
   return typeof value.configured === "boolean"
     && Array.isArray(value.positions)
     && isRecord(value.strategy2)
-    && isRecord(value.strategy3)
     && typeof value.historyAvailable === "boolean"
     && Array.isArray(value.closedTrades)
     && Array.isArray(value.realizedEvents);
+}
+
+
+const PRESERVED_ACCOUNT_FIELDS = [
+  "equity", "walletBalance", "availableBalance", "activeTradeCapital",
+  "activePositions", "maintenanceMargin", "marginRatio", "unrealizedPnl",
+];
+
+export function preserveConfirmedAsterValues(previous, incoming) {
+  if (!isRecord(incoming)) throw new Error("Onvolledige Aster-snapshot ontvangen.");
+  if (!isRecord(previous)) return incoming;
+  const merged = { ...previous, ...incoming };
+  for (const key of PRESERVED_ACCOUNT_FIELDS) {
+    if (!(key in incoming) || incoming[key] === null || incoming[key] === undefined) {
+      if (key in previous) merged[key] = previous[key];
+    }
+  }
+  if (!isRecord(incoming.strategy2) && isRecord(previous.strategy2)) merged.strategy2 = previous.strategy2;
+  return merged;
 }
 
 export function mergeCompleteAsterSnapshot(account, history) {

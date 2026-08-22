@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const files=[
-  "../components/aster-dry-run-control.tsx",
   "../components/aster-strategy2-maker.tsx",
   "../components/aster-strategy3-control.tsx",
   "../components/hyperliquid-strategy-control.tsx",

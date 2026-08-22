@@ -5,7 +5,6 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = {
     "deploy-cloud-production.yml": "DEPLOY_PRODUCTION_BACKEND",
     "deploy-cloud-staging.yml": "DEPLOY_CLOUD_STAGING",
-    "deploy-cloud-live-canary.yml": "DEPLOY_LIVE_CANARY",
 }
 
 

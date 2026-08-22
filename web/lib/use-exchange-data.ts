@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "./cloud-client";
-import { mergeCompleteAsterSnapshot, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
+import { mergeCompleteAsterSnapshot, preserveConfirmedAsterValues, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
 import { createLatestAsterRequestGate } from "./aster-strategy2-server-status.mjs";
 
 export type ExchangeId = "hyperliquid" | "aster";
@@ -90,15 +90,23 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
       const updatedAt = Date.now();
       const payload = exchange === "aster" ? data.data : data;
       const timings = exchange === "aster" ? data.timings : undefined;
-      if (exchange === "aster") {
-        saveAsterSnapshot(window.localStorage, uid, payload, updatedAt);
-        console.info("[TradeMentor Aster timing]", timings);
-      }
-      setState((current) => current.uid !== uid ? current : ({ ...current, snapshots: { ...current.snapshots, [exchange]: { loading: false, data: payload, error: "", updatedAt, source: "server", serverConfirmed: true, ...(timings ? { timings } : {}) } } }));
+      setState((current) => {
+        if (current.uid !== uid) return current;
+        const confirmedPayload = exchange === "aster"
+          ? preserveConfirmedAsterValues(current.snapshots.aster.data, payload)
+          : payload;
+        if (exchange === "aster") {
+          saveAsterSnapshot(window.localStorage, uid, confirmedPayload, updatedAt);
+          console.info("[TradeMentor Aster timing]", timings);
+        }
+        return { ...current, snapshots: { ...current.snapshots, [exchange]: {
+          loading: false, data: confirmedPayload, error: "", updatedAt, source: "server", serverConfirmed: true, ...(timings ? { timings } : {})
+        } } };
+      });
     } catch (reason) {
       if (!mounted.current) return;
       if (exchange === "aster" && !gate?.accepts(requestToken)) return;
-      setState((current) => current.uid !== uid ? current : ({ ...current, snapshots: { ...current.snapshots, [exchange]: { ...current.snapshots[exchange], loading: false, serverConfirmed: false, error: reason instanceof Error ? reason.message : "Exchangegegevens zijn niet beschikbaar." } } }));
+      setState((current) => current.uid !== uid ? current : ({ ...current, snapshots: { ...current.snapshots, [exchange]: { ...current.snapshots[exchange], loading: false, serverConfirmed: current.snapshots[exchange].serverConfirmed, error: reason instanceof Error ? reason.message : "Exchangegegevens zijn niet beschikbaar." } } }));
     }
   }, [currentAsterRequestGate, uid]);
 

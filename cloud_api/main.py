@@ -74,22 +74,12 @@ from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
 from aster_strategy2_state import OwnedLeg, reconcile_owned_legs
-from aster_strategy2_readiness import build_readiness_report, combined_strategy_ownership
+from aster_strategy2_readiness import build_readiness_report
 from aster_canary import choose_flat_symbol, existing_canary_action
 from aster_strategy2 import Decision
-from aster_strategy3 import Strategy3Config, LegState as Strategy3LegState, PortfolioState as Strategy3PortfolioState
-from aster_strategy3 import Decision as Strategy3Decision, decide as decide_strategy3, net_return as strategy3_net_return
-from aster_strategy3 import account_canary_proven as strategy3_account_canary_proven
-from aster_strategy3 import persisted_runtime_mode as strategy3_persisted_runtime_mode
-from aster_strategy3_simulation import standard_suite as strategy3_standard_suite, failure_suite as strategy3_failure_suite
-from aster_strategy3_readiness import build_strategy3_readiness_report
-from aster_strategy3_execution import Strategy3ExecutionContext, execute_strategy3_decision
-from aster_strategy3_status import strategy3_position_tp_contract
 from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_user_trades, refresh_owned_costs
 from aster_strategy_status import (operating_status_contract, ownership_reason_contract,
     position_count_contract, proven_owned_rows, reconciled_ownership_update)
-from aster_dashboard_status import build_aster_dashboard_status
-from aster_rapid_build import run_confirmed_batch
 from aster_strategy2_execution import ExecutionContext, Strategy2RiskBlocked, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
 from aster_strategy2_runtime import next_management_decision, scanner_allowed, active_position_map, cost_evidence_max_age_seconds
@@ -137,7 +127,6 @@ from portfolio_risk import (
 from portfolio_growth import estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from reliability_monitor import event_key as reliability_event_key, event_payload as reliability_event_payload, counts as reliability_counts, overall as reliability_overall
-from aster_strategy3 import account_entry_side
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
 from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
 from read_only_source import read_source_url
@@ -212,8 +201,6 @@ _info_cache: dict[str, tuple[float, Any]] = {}
 _aster_universe_cache: AsterUniverseSnapshot | None = None
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
-_aster_strategy2_cost_cache: dict[str, tuple[float, dict[tuple[str, str], OwnedLeg], dict[str, str]]] = {}
-_aster_strategy3_cost_cache: dict[str, tuple[float, dict[tuple[str, str], OwnedLeg], dict[str, str]]] = {}
 
 
 class WalletLinkRequest(BaseModel):
@@ -1167,55 +1154,6 @@ def _server_universe_contract(ref: Any, raw: dict[str, Any], requested_top_n: in
     return refreshed
 
 
-def aster_strategy3_public(uid: str) -> dict[str, Any]:
-    ref = aster_strategy3_reference(uid)
-    raw = ref.get().to_dict() or {}
-    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else Strategy3Config().public_dict()
-    owned = proven_owned_rows(raw.get("ownedLegs", []), strategy_id="aster-strategy-3", engine_type="strategy3")
-    roles = [str(x.get("role", "HARVEST")) for x in owned]
-    account_snapshot = raw.get("accountSnapshot") if isinstance(raw.get("accountSnapshot"), dict) else {}
-    universe = _server_universe_contract(ref, raw, int(settings.get("universeTopN", 100)))
-    unassigned_positions = int(safe_float(raw.get("unassignedPositions")))
-    return {"strategy3": {"settings": settings, "effectiveLiveSettings": settings, "universe": universe,
-        "settingsSource": "server", "phase": str(raw.get("phase", "DRAFT")),
-        "enabled": bool(raw.get("enabled",False)), "liveReady": bool(raw.get("liveReady",False)),
-        "paperOnly": not bool(raw.get("canaryValidated",False)), "canaryValidated":bool(raw.get("canaryValidated",False)),
-        "configVersion": int(safe_float(raw.get("configVersion", settings.get("version", 1)))),
-        "lastReason": ownership_reason_contract(raw.get("lastReason"), unassigned_positions),
-        "lastSimulation": raw.get("lastSimulation") if isinstance(raw.get("lastSimulation"), dict) else None,
-        "lastTickAt":raw.get("lastTickAt"), "activeTrades":len(owned),
-        "accountActivePositions":int(safe_float(account_snapshot.get("accountActivePositions"))),
-        "activePairs":len({str(x.get("symbol", "")) for x in owned}),
-        "longLegs":sum(1 for x in owned if x.get("side")=="LONG"),
-        "shortLegs":sum(1 for x in owned if x.get("side")=="SHORT"),
-        "harvestLegs":sum(1 for x in roles if x=="HARVEST"),
-        "shieldLegs":sum(1 for x in roles if x in {"PROTECTION","HARVEST_PROTECTION"}),
-        "trailingActive":len(raw.get("trailingPeaks", {}) if isinstance(raw.get("trailingPeaks"),dict) else {}),
-        "trailingBlocked":0, "unassignedPositions":unassigned_positions}}
-
-
-def _read_strategy_cost_evidence(uid: str, client: AsterV3Client, owned: list[OwnedLeg], *,
-                                 now: datetime, strategy: str) -> tuple[dict[tuple[str, str], OwnedLeg], dict[str, str]]:
-    """Read complete fee/funding evidence for Positions; never persist or order."""
-    cache = _aster_strategy3_cost_cache if strategy == "strategy3" else _aster_strategy2_cost_cache
-    with _cache_lock:
-        cached = cache.get(uid)
-        if cached and time.monotonic() - cached[0] < 30:
-            return cached[1], cached[2] if len(cached) > 2 else {}
-    checked_at_ms = int(now.timestamp() * 1000)
-    enriched, failures = refresh_owned_costs(client, owned, {leg.symbol for leg in owned}, checked_at_ms=checked_at_ms)
-    result = {(leg.symbol, leg.side): leg for leg in enriched}
-    with _cache_lock:
-        cache[uid] = (time.monotonic(), result, failures)
-    return result, failures
-
-
-def _read_strategy3_cost_evidence(uid: str, client: AsterV3Client, owned: list[OwnedLeg],
-                                  *, now: datetime) -> dict[tuple[str, str], OwnedLeg]:
-    """Compatibility wrapper for the read-only Strategy-3 status contract."""
-    return _read_strategy_cost_evidence(uid, client, owned, now=now, strategy="strategy3")[0]
-
-
 def _explicit_strategy1_owned_keys(raw: dict[str, Any]) -> set[tuple[str, str]]:
     """Read explicit Strategy-1 claims; an exchange snapshot is not ownership."""
     keys:set[tuple[str,str]]=set()
@@ -1239,272 +1177,6 @@ def _aster_owned_keys(uid: str) -> tuple[set[tuple[str, str]], set[tuple[str, st
             leg=owned_from_mapping(row);s2.add((leg.symbol,leg.side))
         except (TypeError,ValueError):pass
     return s1,s2
-
-
-def _run_aster_strategy3_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
-    """One fail-closed S3 tick; the exchange remains source of truth."""
-    if _aster_close_all_active(uid):
-        return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
-    strategy2_control=aster_strategy2_reference(uid).get().to_dict() or {}
-    if bool(strategy2_control.get("exclusiveOwnership",False)):
-        return {"status":"blocked","reason":"Exclusieve Strategy-2-ownership: Strategy 3 mag geen orders versturen","ordersSent":0}
-    ref=aster_strategy3_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
-    persisted_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
-    canary_doc=ref.collection("canaries").document("s3-open-fill-close-v1").get().to_dict() or {}
-    settings=replace(Strategy3Config.from_mapping(persisted_settings),mode=strategy3_persisted_runtime_mode(persisted_settings,canary_doc))
-    enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
-    if not monitor and not dry_run:return {"status":"stopped","reason":"Strategy 3 monitoring staat uit","ordersSent":0}
-    gates=(os.getenv("ASTER_LIVE_EXECUTION_ENABLED","false").lower()=="true" and
-        os.getenv("ASTER_STRATEGY3_LIVE_ENABLED","false").lower()=="true" and
-        os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED","false").lower()=="true" and
-        strategy3_account_canary_proven(raw,canary_doc))
-    live=settings.mode=="live" and enabled and not dry_run
-    if live and (not gates or not raw.get("canaryValidated") or not raw.get("liveReady")):
-        return {"status":"blocked","reason":"Strategy 3 live-gates of canary zijn niet volledig vrijgegeven","ordersSent":0}
-    secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,
-        sign_message=local_eip712_signer(secret),live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
-    try:hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
-    except (AsterApiError,ValueError) as exc:
-        ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True)
-        return {"status":"data-hold","reason":str(exc),"ordersSent":0}
-    if not hedge:return {"status":"blocked","reason":"Aster Hedge Mode staat uit","ordersSent":0}
-    if orders:return {"status":"reconciling","reason":"Open Aster-orders worden eerst gereconcilieerd","ordersSent":0}
-    owned=[]
-    for item in raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []:
-        try:
-            leg=owned_from_mapping(item)
-            if leg.strategy_id=="aster-strategy-3" and leg.engine_type=="strategy3":owned.append(leg)
-        except (TypeError,ValueError):pass
-    s1_keys,s2_keys=_aster_owned_keys(uid);posmap=active_position_map(positions);active_keys=set(posmap)
-    try:
-        audit_events=[row.to_dict() or {} for row in ref.collection("audit").stream()]
-        s3_open_events=[row for row in audit_events if str(row.get("event","")).upper()=="INITIAL_OPEN_LEG"
-            and str(row.get("strategyId",row.get("strategy_id","")))=="aster-strategy-3"]
-        known_keys={(leg.symbol,leg.side) for leg in owned}
-        missing_symbols={str(row.get("symbol","")).upper() for row in s3_open_events
-            if (str(row.get("symbol","")).upper(),str(row.get("side","")).upper()) in active_keys-known_keys}
-        ownership_fills=[]
-        for symbol in sorted(missing_symbols):
-            stamps=[row.get("timestamp") for row in s3_open_events if str(row.get("symbol","")).upper()==symbol]
-            starts=[int(stamp.timestamp()*1000) for stamp in stamps if hasattr(stamp,"timestamp")]
-            ownership_fills.extend(paged_user_trades(client,symbol,start_time=min(starts) if starts else None))
-        owned,recovered_ownership=recover_audited_ownership(persisted=owned,positions=positions,
-            audit_events=audit_events,fills=ownership_fills,excluded_keys=s1_keys|s2_keys,
-            strategy_id="aster-strategy-3",engine_type="strategy3",require_event_strategy=True)
-        if recovered_ownership:
-            ref.set({"ownedLegs":[owned_to_mapping(leg) for leg in owned],"updatedAt":now},merge=True)
-            for recovered in recovered_ownership:
-                ref.collection("audit").add({"event":"OWNERSHIP_RECOVERED_FROM_AUDIT",**recovered,"timestamp":now})
-    except (AsterApiError,ValueError) as exc:
-        return {"status":"data-hold","reason":f"Strategy-3 ownershipherstel niet betrouwbaar: {exc}","ordersSent":0}
-    s3_keys={(x.symbol,x.side) for x in owned}
-    if s3_keys & (s1_keys|s2_keys):
-        return {"status":"blocked","reason":"Strategy 3 ownership botst met een bestaande strategie","ordersSent":0}
-    known=s1_keys|s2_keys|s3_keys
-    unknown=active_keys-known
-    if unknown:
-        ref.set({"phase":"RECONCILING","unassignedPositions":len(unknown),"lastReason":"Actieve exposure zonder bewezen ownership","lastTickAt":now},merge=True)
-        return {"status":"reconciling","reason":"Actieve exposure zonder bewezen ownership","ordersSent":0}
-    # The exchange-truth check above is authoritative for the current tick.
-    # Clear both halves of a previously persisted ownership warning together,
-    # before any later fee/funding or risk hold can return early.
-    ownership_update=reconciled_ownership_update(raw.get("lastReason"))
-    stored_reason=str(raw.get("lastReason") or "Nieuw — simulatie; standaard uit")
-    if int(safe_float(raw.get("unassignedPositions")))!=0 or ownership_update["lastReason"]!=stored_reason:
-        ref.set(ownership_update,merge=True)
-    fills=[];income=[]
-    try:
-        changed_symbols = changed_owned_symbols(owned, positions)
-        for symbol in sorted(changed_symbols):fills.extend(paged_user_trades(client,symbol))
-        s3_positions=[row for key,row in posmap.items() if key in s3_keys]
-        recovery=reconcile_owned_legs(persisted=owned,positions=s3_positions,open_orders=[],fills=fills,
-            exchange_reliable=True,strategy_label="Strategy-3")
-    except (AsterApiError,ValueError) as exc:
-        return {"status":"data-hold","reason":f"Strategy-3 recovery niet betrouwbaar: {exc}","ordersSent":0}
-    if not recovery.allow_risk_increase:
-        ref.set({"phase":"RECONCILING","lastReason":"; ".join(recovery.reasons),"lastTickAt":now},merge=True)
-        return {"status":"reconciling","reason":"; ".join(recovery.reasons),"ordersSent":0}
-    for event in recovery.audit:ref.collection("audit").add({**event,"timestamp":now})
-    owned=list(recovery.legs)
-    refresh_symbols=cost_refresh_symbols(owned,positions,maximum_background=4,maximum_total=6)
-    owned,cost_failures=refresh_owned_costs(client,owned,refresh_symbols,checked_at_ms=int(now.timestamp()*1000))
-    s3_keys={(x.symbol,x.side) for x in owned}
-    wallet=safe_float(account.get("totalWalletBalance"));unreal=safe_float(account.get("totalUnrealizedProfit"))
-    equity=safe_float(account.get("totalMarginBalance")) or wallet+unreal;maint=safe_float(account.get("totalMaintMargin"))
-    long_exp=sum(abs(safe_float(x.get("positionAmt")))*safe_float(x.get("markPrice")) for x in positions if str(x.get("positionSide")).upper()=="LONG")
-    short_exp=sum(abs(safe_float(x.get("positionAmt")))*safe_float(x.get("markPrice")) for x in positions if str(x.get("positionSide")).upper()=="SHORT")
-    strategy_margin=sum(abs(safe_float(posmap.get((x.symbol,x.side),{}).get("positionAmt")))*safe_float(posmap.get((x.symbol,x.side),{}).get("markPrice"))/max(1,safe_float(posmap.get((x.symbol,x.side),{}).get("leverage")) or settings.leverage) for x in owned)
-    hwm=max(safe_float(raw.get("adjustedHighWaterMark")),equity)
-    portfolio=Strategy3PortfolioState(equity,hwm,maint/equity if equity>0 else 1,long_exp,short_exp,strategy_margin)
-    peaks=dict(raw.get("trailingPeaks") or {}) if isinstance(raw.get("trailingPeaks"),dict) else {}
-    action_cooldowns=dict(raw.get("actionCooldowns") or {}) if isinstance(raw.get("actionCooldowns"),dict) else {}
-    now_ms=int(time.time()*1000)
-    # A definite exchange rejection proves that no order was accepted. Cool
-    # down only that exact action so another TP candidate can be assessed on
-    # the next tick; uncertain close outcomes still stop the complete tick.
-    action_cooldowns={key:value for key,value in action_cooldowns.items() if safe_float(value)>now_ms}
-    priority={"ASSIGN_PROTECTION":0,"PARTIAL_TP":1,"TRAILING_TP":1,"FULL_TP":1,"ADD_DCA":2,"ARM_TRAILING":3,"HOLD":9};choices=[];cost_holds=[]
-    for leg in owned:
-        row=posmap.get((leg.symbol,leg.side))
-        if not row:continue
-        cost_age_ms=now_ms-int(leg.costs_updated_at_ms or 0)
-        if leg.costs_updated_at_ms<=0 or cost_age_ms>300_000:
-            cost_holds.append(f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}")
-            continue
-        mark=safe_float(row.get("markPrice"));size=abs(safe_float(row.get("positionAmt")))*mark;key=f"{leg.symbol}|{leg.side}"
-        state=Strategy3LegState(leg.side,size,safe_float(row.get("entryPrice")) or leg.weighted_entry,mark,leg.dca_count,
-            safe_float(row.get("unRealizedProfit",row.get("unrealizedProfit"))),leg.fees,leg.funding,leg.role,
-            safe_float(peaks.get(key)) if key in peaks else None)
-        decision=decide_strategy3(settings,state,portfolio,close_fee=size*.0005)
-        # Arming/updating trailing is bookkeeping, not an exchange action. Persist the
-        # peak, but do not let it monopolise this tick or block rapid start entries.
-        # A later tick can still select TRAILING_TP when the configured pullback occurs.
-        if decision.kind=="ARM_TRAILING":
-            peaks[key]=max(strategy3_net_return(state),safe_float(peaks.get(key)))
-            continue
-        if safe_float(action_cooldowns.get(f"{key}|{decision.kind}"))>now_ms:
-            continue
-        surplus=strategy3_net_return(state,size*.0005)-settings.take_profit
-        choices.append((priority.get(decision.kind,8),-surplus,leg,state,decision))
-    choices.sort(key=lambda x:(x[0],x[1]));selected=choices[0] if choices and choices[0][4].kind!="HOLD" else None
-    snapshot={"equity":equity,"highWaterMark":hwm,"drawdown":portfolio.drawdown,"marginRatio":portfolio.margin_ratio,
-        "longExposure":long_exp,"shortExposure":short_exp,"strategyMargin":strategy_margin,"activeTrades":len(owned),"capturedAt":now}
-    snapshot["accountActivePositions"] = len(active_keys)
-    ref.set({"accountSnapshot":snapshot,"adjustedHighWaterMark":hwm,"ownedLegs":[owned_to_mapping(x) for x in owned],
-        "unassignedPositions":0,"runtimeEnabled":gates,"lastTickAt":now},merge=True)
-    if selected:
-        _,_,leg,state,decision=selected;key=f"{leg.symbol}|{leg.side}"
-        if decision.kind=="ASSIGN_PROTECTION":
-            owned=[replace(x,role="PROTECTION") if x==leg else x for x in owned]
-            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,"phase":"PROTECTION","lastReason":decision.reason},merge=True)
-            return {"status":"ok","action":decision.kind,"ordersSent":0}
-        if decision.kind=="ADD_DCA" and (not enabled or portfolio.margin_ratio>=settings.defensive_margin_ratio):
-            return {"status":"waiting","action":"HOLD","reason":"DCA geblokkeerd door stop- of risicomodus","ordersSent":0}
-        try:
-            row=posmap[(leg.symbol,leg.side)];mark=safe_float(row.get("markPrice"));qty=abs(Decimal(str(row.get("positionAmt"))))
-            plan=PairExecutionPlan(leg.symbol,qty,qty*Decimal(str(mark)),max(1,int(safe_float(row.get("leverage")))))
-            if decision.kind=="ADD_DCA":
-                info={str(x.get("symbol","")).upper():x for x in client.public_exchange_info().get("symbols",[])}
-                plan=plan_aster_pair(info[leg.symbol],planning_brackets(client,client.leverage_brackets(),leg.symbol,settings.leverage),mark,decision.notional)
-                plan=replace(plan,leverage=configure_maximum_usable_leverage(client,replace(plan,leverage=min(plan.leverage,settings.leverage))))
-            if dry_run or not live:return {"status":"simulated","action":decision.kind,"ordersSent":0,"reason":decision.reason}
-            context=Strategy3ExecutionContext(leg.cycle_id,settings.version,leg,True,True,gates,
-                account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}))
-            result=execute_strategy3_decision(client,decision,plan,context,risk_approved=lambda margin:
-                portfolio.margin_ratio<settings.defensive_margin_ratio and strategy_margin+margin<=equity*settings.strategy_budget)
-        except AsterCloseBlocked:
-            ref.set({"phase":"RUNNING","lastReason":BLOCK_MESSAGE,"lastTickAt":now},merge=True)
-            return {"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","symbol":leg.symbol,
-                "side":leg.side,"ordersSent":0,"reason":BLOCK_MESSAGE}
-        except Exception as exc:
-            # Aster -5018/-2027 and equivalent definite contract rejections
-            # prove that no fill occurred.  For a risk-increasing DCA it is
-            # therefore safe to cool down only this exact action and let the
-            # next tick consider another TP candidate. Unknown order outcomes
-            # still fail closed because an accepted order cannot be excluded.
-            if not is_definite_contract_rejection(exc):
-                raise
-            cooldown_key=f"{key}|{decision.kind}"
-            action_cooldowns[cooldown_key]=now_ms+(30*60*1000 if decision.kind=="ADD_DCA" else 5*60*1000)
-            reason=f"{leg.symbol} {leg.side} {decision.kind} tijdelijk overgeslagen na definitieve afwijzing: {exc}"
-            ref.set({"actionCooldowns":action_cooldowns,"trailingPeaks":peaks,"phase":"RUNNING",
-                "lastReason":reason,"lastTickAt":now},merge=True)
-            ref.collection("audit").add({"event":"DCA_CONTRACT_REJECTION_SKIPPED" if decision.kind=="ADD_DCA" else "MANAGEMENT_CONTRACT_REJECTION_SKIPPED","symbol":leg.symbol,
-                "side":leg.side,"cycleId":leg.cycle_id,"action":decision.kind,"reason":str(exc),"timestamp":now})
-            return {"status":"ok","action":"DCA_SKIPPED" if decision.kind=="ADD_DCA" else "MANAGEMENT_SKIPPED","symbol":leg.symbol,"side":leg.side,
-                "ordersSent":0,"reason":reason}
-        rr=result[0].get("result",{});filled=safe_float(rr.get("executedQty")) or float(plan.quantity);price=safe_float(rr.get("avgPrice")) or mark
-        _record_aster_order_attribution(ref,rr,strategy_id="aster-strategy-3",
-            strategy_name=str(settings.name or "Strategy 3"),cycle_id=leg.cycle_id,
-            config_version=settings.version,symbol=leg.symbol,side=leg.side,action=decision.kind)
-        if decision.kind=="ADD_DCA":
-            total=leg.quantity+filled;owned=[replace(x,quantity=total,weighted_entry=(leg.quantity*leg.weighted_entry+filled*price)/total,
-                dca_count=leg.dca_count+1,last_order_at_ms=int(time.time()*1000)) if x==leg else x for x in owned]
-        else:
-            remaining=max(0,leg.quantity-filled);owned=[replace(x,quantity=remaining,role=decision.role) if x==leg and remaining>1e-12 else x for x in owned if x!=leg or remaining>1e-12]
-            peaks.pop(key,None)
-        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,
-            "actionCooldowns":action_cooldowns,"phase":"RUNNING","lastReason":decision.reason,"updatedAt":now},merge=True)
-        ref.collection("audit").add({"event":decision.kind,"symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,"timestamp":now})
-        return {"status":"ok","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":len(result)}
-    if cost_holds:
-        reason="; ".join(cost_holds[:3])
-        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now,"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True)
-        return {"status":"data-hold","action":"HOLD","ordersSent":0,"reason":reason}
-    if not enabled:
-        ref.set({"trailingPeaks":peaks,"phase":"PROTECTIVE_ONLY","lastReason":"Strategy 3 staat veilig gestopt"},merge=True)
-        return {"status":"waiting","action":"HOLD","ordersSent":0,"reason":"Strategy 3 staat veilig gestopt"}
-    # maximumPositions is an account-wide safety ceiling. Existing manual,
-    # legacy or other-strategy exposure consumes capacity even though Strategy 3
-    # must never claim its ownership.
-    account_side=account_entry_side(active_keys,settings.maximum_positions)
-    if account_side is None:
-        ref.set({"trailingPeaks":peaks,"phase":"RUNNING","rapidBuildRequested":False,
-            "lastReason":f"Accountlimiet bereikt: {len(active_keys)} van {settings.maximum_positions} actieve posities"},merge=True)
-        return {"status":"waiting","action":"HOLD","ordersSent":0,"reason":"Accountbrede positiegrens bereikt"}
-    long_target,short_target=balanced_entry_targets(settings.maximum_positions);long_count,short_count=harvest_counts(owned)
-    side=account_side
-    if not side:
-        ref.set({"trailingPeaks":peaks,"phase":"RUNNING","rapidBuildRequested":False,"lastReason":f"Doelbezetting bereikt: {long_count} LONG / {short_count} SHORT"},merge=True)
-        return {"status":"waiting","action":"HOLD","ordersSent":0,"reason":"Doelbezetting bereikt"}
-    if portfolio.margin_ratio>=settings.caution_margin_ratio or strategy_margin+settings.base_notional/max(1,settings.leverage)>equity*settings.strategy_budget:
-        if bool(raw.get("rapidBuildRequested")):
-            ref.set({"rapidBuildRequested":False,"phase":"RISK_HOLD","lastReason":"Snelle startopbouw gestopt door actuele Strategy-3-risicocontrole"},merge=True)
-        return {"status":"waiting","action":"HOLD","ordersSent":0,"reason":"Nieuwe entry geblokkeerd door Strategy-3-risicobudget"}
-    try:
-        exchange_info=client.public_exchange_info()
-        info={str(x.get("symbol","")).upper():x for x in exchange_info.get("symbols",[]) if str(x.get("status","")).upper()=="TRADING"}
-        prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
-        market24=client.ticker_24h()
-        changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in market24}
-        universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)
-        brackets=client.leverage_brackets()
-    except (AsterApiError,ValueError) as exc:
-        reason=f"Strategy-3 marktdata niet gereed: {exc}"
-        blocked=aster_usdt_universe_snapshot(settings.universe_top_n,client=client).public_dict()
-        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now,"universe":blocked},merge=True)
-        return {"status":"data-hold","reason":reason,"ordersSent":0}
-    universe_contract=universe.public_dict()
-    ref.set({"universe":universe_contract},merge=True)
-    if universe.entry_blocked:
-        reason=universe_contract["entryBlockReason"]
-        ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
-        return {"status":"data-hold","reason":reason,"ordersSent":0,"universe":universe_contract}
-    blocked_symbols={symbol for symbol,_ in active_keys|s1_keys|s2_keys|s3_keys};candidates=list(universe_contract["selectedSymbols"])
-    candidates=[x for x in candidates if x in info and x in prices and x not in blocked_symbols];candidates.sort(key=lambda x:changes.get(x,0),reverse=side=="LONG")
-    if dry_run or not live:
-        reason="Droge Strategy-3-planning; geen order verzonden" if dry_run else "Live-mode is niet volledig bewezen"
-        ref.set({"phase":"SIMULATED" if dry_run else "LIVE_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
-        return {"status":"simulated","action":"OPEN_BASE","side":side,"candidates":len(candidates),"ordersSent":0,"reason":reason}
-    failures=[]
-    for symbol in candidates:
-        try:
-            plan=plan_aster_pair(info[symbol],planning_brackets(client,brackets,symbol,settings.leverage),prices[symbol],settings.base_notional)
-            plan=replace(plan,leverage=configure_maximum_usable_leverage(client,replace(plan,leverage=min(plan.leverage,settings.leverage))))
-            cycle=f"s3c{int(time.time()*1000)}";decision=Strategy3Decision("OPEN_BASE",side,notional=settings.base_notional,reason="Gebalanceerde Strategy-3-entry")
-            result=execute_strategy3_decision(client,decision,plan,Strategy3ExecutionContext(cycle,settings.version,None,True,True,gates),
-                risk_approved=lambda margin:strategy_margin+margin<=equity*settings.strategy_budget)
-            rr=result[0].get("result",{});qty=safe_float(rr.get("executedQty")) or float(plan.quantity);price=safe_float(rr.get("avgPrice")) or prices[symbol]
-            _record_aster_order_attribution(ref,rr,strategy_id="aster-strategy-3",
-                strategy_name=str(settings.name or "Strategy 3"),cycle_id=cycle,
-                config_version=settings.version,symbol=symbol,side=side,action="OPEN_BASE")
-            owned.append(OwnedLeg("aster-strategy-3","strategy3",symbol,side,cycle,settings.version,qty,price,0,"HARVEST",
-                (str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000),last_order_at_ms=int(time.time()*1000)))
-            ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"trailingPeaks":peaks,"phase":"RUNNING","lastReason":f"{symbol} {side} bevestigd","updatedAt":now},merge=True)
-            ref.collection("audit").add({"event":"INITIAL_OPEN_LEG","strategyId":"aster-strategy-3","symbol":symbol,"side":side,"cycleId":cycle,"configVersion":settings.version,"timestamp":now})
-            return {"status":"ok","action":"OPEN_BASE","symbol":symbol,"side":side,"ordersSent":1}
-        except ValueError as exc:
-            # Contract minimum/step-size validation is deterministic and happens
-            # before order submission. Never raise the user's configured amount;
-            # skip this contract and continue with the next eligible candidate.
-            failures.append(f"{symbol}: {exc}")
-            continue
-        except Exception as exc:
-            if not is_definite_contract_rejection(exc):raise
-            failures.append(f"{symbol}: {exc}")
-    reason="; ".join(failures[:3]) or "Geen geldig vrij contract"
-    ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now},merge=True)
-    return {"status":"waiting","action":"OPEN_BASE","ordersSent":0,"reason":reason}
 
 
 def aster_strategy2_public(uid: str) -> dict[str, Any]:
@@ -1601,9 +1273,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         for symbol in sorted(recovery_symbols):
             starts=[leg.created_at_ms for leg in owned if leg.symbol==symbol and leg.created_at_ms>0]
             fills.extend(paged_user_trades(client,symbol,start_time=min(starts) if starts else None))
-        # Strategy 3 is retired. Stale Strategy-3 documents must never participate
-        # in Strategy-2 ownership, TP management, or entry gating.
-        s3_keys:set[tuple[str,str]]=set();s3_legs:list[OwnedLeg]=[]
+        s3_keys:set[tuple[str,str]]=set()
         # Repair a confirmed fill/audit refresh race before exclusive ownership
         # completeness is evaluated.  Both evidence sources must match the
         # active exchange leg; manual or otherwise unproven positions remain
@@ -1619,32 +1289,34 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     {"event":"OWNERSHIP_RECOVERED_FROM_AUDIT",**item,"timestamp":recovered_at})
             recovery_batch.commit()
             refresh_symbols|={str(item.get("symbol","")).upper() for item in recovered_ownership}
-        exclusive=os.getenv("ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP","false").lower()=="true"
-        # Strategy 1 and Strategy 3 are retired app-wide. Their persisted rows
-        # are historical only and may not gate or claim current Strategy-2 legs.
-        s1_legs:list[OwnedLeg]=[]
-        if exclusive:
-            transferred,missing,transfer_errors=transfer_active_ownership_to_strategy2(positions=positions,
-                strategy2_legs=owned,strategy3_legs=s3_legs,strategy1_legs=s1_legs)
-            if transfer_errors:
-                reason="Exclusieve Strategy-2-overdracht bevat tegenstrijdig ownershipbewijs"
-                ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now,
-                    "unassignedPositions":len(missing)},merge=True)
-                return {"status":"reconciling","reason":reason,"ordersSent":0}
-            # Missing active keys remain explicitly unclaimed. They are isolated
-            # below; only the transferred, proven subset may be managed.
-            previous={(leg.symbol,leg.side,leg.strategy_id,leg.engine_type,leg.quantity,leg.weighted_entry) for leg in owned}
-            current={(leg.symbol,leg.side,leg.strategy_id,leg.engine_type,leg.quantity,leg.weighted_entry) for leg in transferred}
-            owned=transferred;s3_keys=set()
-            if current!=previous:
+        # Strategy 1/3 are retired. Their stored ownership may be read exactly once
+        # as migration evidence for an already-open exchange leg, but can never
+        # act as an owner, blocker, scheduler input, or trading decision afterward.
+        legacy_s3_raw=aster_strategy3_reference(uid).get().to_dict() or {}
+        legacy_s1_raw=aster_automation_reference(uid).get().to_dict() or {}
+        legacy_s3_legs:list[OwnedLeg]=[];legacy_s1_legs:list[OwnedLeg]=[]
+        for item in legacy_s3_raw.get("ownedLegs",[]) if isinstance(legacy_s3_raw.get("ownedLegs"),list) else []:
+            try:
+                leg=owned_from_mapping(item)
+                if leg.strategy_id=="aster-strategy-3" and leg.engine_type=="strategy3":legacy_s3_legs.append(leg)
+            except (TypeError,ValueError):pass
+        for item in legacy_s1_raw.get("ownedLegs",[]) if isinstance(legacy_s1_raw.get("ownedLegs"),list) else []:
+            try:legacy_s1_legs.append(owned_from_mapping(item))
+            except (TypeError,ValueError):pass
+        normalized,normalization_missing,normalization_errors=transfer_active_ownership_to_strategy2(
+            positions=positions,strategy2_legs=owned,strategy3_legs=legacy_s3_legs,strategy1_legs=legacy_s1_legs)
+        if not normalization_errors:
+            previous_keys={(x.symbol,x.side,x.strategy_id,x.engine_type) for x in owned}
+            normalized_keys={(x.symbol,x.side,x.strategy_id,x.engine_type) for x in normalized}
+            if normalized_keys!=previous_keys and normalized:
+                owned=normalized
                 ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"updatedAt":now,
-                    "unassignedPositions":0},merge=True)
-                ref.collection("audit").add({"event":"EXCLUSIVE_STRATEGY2_OWNERSHIP_TRANSFERRED",
-                    "positionCount":len(owned),"timestamp":now})
-        elif {(leg.symbol,leg.side) for leg in owned}&s3_keys:
-            reason="Strategy-2-ownership botst met Strategy 3 en is niet eenduidig bewezen"
-            ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
-            return {"status":"reconciling","reason":reason,"ordersSent":0}
+                    "legacyOwnershipNormalizedAt":now,"unassignedPositions":len(normalization_missing)},merge=True)
+                ref.collection("audit").add({"event":"LEGACY_OWNERSHIP_NORMALIZED_TO_STRATEGY2",
+                    "positionCount":len(owned),"remainingUnassigned":len(normalization_missing),"timestamp":now})
+        # After normalization there is exactly one active ownership namespace.
+        # Any leg still missing proof is isolated as unknown below, never as an
+        # S1/S3 collision and never as an account-wide seat-refill blocker.
         s1_keys:set[tuple[str,str]]=set()
         s2_keys={(leg.symbol,leg.side) for leg in owned}
         unknown=active_keys-(s1_keys|s2_keys|s3_keys)
@@ -1666,8 +1338,12 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     except (AsterApiError,ValueError) as exc:
         return {"status":"data-hold","reason":f"Fill/funding recovery niet betrouwbaar: {exc}","ordersSent":0}
     if not recovery.allow_risk_increase:
-        ref.set({"phase":"RECONCILING","lastReason":"; ".join(recovery.reasons),"lastTickAt":now},merge=True)
-        return {"status":"reconciling","reason":"; ".join(recovery.reasons),"ordersSent":0}
+        # Recovery uncertainty is leg-local. Existing uncertain legs are isolated
+        # from risk-increasing management, while unrelated empty seats may refill.
+        ownership_isolated=True
+        reason="; ".join(recovery.reasons)
+        ref.set({"phase":"PROTECTIVE_ONLY","lastReason":f"{reason}; vrije stoelen blijven doorstromen","lastTickAt":now},merge=True)
+        ref.collection("audit").add({"event":"RECOVERY_ISOLATED_FROM_SEAT_REFILL","reason":reason,"timestamp":now})
     missing_fill_keys={(leg.symbol,leg.side) for leg in recovery.legs if not leg.fill_ids}
     owned,cost_failures=refresh_owned_costs(client,list(recovery.legs),refresh_symbols,
         checked_at_ms=int(now.timestamp()*1000),recover_fill_ids=True)
@@ -2162,241 +1838,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         "candidateScan":scan_status,"ordersSent":len(opened_legs),"reason":reason}
 
 
-def aster_automation_public(uid: str) -> dict[str, Any]:
-    value = aster_automation_reference(uid).get().to_dict() or {}
-    settings = value.get("settings") if isinstance(value.get("settings"), dict) else {}
-    return {
-        "automationEnabled": bool(value.get("enabled", False)),
-        "automationMonitoring": bool(value.get("monitor", False)),
-        "automationPhase": str(value.get("phase", "STOPPED")),
-        "automationReason": str(value.get("lastReason", "Niet gestart")),
-        "automationLastTickAt": value.get("lastTickAt"),
-        "automationSettings": settings or AsterStrategySettings().public_dict(),
-        "automationUniverse": _configured_universe_contract(value, int((settings or {}).get("universeTopN", 50))),
-        "cycleStartEquity": safe_float(value.get("cycleStartEquity")),
-        "realizedProfit": safe_float(value.get("realizedProfit")),
-        "safetyBuffer": safe_float(value.get("safetyBuffer")),
-        "momentumPot": safe_float(value.get("momentumPot")),
-    }
-
-
 def _aster_brackets(rows: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
     for row in rows:
         if str(row.get("symbol", "")).upper() == symbol.upper():
             return list(row.get("brackets") or [])
     return []
-
-
-def _run_aster_automation_tick(uid: str, *, dry_run: bool = False) -> dict[str, Any]:
-    if _aster_close_all_active(uid):
-        return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
-    ref = aster_automation_reference(uid); control = ref.get().to_dict() or {}
-    strategy2_control=aster_strategy2_reference(uid).get().to_dict() or {}
-    if bool(strategy2_control.get("exclusiveOwnership",False)):
-        return {"status":"blocked","reason":"Exclusieve Strategy-2-ownership: legacyproces mag geen orders versturen","ordersSent":0}
-    now_utc=datetime.now(timezone.utc);retry_at=control.get("nextRetryAt")
-    if isinstance(retry_at,datetime) and retry_at>now_utc:
-        return {"status":"backoff","reason":f"Aster API-rust tot {retry_at.isoformat()}"}
-    settings = AsterStrategySettings.from_mapping({**(control.get("settings") or {}),"enabled":bool(control.get("enabled",False))})
-    secret = load_aster_secret({"uid": uid})
-    live = os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true" and not dry_run
-    client = AsterV3Client(signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
-    try:
-        hedge = client.position_mode(); account_info = client.account_information(); raw_positions = client.position_risk()
-        raw_orders = client.open_orders()
-    except (AsterApiError, ValueError) as exc:
-        message=str(exc);match=re.search(r"banned until\s+(\d+)",message,re.IGNORECASE)
-        next_retry=datetime.fromtimestamp(int(match.group(1))/1000,tz=timezone.utc)+timedelta(seconds=5) if match else now_utc+timedelta(minutes=1)
-        ref.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":now_utc,"nextRetryAt":next_retry},merge=True)
-        return {"status":"data-hold","reason":str(exc)}
-    if not hedge: return {"status":"blocked","reason":"Aster Hedge Mode staat uit"}
-    if raw_orders: return {"status":"reconciling","reason":"Open Aster-orders worden eerst gereconcilieerd"}
-    equity, _wallet, available, _unrealized, maint = aster_account_information_values(account_info)
-    active=[x for x in raw_positions if abs(safe_float(x.get("positionAmt")))>0]
-    ratio=maint/equity if equity>0 else (1.0 if active else 0.0)
-    prices={str(x.get("symbol","")).upper():safe_float(x.get("markPrice")) for x in active}
-    meta=control.get("legMeta") if isinstance(control.get("legMeta"),dict) else {}
-    leg_last_order_at=control.get("legLastOrderAt") if isinstance(control.get("legLastOrderAt"),dict) else {}
-    grouped:dict[str,dict[str,Any]]={}
-    for row in active: grouped.setdefault(str(row.get("symbol","")).upper(),{})[str(row.get("positionSide","")).upper()]=row
-    ref.set({"accountSnapshot": {
-        "hedgeMode": hedge, "equity": equity, "walletBalance": _wallet,
-        "availableBalance": available, "unrealizedPnl": _unrealized,
-        "activePositions": len(active), "maintenanceMargin": maint,
-        "marginRatio": ratio, "openOrders": len(raw_orders),
-        "positions": [{
-            "symbol": str(row.get("symbol", "")),
-            "side": str(row.get("positionSide", "")),
-            "quantity": abs(safe_float(row.get("positionAmt"))),
-            "notionalUsd": abs(safe_float(row.get("positionAmt"))) * safe_float(row.get("markPrice")),
-            "entryPrice": safe_float(row.get("entryPrice")),
-            "markPrice": safe_float(row.get("markPrice")),
-            "unrealizedPnl": safe_float(row.get("unRealizedProfit", row.get("unrealizedProfit"))),
-            "leverage": int(safe_float(row.get("leverage"))),
-        } for row in active],
-        "capturedAt": now_utc,
-    }}, merge=True)
-    for symbol,sides in grouped.items():
-        existing=dict(meta.get(symbol) or {}) if isinstance(meta.get(symbol),dict) else {}
-        inferred=dict(existing)
-        for side,row in sides.items():
-            notional=abs(safe_float(row.get("positionAmt")))*safe_float(row.get("entryPrice"))
-            maximum=settings.maximum_long_dca if side=="LONG" else settings.maximum_short_dca
-            level=infer_aster_dca_level(notional,settings.base_notional,settings.dca_multiplier,maximum)
-            if level is not None:
-                inferred[side]=max(int(safe_float(existing.get(side))),level)
-        if inferred:
-            meta[symbol]=inferred
-    metadata_complete = all(
-        isinstance(meta.get(symbol), dict) and all(side in meta[symbol] for side in sides)
-        for symbol, sides in grouped.items()
-    )
-    reconciled = reconcile_aster_state(
-        persisted=aster_state_from_mapping(control.get("exchangeState")),
-        exchange_positions=raw_positions, exchange_open_orders=raw_orders,
-        hedge_mode_confirmed=hedge, exchange_read_ok=True,
-        round_trip_verified=False, fills_reconciled=metadata_complete,
-    )
-    if reconciled.changed or not reconciled.allow_risk_increase:
-        reason = "; ".join(reconciled.reasons)
-        ref.set({"exchangeState":aster_state_to_mapping(reconciled.state),"phase":"RECONCILING",
-                 "lastReason":reason,"lastTickAt":datetime.now(timezone.utc)},merge=True)
-        return {"status":"reconciling","reason":reason,"activePairs":len(grouped)}
-    pairs=[]
-    for symbol,sides in grouped.items():
-        legs=[]
-        for side in ("LONG","SHORT"):
-            row=sides.get(side)
-            if not row: legs.append(None);continue
-            qty=abs(safe_float(row.get("positionAmt"))); mark=safe_float(row.get("markPrice")) or prices.get(symbol,0)
-            legs.append(AsterStrategyLeg(side,qty*mark,safe_float(row.get("entryPrice")),int(safe_float((meta.get(symbol,{}) or {}).get(side,0))),safe_float(row.get("unRealizedProfit",row.get("unrealizedProfit"))),0))
-        pairs.append(AsterStrategyPair(symbol,legs[0],legs[1]))
-    used_margin=sum(
-        abs(safe_float(x.get("positionAmt"))) * (safe_float(x.get("markPrice")) or prices.get(str(x.get("symbol","")).upper(),0))
-        / max(1, safe_float(x.get("leverage")))
-        for x in active
-    )
-    account=AsterStrategyAccount(equity,available,ratio,safe_float(control.get("cycleStartEquity")) or equity,used_margin)
-    action=decide_aster_tick(settings,account,pairs,AsterTickMarket(prices))
-    base={"status":"simulated" if dry_run else "ok","action":action.kind,"reason":action.reason,"marginRatio":ratio,"activePairs":len(pairs)}
-    if dry_run and action.kind!="FILL_SLOT": return base
-    rows={};brackets=[];market24=[];universe=None
-    if action.kind in {"ADD_DCA","HARVEST_RESET","FILL_SLOT"}:
-        try:
-            brackets=client.leverage_brackets();exchange_info=client.public_exchange_info();info_rows=exchange_info.get("symbols",[])
-            rows={str(x.get("symbol","")).upper():x for x in info_rows if str(x.get("status","")).upper()=="TRADING"}
-            if action.kind=="FILL_SLOT":
-                tickers=client.ticker_prices();market24=client.ticker_24h()
-                prices.update({str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in tickers})
-                universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)
-        except (AsterApiError,ValueError) as exc:
-            message=str(exc);match=re.search(r"banned until\s+(\d+)",message,re.IGNORECASE)
-            next_retry=datetime.fromtimestamp(int(match.group(1))/1000,tz=timezone.utc)+timedelta(seconds=5) if match else now_utc+timedelta(minutes=1)
-            ref.set({"phase":"DATA_HOLD","lastReason":message,"lastTickAt":now_utc,"nextRetryAt":next_retry},merge=True)
-            return {**base,"status":"data-hold","reason":message}
-    prefix=f"tm-{uid[-6:]}-{int(time.time())}"
-    try:
-        if action.kind in {"CLOSE_LEG","ADD_DCA","HARVEST_RESET"} and (action.kind=="CLOSE_LEG" or action.symbol in rows):
-            row=next(x for x in active if str(x.get("symbol","")).upper()==action.symbol and str(x.get("positionSide","")).upper()==action.side)
-            qty=abs(Decimal(str(row.get("positionAmt")))); lev=max(1,int(safe_float(row.get("leverage"))))
-            current=PairExecutionPlan(action.symbol,qty,qty*Decimal(str(prices[action.symbol])),lev)
-            side=PositionSide(action.side)
-            incomplete_close_evidence=CloseEvidence(account_uid=uid,symbol=action.symbol,side=action.side,
-                caller=f"legacy:{action.kind}",reason=action.reason,quantity=float(qty),
-                entry_price=safe_float(row.get("entryPrice")),mark_price=prices[action.symbol],
-                gross_pnl=safe_float(row.get("unRealizedProfit",row.get("unrealizedProfit"))),
-                entry_fees=0,close_fee=float(current.notional_per_leg)*.0005,funding=0,
-                slippage_buffer=float(current.notional_per_leg)*.001,ownership_reliable=False,
-                fills_reliable=False,prices_reliable=prices[action.symbol]>0,costs_reliable=False)
-            close_audit=lambda event: ref.collection("audit").add({**event,"timestamp":now_utc})
-            if action.kind=="CLOSE_LEG": execute_aster_leg(client,current,side=side,action="CLOSE",id_prefix=prefix,confirm=True,
-                close_evidence=incomplete_close_evidence,close_audit=close_audit)
-            elif action.kind=="ADD_DCA":
-                add=plan_aster_pair(rows[action.symbol],_aster_brackets(brackets,action.symbol),prices[action.symbol],action.notional)
-                added_margin=float(add.notional_per_leg)/max(1,add.leverage)
-                pair_rows=[x for x in active if str(x.get("symbol","")).upper()==action.symbol]
-                pair_margin=sum(abs(safe_float(x.get("positionAmt")))*prices[action.symbol]/max(1,safe_float(x.get("leverage"))) for x in pair_rows)
-                pair_cap=equity*settings.bot_margin_budget_ratio/settings.maximum_pairs*(1+settings.pair_budget_tolerance)
-                if used_margin+added_margin>equity*settings.bot_margin_budget_ratio or pair_margin+added_margin>pair_cap:
-                    raise ValueError("DCA geblokkeerd door bot- of pairbudget")
-                execute_aster_leg(client,add,side=side,action="OPEN",id_prefix=prefix,confirm=True)
-                side_meta=dict(meta.get(action.symbol,{}) or {});side_meta[action.side]=int(side_meta.get(action.side,0))+1;meta[action.symbol]=side_meta
-                side_times=dict(leg_last_order_at.get(action.symbol,{}) or {});side_times[action.side]=int(time.time()*1000);leg_last_order_at[action.symbol]=side_times
-            else:
-                reopen=plan_aster_pair(rows[action.symbol],_aster_brackets(brackets,action.symbol),prices[action.symbol],settings.base_notional)
-                opposite_side="SHORT" if action.side=="LONG" else "LONG";opp=next(x for x in active if str(x.get("symbol","")).upper()==action.symbol and str(x.get("positionSide","")).upper()==opposite_side)
-                oppq=abs(Decimal(str(opp.get("positionAmt"))));opplan=PairExecutionPlan(action.symbol,oppq,oppq*Decimal(str(prices[action.symbol])),max(1,int(safe_float(opp.get("leverage")))))
-                execute_aster_harvest(client,current,reopen,side=side,opposite_plan=opplan,id_prefix=prefix,confirm=True,
-                    close_evidence=incomplete_close_evidence,close_audit=close_audit)
-                side_meta=dict(meta.get(action.symbol,{}) or {});side_meta[action.side]=0;meta[action.symbol]=side_meta
-                side_times=dict(leg_last_order_at.get(action.symbol,{}) or {});side_times[action.side]=int(time.time()*1000);leg_last_order_at[action.symbol]=side_times
-                gross=max(0.0,safe_float(row.get("unRealizedProfit",row.get("unrealizedProfit"))))
-                fee_estimate=(float(current.notional_per_leg)+float(reopen.notional_per_leg))*.0004
-                realized=max(0.0,gross-fee_estimate)
-                user_reference({"uid": uid}).collection("asterClosedTrades").add({
-                    "symbol": action.symbol, "side": action.side,
-                    "notionalUsd": float(current.notional_per_leg),
-                    "entryPrice": safe_float(row.get("entryPrice")),
-                    "exitPrice": prices[action.symbol], "realizedPnlUsd": realized,
-                    "closedAt": datetime.now(timezone.utc), "source": "aster-bot-harvest",
-                    "strategyId": "strategy_2", "strategyName": "Strategy 2 · Dual Profit Harvest DCA",
-                })
-                reinvest=realized*settings.momentum_reinvest_ratio
-                control["realizedProfit"]=safe_float(control.get("realizedProfit"))+realized
-                control["momentumPot"]=safe_float(control.get("momentumPot"))+reinvest
-                control["safetyBuffer"]=safe_float(control.get("safetyBuffer"))+(realized-reinvest)
-        elif action.kind=="FILL_SLOT" and settings.enabled and len(pairs)<settings.maximum_pairs:
-            universe_contract=universe.public_dict() if universe is not None else aster_usdt_universe_snapshot(settings.universe_top_n,client=client).public_dict()
-            ref.set({"universe":universe_contract},merge=True)
-            if universe_contract["entryBlocked"]:
-                reason=str(universe_contract["entryBlockReason"])
-                ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now_utc},merge=True)
-                return {**base,"status":"data-hold","reason":reason,"universe":universe_contract}
-            changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in market24}
-            active_symbols=set(grouped); candidates=[]
-            for symbol in universe_contract["selectedSymbols"]:
-                if symbol in rows and symbol in prices and symbol not in active_symbols and symbol not in candidates: candidates.append(symbol)
-            candidates.sort(key=lambda x:-changes.get(x,-999))
-            if dry_run:
-                return {**base,"status":"simulated","candidates":candidates,"ordersSent":0,"universe":universe_contract}
-            opened=[]; candidate_failures=[]
-            for symbol in candidates:
-                if len(pairs)+len(opened)>=settings.maximum_pairs:break
-                try:
-                    plan=plan_aster_pair(rows[symbol],_aster_brackets(brackets,symbol),prices[symbol],settings.base_notional)
-                    required_margin=float(plan.notional_per_leg)*2/max(1,plan.leverage)
-                    pair_cap=equity*settings.bot_margin_budget_ratio/settings.maximum_pairs*(1+settings.pair_budget_tolerance)
-                    if required_margin>pair_cap or used_margin+sum(x[1] for x in opened)+required_margin>equity*settings.bot_margin_budget_ratio:
-                        continue
-                    execution_result=execute_aster_pair(
-                        client,plan,id_prefix=f"{prefix}-{len(opened)}",confirm=True,
-                        risk_approved=lambda margin: ratio<settings.block_risk_ratio
-                        and used_margin+sum(x[1] for x in opened)+margin<=equity*settings.bot_margin_budget_ratio
-                        and margin<=pair_cap,
-                    )
-                    meta[symbol]={"LONG":0,"SHORT":0}
-                    leg_last_order_at[symbol]={"LONG":int(time.time()*1000),"SHORT":int(time.time()*1000)}
-                    actual_leverage=max(1,int(safe_float((execution_result[0] if execution_result else {}).get("leverage"))))
-                    opened.append((symbol,float(plan.notional_per_leg)*2/actual_leverage))
-                except Exception as candidate_error:
-                    message=str(candidate_error)
-                    if "onzeker" in message.lower() or "noodcontrole" in message.lower():
-                        raise
-                    candidate_failures.append({"symbol":symbol,"reason":message})
-                    continue
-            base["openedPairs"]=[x[0] for x in opened]
-            base["candidateFailures"]=candidate_failures[:20]
-    except AsterCloseBlocked:
-        ref.set({"phase":"MONITORING","lastReason":BLOCK_MESSAGE,"lastTickAt":datetime.now(timezone.utc)},merge=True)
-        return {**base,"status":"waiting","action":"CLOSE_BLOCKED_NET_NON_POSITIVE","ordersSent":0,"reason":BLOCK_MESSAGE}
-    except Exception as exc:
-        ref.set({"phase":"PAUSED","lastReason":str(exc),"lastTickAt":datetime.now(timezone.utc)},merge=True)
-        return {**base,"status":"paused","reason":str(exc)}
-    final_reason = (base.get("candidateFailures") or [{}])[0].get("reason") if not base.get("openedPairs") and base.get("candidateFailures") else action.reason
-    ref.set({"phase":"MONITORING","lastReason":final_reason,"lastAction":action.kind,"lastTickAt":datetime.now(timezone.utc),"nextRetryAt":None,"legMeta":meta,"legLastOrderAt":leg_last_order_at,
-             "usedBotMargin":used_margin,"realizedProfit":safe_float(control.get("realizedProfit")),
-             "safetyBuffer":safe_float(control.get("safetyBuffer")),"momentumPot":safe_float(control.get("momentumPot"))},merge=True)
-    return base
 
 
 def mexc_automation_public(uid: str) -> dict[str, Any]:
@@ -3671,10 +3117,7 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
         ]
         strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
         strategy2_legs = strategy2_state.get("ownedLegs") if isinstance(strategy2_state.get("ownedLegs"), list) else []
-        strategy_states = [
-            ("Strategy 1", automation), ("Strategy 2", strategy2_state),
-            ("Strategy 3", aster_strategy3_reference(uid).get().to_dict() or {}),
-        ]
+        strategy_states = [("Strategy 2", strategy2_state)]
         strategy_by_intent = {}
         strategy_by_order_id = {}
         for fallback_name, state in strategy_states:
@@ -3879,17 +3322,20 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
         positions.append(row)
     closed_trades = _stored_aster_closed_trades(user)
+    def confirmed_snapshot_number(key: str) -> float | None:
+        value=snapshot.get(key)
+        return safe_float(value) if value is not None else None
     status = {
         "configured": True, "credentialsVerified": True, "hedgeMode": hedge_mode,
-        "equity": safe_float(snapshot.get("equity")),
-        "walletBalance": safe_float(snapshot.get("walletBalance")),
-        "availableBalance": safe_float(snapshot.get("availableBalance")),
-        "unrealizedPnl": safe_float(snapshot.get("unrealizedPnl")),
+        "equity": confirmed_snapshot_number("equity"),
+        "walletBalance": confirmed_snapshot_number("walletBalance"),
+        "availableBalance": confirmed_snapshot_number("availableBalance"),
+        "unrealizedPnl": confirmed_snapshot_number("unrealizedPnl"),
         "activePositions": len(positions),
-        "activeTradeCapital": safe_float(snapshot.get("activeTradeCapital")),
+        "activeTradeCapital": confirmed_snapshot_number("activeTradeCapital"),
         "financialDataContract": snapshot.get("financialDataContract") if isinstance(snapshot.get("financialDataContract"), dict) else {},
-        "maintenanceMargin": safe_float(snapshot.get("maintenanceMargin")),
-        "marginRatio": safe_float(snapshot.get("marginRatio")),
+        "maintenanceMargin": confirmed_snapshot_number("maintenanceMargin"),
+        "marginRatio": confirmed_snapshot_number("marginRatio"),
         "openOrders": int(safe_float(snapshot.get("openOrders"))),
         "positions": positions, "closedTrades": closed_trades,
         "tradableSymbols": int(safe_float(snapshot.get("tradableSymbols"))),
@@ -4251,231 +3697,6 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
         "message":"Dezelfde Strategy-2-engine is gebruikt; de live execution adapter bleef vergrendeld."}
 
 
-@app.put("/v1/me/aster/strategy3/settings")
-def save_aster_strategy3_settings(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    try: candidate=Strategy3Config.from_mapping(request.settings)
-    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
-    uid=str(user["uid"]);ref=aster_strategy3_reference(uid);existing=ref.get().to_dict() or {}
-    version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
-    saved=Strategy3Config.from_mapping({**candidate.public_dict(),"version":version})
-    now=datetime.now(timezone.utc)
-    account_authorized=bool(existing.get("canaryValidated")) and bool(existing.get("liveAccountAuthorized"))
-    live_ready=bool(existing.get("liveReady")) and account_authorized
-    already_live=bool(existing.get("enabled")) and live_ready
-    phase=str(existing.get("phase","RUNNING")) if already_live else ("LIVE_READY" if live_ready else "CONFIGURED")
-    ref.set({"settings":saved.public_dict(),"configVersion":version,
-        "phase":phase,
-        "enabled":already_live,
-        "liveReady":live_ready,
-        "paperOnly":not account_authorized,
-        "lastReason":"Instellingen opgeslagen; nieuwe beslissingen gebruiken serverconfiguratie v%d"%version if already_live else ("Configuratie opgeslagen; bestaande live-autorisatie blijft geldig" if live_ready else "Configuratie opgeslagen; live-uitvoering blijft technisch geblokkeerd"),
-        "updatedAt":now},merge=True)
-    ref.collection("configHistory").add({"version":version,"newValue":saved.public_dict(),"source":"user","timestamp":now})
-    return {"saved":True,**aster_strategy3_public(uid)}
-
-
-@app.post("/v1/me/aster/strategy3/simulate")
-def simulate_aster_strategy3(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    try: settings=Strategy3Config.from_mapping(request.settings)
-    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
-    scenarios=strategy3_standard_suite(settings);failures=strategy3_failure_suite(settings)
-    report={"mode":"paper","ordersSent":0,"engine":"aster-strategy-3","liveExecutionAvailable":False,
-        "configurationValid":all(x.passed for x in scenarios) and all(failures.values()),
-        "scenarios":[{"name":x.name,"passed":x.passed,"decisions":len(x.decisions),"simulatedOrders":x.simulated_orders,
-            "protectionEvents":x.protection_events,"trailingEvents":x.trailing_events} for x in scenarios],"failureChecks":failures,
-        "message":"Dual Harvest Adaptive Shield is uitsluitend met de paper-adapter uitgevoerd; er zijn nul echte orders verzonden."}
-    uid=str(user["uid"]);aster_strategy3_reference(uid).set({"lastSimulation":report,"phase":"PAPER_TESTED",
-        "lastReason":"Paper-simulatie afgerond; live blijft geblokkeerd","enabled":False,"liveReady":False,
-        "updatedAt":datetime.now(timezone.utc)},merge=True)
-    return report
-
-
-@app.get("/v1/me/aster/strategy3/readiness")
-def aster_strategy3_readiness(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    """Read-only Strategy-3 gate. This endpoint cannot submit an order."""
-    uid=str(user["uid"]);raw=aster_strategy3_reference(uid).get().to_dict() or {}
-    owned=[]
-    for row in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
-        try:
-            leg=owned_from_mapping(row)
-            if leg.strategy_id=="aster-strategy-3" and leg.engine_type=="strategy3":owned.append(leg)
-        except (TypeError,ValueError):pass
-    s3_keys={(x.symbol,x.side) for x in owned}
-    secret=load_aster_secret(user)
-    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
-    try:
-        hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
-        active_symbols=sorted({str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0})
-        # Read one bounded history sample to prove the signed history endpoints
-        # are available. Iterating every active symbol made large accounts
-        # perform hundreds of sequential reads even though this route cannot
-        # place an order. Any ownership mismatch outside this sample remains
-        # conservatively blocked by reconciliation rather than guessed.
-        owned_symbols=sorted({x.symbol for x in owned})
-        probe_symbol=(owned_symbols or active_symbols or ["BTCUSDT"])[0]
-        order_history=client.all_orders(probe_symbol,limit=1)
-        fills=client.user_trades(probe_symbol,limit=5)
-        income=client.income_history(limit=50)
-    except (AsterApiError,ValueError) as exc:
-        raise HTTPException(409,f"Strategy-3-readiness kon Aster niet volledig lezen: {exc}") from exc
-
-    s2_raw=aster_strategy2_reference(uid).get().to_dict() or {}
-    s2_owned=[]
-    for row in s2_raw.get("ownedLegs") if isinstance(s2_raw.get("ownedLegs"),list) else []:
-        try:s2_owned.append(owned_from_mapping(row))
-        except (TypeError,ValueError):pass
-    s2_keys={(x.symbol,x.side) for x in s2_owned}
-    s1_raw=aster_automation_reference(uid).get().to_dict() or {}
-    s1_keys=_explicit_strategy1_owned_keys(s1_raw)
-    s3_positions=[x for x in positions if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in s3_keys]
-    s3_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in s3_keys]
-    recovery=reconcile_owned_legs(persisted=owned,positions=s3_positions,open_orders=s3_orders,fills=fills,
-        exchange_reliable=True,strategy_label="Strategy-3")
-    known=s1_keys|s2_keys|s3_keys
-    active={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in positions if abs(safe_float(x.get("positionAmt")))>0}
-    ownership_collisions=s3_keys & (s1_keys|s2_keys)
-    report=build_strategy3_readiness_report(hedge_mode=hedge,account=account,positions=positions,open_orders=orders,
-        strategy3_ownership_keys=s3_keys,all_known_ownership_keys=known,conflicting_ownership_keys=ownership_collisions,order_history_readable=isinstance(order_history,list),
-        fills_readable=isinstance(fills,list),income_readable=isinstance(income,list),
-        reconciliation_passed=recovery.allow_risk_increase and active.issubset(known),
-        coexistence_safe=not bool(ownership_collisions),canary_validated=bool(raw.get("canaryValidated",False)))
-    report["historyProbe"]={"mode":"bounded-single-symbol","symbol":probe_symbol,"ordersLimit":1,"fillsLimit":5,"incomeLimit":50}
-    # Readiness never submits an order and never grants a new canary. It may
-    # restore liveReady only for this same account when its completed canary
-    # and live authorization were already persisted and every fresh read-only
-    # check still passes. Any uncertainty remains fail-closed.
-    account_authorized=bool(raw.get("canaryValidated")) and bool(raw.get("liveAccountAuthorized"))
-    revalidated=account_authorized and bool(report.get("liveReady"))
-    update={"readiness":report,"readinessCheckedAt":datetime.now(timezone.utc),"liveReady":revalidated,
-        "paperOnly":not account_authorized,
-        "lastReason":"Live-gereedheid opnieuw bevestigd; bestaande accountcanary blijft geldig" if revalidated else "Read-only readiness uitgevoerd; live blijft veilig geblokkeerd"}
-    if revalidated and not bool(raw.get("enabled")):update["phase"]="LIVE_READY"
-    aster_strategy3_reference(uid).set(update,merge=True)
-    return report
-
-
-@app.post("/v1/me/aster/strategy3/canary")
-def run_aster_strategy3_canary(request:AsterCanaryRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
-    """Explicit S3 canary: one idempotent LONG open, confirmed fill and close."""
-    if not request.confirm:raise HTTPException(422,"Bevestig de echte Strategy-3-canary expliciet")
-    if os.getenv("ASTER_STRATEGY3_CANARY_ENABLED","false").lower()!="true":
-        raise HTTPException(423,"De afzonderlijke Strategy-3-canarypoort staat centraal uit")
-    uid=str(user["uid"]);strategy_ref=aster_strategy3_reference(uid);state=strategy_ref.get().to_dict() or {}
-    readiness=state.get("readiness") if isinstance(state.get("readiness"),dict) else {};checked_at=state.get("readinessCheckedAt")
-    if not readiness.get("softwareReady") or not isinstance(checked_at,datetime) or datetime.now(timezone.utc)-checked_at>timedelta(minutes=5):
-        raise HTTPException(409,"Voer eerst opnieuw de Strategy-3-live-gereedheidscontrole uit")
-    canary_ref=strategy_ref.collection("canaries").document("s3-open-fill-close-v1")
-    existing=canary_ref.get().to_dict() or {};action=existing_canary_action(existing.get("status"))
-    if action=="replay":return {"completed":True,"replayed":True,"orders":existing.get("orders",[]),"symbol":existing.get("symbol")}
-    if action=="block":raise HTTPException(409,"Een eerdere Strategy-3-canary is actief of onzeker; geen tweede order verzonden")
-    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True,before_order_submit=_block_order_during_close_all(str(user["uid"])))
-    try:hedge=client.position_mode();positions=client.position_risk();orders=client.open_orders();account=client.account_information()
-    except (AsterApiError,ValueError) as exc:raise HTTPException(409,f"Canary-preflight kon Aster niet betrouwbaar lezen: {exc}") from exc
-    if not hedge or orders:raise HTTPException(409,"Canary geblokkeerd: Hedge Mode of open-orderstatus is niet veilig")
-    equity,_,available,_,maint=aster_account_information_values(account)
-    if equity<=0 or available<=0 or maint/max(equity,1)>.5:raise HTTPException(409,"Canary geblokkeerd door account- of marginrisico")
-    info=client.public_exchange_info();prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
-    active_symbols={str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0}
-    plan=None;tested=set(active_symbols)
-    for _ in range(20):
-        try:candidate=choose_flat_symbol(info,prices,tested)
-        except ValueError:break
-        symbol=str(candidate.get("symbol","")).upper();tested.add(symbol)
-        try:plan=plan_aster_pair(candidate,_aster_brackets(client.leverage_brackets(symbol),symbol),prices[symbol],request.notional_usd)
-        except (ValueError,AsterApiError):continue
-        break
-    if plan is None:raise HTTPException(409,"Geen vlak Aster-contract gevonden waarvan het exchange-minimum binnen het canarybedrag past")
-    symbol=plan.symbol;intent_prefix=f"s3c-{uid[-4:]}-{int(time.time())}"
-    canary_ref.set({"status":"OPENING","strategyId":"aster-strategy-3","symbol":symbol,"notionalUsd":request.notional_usd,
-        "intentPrefix":intent_prefix,"startedAt":datetime.now(timezone.utc)})
-    opened=None
-    try:
-        client.change_margin_type(symbol,"CROSSED");client.change_leverage(symbol,min(plan.leverage,10))
-        opened=execute_aster_leg(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=intent_prefix,confirm=True)
-        open_result=opened.get("result") or {};filled=Decimal(str(open_result.get("executedQty") or plan.quantity))
-        fill_price=safe_float(open_result.get("avgPrice")) or prices[symbol]
-        close_plan=PairExecutionPlan(symbol,filled,filled*Decimal(str(fill_price)),min(plan.leverage,10))
-        canary_ref.set({"status":"OPENED","openOrder":open_result},merge=True)
-        closed=execute_aster_leg(client,close_plan,side=PositionSide.LONG,action="CLOSE",id_prefix=intent_prefix,confirm=True)
-        # Prove that the canary leg is flat before unlocking anything.
-        final_positions=client.position_risk()
-        still_open=any(str(x.get("symbol","")).upper()==symbol and str(x.get("positionSide","")).upper()=="LONG" and abs(safe_float(x.get("positionAmt")))>0 for x in final_positions)
-        if still_open:raise RuntimeError("Aster bevestigt na close nog Strategy-3-canary-exposure")
-    except Exception as exc:
-        canary_ref.set({"status":"OPENED" if opened else "UNKNOWN","error":str(exc),"updatedAt":datetime.now(timezone.utc)},merge=True)
-        strategy_ref.set({"canaryValidated":False,"liveReady":False,"phase":"CANARY_HOLD","lastReason":f"Canary niet veilig afgerond: {exc}"},merge=True)
-        raise HTTPException(409,f"Canary niet volledig afgerond; geen retry verzonden: {exc}") from exc
-    orders_out=[opened.get("result",{}),closed.get("result",{})]
-    canary_ref.set({"status":"COMPLETED","orders":orders_out,"completedAt":datetime.now(timezone.utc)},merge=True)
-    strategy_ref.set({"canaryValidated":True,"liveReady":True,"liveAccountAuthorized":True,"phase":"LIVE_READY","enabled":False,
-        "lastReason":"Strategy-3-canary open, fill, close en flat-state zijn door Aster bevestigd","updatedAt":datetime.now(timezone.utc)},merge=True)
-    return {"completed":True,"replayed":False,"symbol":symbol,"notionalUsd":request.notional_usd,"orders":orders_out,
-        "message":"Strategy-3-canary geslaagd: open, fill, close en flat-state zijn door Aster bevestigd."}
-
-
-@app.post("/v1/me/aster/strategy3/start")
-def start_aster_strategy3(request:AsterStrategyStartRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
-    """Persist a live start request only when every independent gate is open."""
-    if not request.confirm:raise HTTPException(422,"Bevestig Strategy 3 live expliciet")
-    uid=str(user["uid"]);ref=aster_strategy3_reference(uid);existing=ref.get().to_dict() or {}
-    # Starting live must use the last explicitly saved server configuration.
-    # A stale/default browser draft may never overwrite (for example) a saved
-    # US$ 25 base order with the US$ 10 client default.
-    persisted=existing.get("settings") if isinstance(existing.get("settings"),dict) and existing.get("settings") else request.settings
-    try:settings=replace(Strategy3Config.from_mapping(persisted),mode="live")
-    except ValueError as exc:raise HTTPException(422,str(exc)) from exc
-    readiness=existing.get("readiness") if isinstance(existing.get("readiness"),dict) else {}
-    if not bool(existing.get("canaryValidated")) or not bool(existing.get("liveReady")) or not bool(readiness.get("softwareReady")):
-        raise HTTPException(423,"Strategy 3 is niet LIVE READY; readiness en afzonderlijke canary moeten eerst slagen")
-    if os.getenv("ASTER_STRATEGY3_LIVE_ENABLED","false").lower()!="true":
-        raise HTTPException(423,"Strategy 3 productie-uitvoering staat centraal uit")
-    # Scheduler/runtime remains a second independent server-side gate.
-    if os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED","false").lower()!="true":
-        raise HTTPException(423,"Strategy 3 runtime is nog niet vrijgegeven")
-    canary_doc=ref.collection("canaries").document("s3-open-fill-close-v1").get().to_dict() or {}
-    account_canary_proven=strategy3_account_canary_proven(existing,canary_doc)
-    if not account_canary_proven:
-        raise HTTPException(423,"Strategy 3 live is voor dit account pas beschikbaar na de eigen volledig afgeronde canary")
-    now=datetime.now(timezone.utc);ref.set({"settings":settings.public_dict(),"enabled":True,"monitor":True,
-        # Persist only after the account's canary document itself proves a
-        # completed open/fill/close/flat round trip.
-        "liveAccountAuthorized":True,
-        "phase":"START_PENDING","lastReason":"Live start bevestigd; wacht op eerste gereconcilieerde tick","startedAt":now,"updatedAt":now},merge=True)
-    first_tick=_run_aster_strategy3_tick(uid)
-    return {"started":True,"firstTick":first_tick,**aster_strategy3_public(uid)}
-
-
-def _run_strategy3_rapid_batch(uid:str,maximum_orders:int=10)->dict[str,Any]:
-    """Run confirmed ticks sequentially; stop immediately after hold or uncertainty."""
-    ref=aster_strategy3_reference(uid)
-    batch=run_confirmed_batch(lambda:_run_aster_strategy3_tick(uid),maximum_orders)
-    if batch["stopped"]:
-        last=batch["last"]
-        ref.set({"rapidBuildRequested":False,"lastReason":f"Snelle startopbouw veilig gestopt: {last.get('reason','onbekende status')}"},merge=True)
-    current=ref.get().to_dict() or {}
-    return {**batch,"active":bool(current.get("rapidBuildRequested")),"phase":str(current.get("phase",""))}
-
-
-@app.post("/v1/me/aster/strategy3/rapid-build")
-def rapid_build_aster_strategy3(request:AsterRapidBuildRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
-    if not request.confirm:raise HTTPException(422,"Bevestig de snelle Strategy-3-startopbouw expliciet")
-    uid=str(user["uid"]);ref=aster_strategy3_reference(uid);state=ref.get().to_dict() or {}
-    if not bool(state.get("enabled")) or not bool(state.get("liveReady")) or not bool(state.get("canaryValidated")):
-        raise HTTPException(423,"Snelle startopbouw kan alleen bij een actieve, live-gereed bevestigde Strategy 3")
-    ref.set({"rapidBuildRequested":True,"phase":"RAPID_BUILD","lastReason":"Handmatige snelle startopbouw bevestigd",
-        "rapidBuildStartedAt":datetime.now(timezone.utc)},merge=True)
-    batch=_run_strategy3_rapid_batch(uid,10)
-    return {"accepted":True,"batch":batch,**aster_strategy3_public(uid)}
-
-
-@app.post("/v1/me/aster/strategy3/stop")
-def stop_aster_strategy3(request:AsterStrategyStopRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
-    if not request.confirm:raise HTTPException(422,"Bevestig veilig stoppen")
-    uid=str(user["uid"]);aster_strategy3_reference(uid).set({"enabled":False,"monitor":True,"phase":"PROTECTIVE_ONLY",
-        "lastReason":"Nieuwe entries en normale DCA gestopt; monitoring blijft actief","updatedAt":datetime.now(timezone.utc)},merge=True)
-    return {"stopped":True,**aster_strategy3_public(uid)}
-
-
 @app.get("/v1/me/aster/strategy2/readiness")
 def aster_strategy2_readiness(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     """Read-only exchange validation. This route cannot submit an order."""
@@ -4497,19 +3718,13 @@ def aster_strategy2_readiness(user: dict[str, Any] = Depends(authenticated_user)
         try: owned.append(OwnedLeg(**row))
         except (TypeError,ValueError): pass
     strategy2_keys={(x.symbol,x.side) for x in owned}
-    strategy1_raw=aster_automation_reference(uid).get().to_dict() or {}
-    strategy1_keys=_explicit_strategy1_owned_keys(strategy1_raw)
-    strategy3_raw=aster_strategy3_reference(uid).get().to_dict() or {}
-    strategy3_rows=proven_owned_rows(strategy3_raw.get("ownedLegs",[]),
-        strategy_id="aster-strategy-3",engine_type="strategy3")
-    strategy3_keys={(str(x.get("symbol","")).upper(),str(x.get("side","")).upper()) for x in strategy3_rows}
     strategy2_positions=[x for x in positions if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in strategy2_keys]
     strategy2_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in strategy2_keys]
     recovery=reconcile_owned_legs(persisted=owned,positions=strategy2_positions,open_orders=strategy2_orders,fills=fills,exchange_reliable=True)
-    known_keys,ownership_collisions=combined_strategy_ownership(strategy1_keys=strategy1_keys,
-        strategy2_keys=strategy2_keys,strategy3_keys=strategy3_keys)
-    active_keys={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in positions if abs(safe_float(x.get("positionAmt")))>0}
-    ownership_consistent=active_keys.issubset(known_keys) and not ownership_collisions
+    # Strategy 2 is the only active owner. Unknown/manual legs are isolated by
+    # the runtime and never become a cross-strategy collision.
+    known_keys=set(strategy2_keys)
+    ownership_consistent=True
     report=build_readiness_report(hedge_mode=hedge,account=account,positions=positions,open_orders=orders,
         ownership_keys=known_keys,order_history_readable=isinstance(order_history,list),
         fills_readable=isinstance(fills,list),income_readable=isinstance(income,list),
@@ -4610,84 +3825,6 @@ def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any]
     if not request.confirm: raise HTTPException(422,"Bevestig veilig stoppen")
     uid=str(user["uid"]);aster_strategy2_reference(uid).set({"enabled":False,"monitor":True,"phase":"PROTECTIVE_ONLY","updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"stopped":True,**aster_strategy2_public(uid)}
-
-
-@app.put("/v1/me/aster/automation/settings")
-def save_aster_automation_settings(
-    request: AsterStrategySettingsRequest,
-    user: dict[str, Any] = Depends(authenticated_user),
-) -> dict[str, Any]:
-    try:
-        settings = AsterStrategySettings.from_mapping(request.settings)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    ref = aster_automation_reference(str(user["uid"]))
-    ref.set({"settings": settings.public_dict(), "updatedAt": datetime.now(timezone.utc)}, merge=True)
-    return {"saved": True, **aster_automation_public(str(user["uid"]))}
-
-
-@app.post("/v1/me/aster/automation/simulate")
-def simulate_aster_strategy(
-    request: AsterStrategySettingsRequest,
-    user: dict[str, Any] = Depends(authenticated_user),
-) -> dict[str, Any]:
-    try:
-        settings = AsterStrategySettings.from_mapping({**request.settings, "enabled": True, "mode": "paper"})
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    result = simulate_aster_multi_pair(
-        AsterDryRunRequest(pair_count=settings.maximum_pairs, notional_per_leg_usd=settings.base_notional), user,
-    )
-    return {
-        **result, "settings": settings.public_dict(),
-        "checks": [
-            "Hedge Mode bevestigd", "Cross Margin gepland", "maximale leverage per contract gelezen",
-            "actieve pairs uitgesloten", "LONG/SHORT paargewijs gepland", "0 orders verzonden",
-        ],
-    }
-
-
-@app.post("/v1/me/aster/automation/start")
-def start_aster_strategy(
-    request: AsterStrategyStartRequest,
-    user: dict[str, Any] = Depends(authenticated_user),
-) -> dict[str, Any]:
-    if not request.confirm:
-        raise HTTPException(422, "Bevestig de live-start persoonlijk")
-    try:
-        settings = AsterStrategySettings.from_mapping({**request.settings, "enabled": True, "mode": "live"})
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    status = inspect_aster(load_aster_secret(user))
-    if not status.get("hedgeMode") or not status.get("liveReady"):
-        raise HTTPException(409, "Aster Hedge Mode of exchange-state is niet gereed")
-    if status.get("activePositions", 0):
-        raise HTTPException(409, "Bestaande Aster-posities gevonden; de scanner mag deze niet vermengen")
-    if not os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true":
-        raise HTTPException(423, "Aster productie-uitvoering is nog niet door de regressiepoort vrijgegeven")
-    now = datetime.now(timezone.utc)
-    ref = aster_automation_reference(str(user["uid"]))
-    ref.set({
-        "enabled": True, "monitor": True, "phase": "START_PENDING", "settings": settings.public_dict(),
-        "cycleStartEquity": status.get("equity", 0), "lastReason": "Live-start persoonlijk bevestigd",
-        "updatedAt": now,
-    }, merge=True)
-    first_tick = _run_aster_automation_tick(str(user["uid"]))
-    return {"started": True, "firstTick": first_tick, **aster_automation_public(str(user["uid"]))}
-
-
-@app.post("/v1/me/aster/automation/stop")
-def stop_aster_strategy(
-    request: AsterStrategyStopRequest,
-    user: dict[str, Any] = Depends(authenticated_user),
-) -> dict[str, Any]:
-    if not request.confirm: raise HTTPException(422, "Bevestig veilig stoppen")
-    aster_automation_reference(str(user["uid"])).set({
-        "enabled": False, "monitor": True, "phase": "PROTECTIVE_ONLY",
-        "lastReason": "Nieuwe entries en DCA gestopt; bestaande posities blijven bewaakt",
-        "updatedAt": datetime.now(timezone.utc),
-    }, merge=True)
-    return {"stopped": True, **aster_automation_public(str(user["uid"]))}
 
 
 def _portfolio_growth_client(user:dict[str,Any],*,live:bool)->AsterV3Client:
@@ -4802,7 +3939,7 @@ def close_all_aster_strategy(
         txn.set(action_ref,{"uid":uid,"status":"RESERVED","quoteId":request.quote_id,"preview":preview,"createdAt":now})
         txn.set(growth,{"closeLock":{"active":True,"token":lock_token,"actionId":action_hash,"until":now+timedelta(hours=24)}},merge=True)
         pause={"enabled":False,"monitor":True,"closeAllPause":True,"phase":"CLOSING_ALL","lastReason":"Persoonlijk Alles sluiten actief","updatedAt":now}
-        txn.set(aster_automation_reference(uid),pause,merge=True);txn.set(aster_strategy2_reference(uid),pause,merge=True);txn.set(aster_strategy3_reference(uid),pause,merge=True)
+        txn.set(aster_strategy2_reference(uid),pause,merge=True)
         return "RESERVED"
     status=reserve(transaction)
     if status!="RESERVED":return {"actionId":action_hash,"status":status,"duplicate":True}
@@ -6009,29 +5146,11 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
     return {"processed":len(strategy2_results),"strategy2":strategy2_results,"strategy2Only":True}
 
 
-@app.post("/internal/aster-strategy3/tick")
-def run_aster_strategy3_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    verify_internal_cloud_request(authorization)
-    raise HTTPException(410, "Strategy 3 is retired; Strategy 2 is the only Aster runtime")
-
-
-@app.post("/internal/aster-automation/{uid}/simulate")
-def run_aster_internal_simulation(uid: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    verify_internal_cloud_request(authorization)
-    raise HTTPException(410, "Strategy 1 is retired; Strategy 2 is the only Aster runtime")
-
-
 @app.post("/internal/aster-strategy2/{uid}/simulate")
 def run_aster_strategy2_internal_simulation(uid:str,authorization:str|None=Header(default=None))->dict[str,Any]:
     verify_internal_cloud_request(authorization)
     if not uid or len(uid)>128:raise HTTPException(422,"Ongeldige gebruiker")
     return _run_aster_strategy2_tick(uid,dry_run=True)
-
-
-@app.post("/internal/aster-strategy3/{uid}/simulate")
-def run_aster_strategy3_internal_simulation(uid:str,authorization:str|None=Header(default=None))->dict[str,Any]:
-    verify_internal_cloud_request(authorization)
-    raise HTTPException(410, "Strategy 3 is retired; Strategy 2 is the only Aster runtime")
 
 
 @app.get("/v1/me/hyperliquid/scanner/status")

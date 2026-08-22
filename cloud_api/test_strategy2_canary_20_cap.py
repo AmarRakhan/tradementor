@@ -9,7 +9,7 @@ def test_strategy2_canary_has_its_own_twenty_dollar_cap():
     assert "class AsterStrategy2CanaryRequest" in source
     assert "notional_usd: float = Field(default=20.0, ge=5.0, le=20.0)" in source
     assert "def run_aster_strategy2_canary(request:AsterStrategy2CanaryRequest" in source
-    assert "def run_aster_strategy3_canary(request:AsterCanaryRequest" in source
+    assert "def run_aster_strategy3_canary" not in source
 
 
 def test_mobile_confirmation_sends_exactly_twenty_dollars():

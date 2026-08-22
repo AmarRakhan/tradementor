@@ -83,7 +83,7 @@ def test_successful_reconciliation_clears_counter_and_stale_reason_atomically():
 def test_strategy2_off_returns_before_every_new_entry_path_but_after_management():
     source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
     start = source.index("def _run_aster_strategy2_tick")
-    end = source.index("def _run_strategy3_rapid_batch", start)
+    end = source.index("def _aster_brackets", start)
     tick = source[start:end]
     management = tick.index("selected=portfolio_protection_decision")
     off_guard = tick.index("if not enabled or not scanner_allowed")
@@ -102,10 +102,10 @@ def test_no_backend_module_contains_removed_external_market_fallback():
         assert removed_name not in path.read_text(encoding="utf-8").lower(), path.name
 
 
-def test_both_strategy_entry_paths_use_the_shared_aster_snapshot_builder():
+def test_strategy2_entry_paths_use_the_shared_aster_snapshot_builder():
     source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
-    assert source.count("build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n)") >= 2
-    assert source.count('universe_contract["selectedSymbols"]') >= 3
+    assert "build_aster_universe_snapshot" in source
+    assert source.count('universe_contract["selectedSymbols"]') >= 2
 
 
 def test_public_dashboard_status_never_refreshes_every_position_cost_from_aster():

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { loadAsterSnapshot, mergeCompleteAsterSnapshot, saveAsterSnapshot } from "../lib/aster-snapshot-cache.mjs";
+import { loadAsterSnapshot, mergeCompleteAsterSnapshot, preserveConfirmedAsterValues, saveAsterSnapshot } from "../lib/aster-snapshot-cache.mjs";
 import { createLatestAsterRequestGate, strategy2ServerStatus } from "../lib/aster-strategy2-server-status.mjs";
 
 class Storage {
@@ -16,7 +16,6 @@ const account = (uid, enabled) => ({
   uid,
   positions: [],
   strategy2: { enabled, liveReady: true, phase: enabled ? "RUNNING" : "LIVE_READY", settings: {} },
-  strategy3: { settings: {} },
 });
 
 test("AAN -> refresh -> AAN remains server-authoritative", () => {
@@ -66,6 +65,28 @@ test("logout/login and a full browser restart wait for GET and then restore AAN"
   assert.equal(freshServer.label, "AAN");
 });
 
+
+
+test("valid Aster values survive a later incomplete refresh while explicit zero remains valid", () => {
+  const first = { ...mergeCompleteAsterSnapshot(account("user-a", true), history), equity: 400, availableBalance: 90, activeTradeCapital: 80, maintenanceMargin: 10, marginRatio: 0.025, activePositions: 72 };
+  const incomplete = { ...mergeCompleteAsterSnapshot(account("user-a", true), history), equity: null, availableBalance: null, activeTradeCapital: undefined, maintenanceMargin: null, marginRatio: null, activePositions: 0 };
+  const merged = preserveConfirmedAsterValues(first, incomplete);
+  assert.equal(merged.equity, 400);
+  assert.equal(merged.availableBalance, 90);
+  assert.equal(merged.activeTradeCapital, 80);
+  assert.equal(merged.maintenanceMargin, 10);
+  assert.equal(merged.marginRatio, 0.025);
+  assert.equal(merged.activePositions, 0);
+});
+
+
+test("a temporary refresh failure after a confirmed response never returns Strategy 2 to checking", async () => {
+  const hook = await readFile(new URL("../lib/use-exchange-data.ts", import.meta.url), "utf8");
+  assert.match(hook, /serverConfirmed: current\.snapshots\[exchange\]\.serverConfirmed/);
+  const view = strategy2ServerStatus(account("user-a", true).strategy2, null, true);
+  assert.equal(view.pending, false);
+  assert.equal(view.label, "AAN");
+});
 test("start, status GET and refresh share one configured Strategy-2 production API", async () => {
   const [genericProxy, strategy2Proxy, route, hook] = await Promise.all([
     readFile(new URL("../lib/cloud-proxy.ts", import.meta.url), "utf8"),

@@ -1,0 +1,62 @@
+from pathlib import Path
+
+from aster_strategy2 import Strategy2Config
+from aster_strategy2_runtime import (
+    entry_order_limit, queued_entry_order_limit, transfer_active_ownership_to_strategy2,
+)
+from aster_strategy2_state import OwnedLeg
+
+ROOT = Path(__file__).resolve().parent
+MAIN = (ROOT / "main.py").read_text(encoding="utf-8")
+
+def legs(count: int):
+    result=[]
+    for i in range(count):
+        side="LONG" if i % 2 == 0 else "SHORT"
+        result.append(OwnedLeg("aster-strategy-2","strategy2",f"S{i}USDT",side,f"c{i}",1,1,100))
+    return result
+
+def test_72_of_100_exposes_28_missing_and_first_scan_caps_at_15():
+    owned=legs(72)
+    assert entry_order_limit(True,owned,100)==28
+    assert queued_entry_order_limit(True,owned,100,orders_used=0,maximum_orders=15)==15
+
+def test_next_scan_continues_remaining_13_after_fifteen_confirmed_entries():
+    owned=legs(87)
+    assert entry_order_limit(True,owned,100)==13
+    assert queued_entry_order_limit(True,owned,100,orders_used=0,maximum_orders=15)==13
+
+def test_legacy_strategy3_owner_normalizes_to_strategy2_without_order_action():
+    legacy=OwnedLeg("aster-strategy-3","strategy3","BTCUSDT","LONG","legacy",7,2,100)
+    positions=[{"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"2","entryPrice":"100"}]
+    transferred,missing,errors=transfer_active_ownership_to_strategy2(
+        positions=positions,strategy2_legs=[],strategy3_legs=[legacy],strategy1_legs=[])
+    assert not missing and not errors and len(transferred)==1
+    assert transferred[0].strategy_id=="aster-strategy-2"
+    assert transferred[0].engine_type=="strategy2"
+    assert transferred[0].symbol=="BTCUSDT" and transferred[0].side=="LONG"
+
+def test_strategy3_conflict_text_is_impossible_in_strategy2_tick():
+    tick=MAIN[MAIN.index("def _run_aster_strategy2_tick"):MAIN.index("def _aster_brackets")]
+    assert "botst met Strategy 3" not in tick
+    assert "LEGACY_OWNERSHIP_NORMALIZED_TO_STRATEGY2" in tick
+    assert "RECOVERY_ISOLATED_FROM_SEAT_REFILL" in tick
+
+def test_candidate_failure_paths_continue_scanning():
+    tick=MAIN[MAIN.index("def _run_aster_strategy2_tick"):MAIN.index("def _aster_brackets")]
+    candidate=tick[tick.index("for candidate in candidates"):tick.index("if not plan or opened is None:break")]
+    assert "NewPositionLeverageBlocked" in candidate
+    assert "ENTRY_CANDIDATE_REJECTED" in candidate
+    assert "ENTRY_CANDIDATE_VALIDATION_SKIPPED" in candidate
+    assert candidate.count("continue") >= 4
+
+def test_same_symbol_long_and_short_are_distinct_active_keys():
+    cfg=Strategy2Config(maximum_pairs=2)
+    positions=[
+        {"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100"},
+        {"symbol":"BTCUSDT","positionSide":"SHORT","positionAmt":"1","entryPrice":"101"},
+    ]
+    s2=[OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","l",1,1,100),
+        OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","SHORT","s",1,1,101)]
+    transferred,missing,errors=transfer_active_ownership_to_strategy2(positions=positions,strategy2_legs=s2)
+    assert not missing and not errors and len(transferred)==cfg.maximum_pairs

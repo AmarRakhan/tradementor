@@ -164,9 +164,9 @@ def test_existing_position_management_does_not_depend_on_universe_membership():
     assert "universe" not in strategy3[strategy3.index("def decide("):].lower()
 
 
-def test_all_three_entry_paths_consume_only_server_selected_symbols():
+def test_active_strategy2_entry_paths_consume_only_server_selected_symbols():
     source = open("main.py", encoding="utf-8").read()
-    assert source.count('universe_contract["selectedSymbols"]') >= 3
+    assert source.count('universe_contract["selectedSymbols"]') >= 2
     assert "preferred=(\"BTCUSDT\"" not in source
 
 

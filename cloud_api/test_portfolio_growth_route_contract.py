@@ -31,9 +31,9 @@ def test_reset_requires_confirmation_reason_and_audit():
 
 def test_close_all_lock_and_all_pauses_are_uid_scoped():
     assert '"closeLock":{"active":True' in ROUTE
-    assert 'aster_automation_reference(uid)' in ROUTE
     assert 'aster_strategy2_reference(uid)' in ROUTE
-    assert 'aster_strategy3_reference(uid)' in ROUTE
+    assert 'aster_automation_reference(uid)' not in ROUTE
+    assert 'aster_strategy3_reference(uid)' not in ROUTE
 
 
 def test_idempotency_is_bound_to_account_and_key():

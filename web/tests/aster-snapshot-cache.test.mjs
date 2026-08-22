@@ -6,6 +6,7 @@ import {
   clearAsterSnapshot,
   loadAsterSnapshot,
   mergeCompleteAsterSnapshot,
+  preserveConfirmedAsterValues,
   saveAsterSnapshot,
   withBoundedRetry,
 } from "../lib/aster-snapshot-cache.mjs";
@@ -17,7 +18,7 @@ class Storage {
   removeItem(key) { this.values.delete(key); }
 }
 
-const account = (uid) => ({ configured: true, uid, positions: [], strategy2: { settings: { baseNotional: 35 } }, strategy3: { settings: { baseNotional: 35 } } });
+const account = (uid) => ({ configured: true, uid, positions: [], strategy2: { settings: { baseNotional: 35 } } });
 const history = { historyAvailable: true, closedTrades: [], realizedEvents: [] };
 
 test("Aster cache is strictly isolated by Firebase UID and exchange", () => {
@@ -44,6 +45,21 @@ test("partial or invalid snapshots never replace the last valid value", () => {
   assert.equal(loadAsterSnapshot(storage, "user-a")?.updatedAt, 1234);
 });
 
+
+
+test("Strategy-2-only snapshots are valid and incomplete refreshes preserve confirmed values", () => {
+  const previous = { ...account("user-a"), ...history, equity: 321.5, availableBalance: 88.25, activeTradeCapital: 77, maintenanceMargin: 12, marginRatio: 0.04, activePositions: 72 };
+  const incoming = { ...account("user-a"), ...history, equity: null, availableBalance: undefined, activeTradeCapital: null, maintenanceMargin: null, marginRatio: null, activePositions: 0 };
+  const merged = preserveConfirmedAsterValues(previous, incoming);
+  assert.equal(merged.equity, 321.5);
+  assert.equal(merged.availableBalance, 88.25);
+  assert.equal(merged.activeTradeCapital, 77);
+  assert.equal(merged.maintenanceMargin, 12);
+  assert.equal(merged.marginRatio, 0.04);
+  assert.equal(merged.activePositions, 0, "explicit zero is a confirmed value");
+  assert.equal("strategy3" in mergeCompleteAsterSnapshot(account("user-a"), history), false);
+});
+
 test("temporary read failure is retried once and then succeeds", async () => {
   let calls = 0;
   const result = await withBoundedRetry(async () => {
@@ -63,7 +79,7 @@ test("Aster refresh is parallel, deduplicated and fail-closed for actions", asyn
   ]);
   assert.match(hook, /Promise\.all\(\[\s*timedRead\("\/api\/exchanges\/aster"\),\s*timedRead\("\/api\/exchanges\/aster\/closed-trades"\)/s);
   assert.match(hook, /inFlight\.get\(key\)/);
-  assert.match(hook, /current\.snapshots\[exchange\].*loading: false, serverConfirmed: false/s);
+  assert.match(hook, /serverConfirmed: current\.snapshots\[exchange\]\.serverConfirmed/);
   assert.match(hook, /snapshots: \{ hyperliquid: emptySnapshot\(\), aster: emptySnapshot\(\) \}/);
   assert.match(page, /asterActionsAreFresh[\s\S]*snapshot\.serverConfirmed/);
   assert.match(page, /fieldset className="aster-action-gate" disabled=\{!asterActionsEnabled\}/);

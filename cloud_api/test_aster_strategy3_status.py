@@ -108,10 +108,8 @@ def test_status_projection_and_history_refresh_are_strictly_read_only():
     assert "execute_strategy3_decision" not in status_source and ".set(" not in status_source
 
     main_source = Path(__file__).with_name("main.py").read_text()
-    helper = main_source[main_source.index("def _read_strategy_cost_evidence"):
-        main_source.index("def _explicit_strategy1_owned_keys")]
-    assert "refresh_owned_costs" in helper
-    assert "execute_" not in helper and ".set(" not in helper and "new_order" not in helper
+    assert "def _read_strategy3_cost_evidence" not in main_source
+    assert "from aster_strategy3_status import" not in main_source
     status_route = main_source[main_source.index('def aster_status('):main_source.index('@app.get("/v1/me/aster/trade-events")')]
     assert 'row["strategy3Tp"]=strategy3_position_tp_contract' not in status_route
     assert "aster_strategy3_reference" not in status_route

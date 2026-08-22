@@ -6,7 +6,6 @@ import { AuthGate } from "@/components/auth-gate";
 import { ConnectionManager } from "@/components/connection-manager";
 import { ExchangeLiveControl } from "@/components/exchange-live-control";
 import { HyperliquidStrategyControl } from "@/components/hyperliquid-strategy-control";
-import { AsterDryRunControl } from "@/components/aster-dry-run-control";
 import { AsterStrategy2Maker } from "@/components/aster-strategy2-maker";
 import { AsterPerformancePanel } from "@/components/aster-performance-panel";
 import { AsterRecentTrades } from "@/components/aster-recent-trades";
@@ -446,7 +445,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         </article>}
 
         {!positionsOnly && <aside className="side-stack">
-          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterDryRunControl snapshot={snapshot.data} onChanged={onRefresh} /><AsterStrategy2Maker snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></fieldset>}
+          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Maker snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></fieldset>}
           {destination !== "aster" && <ExchangeLiveControl exchange={destination} cloudReady={cloudReady} snapshot={snapshot.data} onChanged={onRefresh} />}
           <article className={`safety-card ${view.tradingEnabled && asterExecutionConfirmed ? "live" : ""}`}>
             <div className="shield-mark">TM</div>
@@ -646,7 +645,7 @@ function PremiumExchanges({ snapshots, onRefresh }: { snapshots: ExchangeSnapsho
 function PremiumUnavailable({ title }: { title: string }) { return <><PremiumPageHeading eyebrow="BINNENKORT BESCHIKBAAR" title={title} detail="Dit onderdeel zat nog niet als werkende functie in de huidige webapp." /><section className="premium-unavailable"><span>Binnenkort beschikbaar</span><h2>Geen nepknoppen of verzonnen gegevens</h2><p>De plaats in de navigatie is alvast zichtbaar. De functie wordt pas interactief wanneer de echte databron en veilige gebruikersflow beschikbaar zijn.</p></section></>; }
 
 type StrategyTpView = { netProfitUsd: number | null; takeProfitTargetUsd: number | null; takeProfitPercent: number | null; progressPercent: number | null; status: "TP bereikt" | "TP nog niet bereikt" | "Niet betrouwbaar te bepalen"; evaluatedAt: string | null; blockReason: string; paidFeesUsd: number | null; fundingUsd: number | null; estimatedCloseFeeUsd: number | null; ownershipProven: boolean; decision: string; phase: string; protection: { role: string | null; active: boolean }; trailing: { enabled: boolean; active: boolean; peakReturnPercent: number | null }; scheduler: { status: string; lastTickAt: unknown; ageSeconds: number | null; warning: string } };
-type PositionView = { symbol: string; side: string; size: number; entry: number; mark: number; pnl: number; leverage: number; dcaCount: number; lastOrderAt: number; openedAt: number; strategy: string; strategy2Tp: StrategyTpView | null; strategy3Tp: StrategyTpView | null };
+type PositionView = { symbol: string; side: string; size: number; entry: number; mark: number; pnl: number; leverage: number; dcaCount: number; lastOrderAt: number; openedAt: number; strategy: string; strategy2Tp: StrategyTpView | null };
 type ClosedTradeView = { symbol: string; side: string; size: number; entry: number; exit: number; pnl: number; openedAt: string; closedAt: string; strategy: string; dcaCount: number };
 
 const positionFilterOptions = [
@@ -750,13 +749,9 @@ function isStrategy2Position(position: PositionView) {
   return position.strategy2Tp !== null || /Strategy\s*2/i.test(position.strategy);
 }
 
-function isStrategy3Position(position: PositionView) {
-  return position.strategy3Tp !== null || /Strategy\s*3/i.test(position.strategy);
-}
-
-function isManagedStrategyPosition(position: PositionView) { return isStrategy2Position(position) || isStrategy3Position(position); }
-function positionTp(position: PositionView) { return isStrategy3Position(position) ? position.strategy3Tp : position.strategy2Tp; }
-function strategyTpLabel(position: PositionView) { return isStrategy3Position(position) ? "Strategy 3" : "Strategy 2"; }
+function isManagedStrategyPosition(position: PositionView) { return isStrategy2Position(position); }
+function positionTp(position: PositionView) { return position.strategy2Tp; }
+function strategyTpLabel(_position: PositionView) { return "Strategy 2"; }
 
 function StrategyTpPanel({ value, strategy }: { value: StrategyTpView | null; strategy: string }) {
   if (!value) return <section className="strategy2-tp-panel unknown" aria-label={`${strategy} netto TP: Niet betrouwbaar te bepalen`}><strong>Niet betrouwbaar te bepalen</strong><span>De server heeft geen volledig, bewezen netto TP-contract geleverd.</span></section>;
@@ -826,7 +821,6 @@ function parseStrategyTp(value: unknown): StrategyTpView | null {
 }
 
 function parseStrategy2Tp(value: unknown): StrategyTpView | null { return parseStrategyTp(value); }
-function parseStrategy3Tp(value: unknown): StrategyTpView | null { return parseStrategyTp(value); }
 
 function asTimestamp(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value < 10_000_000_000 ? value * 1000 : value;
@@ -884,7 +878,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
       const size = asNumber(row.szi);
       const symbol = String(row.coin ?? "—");
       const metadata=dealMeta.get(symbol.toUpperCase());
-      return { symbol, side: size >= 0 ? "long" : "short", size: Math.abs(asNumber(row.positionValue) || size * asNumber(row.entryPx)), entry: asNumber(row.entryPx), mark: asNumber(row.markPx), pnl: asNumber(row.unrealizedPnl), leverage: asNumber(asRecord(row.leverage).value), dcaCount: metadata?.dcaCount ?? 0, lastOrderAt:metadata?.lastOrderAt ?? asTimestamp(row.openedAt), openedAt: asTimestamp(row.openedAt), strategy: String(row.strategyName ?? row.strategyId ?? ""), strategy2Tp:null, strategy3Tp:null };
+      return { symbol, side: size >= 0 ? "long" : "short", size: Math.abs(asNumber(row.positionValue) || size * asNumber(row.entryPx)), entry: asNumber(row.entryPx), mark: asNumber(row.markPx), pnl: asNumber(row.unrealizedPnl), leverage: asNumber(asRecord(row.leverage).value), dcaCount: metadata?.dcaCount ?? 0, lastOrderAt:metadata?.lastOrderAt ?? asTimestamp(row.openedAt), openedAt: asTimestamp(row.openedAt), strategy: String(row.strategyName ?? row.strategyId ?? ""), strategy2Tp:null };
     });
     openPnl = asNumber(data.unrealizedPnl);
     activeCount = asNumber(data.activePositionCount);
@@ -913,7 +907,6 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
       openedAt: asTimestamp(row.openedAt),
       strategy: String(row.strategyName ?? row.strategyId ?? ""),
       strategy2Tp: parseStrategy2Tp(row.strategy2Tp),
-      strategy3Tp: parseStrategy3Tp(row.strategy3Tp),
     }));
     activeCount = asNumber(data.activePositions);
     tradingEnabled = Boolean(data.liveEnabled);
