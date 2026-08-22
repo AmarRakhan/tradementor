@@ -265,16 +265,21 @@ def recent_trade_activity_from_fills(
                 pct = authoritative_pct(position)
                 if pct is not None:
                     row["returnPct"] = pct
+                elif notional > 0 and row["unrealizedPnlUsd"] is not None:
+                    row["returnPct"] = _number(row["unrealizedPnlUsd"]) / notional * 100.0
             else:
                 row["unrealizedPnlUsd"] = None
                 row["currentValueUsd"] = None
             entries.append(row)
         else:
-            row["costBasisUsd"] = notional - _number(row.get("realizedPnlUsd"))
+            realized = _number(row.get("realizedPnlUsd"))
+            row["costBasisUsd"] = notional - realized if str(row.get("side")) == "LONG" else notional + realized
             row["closedValueUsd"] = notional
             pct = authoritative_pct(row)
             if pct is not None:
                 row["returnPct"] = pct
+            elif row["costBasisUsd"] > 0:
+                row["returnPct"] = realized / row["costBasisUsd"] * 100.0
             exits.append(row)
     sorter = lambda row: (int(row.get("timestampMs", 0)), str(row.get("id", "")))
     entries.sort(key=sorter, reverse=True)

@@ -28,5 +28,14 @@ export function reliableReturnPct(row = {}) {
     const value = Number(row[key]);
     if (Number.isFinite(value)) return value;
   }
+  const realized = Number(row.realizedPnlUsd);
+  const closedValue = Number(row.closedValueUsd);
+  if (Number.isFinite(realized) && Number.isFinite(closedValue) && closedValue > 0) {
+    const basis = String(row.side || "").toUpperCase() === "SHORT" ? closedValue + realized : closedValue - realized;
+    if (basis > 0) return realized / basis * 100;
+  }
+  const unrealized = Number(row.unrealizedPnlUsd);
+  const executed = Number(row.executedNotionalUsd);
+  if (Number.isFinite(unrealized) && Number.isFinite(executed) && executed > 0) return unrealized / executed * 100;
   return null;
 }

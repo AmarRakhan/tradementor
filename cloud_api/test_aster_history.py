@@ -81,8 +81,11 @@ def test_recent_activity_combines_partial_fills_and_mirrors_hedge_sides():
     assert len(activity["entries"]) == 2
     assert round(activity["entries"][1]["executedNotionalUsd"], 8) == 20.2
     assert activity["entries"][1]["unrealizedPnlUsd"] == 2
+    assert round(activity["entries"][1]["returnPct"], 6) == round(2 / 20.2 * 100, 6)
     assert activity["exits"][0]["side"] == "SHORT"
     assert activity["exits"][0]["realizedPnlUsd"] == 5
+    assert activity["exits"][0]["costBasisUsd"] == 50
+    assert activity["exits"][0]["returnPct"] == 10
     assert activity["exits"][0]["strategy"] == "Niet aan strategie gekoppeld"
 
 
@@ -198,13 +201,13 @@ def test_recent_activity_uses_stable_id_tiebreak_and_does_not_truncate_history()
     assert activity["entries"][-1]["id"] == "000"
 
 
-def test_recent_activity_only_exposes_authoritative_exchange_percentage():
+def test_recent_activity_uses_exchange_percentage_or_trade_notional_fallback():
     fill = {"id": "1", "orderId": "1", "symbol": "SOLUSDT", "positionSide": "SHORT",
             "side": "SELL", "qty": "2", "price": "20", "time": 1_000}
     without_roe = recent_trade_activity_from_fills([fill], active_positions=[
         {"symbol": "SOLUSDT", "positionSide": "SHORT", "positionAmt": "2", "unRealizedProfit": "4"},
     ])["entries"][0]
-    assert "returnPct" not in without_roe
+    assert without_roe["returnPct"] == 10
     with_roe = recent_trade_activity_from_fills([fill], active_positions=[
         {"symbol": "SOLUSDT", "positionSide": "SHORT", "positionAmt": "2", "unRealizedProfit": "4", "roe": "0.18"},
     ])["entries"][0]

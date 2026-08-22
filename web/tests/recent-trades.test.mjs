@@ -35,10 +35,12 @@ test("history grows in exact batches of 100 without duplicates", () => {
   assert.equal(new Set(pageActivity(rows, 3).map((row) => row.id)).size, 215);
 });
 
-test("missing return information stays unavailable instead of becoming zero", () => {
+test("missing exchange return falls back to trade notional without leverage ROE", () => {
   assert.equal(reliableReturnPct({ realizedPnlUsd: 0 }), null);
   assert.equal(reliableReturnPct({ roePct: -1.25 }), -1.25);
   assert.equal(reliableReturnPct({ returnPct: 0 }), 0);
+  assert.equal(reliableReturnPct({ side: "LONG", unrealizedPnlUsd: 0.39, executedNotionalUsd: 24 }), 1.625);
+  assert.equal(reliableReturnPct({ side: "SHORT", realizedPnlUsd: 5, closedValueUsd: 45 }), 10);
 });
 
 test("trade rows expose only percent and P&L value columns", () => {
