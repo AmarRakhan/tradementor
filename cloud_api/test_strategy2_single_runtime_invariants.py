@@ -60,3 +60,13 @@ def test_same_symbol_long_and_short_are_distinct_active_keys():
         OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","SHORT","s",1,1,101)]
     transferred,missing,errors=transfer_active_ownership_to_strategy2(positions=positions,strategy2_legs=s2)
     assert not missing and not errors and len(transferred)==cfg.maximum_pairs
+
+
+def test_queue_lease_outlives_cloud_scheduler_request_and_scan_has_wall_clock_budget():
+    source=MAIN
+    assert 'orderQueueLease":{"token":token,"until":now+timedelta(minutes=10)' in source
+    tick=source[source.index('def _run_aster_strategy2_queue_scan'):source.index('@app.post("/internal/mexc-automation/tick")')]
+    assert 'scan_deadline=time.monotonic()+120' in tick
+    assert 'if time.monotonic()>=scan_deadline:' in tick
+    assert 'volgende minuut gaat verder' in tick
+    assert 'token_hex(4)' in tick

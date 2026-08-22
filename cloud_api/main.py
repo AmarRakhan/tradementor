@@ -4881,7 +4881,7 @@ def _acquire_strategy2_queue_lease(reference)->str|None:
         if isinstance(until,datetime):
             until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
         if isinstance(until,datetime) and until>now:return None
-        txn.set(reference,{"orderQueueLease":{"token":token,"until":now+timedelta(minutes=3),"acquiredAt":now}},merge=True)
+        txn.set(reference,{"orderQueueLease":{"token":token,"until":now+timedelta(minutes=10),"acquiredAt":now}},merge=True)
         return token
     return acquire(transaction)
 
@@ -4997,8 +4997,11 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN)->dict[str,Any]:
     """Run one durable, account-local scan with a hard Aster request budget."""
     scan_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))
+    # A queue scan may perform several signed Aster reads. Keep the HTTP scheduler
+    # well below its platform timeout and continue remaining work next minute.
+    scan_deadline=time.monotonic()+120
     ref=aster_strategy2_reference(uid);now=datetime.now(timezone.utc)
-    scan_id=now.strftime("%Y%m%dT%H%M")
+    scan_id=f"{now.strftime('%Y%m%dT%H%M%S')}-{python_secrets.token_hex(4)}"
     raw=ref.get().to_dict() or {};prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
     current_intent=prior.get("currentIntent") if isinstance(prior.get("currentIntent"),dict) else {}
     if current_intent:
@@ -5027,6 +5030,10 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     ref.set({"orderQueueState":state},merge=True)
     results=[]
     while used<scan_limit:
+        if time.monotonic()>=scan_deadline:
+            results.append({"status":"time-budget","ordersSent":0,
+                "reason":"Strategy-2 accountscan tijdsbudget bereikt; volgende minuut gaat verder"})
+            break
         try:
             result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,
                 before_order=lambda intent,details=None:_reserve_strategy2_queue_order(
