@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
+from statistics import fmean, pstdev
 import math
 from aster_universe import normalize_top_n
 
@@ -25,6 +26,7 @@ class Strategy2Config:
     take_profit: float = .015
     auto_restart: bool = True
     dca_enabled: bool = True
+    trend_bollinger_entry_enabled: bool = False
     dca_mode: Literal["fixed", "progressive", "custom"] = "fixed"
     long_dca_distance: float = .02
     short_dca_distance: float = .02
@@ -79,6 +81,7 @@ class Strategy2Config:
             version=i("version", 1), mode="live" if raw.get("mode") == "live" else "paper",
             base_notional=f("baseNotional", 10), take_profit=f("takeProfit", .015),
             auto_restart=bool(raw.get("autoRestart", True)), dca_enabled=bool(raw.get("dcaEnabled", True)),
+            trend_bollinger_entry_enabled=bool(raw.get("trendBollingerEntryEnabled", False)),
             dca_mode=str(raw.get("dcaMode", "fixed")).lower(),
             long_dca_distance=f("longDcaDistance", .02), short_dca_distance=f("shortDcaDistance", .02),
             long_max_dca=i("longMaxDca", 3), short_max_dca=i("shortMaxDca", 3),
@@ -129,7 +132,8 @@ class Strategy2Config:
     def public_dict(self) -> dict[str, Any]:
         return ({"strategyId":self.strategy_id,"name":self.name,"version":self.version,"mode":self.mode,
             "baseNotional":self.base_notional,"takeProfit":self.take_profit,"autoRestart":self.auto_restart,
-            "dcaEnabled":self.dca_enabled,"dcaMode":self.dca_mode,"longDcaDistance":self.long_dca_distance,
+            "dcaEnabled":self.dca_enabled,"trendBollingerEntryEnabled":self.trend_bollinger_entry_enabled,
+            "dcaMode":self.dca_mode,"longDcaDistance":self.long_dca_distance,
             "shortDcaDistance":self.short_dca_distance,"longMaxDca":self.long_max_dca,"shortMaxDca":self.short_max_dca,
             "dcaMultiplier":self.dca_multiplier,"longCustomLevels":list(self.long_custom_levels),
             "shortCustomLevels":list(self.short_custom_levels),"maximumPairs":self.maximum_pairs,
@@ -148,6 +152,36 @@ class Strategy2Config:
             "moneyGrabberFullThreshold":self.money_grabber_full_threshold,
             "moneyGrabberFullRatio":self.money_grabber_full_ratio,
             "moneyGrabberPairCloseEnabled":self.money_grabber_pair_close_enabled})
+
+
+def _ema(values: list[float], period: int) -> float:
+    seed = fmean(values[:period])
+    alpha = 2.0 / (period + 1.0)
+    result = seed
+    for value in values[period:]:
+        result = value * alpha + result * (1.0 - alpha)
+    return result
+
+def trend_bollinger_entry_check(closes: list[float], price: float, side: Side) -> dict[str, Any] | None:
+    values = [float(value) for value in closes if math.isfinite(float(value)) and float(value) > 0]
+    if len(values) < 50 or not math.isfinite(price) or price <= 0 or side not in {"LONG", "SHORT"}:
+        return None
+    ema20, ema50 = _ema(values, 20), _ema(values, 50)
+    window = values[-20:]
+    middle = fmean(window)
+    deviation = pstdev(window)
+    upper, lower = middle + 2.0 * deviation, middle - 2.0 * deviation
+    trend = "UP" if ema20 > ema50 else "DOWN" if ema20 < ema50 else "NEUTRAL"
+    if trend == "UP":
+        eligible = price <= middle if side == "LONG" else price > upper
+        reason = "price<=middle" if side == "LONG" else "price>upper"
+    elif trend == "DOWN":
+        eligible = price < lower if side == "LONG" else price >= middle
+        reason = "price<lower" if side == "LONG" else "price>=middle"
+    else:
+        eligible = price < lower if side == "LONG" else price > upper
+        reason = "price<lower" if side == "LONG" else "price>upper"
+    return {"eligible": eligible, "trend": trend, "price": price, "middle": middle, "upper": upper, "lower": lower, "reason": reason}
 
 
 @dataclass(frozen=True)

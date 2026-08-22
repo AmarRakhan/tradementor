@@ -71,7 +71,7 @@ from aster_gateway import (
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_strategy import AsterStrategySettings
-from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case
+from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
 from aster_strategy2_state import OwnedLeg, reconcile_owned_legs
 from aster_strategy2_readiness import build_readiness_report
@@ -1781,6 +1781,28 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
                         continue
                     cooldowns.pop(cooldown_key,None)
+                    if settings.trend_bollinger_entry_enabled:
+                        try:
+                            candle_rows=client.klines(candidate,"15m",60)
+                            closes=[safe_float(row[4]) for row in candle_rows if isinstance(row,list) and len(row)>=5 and safe_float(row[4])>0]
+                            entry_check=trend_bollinger_entry_check(closes,prices[candidate],entry_side)
+                        except (AsterApiError,ValueError) as exc:
+                            scan_skipped+=1;advanced_after_rejection=True
+                            candidate_failures.append(f"{candidate}: Trend + Bollinger 15m-data niet betrouwbaar ({exc})")
+                            continue
+                        if entry_check is None:
+                            scan_skipped+=1;advanced_after_rejection=True
+                            candidate_failures.append(f"{candidate}: onvoldoende 15m-data voor Trend + Bollinger")
+                            continue
+                        if not bool(entry_check["eligible"]):
+                            scan_skipped+=1;advanced_after_rejection=True
+                            relevant=(entry_check["middle"] if entry_check["trend"] in {"UP","DOWN"} and
+                                ((entry_check["trend"]=="UP" and entry_side=="LONG") or (entry_check["trend"]=="DOWN" and entry_side=="SHORT"))
+                                else entry_check["lower"] if entry_side=="LONG" else entry_check["upper"])
+                            candidate_failures.append(
+                                f"{candidate}: Trend + Bollinger skip {entry_side} · trend {entry_check['trend']} · "
+                                f"prijs {entry_check['price']:.8g} · band {relevant:.8g}")
+                            continue
                     value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
                         accepted_leverage=settings.leverage,
                         existing_contract_notional=contract_exposure.get(candidate,0))

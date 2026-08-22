@@ -361,6 +361,13 @@ class AsterV3Client:
         if not isinstance(payload, list): raise AsterApiError("Aster 24-uursmarktdata heeft een ongeldig formaat")
         return [item for item in payload if isinstance(item, dict)]
 
+    def klines(self, symbol: str, interval: str = "15m", limit: int = 60) -> list[list[Any]]:
+        safe_symbol=str(symbol).upper().strip();safe_limit=max(1,min(1000,int(limit)))
+        path=f"/fapi/v1/klines?symbol={safe_symbol}&interval={interval}&limit={safe_limit}"
+        payload=self._public_get(path,ttl_seconds=15,invalid_message="Aster 15m-candles konden niet betrouwbaar worden gelezen")
+        if not isinstance(payload,list): raise AsterApiError("Aster candles hebben een ongeldig formaat")
+        return [item for item in payload if isinstance(item,list)]
+
     def signed_request(self, method: str, path: str, parameters: dict[str, Any] | None = None) -> Any:
         self._rest_guard.assert_allowed()
         values = dict(parameters or {})
