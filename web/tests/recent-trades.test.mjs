@@ -41,18 +41,24 @@ test("missing return information stays unavailable instead of becoming zero", ()
   assert.equal(reliableReturnPct({ returnPct: 0 }), 0);
 });
 
-test("trade rows expose only percent and P&L value columns", () => {
-  assert.match(component, /<span>%<\/span><span>P&amp;L<\/span>/);
-  assert.doesNotMatch(component, /INGEKOCHT|INGESTAPT \(\$\)|VERKOCHT|NU WAARD|Perp ·|Niet aan strategie gekoppeld/);
+test("trade rows preserve IN, NU/UIT, percent and P&L columns", () => {
+  assert.match(component, /<span>IN<\/span><span>\{closed \? "UIT" : "NU"\}<\/span><span>%<\/span><span>P&amp;L<\/span>/);
+  assert.match(component, /trade\.costBasisUsd/);
+  assert.match(component, /trade\.closedValueUsd/);
+  assert.match(component, /trade\.executedNotionalUsd/);
+  assert.match(component, /trade\.currentValueUsd/);
   assert.match(component, /Toon alle/);
   assert.match(component, /Terug naar laatste 20/);
   assert.match(component, /Laad nog 100/);
 });
 
-test("mobile layout has two bounded value columns and reduced-motion fallback", () => {
-  assert.match(css, /repeat\(2,minmax\(/);
+test("mobile layout keeps four bounded value columns and reduced-motion fallback", () => {
+  assert.match(css, /repeat\(4,minmax\(/);
   assert.match(css, /prefers-reduced-motion:reduce/);
-  assert.doesNotMatch(css, /content:"IN"|content:"NU"/);
+  assert.match(css, /content:"IN"/);
+  assert.match(css, /content:"NU\/UIT"/);
+  assert.match(css, /content:"%"/);
+  assert.match(css, /content:"P&L"/);
 });
 
 test("manual Aster close is confirmed, idempotent in the browser and refreshes exchange truth", () => {
