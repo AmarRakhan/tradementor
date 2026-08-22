@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from enum import Enum
+import math
 import re
 import threading
 import time
@@ -408,6 +409,23 @@ class AsterV3Client:
         """Return Aster's authoritative joined-margin account totals."""
         payload = self.signed_request("GET", "/fapi/v3/accountWithJoinMargin")
         return payload if isinstance(payload, dict) else {}
+
+    def remaining_openable_notional_value(self, symbol: str, leverage: int) -> float:
+        """Read Aster's account-specific remaining opening capacity for one leverage."""
+        if not symbol or leverage < 1:
+            raise AsterValidationError("Symbool en positieve leverage zijn verplicht voor Aster-capaciteit")
+        payload = self.signed_request("GET", "/fapi/v1/remainingOpenableNotionalValue", {
+            "symbol": symbol.upper(), "leverage": int(leverage),
+        })
+        if not isinstance(payload, dict) or "remainingOpenableNotionalValue" not in payload:
+            raise AsterApiError("Aster gaf geen betrouwbare resterende openbare notional")
+        try:
+            value = float(payload["remainingOpenableNotionalValue"])
+        except (TypeError, ValueError) as exc:
+            raise AsterApiError("Aster gaf een ongeldige resterende openbare notional") from exc
+        if not math.isfinite(value) or value < 0:
+            raise AsterApiError("Aster gaf een ongeldige resterende openbare notional")
+        return value
 
     def open_orders(self, symbol: str | None = None) -> list[dict[str, Any]]:
         payload = self.signed_request(

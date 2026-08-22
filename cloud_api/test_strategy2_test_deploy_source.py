@@ -191,7 +191,7 @@ def test_strategy2_known_configured_leverage_candidates_are_ranked_first():
 def test_strategy2_old_candidate_cooldowns_are_invalidated_by_schema_version():
     source = MAIN.read_text(encoding="utf-8")
     tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
-    assert "cooldown_version=2" in tick
+    assert "cooldown_version=3" in tick
     assert 'entryCandidateCooldownVersion' in tick
     assert 'int(safe_float(raw.get("entryCandidateCooldownVersion")))==cooldown_version' in tick
     assert tick.count('"entryCandidateCooldownVersion":cooldown_version') >= 2

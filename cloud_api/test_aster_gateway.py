@@ -223,6 +223,18 @@ def test_margin_and_leverage_configuration_are_signed_once():
     assert "leverage=200" in seen[1][1]
 
 
+
+def test_remaining_openable_notional_value_uses_official_v1_capacity_endpoint():
+    seen=[]
+    def handler(request: httpx.Request):
+        seen.append((request.method,request.url.path,request.url.query.decode()))
+        return httpx.Response(200,json={"remainingOpenableNotionalValue":"123.45"})
+    client=AsterV3Client(signer_address="0xagent",sign_message=lambda _:"sig",
+        transport=httpx.MockTransport(handler))
+    assert client.remaining_openable_notional_value("btcusdt",50)==123.45
+    assert seen[0][0:2]==("GET","/fapi/v1/remainingOpenableNotionalValue")
+    assert "symbol=BTCUSDT" in seen[0][2] and "leverage=50" in seen[0][2]
+
 def test_strategy2_recovery_reads_use_official_v3_endpoints_and_never_write():
     seen = []
     def handler(request: httpx.Request):

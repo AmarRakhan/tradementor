@@ -1717,7 +1717,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}
     opened_legs=[];remaining_available=portfolio.available_balance;candidate_failures=[];budget_blocked=False
     scan_checked=0;scan_skipped=0;advanced_after_rejection=False
-    cooldown_version=2
+    openable_zero_candidates=0;capacity_check_failures=0
+    cooldown_version=3
     cooldowns=(raw.get("entryCandidateCooldowns") if
         int(safe_float(raw.get("entryCandidateCooldownVersion")))==cooldown_version and
         isinstance(raw.get("entryCandidateCooldowns"),dict) else {})
@@ -1753,7 +1754,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     if (safe_float(prior.get("until"))>now_ms and
                         int(safe_float(prior.get("requestedLeverage")))==int(settings.leverage)):
                         scan_skipped+=1
-                        candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
+                        if str(prior.get("code",""))=="ASTER_OPENABLE_NOTIONAL_ZERO":
+                            openable_zero_candidates+=1
+                            candidate_failures.append(f"{candidate}: Aster heeft bij {settings.leverage}x tijdelijk 0 USDT nieuwe capaciteit")
+                        else:
+                            candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
                         continue
                     candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)
                     rules=ContractRules.from_exchange_info(rows[candidate])
@@ -1769,6 +1774,28 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
                         accepted_leverage=settings.leverage,
                         existing_contract_notional=contract_exposure.get(candidate,0))
+                    try:
+                        remaining_openable=client.remaining_openable_notional_value(candidate,settings.leverage)
+                    except (AsterApiError,AsterValidationError,ValueError) as exc:
+                        capacity_check_failures+=1;scan_skipped+=1;advanced_after_rejection=True
+                        candidate_failures.append(f"{candidate}: Aster-capaciteit tijdelijk niet betrouwbaar leesbaar")
+                        cooldowns[cooldown_key]={"until":now_ms+60*1000,"fingerprint":fingerprint,
+                            "attempts":int(safe_float(prior.get("attempts")))+1,"code":"ASTER_OPENABLE_CAPACITY_UNAVAILABLE",
+                            "reason":str(exc),"side":entry_side,"action":"OPEN","requestedLeverage":settings.leverage}
+                        continue
+                    if remaining_openable+1e-9<float(value.notional_per_leg):
+                        openable_zero_candidates+=1;scan_skipped+=1;advanced_after_rejection=True
+                        capacity_reason=(f"Aster meldt bij {settings.leverage}x slechts {remaining_openable:.8g} USDT "
+                            f"resterende openbare notional; {float(value.notional_per_leg):.8g} USDT nodig")
+                        candidate_failures.append(f"{candidate}: {capacity_reason}")
+                        cooldowns[cooldown_key]={"until":now_ms+5*60*1000,"fingerprint":fingerprint,
+                            "attempts":int(safe_float(prior.get("attempts")))+1,"code":"ASTER_OPENABLE_NOTIONAL_ZERO",
+                            "reason":capacity_reason,"side":entry_side,"action":"OPEN","requestedLeverage":settings.leverage}
+                        ref.collection("audit").add({"event":"ENTRY_CANDIDATE_CAPACITY_WAIT","symbol":candidate,
+                            "side":entry_side,"action":"OPEN","configuredLeverage":settings.leverage,
+                            "remainingOpenableNotional":remaining_openable,"requiredNotional":float(value.notional_per_leg),
+                            "timestamp":datetime.now(timezone.utc)})
+                        continue
                     required=float(value.notional_per_leg)/max(1,value.leverage)
                     if required*1.05>remaining_available:
                         budget_blocked=True;scan_skipped+=1;advanced_after_rejection=True
@@ -1843,12 +1870,17 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             "configuredBaseNotional":settings.base_notional,"filledNotional":q*p,"acceptedLeverage":opened.get("leverage",plan.leverage),"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
         batch.commit()
     long_count,short_count=harvest_counts(owned);complete=long_count>=long_target and short_count>=short_target
-    detail=("; ".join(candidate_failures[:3]) if candidate_failures else
-        ("Strategy Margin Budget bereikt" if budget_blocked else f"{len(codes)} kandidaten gecontroleerd"))
+    capacity_waiting=bool(openable_zero_candidates>0 and not opened_legs and len(owned)<settings.maximum_pairs)
+    detail=((f"Aster heeft bij {settings.leverage}x momenteel geen voldoende nieuwe notionalcapaciteit "
+        f"voor {openable_zero_candidates} technisch geschikte kandidaat/kandidaten; automatische hercheck blijft actief")
+        if capacity_waiting else ("; ".join(candidate_failures[:3]) if candidate_failures else
+        ("Strategy Margin Budget bereikt" if budget_blocked else f"{len(codes)} kandidaten gecontroleerd")))
     reason=(f"Gebalanceerde start compleet: {long_count} LONG / {short_count} SHORT" if complete else
         f"Initiële opbouw gepauzeerd op {long_count} LONG / {short_count} SHORT. {detail}")
     scan_status={"checked":scan_checked,"skipped":scan_skipped,"advancedWithinTick":advanced_after_rejection,
-        "reasons":candidate_failures[:5],"accountPositionCount":len(active_keys),"provenStrategy2LegCount":len(owned),"checkedAt":now}
+        "reasons":candidate_failures[:5],"accountPositionCount":len(active_keys),"provenStrategy2LegCount":len(owned),
+        "openableZeroCandidates":openable_zero_candidates,"capacityCheckFailures":capacity_check_failures,
+        "openableCapacityBlocked":capacity_waiting,"configuredLeverage":settings.leverage,"checkedAt":now}
     ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"entryCandidateCooldowns":cooldowns,
         "entryCandidateCooldownVersion":cooldown_version,"candidateScan":scan_status,"initialBuildComplete":complete,"phase":"RUNNING" if complete else "INITIAL_BUILD",
         "lastReason":reason,"updatedAt":datetime.now(timezone.utc)},merge=True)

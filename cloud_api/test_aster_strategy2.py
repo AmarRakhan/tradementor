@@ -103,3 +103,14 @@ def test_new_entry_planning_uses_each_accounts_configured_leverage():
     for leverage in (20,50,70):
         plan=plan_pair(row,brackets,1.0,20.0,accepted_leverage=leverage)
         assert plan.leverage==leverage
+
+
+def test_new_entries_use_account_specific_aster_openable_capacity_before_submission():
+    from pathlib import Path
+    source=(Path(__file__).resolve().parent/"main.py").read_text(encoding="utf-8")
+    tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
+    assert "remaining_openable_notional_value(candidate,settings.leverage)" in tick
+    assert "ASTER_OPENABLE_NOTIONAL_ZERO" in tick
+    assert "ENTRY_CANDIDATE_CAPACITY_WAIT" in tick
+    assert '"openableCapacityBlocked":capacity_waiting' in tick
+    assert "cooldown_version=3" in tick

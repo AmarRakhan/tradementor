@@ -39,3 +39,11 @@ test("status view has no additional polling path", async () => {
   assert.doesNotMatch(component, /setInterval|refresh|retry/i);
   assert.match(exchangeData, /}, 60_000\);/);
 });
+
+
+test("Aster capacity zero is shown as waiting instead of falsely claiming active refill", async () => {
+  const parser = await read("lib/aster-bot-status.ts");
+  assert.match(parser, /openableCapacityBlocked/);
+  assert.match(parser, /ASTER_OPENABLE_CAPACITY_WAIT/);
+  assert.match(parser, /automatische hercheck blijft aan/);
+});
