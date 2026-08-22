@@ -11,12 +11,13 @@ test("webapp version 44 and deploy build number stay visible throughout app star
   ]);
 
   assert.match(versionSource, /WEBAPP_VERSION = "44"/);
-  assert.match(versionSource, /NEXT_PUBLIC_WEBAPP_BUILD_NUMBER/);
+  assert.match(versionSource, /webappVersionLabel/);
   assert.match(versionSource, /Webapp versie/);
-  assert.match(layout, /<AppVersionControl \/>/);
+  assert.match(layout, /WEBAPP_BUILD_NUMBER/);
+  assert.match(layout, /<AppVersionControl buildNumber=\{buildNumber\} \/>/);
   assert.match(layout, /<AuthProvider>\{children\}<\/AuthProvider>/);
-  assert.ok(layout.indexOf("<AppVersionControl />") < layout.indexOf("<AuthProvider>"));
-  assert.match(layout, /data-webapp-build=\{WEBAPP_BUILD_NUMBER\}/);
+  assert.ok(layout.indexOf("<AppVersionControl buildNumber={buildNumber} />") < layout.indexOf("<AuthProvider>"));
+  assert.match(layout, /data-webapp-build=\{buildNumber\}/);
   assert.match(layout, /STRATEGY 2-RUNTIME/);
   assert.doesNotMatch(layout, /STRATEGY 3-RUNTIME LIVE/);
   assert.match(layout, /manifest\.webmanifest\?v=\$\{WEBAPP_VERSION\}/);
@@ -24,6 +25,6 @@ test("webapp version 44 and deploy build number stay visible throughout app star
   assert.doesNotMatch(registration, /pwaVersion =/);
   assert.match(control, /registration\?\.update\(\)/);
   assert.match(control, /cache: "no-store"/);
-  assert.match(control, /WEBAPP_BUILD_NUMBER/);
+  assert.match(control, /buildNumber/);
   assert.match(control, /data-webapp-build/);
 });

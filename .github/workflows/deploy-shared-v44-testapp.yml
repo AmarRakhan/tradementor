@@ -95,7 +95,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --source web \
-            --set-build-env-vars "NEXT_PUBLIC_WEBAPP_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" \
+            --set-env-vars "WEBAPP_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" \
             --revision-suffix "$SUFFIX" \
             --no-traffic \
             --tag "$TAG" \
