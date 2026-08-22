@@ -89,3 +89,17 @@ def test_side_state_machine_and_recovery_are_explicit():
     value=transition(value,"RELEASE");assert value.lifecycle=="HARVEST_PROTECTION"
     recovery=transition(LegState("LONG","c",10,100,100,lifecycle="OPENING"),"UNKNOWN")
     assert recovery.lifecycle=="RECOVERY" and transition(recovery,"RECONCILED").lifecycle=="HARVEST"
+
+
+def test_new_entry_planning_uses_each_accounts_configured_leverage():
+    from aster_execution import plan_pair
+    row={"symbol":"TESTUSDT","status":"TRADING","filters":[
+        {"filterType":"MARKET_LOT_SIZE","minQty":"0.001","maxQty":"100000","stepSize":"0.001"},
+        {"filterType":"LOT_SIZE","minQty":"0.001","maxQty":"100000","stepSize":"0.001"},
+        {"filterType":"MIN_NOTIONAL","notional":"1"},
+        {"filterType":"PRICE_FILTER","tickSize":"0.001"},
+    ]}
+    brackets=[{"notionalFloor":"0","notionalCap":"100000","initialLeverage":70,"maintMarginRatio":"0.01"}]
+    for leverage in (20,50,70):
+        plan=plan_pair(row,brackets,1.0,20.0,accepted_leverage=leverage)
+        assert plan.leverage==leverage

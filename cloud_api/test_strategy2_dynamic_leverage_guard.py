@@ -26,7 +26,8 @@ def test_new_entry_routes_never_use_lower_leverage_fallback():
         assert marker in tick
     assert "reopen=replace(reopen,leverage=min(reopen.leverage,settings.leverage))" not in tick
     assert "accepted=configure_maximum_usable_leverage(client,value)" not in tick
-    assert "value=replace(value,leverage=settings.leverage)" in tick
+    assert "accepted_leverage=settings.leverage" in tick
+    assert "value=replace(value,leverage=settings.leverage)" not in tick
 
 
 def test_dca_does_not_invoke_the_new_position_guard():
