@@ -74,6 +74,10 @@ def test_queue_hard_limit_remains_fifteen():
 
 def test_stale_cost_evidence_is_leg_local_while_user_seats_are_missing():
     tick = _tick_source()
-    block = tick[tick.index("if cost_holds:"):tick.index("if orders:", tick.index("if cost_holds:"))]
+    start = tick.index("if cost_holds:")
+    end = tick.index("if ownership_isolated:", start)
+    block = tick[start:end]
     assert 'seat_shortage=len([leg for leg in owned if leg.role!="PROTECTION"])<settings.maximum_pairs' in block
     assert "vrije stoelen blijven doorstromen" in block
+    assert "if orders:" not in block
+    assert "open_order_symbols" in block

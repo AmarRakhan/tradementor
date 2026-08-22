@@ -96,7 +96,9 @@ def test_completed_canary_authorization_survives_transient_readiness_and_open_or
     assert 'if live and (not canary_authorized or not central_live_enabled)' in tick
     assert '"liveReadyRecoveryReason":"COMPLETED_CANARY_AUTHORIZATION"' in tick
     assert 'management_owned=[leg for leg in management_owned if (leg.symbol,leg.side) not in open_order_keys]' in tick
-    assert tick.index('if selected:') < tick.index('if orders:')
+    assert 'open_order_symbols=' in tick
+    assert 'if candidate not in open_order_symbols' in tick
+    assert 'if orders:' not in tick[tick.index('if cost_holds:'):tick.index('if ownership_isolated:')]
     assert 'durable_live_ready=bool(raw.get("canaryValidated",False))' in readiness
     assert '"liveReady":report["liveReady"]' not in readiness
 

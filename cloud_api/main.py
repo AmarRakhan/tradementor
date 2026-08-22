@@ -1981,10 +1981,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         # Cost/funding evidence is leg-local. Stale managed legs stay blocked,
         # but unrelated free seats may still fill toward the user's target.
         ref.set({"lastReason":f"{reason}; vrije stoelen blijven doorstromen","lastTickAt":now},merge=True)
-    if orders:
-        reason=f"{len(orders)} open Aster-order(s) worden gereconcilieerd; nieuwe exposure wacht"
-        ref.set({"phase":"RECONCILING","lastReason":reason,"lastTickAt":now},merge=True)
-        return {"status":"reconciling","action":"HOLD","reason":reason,"ordersSent":0}
+    # Open orders are symbol-local: unrelated free seats may continue refilling.
+    open_order_symbols={str(order.get("symbol","")).upper() for order in orders
+        if str(order.get("symbol","")).strip()}
     if ownership_isolated:
         # Unknown/manual exchange legs stay quarantined forever unless explicit
         # ownership evidence appears.  They must not deadlock the whole account:
@@ -2037,85 +2036,96 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         contract_exposure[position_symbol]=contract_exposure.get(position_symbol,Decimal("0"))+abs(
             Decimal(str(position.get("positionAmt",0)))*Decimal(str(position.get("markPrice",0))))
     for index in range(order_limit):
-        entry_side=next_balanced_entry_side(owned,settings.maximum_pairs)
-        if not entry_side:break
-        candidates=side_entry_candidates(codes,active_keys,entry_side)
-        candidates.sort(key=lambda symbol:(symbol not in preferred_codes,
-            -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))
-        plan=None;symbol="";opened=None
-        for candidate in candidates:
-            scan_checked+=1
-            try:
-                candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)
-                rules=ContractRules.from_exchange_info(rows[candidate])
-                fingerprint=hashlib.sha256(json.dumps({"price":prices[candidate],"tick":str(rules.tick_size),
-                    "step":str(rules.market_quantity_step),"minQty":str(rules.market_min_quantity),
-                    "minNotional":str(rules.min_notional),"requestedLeverage":settings.leverage,
-                    "brackets":candidate_brackets},sort_keys=True,separators=(",",":" )).encode()).hexdigest()[:20]
-                cooldown_key=f"{candidate}|{entry_side}|OPEN"
-                prior=cooldowns.get(cooldown_key,{})
-                if safe_float(prior.get("until"))>now_ms and prior.get("fingerprint")==fingerprint:
-                    scan_skipped+=1
-                    candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
-                    continue
-                cooldowns.pop(cooldown_key,None)
-                value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
-                    existing_contract_notional=contract_exposure.get(candidate,0))
-                value=replace(value,leverage=settings.leverage)
-                required=float(value.notional_per_leg)/max(1,value.leverage)
-                if required*1.05>remaining_available:
-                    budget_blocked=True;scan_skipped+=1;advanced_after_rejection=True
-                    candidate_failures.append(f"{candidate}: onvoldoende vrije Aster-margin inclusief 5% uitvoeringsbuffer")
-                    continue
+        preferred_side=next_balanced_entry_side(owned,settings.maximum_pairs)
+        if not preferred_side:break
+        long_target_now,short_target_now=balanced_entry_targets(settings.maximum_pairs)
+        long_count_now,short_count_now=harvest_counts(owned)
+        alternate_side="SHORT" if preferred_side=="LONG" else "LONG"
+        entry_sides=[preferred_side]
+        if ((alternate_side=="LONG" and long_count_now<long_target_now) or
+            (alternate_side=="SHORT" and short_count_now<short_target_now)):
+            entry_sides.append(alternate_side)
+        plan=None;symbol="";opened=None;entry_side=preferred_side
+        for entry_side in entry_sides:
+            candidates=[candidate for candidate in side_entry_candidates(codes,active_keys,entry_side)
+                if candidate not in open_order_symbols]
+            candidates.sort(key=lambda symbol:(symbol not in preferred_codes,
+                -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))
+            for candidate in candidates:
+                scan_checked+=1
                 try:
-                    scan_key=str(raw.get("orderQueueState",{}).get("scanId",""))
-                    entry_prefix=(f"s2q-i-{hashlib.sha256((uid+scan_key+candidate+entry_side+str(index)).encode()).hexdigest()[:12]}"
-                        if before_order else f"s2i-{uid[-4:]}-{int(time.time()*1000)}-{index}-{candidate[:5].lower()}")
-                    opened=execute_aster_leg(client,value,side=PositionSide(entry_side),action="OPEN",
-                        id_prefix=entry_prefix,confirm=True,
-                        new_position_leverage=settings.leverage,
-                        before_submit=(lambda intent:before_order(intent,{"kind":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG"})) if before_order else None)
+                    candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)
+                    rules=ContractRules.from_exchange_info(rows[candidate])
+                    fingerprint=hashlib.sha256(json.dumps({"price":prices[candidate],"tick":str(rules.tick_size),
+                        "step":str(rules.market_quantity_step),"minQty":str(rules.market_min_quantity),
+                        "minNotional":str(rules.min_notional),"requestedLeverage":settings.leverage,
+                        "brackets":candidate_brackets},sort_keys=True,separators=(",",":" )).encode()).hexdigest()[:20]
+                    cooldown_key=f"{candidate}|{entry_side}|OPEN"
+                    prior=cooldowns.get(cooldown_key,{})
+                    if safe_float(prior.get("until"))>now_ms and prior.get("fingerprint")==fingerprint:
+                        scan_skipped+=1
+                        candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
+                        continue
+                    cooldowns.pop(cooldown_key,None)
+                    value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
+                        existing_contract_notional=contract_exposure.get(candidate,0))
+                    value=replace(value,leverage=settings.leverage)
+                    required=float(value.notional_per_leg)/max(1,value.leverage)
+                    if required*1.05>remaining_available:
+                        budget_blocked=True;scan_skipped+=1;advanced_after_rejection=True
+                        candidate_failures.append(f"{candidate}: onvoldoende vrije Aster-margin inclusief 5% uitvoeringsbuffer")
+                        continue
+                    try:
+                        scan_key=str(raw.get("orderQueueState",{}).get("scanId",""))
+                        entry_prefix=(f"s2q-i-{hashlib.sha256((uid+scan_key+candidate+entry_side+str(index)).encode()).hexdigest()[:12]}"
+                            if before_order else f"s2i-{uid[-4:]}-{int(time.time()*1000)}-{index}-{candidate[:5].lower()}")
+                        opened=execute_aster_leg(client,value,side=PositionSide(entry_side),action="OPEN",
+                            id_prefix=entry_prefix,confirm=True,
+                            new_position_leverage=settings.leverage,
+                            before_submit=(lambda intent:before_order(intent,{"kind":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG"})) if before_order else None)
+                    except Exception as exc:
+                        if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):
+                            raise
+                        candidate_failures.append(f"{candidate}: {exc}")
+                        scan_skipped+=1;advanced_after_rejection=True
+                        attempts=int(safe_float(prior.get("attempts")))+1
+                        cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
+                        code=(exc.reason_code if isinstance(exc,NewPositionLeverageBlocked)
+                            else (re.search(r"-\d{4}",str(exc)) or [""])[0])
+                        cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
+                            "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
+                        ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
+                            "action":"OPEN","errorCode":code,"reason":str(exc),"cooldownSeconds":cooldown_seconds,
+                            "configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
+                        continue
+                    plan=value;symbol=candidate;break
+                except ValueError as exc:
+                    candidate_failures.append(f"{candidate}: {exc}")
+                    scan_skipped+=1;advanced_after_rejection=True
+                    attempts=int(safe_float(prior.get("attempts")))+1
+                    cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
+                    cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
+                        "attempts":attempts,"code":"VALIDATION","reason":str(exc),"side":entry_side,"action":"OPEN"}
+                    ref.collection("audit").add({"event":"ENTRY_CANDIDATE_VALIDATION_SKIPPED","symbol":candidate,
+                        "side":entry_side,"action":"OPEN","errorCode":"VALIDATION","reason":str(exc),
+                        "cooldownSeconds":cooldown_seconds,"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
+                    continue
                 except Exception as exc:
-                    if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):
+                    if not is_definite_contract_rejection(exc):
                         raise
                     candidate_failures.append(f"{candidate}: {exc}")
                     scan_skipped+=1;advanced_after_rejection=True
                     attempts=int(safe_float(prior.get("attempts")))+1
                     cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
-                    code=(exc.reason_code if isinstance(exc,NewPositionLeverageBlocked)
-                        else (re.search(r"-\d{4}",str(exc)) or [""])[0])
+                    code=(re.search(r"-\d{4}",str(exc)) or [""])[0]
                     cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
                         "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
                     ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
                         "action":"OPEN","errorCode":code,"reason":str(exc),"cooldownSeconds":cooldown_seconds,
                         "configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
                     continue
-                plan=value;symbol=candidate;break
-            except ValueError as exc:
-                candidate_failures.append(f"{candidate}: {exc}")
-                scan_skipped+=1;advanced_after_rejection=True
-                attempts=int(safe_float(prior.get("attempts")))+1
-                cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
-                cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
-                    "attempts":attempts,"code":"VALIDATION","reason":str(exc),"side":entry_side,"action":"OPEN"}
-                ref.collection("audit").add({"event":"ENTRY_CANDIDATE_VALIDATION_SKIPPED","symbol":candidate,
-                    "side":entry_side,"action":"OPEN","errorCode":"VALIDATION","reason":str(exc),
-                    "cooldownSeconds":cooldown_seconds,"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
-                continue
-            except Exception as exc:
-                if not is_definite_contract_rejection(exc):
-                    raise
-                candidate_failures.append(f"{candidate}: {exc}")
-                scan_skipped+=1;advanced_after_rejection=True
-                attempts=int(safe_float(prior.get("attempts")))+1
-                cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
-                code=(re.search(r"-\d{4}",str(exc)) or [""])[0]
-                cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
-                    "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
-                ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
-                    "action":"OPEN","errorCode":code,"reason":str(exc),"cooldownSeconds":cooldown_seconds,
-                    "configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
-                continue
+            if plan is not None and opened is not None:
+                break
         if not plan or opened is None:break
         required=float(plan.notional_per_leg)/max(1,plan.leverage)
         cycle=f"c{int(time.time()*1000)}-{index}"
