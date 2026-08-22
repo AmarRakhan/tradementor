@@ -50,6 +50,20 @@ def test_candidate_failure_paths_continue_scanning():
     assert "ENTRY_CANDIDATE_VALIDATION_SKIPPED" in candidate
     assert candidate.count("continue") >= 4
 
+def test_seat_refill_is_not_stopped_by_accountwide_emergency_or_local_zero_order_management():
+    from aster_strategy2_runtime import scanner_allowed
+    from aster_strategy2 import PortfolioState
+    cfg=Strategy2Config(base_notional=10,leverage=10,maximum_pairs=100)
+    emergency=PortfolioState(1000,1000,.99,0,0,0,available_balance=100)
+    assert scanner_allowed(cfg,emergency,legs(72)) is True
+    queue=MAIN[MAIN.index("def _run_aster_strategy2_queue_scan"):MAIN.index('@app.post("/internal/mexc-automation/tick")')]
+    assert 'retryable_zero_order=' in queue
+    for action in ("DCA_BLOCKED_MINIMUM","PROTECTION_BUDGET_SKIPPED","CLOSE_BLOCKED_NET_NON_POSITIVE","RISK_BLOCKED","MANAGEMENT_SKIPPED"):
+        assert action in queue
+    tick=MAIN[MAIN.index("def _run_aster_strategy2_tick"):MAIN.index("def _aster_brackets")]
+    risk=tick[tick.index("except Strategy2RiskBlocked"):tick.index("except Exception as exc", tick.index("except Strategy2RiskBlocked"))]
+    assert 'blockedManagementActions' in risk and 'retryAfterSeconds' in risk
+
 def test_same_symbol_long_and_short_are_distinct_active_keys():
     cfg=Strategy2Config(maximum_pairs=2)
     positions=[

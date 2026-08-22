@@ -1424,9 +1424,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     protection_selected=portfolio_protection_decision(settings,portfolio,management_owned)
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
-    # A proven take-profit close always preempts carried risk-increasing work.
-    # Cache the management choice so a pending reopen can never delay FULL_TP
-    # or PARTIAL_TP, while risk reduction/protection remains first.
+    # A proven take-profit close has absolute Strategy-2 priority. Protection,
+    # emergency state, carried reopen work and new exposure may be evaluated
+    # afterwards, but none may retain or delay a winning leg.
     management_selected=next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions)
     take_profit_selected=(management_selected if management_selected and
         management_selected[1].kind in {"FULL_TP","PARTIAL_TP"} else None)
@@ -1487,7 +1487,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             # account tick.  Keep the exact reopen queued with its cooldown,
             # consume no order slot, and continue with other proven management
             # actions or normal new-entry candidates below.
-    selected=protection_selected or management_selected or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
+    selected=take_profit_selected or protection_selected or management_selected or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
     if ownership_isolated and selected and not selected[1].risk_reducing:
@@ -1581,9 +1581,12 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     "side":leg.side,"ordersSent":0,"reason":reason}
             except Strategy2RiskBlocked as exc:
                 reason=str(exc)
-                ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now,"updatedAt":now},merge=True)
+                action_key=f"{leg.symbol}|{leg.side}|{decision.kind}"
+                blocked_management[action_key]=int(now.timestamp()*1000)+5*60*1000
+                ref.set({"blockedManagementActions":blocked_management,"phase":"WAITING","lastReason":reason,
+                         "lastTickAt":now,"updatedAt":now},merge=True)
                 ref.collection("audit").add({"event":"MANAGEMENT_RISK_BLOCKED","symbol":leg.symbol,
-                    "side":leg.side,"action":decision.kind,"reason":reason,"timestamp":now})
+                    "side":leg.side,"action":decision.kind,"reason":reason,"retryAfterSeconds":300,"timestamp":now})
                 return {"status":"waiting","action":"RISK_BLOCKED","symbol":leg.symbol,
                     "side":leg.side,"ordersSent":0,"reason":reason}
             except Exception as exc:
@@ -5135,7 +5138,16 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
             "pendingReopens":ref.get().to_dict().get("pendingReopens",[])})
         ref.set({"orderQueueState":state},merge=True);results.append(result)
         if drain_pending_only and not state.get("pendingReopens"):break
-        if sent==0:break
+        if sent==0:
+            # A symbol/leg-local management rejection must not consume the whole
+            # account scan while configured Strategy-2 seats are empty. These
+            # actions persist a cooldown/block marker, so the next tick advances
+            # past that local issue and can use the remaining scan budget to refill.
+            retryable_zero_order={"DCA_BLOCKED_MINIMUM","PROTECTION_BUDGET_SKIPPED",
+                "CLOSE_BLOCKED_NET_NON_POSITIVE","RISK_BLOCKED","MANAGEMENT_SKIPPED"}
+            if str(result.get("action","")) in retryable_zero_order:
+                continue
+            break
     final_status="ok" if results and any(int(safe_float(x.get("ordersSent"))) for x in results) else "waiting"
     completed_at=datetime.now(timezone.utc)
     # The durable queue wrapper is the account-scan boundary. Even when every

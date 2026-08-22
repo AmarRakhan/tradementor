@@ -243,12 +243,11 @@ def decide_leg(config: Strategy2Config, leg: LegState, portfolio: PortfolioState
         return Decision("HOLD", leg.side, reason="Exchange-state, ownership of orderstatus is onzeker; geen nieuw risico", risk_reducing=True)
     mode = risk_mode(config, portfolio)
     if tp_due(config, leg, estimated_close_fee):
-        retain = min(leg.size, required_protection(config, portfolio, leg.side))
-        if retain >= leg.size - 1e-9:
-            return Decision("ASSIGN_PROTECTION", leg.side, retain_notional=leg.size, role="PROTECTION", reason=f"TP bereikt maar volledige sluiting verslechtert portfoliorisico in {mode}", risk_reducing=True)
-        if retain > 0:
-            return Decision("PARTIAL_TP", leg.side, notional=leg.size-retain, retain_notional=retain, role="HARVEST_PROTECTION", reason=f"Veilig deel oogsten; {retain:.2f} USD blijft als protection", risk_reducing=True)
-        return Decision("FULL_TP", leg.side, notional=leg.size, role="HARVEST", reason="Netto TP bereikt en volledige sluiting is portfolioveilig", risk_reducing=True)
+        # Hard Strategy-2 invariant: a proven net-profitable TP is harvested in
+        # full. Portfolio protection may rebalance the remaining portfolio on a
+        # later decision, but it may never retain or relabel the winning leg.
+        return Decision("FULL_TP", leg.side, notional=leg.size, role="HARVEST",
+            reason="Netto TP bereikt; winst oogsten heeft prioriteit op protection en risicomodus", risk_reducing=True)
     # CAUTION and DEFENSIVE are advisory/protection modes. They must not freeze
     # ordinary Strategy-2 management account-wide. Only the configured
     # EMERGENCY boundary is a hard stop for new exposure.

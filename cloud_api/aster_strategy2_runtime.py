@@ -264,10 +264,11 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
 
 def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:
     new_pair_margin=config.base_notional/max(1,config.leverage)
-    # Every live Strategy-2 leg occupies one configured seat, including a leg
-    # whose role is PROTECTION. Risk/margin gates remain unchanged.
-    margin_emergency=portfolio.margin_ratio>=config.emergency_margin_ratio
-    return not margin_emergency and len(owned)<config.maximum_pairs and portfolio.available_balance>=new_pair_margin*1.05
+    # Seat refill is a Strategy-2 capacity invariant. Account-wide risk/recovery
+    # modes may change management decisions, but may not strand configured empty
+    # seats. The authoritative available-balance buffer and per-contract Aster
+    # capacity/leverage checks below the scanner remain the hard execution gates.
+    return len(owned)<config.maximum_pairs and portfolio.available_balance>=new_pair_margin*1.05
 
 def balanced_entry_targets(total:int)->tuple[int,int]:
     """Return the closest possible LONG/SHORT split for a total position cap."""

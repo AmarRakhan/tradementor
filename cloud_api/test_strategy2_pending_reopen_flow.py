@@ -14,7 +14,7 @@ def _tick_source() -> str:
 def _pending_reopen_block() -> str:
     tick = _tick_source()
     start = tick.index("management_selected=next_management_decision")
-    end = tick.index("selected=protection_selected", start)
+    end = tick.index("selected=take_profit_selected", start)
     return tick[start:end]
 
 
@@ -24,7 +24,7 @@ def test_pending_reopen_cooldown_does_not_return_before_normal_candidates():
     assert "pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms" in block
     assert "not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled" in block
     assert "PENDING_REOPEN_COOLDOWN" not in block
-    assert tick.index("selected=protection_selected") < tick.index("for candidate in candidates")
+    assert tick.index("selected=take_profit_selected") < tick.index("for candidate in candidates")
 
 
 def test_take_profit_is_selected_before_pending_reopen():

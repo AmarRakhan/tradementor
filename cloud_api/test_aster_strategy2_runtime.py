@@ -131,7 +131,7 @@ def test_scanner_uses_authoritative_available_balance_with_buffer():
     assert scanner_allowed(config,portfolio,[]) is True
     assert scanner_allowed(config,PortfolioState(1000,1000,.1,0,0,0,available_balance=5),[]) is False
 
-def test_scanner_keeps_filling_during_drawdown_but_stops_at_margin_emergency():
+def test_scanner_keeps_filling_during_drawdown_and_accountwide_margin_emergency():
     config=Strategy2Config(base_notional=10,leverage=10,maximum_pairs=5)
     caution=PortfolioState(960,1000,.40,0,0,0,available_balance=100)
     defensive=PortfolioState(930,1000,.55,0,0,0,available_balance=100)
@@ -141,7 +141,7 @@ def test_scanner_keeps_filling_during_drawdown_but_stops_at_margin_emergency():
     assert scanner_allowed(config,defensive,[]) is True
     assert risk_mode(config,drawdown_emergency)=="EMERGENCY"
     assert scanner_allowed(config,drawdown_emergency,[]) is True
-    assert scanner_allowed(config,margin_emergency,[]) is False
+    assert scanner_allowed(config,margin_emergency,[]) is True
 
 def test_initial_fifty_positions_target_exactly_twenty_five_per_side():
     assert balanced_entry_targets(50)==(25,25)
@@ -287,7 +287,7 @@ def test_beat_like_gross_37_40_percent_uses_net_costs_and_closes_in_normal_mode(
     assert round(result["netProfitUsd"],4)==3.9845
     assert round(result["takeProfitTargetUsd"],3)==.165
     assert result["takeProfitPercent"]==1.5 and result["status"]=="TP bereikt"
-    assert result["decision"]=="FULL_TP" and "volledige sluiting" in result["blockReason"]
+    assert result["decision"]=="FULL_TP" and "prioriteit" in result["blockReason"]
 
 def test_ena_like_gross_4_83_percent_still_uses_fees_funding_and_close_fee():
     now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
@@ -333,7 +333,7 @@ def test_contract_uses_the_persisted_take_profit_instead_of_the_default():
     assert round(result["takeProfitPercent"],4)==1.75
     assert round(result["takeProfitTargetUsd"],4)==.1925
 
-def test_protection_mode_returns_partial_close_or_concrete_block_reason():
+def test_protection_mode_cannot_block_proven_take_profit():
     now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live",take_profit=.015)
     owned=_tp_owned("BEATUSDT","SHORT",17,.889,now)
     row={"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":"17","quantity":17,
@@ -341,8 +341,8 @@ def test_protection_mode_returns_partial_close_or_concrete_block_reason():
     portfolio=PortfolioState(900,1000,.60,600,50,650)
     result=strategy2_position_tp_contract(row=row,owned=owned,config=cfg,state=_live_state(now),portfolio=portfolio,now=now)
     assert result["status"]=="TP bereikt"
-    assert result["decision"] in {"PARTIAL_TP","ASSIGN_PROTECTION"}
-    assert result["blockReason"]
+    assert result["decision"]=="FULL_TP"
+    assert "prioriteit" in result["blockReason"]
 
 def test_missing_ownership_never_produces_orderable_tp_status():
     now=datetime(2026,8,14,18,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live")

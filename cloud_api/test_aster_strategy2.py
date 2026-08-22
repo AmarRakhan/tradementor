@@ -31,10 +31,10 @@ def test_normal_tp_closes_full_leg():
     result=decide_leg(cfg(take_profit=.01),leg(unrealized_pnl=2),portfolio())
     assert result.kind=="FULL_TP" and result.notional==100
 
-def test_extreme_opposite_exposure_converts_winner_to_protection():
+def test_extreme_opposite_exposure_never_blocks_proven_tp():
     p=PortfolioState(1000,1100,.60,100,500,600)
     result=decide_leg(cfg(take_profit=.01),leg(unrealized_pnl=2),p)
-    assert result.kind in {"PARTIAL_TP","ASSIGN_PROTECTION"} and result.retain_notional>0
+    assert result.kind=="FULL_TP" and result.notional==100 and result.retain_notional==0
 
 def test_defensive_mode_keeps_normal_dca_running():
     p=PortfolioState(920,1000,.55,100,100,200)
