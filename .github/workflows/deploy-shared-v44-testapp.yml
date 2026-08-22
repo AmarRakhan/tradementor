@@ -21,6 +21,7 @@ env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
   CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  ARTIFACT_REPOSITORY: tradementor
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
 
@@ -86,6 +87,15 @@ jobs:
           print(f'CANONICAL_URL={service["status"]["url"]}')
           PY
 
+      - name: Build and push V45 web image
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/amar-bot-web-v45:$GITHUB_SHA"
+          docker build --tag "$IMAGE" web
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
       - name: Deploy candidate without traffic
         shell: bash
         run: |
@@ -94,7 +104,7 @@ jobs:
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
-            --source web \
+            --image "$IMAGE" \
             --set-env-vars "WEBAPP_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" \
             --revision-suffix "$SUFFIX" \
             --no-traffic \
@@ -108,7 +118,9 @@ jobs:
           assert b.get("serviceAccountName")==a.get("serviceAccountName")
           assert b.get("timeoutSeconds")==a.get("timeoutSeconds")
           assert b.get("containerConcurrency")==a.get("containerConcurrency")
-          assert b["containers"][0].get("env",[])==a["containers"][0].get("env",[])
+          def env_without_build(spec):
+              return sorted((x.get("name"),x.get("value")) for x in spec["containers"][0].get("env",[]) if x.get("name")!="WEBAPP_BUILD_NUMBER")
+          assert env_without_build(b)==env_without_build(a)
           row=next(x for x in after["status"]["traffic"] if x.get("tag")==tag)
           print(f'CANDIDATE_REVISION={row["revisionName"]}')
           print(f'CANDIDATE_URL={row["url"]}')

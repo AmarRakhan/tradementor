@@ -14,6 +14,10 @@ test("shared V45 testapp has one canonical Cloud Run service", () => {
   assert.match(workflow, /--no-traffic/);
   assert.match(workflow, /Verify candidate before traffic/);
   assert.match(workflow, /Rollback canonical traffic on failed post-promotion verification/);
+  assert.match(workflow, /docker build --tag "\$IMAGE" web/);
+  assert.match(workflow, /docker push "\$IMAGE"/);
+  assert.match(workflow, /--image "\$IMAGE"/);
+  assert.doesNotMatch(workflow, /--source web/);
 });
 
 test("shared V45 testapp reads the production Aster status directly", () => {
