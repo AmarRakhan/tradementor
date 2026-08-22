@@ -1717,7 +1717,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}
     opened_legs=[];remaining_available=portfolio.available_balance;candidate_failures=[];budget_blocked=False
     scan_checked=0;scan_skipped=0;advanced_after_rejection=False
-    openable_zero_candidates=0;capacity_check_failures=0
+    openable_zero_symbols:set[str]=set();capacity_check_failures=0
+    capacity_cache:dict[str,float]={}
+    compatible_codes=[symbol for symbol in codes
+        if symbol not in bulk_max_leverage or bulk_max_leverage.get(symbol,0)>=settings.leverage]
     cooldown_version=3
     cooldowns=(raw.get("entryCandidateCooldowns") if
         int(safe_float(raw.get("entryCandidateCooldownVersion")))==cooldown_version and
@@ -1740,7 +1743,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             entry_sides.append(alternate_side)
         plan=None;symbol="";opened=None;entry_side=preferred_side
         for entry_side in entry_sides:
-            candidates=[candidate for candidate in side_entry_candidates(codes,active_keys,entry_side)
+            candidates=[candidate for candidate in side_entry_candidates(compatible_codes,active_keys,entry_side)
                 if candidate not in open_order_symbols]
             candidates.sort(key=lambda symbol:(
                 0 if bulk_max_leverage.get(symbol,0)>=settings.leverage else (1 if symbol not in bulk_max_leverage else 2),
@@ -1755,7 +1758,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         int(safe_float(prior.get("requestedLeverage")))==int(settings.leverage)):
                         scan_skipped+=1
                         if str(prior.get("code",""))=="ASTER_OPENABLE_NOTIONAL_ZERO":
-                            openable_zero_candidates+=1
+                            openable_zero_symbols.add(candidate)
                             candidate_failures.append(f"{candidate}: Aster heeft bij {settings.leverage}x tijdelijk 0 USDT nieuwe capaciteit")
                         else:
                             candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
@@ -1775,7 +1778,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         accepted_leverage=settings.leverage,
                         existing_contract_notional=contract_exposure.get(candidate,0))
                     try:
-                        remaining_openable=client.remaining_openable_notional_value(candidate,settings.leverage)
+                        if candidate not in capacity_cache:
+                            capacity_cache[candidate]=client.remaining_openable_notional_value(candidate,settings.leverage)
+                        remaining_openable=capacity_cache[candidate]
                     except (AsterApiError,AsterValidationError,ValueError) as exc:
                         capacity_check_failures+=1;scan_skipped+=1;advanced_after_rejection=True
                         candidate_failures.append(f"{candidate}: Aster-capaciteit tijdelijk niet betrouwbaar leesbaar")
@@ -1784,7 +1789,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                             "reason":str(exc),"side":entry_side,"action":"OPEN","requestedLeverage":settings.leverage}
                         continue
                     if remaining_openable+1e-9<float(value.notional_per_leg):
-                        openable_zero_candidates+=1;scan_skipped+=1;advanced_after_rejection=True
+                        openable_zero_symbols.add(candidate);scan_skipped+=1;advanced_after_rejection=True
                         capacity_reason=(f"Aster meldt bij {settings.leverage}x slechts {remaining_openable:.8g} USDT "
                             f"resterende openbare notional; {float(value.notional_per_leg):.8g} USDT nodig")
                         candidate_failures.append(f"{candidate}: {capacity_reason}")
@@ -1860,7 +1865,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             cycle_id=cycle,config_version=settings.version,symbol=symbol,side=entry_side,
             action="INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG")
         owned.append(OwnedLeg(settings.strategy_id,"strategy2",symbol,entry_side,cycle,settings.version,q,p,0,"HARVEST",(str(rr.get("clientOrderId","")),),(),(),int(time.time()*1000)))
-        active_keys.add((symbol,entry_side));remaining_available=max(0.0,remaining_available-required);opened_legs.append({"symbol":symbol,"side":entry_side})
+        active_keys.add((symbol,entry_side));remaining_available=max(0.0,remaining_available-required)
+        if symbol in capacity_cache:
+            capacity_cache[symbol]=max(0.0,capacity_cache[symbol]-(q*p))
+        opened_legs.append({"symbol":symbol,"side":entry_side})
         # Persist after every confirmed fill: a later timeout must never erase
         # ownership of the positions already opened in this initial batch.
         audit_ref=ref.collection("audit").document();batch=db.batch();confirmed_at=datetime.now(timezone.utc)
@@ -1870,9 +1878,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             "configuredBaseNotional":settings.base_notional,"filledNotional":q*p,"acceptedLeverage":opened.get("leverage",plan.leverage),"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
         batch.commit()
     long_count,short_count=harvest_counts(owned);complete=long_count>=long_target and short_count>=short_target
+    openable_zero_candidates=len(openable_zero_symbols)
     capacity_waiting=bool(openable_zero_candidates>0 and not opened_legs and len(owned)<settings.maximum_pairs)
     detail=((f"Aster heeft bij {settings.leverage}x momenteel geen voldoende nieuwe notionalcapaciteit "
-        f"voor {openable_zero_candidates} technisch geschikte kandidaat/kandidaten; automatische hercheck blijft actief")
+        f"voor {openable_zero_candidates} technisch geschikte markt(en); automatische hercheck blijft actief")
         if capacity_waiting else ("; ".join(candidate_failures[:3]) if candidate_failures else
         ("Strategy Margin Budget bereikt" if budget_blocked else f"{len(codes)} kandidaten gecontroleerd")))
     reason=(f"Gebalanceerde start compleet: {long_count} LONG / {short_count} SHORT" if complete else

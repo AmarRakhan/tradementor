@@ -110,6 +110,11 @@ def test_new_entries_use_account_specific_aster_openable_capacity_before_submiss
     source=(Path(__file__).resolve().parent/"main.py").read_text(encoding="utf-8")
     tick=source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
     assert "remaining_openable_notional_value(candidate,settings.leverage)" in tick
+    assert "compatible_codes=[symbol for symbol in codes" in tick
+    assert "capacity_cache:dict[str,float]={}" in tick
+    assert "if candidate not in capacity_cache" in tick
+    assert "capacity_cache[symbol]=max(0.0,capacity_cache[symbol]-(q*p))" in tick
+    assert "side_entry_candidates(compatible_codes" in tick
     assert "ASTER_OPENABLE_NOTIONAL_ZERO" in tick
     assert "ENTRY_CANDIDATE_CAPACITY_WAIT" in tick
     assert '"openableCapacityBlocked":capacity_waiting' in tick
