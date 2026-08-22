@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "./cloud-client";
-import { mergeCompleteAsterSnapshot, preserveConfirmedAsterValues, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
+import { loadAsterSnapshot, mergeAsterSnapshotWithHistoryFallback, preserveConfirmedAsterValues, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
 import { createLatestAsterRequestGate } from "./aster-strategy2-server-status.mjs";
 
 export type ExchangeId = "hyperliquid" | "aster";
@@ -30,19 +30,24 @@ function fetchAsterSnapshot(uid: string, generation: number) {
   const current = inFlight.get(key);
   if (current) return current;
   const started = performance.now();
-  const request = Promise.all([
+  const request = Promise.allSettled([
     timedRead("/api/exchanges/aster"),
     timedRead("/api/exchanges/aster/closed-trades"),
-  ]).then(([account, history]) => ({
-    data: mergeCompleteAsterSnapshot(account.value, history.value) as Record<string, unknown>,
-    timings: {
-      statusMs: account.durationMs,
-      historyMs: history.durationMs,
-      statusAttempts: account.attempts,
-      historyAttempts: history.attempts,
-      totalMs: Math.round(performance.now() - started),
-    },
-  })).finally(() => inFlight.delete(key));
+  ]).then(([accountResult, historyResult]) => {
+    if (accountResult.status !== "fulfilled") throw accountResult.reason;
+    const account = accountResult.value;
+    const history = historyResult.status === "fulfilled" ? historyResult.value : null;
+    const previous = loadAsterSnapshot(window.localStorage, uid)?.data;
+    return {
+      data: mergeAsterSnapshotWithHistoryFallback(account.value, history?.value, previous) as Record<string, unknown>,
+      timings: {
+        statusMs: account.durationMs,
+        statusAttempts: account.attempts,
+        ...(history ? { historyMs: history.durationMs, historyAttempts: history.attempts } : { historyFailed: 1 }),
+        totalMs: Math.round(performance.now() - started),
+      },
+    };
+  }).finally(() => inFlight.delete(key));
   inFlight.set(key, request);
   return request;
 }

@@ -43,6 +43,19 @@ export function mergeCompleteAsterSnapshot(account, history) {
   return merged;
 }
 
+
+export function mergeAsterSnapshotWithHistoryFallback(account, history, previous) {
+  if (!isRecord(account)) throw new Error("Onvolledige Aster-accountstatus ontvangen.");
+  if (isRecord(history)) return mergeCompleteAsterSnapshot(account, history);
+  const fallback = {
+    historyAvailable: false,
+    closedTrades: Array.isArray(previous?.closedTrades) ? previous.closedTrades : [],
+    realizedEvents: Array.isArray(previous?.realizedEvents) ? previous.realizedEvents : [],
+    recentTradeActivity: Array.isArray(previous?.recentTradeActivity) ? previous.recentTradeActivity : [],
+  };
+  return mergeCompleteAsterSnapshot(account, fallback);
+}
+
 export function loadAsterSnapshot(storage, uid) {
   if (!storage || !uid) return null;
   try {

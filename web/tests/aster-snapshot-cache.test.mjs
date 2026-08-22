@@ -6,6 +6,7 @@ import {
   clearAsterSnapshot,
   loadAsterSnapshot,
   mergeCompleteAsterSnapshot,
+  mergeAsterSnapshotWithHistoryFallback,
   preserveConfirmedAsterValues,
   saveAsterSnapshot,
   withBoundedRetry,
@@ -77,7 +78,8 @@ test("Aster refresh is parallel, deduplicated and fail-closed for actions", asyn
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/auth-provider.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(hook, /Promise\.all\(\[\s*timedRead\("\/api\/exchanges\/aster"\),\s*timedRead\("\/api\/exchanges\/aster\/closed-trades"\)/s);
+  assert.match(hook, /Promise\.allSettled\(\[\s*timedRead\("\/api\/exchanges\/aster"\),\s*timedRead\("\/api\/exchanges\/aster\/closed-trades"\)/s);
+  assert.match(hook, /mergeAsterSnapshotWithHistoryFallback/);
   assert.match(hook, /inFlight\.get\(key\)/);
   assert.match(hook, /serverConfirmed: current\.snapshots\[exchange\]\.serverConfirmed/);
   assert.match(hook, /snapshots: \{ hyperliquid: emptySnapshot\(\), aster: emptySnapshot\(\) \}/);
@@ -85,4 +87,18 @@ test("Aster refresh is parallel, deduplicated and fail-closed for actions", asyn
   assert.match(page, /fieldset className="aster-action-gate" disabled=\{!asterActionsEnabled\}/);
   assert.match(page, /PremiumBotCreator[\s\S]*asterActionsAreFresh\(snapshots\.aster, cloudReady\)[\s\S]*creator-existing-engine/);
   assert.match(provider, /window\.addEventListener\("online", resume\)/);
+});
+
+
+test("history failure never freezes a newer Strategy-2 status", () => {
+  const previous = mergeCompleteAsterSnapshot(
+    { ...account("user-a"), strategy2: { settings: {}, lastTickAt: "08:30" } },
+    { historyAvailable: true, closedTrades: [{ id: "old" }], realizedEvents: [{ id: "old-event" }] },
+  );
+  const freshAccount = { ...account("user-a"), strategy2: { settings: {}, lastTickAt: "10:48" } };
+  const merged = mergeAsterSnapshotWithHistoryFallback(freshAccount, null, previous);
+  assert.equal(merged.strategy2.lastTickAt, "10:48");
+  assert.equal(merged.historyAvailable, false);
+  assert.deepEqual(merged.closedTrades, [{ id: "old" }]);
+  assert.deepEqual(merged.realizedEvents, [{ id: "old-event" }]);
 });
