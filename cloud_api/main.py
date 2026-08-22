@@ -5076,7 +5076,15 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
         ref.set({"orderQueueState":state},merge=True);results.append(result)
         if drain_pending_only and not state.get("pendingReopens"):break
         if sent==0:break
-    return {"status":"ok" if results and any(int(safe_float(x.get("ordersSent"))) for x in results) else "waiting",
+    final_status="ok" if results and any(int(safe_float(x.get("ordersSent"))) for x in results) else "waiting"
+    completed_at=datetime.now(timezone.utc)
+    # The durable queue wrapper is the account-scan boundary. Even when every
+    # candidate is skipped, this scan was real server work and must advance the
+    # visible Strategy-2 check time. Otherwise the UI can falsely show an old
+    # last check while fresh candidate/audit evidence is being produced.
+    ref.set({"lastTickAt":completed_at,"queueLastCompletedAt":completed_at,
+        "orderQueueState":{**state,"ordersUsed":used,"updatedAt":completed_at}},merge=True)
+    return {"status":final_status,
         "scanId":scan_id,"ordersSent":used-starting_used,"ordersUsed":used,"maximumOrders":scan_limit,
         "actions":results}
 

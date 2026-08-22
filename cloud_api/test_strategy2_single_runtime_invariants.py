@@ -70,3 +70,12 @@ def test_queue_lease_outlives_cloud_scheduler_request_and_scan_has_wall_clock_bu
     assert 'if time.monotonic()>=scan_deadline:' in tick
     assert 'volgende minuut gaat verder' in tick
     assert 'token_hex(4)' in tick
+
+def test_queue_scan_completion_always_advances_visible_server_check_time():
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    start = source.index("def _run_aster_strategy2_queue_scan")
+    end = source.index('@app.post("/internal/mexc-automation/tick")', start)
+    queue = source[start:end]
+    assert '"lastTickAt":completed_at' in queue
+    assert '"queueLastCompletedAt":completed_at' in queue
+    assert '"updatedAt":completed_at' in queue
