@@ -1974,7 +1974,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             return {"status":"ok","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":len(result)}
     if cost_holds:
         reason="; ".join(cost_holds[:3])
-        seat_shortage=len([leg for leg in owned if leg.role!="PROTECTION"])<settings.maximum_pairs
+        seat_shortage=len(owned)<settings.maximum_pairs
         if not enabled or not seat_shortage:
             ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
             return {"status":"data-hold","action":"HOLD","reason":reason,"ordersSent":0}

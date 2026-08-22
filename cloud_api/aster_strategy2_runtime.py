@@ -263,13 +263,11 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
     return (choices[0][2],choices[0][3]) if choices[0][3].kind!="HOLD" else None
 
 def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:
-    harvest=[x for x in owned if x.role!="PROTECTION"]
     new_pair_margin=config.base_notional/max(1,config.leverage)
-    # Drawdown remains visible to protection and existing-position management,
-    # but it must not permanently freeze balanced new entries by itself.
-    # Only an actual emergency margin ratio blocks new exposure here.
+    # Every live Strategy-2 leg occupies one configured seat, including a leg
+    # whose role is PROTECTION. Risk/margin gates remain unchanged.
     margin_emergency=portfolio.margin_ratio>=config.emergency_margin_ratio
-    return not margin_emergency and len(harvest)<config.maximum_pairs and portfolio.available_balance>=new_pair_margin*1.05
+    return not margin_emergency and len(owned)<config.maximum_pairs and portfolio.available_balance>=new_pair_margin*1.05
 
 def balanced_entry_targets(total:int)->tuple[int,int]:
     """Return the closest possible LONG/SHORT split for a total position cap."""
@@ -277,8 +275,8 @@ def balanced_entry_targets(total:int)->tuple[int,int]:
     return ((total+1)//2,total//2)
 
 def harvest_counts(owned:list[OwnedLeg])->tuple[int,int]:
-    values=[x for x in owned if x.role!="PROTECTION"]
-    return (sum(1 for x in values if x.side=="LONG"),sum(1 for x in values if x.side=="SHORT"))
+    # Seat accounting counts every live Strategy-2 LONG/SHORT leg.
+    return (sum(1 for x in owned if x.side=="LONG"),sum(1 for x in owned if x.side=="SHORT"))
 
 def next_balanced_entry_side(owned:list[OwnedLeg],total:int)->str|None:
     long_target,short_target=balanced_entry_targets(total);long_count,short_count=harvest_counts(owned)

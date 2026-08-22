@@ -184,10 +184,11 @@ def test_management_resumes_after_balanced_start_is_complete():
     owned=[OwnedLeg("s2","strategy2","BTCUSDT","LONG","l",1,1,100),OwnedLeg("s2","strategy2","ETHUSDT","SHORT","s",1,1,100)]
     assert management_preempts_initial_build(config,owned,Decision("FULL_TP","LONG",risk_reducing=True)) is True
 
-def test_protection_hedges_do_not_distort_harvest_balance():
+def test_every_live_leg_counts_as_one_configured_seat():
     owned=[OwnedLeg("s2","strategy2","BTCUSDT","LONG","l",1,1,100),OwnedLeg("s2","strategy2","BTCUSDT","SHORT","h",1,1,100,role="PROTECTION")]
-    assert harvest_counts(owned)==(1,0)
-    assert next_balanced_entry_side(owned,4)=="SHORT"
+    assert harvest_counts(owned)==(1,1)
+    assert entry_order_limit(False,owned,4)==2
+    assert next_balanced_entry_side(owned,4)=="LONG"
 
 def test_only_exchange_confirmed_side_costs_are_attributed_to_leg():
     leg=OwnedLeg("s2","strategy2","BTCUSDT","LONG","c",1,1,100,created_at_ms=100)
