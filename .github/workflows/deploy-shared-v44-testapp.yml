@@ -99,7 +99,7 @@ jobs:
       - name: Deploy candidate without traffic
         shell: bash
         run: |
-          TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TAG="c-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           SUFFIX="v45-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
