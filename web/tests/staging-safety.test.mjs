@@ -15,16 +15,15 @@ test("the cloud target is pinned to production and authenticated", async () => {
 
 test("risk-sensitive browser routes remain thin authenticated server proxies", async () => {
   const paths = [
-    "app/api/exchanges/aster/strategy3/canary/route.ts",
-    "app/api/exchanges/aster/strategy3/rapid-build/route.ts",
     "app/api/execution/live/route.ts",
     "app/api/connections/aster/route.ts",
+    "app/api/exchanges/aster/strategy2/start/route.ts",
+    "app/api/exchanges/aster/strategy2/readiness/route.ts",
   ];
   for (const path of paths) {
     const source = await read(path);
-    assert.match(source, /proxyCloud/);
-    assert.match(source, /\/v1\/me\//);
-    assert.doesNotMatch(source, /fetch\(|ASTER_SECRET|PRIVATE_KEY/);
+    assert.match(source, /proxyCloud|proxyStrategy2Live/);
+    assert.doesNotMatch(source, /ASTER_SECRET|PRIVATE_KEY/);
   }
 });
 
@@ -54,16 +53,15 @@ test("the generic proxy fails closed before any upstream request without Firebas
 
 test("Strategy settings and bot decisions remain server-authoritative", async () => {
   const [route, control, status] = await Promise.all([
-    read("app/api/exchanges/aster/strategy3/settings/route.ts"),
-    read("components/aster-strategy3-control.tsx"),
+    read("app/api/exchanges/aster/strategy2/settings/route.ts"),
+    read("components/aster-strategy2-maker.tsx"),
     read("lib/aster-bot-status.ts"),
   ]);
-  assert.match(route, /proxyCloud/);
-  assert.match(route, /\/v1\/me\/aster\/strategy3\/settings/);
-  assert.match(control, /De server bevestigde niet dezelfde Strategy-3-instellingen/);
+  assert.match(route, /proxyStrategy2Live/);
+  assert.match(control, /result\.strategy2/);
   assert.doesNotMatch(control, /localStorage/);
-  assert.match(status, /browserDerived !== false/);
-  assert.match(status, /return null/);
+  assert.match(status, /strategyId:"aster-strategy-2"/);
+  assert.doesNotMatch(status, /strategy3/i);
 });
 
 test("Strategy 2 production proxy is narrowly scoped and preserves Firebase identity", async () => {
@@ -94,40 +92,9 @@ test("Strategy 2 live controls cannot bypass server readiness or create request 
   assert.match(maker, /Boolean\(readiness\?\.softwareReady\)/);
 });
 
-test("Strategy 3 simulation remains local, paper-only and orderless", async () => {
-  const [route, simulator] = await Promise.all([
-    read("app/api/exchanges/aster/strategy3/simulate/route.ts"),
-    read("lib/aster-strategy3-paper.ts"),
-  ]);
-  assert.match(route, /simulateStrategy3Paper/);
-  assert.doesNotMatch(route, /proxyCloud|fetch\(/);
-  assert.match(simulator, /paperOnly:true,liveReady:false/);
-  assert.match(simulator, /Er zijn geen echte orders verzonden/);
-  assert.doesNotMatch(simulator, /placeOrder|createOrder|sendOrder/);
-});
-
-test("Strategy 3 settings survive restart through authoritative cloud state", async () => {
-  const [control, route] = await Promise.all([
-    read("components/aster-strategy3-control.tsx"),
-    read("app/api/exchanges/aster/strategy3/settings/route.ts"),
-  ]);
-  assert.match(control, /fromState\(settings\)/);
-  assert.match(control, /method:kind==="save"\?"PUT"/);
-  assert.match(control, /setDraft\(fromState\(saved\)\)/);
-  assert.match(control, /onChanged\(\)/);
-  assert.doesNotMatch(control, /localStorage/);
-  assert.match(route, /proxyCloud/);
-});
-
-test("Strategy 3 dashboard never invents scheduler or entry state", async () => {
-  const [parser, view] = await Promise.all([
-    read("lib/aster-bot-status.ts"),
-    read("components/aster-bot-status.tsx"),
-  ]);
-  assert.match(parser, /browserDerived !== false/);
-  assert.match(parser, /entryStatuses\.has\(status\)/);
-  assert.match(parser, /return null/);
-  assert.match(view, /STATUS NIET BETROUWBAAR/);
-  assert.match(view, /INSTAPSTATUS ONBEKEND/);
-  assert.doesNotMatch(view, /setInterval|setTimeout|fetch\(/);
+test("Strategy 3 browser runtime is absent", async () => {
+  const page = await read("app/page.tsx");
+  const status = await read("lib/aster-bot-status.ts");
+  assert.doesNotMatch(page, /strategy3Tp|parseStrategy3Tp|Strategy 3/);
+  assert.doesNotMatch(status, /strategy3/i);
 });

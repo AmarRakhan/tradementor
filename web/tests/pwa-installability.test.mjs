@@ -37,5 +37,5 @@ test("private staging fetches its manifest with the signed-in session", async ()
   assert.match(registration, /sw\.js\?v=\$\{WEBAPP_VERSION\}&build=\$\{buildNumber\}/);
   assert.match(registration, /buildNumber/);
   assert.match(registration, /WEBAPP_VERSION/);
-  assert.match(version, /WEBAPP_VERSION = "44"/);
+  assert.match(version, /WEBAPP_VERSION = "45"/);
 });

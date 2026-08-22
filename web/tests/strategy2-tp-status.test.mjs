@@ -4,9 +4,8 @@ import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-test("Positions renders only the server Strategy-2 and Strategy-3 TP contracts", () => {
+test("Positions renders only the server Strategy-2 TP contract", () => {
   assert.match(page, /strategy2Tp:\s*parseStrategy2Tp\(row\.strategy2Tp\)/);
-  assert.match(page, /strategy3Tp:\s*parseStrategy3Tp\(row\.strategy3Tp\)/);
   assert.match(page, /Netto \{net\} · doel/);
   assert.match(page, /paidFeesUsd/);
   assert.match(page, /fundingUsd/);
@@ -23,11 +22,10 @@ test("Positions renders only the server Strategy-2 and Strategy-3 TP contracts",
 test("missing or unrecognized server evidence cannot become a TP result", () => {
   assert.match(page, /function parseStrategyTp/);
   assert.match(page, /function parseStrategy2Tp/);
-  assert.match(page, /function parseStrategy3Tp/);
   assert.match(page, /Niet betrouwbaar te bepalen/);
   assert.match(page, /return null/);
   assert.match(page, /De server heeft geen volledig, bewezen netto TP-contract geleverd/);
-  assert.match(page, /isManagedStrategyPosition\(position\).*StrategyTpPanel/s);
+  assert.match(page, /isStrategy2Position\(position\).*StrategyTpPanel/s);
   assert.doesNotMatch(page, /position\.pnl\s*>?=?.*takeProfit/);
   assert.doesNotMatch(page, /resultPercent\s*>?=?.*TP bereikt/);
 });

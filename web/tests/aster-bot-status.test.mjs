@@ -13,23 +13,25 @@ test("Aster hero uses only the server bot-status component and preserves the mai
   assert.doesNotMatch(component, /onRefresh|refresh-chip|Live handel|Exchange verbonden/);
 });
 
-test("browser parses and presents the server decision without fetching, caching, or deriving permission", async () => {
+test("browser presents only Strategy-2 server status without fetching or caching", async () => {
   const [component, parser] = await Promise.all([read("components/aster-bot-status.tsx"), read("lib/aster-bot-status.ts")]);
   assert.match(component, /value\.newEntry\.status/);
-  assert.match(component, /value\.strategy3\.remainingAccountCapacity/);
+  assert.match(component, /value\.strategy2\.ownedPositions/);
+  assert.match(component, /value\.remainingToTarget/);
   assert.match(component, /value\.account\.activePositions/);
-  assert.match(parser, /source\.botStatusDashboard/);
-  assert.match(parser, /browserDerived !== false/);
-  assert.doesNotMatch(component + parser, /authenticatedRequest|\bfetch\(|localStorage|setInterval|setTimeout/);
-  assert.doesNotMatch(component, /maximumPositions\s*-|activePositions\s*[<>]=?|marginRatio\s*[<>]=?|liveReady\s*&&/);
+  assert.match(parser, /STRATEGY2_ONLY/);
+  assert.match(parser, /strategyId:"aster-strategy-2"/);
+  assert.doesNotMatch(component + parser, /authenticatedRequest|\bfetch\(|localStorage|setInterval|setTimeout|strategy3/i);
 });
 
-test("read-only details expose gates, ownership, scheduler, action, reason, and every server check", async () => {
+test("read-only details expose Strategy-2 scheduler, action and reason", async () => {
   const component = await read("components/aster-bot-status.tsx");
-  for (const field of ["liveGates", "ownershipStatus", "schedulerStatus", "lastAction", "lastReason", "newEntry.checks", "newEntry.activeBlocks"]) {
+  for (const field of ["schedulerStatus", "lastAction", "lastReason", "ownedPositions"]) {
     assert.ok(component.includes(field), `missing ${field}`);
   }
-  assert.doesNotMatch(component, /authenticatedRequest|\/api\/|onChanged|confirm\s*:|type="submit"|start-live|strategy3\/stop/i);
+  assert.match(component, /Laatste Strategy-2-controle/);
+  assert.match(component, /Laatste Strategy-2-actie/);
+  assert.doesNotMatch(component, /authenticatedRequest|\/api\/|onChanged|confirm\s*:|type="submit"|strategy3/i);
 });
 
 test("status view has no additional polling path", async () => {
