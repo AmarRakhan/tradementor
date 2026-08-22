@@ -83,9 +83,9 @@ def test_stale_cost_evidence_is_leg_local_while_user_seats_are_missing():
     assert "open_order_symbols" in block
 
 
-def test_role_only_bookkeeping_never_preempts_empty_seat_refill():
+def test_non_tp_management_never_preempts_empty_seat_refill():
     tick = _tick_source()
-    guard = 'if selected and selected[1].kind in {"ASSIGN_PROTECTION","RELEASE_PROTECTION"} and len(owned)<settings.maximum_pairs:'
-    assert guard in tick
-    assert tick.index(guard) < tick.index("if selected:", tick.index(guard))
-    assert "selected=None" in tick[tick.index(guard):tick.index("if selected:", tick.index(guard))]
+    assert 'seat_shortage=len(owned)<settings.maximum_pairs' in tick
+    assert 'if seat_shortage:' in tick
+    assert 'selected=take_profit_selected' in tick
+    assert 'protection_selected=(None if seat_shortage else portfolio_protection_decision' in tick

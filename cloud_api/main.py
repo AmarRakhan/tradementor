@@ -1421,7 +1421,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     management_positions=[row for row in strategy_positions if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in management_keys]
     cost_holds=[f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}"
         for leg in owned if (leg.symbol,leg.side) not in fresh_cost_keys]
-    protection_selected=portfolio_protection_decision(settings,portfolio,management_owned)
+    seat_shortage=len(owned)<settings.maximum_pairs
+    protection_selected=(None if seat_shortage else portfolio_protection_decision(settings,portfolio,management_owned))
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
     # A proven take-profit close has absolute Strategy-2 priority. Protection,
@@ -1487,14 +1488,17 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             # account tick.  Keep the exact reopen queued with its cooldown,
             # consume no order slot, and continue with other proven management
             # actions or normal new-entry candidates below.
-    selected=take_profit_selected or protection_selected or management_selected or same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions)
+    # Hard capacity invariant: while configured seats are empty, only a proven
+    # TP close may preempt refill. DCA/protection/role bookkeeping are deferred
+    # until the target is full, so account-wide risk modes cannot strand seats.
+    if seat_shortage:
+        selected=take_profit_selected
+    else:
+        selected=(take_profit_selected or protection_selected or management_selected or
+            same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions))
     if selected and not management_preempts_initial_build(settings,owned,selected[1]):
         selected=None
     if ownership_isolated and selected and not selected[1].risk_reducing:
-        selected=None
-    # Role-only bookkeeping may never consume a scan while configured seats are
-    # empty. Fill capacity first; role labels can be updated after the target is full.
-    if selected and selected[1].kind in {"ASSIGN_PROTECTION","RELEASE_PROTECTION"} and len(owned)<settings.maximum_pairs:
         selected=None
     if selected:
         leg,decision=selected

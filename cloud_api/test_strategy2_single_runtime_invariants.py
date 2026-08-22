@@ -63,6 +63,9 @@ def test_seat_refill_is_not_stopped_by_accountwide_emergency_or_local_zero_order
     tick=MAIN[MAIN.index("def _run_aster_strategy2_tick"):MAIN.index("def _aster_brackets")]
     risk=tick[tick.index("except Strategy2RiskBlocked"):tick.index("except Exception as exc", tick.index("except Strategy2RiskBlocked"))]
     assert 'blockedManagementActions' in risk and 'retryAfterSeconds' in risk
+    assert 'seat_shortage=len(owned)<settings.maximum_pairs' in tick
+    assert 'protection_selected=(None if seat_shortage else portfolio_protection_decision' in tick
+    assert 'if seat_shortage:' in tick and 'selected=take_profit_selected' in tick
 
 def test_same_symbol_long_and_short_are_distinct_active_keys():
     cfg=Strategy2Config(maximum_pairs=2)

@@ -85,7 +85,7 @@ def test_strategy2_off_returns_before_every_new_entry_path_but_after_management(
     start = source.index("def _run_aster_strategy2_tick")
     end = source.index("def _aster_brackets", start)
     tick = source[start:end]
-    management = tick.index("selected=portfolio_protection_decision")
+    management = tick.index("protection_selected=(None if seat_shortage else portfolio_protection_decision")
     off_guard = tick.index("if not enabled or not scanner_allowed")
     universe_fetch = tick.index("exchange_info=client.public_exchange_info()", off_guard)
     assert management < off_guard < universe_fetch
