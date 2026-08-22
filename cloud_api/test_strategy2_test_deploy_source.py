@@ -178,6 +178,16 @@ def test_strategy2_active_candidate_cooldown_skips_before_expensive_bracket_look
     assert '"requestedLeverage":settings.leverage' in tick
 
 
+def test_strategy2_known_configured_leverage_candidates_are_ranked_first():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
+    assert "bulk_max_leverage" in tick
+    assert 'bulk_max_leverage.get(symbol,0)>=settings.leverage' in tick
+    sort_at=tick.index("candidates.sort")
+    plan_at=tick.index("candidate_brackets=planning_brackets",sort_at)
+    assert sort_at < plan_at
+
+
 def test_strategy2_old_candidate_cooldowns_are_invalidated_by_schema_version():
     source = MAIN.read_text(encoding="utf-8")
     tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]

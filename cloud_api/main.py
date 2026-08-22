@@ -1689,6 +1689,15 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n,
             base_notional=settings.base_notional)
         all_brackets=client.leverage_brackets()
+        bulk_max_leverage={}
+        for bracket_row in all_brackets if isinstance(all_brackets,list) else []:
+            if not isinstance(bracket_row,dict): continue
+            bracket_symbol=str(bracket_row.get("symbol","")).upper()
+            bracket_items=(bracket_row.get("brackets") if isinstance(bracket_row.get("brackets"),list)
+                else ([bracket_row] if bracket_row.get("initialLeverage") is not None else []))
+            if bracket_symbol:
+                bulk_max_leverage[bracket_symbol]=max(
+                    [int(safe_float(item.get("initialLeverage"))) for item in bracket_items if isinstance(item,dict)] or [0])
     except (AsterApiError,ValueError) as exc:
         blocked=aster_usdt_universe_snapshot(settings.universe_top_n,client=client).public_dict()
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now,"universe":blocked},merge=True)
@@ -1732,7 +1741,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         for entry_side in entry_sides:
             candidates=[candidate for candidate in side_entry_candidates(codes,active_keys,entry_side)
                 if candidate not in open_order_symbols]
-            candidates.sort(key=lambda symbol:(symbol not in preferred_codes,
+            candidates.sort(key=lambda symbol:(
+                0 if bulk_max_leverage.get(symbol,0)>=settings.leverage else (1 if symbol not in bulk_max_leverage else 2),
+                symbol not in preferred_codes,
                 -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))
             for candidate in candidates:
                 scan_checked+=1
