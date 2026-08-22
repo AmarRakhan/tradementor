@@ -1,0 +1,155 @@
+name: Hotfix V44 percentage and seat refill
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/hotfix-v44-percentage-seat-refill.yml]
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: hotfix-v44-percentage-seat-refill
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  patch-test-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply percentage and seat refill fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('cloud_api/aster_state.py')
+          s=p.read_text()
+          old='''            "returnPct": (\n                _number(row.get("returnPct")) if row.get("returnPct") not in (None, "") else\n                _number(row.get("roePct")) if row.get("roePct") not in (None, "") else\n                _number(row.get("roiPct")) if row.get("roiPct") not in (None, "") else\n                (_number(row.get("unRealizedProfit", row.get("unrealizedProfit"))) / _number(row.get("positionInitialMargin", row.get("initialMargin"))) * 100\n                 if _number(row.get("positionInitialMargin", row.get("initialMargin"))) > 0 else 0.0)\n            ),\n'''
+          new='''            "returnPct": (\n                ((_number(row.get("markPrice")) - _number(row.get("entryPrice"))) / _number(row.get("entryPrice")) * 100.0)\n                * (-1.0 if str(row.get("positionSide", "")).upper() == "SHORT" else 1.0)\n                if _number(row.get("entryPrice")) > 0 else 0.0\n            ),\n'''
+          if old not in s: raise SystemExit('aster_state percentage block not found')
+          s=s.replace(old,new,1)
+          s=s.replace('"positionDisplayReturnPct": "Aster returnPct/roePct/roiPct or unRealizedProfit / positionInitialMargin * 100",','"positionDisplayReturnPct": "Aster markPrice versus entryPrice percentage; LONG=(mark-entry)/entry, SHORT=(entry-mark)/entry",',1)
+          p.write_text(s)
+
+          p=Path('cloud_api/aster_strategy2_runtime.py')
+          s=p.read_text()
+          old='''def harvest_counts(owned:list[OwnedLeg])->tuple[int,int]:\n    values=[x for x in owned if x.role!="PROTECTION"]\n    return (sum(1 for x in values if x.side=="LONG"),sum(1 for x in values if x.side=="SHORT"))\n'''
+          new='''def harvest_counts(owned:list[OwnedLeg])->tuple[int,int]:\n    # Every live LONG/SHORT leg consumes one configured account seat.\n    values=list(owned)\n    return (sum(1 for x in values if x.side=="LONG"),sum(1 for x in values if x.side=="SHORT"))\n'''
+          if old not in s: raise SystemExit('harvest_counts block not found')
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('cloud_api/main.py')
+          s=p.read_text()
+          old='''    for index in range(order_limit):\n        entry_side=next_balanced_entry_side(owned,settings.maximum_pairs)\n        if not entry_side:break\n        candidates=side_entry_candidates(codes,active_keys,entry_side)\n        candidates.sort(key=lambda symbol:(symbol not in preferred_codes,\n            -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))\n        plan=None;symbol="";opened=None\n        for candidate in candidates:\n'''
+          new='''    for index in range(order_limit):\n        preferred_side=next_balanced_entry_side(owned,settings.maximum_pairs)\n        if not preferred_side:break\n        long_target_now,short_target_now=balanced_entry_targets(settings.maximum_pairs)\n        long_count_now,short_count_now=harvest_counts(owned)\n        alternate_side="SHORT" if preferred_side=="LONG" else "LONG"\n        entry_sides=[preferred_side]\n        if ((alternate_side=="LONG" and long_count_now<long_target_now) or\n            (alternate_side=="SHORT" and short_count_now<short_target_now)):\n            entry_sides.append(alternate_side)\n        plan=None;symbol="";opened=None\n        for entry_side in entry_sides:\n            candidates=side_entry_candidates(codes,active_keys,entry_side)\n            candidates.sort(key=lambda symbol:(symbol not in preferred_codes,\n                -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))\n            for candidate in candidates:\n'''
+          if old not in s: raise SystemExit('entry loop block not found')
+          s=s.replace(old,new,1)
+          start=s.index('            for candidate in candidates:\n',s.index('preferred_side=next_balanced_entry_side'))+len('            for candidate in candidates:\n')
+          end=s.index('        if not plan or opened is None:break',start)
+          body=s[start:end]
+          s=s[:start]+''.join(('    '+line if line.strip() else line) for line in body.splitlines(True))+s[end:]
+          needle='        if not plan or opened is None:break\n'
+          pos=s.index(needle,s.index('preferred_side=next_balanced_entry_side'))
+          s=s[:pos]+'            if plan is not None and opened is not None:break\n'+s[pos:]
+          # Honor an active contract cooldown before any expensive private leverage lookup.
+          marker='''            for candidate in candidates:\n                scan_checked+=1\n                try:\n                    candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)\n'''
+          replacement='''            for candidate in candidates:\n                scan_checked+=1\n                cooldown_key=f"{candidate}|{entry_side}|OPEN"\n                prior=cooldowns.get(cooldown_key,{})\n                if safe_float(prior.get("until"))>now_ms:\n                    scan_skipped+=1\n                    candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")\n                    continue\n                try:\n                    candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)\n'''
+          if marker not in s: raise SystemExit('candidate precheck marker not found')
+          s=s.replace(marker,replacement,1)
+          p.write_text(s)
+
+          p=Path('cloud_api/test_aster_state.py')
+          s=p.read_text()
+          old='assert round(snapshot["positions"][0]["returnPct"], 6) == round(2 / 6.5 * 100, 6)'
+          new='assert round(snapshot["positions"][0]["returnPct"], 6) == round((65000 - 64000) / 64000 * 100, 6)'
+          if old not in s: raise SystemExit('aster_state test assertion not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
+          p=Path('cloud_api/test_aster_strategy2_runtime.py')
+          s=p.read_text()
+          old='''def test_protection_hedges_do_not_distort_harvest_balance():\n    owned=[OwnedLeg("s2","strategy2","BTCUSDT","LONG","l",1,1,100),OwnedLeg("s2","strategy2","BTCUSDT","SHORT","h",1,1,100,role="PROTECTION")]\n    assert harvest_counts(owned)==(1,0)\n    assert next_balanced_entry_side(owned,4)=="SHORT"\n'''
+          new='''def test_every_live_leg_counts_as_a_configured_seat():\n    owned=[OwnedLeg("s2","strategy2","BTCUSDT","LONG","l",1,1,100),OwnedLeg("s2","strategy2","BTCUSDT","SHORT","h",1,1,100,role="PROTECTION")]\n    assert harvest_counts(owned)==(1,1)\n    assert entry_order_limit(False,owned,4)==2\n    assert next_balanced_entry_side(owned,4)=="LONG"\n'''
+          if old not in s: raise SystemExit('runtime seat test not found')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Add regression test for non-ROI percentage
+        shell: bash
+        run: |
+          cat >> cloud_api/test_aster_state.py <<'PY'
+
+
+def test_dashboard_snapshot_percentage_is_price_move_not_leveraged_roi():
+    snapshot = dashboard_snapshot({}, [
+        {"symbol":"WLDUSDT","positionSide":"LONG","positionAmt":"10","entryPrice":"1.00","markPrice":"1.10","unRealizedProfit":"5","positionInitialMargin":"0.50","leverage":"50","roiPct":"1000"},
+        {"symbol":"XRPUSDT","positionSide":"SHORT","positionAmt":"-10","entryPrice":"1.00","markPrice":"0.90","unRealizedProfit":"5","positionInitialMargin":"0.50","leverage":"50","roePct":"1000"},
+    ])
+    assert round(snapshot["positions"][0]["returnPct"],6) == 10.0
+    assert round(snapshot["positions"][1]["returnPct"],6) == 10.0
+PY
+      - name: Install and run targeted regression tests
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          python -m py_compile cloud_api/main.py cloud_api/aster_state.py cloud_api/aster_strategy2_runtime.py
+          cd cloud_api
+          pytest -q test_aster_state.py test_aster_strategy2_runtime.py test_strategy2_test_deploy_source.py
+      - name: Commit hotfix source
+        shell: bash
+        run: |
+          git config user.name 'TradeMentor Control Plane'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/main.py cloud_api/aster_state.py cloud_api/aster_strategy2_runtime.py cloud_api/test_aster_state.py cloud_api/test_aster_strategy2_runtime.py
+          git commit -m 'Fix V44 percentage and hard seat refill rule'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build deploy and promote verified backend
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          python - "$RUNNER_TEMP/before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1]))
+          env={x['name']:x.get('value') for x in service['spec']['template']['spec']['containers'][0].get('env',[])}
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='true'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='true'
+          PY
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:hotfix-$GITHUB_RUN_ID"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          REV="hotfix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$REV" --no-traffic --tag "$TAG"
+          CANDIDATE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json | python -c 'import json,sys; d=json.load(sys.stdin); tag=sys.argv[1]; print(next(x["url"] for x in d["status"]["traffic"] if x.get("tag")==tag))' "$TAG")"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready' and h['multiUser'] is True
+          PY
+          CANDIDATE_REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json | python -c 'import json,sys; d=json.load(sys.stdin); tag=sys.argv[1]; print(next(x["revisionName"] for x in d["status"]["traffic"] if x.get("tag")==tag))' "$TAG")"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 "$SERVICE_URL/health" >/dev/null
