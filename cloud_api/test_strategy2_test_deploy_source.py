@@ -168,6 +168,16 @@ def test_strategy2_candidate_rejections_are_isolated_and_visible():
     assert 'except Exception as exc' in tick
 
 
+def test_strategy2_active_candidate_cooldown_skips_before_expensive_bracket_lookup():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
+    cooldown = tick.index('int(safe_float(prior.get("requestedLeverage")))==int(settings.leverage)')
+    brackets = tick.index('candidate_brackets=planning_brackets', cooldown)
+    assert cooldown < brackets
+    assert 'accepted_leverage=settings.leverage' in tick
+    assert '"requestedLeverage":settings.leverage' in tick
+
+
 def test_confirmed_fill_and_strategy2_ownership_are_committed_atomically():
     source = MAIN.read_text(encoding="utf-8")
     tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]

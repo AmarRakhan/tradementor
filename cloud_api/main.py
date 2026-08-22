@@ -1734,22 +1734,27 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             for candidate in candidates:
                 scan_checked+=1
                 try:
+                    cooldown_key=f"{candidate}|{entry_side}|OPEN"
+                    prior=cooldowns.get(cooldown_key,{})
+                    if (safe_float(prior.get("until"))>now_ms and
+                        int(safe_float(prior.get("requestedLeverage")))==int(settings.leverage)):
+                        scan_skipped+=1
+                        candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
+                        continue
                     candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)
                     rules=ContractRules.from_exchange_info(rows[candidate])
                     fingerprint=hashlib.sha256(json.dumps({"price":prices[candidate],"tick":str(rules.tick_size),
                         "step":str(rules.market_quantity_step),"minQty":str(rules.market_min_quantity),
                         "minNotional":str(rules.min_notional),"requestedLeverage":settings.leverage,
                         "brackets":candidate_brackets},sort_keys=True,separators=(",",":" )).encode()).hexdigest()[:20]
-                    cooldown_key=f"{candidate}|{entry_side}|OPEN"
-                    prior=cooldowns.get(cooldown_key,{})
                     if safe_float(prior.get("until"))>now_ms and prior.get("fingerprint")==fingerprint:
                         scan_skipped+=1
                         candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
                         continue
                     cooldowns.pop(cooldown_key,None)
                     value=plan_aster_pair(rows[candidate],candidate_brackets,prices[candidate],settings.base_notional,
+                        accepted_leverage=settings.leverage,
                         existing_contract_notional=contract_exposure.get(candidate,0))
-                    value=replace(value,leverage=settings.leverage)
                     required=float(value.notional_per_leg)/max(1,value.leverage)
                     if required*1.05>remaining_available:
                         budget_blocked=True;scan_skipped+=1;advanced_after_rejection=True
@@ -1773,7 +1778,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         code=(exc.reason_code if isinstance(exc,NewPositionLeverageBlocked)
                             else (re.search(r"-\d{4}",str(exc)) or [""])[0])
                         cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
-                            "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
+                            "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN","requestedLeverage":settings.leverage}
                         ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
                             "action":"OPEN","errorCode":code,"reason":str(exc),"cooldownSeconds":cooldown_seconds,
                             "configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
@@ -1785,7 +1790,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     attempts=int(safe_float(prior.get("attempts")))+1
                     cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
                     cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
-                        "attempts":attempts,"code":"VALIDATION","reason":str(exc),"side":entry_side,"action":"OPEN"}
+                        "attempts":attempts,"code":"VALIDATION","reason":str(exc),"side":entry_side,"action":"OPEN","requestedLeverage":settings.leverage}
                     ref.collection("audit").add({"event":"ENTRY_CANDIDATE_VALIDATION_SKIPPED","symbol":candidate,
                         "side":entry_side,"action":"OPEN","errorCode":"VALIDATION","reason":str(exc),
                         "cooldownSeconds":cooldown_seconds,"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
@@ -1799,7 +1804,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     cooldown_seconds=min(30*60,60*(2**min(attempts,5)))
                     code=(re.search(r"-\d{4}",str(exc)) or [""])[0]
                     cooldowns[cooldown_key]={"until":now_ms+cooldown_seconds*1000,"fingerprint":fingerprint,
-                        "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN"}
+                        "attempts":attempts,"code":code,"reason":str(exc),"side":entry_side,"action":"OPEN","requestedLeverage":settings.leverage}
                     ref.collection("audit").add({"event":"ENTRY_CANDIDATE_REJECTED","symbol":candidate,"side":entry_side,
                         "action":"OPEN","errorCode":code,"reason":str(exc),"cooldownSeconds":cooldown_seconds,
                         "configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})

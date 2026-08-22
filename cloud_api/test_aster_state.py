@@ -39,6 +39,16 @@ def test_dashboard_snapshot_sums_only_active_exchange_reported_position_margin()
     ])
     assert snapshot["activeTradeCapital"] == 35.5
 
+def test_dashboard_snapshot_derives_return_from_entry_notional_and_leverage_when_margin_missing():
+    snapshot = dashboard_snapshot({}, [{
+        "symbol":"LINKUSDT","positionSide":"LONG","positionAmt":"2",
+        "entryPrice":"10","markPrice":"11","unRealizedProfit":"1","leverage":"20",
+    }])
+    row=snapshot["positions"][0]
+    assert row["initialMarginUsd"] == 0.0
+    assert row["returnPct"] == 100.0
+
+
 def test_dashboard_snapshot_falls_back_to_account_initial_margin_for_cross_positions():
     snapshot = dashboard_snapshot({"totalInitialMargin":"214.76"}, [
         {"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"1","initialMargin":"0"},

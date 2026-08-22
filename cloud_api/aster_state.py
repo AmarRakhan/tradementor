@@ -14,6 +14,22 @@ def _number(value: Any) -> float:
     return result if math.isfinite(result) else 0.0
 
 
+
+
+def _position_return_pct(row: dict[str, Any]) -> float:
+    for key in ("returnPct", "roePct", "roiPct"):
+        if row.get(key) not in (None, ""):
+            return _number(row.get(key))
+    pnl = _number(row.get("unRealizedProfit", row.get("unrealizedProfit")))
+    margin = _number(row.get("positionInitialMargin", row.get("initialMargin")))
+    if margin > 0:
+        return pnl / margin * 100
+    quantity = abs(_number(row.get("positionAmt")))
+    entry = _number(row.get("entryPrice"))
+    leverage = max(1, int(_number(row.get("leverage")) or 1))
+    derived_margin = quantity * entry / leverage
+    return pnl / derived_margin * 100 if derived_margin > 0 else 0.0
+
 def account_values(usdt: dict[str, Any], positions: list[dict[str, Any]]) -> tuple[float, float, float, float]:
     """Normalize Aster balance variants to equity, wallet, available and PnL."""
     available = _number(usdt.get("availableBalance", usdt.get("available")))
@@ -77,7 +93,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
             },
             "calculated": {
                 "marginRatio": "totalMaintMargin / totalMarginBalance",
-                "positionDisplayReturnPct": "Aster returnPct/roePct/roiPct or unRealizedProfit / positionInitialMargin * 100",
+                "positionDisplayReturnPct": "Aster returnPct/roePct/roiPct or unRealizedProfit / effective initial margin * 100",
             },
             "positionDisplayReturnIsTakeProfitStatus": False,
         },
@@ -92,13 +108,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
             "initialMarginUsd": _number(row.get("positionInitialMargin", row.get("initialMargin"))),
             "dataSource": "ASTER_API",
             "leverage": max(1, int(_number(row.get("leverage")) or 1)),
-            "returnPct": (
-                _number(row.get("returnPct")) if row.get("returnPct") not in (None, "") else
-                _number(row.get("roePct")) if row.get("roePct") not in (None, "") else
-                _number(row.get("roiPct")) if row.get("roiPct") not in (None, "") else
-                (_number(row.get("unRealizedProfit", row.get("unrealizedProfit"))) / _number(row.get("positionInitialMargin", row.get("initialMargin"))) * 100
-                 if _number(row.get("positionInitialMargin", row.get("initialMargin"))) > 0 else 0.0)
-            ),
+            "returnPct": _position_return_pct(row),
             **({"roePct": _number(row.get("roePct"))} if row.get("roePct") not in (None, "") else {}),
             **({"roiPct": _number(row.get("roiPct"))} if row.get("roiPct") not in (None, "") else {}),
         } for row in active],
