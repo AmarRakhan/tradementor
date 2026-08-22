@@ -1708,7 +1708,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}
     opened_legs=[];remaining_available=portfolio.available_balance;candidate_failures=[];budget_blocked=False
     scan_checked=0;scan_skipped=0;advanced_after_rejection=False
-    cooldowns=raw.get("entryCandidateCooldowns") if isinstance(raw.get("entryCandidateCooldowns"),dict) else {}
+    cooldown_version=2
+    cooldowns=(raw.get("entryCandidateCooldowns") if
+        int(safe_float(raw.get("entryCandidateCooldownVersion")))==cooldown_version and
+        isinstance(raw.get("entryCandidateCooldowns"),dict) else {})
     cooldowns={str(key):value for key,value in cooldowns.items() if isinstance(value,dict)}
     contract_exposure={}
     for position in positions:
@@ -1824,7 +1827,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         # ownership of the positions already opened in this initial batch.
         audit_ref=ref.collection("audit").document();batch=db.batch();confirmed_at=datetime.now(timezone.utc)
         batch.set(ref,{"ownedLegs":[owned_to_mapping(x) for x in owned],"entryCandidateCooldowns":cooldowns,
-            "phase":"INITIAL_BUILD","lastReason":f"Initiële opbouw: {len(opened_legs)} positie(s) bevestigd","updatedAt":confirmed_at},merge=True)
+            "entryCandidateCooldownVersion":cooldown_version,"phase":"INITIAL_BUILD","lastReason":f"Initiële opbouw: {len(opened_legs)} positie(s) bevestigd","updatedAt":confirmed_at},merge=True)
         batch.set(audit_ref,{"event":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG","symbol":symbol,"side":entry_side,"cycleId":cycle,
             "configuredBaseNotional":settings.base_notional,"filledNotional":q*p,"acceptedLeverage":opened.get("leverage",plan.leverage),"configVersion":settings.version,"timestamp":datetime.now(timezone.utc)})
         batch.commit()
@@ -1836,7 +1839,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     scan_status={"checked":scan_checked,"skipped":scan_skipped,"advancedWithinTick":advanced_after_rejection,
         "reasons":candidate_failures[:5],"accountPositionCount":len(active_keys),"provenStrategy2LegCount":len(owned),"checkedAt":now}
     ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"entryCandidateCooldowns":cooldowns,
-        "candidateScan":scan_status,"initialBuildComplete":complete,"phase":"RUNNING" if complete else "INITIAL_BUILD",
+        "entryCandidateCooldownVersion":cooldown_version,"candidateScan":scan_status,"initialBuildComplete":complete,"phase":"RUNNING" if complete else "INITIAL_BUILD",
         "lastReason":reason,"updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"status":"ok" if opened_legs else "waiting","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG",
         "opened":opened_legs,"longCount":long_count,"shortCount":short_count,"targetLong":long_target,"targetShort":short_target,

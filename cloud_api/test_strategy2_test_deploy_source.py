@@ -178,6 +178,15 @@ def test_strategy2_active_candidate_cooldown_skips_before_expensive_bracket_look
     assert '"requestedLeverage":settings.leverage' in tick
 
 
+def test_strategy2_old_candidate_cooldowns_are_invalidated_by_schema_version():
+    source = MAIN.read_text(encoding="utf-8")
+    tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
+    assert "cooldown_version=2" in tick
+    assert 'entryCandidateCooldownVersion' in tick
+    assert 'int(safe_float(raw.get("entryCandidateCooldownVersion")))==cooldown_version' in tick
+    assert tick.count('"entryCandidateCooldownVersion":cooldown_version') >= 2
+
+
 def test_confirmed_fill_and_strategy2_ownership_are_committed_atomically():
     source = MAIN.read_text(encoding="utf-8")
     tick = source[source.index("def _run_aster_strategy2_tick"):source.index("def _aster_brackets")]
