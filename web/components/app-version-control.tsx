@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { WEBAPP_VERSION, WEBAPP_VERSION_LABEL } from "@/lib/app-version";
+import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION, WEBAPP_VERSION_LABEL } from "@/lib/app-version";
 
 export function AppVersionControl() {
   const [label, setLabel] = useState(WEBAPP_VERSION_LABEL);
@@ -27,14 +27,16 @@ export function AppVersionControl() {
       const response = await fetch(`/?versionCheck=${Date.now()}`, { cache: "no-store" });
       const html = await response.text();
       const availableVersion = html.match(/data-webapp-version="([^"]+)"/)?.[1];
+      const availableBuild = html.match(/data-webapp-build="([^"]+)"/)?.[1];
 
-      if (availableVersion && availableVersion !== WEBAPP_VERSION) {
-        setLabel(`Versie ${availableVersion} laden…`);
+      if ((availableVersion && availableVersion !== WEBAPP_VERSION) ||
+          (availableBuild && availableBuild !== WEBAPP_BUILD_NUMBER)) {
+        setLabel(`Versie ${availableVersion || WEBAPP_VERSION} · build ${availableBuild || "?"} laden…`);
         window.location.reload();
         return;
       }
 
-      setLabel(`Versie ${WEBAPP_VERSION} is actueel`);
+      setLabel(`Versie ${WEBAPP_VERSION} · build ${WEBAPP_BUILD_NUMBER} is actueel`);
     } catch {
       setLabel("Updatecontrole mislukt");
     } finally {

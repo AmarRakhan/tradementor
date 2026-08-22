@@ -34,7 +34,8 @@ test("private staging fetches its manifest with the signed-in session", async ()
   assert.match(layout, /crossOrigin="use-credentials"/);
   assert.match(layout, /manifest\.webmanifest\?v=\$\{WEBAPP_VERSION\}/);
   assert.doesNotMatch(layout, /manifest:\s*["']/);
-  assert.match(registration, /sw\.js\?v=\$\{WEBAPP_VERSION\}/);
-  assert.match(registration, /import \{ WEBAPP_VERSION \}/);
+  assert.match(registration, /sw\.js\?v=\$\{WEBAPP_VERSION\}&build=\$\{WEBAPP_BUILD_NUMBER\}/);
+  assert.match(registration, /WEBAPP_BUILD_NUMBER/);
+  assert.match(registration, /WEBAPP_VERSION/);
   assert.match(version, /WEBAPP_VERSION = "44"/);
 });

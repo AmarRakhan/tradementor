@@ -4,7 +4,7 @@ import { AuthProvider } from "@/components/auth-provider";
 import { PwaRegistration } from "@/components/pwa-registration";
 import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
-import { WEBAPP_VERSION } from "@/lib/app-version";
+import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 import "./globals.css";
 import "./premium.css";
 import "./premium-next.css";
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="nl" data-webapp-version={WEBAPP_VERSION}>
+    <html lang="nl" data-webapp-version={WEBAPP_VERSION} data-webapp-build={WEBAPP_BUILD_NUMBER}>
       <head>
         <link rel="manifest" href={`/manifest.webmanifest?v=${WEBAPP_VERSION}`} crossOrigin="use-credentials" />
         <link rel="apple-touch-icon" href="/tradementor-icon-192.png" />
@@ -47,7 +47,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <div className="test-environment-banner live-runtime-banner">
           <span className="runtime-name">AMAR CRYPTO BOT 2026</span>
-          <span className="runtime-status">PLATFORMSTATUS · STRATEGY 3-RUNTIME LIVE · DIT IS NIET JOUW ACCOUNTSTATUS</span>
+          <span className="runtime-status">PLATFORMSTATUS · STRATEGY 2-RUNTIME · DIT IS NIET JOUW ACCOUNTSTATUS</span>
           <AppVersionControl />
         </div>
         <PwaRegistration />
