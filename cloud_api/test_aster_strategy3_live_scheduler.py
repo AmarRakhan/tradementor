@@ -8,24 +8,20 @@ def _dedicated_strategy3_scheduler_source() -> str:
     return source[start:end]
 
 
-def test_dedicated_scheduler_is_strategy3_only() -> None:
+def test_retired_strategy3_scheduler_is_hard_disabled() -> None:
     block = _dedicated_strategy3_scheduler_source()
-    assert 'db.collection("asterStrategy3")' in block
-    assert "_run_aster_strategy3_tick" in block
-    assert 'os.getenv("ASTER_STRATEGY3_LIVE_ENABLED"' in block
-    assert 'os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED"' in block
+    assert 'raise HTTPException(410, "Strategy 3 is retired; Strategy 2 is the only Aster runtime")' in block
+    assert 'db.collection("asterStrategy3")' not in block
+    assert "_run_aster_strategy3_tick" not in block
+    assert 'ASTER_STRATEGY3_LIVE_ENABLED' not in block
+    assert 'ASTER_STRATEGY3_RUNTIME_ENABLED' not in block
 
-    assert 'db.collection("asterAutomation")' not in block
-    assert 'db.collection("asterStrategy2")' not in block
-    assert "_run_aster_automation_tick" not in block
-    assert "_run_aster_strategy2_tick" not in block
+
+def test_retired_strategy3_scheduler_cannot_process_rapid_build_requests() -> None:
+    block = _dedicated_strategy3_scheduler_source()
+    assert '"rapidBuildRequested": False' not in block
     assert "_run_strategy3_rapid_batch" not in block
-
-
-def test_dedicated_scheduler_clears_rapid_build_requests() -> None:
-    block = _dedicated_strategy3_scheduler_source()
-    assert '"rapidBuildRequested": False' in block
-    assert "normal one-action ticks only" in block
+    assert "HTTPException(410" in block
 
 
 def test_readiness_rearm_preserves_isolated_runtime_boundaries() -> None:

@@ -1816,6 +1816,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         selected=None
     if ownership_isolated and selected and not selected[1].risk_reducing:
         selected=None
+    # Role-only bookkeeping may never consume a scan while configured seats are
+    # empty. Fill capacity first; role labels can be updated after the target is full.
+    if selected and selected[1].kind in {"ASSIGN_PROTECTION","RELEASE_PROTECTION"} and len(owned)<settings.maximum_pairs:
+        selected=None
     if selected:
         leg,decision=selected
         if decision.kind=="ADD_DCA" and (not enabled or portfolio.margin_ratio>=settings.defensive_margin_ratio):decision=Decision("HOLD",leg.side,reason="DCA geblokkeerd omdat Strategy 2 gestopt of defensief is",risk_reducing=True)
@@ -6000,59 +6004,21 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
         with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="s2-scheduler") as pool:
             futures=[pool.submit(run_strategy2_account,uid) for uid in strategy2_uids]
             for future in as_completed(futures):strategy2_results.append(future.result())
-    # Strategy 3 has its own service, data project and dedicated scheduler.
-    # The production scheduler must never read or mutate isolated S3 state.
-    return {"processed":len(results)+len(strategy2_results),"strategy1":results,
-        "strategy2":strategy2_results,"strategy3":[],"strategy3Isolated":True}
+    # Strategy 1 and Strategy 3 are retired app-wide. Production Aster
+    # scheduling is Strategy-2-only.
+    return {"processed":len(strategy2_results),"strategy2":strategy2_results,"strategy2Only":True}
 
 
 @app.post("/internal/aster-strategy3/tick")
 def run_aster_strategy3_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    """Run only the normal Strategy-3 loop; rapid build and other engines stay isolated."""
     verify_internal_cloud_request(authorization)
-    live_gates = (
-        os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true"
-        and os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false").lower() == "true"
-        and os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false").lower() == "true"
-    )
-    if not live_gates:
-        return {"processed": 0, "status": "centrally-disabled", "strategy3": []}
-
-    controls = list(db.collection("asterStrategy3").where("monitor", "==", True).stream())
-    strategy3_results = []
-    for item in controls[:100]:
-        reference = aster_strategy3_reference(item.id)
-        if not _acquire_mexc_automation_lease(reference):
-            strategy3_results.append({"uid": item.id, "status": "lease-busy"})
-            continue
-        try:
-            state = item.to_dict() or {}
-            if bool(state.get("rapidBuildRequested")):
-                reference.set({
-                    "rapidBuildRequested": False,
-                    "rapidBuildBlockedReason": "Dedicated live scheduler allows normal one-action ticks only",
-                    "updatedAt": datetime.now(timezone.utc),
-                }, merge=True)
-            strategy3_results.append({"uid": item.id, **_run_aster_strategy3_tick(item.id)})
-        except Exception as exc:
-            message = f"Veilige Strategy-3-schedulerfout: {exc}"
-            reference.set({
-                "phase": "DATA_HOLD",
-                "rapidBuildRequested": False,
-                "lastReason": message,
-                "lastTickAt": datetime.now(timezone.utc),
-            }, merge=True)
-            strategy3_results.append({"uid": item.id, "status": "data-hold", "reason": message})
-        finally:
-            reference.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
-    return {"processed": len(strategy3_results), "strategy3": strategy3_results}
+    raise HTTPException(410, "Strategy 3 is retired; Strategy 2 is the only Aster runtime")
 
 
 @app.post("/internal/aster-automation/{uid}/simulate")
 def run_aster_internal_simulation(uid: str, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_cloud_request(authorization)
-    if not uid or len(uid)>128: raise HTTPException(422,"Ongeldige gebruiker")
-    return _run_aster_automation_tick(uid,dry_run=True)
+    raise HTTPException(410, "Strategy 1 is retired; Strategy 2 is the only Aster runtime")
 
 
 @app.post("/internal/aster-strategy2/{uid}/simulate")
@@ -6065,8 +6031,7 @@ def run_aster_strategy2_internal_simulation(uid:str,authorization:str|None=Heade
 @app.post("/internal/aster-strategy3/{uid}/simulate")
 def run_aster_strategy3_internal_simulation(uid:str,authorization:str|None=Header(default=None))->dict[str,Any]:
     verify_internal_cloud_request(authorization)
-    if not uid or len(uid)>128:raise HTTPException(422,"Ongeldige gebruiker")
-    return _run_aster_strategy3_tick(uid,dry_run=True)
+    raise HTTPException(410, "Strategy 3 is retired; Strategy 2 is the only Aster runtime")
 
 
 @app.get("/v1/me/hyperliquid/scanner/status")

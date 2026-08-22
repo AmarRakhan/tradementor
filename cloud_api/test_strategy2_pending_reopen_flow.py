@@ -81,3 +81,11 @@ def test_stale_cost_evidence_is_leg_local_while_user_seats_are_missing():
     assert "vrije stoelen blijven doorstromen" in block
     assert "if orders:" not in block
     assert "open_order_symbols" in block
+
+
+def test_role_only_bookkeeping_never_preempts_empty_seat_refill():
+    tick = _tick_source()
+    guard = 'if selected and selected[1].kind in {"ASSIGN_PROTECTION","RELEASE_PROTECTION"} and len(owned)<settings.maximum_pairs:'
+    assert guard in tick
+    assert tick.index(guard) < tick.index("if selected:", tick.index(guard))
+    assert "selected=None" in tick[tick.index(guard):tick.index("if selected:", tick.index(guard))]

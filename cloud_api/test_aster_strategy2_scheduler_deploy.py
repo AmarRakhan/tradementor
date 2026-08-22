@@ -31,14 +31,16 @@ def test_production_runtime_requires_live_s2_boundary_and_rejects_s3_target():
     assert "/internal/aster-strategy3/tick" not in workflow
 
 
-def test_production_scheduler_endpoint_never_processes_isolated_strategy3():
+def test_production_scheduler_endpoint_is_strategy2_only():
     source = (ROOT / "cloud_api/main.py").read_text(encoding="utf-8")
     start = source.index('@app.post("/internal/aster-automation/tick")')
     end = source.index('@app.post("/internal/aster-strategy3/tick")', start)
     block = source[start:end]
     assert "_run_aster_strategy2_tick" in block
     assert "_run_aster_strategy3_tick" not in block
-    assert '"strategy3Isolated":True' in block
+    assert '"strategy2Only":True' in block
+    assert '"strategy1"' not in block
+    assert '"strategy3"' not in block
 
 
 def test_strategy2_queue_is_double_gated_and_old_runtime_remains_available():

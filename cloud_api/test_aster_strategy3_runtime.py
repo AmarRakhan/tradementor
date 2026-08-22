@@ -21,9 +21,9 @@ def test_strategy3_balanced_capacity_is_per_leg():
     assert next_balanced_entry_side(owned, 5) == "LONG"
 
 
-def test_strategy3_never_counts_protection_as_new_harvest_capacity():
+def test_shared_seat_counter_counts_every_live_leg_even_for_legacy_strategy3_fixture():
     owned = [s3("LONG"), OwnedLeg("aster-strategy-3", "strategy3", "ETHUSDT", "SHORT", "p", 1, 1, 10, role="PROTECTION")]
-    assert next_balanced_entry_side(owned, 2) == "SHORT"
+    assert next_balanced_entry_side(owned, 2) is None
 
 
 def test_strategy3_account_limit_counts_other_and_unknown_positions():
