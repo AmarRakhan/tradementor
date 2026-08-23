@@ -21,7 +21,9 @@ test("Aster dashboard exposes today and an interactive realized calendar", async
   assert.match(page, /TRADES GESLOTEN/);
   assert.match(styles, /\.metric\.realized-today\.positive \.realized-amount \{ color:var\(--green\)/);
   assert.match(styles, /\.metric\.realized-today\.negative \.realized-amount \{ color:var\(--danger\)/);
-  assert.match(page, /setInterval\(\(\) => setNow\(new Date\(\)\), 1000\)/);
+  assert.doesNotMatch(page, /setInterval\(\(\) => setNow\(new Date\(\)\), 1000\)/);
+  assert.match(page, /nextDay\.setHours\(24, 0, 0, 50\)/);
+  assert.match(page, /visibilitychange/);
   assert.match(panel, /Kalender gesloten resultaat/);
   assert.match(panel, /Werkelijk gesloten resultaat/);
   assert.match(panel, /setSelectedDate/);
