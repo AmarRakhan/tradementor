@@ -1,0 +1,160 @@
+name: One-shot portfolio daily growth
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/one-shot-portfolio-daily-growth.yml]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: one-shot-portfolio-daily-growth
+  cancel-in-progress: false
+
+jobs:
+  implement-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Apply isolated portfolio-statistics change
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # Pure arithmetic helpers only; no execution/trading dependencies.
+          p=Path('cloud_api/portfolio_growth.py')
+          s=p.read_text(encoding='utf-8')
+          anchor='ENTRY_INTENT_WORDS = ("open", "entry", "base", "dca", "reopen", "reset")\n'
+          if 'PORTFOLIO_GROWTH_START_DATE' not in s:
+              if anchor not in s: raise SystemExit('portfolio_growth constant anchor missing')
+              s=s.replace(anchor, anchor+'PORTFOLIO_GROWTH_START_DATE = "2026-08-23"\n', 1)
+          helper='''\n\ndef daily_return_percentage(previous_equity: Any, current_equity: Any, external_cashflow: Any = 0) -> float:\n    previous = _finite(previous_equity)\n    current = _finite(current_equity)\n    cashflow = _finite(external_cashflow)\n    if previous <= 0:\n        raise ValueError("Vorige dagwaarde moet positief zijn")\n    return ((current - cashflow) - previous) / previous * 100.0\n\n\ndef average_daily_return(completed_sum: Any, completed_count: int, today_return: Any) -> float:\n    total = _finite(completed_sum) + _finite(today_return)\n    count = int(completed_count) + 1\n    if count <= 0:\n        raise ValueError("Aantal gemeten dagen moet positief zijn")\n    return total / count\n'''
+          if 'def daily_return_percentage(' not in s:
+              marker='\ndef external_cashflow_since('
+              if marker not in s: raise SystemExit('portfolio_growth helper anchor missing')
+              s=s.replace(marker, helper+marker, 1)
+          p.write_text(s, encoding='utf-8')
+
+          # Extend existing arithmetic tests.
+          p=Path('cloud_api/test_portfolio_growth.py')
+          s=p.read_text(encoding='utf-8')
+          old='from portfolio_growth import estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms\n'
+          new='from portfolio_growth import (PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms)\n'
+          if old in s: s=s.replace(old,new,1)
+          tests='''\n\ndef test_daily_growth_start_and_percentage_math():\n    assert PORTFOLIO_GROWTH_START_DATE == "2026-08-23"\n    assert daily_return_percentage(203, 224) == pytest.approx(10.3448275862)\n    assert daily_return_percentage(200, 190) == pytest.approx(-5.0)\n\n\ndef test_daily_growth_removes_external_cashflow_and_averages_arithmetically():\n    assert daily_return_percentage(200, 310, 100) == pytest.approx(5.0)\n    assert daily_return_percentage(200, 155, -50) == pytest.approx(2.5)\n    assert average_daily_return(5.0, 2, 4.0) == pytest.approx(3.0)\n'''
+          if 'test_daily_growth_start_and_percentage_math' not in s:
+              s += tests
+          p.write_text(s, encoding='utf-8')
+
+          # Add a read-only daily-growth function and endpoint to the existing Aster portfolio module in main.py.
+          p=Path('cloud_api/main.py')
+          s=p.read_text(encoding='utf-8')
+          old='from portfolio_growth import estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms\n'
+          new='from portfolio_growth import PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms\n'
+          if old not in s and 'PORTFOLIO_GROWTH_START_DATE, average_daily_return' not in s:
+              raise SystemExit('main portfolio_growth import anchor missing')
+          s=s.replace(old,new,1)
+
+          helper='''\n\ndef _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:\n    uid=str(user["uid"]);ref=portfolio_growth_reference(uid);now=datetime.now(timezone.utc)\n    amsterdam=ZoneInfo("Europe/Amsterdam");local_now=now.astimezone(amsterdam)\n    if local_now.date().isoformat()<PORTFOLIO_GROWTH_START_DATE:\n        return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,"blockReason":"Meting is nog niet gestart"}\n    start_local=datetime(2026,8,23,0,0,0,tzinfo=amsterdam)\n    client=_portfolio_growth_client(user,live=False)\n    try:\n        account=client.account_information();equity,_,_,_,_=aster_account_information_values(account)\n        if equity<=0:raise ValueError("Actuele portfolio/equity is niet positief")\n        income=[]\n        for income_type in ("TRANSFER","WELCOME_BONUS","INSURANCE_CLEAR"):\n            income.extend(client.income_history(income_type=income_type,start_time=utc_ms(start_local),limit=1000))\n        cumulative_cashflow=external_cashflow_since(income,utc_ms(start_local))\n        today=local_now.date().isoformat();transaction=db.transaction()\n        @firestore.transactional\n        def update(txn:Any)->dict[str,Any]:\n            doc=ref.get(transaction=txn);stored=doc.to_dict() or {};state=dict(stored.get("dailyGrowth") or {})\n            if state.get("startDate")!=PORTFOLIO_GROWTH_START_DATE or safe_float(state.get("referenceEquity"))<=0:\n                state={"startDate":PORTFOLIO_GROWTH_START_DATE,"referenceDate":today,"referenceEquity":equity,\n                    "referenceCashflow":cumulative_cashflow,"lastObservedDate":today,"lastObservedEquity":equity,\n                    "lastObservedCashflow":cumulative_cashflow,"completedReturnSum":0.0,"completedReturnCount":0}\n            elif state.get("lastObservedDate")!=today:\n                previous_equity=safe_float(state.get("referenceEquity"));last_equity=safe_float(state.get("lastObservedEquity"))\n                reference_cashflow=safe_float(state.get("referenceCashflow"));last_cashflow=safe_float(state.get("lastObservedCashflow"))\n                if previous_equity>0 and last_equity>0:\n                    finished=daily_return_percentage(previous_equity,last_equity,last_cashflow-reference_cashflow)\n                    state["completedReturnSum"]=safe_float(state.get("completedReturnSum"))+finished\n                    state["completedReturnCount"]=int(state.get("completedReturnCount",0))+1\n                    state["referenceEquity"]=last_equity;state["referenceCashflow"]=last_cashflow\n                    state["referenceDate"]=str(state.get("lastObservedDate"))\n            state["lastObservedDate"]=today;state["lastObservedEquity"]=equity;state["lastObservedCashflow"]=cumulative_cashflow\n            today_pct=daily_return_percentage(safe_float(state.get("referenceEquity")),equity,cumulative_cashflow-safe_float(state.get("referenceCashflow")))\n            completed_count=int(state.get("completedReturnCount",0));completed_sum=safe_float(state.get("completedReturnSum"))\n            average_pct=average_daily_return(completed_sum,completed_count,today_pct)\n            state["updatedAt"]=now\n            txn.set(ref,{"dailyGrowth":state},merge=True)\n            return {"reliable":True,"todayPercentage":round(today_pct,8),"averageDailyPercentage":round(average_pct,8),\n                "measuredDays":completed_count+1,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,"referenceDate":state.get("referenceDate")}\n        return update(transaction)\n    except Exception as exc:\n        return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,\n            "blockReason":f"Dagelijkse portfoliogroei niet betrouwbaar beschikbaar: {str(exc)[:180]}"}\n'''
+          if 'def _portfolio_daily_growth(' not in s:
+              marker='\ndef _portfolio_growth_estimate(user:dict[str,Any],*,persist_quote:bool=True)->dict[str,Any]:\n'
+              if marker not in s: raise SystemExit('main daily helper insertion anchor missing')
+              s=s.replace(marker,helper+marker,1)
+
+          route='''\n\n@app.get("/v1/me/aster/portfolio-growth/daily")\ndef get_aster_portfolio_daily_growth(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:\n    return _portfolio_daily_growth(user)\n'''
+          if '/v1/me/aster/portfolio-growth/daily' not in s:
+              marker='\n@app.get("/v1/me/aster/portfolio-growth")\n'
+              if marker not in s: raise SystemExit('main portfolio route anchor missing')
+              s=s.replace(marker,route+marker,1)
+          p.write_text(s, encoding='utf-8')
+
+          # Add web proxy for the isolated read-only endpoint.
+          p=Path('web/app/api/exchanges/aster/portfolio-growth/daily/route.ts')
+          p.parent.mkdir(parents=True,exist_ok=True)
+          p.write_text('import { proxyCloud } from "@/lib/cloud-proxy";\nexport async function GET(request: Request) { return proxyCloud(request, "/v1/me/aster/portfolio-growth/daily", "GET"); }\n',encoding='utf-8')
+
+          # Keep all existing close-all/baseline UI intact; only add a compact inline statistic row.
+          p=Path('web/components/portfolio-growth-card.tsx')
+          s=p.read_text(encoding='utf-8')
+          old='''type Growth = { setupRequired?:boolean; reliable?:boolean; closeEnabled?:boolean; baseline?:number;\n  expectedEndValue?:number; difference?:number; percentage?:number; positionCount?:number; blockReason?:string; quoteId?:string; };\n'''
+          new='''type Growth = { setupRequired?:boolean; reliable?:boolean; closeEnabled?:boolean; baseline?:number;\n  expectedEndValue?:number; difference?:number; percentage?:number; positionCount?:number; blockReason?:string; quoteId?:string; };\ntype DailyGrowth = { reliable?:boolean; todayPercentage?:number; averageDailyPercentage?:number; measuredDays?:number; measurementStartDate?:string; blockReason?:string; };\n'''
+          if old not in s and 'type DailyGrowth' not in s: raise SystemExit('web growth type anchor missing')
+          s=s.replace(old,new,1)
+          old='''  const [data,setData]=useState<Growth|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");\n  const [amount,setAmount]=useState(""),[confirm,setConfirm]=useState(false),[reset,setReset]=useState(false),[resetReason,setResetReason]=useState("");\n'''
+          new='''  const [data,setData]=useState<Growth|null>(null),[daily,setDaily]=useState<DailyGrowth|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");\n  const [amount,setAmount]=useState(""),[confirm,setConfirm]=useState(false),[reset,setReset]=useState(false),[resetReason,setResetReason]=useState("");\n'''
+          if old not in s and '[daily,setDaily]' not in s: raise SystemExit('web state anchor missing')
+          s=s.replace(old,new,1)
+          old='''  useEffect(()=>{let active=true;authenticatedRequest("/api/exchanges/aster/portfolio-growth").then(value=>{if(active)setData(value as Growth)}).catch(cause=>{if(active){setData({reliable:false});setError(cause instanceof Error?cause.message:"Berekening niet beschikbaar")}});return()=>{active=false}},[]);\n'''
+          new='''  useEffect(()=>{let active=true;authenticatedRequest("/api/exchanges/aster/portfolio-growth").then(value=>{if(active)setData(value as Growth)}).catch(cause=>{if(active){setData({reliable:false});setError(cause instanceof Error?cause.message:"Berekening niet beschikbaar")}});authenticatedRequest("/api/exchanges/aster/portfolio-growth/daily").then(value=>{if(active)setDaily(value as DailyGrowth)}).catch(()=>{if(active)setDaily({reliable:false})});return()=>{active=false}},[]);\n'''
+          if old not in s and 'portfolio-growth/daily' not in s: raise SystemExit('web useEffect anchor missing')
+          s=s.replace(old,new,1)
+          old='''  const difference=Number(data?.difference??0),tone=!data?.reliable?"unreliable":difference>0?"profit":difference<0?"loss":"neutral";\n  return <><article className={`metric portfolio-growth ${tone}`} aria-live="polite"><span>PORTFOLIO GROEI</span>{data?.setupRequired?<div className="portfolio-growth-setup"><small>Stel eenmalig je startwaarde in</small><input aria-label="Startwaarde in US-dollar" inputMode="decimal" placeholder="US$ 359,00" value={amount} onChange={e=>setAmount(e.target.value)} /><button disabled={busy} onClick={()=>setConfirm(true)}>STARTWAARDE OPSLAAN</button></div>:<><small>Netto winst bij alles sluiten</small><strong className="portfolio-growth-money">{data?.reliable?money(difference,true):"—"}</strong><b>{data?.reliable?percent(Number(data?.percentage??0)):"Onbetrouwbaar"}</b><button className="portfolio-close-all" disabled={busy||!data?.closeEnabled} onClick={()=>setConfirm(true)}>ALLES SLUITEN</button><small>Startwaarde {data?.baseline?money(data.baseline):"—"}</small><button className="portfolio-baseline-reset" disabled={busy} onClick={()=>setReset(true)}>Startwaarde resetten</button></>}{error&&<em>{error}</em>}{!error&&!data?.reliable&&!data?.setupRequired&&<em>{data?.blockReason||"Sluiten is veilig geblokkeerd"}</em>}</article>\n'''
+          new='''  const difference=Number(data?.difference??0),tone=!data?.reliable?"unreliable":difference>0?"profit":difference<0?"loss":"neutral";\n  const dailyTone=(value:number)=>value>0?"#35c46a":value<0?"#ef5b5b":"inherit";\n  const today=Number(daily?.todayPercentage??0),average=Number(daily?.averageDailyPercentage??0);\n  const dailyStats=<div className="portfolio-growth-daily" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"3px 12px",width:"100%",margin:"4px 0 2px",alignItems:"end"}}><span style={{display:"grid",gap:1}}><small>Vandaag</small><strong style={{fontSize:"1rem",lineHeight:1.1,color:daily?.reliable?dailyTone(today):"inherit"}}>{daily?.reliable?percent(today):"—"}</strong></span><span style={{display:"grid",gap:1}}><small>Gemiddeld per dag</small><strong style={{fontSize:"1rem",lineHeight:1.1,color:daily?.reliable?dailyTone(average):"inherit"}}>{daily?.reliable?percent(average):"—"}</strong></span><small style={{gridColumn:"1 / -1",opacity:.72,fontSize:".72rem"}}>Gemeten over {daily?.reliable?(daily.measuredDays??1):"—"} {daily?.measuredDays===1?"dag":"dagen"} · Sinds 23 augustus 2026</small></div>;\n  return <><article className={`metric portfolio-growth ${tone}`} aria-live="polite"><span>PORTFOLIO GROEI</span>{data?.setupRequired?<div className="portfolio-growth-setup"><small>Stel eenmalig je startwaarde in</small><input aria-label="Startwaarde in US-dollar" inputMode="decimal" placeholder="US$ 359,00" value={amount} onChange={e=>setAmount(e.target.value)} /><button disabled={busy} onClick={()=>setConfirm(true)}>STARTWAARDE OPSLAAN</button></div>:<><small>Netto winst bij alles sluiten</small><strong className="portfolio-growth-money">{data?.reliable?money(difference,true):"—"}</strong><b>{data?.reliable?percent(Number(data?.percentage??0)):"Onbetrouwbaar"}</b><button className="portfolio-close-all" disabled={busy||!data?.closeEnabled} onClick={()=>setConfirm(true)}>ALLES SLUITEN</button><small>Startwaarde {data?.baseline?money(data.baseline):"—"}</small><button className="portfolio-baseline-reset" disabled={busy} onClick={()=>setReset(true)}>Startwaarde resetten</button></>}{dailyStats}{error&&<em>{error}</em>}{!error&&!data?.reliable&&!data?.setupRequired&&<em>{data?.blockReason||"Sluiten is veilig geblokkeerd"}</em>}</article>\n'''
+          if old not in s and 'const dailyStats=' not in s: raise SystemExit('web render anchor missing')
+          s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
+
+          # Small source-level web contract to keep the UI compact and pinned to the requested date.
+          p=Path('web/tests/portfolio-daily-growth.test.mjs')
+          p.write_text('''import assert from "node:assert/strict";\nimport { readFile } from "node:fs/promises";\nimport test from "node:test";\n\nconst card=await readFile(new URL("../components/portfolio-growth-card.tsx",import.meta.url),"utf8");\nconst route=await readFile(new URL("../app/api/exchanges/aster/portfolio-growth/daily/route.ts",import.meta.url),"utf8");\n\ntest("daily portfolio growth is compact inside the existing card",()=>{\n  assert.match(card,/portfolio-growth-daily/);\n  assert.match(card,/Vandaag/);\n  assert.match(card,/Gemiddeld per dag/);\n  assert.match(card,/Sinds 23 augustus 2026/);\n  assert.doesNotMatch(card,/article className=.{0,40}daily-growth/);\n});\n\ntest("daily portfolio growth uses the isolated read-only backend route",()=>{\n  assert.match(route,/portfolio-growth\\/daily/);\n  assert.match(route,/\"GET\"/);\n});\n''',encoding='utf-8')
+          PY
+
+      - name: Run complete backend regression suite
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          python -m py_compile cloud_api/main.py cloud_api/portfolio_growth.py
+          cd cloud_api
+          pytest -q
+
+      - name: Run complete web build and regression suite
+        run: |
+          cd web
+          npm ci
+          npm test
+
+      - name: Verify no trading implementation files changed
+        shell: bash
+        run: |
+          git diff --name-only | tee /tmp/changed.txt
+          ! grep -E 'cloud_api/(aster_strategy2|aster_strategy2_runtime|aster_strategy2_queue|aster_execution|money_grabber|order_coordinator|aster_automation)\.py' /tmp/changed.txt
+          grep -q '^cloud_api/main.py$' /tmp/changed.txt
+          grep -q '^cloud_api/portfolio_growth.py$' /tmp/changed.txt
+          grep -q '^web/components/portfolio-growth-card.tsx$' /tmp/changed.txt
+
+      - name: Commit isolated source change
+        id: commit
+        shell: bash
+        run: |
+          git config user.name 'TradeMentor Control Plane'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/main.py cloud_api/portfolio_growth.py cloud_api/test_portfolio_growth.py web/components/portfolio-growth-card.tsx web/app/api/exchanges/aster/portfolio-growth/daily/route.ts web/tests/portfolio-daily-growth.test.mjs
+          git commit -m 'Add compact daily portfolio growth statistics'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch normal production backend deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh workflow run deploy-cloud-production.yml --ref amar-crypto-bot-2026-cloud -f confirmation=DEPLOY_PRODUCTION_BACKEND
