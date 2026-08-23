@@ -9,7 +9,7 @@ const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8
 test("top profit, closed and opened sections render in the required order", () => {
   const top = component.indexOf('<TopProfitCard rows={positions}');
   const closed = component.indexOf('title="Laatste 20 uitgestapte trades" rows={exits}');
-  const opened = component.indexOf('title="Laatste 20 ingestapte trades" rows={entries}');
+  const opened = component.indexOf('title="Laatste 5 ingestapte trades" rows={entries}');
   assert.ok(top >= 0 && closed > top && opened > closed);
 });
 
@@ -47,7 +47,8 @@ test("trade rows expose only percent and P&L value columns", () => {
   assert.match(component, /<span>%<\/span><span>P&amp;L<\/span>/);
   assert.doesNotMatch(component, /INGEKOCHT|INGESTAPT \(\$\)|VERKOCHT|NU WAARD|Perp ·|Niet aan strategie gekoppeld/);
   assert.match(component, /Toon alle/);
-  assert.match(component, /Terug naar laatste 20/);
+  assert.match(component, /Terug naar laatste \{compactLimit\}/);
+  assert.match(component, /compactLimit=\{5\}/);
   assert.match(component, /Laad nog 100/);
 });
 
