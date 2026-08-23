@@ -10,6 +10,15 @@ export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown>
 export type ExchangeSnapshots = Record<ExchangeId, ExchangeSnapshot>;
 
 const emptySnapshot = (): ExchangeSnapshot => ({ loading: false, data: null, error: "", updatedAt: null, source: "none", serverConfirmed: false });
+
+function cachedAsterSnapshot(uid: string): ExchangeSnapshot {
+  if (typeof window === "undefined" || !uid) return emptySnapshot();
+  const cached = loadAsterSnapshot(window.localStorage, uid);
+  return cached
+    ? { loading: false, data: cached.data, error: "", updatedAt: cached.updatedAt, source: "cache", serverConfirmed: false }
+    : emptySnapshot();
+}
+
 const inFlight = new Map<string, Promise<{ data: Record<string, unknown>; timings: Record<string, number> }>>();
 
 async function timedRead(path: string) {
@@ -53,7 +62,7 @@ function fetchAsterSnapshot(uid: string, generation: number) {
 }
 
 export function useExchangeData(cloudReady: boolean, uid: string) {
-  const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: emptySnapshot() } }));
+  const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAsterSnapshot(uid) } }));
   const mounted = useRef(true);
   const asterRequestGate = useRef({ uid, gate: createLatestAsterRequestGate() });
 
@@ -71,7 +80,7 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
   useEffect(() => {
     if (state.uid === uid) return;
     asterRequestGate.current = { uid, gate: createLatestAsterRequestGate() };
-    setState({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: emptySnapshot() } });
+    setState({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAsterSnapshot(uid) } });
   }, [state.uid, uid]);
 
   const snapshots = useMemo(() => state.uid === uid ? state.snapshots : { hyperliquid: emptySnapshot(), aster: emptySnapshot() }, [state, uid]);

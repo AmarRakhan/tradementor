@@ -82,7 +82,10 @@ test("Aster refresh is parallel, deduplicated and fail-closed for actions", asyn
   assert.match(hook, /mergeAsterSnapshotWithHistoryFallback/);
   assert.match(hook, /inFlight\.get\(key\)/);
   assert.match(hook, /serverConfirmed: current\.snapshots\[exchange\]\.serverConfirmed/);
-  assert.match(hook, /snapshots: \{ hyperliquid: emptySnapshot\(\), aster: emptySnapshot\(\) \}/);
+  assert.match(hook, /function cachedAsterSnapshot\(uid: string\)/);
+  assert.match(hook, /loadAsterSnapshot\(window\.localStorage, uid\)/);
+  assert.match(hook, /source: "cache", serverConfirmed: false/);
+  assert.match(hook, /snapshots: \{ hyperliquid: emptySnapshot\(\), aster: cachedAsterSnapshot\(uid\) \}/);
   assert.match(page, /asterActionsAreFresh[\s\S]*snapshot\.serverConfirmed/);
   assert.match(page, /fieldset className="aster-action-gate" disabled=\{!asterActionsEnabled\}/);
   assert.match(page, /PremiumBotCreator[\s\S]*asterActionsAreFresh\(snapshots\.aster, cloudReady\)[\s\S]*creator-existing-engine/);
