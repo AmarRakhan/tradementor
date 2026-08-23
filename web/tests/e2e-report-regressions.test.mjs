@@ -6,7 +6,7 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("every legacy destination has a direct route and browser history entry", async () => {
   const page = await read("app/page.tsx");
-  assert.match(page, /destinationIds = new Set<Destination>\(\["hyperliquid", "aster", "positions", "risk", "wallet", "admin"\]\)/);
+  assert.match(page, /destinationIds = new Set<Destination>\(\["hyperliquid", "aster", "journey", "positions", "risk", "wallet", "admin"\]\)/);
   assert.match(page, /window\.history\.pushState\(\{ destination \}, "", destinationHref\(destination\)\)/);
   assert.match(page, /if \(route !== initial\) window\.history\.replaceState\(\{ destination: initial \}, "", destinationHref\(initial\)\)/);
   assert.match(page, /window\.addEventListener\("popstate", restoreDestination\)/);
