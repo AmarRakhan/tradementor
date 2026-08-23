@@ -26,7 +26,9 @@ function asterEquityDays(currentEquity: number): Map<string, EquityDay> {
     const grouped = new Map<string, Array<{ at: number; value: number }>>();
     for (const row of rows) {
       const date = localDay(row.at);
-      grouped.set(date, [...(grouped.get(date) || []), row]);
+      const values = grouped.get(date);
+      if (values) values.push(row);
+      else grouped.set(date, [row]);
     }
     return new Map([...grouped].map(([date, values]) => {
       const start = values[0]?.value || 0;

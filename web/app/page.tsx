@@ -107,12 +107,17 @@ function TradeMentorHome() {
       const now = Date.now();
       if (latest && now - Number(latest.at) < 10_000) return;
       const next: PortfolioEquityRow = { at: now, total, hyperliquid, aster };
+      const persistHistory = () => {
+        const overflow = history.length - 20_000;
+        if (overflow > 0) history.splice(0, overflow);
+        window.localStorage.setItem(key, JSON.stringify(history));
+      };
       if (!isCompletePortfolioSnapshot(latest, next)) {
-        window.localStorage.setItem(key, JSON.stringify(history.slice(-20_000)));
+        persistHistory();
         return;
       }
       history.push(next);
-      window.localStorage.setItem(key, JSON.stringify(history.slice(-20_000)));
+      persistHistory();
     } catch { /* Een beschadigde lokale historie mag actuele exchange-data nooit blokkeren. */ }
   }, [snapshots.hyperliquid.updatedAt, snapshots.aster.updatedAt, user?.uid]);
 
@@ -960,8 +965,20 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
 function TodayRealizedMetric({ trades, available, onChanged }: { trades: ClosedTradeView[]; available: boolean; onChanged:()=>void }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(timer);
+    let timer = 0;
+    const scheduleNextDay = () => {
+      window.clearTimeout(timer);
+      const current = new Date();
+      const nextDay = new Date(current);
+      nextDay.setHours(24, 0, 0, 50);
+      timer = window.setTimeout(() => { setNow(new Date()); scheduleNextDay(); }, Math.max(1000, nextDay.getTime() - Date.now()));
+    };
+    const refreshAfterResume = () => {
+      if (document.visibilityState === "visible") { setNow(new Date()); scheduleNextDay(); }
+    };
+    scheduleNextDay();
+    document.addEventListener("visibilitychange", refreshAfterResume);
+    return () => { window.clearTimeout(timer); document.removeEventListener("visibilitychange", refreshAfterResume); };
   }, []);
   const { today } = realizedCalendar(trades.map((trade) => ({ closedAt: trade.closedAt, realizedPnlUsd: trade.pnl })), now);
   return <>
