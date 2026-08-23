@@ -1,0 +1,44 @@
+name: Diagnose portfolio growth live revisions
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diagnose-portfolio-daily-growth-live.yml]
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-production
+      GCP_REGION: europe-west4
+      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+      DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Record current live revisions
+        shell: bash
+        run: |
+          python - <<'PY' > .portfolio-daily-growth-diagnostic
+          import json,subprocess,datetime
+          def describe(service):
+              raw=subprocess.check_output(['gcloud','run','services','describe',service,'--project','tradementor-production','--region','europe-west4','--format=json'],text=True)
+              d=json.loads(raw); live=[r for r in d.get('status',{}).get('traffic',[]) if int(r.get('percent',0))==100]
+              return (live[0].get('revisionName','') if len(live)==1 else repr(live),d.get('status',{}).get('url',''))
+          b,bu=describe('tradementor-api'); w,wu=describe('amar-bot-v44-direct-install')
+          print('backend-revision='+b); print('backend-url='+bu); print('web-revision='+w); print('web-url='+wu); print('checked-at='+datetime.datetime.now(datetime.timezone.utc).isoformat())
+          PY
+          git config user.name 'TradeMentor Control Plane'
+          git config user.email 'actions@users.noreply.github.com'
+          git add .portfolio-daily-growth-diagnostic
+          git commit -m 'Record portfolio growth live revision diagnostic'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
