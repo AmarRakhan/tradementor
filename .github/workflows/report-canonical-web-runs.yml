@@ -1,0 +1,21 @@
+name: Report canonical web deployment runs
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/report-canonical-web-runs.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: amar-crypto-bot-2026-cloud, fetch-depth: 0}
+      - name: Record recent canonical deployment runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run list --workflow deploy-shared-v44-testapp.yml --branch amar-crypto-bot-2026-cloud --limit 10 --json databaseId,headSha,status,conclusion,displayTitle,event,createdAt,updatedAt,url > .canonical-web-runs.json
+          git config user.name 'TradeMentor Control Plane'; git config user.email 'actions@users.noreply.github.com'
+          git add .canonical-web-runs.json; git commit -m 'Record canonical web deployment run status'; git push origin HEAD:amar-crypto-bot-2026-cloud
