@@ -1,0 +1,35 @@
+name: Verify canonical portfolio web deployment
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/verify-canonical-portfolio-web.yml]
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPECTED: 783b0b03
+      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+      DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: amar-crypto-bot-2026-cloud, fetch-depth: 0}
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Wait for exact canonical revision
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            rev="$(gcloud run services describe amar-bot-v44-direct-install --project tradementor-production --region europe-west4 --format=json | python -c 'import json,sys; d=json.load(sys.stdin); rows=[r for r in d["status"].get("traffic",[]) if int(r.get("percent",0))==100]; print(rows[0]["revisionName"] if len(rows)==1 else "")')"
+            if [[ "$rev" == *"$EXPECTED"* ]]; then echo "$rev" > .portfolio-web-live-verified; break; fi
+            sleep 10
+          done
+          test -s .portfolio-web-live-verified
+          git config user.name 'TradeMentor Control Plane'; git config user.email 'actions@users.noreply.github.com'
+          git add .portfolio-web-live-verified; git commit -m 'Verify canonical portfolio web live'; git push origin HEAD:amar-crypto-bot-2026-cloud
