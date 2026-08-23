@@ -1,0 +1,26 @@
+name: Check canonical web 100 percent revision
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/check-portfolio-web-live-100.yml]
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+      DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: amar-crypto-bot-2026-cloud, fetch-depth: 0}
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud run services describe amar-bot-v44-direct-install --project tradementor-production --region europe-west4 --format=json | python -c 'import json,sys; d=json.load(sys.stdin); rows=[r for r in d["status"].get("traffic",[]) if int(r.get("percent",0))==100]; assert len(rows)==1; print(rows[0]["revisionName"])' > .portfolio-web-live-100
+          git config user.name 'TradeMentor Control Plane'; git config user.email 'actions@users.noreply.github.com'
+          git add .portfolio-web-live-100; git commit -m 'Record canonical portfolio web revision'; git push origin HEAD:amar-crypto-bot-2026-cloud
