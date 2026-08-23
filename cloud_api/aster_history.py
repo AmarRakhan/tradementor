@@ -102,6 +102,38 @@ def merge_realized_events(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]
     return sorted(merged.values(), key=lambda row: str(row.get("closedAt", "")), reverse=True)
 
 
+def merge_recent_trade_activity(*groups: dict[str, list[dict[str, Any]]], limit: int = 1000) -> dict[str, list[dict[str, Any]]]:
+    """Merge rotating Aster fill batches without dropping previously confirmed recent activity."""
+    maximum = max(20, int(limit))
+
+    def row_key(row: dict[str, Any]) -> str:
+        stable = str(row.get("id", row.get("exchangeTradeId", ""))).strip()
+        return "|".join((
+            str(row.get("symbol", "")).upper(), str(row.get("side", "")).upper(),
+            str(row.get("action", "")).upper(), str(row.get("orderSide", "")).upper(),
+            stable or str(row.get("timestampMs", row.get("executedAt", ""))),
+        ))
+
+    def row_time(row: dict[str, Any]) -> tuple[int, str]:
+        try:
+            stamp = int(float(row.get("timestampMs", 0) or 0))
+        except (TypeError, ValueError):
+            stamp = 0
+        return stamp, row_key(row)
+
+    result: dict[str, list[dict[str, Any]]] = {}
+    for kind in ("entries", "exits"):
+        merged: dict[str, dict[str, Any]] = {}
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            for row in group.get(kind, []):
+                if isinstance(row, dict):
+                    merged[row_key(row)] = row
+        result[kind] = sorted(merged.values(), key=row_time, reverse=True)[:maximum]
+    return result
+
+
 def strategy_by_order_id_from_orders(
     orders: list[dict[str, Any]], strategy_by_intent: dict[str, str] | None = None,
 ) -> dict[str, str]:

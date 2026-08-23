@@ -160,7 +160,15 @@ def bounded_history_symbols(priority_symbols: Iterable[str], background_symbols:
     maximum = max(1, int(maximum_symbols))
     priority = list(dict.fromkeys(str(value).upper() for value in priority_symbols if str(value)))
     if len(priority) >= maximum:
-        return priority[:maximum]
+        fixed_count = max(1, maximum // 2)
+        fixed = priority[:fixed_count]
+        backlog = priority[fixed_count:min(len(priority), 20)]
+        if not backlog:
+            return fixed[:maximum]
+        rotating_count = maximum - len(fixed)
+        offset = (max(0, int(rotation_slot)) * rotating_count) % len(backlog)
+        rotated = backlog[offset:] + backlog[:offset]
+        return fixed + rotated[:rotating_count]
     background = [value for value in dict.fromkeys(
         str(item).upper() for item in background_symbols if str(item)
     ) if value not in priority]

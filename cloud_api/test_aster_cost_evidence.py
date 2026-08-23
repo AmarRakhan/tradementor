@@ -82,6 +82,15 @@ def test_dashboard_history_scan_is_bounded_and_rotates_background_symbols():
     assert set(first[1:]).isdisjoint(set(second[1:]))
 
 
+def test_dashboard_history_scan_keeps_newest_priority_and_rotates_priority_backlog():
+    priority=[f"P{i:02d}USDT" for i in range(20)]
+    first=bounded_history_symbols(priority,[],maximum_symbols=8,rotation_slot=0)
+    second=bounded_history_symbols(priority,[],maximum_symbols=8,rotation_slot=1)
+    assert first[:4] == second[:4] == priority[:4]
+    assert first[4:] == priority[4:8]
+    assert second[4:] == priority[8:12]
+
+
 def test_strategy3_ownership_recovers_only_from_explicit_s3_audit_and_fill():
     from aster_strategy2_runtime import recover_audited_ownership
     stamp=datetime(2026,8,14,12,tzinfo=timezone.utc)

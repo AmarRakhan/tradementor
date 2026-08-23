@@ -69,7 +69,7 @@ from aster_gateway import (
     build_hedge_order_payload,
 )
 from aster_signing import AsterSecret, local_eip712_signer
-from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, trade_events_from_fills
+from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -3253,10 +3253,12 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
                 continue
             fills.extend(row for row in rows if isinstance(row, dict))
         confirmed = closed_trades_from_fills(fills)
-        activity = recent_trade_activity_from_fills(
+        fresh_activity = recent_trade_activity_from_fills(
             fills, active_positions=active_positions, strategy_by_intent=strategy_by_intent,
             strategy_by_order_id=strategy_by_order_id,
         )
+        previous_activity = cached[3] if cached else {"entries": [], "exits": []}
+        activity = merge_recent_trade_activity(previous_activity, fresh_activity)
         _persist_confirmed_aster_closed_trades(user, confirmed)
         with _cache_lock:
             _aster_closed_trades_cache[uid] = (time.monotonic(), confirmed, realized_events, activity)

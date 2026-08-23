@@ -1,4 +1,4 @@
-from aster_history import closed_trade_from_fill, closed_trades_from_fills, realized_events_from_income, merge_realized_events, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
+from aster_history import closed_trade_from_fill, closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
 
 
 def test_long_sell_is_confirmed_close_even_at_breakeven():
@@ -43,6 +43,19 @@ def test_durable_realized_ledger_never_loses_an_older_close_when_live_window_mov
     merged = merge_realized_events(older, newest, newest)
     assert len(merged) == 2
     assert sum(row["realizedPnlUsd"] for row in merged) == 3.0
+
+
+def test_recent_activity_merge_keeps_rotated_exits_and_deduplicates_fresh_rows():
+    older = {"entries": [], "exits": [
+        {"id": "o1", "symbol": "OLDUSDT", "side": "LONG", "action": "EXIT", "timestampMs": 1000},
+    ]}
+    fresh = {"entries": [], "exits": [
+        {"id": "o2", "symbol": "NEWUSDT", "side": "SHORT", "action": "EXIT", "timestampMs": 3000},
+        {"id": "o1", "symbol": "OLDUSDT", "side": "LONG", "action": "EXIT", "timestampMs": 1000, "realizedPnlUsd": 2},
+    ]}
+    merged = merge_recent_trade_activity(older, fresh)
+    assert [row["id"] for row in merged["exits"]] == ["o2", "o1"]
+    assert merged["exits"][1]["realizedPnlUsd"] == 2
 
 
 def test_trade_events_reconstruct_long_entry_dcas_and_tp():
