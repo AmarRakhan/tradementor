@@ -1,0 +1,24 @@
+name: Trigger canonical V45 deployment for portfolio growth
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/trigger-canonical-web-portfolio-growth.yml]
+permissions:
+  contents: write
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Touch canonical deployment workflow only
+        shell: bash
+        run: |
+          printf '\n# portfolio-growth-live-trigger-20260823\n' >> .github/workflows/deploy-shared-v44-testapp.yml
+          git config user.name 'TradeMentor Control Plane'
+          git config user.email 'actions@users.noreply.github.com'
+          git add .github/workflows/deploy-shared-v44-testapp.yml
+          git commit -m 'Trigger canonical V45 web deployment for portfolio growth'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
