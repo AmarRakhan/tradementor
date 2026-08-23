@@ -20,13 +20,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.fragment.app.FragmentActivity
 import com.reown.appkit.ui.AppKitSheet
 import com.tradementor.app.navigation.MainDestination
@@ -109,17 +107,14 @@ fun MainScreen() {
         Box(modifier = Modifier.padding(innerPadding)) {
             when (selectedDestination) {
                 MainDestination.Mexc -> MexcAutoTradeScreen()
-                MainDestination.Hyperliquid -> Unit
+                MainDestination.Hyperliquid -> LivePositionsScreen(
+                    onOpenWallet = openWallet,
+                    onOpenStrategySettings = { showHyperliquidStrategy = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
                 MainDestination.Aster -> AsterScreen()
                 MainDestination.Wallet -> WalletScreen(onOpenWallet = openWallet, onOpenSettings = { showSettings = true })
             }
-            LivePositionsScreen(
-                onOpenWallet = openWallet,
-                onOpenStrategySettings = { showHyperliquidStrategy = true },
-                modifier = Modifier.fillMaxSize()
-                    .alpha(if (selectedDestination == MainDestination.Hyperliquid) 1f else 0f)
-                    .zIndex(if (selectedDestination == MainDestination.Hyperliquid) 1f else -1f)
-            )
         }
     }
 }
