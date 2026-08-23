@@ -3952,6 +3952,12 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
                 reference_cashflow=safe_float(state.get("referenceCashflow"));last_cashflow=safe_float(state.get("lastObservedCashflow"))
                 if previous_equity>0 and last_equity>0:
                     finished=daily_return_percentage(previous_equity,last_equity,last_cashflow-reference_cashflow)
+                    previous_avg=average_daily_return(safe_float(state.get("completedReturnSum")),int(state.get("completedReturnCount",0)),finished)
+                    completed_day={"date":str(state.get("lastObservedDate")),"startEquity":round(previous_equity,8),"endEquity":round(last_equity,8),
+                        "usdChange":round((last_equity-(last_cashflow-reference_cashflow))-previous_equity,8),"percentage":round(finished,8),
+                        "averageDailyPercentage":round(previous_avg,8),"levels":max(0,int(math.floor(finished/previous_avg+1e-12))) if previous_avg>0 and finished>0 else 0}
+                    history=list(state.get("history") or []);history=[row for row in history if isinstance(row,dict) and row.get("date")!=completed_day["date"]]
+                    history.append(completed_day);state["history"]=history[-120:]
                     state["completedReturnSum"]=safe_float(state.get("completedReturnSum"))+finished
                     state["completedReturnCount"]=int(state.get("completedReturnCount",0))+1
                     state["referenceEquity"]=last_equity;state["referenceCashflow"]=last_cashflow
@@ -3962,8 +3968,13 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
             average_pct=average_daily_return(completed_sum,completed_count,today_pct)
             state["updatedAt"]=now
             txn.set(ref,{"dailyGrowth":state},merge=True)
-            return {"reliable":True,"todayPercentage":round(today_pct,8),"averageDailyPercentage":round(average_pct,8),
-                "measuredDays":completed_count+1,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,"referenceDate":state.get("referenceDate")}
+            today_usd=(equity-(cumulative_cashflow-safe_float(state.get("referenceCashflow"))))-safe_float(state.get("referenceEquity"))
+            today_levels=max(0,int(math.floor(today_pct/average_pct+1e-12))) if average_pct>0 and today_pct>0 else 0
+            history=list(state.get("history") or [])
+            return {"reliable":True,"todayPercentage":round(today_pct,8),"todayUsd":round(today_usd,8),"todayLevels":today_levels,
+                "averageDailyPercentage":round(average_pct,8),"measuredDays":completed_count+1,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,
+                "referenceDate":state.get("referenceDate"),"dayStartEquity":round(safe_float(state.get("referenceEquity")),8),
+                "currentEquity":round(equity,8),"history":history[-120:]}
         return update(transaction)
     except Exception as exc:
         return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,

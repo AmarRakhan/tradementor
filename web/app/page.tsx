@@ -25,15 +25,16 @@ import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
 import { AsterBotStatus } from "@/components/aster-bot-status";
 import { BotHealthCard } from "@/components/bot-health-card";
+import { JourneyView } from "@/components/journey-view";
 
-type Destination = "hyperliquid" | "aster" | "positions" | "risk" | "wallet" | "admin";
+type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
 type InterfaceMode = "legacy" | "premium";
 type AppSkin = "original" | "suriname-heritage";
 type ChartScope = TradingExchange | "portfolio";
 type PremiumSection = "dashboard" | "screener" | "bots" | "risk" | "portfolio" | "exchanges" | "wallet" | "academy" | "settings";
 
-const destinationIds = new Set<Destination>(["hyperliquid", "aster", "positions", "risk", "wallet", "admin"]);
+const destinationIds = new Set<Destination>(["hyperliquid", "aster", "journey", "positions", "risk", "wallet", "admin"]);
 
 function destinationFromLocation(): Destination | null {
   const route = window.location.hash.replace(/^#\/?/, "").split(/[/?]/, 1)[0];
@@ -51,6 +52,7 @@ function asterActionsAreFresh(snapshot: ExchangeSnapshot, cloudReady: boolean) {
 const destinations: Array<{ id: Destination; label: string; glyph: string }> = [
   { id: "hyperliquid", label: "HYPERLIQUID", glyph: "HL" },
   { id: "aster", label: "ASTER", glyph: "AS" },
+  { id: "journey", label: "JOURNEY", glyph: "J" },
   { id: "positions", label: "POSITIONS", glyph: "P" },
   { id: "risk", label: "RISICO", glyph: "R" },
   { id: "wallet", label: "WALLET", glyph: "W" },
@@ -278,7 +280,7 @@ function TradeMentorHome() {
         </div>
 
         <div className="content">
-          {active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} showHyperliquidTab={showHyperliquidTab} onShowHyperliquidTabChange={changeHyperliquidTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} onStrategy2Confirmed={confirmAsterStrategy2} />}
+          {active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "journey" ? <JourneyView snapshots={snapshots} /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} showHyperliquidTab={showHyperliquidTab} onShowHyperliquidTabChange={changeHyperliquidTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} onStrategy2Confirmed={confirmAsterStrategy2} />}
         </div>
       </section>
 
