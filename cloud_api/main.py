@@ -124,7 +124,7 @@ from hyperliquid_scanner import (
 from portfolio_risk import (
     ExchangeRiskSnapshot, PortfolioRiskLimits, evaluate_risk_increase,
 )
-from portfolio_growth import estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
+from portfolio_growth import PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from reliability_monitor import event_key as reliability_event_key, event_payload as reliability_event_payload, counts as reliability_counts, overall as reliability_overall
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
@@ -3924,6 +3924,51 @@ def _portfolio_growth_client(user:dict[str,Any],*,live:bool)->AsterV3Client:
         sign_message=local_eip712_signer(secret),live_authorized=live)
 
 
+
+def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
+    uid=str(user["uid"]);ref=portfolio_growth_reference(uid);now=datetime.now(timezone.utc)
+    amsterdam=ZoneInfo("Europe/Amsterdam");local_now=now.astimezone(amsterdam)
+    if local_now.date().isoformat()<PORTFOLIO_GROWTH_START_DATE:
+        return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,"blockReason":"Meting is nog niet gestart"}
+    start_local=datetime(2026,8,23,0,0,0,tzinfo=amsterdam)
+    client=_portfolio_growth_client(user,live=False)
+    try:
+        account=client.account_information();equity,_,_,_,_=aster_account_information_values(account)
+        if equity<=0:raise ValueError("Actuele portfolio/equity is niet positief")
+        income=[]
+        for income_type in ("TRANSFER","WELCOME_BONUS","INSURANCE_CLEAR"):
+            income.extend(client.income_history(income_type=income_type,start_time=utc_ms(start_local),limit=1000))
+        cumulative_cashflow=external_cashflow_since(income,utc_ms(start_local))
+        today=local_now.date().isoformat();transaction=db.transaction()
+        @firestore.transactional
+        def update(txn:Any)->dict[str,Any]:
+            doc=ref.get(transaction=txn);stored=doc.to_dict() or {};state=dict(stored.get("dailyGrowth") or {})
+            if state.get("startDate")!=PORTFOLIO_GROWTH_START_DATE or safe_float(state.get("referenceEquity"))<=0:
+                state={"startDate":PORTFOLIO_GROWTH_START_DATE,"referenceDate":today,"referenceEquity":equity,
+                    "referenceCashflow":cumulative_cashflow,"lastObservedDate":today,"lastObservedEquity":equity,
+                    "lastObservedCashflow":cumulative_cashflow,"completedReturnSum":0.0,"completedReturnCount":0}
+            elif state.get("lastObservedDate")!=today:
+                previous_equity=safe_float(state.get("referenceEquity"));last_equity=safe_float(state.get("lastObservedEquity"))
+                reference_cashflow=safe_float(state.get("referenceCashflow"));last_cashflow=safe_float(state.get("lastObservedCashflow"))
+                if previous_equity>0 and last_equity>0:
+                    finished=daily_return_percentage(previous_equity,last_equity,last_cashflow-reference_cashflow)
+                    state["completedReturnSum"]=safe_float(state.get("completedReturnSum"))+finished
+                    state["completedReturnCount"]=int(state.get("completedReturnCount",0))+1
+                    state["referenceEquity"]=last_equity;state["referenceCashflow"]=last_cashflow
+                    state["referenceDate"]=str(state.get("lastObservedDate"))
+            state["lastObservedDate"]=today;state["lastObservedEquity"]=equity;state["lastObservedCashflow"]=cumulative_cashflow
+            today_pct=daily_return_percentage(safe_float(state.get("referenceEquity")),equity,cumulative_cashflow-safe_float(state.get("referenceCashflow")))
+            completed_count=int(state.get("completedReturnCount",0));completed_sum=safe_float(state.get("completedReturnSum"))
+            average_pct=average_daily_return(completed_sum,completed_count,today_pct)
+            state["updatedAt"]=now
+            txn.set(ref,{"dailyGrowth":state},merge=True)
+            return {"reliable":True,"todayPercentage":round(today_pct,8),"averageDailyPercentage":round(average_pct,8),
+                "measuredDays":completed_count+1,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,"referenceDate":state.get("referenceDate")}
+        return update(transaction)
+    except Exception as exc:
+        return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,
+            "blockReason":f"Dagelijkse portfoliogroei niet betrouwbaar beschikbaar: {str(exc)[:180]}"}
+
 def _portfolio_growth_estimate(user:dict[str,Any],*,persist_quote:bool=True)->dict[str,Any]:
     uid=str(user["uid"]);ref=portfolio_growth_reference(uid);stored=ref.get().to_dict() or {}
     baseline=safe_float(stored.get("baseline"));set_at=stored.get("baselineSetAt")
@@ -3959,6 +4004,11 @@ def _portfolio_growth_estimate(user:dict[str,Any],*,persist_quote:bool=True)->di
         payload={**payload,"quoteId":quote_id,"quoteExpiresAt":expires.isoformat()}
     return payload
 
+
+
+@app.get("/v1/me/aster/portfolio-growth/daily")
+def get_aster_portfolio_daily_growth(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    return _portfolio_daily_growth(user)
 
 @app.get("/v1/me/aster/portfolio-growth")
 def get_aster_portfolio_growth(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:

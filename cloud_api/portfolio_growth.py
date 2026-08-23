@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 EXTERNAL_CASHFLOW_TYPES = frozenset({"TRANSFER", "WELCOME_BONUS", "INSURANCE_CLEAR"})
 ENTRY_INTENT_WORDS = ("open", "entry", "base", "dca", "reopen", "reset")
+PORTFOLIO_GROWTH_START_DATE = "2026-08-23"
 
 
 def _finite(value: Any) -> float:
@@ -60,6 +61,23 @@ class CloseEstimate:
             "blockReason": self.block_reason,
         }
 
+
+
+def daily_return_percentage(previous_equity: Any, current_equity: Any, external_cashflow: Any = 0) -> float:
+    previous = _finite(previous_equity)
+    current = _finite(current_equity)
+    cashflow = _finite(external_cashflow)
+    if previous <= 0:
+        raise ValueError("Vorige dagwaarde moet positief zijn")
+    return ((current - cashflow) - previous) / previous * 100.0
+
+
+def average_daily_return(completed_sum: Any, completed_count: int, today_return: Any) -> float:
+    total = _finite(completed_sum) + _finite(today_return)
+    count = int(completed_count) + 1
+    if count <= 0:
+        raise ValueError("Aantal gemeten dagen moet positief zijn")
+    return total / count
 
 def external_cashflow_since(rows: Iterable[dict[str, Any]], since_ms: int) -> float:
     total = 0.0

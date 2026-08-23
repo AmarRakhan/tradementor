@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import pytest
 
-from portfolio_growth import estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
+from portfolio_growth import (PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms)
 
 
 def position(notional=100, side="LONG"):
@@ -58,3 +58,15 @@ def test_entry_order_classification_is_fail_closed_for_unknown():
 
 def test_utc_ms():
     assert utc_ms(datetime(1970,1,1,0,0,1,tzinfo=timezone.utc)) == 1000
+
+
+def test_daily_growth_start_and_percentage_math():
+    assert PORTFOLIO_GROWTH_START_DATE == "2026-08-23"
+    assert daily_return_percentage(203, 224) == pytest.approx(10.3448275862)
+    assert daily_return_percentage(200, 190) == pytest.approx(-5.0)
+
+
+def test_daily_growth_removes_external_cashflow_and_averages_arithmetically():
+    assert daily_return_percentage(200, 310, 100) == pytest.approx(5.0)
+    assert daily_return_percentage(200, 155, -50) == pytest.approx(2.5)
+    assert average_daily_return(5.0, 2, 4.0) == pytest.approx(3.0)
