@@ -8,7 +8,8 @@
             android:label="Amar Crypto Bot Auto"
             android:resizeableActivity="true"
             android:screenOrientation="landscape"
-            tools:node="merge">
+            tools:node="merge"
+            tools:replace="android:label">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
