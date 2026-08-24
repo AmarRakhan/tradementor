@@ -9,6 +9,7 @@ import "./globals.css";
 import "./premium.css";
 import "./premium-next.css";
 import "./suriname-heritage.css";
+import "./aster-tables.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
