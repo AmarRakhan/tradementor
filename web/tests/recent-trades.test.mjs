@@ -45,7 +45,7 @@ test("missing exchange return falls back to trade notional without leverage ROE"
 
 test("all compact trade tables expose the exact six approved columns", () => {
   assert.match(component, /<span>PAIR<\/span><span>LEV<\/span><span>CLOSE<\/span><span>MARGIN<\/span><span>%<\/span><span>P&amp;L<\/span>/);
-  assert.match(component, />Close<\/button>/);
+  assert.match(component, />\s*Close\s*<\/button>/);
   assert.match(component, /function money\(value: unknown\)/);
   assert.match(component, /`\$\$\{amount\(n\)\}`/);
   assert.equal((component.match(/compactLimit=\{5\}/g) || []).length, 2);
