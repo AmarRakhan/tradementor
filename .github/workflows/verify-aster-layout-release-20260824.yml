@@ -1,0 +1,106 @@
+name: Verify Aster layout release 20260824
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/verify-aster-layout-release-20260824.yml]
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  TARGET_SHA: e499d1ca2e1cfbbd91cdee4a6e8f1031dac01ab4
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  VERIFY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Run lint, production build and regression tests
+        working-directory: web
+        run: |
+          npm ci
+          npm run lint
+          npm test
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.VERIFY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Wait for exact web commit to own canonical traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          for attempt in $(seq 1 75); do
+            gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+            readarray -t values < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1],encoding='utf-8'))
+          live=[x for x in d['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          if len(live)!=1:
+              print('');print(d['status'].get('url',''));raise SystemExit
+          print(live[0].get('revisionName',''))
+          print(d['status'].get('url',''))
+          PY
+            )
+            revision="${values[0]}"
+            canonical_url="${values[1]}"
+            if [ -n "$revision" ]; then
+              image="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+              if [[ "$image" == *":$TARGET_SHA" ]]; then
+                found=1
+                break
+              fi
+            fi
+            sleep 20
+          done
+          test "$found" = 1
+          test -n "$canonical_url"
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$canonical_url/" > "$RUNNER_TEMP/live.html"
+          grep -q 'Webapp versie 45' "$RUNNER_TEMP/live.html"
+          printf '%s\n' "$revision" > "$RUNNER_TEMP/revision"
+          printf '%s\n' "$canonical_url" > "$RUNNER_TEMP/url"
+          printf '%s\n' "$image" > "$RUNNER_TEMP/image"
+
+      - name: Record successful release verification
+        shell: bash
+        run: |
+          python - "$RUNNER_TEMP/revision" "$RUNNER_TEMP/url" "$RUNNER_TEMP/image" <<'PY'
+          import datetime,json,sys
+          payload={
+            'verifiedCommit':'e499d1ca2e1cfbbd91cdee4a6e8f1031dac01ab4',
+            'revision':open(sys.argv[1]).read().strip(),
+            'liveUrl':open(sys.argv[2]).read().strip(),
+            'image':open(sys.argv[3]).read().strip(),
+            'verifiedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'checks':['npm run lint','npm test (production build + all web regression tests)','canonical Cloud Run 100% traffic','live root reachable'],
+          }
+          open('.aster-layout-release-verification.json','w',encoding='utf-8').write(json.dumps(payload,indent=2)+'\n')
+          PY
+          git config user.name 'TradeMentor Release Verifier'
+          git config user.email 'actions@users.noreply.github.com'
+          git add .aster-layout-release-verification.json
+          git commit -m 'Record verified Aster layout release'
+          git pull --rebase origin amar-crypto-bot-2026-cloud
+          git push origin HEAD:amar-crypto-bot-2026-cloud
