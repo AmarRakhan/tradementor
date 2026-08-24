@@ -264,7 +264,7 @@ const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, 
         </span>
       </div>
       <span className="recent-leverage" role="cell">{leverage === null ? "—" : `${leverage}x`}</span>
-      <span className="recent-close-cell" role="cell"><ClosePositionControl position={openPosition} onClosed={onClosed} /></span>
+      <span className="recent-close-cell" role="cell">{closed ? null : <ClosePositionControl position={openPosition} onClosed={onClosed} />}</span>
       <span className="recent-margin" role="cell">{money(margin)}</span>
       <strong role="cell" className={pct === null ? "neutral" : pct >= 0 ? "profit" : "loss"}>{percentage(pct)}</strong>
       <strong role="cell" className={tone}>{amount(result, true)}</strong>

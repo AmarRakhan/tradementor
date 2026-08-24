@@ -107,3 +107,8 @@ test("manual Aster close is confirmed, idempotent in the browser and refreshes e
 test("percent heading aligns with percent values", () => {
   assert.match(css, /span:nth-child\(5\).*strong:first-of-type/);
 });
+
+
+test("closed trade rows keep the Close column empty instead of rendering a disabled button", () => {
+  assert.match(component, /recent-close-cell[^\n]*\{closed \? null : <ClosePositionControl/);
+});
