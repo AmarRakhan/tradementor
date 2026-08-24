@@ -104,16 +104,26 @@ function activityLeverage(trade: Activity, position: OpenPosition | null) {
   return live !== null && live >= 1 ? Math.round(live) : null;
 }
 
+function openPositionMargin(position: OpenPosition | null) {
+  if (!position) return null;
+  const direct = finite(position.initialMarginUsd);
+  if (direct !== null && direct > 0) return direct;
+  const notional = finite(position.notionalUsd);
+  const leverage = finite(position.leverage);
+  if (notional !== null && notional > 0 && leverage !== null && leverage > 0) return notional / leverage;
+  return direct === 0 && notional === 0 ? 0 : null;
+}
+
 function activityMargin(trade: Activity, position: OpenPosition | null, leverage: number | null) {
   for (const value of [trade.marginUsd, trade.initialMarginUsd]) {
     const direct = finite(value);
-    if (direct !== null && direct >= 0) return direct;
+    if (direct !== null && direct > 0) return direct;
   }
-  const live = finite(position?.initialMarginUsd);
-  if (live !== null && live >= 0) return live;
+  const live = openPositionMargin(position);
+  if (live !== null) return live;
   if (leverage && leverage > 0) {
     const basis = finite(trade.costBasisUsd) ?? finite(trade.executedNotionalUsd);
-    if (basis !== null && basis >= 0) return basis / leverage;
+    if (basis !== null && basis > 0) return basis / leverage;
   }
   return null;
 }
@@ -304,7 +314,7 @@ function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition
       </div>
       <span className="recent-leverage" role="cell">{leverage === null ? "—" : `${Math.round(leverage)}x`}</span>
       <span className="recent-close-cell" role="cell"><ClosePositionControl position={position} onClosed={onClosed} /></span>
-      <span className="recent-margin" role="cell">{money(position.initialMarginUsd)}</span>
+      <span className="recent-margin" role="cell">{money(openPositionMargin(position))}</span>
       <strong role="cell" className={pct === null ? "neutral" : pct >= 0 ? "profit" : "loss"}>{percentage(pct)}</strong>
       <strong role="cell" className={tone}>{amount(pnl, true)}</strong>
     </div>

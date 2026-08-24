@@ -60,11 +60,13 @@ test("top profit entry timestamp is reconstructed from confirmed activity, never
   assert.doesNotMatch(component, /Date\.now\(\).*openedAt|updatedAt.*openedAt/);
 });
 
-test("margin prefers Aster initial margin and only derives from notional with a proven leverage", () => {
+test("margin prefers positive Aster initial margin and falls back to live position size divided by proven leverage", () => {
+  assert.match(component, /function openPositionMargin/);
+  assert.match(component, /direct !== null && direct > 0/);
+  assert.match(component, /notional \/ leverage/);
   assert.match(component, /trade\.marginUsd, trade\.initialMarginUsd/);
-  assert.match(component, /position\?\.initialMarginUsd/);
   assert.match(component, /basis \/ leverage/);
-  assert.match(component, /money\(position\.initialMarginUsd\)/);
+  assert.match(component, /money\(openPositionMargin\(position\)\)/);
 });
 
 test("mobile six-column grid is bounded and keeps headers and Close position stable", () => {
