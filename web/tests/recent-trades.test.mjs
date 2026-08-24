@@ -4,13 +4,13 @@ import test from "node:test";
 import { pageActivity, reliableReturnPct, sortedActivity } from "../lib/recent-trades.mjs";
 
 const component = await readFile(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
-const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const css = await readFile(new URL("../app/aster-tables.css", import.meta.url), "utf8");
 
-test("top profit, closed and opened sections render in the required order", () => {
+test("top profit, latest entries and latest exits render in the approved order", () => {
   const top = component.indexOf('<TopProfitCard rows={positions}');
-  const closed = component.indexOf('title="Laatste 20 uitgestapte trades" rows={exits}');
   const opened = component.indexOf('title="Laatste 5 ingestapte trades" rows={entries}');
-  assert.ok(top >= 0 && closed > top && opened > closed);
+  const closed = component.indexOf('title="Laatste 5 uitgestapte trades" rows={exits}');
+  assert.ok(top >= 0 && opened > top && closed > opened);
 });
 
 test("real exchange time wins over a newer import/update time", () => {
@@ -43,19 +43,37 @@ test("missing exchange return falls back to trade notional without leverage ROE"
   assert.equal(reliableReturnPct({ side: "SHORT", realizedPnlUsd: 5, closedValueUsd: 45 }), 10);
 });
 
-test("trade rows expose only percent and P&L value columns", () => {
-  assert.match(component, /<span>%<\/span><span>P&amp;L<\/span>/);
+test("all compact trade tables expose the exact six approved columns", () => {
+  assert.match(component, /<span>PAIR<\/span><span>LEV<\/span><span>CLOSE<\/span><span>MARGIN<\/span><span>%<\/span><span>P&amp;L<\/span>/);
+  assert.match(component, />Close<\/button>/);
+  assert.match(component, /function money\(value: unknown\)/);
+  assert.match(component, /`\$\$\{amount\(n\)\}`/);
+  assert.equal((component.match(/compactLimit=\{5\}/g) || []).length, 2);
+  assert.doesNotMatch(component, /Laatste 20 (?:in|uit)gestapte trades/);
   assert.doesNotMatch(component, /INGEKOCHT|INGESTAPT \(\$\)|VERKOCHT|NU WAARD|Perp ·|Niet aan strategie gekoppeld/);
-  assert.match(component, /Toon alle/);
-  assert.match(component, /Terug naar laatste \{compactLimit\}/);
-  assert.match(component, /compactLimit=\{5\}/);
-  assert.match(component, /Laad nog 100/);
 });
 
-test("mobile layout has two bounded value columns and reduced-motion fallback", () => {
-  assert.match(css, /repeat\(2,minmax\(/);
-  assert.match(css, /prefers-reduced-motion:reduce/);
-  assert.doesNotMatch(css, /content:"IN"|content:"NU"/);
+test("top profit entry timestamp is reconstructed from confirmed activity, never a poll timestamp", () => {
+  assert.match(component, /function currentCycleOpenedAt/);
+  assert.match(component, /activityTime\(a\) - activityTime\(b\)/);
+  assert.match(component, /openedAt=\{currentCycleOpenedAt\(position, entries, exits\)\}/);
+  assert.doesNotMatch(component, /Date\.now\(\).*openedAt|updatedAt.*openedAt/);
+});
+
+test("margin prefers Aster initial margin and only derives from notional with a proven leverage", () => {
+  assert.match(component, /trade\.marginUsd, trade\.initialMarginUsd/);
+  assert.match(component, /position\?\.initialMarginUsd/);
+  assert.match(component, /basis \/ leverage/);
+  assert.match(component, /money\(position\.initialMarginUsd\)/);
+});
+
+test("mobile six-column grid is bounded and keeps headers and Close position stable", () => {
+  assert.match(css, /\.aster-six-column-head,\.aster-six-column-row\{display:grid!important/);
+  assert.match(css, /grid-template-columns:minmax\(0,1fr\) 28px 46px 58px 40px 42px!important/);
+  assert.match(css, /\.recent-trades-head\.aster-six-column-head|\.aster-six-column-head\{display:grid!important/);
+  assert.match(css, /overflow-x:hidden/);
+  assert.match(css, /width:44px;min-width:44px;max-width:44px/);
+  assert.match(css, /contain:layout/);
 });
 
 test("manual Aster close is confirmed, idempotent in the browser and refreshes exchange truth", () => {
