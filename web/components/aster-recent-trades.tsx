@@ -40,7 +40,7 @@ type OpenPosition = {
   roiPct?: number | null;
   leverage?: number | null;
   initialMarginUsd?: number | null;
-  openedAt?: string | number;
+  openedAt?: unknown;
 };
 
 const suffixes = ["USDT", "USDC", "USD"];
@@ -80,9 +80,27 @@ function percentage(value: unknown) {
   return `${n > 0 ? "+" : ""}${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)}%`;
 }
 
+function exchangeTimestampMs(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value < 10_000_000_000 ? value * 1000 : value;
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  if (value && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    const seconds = finite(row.seconds);
+    const nanoseconds = finite(row.nanoseconds) || 0;
+    if (seconds !== null && seconds > 0) return seconds * 1000 + Math.floor(nanoseconds / 1_000_000);
+  }
+  return 0;
+}
+
 function dateTime(value: unknown) {
-  const date = new Date(String(value || ""));
-  if (!Number.isFinite(date.getTime())) return "—";
+  const timestamp = exchangeTimestampMs(value);
+  if (timestamp <= 0) return "—";
+  const date = new Date(timestamp);
   const day = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short", year: "numeric" }).format(date);
   const clock = new Intl.DateTimeFormat("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date);
   return `${day}, ${clock}`;
@@ -297,7 +315,7 @@ function RecentTradesCard({ title, rows, closed, liveState, positions, onClosed,
   );
 }
 
-function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition; openedAt?: string | number; onClosed: () => void }) {
+function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition; openedAt?: unknown; onClosed: () => void }) {
   const pnl = finite(position.unrealizedPnl);
   const tone = pnl === null ? "neutral" : pnl > 0 ? "profit" : pnl < 0 ? "loss" : "neutral";
   const pct = authoritativePositionReturnPct(position);
@@ -309,7 +327,7 @@ function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition
         <CoinIcon symbol={asset} />
         <span className="recent-pair-copy">
           <span className="recent-pair-title"><b>{asset}</b><span className={`recent-side ${String(position.side).toLowerCase()}`}>{String(position.side || "—").toUpperCase()}</span></span>
-          <small><time dateTime={String(openedAt || "")}>{dateTime(openedAt)}</time></small>
+          <small><time dateTime={exchangeTimestampMs(openedAt) ? new Date(exchangeTimestampMs(openedAt)).toISOString() : undefined}>{dateTime(openedAt)}</time></small>
         </span>
       </div>
       <span className="recent-leverage" role="cell">{leverage === null ? "—" : `${Math.round(leverage)}x`}</span>

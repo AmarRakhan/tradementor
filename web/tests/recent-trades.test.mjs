@@ -60,6 +60,13 @@ test("top profit entry timestamp is reconstructed from confirmed activity, never
   assert.doesNotMatch(component, /Date\.now\(\).*openedAt|updatedAt.*openedAt/);
 });
 
+test("top profit renders Firestore and exchange timestamp shapes instead of a dash", () => {
+  assert.match(component, /function exchangeTimestampMs/);
+  assert.match(component, /row\.seconds/);
+  assert.match(component, /row\.nanoseconds/);
+  assert.match(component, /new Date\(exchangeTimestampMs\(openedAt\)\)\.toISOString\(\)/);
+});
+
 test("margin prefers positive Aster initial margin and falls back to live position size divided by proven leverage", () => {
   assert.match(component, /function openPositionMargin/);
   assert.match(component, /direct !== null && direct > 0/);
@@ -67,6 +74,15 @@ test("margin prefers positive Aster initial margin and falls back to live positi
   assert.match(component, /trade\.marginUsd, trade\.initialMarginUsd/);
   assert.match(component, /basis \/ leverage/);
   assert.match(component, /money\(openPositionMargin\(position\)\)/);
+});
+
+test("compact trade cards size to the visible face and align numeric columns cleanly", () => {
+  assert.match(css, /recent-flip-inner\{display:block!important;transform:none!important/);
+  assert.match(css, /recent-flip-back\{display:none!important/);
+  assert.match(css, /is-flipped \.recent-flip-back\{display:block!important/);
+  assert.match(css, /recent-close-cell\{justify-content:center!important/);
+  assert.match(css, /recent-leverage\{text-align:center!important/);
+  assert.match(css, /font-size:9px!important/);
 });
 
 test("mobile six-column grid is bounded and keeps headers and Close position stable", () => {
