@@ -31,3 +31,6 @@
  .aster-six-column-row .recent-pair b{font-size:10.5px!important}
  .aster-six-column-row .recent-pair small{font-size:7px!important}
 }
+
+/* Align percent heading with percent values. */
+.aster-six-column-head>span:nth-child(5),.aster-six-column-row>strong:first-of-type{text-align:center!important}

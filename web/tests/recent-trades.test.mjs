@@ -8,9 +8,9 @@ const css = await readFile(new URL("../app/aster-tables.css", import.meta.url), 
 
 test("top profit, latest entries and latest exits render in the approved order", () => {
   const top = component.indexOf('<TopProfitCard rows={positions}');
-  const opened = component.indexOf('title="Laatste 5 ingestapte trades" rows={entries}');
   const closed = component.indexOf('title="Laatste 5 uitgestapte trades" rows={exits}');
-  assert.ok(top >= 0 && opened > top && closed > opened);
+  const opened = component.indexOf('title="Laatste 5 ingestapte trades" rows={entries}');
+  assert.ok(top >= 0 && closed > top && opened > closed);
 });
 
 test("real exchange time wins over a newer import/update time", () => {
@@ -101,4 +101,9 @@ test("manual Aster close is confirmed, idempotent in the browser and refreshes e
   assert.match(component, /expected_quantity/);
   assert.match(component, /await onClosed\(\)/);
   assert.match(component, />Annuleren</);
+});
+
+
+test("percent heading aligns with percent values", () => {
+  assert.match(css, /span:nth-child\(5\).*strong:first-of-type/);
 });
