@@ -20,6 +20,18 @@
         android:theme="@style/Theme.TradeMentor">
 
         <activity
+            android:name=".CarDashboardActivity"
+            android:exported="true"
+            android:label="Amar Crypto Bot"
+            android:resizeableActivity="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
