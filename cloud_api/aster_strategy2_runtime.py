@@ -301,15 +301,16 @@ def harvest_counts(owned:list[OwnedLeg])->tuple[int,int]:
     # Seat accounting counts every live Strategy-2 LONG/SHORT leg.
     return (sum(1 for x in owned if x.side=="LONG"),sum(1 for x in owned if x.side=="SHORT"))
 
-def next_balanced_entry_side(owned:list[OwnedLeg],total:int)->str|None:
-    long_target,short_target=balanced_entry_targets(total);long_count,short_count=harvest_counts(owned)
+def next_balanced_entry_side(owned:list[OwnedLeg],total:int,long_target:int|None=None,short_target:int|None=None)->str|None:
+    if long_target is None or short_target is None: long_target,short_target=balanced_entry_targets(total)
+    long_count,short_count=harvest_counts(owned)
     if long_count>=long_target and short_count>=short_target:return None
     if long_count<short_count and long_count<long_target:return "LONG"
     if short_count<long_count and short_count<short_target:return "SHORT"
     if long_count<long_target:return "LONG"
     return "SHORT" if short_count<short_target else None
 
-def entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int)->int:
+def entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int,long_target:int|None=None,short_target:int|None=None)->int:
     """Expose the complete seat shortage; queue budget limits actual sends.
 
     ``initial_build_complete`` remains part of the public signature for stored
@@ -317,13 +318,14 @@ def entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int
     seat.  Collapsing that shortage to one prevented a scan from using the
     account-scoped order budget that already safely caps exchange requests.
     """
-    long_target,short_target=balanced_entry_targets(total);long_count,short_count=harvest_counts(owned)
-    return max(0,(long_target-long_count)+(short_target-short_count))
+    if long_target is None or short_target is None: long_target,short_target=balanced_entry_targets(total)
+    long_count,short_count=harvest_counts(owned)
+    return max(0,max(0,long_target-long_count)+max(0,short_target-short_count))
 
 def queued_entry_order_limit(initial_build_complete:bool,owned:list[OwnedLeg],total:int,
-                             *,orders_used:int=0,maximum_orders:int=15)->int:
+                             *,orders_used:int=0,maximum_orders:int=15,long_target:int|None=None,short_target:int|None=None)->int:
     """Cap the complete seat shortage to the remaining account-scan budget."""
-    return min(entry_order_limit(initial_build_complete,owned,total),
+    return min(entry_order_limit(initial_build_complete,owned,total,long_target,short_target),
                max(0,int(maximum_orders)-max(0,int(orders_used))))
 
 def management_preempts_initial_build(config:Strategy2Config,owned:list[OwnedLeg],decision:Decision)->bool:

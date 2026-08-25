@@ -234,3 +234,12 @@ def test_universe_change_cannot_modify_long_short_targets_or_close_logic():
     assert "def balanced_entry_targets" in runtime
     assert "universe" not in runtime.lower()
     assert "require_profitable_automatic_close" not in open("aster_universe.py", encoding="utf-8").read()
+
+
+def test_strategy_configurable_ten_million_volume_boundary():
+    rows=[contract("LOWUSDT"),contract("EXACTUSDT"),contract("HIGHUSDT"),contract("MISSINGUSDT")]
+    tickers=[raw_ticker("LOWUSDT",volume=9_900_000),raw_ticker("EXACTUSDT",volume=10_000_000),raw_ticker("HIGHUSDT",volume=20_000_000),{**raw_ticker("MISSINGUSDT",volume=20_000_000),"quoteVolume":"0"}]
+    value=build_snapshot({"symbols":rows},tickers,10,fetched_at=NOW,minimum_quote_volume_24h_usdt=10_000_000).public_dict()
+    assert value["selectedSymbols"]==["HIGHUSDT","EXACTUSDT"]
+    assert value["thresholds"]["minimumQuoteVolume24hUsdt"]==10_000_000
+    assert "LOWUSDT" in value["rejectionSamples"] and "MISSINGUSDT" in value["rejectionSamples"]

@@ -163,6 +163,7 @@ class AsterUniverseSnapshot:
     rejection_counts: tuple[tuple[str, int], ...] = ()
     rejection_samples: tuple[tuple[str, str], ...] = ()
     unavailable_filters: tuple[str, ...] = ()
+    minimum_quote_volume_24h_usdt: float = MIN_QUOTE_VOLUME_24H_USDT
 
     @property
     def selected(self) -> tuple[RankedAsterMarket, ...]:
@@ -195,7 +196,7 @@ class AsterUniverseSnapshot:
             "rejectionSamples": dict(self.rejection_samples),
             "unavailableFilters": list(self.unavailable_filters),
             "thresholds": {
-                "minimumQuoteVolume24hUsdt": MIN_QUOTE_VOLUME_24H_USDT,
+                "minimumQuoteVolume24hUsdt": self.minimum_quote_volume_24h_usdt,
                 "maximumSpreadRatio": MAX_SPREAD_RATIO,
                 "maximumAbsolutePriceChange24hPct": MAX_ABS_PRICE_CHANGE_24H_PCT,
                 "maximumHighLowRange24hRatio": MAX_HIGH_LOW_RANGE_24H_RATIO,
@@ -212,8 +213,10 @@ def build_snapshot(
     fetched_at: datetime | None = None,
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     base_notional: float | None = None,
+    minimum_quote_volume_24h_usdt: float = MIN_QUOTE_VOLUME_24H_USDT,
 ) -> AsterUniverseSnapshot:
     requested = normalize_top_n(requested_top_n)
+    minimum_volume = max(0.0, _finite(minimum_quote_volume_24h_usdt) or 0.0)
     now = (fetched_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
     all_rows = [row for row in exchange_info.get("symbols", ()) if isinstance(row, dict)]
     contracts = {
@@ -261,7 +264,7 @@ def build_snapshot(
         if change is None or not high or not low or high < low:
             reject(symbol, "onvolledige Aster 24-uurs koersdata")
             continue
-        if volume < MIN_QUOTE_VOLUME_24H_USDT:
+        if volume < minimum_volume:
             reject(symbol, "onvoldoende Aster 24-uurs quotevolume")
             continue
         if spread is not None and spread > MAX_SPREAD_RATIO:
@@ -300,6 +303,7 @@ def build_snapshot(
         tuple(sorted(rejection_counts.items())),
         tuple(list(sorted(rejection_samples.items()))[:100]),
         ("listingdatum", "kortetermijnvolatiliteit", "bulk bid/ask-spread"),
+        minimum_volume,
     )
 
 
@@ -316,6 +320,7 @@ def stale_snapshot(snapshot: AsterUniverseSnapshot, *, now: datetime | None = No
         snapshot.rejection_counts,
         snapshot.rejection_samples,
         snapshot.unavailable_filters,
+        snapshot.minimum_quote_volume_24h_usdt,
     )
 
 

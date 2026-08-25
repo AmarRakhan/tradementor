@@ -96,7 +96,7 @@ def _entry_actions(value: ShadowInputs) -> list[QueueAction]:
     simulated = list(value.owned)
     result: list[QueueAction] = []
     for sequence, symbol in enumerate(dict.fromkeys(x.upper() for x in value.entry_symbols if x)):
-        side = next_balanced_entry_side(simulated, value.config.maximum_pairs)
+        side = next_balanced_entry_side(simulated, value.config.maximum_pairs,*value.config.entry_targets)
         if not side:
             break
         result.append(QueueAction(

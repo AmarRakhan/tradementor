@@ -404,3 +404,19 @@ def test_short_dca_trigger_can_be_configured_at_ten_percent():
     chosen=next_dca_decision(cfg,p,[leg],[row("SHORT",mark="110.1",pnl="-10.1")])
     assert chosen and chosen[1].kind=="ADD_DCA"
     assert next_dca_decision(cfg,p,[leg],[row("SHORT",mark="109.9",pnl="-9.9")]) is None
+
+
+def test_custom_seat_targets_allow_directional_allocations_without_overshoot():
+    for long_target,short_target in ((40,40),(60,20),(70,10),(35,45),(80,0),(0,80)):
+        owned=[]
+        assert entry_order_limit(False,owned,80,long_target,short_target)==80
+        for i in range(long_target): owned.append(OwnedLeg("s2","strategy2",f"L{i}USDT","LONG",f"l{i}",1,1,100))
+        for i in range(short_target): owned.append(OwnedLeg("s2","strategy2",f"S{i}USDT","SHORT",f"s{i}",1,1,100))
+        assert entry_order_limit(True,owned,80,long_target,short_target)==0
+        assert next_balanced_entry_side(owned,80,long_target,short_target) is None
+
+def test_custom_seat_target_refills_only_missing_side():
+    owned=[OwnedLeg("s2","strategy2",f"L{i}USDT","LONG",f"l{i}",1,1,100) for i in range(60)]
+    owned += [OwnedLeg("s2","strategy2",f"S{i}USDT","SHORT",f"s{i}",1,1,100) for i in range(15)]
+    assert next_balanced_entry_side(owned,80,60,20)=="SHORT"
+    assert entry_order_limit(True,owned,80,60,20)==5

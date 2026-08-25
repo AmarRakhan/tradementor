@@ -36,6 +36,9 @@ class Strategy2Config:
     long_custom_levels: tuple[float, ...] = ()
     short_custom_levels: tuple[float, ...] = ()
     maximum_pairs: int = 5
+    maximum_long_positions: int | None = None
+    maximum_short_positions: int | None = None
+    minimum_quote_volume_24h_usdt: float = 10_000_000.0
     universe_top_n: int = 50
     leverage: int = 10
     margin_mode: Literal["cross", "isolated"] = "cross"
@@ -87,6 +90,9 @@ class Strategy2Config:
             long_max_dca=i("longMaxDca", 3), short_max_dca=i("shortMaxDca", 3),
             dca_multiplier=f("dcaMultiplier", 1), long_custom_levels=levels("longCustomLevels"),
             short_custom_levels=levels("shortCustomLevels"), maximum_pairs=i("maximumPairs", 5),
+            maximum_long_positions=(i("maximumLongPositions", 0) if "maximumLongPositions" in raw else None),
+            maximum_short_positions=(i("maximumShortPositions", 0) if "maximumShortPositions" in raw else None),
+            minimum_quote_volume_24h_usdt=f("minimumQuoteVolume24hUsdt", 10_000_000),
             universe_top_n=normalize_top_n(raw.get("universeTopN", 50)), leverage=i("leverage", 10),
             margin_mode="isolated" if raw.get("marginMode") == "isolated" else "cross",
             strategy_budget=f("strategyBudget", .5), protection_enabled=bool(raw.get("protectionEnabled", True)),
@@ -111,6 +117,11 @@ class Strategy2Config:
         if not 1 <= self.base_notional <= 100_000: raise ValueError("Base Order moet tussen 1 en 100.000 USD liggen")
         if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
         if not 1 <= self.maximum_pairs <= 100: raise ValueError("Max Active Pairs moet tussen 1 en 100 liggen")
+        if (self.maximum_long_positions is None) != (self.maximum_short_positions is None): raise ValueError("LONG- en SHORT-stoeldoelen moeten samen worden ingesteld")
+        if self.maximum_long_positions is not None:
+            if self.maximum_long_positions < 0 or self.maximum_short_positions < 0 or self.maximum_long_positions + self.maximum_short_positions != self.maximum_pairs:
+                raise ValueError("LONG + SHORT stoelen moet exact gelijk zijn aan het totale aantal stoelen")
+        if not math.isfinite(self.minimum_quote_volume_24h_usdt) or self.minimum_quote_volume_24h_usdt < 0: raise ValueError("Minimum 24h USDT-volume moet nul of hoger zijn")
         if self.universe_top_n < 1: raise ValueError("Aster USDT Top-N moet een positief geheel getal zijn")
         if not 1 <= self.leverage <= 200: raise ValueError("Leverage moet tussen 1 en 200 liggen en wordt nog aan het contract getoetst")
         if not 0 <= self.long_max_dca <= 50 or not 0 <= self.short_max_dca <= 50: raise ValueError("Max DCA moet tussen 0 en 50 liggen")
@@ -129,7 +140,14 @@ class Strategy2Config:
         if not 0 < self.money_grabber_first_ratio <= self.money_grabber_full_ratio <= 1: raise ValueError("De volledige Money Grabber-beschermingsratio mag niet kleiner zijn dan de eerste ratio")
         return self
 
+    @property
+    def entry_targets(self) -> tuple[int, int]:
+        if self.maximum_long_positions is not None and self.maximum_short_positions is not None:
+            return self.maximum_long_positions, self.maximum_short_positions
+        return ((self.maximum_pairs + 1) // 2, self.maximum_pairs // 2)
+
     def public_dict(self) -> dict[str, Any]:
+        long_target, short_target = self.entry_targets
         return ({"strategyId":self.strategy_id,"name":self.name,"version":self.version,"mode":self.mode,
             "baseNotional":self.base_notional,"takeProfit":self.take_profit,"autoRestart":self.auto_restart,
             "dcaEnabled":self.dca_enabled,"trendBollingerEntryEnabled":self.trend_bollinger_entry_enabled,
@@ -137,6 +155,8 @@ class Strategy2Config:
             "shortDcaDistance":self.short_dca_distance,"longMaxDca":self.long_max_dca,"shortMaxDca":self.short_max_dca,
             "dcaMultiplier":self.dca_multiplier,"longCustomLevels":list(self.long_custom_levels),
             "shortCustomLevels":list(self.short_custom_levels),"maximumPairs":self.maximum_pairs,
+            "maximumLongPositions":long_target,"maximumShortPositions":short_target,
+            "minimumQuoteVolume24hUsdt":self.minimum_quote_volume_24h_usdt,
             "universeTopN":self.universe_top_n,"leverage":self.leverage,"marginMode":self.margin_mode,
             "strategyBudget":self.strategy_budget,"protectionEnabled":self.protection_enabled,
             "cautionDrawdown":self.caution_drawdown,"defensiveDrawdown":self.defensive_drawdown,
@@ -281,15 +301,11 @@ def decide_leg(config: Strategy2Config, leg: LegState, portfolio: PortfolioState
         # later decision, but it may never retain or relabel the winning leg.
         return Decision("FULL_TP", leg.side, notional=leg.size, role="HARVEST",
             reason="Netto TP bereikt; winst oogsten heeft prioriteit op protection en risicomodus", risk_reducing=True)
-    # CAUTION and DEFENSIVE are advisory/protection modes. They must not freeze
-    # ordinary Strategy-2 management account-wide. Only the configured
-    # EMERGENCY boundary is a hard stop for new exposure.
-    if mode == "EMERGENCY": return Decision("HOLD", leg.side, role=leg.role, reason="EMERGENCY: nieuwe DCA tijdelijk geblokkeerd", risk_reducing=True)
+    # Portfolio risk modes stay visible/advisory. A user-configured DCA on an
+    # already-owned leg is admitted by actual Aster available margin, not by an
+    # internal Strategy Budget or CAUTION/DEFENSIVE/EMERGENCY label.
     if dca_due(config, leg):
         proposed = config.base_notional * config.dca_multiplier
-        budget = portfolio.equity * config.strategy_budget
-        proposed_margin = proposed / max(1, config.leverage)
-        if portfolio.strategy_margin + proposed_margin > budget: return Decision("HOLD", leg.side, reason="DCA geblokkeerd door Strategy Margin Budget", risk_reducing=True)
         return Decision("ADD_DCA", leg.side, notional=proposed, role=leg.role, reason=f"DCA-level {leg.dca_count+1} bereikt")
     return Decision("HOLD", leg.side, role=leg.role, reason="Geen veilige beheeractie nodig")
 

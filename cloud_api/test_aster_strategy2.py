@@ -40,9 +40,9 @@ def test_defensive_mode_keeps_normal_dca_running():
     p=PortfolioState(920,1000,.55,100,100,200)
     assert decide_leg(cfg(),leg(current_price=95),p).kind=="ADD_DCA"
 
-def test_budget_blocks_dca():
-    p=PortfolioState(1000,1000,.1,250,250,500,strategy_margin=500)
-    assert "Budget" in decide_leg(cfg(strategy_budget=.5),leg(current_price=95),p).reason
+def test_strategy_budget_does_not_block_due_dca():
+    p=PortfolioState(1000,1000,.1,250,250,500,strategy_margin=900,available_balance=20)
+    assert decide_leg(cfg(strategy_budget=.1),leg(current_price=95),p).kind=="ADD_DCA"
 
 def test_unknown_state_never_adds_risk():
     assert decide_leg(cfg(),leg(current_price=90),portfolio(exchange_reliable=False)).kind=="HOLD"
@@ -63,13 +63,13 @@ def test_risk_modes_are_ordered():
     assert risk_mode(c,PortfolioState(930,1000,.55,0,0,0))=="DEFENSIVE"
     assert risk_mode(c,PortfolioState(850,1000,.75,0,0,0))=="EMERGENCY"
 
-def test_defensive_mode_does_not_freeze_dca_but_emergency_does():
-    config=cfg(long_dca_distance=.02)
-    losing=leg(current_price=97,unrealized_pnl=-3)
-    defensive=PortfolioState(930,1000,.55,0,0,0,strategy_margin=0)
-    emergency=PortfolioState(850,1000,.75,0,0,0,strategy_margin=0)
-    assert decide_leg(config,losing,defensive).kind=="ADD_DCA"
-    assert decide_leg(config,losing,emergency).kind=="HOLD"
+def test_defensive_and_emergency_modes_do_not_freeze_long_or_short_dca():
+    config=cfg(long_dca_distance=.02,short_dca_distance=.10)
+    defensive=PortfolioState(930,1000,.55,0,0,0,strategy_margin=900,available_balance=20)
+    emergency=PortfolioState(850,1000,.75,0,0,0,strategy_margin=900,available_balance=20)
+    assert decide_leg(config,leg(current_price=97),defensive).kind=="ADD_DCA"
+    assert decide_leg(config,leg(current_price=97),emergency).kind=="ADD_DCA"
+    assert decide_leg(config,leg("SHORT",current_price=111),emergency).kind=="ADD_DCA"
 
 def test_worst_case_validation_is_concrete():
     errors=validate_worst_case(cfg(base_notional=200,maximum_pairs=50,long_max_dca=8,short_max_dca=8,leverage=10,strategy_budget=.01),1000,10,50)
@@ -157,3 +157,18 @@ def test_trend_bollinger_filter_is_only_on_new_seat_entry_path():
     assert 'if not bool(entry_check["eligible"]):' in tick[gate:open_plan]
     assert "continue" in tick[tick.index('if not bool(entry_check["eligible"]):',gate):open_plan]
     assert tick.index("REOPEN",0,gate) < gate
+
+
+def test_custom_seat_targets_and_legacy_default_are_validated():
+    assert Strategy2Config.from_mapping({"maximumPairs":80}).entry_targets==(40,40)
+    for long_target,short_target in ((40,40),(60,20),(70,10),(35,45),(80,0),(0,80)):
+        config=Strategy2Config.from_mapping({"maximumPairs":80,"maximumLongPositions":long_target,"maximumShortPositions":short_target})
+        assert config.entry_targets==(long_target,short_target)
+        public=config.public_dict(); assert public["maximumLongPositions"]==long_target and public["maximumShortPositions"]==short_target
+    import pytest
+    with pytest.raises(ValueError): Strategy2Config.from_mapping({"maximumPairs":80,"maximumLongPositions":60,"maximumShortPositions":19})
+
+def test_minimum_quote_volume_defaults_to_ten_million():
+    config=Strategy2Config.from_mapping({})
+    assert config.minimum_quote_volume_24h_usdt==10_000_000
+    assert config.public_dict()["minimumQuoteVolume24hUsdt"]==10_000_000

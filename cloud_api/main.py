@@ -1527,7 +1527,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         selected=None
     if selected:
         leg,decision=selected
-        if decision.kind=="ADD_DCA" and (not enabled or portfolio.margin_ratio>=settings.defensive_margin_ratio):decision=Decision("HOLD",leg.side,reason="DCA geblokkeerd omdat Strategy 2 gestopt of defensief is",risk_reducing=True)
+        if decision.kind=="ADD_DCA" and not enabled:decision=Decision("HOLD",leg.side,reason="DCA geblokkeerd omdat Strategy 2 gestopt is",risk_reducing=True)
         if decision.kind=="ASSIGN_PROTECTION":
             owned=[replace(x,role="PROTECTION") if x==leg else x for x in owned]
             ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"phase":"PROTECTION","lastReason":decision.reason},merge=True)
@@ -1590,6 +1590,14 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         "ordersSent":0,"reason":reason}
                 current=replace(current,leverage=min(current.leverage,settings.leverage))
                 current=replace(current,leverage=configure_maximum_usable_leverage(client,current))
+                if decision.kind=="ADD_DCA":
+                    required_margin=float(current.notional_per_leg)/max(1,current.leverage)
+                    if portfolio.available_balance < required_margin*1.05:
+                        reason=f"{leg.symbol} {leg.side}: DCA wacht op voldoende actuele Aster available margin"
+                        ref.set({"phase":"WAITING","lastReason":reason,"lastTickAt":now,"updatedAt":now},merge=True)
+                        ref.collection("audit").add({"event":"DCA_BLOCKED_AVAILABLE_MARGIN","symbol":leg.symbol,"side":leg.side,
+                            "requiredMargin":required_margin,"availableBalance":portfolio.available_balance,"timestamp":now})
+                        return {"status":"waiting","action":"DCA_BLOCKED_AVAILABLE_MARGIN","symbol":leg.symbol,"side":leg.side,"ordersSent":0,"reason":reason}
             if dry_run or not live:return {"status":"simulated","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":0,"reason":decision.reason}
             context=ExecutionContext(settings.strategy_id,leg.cycle_id,settings.version,leg,True,True,
                 account_uid=uid,cost_evidence_fresh=(leg.symbol,leg.side) in fresh_cost_keys,
@@ -1598,7 +1606,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             try:
                 result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:
                     decision.risk_reducing or
-                    (portfolio.margin_ratio<settings.emergency_margin_ratio and
+                    (decision.kind=="ADD_DCA" and portfolio.available_balance>=margin*1.05) or
+                    (decision.kind!="ADD_DCA" and portfolio.margin_ratio<settings.emergency_margin_ratio and
                      portfolio.drawdown<settings.emergency_drawdown and
                      portfolio.strategy_margin+margin<=portfolio.equity*settings.strategy_budget))
             except AsterCloseBlocked:
@@ -1708,7 +1717,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         reason="Strategy 2 staat veilig gestopt" if not enabled else "Geen beheeractie; pair- of risicolimiet bereikt"
         ref.set({"phase":"PROTECTIVE_ONLY" if not enabled else "WAITING","lastReason":reason},merge=True);return {"status":"waiting","action":"HOLD","reason":reason,"ordersSent":0}
     active_keys={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) for x in positions if abs(safe_float(x.get("positionAmt")))>0}
-    long_target,short_target=balanced_entry_targets(settings.maximum_pairs)
+    long_target,short_target=settings.entry_targets
     long_count,short_count=harvest_counts(owned)
     if long_count>=long_target and short_count>=short_target:
         initial_build_complete=True
@@ -1720,7 +1729,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         market24=client.ticker_24h()
         changes={str(x.get("symbol","")).upper():safe_float(x.get("priceChangePercent")) for x in market24}
         universe=build_aster_universe_snapshot(exchange_info,market24,settings.universe_top_n,
-            base_notional=settings.base_notional)
+            base_notional=settings.base_notional,minimum_quote_volume_24h_usdt=settings.minimum_quote_volume_24h_usdt)
         all_brackets=client.leverage_brackets()
         bulk_max_leverage={}
         for bracket_row in all_brackets if isinstance(all_brackets,list) else []:
@@ -1744,7 +1753,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         return {"status":"data-hold","reason":reason,"ordersSent":0,"universe":universe_contract}
     orders_used=(MAX_ORDERS_PER_ACCOUNT_SCAN-max(0,int(order_budget))) if order_budget is not None else 0
     order_limit=queued_entry_order_limit(initial_build_complete,owned,settings.maximum_pairs,
-        orders_used=orders_used,maximum_orders=MAX_ORDERS_PER_ACCOUNT_SCAN)
+        orders_used=orders_used,maximum_orders=MAX_ORDERS_PER_ACCOUNT_SCAN,long_target=long_target,short_target=short_target)
     if dry_run or not live:
         return {"status":"simulated","action":"INITIAL_BUILD" if not initial_build_complete else "OPEN_LEG","plannedOrders":order_limit,
             "targetLong":long_target,"targetShort":short_target,"ordersSent":0}
@@ -1765,9 +1774,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         contract_exposure[position_symbol]=contract_exposure.get(position_symbol,Decimal("0"))+abs(
             Decimal(str(position.get("positionAmt",0)))*Decimal(str(position.get("markPrice",0))))
     for index in range(order_limit):
-        preferred_side=next_balanced_entry_side(owned,settings.maximum_pairs)
+        preferred_side=next_balanced_entry_side(owned,settings.maximum_pairs,long_target,short_target)
         if not preferred_side:break
-        long_target_now,short_target_now=balanced_entry_targets(settings.maximum_pairs)
+        long_target_now,short_target_now=settings.entry_targets
         long_count_now,short_count_now=harvest_counts(owned)
         alternate_side="SHORT" if preferred_side=="LONG" else "LONG"
         entry_sides=[preferred_side]

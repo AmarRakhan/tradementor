@@ -51,7 +51,7 @@ def validated_entry_symbols(
 ) -> tuple[str, ...]:
     """Return only currently executable entry symbols, without mutations."""
     universe = build_snapshot(
-        exchange_info, tickers_24h, config.universe_top_n,
+        exchange_info, tickers_24h, config.universe_top_n, minimum_quote_volume_24h_usdt=config.minimum_quote_volume_24h_usdt,
         fetched_at=datetime.fromtimestamp(captured_at_ms / 1000, tz=timezone.utc),
         base_notional=config.base_notional,
     )
@@ -79,7 +79,7 @@ def validated_entry_symbols(
     simulated = list(owned)
     result: list[str] = []
     for market in universe.selected:
-        side = next_balanced_entry_side(simulated, config.maximum_pairs)
+        side = next_balanced_entry_side(simulated, config.maximum_pairs,*config.entry_targets)
         if not side:
             break
         symbol = market.symbol
