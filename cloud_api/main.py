@@ -1260,12 +1260,34 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         except (TypeError,ValueError):pass
     fills=[];cost_failures={}
     try:
-        audit_events=[x.to_dict() or {} for x in ref.collection("audit").stream()]
+        active_keys=set(active_position_map(positions));known_keys={(x.symbol,x.side) for x in owned}
+        missing_symbols={symbol for symbol,side in active_keys if (symbol,side) not in known_keys}
+        # The audit collection is recovery evidence, not normal tick input.
+        # Healthy accounts already have durable ownedLegs for every active exchange leg,
+        # so replaying an ever-growing audit history cannot change the decision. Only
+        # enter the historical recovery path when an active exchange leg is actually
+        # missing from persisted Strategy-2 ownership. This keeps recovery semantics
+        # identical while removing unbounded Firestore I/O from the steady-state tick.
+        audit_events=[]
+        # Recovery evidence is needed only for exchange legs missing from durable
+        # Strategy-2 ownership. Query those symbols directly instead of replaying
+        # the complete, ever-growing account audit history. This preserves every
+        # open/flat event for the affected symbols while making steady-state ticks
+        # independent of total audit size. A known transient Firestore stream
+        # transport failure gets one read-only retry; a second failure still
+        # propagates and therefore remains fail-closed.
+        for recovery_symbol in sorted(missing_symbols):
+            query=ref.collection("audit").where("symbol","==",recovery_symbol)
+            try:
+                rows=list(query.stream())
+            except AttributeError as exc:
+                if "_UnaryStreamMultiCallable" not in str(exc) or "_retry" not in str(exc):
+                    raise
+                rows=list(query.stream())
+            audit_events.extend(x.to_dict() or {} for x in rows)
         audited_symbols={str(x.get("symbol","")).upper() for x in audit_events
             if str(x.get("event","")).upper() in {"INITIAL_OPEN_LEG","OPEN_LEG","OPEN_PROTECTION"}
             and str(x.get("strategyId",x.get("strategy_id","aster-strategy-2")))=="aster-strategy-2"}
-        active_keys=set(active_position_map(positions));known_keys={(x.symbol,x.side) for x in owned}
-        missing_symbols={symbol for symbol,side in active_keys if (symbol,side) not in known_keys}
         changed_symbols=changed_owned_symbols(owned,positions)
         refresh_symbols=set(cost_refresh_symbols(owned,positions,maximum_background=4,maximum_total=6))
         # Cost refresh below already reads complete fills and income.  Do not
