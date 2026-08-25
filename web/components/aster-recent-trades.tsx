@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ExchangeSnapshot } from "@/lib/use-exchange-data";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { activityTime, pageActivity, reliableReturnPct, sortedActivity, stableActivityId } from "@/lib/recent-trades.mjs";
@@ -221,10 +222,10 @@ function ClosePositionControl({ position, onClosed, compact = true }: { position
       >
         Close
       </button>
-      {confirming && position && (
-        <div className="market-close-modal" role="dialog" aria-modal="true">
+      {confirming && position && typeof document !== "undefined" && createPortal(
+        <div className="market-close-modal" role="dialog" aria-modal="true" aria-labelledby="aster-close-title">
           <div>
-            <h3>Positie market sluiten</h3>
+            <h3 id="aster-close-title">Positie market sluiten</h3>
             <dl>
               <dt>Coin</dt><dd>{asset}</dd>
               <dt>Richting</dt><dd>{String(position.side).toUpperCase()}</dd>
@@ -239,7 +240,8 @@ function ClosePositionControl({ position, onClosed, compact = true }: { position
             </footer>
             {message && <small>{message}</small>}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       {message && !confirming && <div className="market-close-message" role="status">{message}</div>}
     </>

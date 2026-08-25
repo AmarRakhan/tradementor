@@ -112,3 +112,11 @@ test("percent heading aligns with percent values", () => {
 test("closed trade rows keep the Close column empty instead of rendering a disabled button", () => {
   assert.match(component, /recent-close-cell[^\n]*\{closed \? null : <ClosePositionControl/);
 });
+
+
+test("Aster close confirmation is portalled to document.body so table containment cannot distort it", () => {
+  assert.match(component, /import \{ createPortal \} from "react-dom"/);
+  assert.match(component, /typeof document !== "undefined" && createPortal\(/);
+  assert.match(component, /document\.body/);
+  assert.match(component, /aria-labelledby="aster-close-title"/);
+});
