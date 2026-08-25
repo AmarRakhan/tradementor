@@ -1592,7 +1592,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 current=replace(current,leverage=configure_maximum_usable_leverage(client,current))
             if dry_run or not live:return {"status":"simulated","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":0,"reason":decision.reason}
             context=ExecutionContext(settings.strategy_id,leg.cycle_id,settings.version,leg,True,True,
-                account_uid=uid,audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}),
+                account_uid=uid,cost_evidence_fresh=(leg.symbol,leg.side) in fresh_cost_keys,
+                audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}),
                 before_submit=(lambda intent:before_order(intent,{"kind":decision.kind,"cycleId":leg.cycle_id})) if before_order else None)
             try:
                 result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:

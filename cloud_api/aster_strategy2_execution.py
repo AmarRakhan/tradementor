@@ -21,7 +21,7 @@ class Strategy2RiskBlocked(ValueError):
 @dataclass(frozen=True)
 class ExecutionContext:
     strategy_id:str;cycle_id:str;config_version:int;ownership:OwnedLeg|None;exchange_reconciled:bool;confirm:bool
-    account_uid:str="";close_fee_rate:float=.0005;slippage_rate:float=.001
+    account_uid:str="";close_fee_rate:float=.0005;slippage_rate:float=.001;cost_evidence_fresh:bool=False
     audit:Callable[[dict[str,Any]],None]|None=None
     before_submit:Callable[[Any],None]|None=None
 
@@ -53,8 +53,13 @@ def execute_decision(client:Any,decision:Decision,plan:PairExecutionPlan,context
         entry_price=context.ownership.weighted_entry,mark_price=mark,gross_pnl=gross,
         entry_fees=context.ownership.fees*ratio,close_fee=close_notional*context.close_fee_rate,
         funding=context.ownership.funding*ratio,slippage_buffer=close_notional*context.slippage_rate,
-        ownership_reliable=True,fills_reliable=bool(context.ownership.fill_ids),prices_reliable=mark>0,
-        costs_reliable=context.ownership.costs_updated_at_ms>0,
+        ownership_reliable=True,
+        # A freshly completed cost-evidence refresh proves Aster fill history for
+        # this owned leg even when a legacy ownership transfer cannot reconstruct
+        # the exact current-cycle fill IDs. Do not strand a clearly profitable TP
+        # solely because that optional persisted ID list is empty.
+        fills_reliable=bool(context.ownership.fill_ids) or context.cost_evidence_fresh,
+        prices_reliable=mark>0,costs_reliable=context.cost_evidence_fresh,
     )
     return [execute_leg_once(client,close_plan,side=side,action="CLOSE",id_prefix=prefix,confirm=True,
         close_evidence=evidence,close_audit=context.audit,before_submit=context.before_submit)]

@@ -13,7 +13,7 @@ class Client:
 
 def plan():return PairExecutionPlan("BTCUSDT",Decimal(".1"),Decimal("10"),10)
 def context(owned=True,reconciled=True):return ExecutionContext("s2","c1",3,OwnedLeg("s2","strategy2","BTCUSDT","LONG","c1",3,.1,90,
-    fill_ids=("f1",),fees=.01,funding=0,costs_updated_at_ms=1) if owned else None,reconciled,True,account_uid="uid")
+    fill_ids=("f1",),fees=.01,funding=0,costs_updated_at_ms=1) if owned else None,reconciled,True,account_uid="uid",cost_evidence_fresh=True)
 
 def test_unknown_fill_never_continues_or_resends():
     client=Client("NEW")
@@ -49,3 +49,23 @@ def test_queue_reserves_exact_intent_immediately_before_submission():
     reserved=[];base=context();queued=ExecutionContext(**{**base.__dict__,"before_submit":lambda intent:reserved.append(intent.intent_id)})
     client=Client();execute_decision(client,Decision("ADD_DCA","LONG",10),plan(),queued,risk_approved=lambda _:True)
     assert reserved==client.calls and len(reserved)==1
+
+
+def test_profitable_tp_accepts_fresh_cost_evidence_when_legacy_fill_ids_are_missing():
+    owned=OwnedLeg("s2","strategy2","BTCUSDT","LONG","c1",3,.1,90,
+        fill_ids=(),fees=.01,funding=0,costs_updated_at_ms=123)
+    ctx=ExecutionContext("s2","c1",3,owned,True,True,account_uid="uid",cost_evidence_fresh=True)
+    client=Client()
+    result=execute_decision(client,Decision("FULL_TP","LONG",10,reason="TP"),plan(),ctx,risk_approved=lambda _:True)
+    assert result and len(client.calls)==1
+
+
+def test_missing_fill_ids_still_fail_closed_without_fresh_cost_evidence():
+    owned=OwnedLeg("s2","strategy2","BTCUSDT","LONG","c1",3,.1,90,
+        fill_ids=(),fees=.01,funding=0,costs_updated_at_ms=123)
+    ctx=ExecutionContext("s2","c1",3,owned,True,True,account_uid="uid",cost_evidence_fresh=False)
+    client=Client()
+    from aster_close_guard import AsterCloseBlocked
+    with pytest.raises(AsterCloseBlocked):
+        execute_decision(client,Decision("FULL_TP","LONG",10,reason="TP"),plan(),ctx,risk_approved=lambda _:True)
+    assert not client.calls
