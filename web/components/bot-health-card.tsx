@@ -46,15 +46,47 @@ export function BotHealthCard() {
   const [data, setData] = useState<Health | null>(null);
   const [open, setOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
     let alive = true;
-    const load = () => authenticatedRequest("/api/bot-health")
-      .then((value) => { if (alive) setData(value as Health); })
-      .catch(() => {});
-    load();
-    const id = window.setInterval(load, 12000);
-    return () => { alive = false; window.clearInterval(id); };
+    let timer: number | undefined;
+    let controller: AbortController | null = null;
+    let loading = false;
+    const schedule = () => {
+      if (!alive) return;
+      timer = window.setTimeout(load, 60_000);
+    };
+    const load = async () => {
+      if (!alive || loading || document.visibilityState !== "visible") { schedule(); return; }
+      loading = true;
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller?.abort(), 10_000);
+      try {
+        const value = await authenticatedRequest("/api/bot-health", { cache: "no-store", signal: controller.signal });
+        if (alive) { setData(value as Health); setLoadError(""); }
+      } catch (reason) {
+        if (alive) setLoadError(reason instanceof Error ? reason.message : "Healthinformatie is tijdelijk niet beschikbaar.");
+      } finally {
+        window.clearTimeout(timeout);
+        loading = false;
+        controller = null;
+        schedule();
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer) window.clearTimeout(timer);
+      void load();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    void load();
+    return () => {
+      alive = false;
+      if (timer) window.clearTimeout(timer);
+      controller?.abort();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   const tone = data ? statusClass(data.status) : "loading";
@@ -77,7 +109,7 @@ export function BotHealthCard() {
         {open && (
           <div className="bot-health-expanded">
             {!data ? (
-              <p>Healthinformatie wordt geladen…</p>
+              <p>{loadError || "Healthinformatie wordt geladen…"}</p>
             ) : (
               <>
                 <div className="bot-health-columns">

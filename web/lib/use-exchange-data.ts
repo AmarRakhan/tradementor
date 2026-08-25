@@ -64,6 +64,7 @@ function fetchAsterSnapshot(uid: string, generation: number) {
 export function useExchangeData(cloudReady: boolean, uid: string) {
   const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAsterSnapshot(uid) } }));
   const mounted = useRef(true);
+  const refreshAllInFlight = useRef<Promise<PromiseSettledResult<void>[]> | null>(null);
   const asterRequestGate = useRef({ uid, gate: createLatestAsterRequestGate() });
 
   const currentAsterRequestGate = useCallback(() => {
@@ -143,7 +144,13 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
     });
   }, [currentAsterRequestGate, uid]);
 
-  const refreshAll = useCallback(() => Promise.allSettled((["hyperliquid", "aster"] as ExchangeId[]).map(refresh)), [refresh]);
+  const refreshAll = useCallback(() => {
+    if (refreshAllInFlight.current) return refreshAllInFlight.current;
+    const request = Promise.allSettled((["hyperliquid", "aster"] as ExchangeId[]).map(refresh));
+    refreshAllInFlight.current = request;
+    void request.finally(() => { if (refreshAllInFlight.current === request) refreshAllInFlight.current = null; });
+    return request;
+  }, [refresh]);
 
   useEffect(() => {
     if (!cloudReady) return;

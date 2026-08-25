@@ -201,6 +201,7 @@ _info_cache: dict[str, tuple[float, Any]] = {}
 _aster_universe_cache: AsterUniverseSnapshot | None = None
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
+_bot_health_platform_cache: tuple[float, dict[str, int]] = (0.0, {})
 
 
 class WalletLinkRequest(BaseModel):
@@ -2505,16 +2506,39 @@ def _admin_serialized(snapshot) -> dict[str, Any]:
 
 
 
+def _bot_health_platform_summary()->dict[str,int]:
+    global _bot_health_platform_cache
+    now=time.monotonic()
+    # Keep this dashboard read cheap: the previous implementation ran one reliability
+    # subcollection query per account on every browser poll. That becomes N+1 reads.
+    with _cache_lock:
+        cached_at,cached=_bot_health_platform_cache
+        if cached and now-cached_at<60:return dict(cached)
+    active=tracked=platform_auto=platform_open=0
+    start=datetime.now(timezone.utc).replace(hour=0,minute=0,second=0,microsecond=0)
+    for doc in db.collection("asterStrategy2").stream():
+        tracked+=1;value=doc.to_dict() or {};active+=int(bool(value.get("enabled") or value.get("monitor")))
+    try:
+        for doc in db.collection_group("events").where("lastDetectedAt", ">=", start).stream():
+            row=doc.to_dict() or {};seen=row.get("lastDetectedAt")
+            if not isinstance(seen,datetime):continue
+            status=str(row.get("status") or "")
+            platform_auto+=int(status=="AUTO_RECOVERED")
+            platform_open+=int(status in {"DETECTED","RECOVERING","OPEN","SAFETY_HOLD"})
+    except Exception:
+        # Platform-wide counters are informative only; never make the user's own
+        # health status unavailable because an aggregate read is temporarily blocked.
+        pass
+    result={"activeBots":active,"trackedBots":tracked,"autoRecovered":platform_auto,"openIncidents":platform_open}
+    with _cache_lock:_bot_health_platform_cache=(now,result)
+    return dict(result)
+
 @app.get("/v1/me/bot-health")
 def bot_health(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     uid=str(user["uid"]); state=aster_strategy2_reference(uid).get().to_dict() or {}; rows=_today_reliability(uid); mine=reliability_counts(rows)
-    active=tracked=platform_auto=platform_open=0
-    for doc in db.collection("asterStrategy2").stream():
-        tracked+=1; value=doc.to_dict() or {}; active+=int(bool(value.get("enabled") or value.get("monitor")))
-        events=_today_reliability(doc.id); c=reliability_counts(events); platform_auto+=c["autoRecovered"]; platform_open+=c["open"]+c["safetyHolds"]
     ordered=sorted(rows,key=lambda x:x.get("lastDetectedAt") or datetime.min.replace(tzinfo=timezone.utc),reverse=True)
     return {"status":reliability_overall(rows),"lastSuccessfulScan":state.get("lastTickAt"),"yourBot":mine,
-        "platform":{"activeBots":active,"trackedBots":tracked,"autoRecovered":platform_auto,"openIncidents":platform_open},"incidents":ordered[:100]}
+        "platform":_bot_health_platform_summary(),"incidents":ordered[:100]}
 
 @app.get("/v1/admin/health/accounts")
 def admin_health_accounts(x_admin_device:str|None=Header(default=None,alias="X-TradeMentor-Admin-Device"),user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:

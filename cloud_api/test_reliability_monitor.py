@@ -21,4 +21,4 @@ def test_ui_polling_route_is_get_only_and_has_no_trading_write():
     card=(Path(__file__).parents[1]/"web/components/bot-health-card.tsx").read_text()
     assert 'export async function GET' in route and 'POST' not in route and 'PUT' not in route
     compact=''.join(card.split())
-    assert 'setInterval(load,12000)' in compact and 'method:' not in card
+    assert 'setTimeout(load,60_000)' in compact and 'AbortController' in card and 'method:' not in card
