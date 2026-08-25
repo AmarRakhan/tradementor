@@ -43,6 +43,11 @@ test("missing exchange return falls back to trade notional without leverage ROE"
   assert.equal(reliableReturnPct({ side: "SHORT", realizedPnlUsd: 5, closedValueUsd: 45 }), 10);
 });
 
+test("recent trade freshness window remains above the 60 second exchange refresh cadence", () => {
+  assert.match(component, /Date\.now\(\) - snapshot\.updatedAt < 90_000/);
+  assert.doesNotMatch(component, /Date\.now\(\) - snapshot\.updatedAt < 45_000/);
+});
+
 test("all compact trade tables expose the exact six approved columns", () => {
   assert.match(component, /<span>PAIR<\/span><span>LEV<\/span><span>CLOSE<\/span><span>MARGIN<\/span><span>%<\/span><span>P&amp;L<\/span>/);
   assert.match(component, />\s*Close\s*<\/button>/);
