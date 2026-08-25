@@ -83,9 +83,10 @@ def test_stale_cost_evidence_is_leg_local_while_user_seats_are_missing():
     assert "open_order_symbols" in block
 
 
-def test_non_tp_management_never_preempts_empty_seat_refill():
+def test_due_dca_preempts_empty_seat_refill():
     tick = _tick_source()
     assert 'seat_shortage=len(owned)<settings.maximum_pairs' in tick
     assert 'if seat_shortage:' in tick
-    assert 'selected=take_profit_selected' in tick
+    assert 'selected=take_profit_selected or dca_selected' in tick
+    assert 'next_dca_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions)' in tick
     assert 'protection_selected=(None if seat_shortage else portfolio_protection_decision' in tick

@@ -386,3 +386,21 @@ def test_most_urgent_profitable_position_is_first_management_candidate():
     positions=[{"symbol":"BEATUSDT","positionSide":"SHORT","positionAmt":17,"markPrice":.647,"notional":11,"unRealizedProfit":4.11},
         {"symbol":"ENAUSDT","positionSide":"SHORT","positionAmt":227,"markPrice":.08408,"notional":19.09,"unRealizedProfit":.92}]
     assert most_urgent_profitable_owned(Strategy2Config(),[ena,beat],positions)==beat
+
+def test_next_dca_decision_keeps_existing_long_managed_while_seats_are_empty():
+    cfg=Strategy2Config(long_dca_distance=.02,maximum_pairs=100)
+    leg=OwnedLeg("s2","strategy2","BTCUSDT","LONG","c",1,1,100)
+    positions=[row(mark="97.9",pnl="-2.1")]
+    p=portfolio_state(cfg,{"totalMarginBalance":"1000","totalMaintMargin":"10","availableBalance":"500"},positions,[leg],1000)
+    chosen=next_dca_decision(cfg,p,[leg],positions)
+    assert chosen and chosen[1].kind=="ADD_DCA"
+    assert len([leg]) < cfg.maximum_pairs
+
+
+def test_short_dca_trigger_can_be_configured_at_ten_percent():
+    cfg=Strategy2Config(short_dca_distance=.10)
+    leg=OwnedLeg("s2","strategy2","BTCUSDT","SHORT","c",1,1,100)
+    p=portfolio_state(cfg,{"totalMarginBalance":"1000","totalMaintMargin":"10","availableBalance":"500"},[row("SHORT",mark="110.1",pnl="-10.1")],[leg],1000)
+    chosen=next_dca_decision(cfg,p,[leg],[row("SHORT",mark="110.1",pnl="-10.1")])
+    assert chosen and chosen[1].kind=="ADD_DCA"
+    assert next_dca_decision(cfg,p,[leg],[row("SHORT",mark="109.9",pnl="-9.9")]) is None

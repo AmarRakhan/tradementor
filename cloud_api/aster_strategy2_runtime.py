@@ -262,6 +262,28 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
     choices.sort(key=lambda x:(x[0],x[1]))
     return (choices[0][2],choices[0][3]) if choices[0][3].kind!="HOLD" else None
 
+def next_dca_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg],positions:list[dict[str,Any]],
+                      excluded_dca:set[tuple[str,str]]|None=None,
+                      excluded_actions:set[tuple[str,str,str]]|None=None)->tuple[OwnedLeg,Decision]|None:
+    """Return the most urgent proven DCA without letting seat refill suppress position management.
+
+    Existing legs are evaluated with the normal Strategy-2 safety rules. TP still
+    has separate higher priority in the caller; EMERGENCY, budget, ownership and
+    open-order gates remain authoritative.
+    """
+    pos=active_position_map(positions);excluded_dca=excluded_dca or set();excluded_actions=excluded_actions or set();choices=[]
+    for item in owned:
+        row=pos.get((item.symbol,item.side))
+        if not row or (item.symbol,item.side) in excluded_dca:continue
+        projected=leg_projection(item,row);decision=decide_leg(config,projected,portfolio,estimated_close_fee=estimated_close_fee(row))
+        if decision.kind!='ADD_DCA' or (item.symbol,item.side,decision.kind) in excluded_actions:continue
+        deviation=abs(projected.current_price/projected.weighted_entry-1) if projected.weighted_entry>0 else 0
+        choices.append((deviation,item,decision))
+    if not choices:return None
+    choices.sort(key=lambda x:x[0],reverse=True)
+    return choices[0][1],choices[0][2]
+
+
 def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:
     new_pair_margin=config.base_notional/max(1,config.leverage)
     # Seat refill is a Strategy-2 capacity invariant. Account-wide risk/recovery

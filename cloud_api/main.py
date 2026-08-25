@@ -82,7 +82,7 @@ from aster_strategy_status import (operating_status_contract, ownership_reason_c
     position_count_contract, proven_owned_rows, reconciled_ownership_update)
 from aster_strategy2_execution import ExecutionContext, Strategy2RiskBlocked, execute_decision as execute_aster_strategy2_decision
 from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recover_audited_ownership, portfolio_state as strategy2_portfolio_state
-from aster_strategy2_runtime import next_management_decision, scanner_allowed, active_position_map, cost_evidence_max_age_seconds
+from aster_strategy2_runtime import next_management_decision, next_dca_decision, scanner_allowed, active_position_map, cost_evidence_max_age_seconds
 from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned, isolate_unproven_ownership
 from aster_strategy2_runtime import enrich_confirmed_costs
 from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
@@ -1488,11 +1488,13 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             # account tick.  Keep the exact reopen queued with its cooldown,
             # consume no order slot, and continue with other proven management
             # actions or normal new-entry candidates below.
-    # Hard capacity invariant: while configured seats are empty, only a proven
-    # TP close may preempt refill. DCA/protection/role bookkeeping are deferred
-    # until the target is full, so account-wide risk modes cannot strand seats.
+    # Every confirmed Strategy-2 leg is managed from the moment it opens. Empty
+    # seats may never suppress a due DCA. TP remains absolute priority; while
+    # capacity is still being filled, a proven DCA runs before new exposure.
+    # Protection/role bookkeeping keeps the existing full-capacity behavior.
+    dca_selected=next_dca_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions)
     if seat_shortage:
-        selected=take_profit_selected
+        selected=take_profit_selected or dca_selected
     else:
         selected=(take_profit_selected or protection_selected or management_selected or
             same_pair_protection_decision(settings,portfolio,management_owned,management_positions,blocked_actions))
