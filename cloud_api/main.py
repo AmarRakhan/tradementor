@@ -1198,6 +1198,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         owned_leg_count=counts["positionLegCount"],universe=universe,exchange_data_fresh=exchange_data_fresh)
     queue_enabled=(os.getenv(QUEUE_FEATURE_FLAG,"false").lower()=="true" and bool(raw.get("orderQueueEnabled",False)))
     queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+    scan_history=raw.get("scanActionHistory") if isinstance(raw.get("scanActionHistory"),list) else []
     mg_round=raw.get("moneyGrabberRound") if isinstance(raw.get("moneyGrabberRound"),dict) else None
     mg_pairs=raw.get("moneyGrabberPairs") if isinstance(raw.get("moneyGrabberPairs"),list) else []
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
@@ -1221,7 +1222,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         "orderQueue":{"enabled":queue_enabled,"maximumOrdersPerScan":MAX_ORDERS_PER_ACCOUNT_SCAN,
             "scanId":str(queue_state.get("scanId","")),"ordersUsed":int(safe_float(queue_state.get("ordersUsed"))),
             "haltedUncertain":bool(queue_state.get("haltedUncertain",False)),
-            "lastScanActions":queue_state.get("actions",[]) if isinstance(queue_state.get("actions"),list) else [],
+            "lastScanActions":scan_history[-MAX_ORDERS_PER_ACCOUNT_SCAN:],
             "lastScanCompletedAt":queue_state.get("completedAt",queue_state.get("updatedAt")),
             "pendingReopenCount":len(queue_state.get("pendingReopens",[])) if isinstance(queue_state.get("pendingReopens"),list) else 0}}}
 
@@ -5301,7 +5302,11 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
         used=new_used;state.update({"ordersUsed":used,"currentIntent":{},"updatedAt":confirmed_at,
             "reservedActions":reserved,"actions":confirmed_actions[-MAX_ORDERS_PER_ACCOUNT_SCAN:],
             "pendingReopens":ref.get().to_dict().get("pendingReopens",[])})
-        ref.set({"orderQueueState":state},merge=True);results.append(result)
+        latest_doc=ref.get().to_dict() or {}
+        history=list(latest_doc.get("scanActionHistory",[])) if isinstance(latest_doc.get("scanActionHistory"),list) else []
+        if sent>0:
+            history.extend(confirmed_actions[-sent:])
+        ref.set({"orderQueueState":state,"scanActionHistory":history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]},merge=True);results.append(result)
         if drain_pending_only and not state.get("pendingReopens"):break
         if sent==0:
             # A symbol/leg-local management rejection must not consume the whole

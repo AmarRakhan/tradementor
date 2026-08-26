@@ -11,7 +11,7 @@ test("top profit, last scan actions and latest exits render in the approved orde
   const scan = component.indexOf('<ScanActionsCard rows={scanActions}');
   const closed = component.indexOf('title="Laatste 5 uitgestapte trades" rows={exits}');
   assert.ok(top >= 0 && scan > top && closed > scan);
-  assert.doesNotMatch(component, /title="Laatste 5 ingestapte trades"/);
+  assert.ok(component.indexOf('title="Laatste 5 ingestapte trades" rows={entries}') > closed);
 });
 
 test("real exchange time wins over a newer import/update time", () => {
@@ -54,7 +54,7 @@ test("top profit and closed trades expose the exact seven approved columns", () 
   assert.match(component, />\s*Close\s*<\/button>/);
   assert.match(component, /function money\(value: unknown\)/);
   assert.match(component, /`\$\$\{amount\(n\)\}`/);
-  assert.equal((component.match(/compactLimit=\{5\}/g) || []).length, 1);
+  assert.equal((component.match(/compactLimit=\{5\}/g) || []).length, 2);
   assert.doesNotMatch(component, /Laatste 20 (?:in|uit)gestapte trades/);
   assert.doesNotMatch(component, /INGEKOCHT|INGESTAPT \(\$\)|VERKOCHT|NU WAARD|Perp ·|Niet aan strategie gekoppeld/);
 });

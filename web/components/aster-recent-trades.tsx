@@ -439,6 +439,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       <TopProfitCard rows={positions} entries={entries} exits={exits} liveState={liveState} onClosed={onRetry} />
       <ScanActionsCard rows={scanActions} completedAt={orderQueue.lastScanCompletedAt} positions={allPositions} exits={exits} />
       <RecentTradesCard title="Laatste 5 uitgestapte trades" rows={exits} closed liveState={liveState} positions={allPositions} onClosed={onRetry} scanActions={scanActions} compactLimit={5} />
+      <RecentTradesCard title="Laatste 5 ingestapte trades" rows={entries} closed={false} liveState={liveState} positions={allPositions} onClosed={onRetry} compactLimit={5} />
     </section>
   );
 }

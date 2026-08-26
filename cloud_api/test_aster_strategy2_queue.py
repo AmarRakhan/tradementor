@@ -175,7 +175,8 @@ def test_ten_thousand_shadow_plans_never_mutate_or_exceed_account_budget():
 
 def test_public_queue_exposes_last_scan_actions_contract():
     source = Path(__file__).with_name("main.py").read_text()
-    assert '"lastScanActions":queue_state.get("actions",[])' in source
+    assert '"lastScanActions":scan_history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
+    assert '"scanActionHistory":history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert '"lastScanCompletedAt":queue_state.get("completedAt",queue_state.get("updatedAt"))' in source
     assert '"reservedActions":reserved[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert 'confirmed_actions.append({**action,"executedAt":confirmed_at})' in source
