@@ -91,6 +91,9 @@ from aster_strategy2_runtime import portfolio_protection_decision, same_pair_pro
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, queued_entry_order_limit, management_preempts_initial_build
 from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
 from aster_strategy2_focus_adapter import build_focus_shadow_report, focus_state_from_mapping, focus_state_to_mapping, advance_focus_shadow_state
+from aster_strategy2_focus_adapter import current_focus_markets
+from aster_strategy2_focus import rank_focus_pairs
+from aster_strategy2_focus_live import run_focus_live_step
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -1229,6 +1232,11 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     scan_history=sorted(merged_actions.values(),key=scan_action_time)[-MAX_ORDERS_PER_ACCOUNT_SCAN:]
     mg_round=raw.get("moneyGrabberRound") if isinstance(raw.get("moneyGrabberRound"),dict) else None
     mg_pairs=raw.get("moneyGrabberPairs") if isinstance(raw.get("moneyGrabberPairs"),list) else []
+    focus_live_mode=str(settings.get("tradingMode",""))=="focus" and str(settings.get("mode",""))=="live"
+    focus_state=(raw.get("focusLiveState") if focus_live_mode else raw.get("focusShadowState"))
+    focus_state=focus_state if isinstance(focus_state,dict) else {}
+    focus_report=(raw.get("focusLiveReport") if focus_live_mode else raw.get("focusShadowReport"))
+    focus_report=focus_report if isinstance(focus_report,dict) else {}
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
         "displayPhase":"UIT" if not enabled else str(raw.get("phase","DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": enabled,
@@ -1247,10 +1255,11 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "partialSymbols":sum(str(x.get("status",""))=="PARTIAL_PROTECTION" for x in mg_pairs if isinstance(x,dict)),
             "lockedSymbols":sum(str(x.get("status",""))=="LOCKED" for x in mg_pairs if isinstance(x,dict)),
             "recoverySymbols":sum(str(x.get("status",""))=="RECOVERY" for x in mg_pairs if isinstance(x,dict))},
-        "focus":{"state":raw.get("focusShadowState",{}) if isinstance(raw.get("focusShadowState"),dict) else {},
-            "report":raw.get("focusShadowReport",{}) if isinstance(raw.get("focusShadowReport"),dict) else {},
+        "focus":{**focus_state,"state":focus_state,"report":focus_report,
             "metrics":raw.get("focusShadowMetrics",{}) if isinstance(raw.get("focusShadowMetrics"),dict) else {},
-            "ordersSent":0,"updatedAt":raw.get("focusShadowAt")},
+            "ordersSent":int(safe_float(raw.get("focusLiveOrdersSent"))) if focus_live_mode else 0,
+            "live":bool(focus_live_mode and enabled),"shadowEnabled":bool(settings.get("focusShadowEnabled",False)),
+            "updatedAt":raw.get("focusLiveAt") if focus_live_mode else raw.get("focusShadowAt")},
         "orderQueue":{"enabled":queue_enabled,"maximumOrdersPerScan":MAX_ORDERS_PER_ACCOUNT_SCAN,
             "scanId":str(queue_state.get("scanId","")),"ordersUsed":int(safe_float(queue_state.get("ordersUsed"))),
             "haltedUncertain":bool(queue_state.get("haltedUncertain",False)),
@@ -1528,7 +1537,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     management_positions=[row for row in strategy_positions if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in management_keys]
     cost_holds=[f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}"
         for leg in owned if (leg.symbol,leg.side) not in fresh_cost_keys]
-    seat_shortage=len(owned)<settings.maximum_pairs
+    seat_shortage=(settings.trading_mode!="focus" and len(owned)<settings.maximum_pairs)
     protection_selected=(None if seat_shortage else portfolio_protection_decision(settings,portfolio,management_owned))
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
@@ -1538,6 +1547,16 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     management_selected=next_management_decision(settings,portfolio,management_owned,management_positions,blocked_dca,blocked_actions)
     take_profit_selected=(management_selected if management_selected and
         management_selected[1].kind in {"FULL_TP","PARTIAL_TP"} else None)
+    # Focus uses the same pure planner as Shadow. Safety/emergency protection may
+    # preempt it; otherwise Focus exit/partial/DCA/entry precede legacy management.
+    focus_emergency=bool(protection_selected and protection_selected[1].kind in {"EMERGENCY_REDUCE","CLOSE_PROTECTION"})
+    if settings.trading_mode=="focus" and enabled and not focus_emergency:
+        focus_result=run_focus_live_step(client=client,ref=ref,raw_state={**raw,"ownedLegs":[owned_to_mapping(x) for x in owned]},
+            settings=settings,uid=uid,account=account,positions=positions,timestamp_ms=now_ms,dry_run=dry_run,
+            order_budget=order_budget,before_order=before_order)
+        if focus_result and str(focus_result.get("action",""))!="FOCUS_HOLD":
+            ref.set({"lastTickAt":now},merge=True)
+            return focus_result
     pending_reopen_cooldown_until=(int(safe_float(pending_reopens[0].get("cooldownUntilMs")))
         if pending_reopens and isinstance(pending_reopens[0],dict) else 0)
     pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms
@@ -3865,6 +3884,18 @@ def start_money_grabber(request:MoneyGrabberRoundStartRequest,user:dict[str,Any]
     ref.collection("audit").add({"event":"MONEY_GRABBER_ROUND_STARTED","roundId":round_id,
         "startNetValue":domain.start_net_value,"targetNetValue":domain.target_net_value,"timestamp":datetime.now(timezone.utc)})
     return {"started":True,"ordersSent":0,"round":stored,**aster_strategy2_public(uid)}
+
+
+@app.get("/v1/me/aster/strategy2/focus/markets")
+def strategy2_focus_markets(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    raw=aster_strategy2_reference(str(user["uid"])).get().to_dict() or {}
+    settings=Strategy2Config.from_mapping(raw.get("settings"))
+    secret=load_aster_secret(user)
+    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+    markets=current_focus_markets(client,settings)
+    ranking=rank_focus_pairs(list(markets),minimum_quote_volume=settings.minimum_quote_volume_24h_usdt,
+        minimum_liquidity_score=settings.focus_min_liquidity_score)
+    return {"readOnly":True,"ordersSent":0,"ranking":[row.public_dict() for row in ranking],"marketCount":len(markets)}
 
 
 @app.get("/v1/me/aster/strategy2/focus/shadow")

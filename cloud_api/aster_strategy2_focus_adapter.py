@@ -105,22 +105,24 @@ def current_focus_markets(client: Any, config: Strategy2Config, *, candidate_lim
         if change <= 0 or quote_volume <= 0: continue
         raw.append((symbol, change, quote_volume))
     raw.sort(key=lambda x: x[1], reverse=True)
-    # Technical analysis is deliberately bounded to the strongest 24h leaders;
-    # this preserves 24h performance as the primary selection criterion.
+    # Scan the complete positive USDT-perpetual universe for the selectable/audit list.
+    # Candle requests stay bounded to the strongest leaders plus the manual pair.
+    technical_limit=max(3,min(30,candidate_limit))
+    technical_symbols={symbol for symbol,_,_ in raw[:technical_limit]}
+    if config.focus_manual_pair:technical_symbols.add(config.focus_manual_pair.upper())
     result: list[FocusMarket] = []
-    for symbol, change, volume in raw[:max(3, min(30, candidate_limit))]:
+    for symbol, change, volume in raw:
         price = prices.get(symbol, 0.0)
         if price <= 0: continue
         closes: list[float] = []
-        try:
-            for candle in client.klines(symbol, "15m", 60):
-                if len(candle) > 4:
-                    close = _f(candle[4])
-                    if close > 0: closes.append(close)
-        except Exception:
-            # Ranking stays fail-closed technically when candles are missing;
-            # the pure domain still has the 24h and liquidity evidence.
-            closes = []
+        if symbol in technical_symbols:
+            try:
+                for candle in client.klines(symbol, "15m", 60):
+                    if len(candle) > 4:
+                        close = _f(candle[4])
+                        if close > 0: closes.append(close)
+            except Exception:
+                closes = []
         liquidity = min(1.0, volume / max(1.0, config.minimum_quote_volume_24h_usdt))
         result.append(FocusMarket(symbol, price, change, volume, liquidity, tuple(closes)))
     return tuple(result)

@@ -177,6 +177,7 @@ def changed_owned_symbols(owned:list[OwnedLeg],positions:list[dict[str,Any]])->s
     """Symbols that need fill-history recovery because position truth changed."""
     pos=active_position_map(positions);changed=set()
     for leg in owned:
+        if config.trading_mode=="focus" and str(leg.role).upper()=="FOCUS":continue
         row=pos.get((leg.symbol,leg.side))
         if row is None:continue
         quantity=abs(number(row.get("positionAmt")));entry=number(row.get("entryPrice"))
@@ -248,6 +249,7 @@ def next_management_decision(config:Strategy2Config,portfolio:PortfolioState,own
     excluded_actions=excluded_actions or set()
     choices=[]
     for item in owned:
+        if config.trading_mode=="focus" and str(item.role).upper()=="FOCUS":continue
         row=pos.get((item.symbol,item.side))
         if not row:continue
         close_fee=estimated_close_fee(row);projected=leg_projection(item,row)
@@ -273,6 +275,7 @@ def next_dca_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list
     """
     pos=active_position_map(positions);excluded_dca=excluded_dca or set();excluded_actions=excluded_actions or set();choices=[]
     for item in owned:
+        if config.trading_mode=="focus" and str(item.role).upper()=="FOCUS":continue
         row=pos.get((item.symbol,item.side))
         if not row or (item.symbol,item.side) in excluded_dca:continue
         projected=leg_projection(item,row);decision=decide_leg(config,projected,portfolio,estimated_close_fee=estimated_close_fee(row))
@@ -355,6 +358,7 @@ def same_pair_protection_decision(config:Strategy2Config,portfolio:PortfolioStat
     pos=active_position_map(positions);keys={(x.symbol,x.side) for x in owned};blocked_actions=blocked_actions or set()
     candidates=[]
     for leg in owned:
+        if config.trading_mode=="focus" and str(leg.role).upper()=="FOCUS":continue
         if leg.role=="PROTECTION":continue
         row=pos.get((leg.symbol,leg.side));opposite="SHORT" if leg.side=="LONG" else "LONG"
         if (leg.symbol,leg.side,"OPEN_PROTECTION") in blocked_actions:continue
@@ -370,7 +374,8 @@ def same_pair_protection_decision(config:Strategy2Config,portfolio:PortfolioStat
 
 def portfolio_protection_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->tuple[OwnedLeg,Decision]|None:
     mode=risk_mode(config,portfolio)
-    protected=[x for x in owned if x.role in {"PROTECTION","HARVEST_PROTECTION"}]
+    managed=[x for x in owned if not (config.trading_mode=="focus" and str(x.role).upper()=="FOCUS")]
+    protected=[x for x in managed if x.role in {"PROTECTION","HARVEST_PROTECTION"}]
     if mode=="NORMAL" and protected:
         leg=protected[0]
         if leg.role=="PROTECTION":return leg,Decision("CLOSE_PROTECTION",leg.side,notional=leg.quantity*leg.weighted_entry,role="PROTECTION",reason="Portfolio is terug in NORMAL; tijdelijke hedge wordt gesloten",risk_reducing=True)
@@ -379,7 +384,7 @@ def portfolio_protection_decision(config:Strategy2Config,portfolio:PortfolioStat
     cap=portfolio.equity*config.max_net_exposure_ratio;net=portfolio.long_exposure-portfolio.short_exposure
     if abs(net)<=cap:return None
     if portfolio.margin_ratio>=config.emergency_margin_ratio:
-        overweight="LONG" if net>0 else "SHORT";candidate=next((x for x in owned if x.side==overweight),None)
+        overweight="LONG" if net>0 else "SHORT";candidate=next((x for x in managed if x.side==overweight),None)
         if not candidate:return None
         amount=min(abs(net)-cap,candidate.quantity*candidate.weighted_entry*.25)
         return candidate,Decision("EMERGENCY_REDUCE",overweight,notional=max(0,amount),role=candidate.role,

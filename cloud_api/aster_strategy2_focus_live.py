@@ -219,7 +219,8 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
     planned=focus_state_from_mapping(report.get("state"));decision=report.get("decision") if isinstance(report.get("decision"),dict) else {}
     kind=str(decision.get("kind","HOLD")).upper();symbol=str(decision.get("symbol",planned.active_pair)).upper()
     if kind=="HOLD":
-        ref.set({"focusLiveState":focus_state_to_mapping(planned),"focusLiveReport":report,"focusLiveAt":time.time()},merge=True)
+        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveState":focus_state_to_mapping(planned),
+            "focusLiveReport":report,"focusLiveAt":time.time()},merge=True)
         return {"status":"waiting","action":"FOCUS_HOLD","reason":str(decision.get("reason","runner blijft open")),"ordersSent":0,"focus":report}
     if dry_run or settings.mode!="live":
         return {"status":"simulated","action":f"FOCUS_{kind}","symbol":symbol,"ordersSent":0,"focus":report}
