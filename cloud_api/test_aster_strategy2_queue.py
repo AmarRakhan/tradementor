@@ -178,7 +178,10 @@ def test_public_queue_exposes_last_scan_actions_contract():
     assert '"lastScanActions":scan_history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert '"scanActionHistory":history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert 'existing_history=list(prior.get("actions",[]))[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
-    assert '"lastScanCompletedAt":queue_state.get("completedAt",queue_state.get("updatedAt"))' in source
+    assert '"lastScanCompletedAt":raw.get("lastTickAt")' in source
+    assert 'raw.get("orderAttributions",[])' in source
+    assert 'merged_actions[identity]' in source
+    assert 'dca_number=dca_seen[key]+1' in source
     assert '"reservedActions":reserved[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert 'confirmed_actions.append({**action,"executedAt":confirmed_at})' in source
     assert '"dcaNumber":leg.dca_count+1 if decision.kind=="ADD_DCA" else None' in source

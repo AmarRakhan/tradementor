@@ -1198,7 +1198,34 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         owned_leg_count=counts["positionLegCount"],universe=universe,exchange_data_fresh=exchange_data_fresh)
     queue_enabled=(os.getenv(QUEUE_FEATURE_FLAG,"false").lower()=="true" and bool(raw.get("orderQueueEnabled",False)))
     queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
-    scan_history=raw.get("scanActionHistory") if isinstance(raw.get("scanActionHistory"),list) else []
+    scan_history=[dict(x) for x in raw.get("scanActionHistory",[]) if isinstance(x,dict)] if isinstance(raw.get("scanActionHistory"),list) else []
+    # orderAttributions is durable proof shared by queue and direct Strategy-2 execution.
+    attributed=[dict(x) for x in raw.get("orderAttributions",[]) if isinstance(x,dict)] if isinstance(raw.get("orderAttributions"),list) else []
+    dca_seen:dict[tuple[str,str,str],int]={};attribution_actions=[]
+    def attribution_time(row:dict[str,Any])->float:
+        value=row.get("recordedAt")
+        if isinstance(value,datetime):return value.timestamp()
+        try:return datetime.fromisoformat(str(value).replace("Z","+00:00")).timestamp()
+        except (TypeError,ValueError):return 0.0
+    for item in sorted(attributed,key=attribution_time):
+        kind=str(item.get("action","")).upper();symbol=str(item.get("symbol","")).upper();side=str(item.get("side","")).upper()
+        if not symbol or side not in {"LONG","SHORT"}:continue
+        if kind not in {"INITIAL_OPEN_LEG","OPEN_LEG","ADD_DCA","PROTECTION_INCREASE","OPEN_PROTECTION","FULL_TP","PARTIAL_TP","TAKE_PROFIT_CLOSE","RISK_REDUCE","AUTO_RESTART","PENDING_REOPEN"}:continue
+        cycle=str(item.get("cycleId",""));key=(symbol,side,cycle);dca_number=None
+        if kind=="ADD_DCA":dca_seen[key]=dca_seen.get(key,0)+1;dca_number=dca_seen[key]+1
+        attribution_actions.append({"clientOrderId":str(item.get("clientOrderId","")),"symbol":symbol,"side":side,"kind":kind,
+            "action":"CLOSE" if kind in {"FULL_TP","PARTIAL_TP","TAKE_PROFIT_CLOSE","RISK_REDUCE"} else "OPEN",
+            "dcaNumber":dca_number,"executedAt":item.get("recordedAt"),"cycleId":cycle})
+    merged_actions:dict[str,dict[str,Any]]={}
+    for item in [*attribution_actions,*scan_history]:
+        identity=str(item.get("clientOrderId","")).strip() or "|".join(str(item.get(k,"")) for k in ("symbol","side","kind","executedAt"))
+        merged_actions[identity]={**merged_actions.get(identity,{}),**item}
+    def scan_action_time(row:dict[str,Any])->float:
+        value=row.get("executedAt")
+        if isinstance(value,datetime):return value.timestamp()
+        try:return datetime.fromisoformat(str(value).replace("Z","+00:00")).timestamp()
+        except (TypeError,ValueError):return 0.0
+    scan_history=sorted(merged_actions.values(),key=scan_action_time)[-MAX_ORDERS_PER_ACCOUNT_SCAN:]
     mg_round=raw.get("moneyGrabberRound") if isinstance(raw.get("moneyGrabberRound"),dict) else None
     mg_pairs=raw.get("moneyGrabberPairs") if isinstance(raw.get("moneyGrabberPairs"),list) else []
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
@@ -1223,7 +1250,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "scanId":str(queue_state.get("scanId","")),"ordersUsed":int(safe_float(queue_state.get("ordersUsed"))),
             "haltedUncertain":bool(queue_state.get("haltedUncertain",False)),
             "lastScanActions":scan_history[-MAX_ORDERS_PER_ACCOUNT_SCAN:],
-            "lastScanCompletedAt":queue_state.get("completedAt",queue_state.get("updatedAt")),
+            "lastScanCompletedAt":raw.get("lastTickAt") or queue_state.get("completedAt",queue_state.get("updatedAt")),
             "pendingReopenCount":len(queue_state.get("pendingReopens",[])) if isinstance(queue_state.get("pendingReopens"),list) else 0}}}
 
 
