@@ -5246,10 +5246,13 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
             "reason":str(prior.get("reconcileReason","Geen openstaande queue-intent"))}
     used=int(safe_float(prior.get("ordersUsed"))) if str(prior.get("scanId",""))==scan_id else 0
     starting_used=used
+    existing_history=list(raw.get("scanActionHistory",[])) if isinstance(raw.get("scanActionHistory"),list) else []
+    if not existing_history and isinstance(prior.get("actions"),list):
+        existing_history=list(prior.get("actions",[]))[-MAX_ORDERS_PER_ACCOUNT_SCAN:]
     state={"scanId":scan_id,"ordersUsed":used,"maximumOrders":scan_limit,
         "haltedUncertain":False,"startedAt":prior.get("startedAt") if used else now,
         "pendingReopens":raw.get("pendingReopens",[]),"reservedActions":[],"actions":[]}
-    ref.set({"orderQueueState":state},merge=True)
+    ref.set({"orderQueueState":state,"scanActionHistory":existing_history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]},merge=True)
     results=[]
     while used<scan_limit:
         if time.monotonic()>=scan_deadline:

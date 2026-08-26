@@ -177,6 +177,7 @@ def test_public_queue_exposes_last_scan_actions_contract():
     source = Path(__file__).with_name("main.py").read_text()
     assert '"lastScanActions":scan_history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert '"scanActionHistory":history[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
+    assert 'existing_history=list(prior.get("actions",[]))[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert '"lastScanCompletedAt":queue_state.get("completedAt",queue_state.get("updatedAt"))' in source
     assert '"reservedActions":reserved[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
     assert 'confirmed_actions.append({**action,"executedAt":confirmed_at})' in source
