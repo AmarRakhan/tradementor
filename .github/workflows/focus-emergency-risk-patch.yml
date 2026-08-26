@@ -1,0 +1,40 @@
+name: Focus Emergency Risk Patch
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.focus-emergency-risk-trigger]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - name: Keep Focus visible to emergency reduction only
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_strategy2_runtime.py');s=p.read_text()
+          old='candidate=next((x for x in managed if x.side==overweight),None)'
+          new='candidate=next((x for x in owned if x.side==overweight),None)'
+          if old not in s:raise SystemExit('emergency candidate anchor missing')
+          s=s.replace(old,new,1);p.write_text(s)
+          PY
+          cat >> cloud_api/test_aster_strategy2_focus_live_integration_contract.py <<'PY'
+
+
+def test_focus_owned_leg_remains_visible_to_account_emergency_reduction():
+    source=Path("aster_strategy2_runtime.py").read_text()
+    assert 'candidate=next((x for x in owned if x.side==overweight),None)' in source
+PY
+      - name: Verify and cleanup
+        run: |
+          python -m py_compile cloud_api/aster_strategy2_runtime.py
+          rm -f .github/workflows/focus-emergency-risk-patch.yml .focus-emergency-risk-trigger
+          git config user.name OpenAI
+          git config user.email noreply@openai.com
+          git add -A
+          git commit -m "fix: keep Focus exposure visible to emergency reduction"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
