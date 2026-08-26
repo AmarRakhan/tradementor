@@ -66,6 +66,7 @@ class Strategy2Config:
 
     # Focus / Coin van het moment. Defaults are deliberately off/conservative.
     focus_shadow_enabled: bool = False
+    focus_live_enabled: bool = False
     focus_selection_mode: Literal["automatic", "manual"] = "automatic"
     focus_manual_pair: str = ""
     focus_sizing_mode: Literal["fixed_usd", "equity_pct"] = "fixed_usd"
@@ -140,6 +141,7 @@ class Strategy2Config:
             money_grabber_full_ratio=money_number("moneyGrabberFullRatio", 1.00),
             money_grabber_pair_close_enabled=bool(raw.get("moneyGrabberPairCloseEnabled", True)),
             focus_shadow_enabled=bool(raw.get("focusShadowEnabled", False)),
+            focus_live_enabled=bool(raw.get("focusLiveEnabled", False)),
             focus_selection_mode="manual" if str(raw.get("focusSelectionMode", "automatic")).lower() == "manual" else "automatic",
             focus_manual_pair=str(raw.get("focusManualPair", "")).upper().strip(),
             focus_sizing_mode="equity_pct" if str(raw.get("focusSizingMode", "fixed_usd")).lower() == "equity_pct" else "fixed_usd",
@@ -243,7 +245,7 @@ class Strategy2Config:
             "moneyGrabberAutoClose":self.money_grabber_auto_close,"moneyGrabberFirstThreshold":self.money_grabber_first_threshold,
             "moneyGrabberFirstRatio":self.money_grabber_first_ratio,"moneyGrabberFullThreshold":self.money_grabber_full_threshold,
             "moneyGrabberFullRatio":self.money_grabber_full_ratio,"moneyGrabberPairCloseEnabled":self.money_grabber_pair_close_enabled,
-            "focusShadowEnabled":self.focus_shadow_enabled,"focusSelectionMode":self.focus_selection_mode,"focusManualPair":self.focus_manual_pair,
+            "focusShadowEnabled":self.focus_shadow_enabled,"focusLiveEnabled":self.focus_live_enabled,"focusSelectionMode":self.focus_selection_mode,"focusManualPair":self.focus_manual_pair,
             "focusSizingMode":self.focus_sizing_mode,"focusStartOrderNotional":self.focus_start_order_notional,"focusEquityPct":self.focus_equity_pct,
             "focusAutoCompound":self.focus_auto_compound,"focusMaxStartOrderUsd":self.focus_max_start_order_usd,"focusDcaEnabled":self.focus_dca_enabled,
             "focusDcaMode":self.focus_dca_mode,"focusDcaDistance":self.focus_dca_distance,"focusDcaNotional":self.focus_dca_notional,

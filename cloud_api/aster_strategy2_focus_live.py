@@ -212,8 +212,9 @@ def _close_evidence(client:Any,*,uid:str,leg:OwnedLeg,row:dict[str,Any],quantity
 
 def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:Strategy2Config,uid:str,
                         account:dict[str,Any],positions:list[dict[str,Any]],timestamp_ms:int,
-                        dry_run:bool=False,order_budget:int|None=None,before_order:Callable[[Any,dict[str,Any]],None]|None=None)->dict[str,Any]|None:
-    if settings.trading_mode!="focus":return None
+                        dry_run:bool=False,order_budget:int|None=None,reserve_order:Callable[[Any,dict[str,Any]],None]|None=None,
+                        open_orders:list[dict[str,Any]]|None=None)->dict[str,Any]|None:
+    if settings.trading_mode!="focus" or not settings.focus_live_enabled:return None
     report,previous,owned=build_focus_live_plan(client=client,raw_state=raw_state,settings=settings,
         account=account,positions=positions,timestamp_ms=timestamp_ms)
     planned=focus_state_from_mapping(report.get("state"));decision=report.get("decision") if isinstance(report.get("decision"),dict) else {}
@@ -226,6 +227,10 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
         return {"status":"simulated","action":f"FOCUS_{kind}","symbol":symbol,"ordersSent":0,"focus":report}
     if order_budget is not None and order_budget<1:
         return {"status":"budget-exhausted","action":f"FOCUS_{kind}","symbol":symbol,"ordersSent":0}
+    relevant_open_orders=[row for row in (open_orders or []) if isinstance(row,dict) and str(row.get("symbol","")).upper()==symbol]
+    if relevant_open_orders:
+        return {"status":"waiting","action":"FOCUS_OPEN_ORDER_PENDING","symbol":symbol,"ordersSent":0,
+            "reason":"Bestaande open Aster-order op Focus-pair; geen tweede order verzonden"}
     market_price=_focus_market_price(report,symbol,_f((_position_for(positions,symbol) or {}).get("markPrice")))
     if market_price<=0:raise ValueError(f"{symbol}: Focus heeft geen betrouwbare actuele prijs")
 
@@ -241,7 +246,7 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
             existing_contract_notional=existing_notional)
         prefix=f"s2f-{hashlib.sha256(f'{uid}|{cycle}|{kind}|{previous.dca_count}'.encode()).hexdigest()[:12]}"
         def reserve(intent:Any)->None:
-            if before_order:before_order(intent,{"kind":f"FOCUS_{kind}","cycleId":cycle,"leverage":settings.leverage,
+            if reserve_order:reserve_order(intent,{"kind":f"FOCUS_{kind}","cycleId":cycle,"leverage":settings.leverage,
                 "marginUsd":float(plan.notional_per_leg)/max(1,settings.leverage),"dcaNumber":previous.dca_count+1 if kind=="DCA" else None})
         result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True,
             before_submit=reserve,new_position_leverage=settings.leverage)
@@ -284,7 +289,7 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
     evidence=_close_evidence(client,uid=uid,leg=leg,row=row,quantity=float(close_qty),mark=mark,reason=str(decision.get("reason","")))
     prefix=f"s2f-{hashlib.sha256(f'{uid}|{leg.cycle_id}|{kind}|{len(planned.partials_taken)}'.encode()).hexdigest()[:12]}"
     def reserve_close(intent:Any)->None:
-        if before_order:before_order(intent,{"kind":f"FOCUS_{kind}","cycleId":leg.cycle_id,"leverage":plan.leverage,
+        if reserve_order:reserve_order(intent,{"kind":f"FOCUS_{kind}","cycleId":leg.cycle_id,"leverage":plan.leverage,
             "marginUsd":0.0,"dcaNumber":None,"riskReducing":True})
     result=execute_leg_once(client,plan,side=PositionSide.LONG,action="CLOSE",id_prefix=prefix,confirm=True,
         close_evidence=evidence,close_audit=lambda event:ref.collection("audit").add(event),before_submit=reserve_close)

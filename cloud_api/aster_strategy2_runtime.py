@@ -177,7 +177,6 @@ def changed_owned_symbols(owned:list[OwnedLeg],positions:list[dict[str,Any]])->s
     """Symbols that need fill-history recovery because position truth changed."""
     pos=active_position_map(positions);changed=set()
     for leg in owned:
-        if config.trading_mode=="focus" and str(leg.role).upper()=="FOCUS":continue
         row=pos.get((leg.symbol,leg.side))
         if row is None:continue
         quantity=abs(number(row.get("positionAmt")));entry=number(row.get("entryPrice"))
@@ -232,6 +231,7 @@ def most_urgent_profitable_owned(config:Strategy2Config,owned:list[OwnedLeg],pos
     """Pick the profitable owned leg furthest above its net TP threshold."""
     pos=active_position_map(positions);candidates=[]
     for leg in owned:
+        if config.trading_mode=="focus" and str(leg.role).upper()=="FOCUS":continue
         row=pos.get((leg.symbol,leg.side))
         if not row:continue
         gross=number(row.get("unRealizedProfit",row.get("unrealizedProfit")))

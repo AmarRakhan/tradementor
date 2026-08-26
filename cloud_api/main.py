@@ -1318,6 +1318,7 @@ def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:
 
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
                               before_order:Any=None)->dict[str,Any]:
+    focus_queue_reserver=before_order
     if _aster_close_all_active(uid):
         return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
@@ -1537,7 +1538,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     management_positions=[row for row in strategy_positions if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in management_keys]
     cost_holds=[f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}"
         for leg in owned if (leg.symbol,leg.side) not in fresh_cost_keys]
-    seat_shortage=(settings.trading_mode!="focus" and len(owned)<settings.maximum_pairs)
+    seat_shortage=len(owned)<settings.maximum_pairs
+    if settings.trading_mode=="focus":seat_shortage=False
     protection_selected=(None if seat_shortage else portfolio_protection_decision(settings,portfolio,management_owned))
     if protection_selected and (protection_selected[0].symbol,protection_selected[0].side,protection_selected[1].kind) in blocked_actions:
         protection_selected=None
@@ -1553,7 +1555,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if settings.trading_mode=="focus" and enabled and not focus_emergency:
         focus_result=run_focus_live_step(client=client,ref=ref,raw_state={**raw,"ownedLegs":[owned_to_mapping(x) for x in owned]},
             settings=settings,uid=uid,account=account,positions=positions,timestamp_ms=now_ms,dry_run=dry_run,
-            order_budget=order_budget,before_order=before_order)
+            order_budget=order_budget,reserve_order=focus_queue_reserver,open_orders=orders)
         if focus_result and str(focus_result.get("action",""))!="FOCUS_HOLD":
             ref.set({"lastTickAt":now},merge=True)
             return focus_result
@@ -3950,10 +3952,12 @@ def money_grabber_shadow(user:dict[str,Any]=Depends(authenticated_user))->dict[s
 
 @app.put("/v1/me/aster/strategy2/settings")
 def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    try: candidate = Strategy2Config.from_mapping(request.settings)
-    except ValueError as exc: raise HTTPException(422, str(exc)) from exc
     uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
     old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
+    incoming=dict(request.settings);incoming["focusLiveEnabled"]=bool(old.get("focusLiveEnabled",False))
+    try: candidate = Strategy2Config.from_mapping(incoming)
+    except ValueError as exc: raise HTTPException(422, str(exc)) from exc
+    if candidate.trading_mode!="focus":candidate=replace(candidate,focus_live_enabled=False)
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
     saved=Strategy2Config.from_mapping({**candidate.public_dict(),"version":version});now=datetime.now(timezone.utc)
     update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now}
@@ -4092,6 +4096,7 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
     if not request.confirm: raise HTTPException(422,"Persoonlijke bevestiging ontbreekt")
     try: settings=Strategy2Config.from_mapping(request.settings)
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    settings=replace(settings,focus_live_enabled=bool(settings.trading_mode=="focus" and settings.mode=="live"))
     uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
     if settings.mode=="live":
         if not bool(existing.get("liveReady")) or not bool(existing.get("canaryValidated")):

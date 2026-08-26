@@ -29,7 +29,7 @@ class FakeRef:
 
 
 def settings(**extra):
-    raw={"tradingMode":"focus","mode":"live","focusShadowEnabled":False,"focusStartOrderNotional":100,
+    raw={"tradingMode":"focus","mode":"live","focusShadowEnabled":False,"focusLiveEnabled":True,"focusStartOrderNotional":100,
          "focusMaxBudgetUsd":1000,"minimumQuoteVolume24hUsdt":0,"leverage":20,"strategyBudget":.9,
          "focusTrailingActivationPct":.02,"focusMinimumProfitPct":.015}
     raw.update(extra);return Strategy2Config.from_mapping(raw)
