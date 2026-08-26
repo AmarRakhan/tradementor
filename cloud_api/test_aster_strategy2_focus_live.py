@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aster_strategy2 import Strategy2Config
+from aster_strategy2_focus import FocusState, reset_after_full_exit
 from aster_strategy2_focus_live import build_focus_live_plan, run_focus_live_step
 
 
@@ -35,9 +36,13 @@ def settings(**extra):
     raw.update(extra);return Strategy2Config.from_mapping(raw)
 
 
+def account():
+    return {"totalMarginBalance":"1000","availableBalance":"900","totalMaintMargin":"10"}
+
+
 def test_live_plan_uses_same_focus_planner_even_when_shadow_is_off():
     report,state,owned=build_focus_live_plan(client=FakeClient(),raw_state={},settings=settings(),
-        account={"totalMarginBalance":"1000","availableBalance":"900","totalMaintMargin":"10"},positions=[],timestamp_ms=1)
+        account=account(),positions=[],timestamp_ms=1)
     assert report["mode"]=="focus-live"
     assert report["decision"]["kind"]=="OPEN"
     assert report["decision"]["symbol"]=="BTCUSDT"
@@ -46,7 +51,7 @@ def test_live_plan_uses_same_focus_planner_even_when_shadow_is_off():
     assert owned==[]
 
 
-def test_confirmed_live_open_persists_focus_ownership_and_one_order(monkeypatch):
+def test_confirmed_live_open_persists_focus_ownership_and_one_queue_reservation(monkeypatch):
     calls=[]
     def fake_execute(_client,_plan,**kwargs):
         if kwargs.get("before_submit"): kwargs["before_submit"](object())
@@ -54,11 +59,11 @@ def test_confirmed_live_open_persists_focus_ownership_and_one_order(monkeypatch)
     monkeypatch.setattr("aster_strategy2_focus_live.execute_leg_once",fake_execute)
     ref=FakeRef()
     result=run_focus_live_step(client=FakeClient(),ref=ref,raw_state={},settings=settings(),uid="u1",
-        account={"totalMarginBalance":"1000","availableBalance":"900","totalMaintMargin":"10"},positions=[],timestamp_ms=1000,
-        before_order=lambda _intent,details:calls.append(details))
+        account=account(),positions=[],timestamp_ms=1000,
+        reserve_order=lambda _intent,details:calls.append(details))
     assert result["action"]=="FOCUS_OPEN"
     assert result["ordersSent"]==1
-    assert calls[0]["kind"]=="FOCUS_OPEN"
+    assert calls==[{"kind":"FOCUS_OPEN","cycleId":calls[0]["cycleId"],"leverage":20,"marginUsd":5.0,"dcaNumber":None}]
     final=next(value for value in reversed(ref.values) if "ownedLegs" in value)
     assert final["ownedLegs"][0]["role"]=="FOCUS"
     assert final["ownedLegs"][0]["side"]=="LONG"
@@ -68,8 +73,7 @@ def test_confirmed_live_open_persists_focus_ownership_and_one_order(monkeypatch)
 
 def test_wait_until_flat_blocks_new_focus_cycle_without_touching_legacy_position():
     report,_,_=build_focus_live_plan(client=FakeClient(),raw_state={},settings=settings(focusWaitUntilFlat=True),
-        account={"totalMarginBalance":"1000","availableBalance":"900","totalMaintMargin":"10"},
-        positions=[{"symbol":"ETHUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"50","markPrice":"51","leverage":"10"}],timestamp_ms=1)
+        account=account(),positions=[{"symbol":"ETHUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"50","markPrice":"51","leverage":"10"}],timestamp_ms=1)
     assert report["decision"]["kind"]=="HOLD"
     assert "wacht" in report["decision"]["reason"].lower()
 
@@ -77,6 +81,28 @@ def test_wait_until_flat_blocks_new_focus_cycle_without_touching_legacy_position
 def test_zero_order_budget_never_calls_executor(monkeypatch):
     monkeypatch.setattr("aster_strategy2_focus_live.execute_leg_once",lambda *_a,**_k: (_ for _ in ()).throw(AssertionError("order called")))
     result=run_focus_live_step(client=FakeClient(),ref=FakeRef(),raw_state={},settings=settings(),uid="u1",
-        account={"totalMarginBalance":"1000","availableBalance":"900","totalMaintMargin":"10"},positions=[],timestamp_ms=1,order_budget=0)
+        account=account(),positions=[],timestamp_ms=1,order_budget=0)
     assert result["status"]=="budget-exhausted"
     assert result["ordersSent"]==0
+
+
+def test_existing_open_order_on_focus_pair_blocks_duplicate_submission(monkeypatch):
+    monkeypatch.setattr("aster_strategy2_focus_live.execute_leg_once",lambda *_a,**_k: (_ for _ in ()).throw(AssertionError("duplicate order called")))
+    result=run_focus_live_step(client=FakeClient(),ref=FakeRef(),raw_state={},settings=settings(),uid="u1",
+        account=account(),positions=[],timestamp_ms=1,open_orders=[{"symbol":"BTCUSDT","status":"NEW"}])
+    assert result["action"]=="FOCUS_OPEN_ORDER_PENDING"
+    assert result["ordersSent"]==0
+
+
+def test_full_exit_state_is_immediately_eligible_for_next_focus_open():
+    closed=reset_after_full_exit(FocusState(active_pair="BTCUSDT",cycle_id="old",original_entry=90,weighted_entry=90,total_quantity=1,total_notional=90),realized_pnl=10,theoretical_portfolio_value=1010)
+    report,_,_=build_focus_live_plan(client=FakeClient(),raw_state={"focusLiveState":{
+        "activePair":closed.active_pair,"cycleId":closed.cycle_id,"cycleStatus":closed.cycle_status,"openedAt":closed.opened_at_ms,
+        "originalEntry":closed.original_entry,"weightedEntry":closed.weighted_entry,"totalQuantity":closed.total_quantity,"totalNotional":closed.total_notional,
+        "usedMargin":closed.used_margin,"dcaCount":closed.dca_count,"nextDcaTrigger":closed.next_dca_trigger,"highestPrice":closed.highest_price,
+        "highestProfitPct":closed.highest_profit_pct,"trailingActive":closed.trailing_active,"trailingFloor":closed.trailing_floor,
+        "partialsTaken":[],"realizedPnl":closed.realized_pnl,"theoreticalPortfolioValue":closed.theoretical_portfolio_value,
+        "focusBudgetUsed":closed.focus_budget_used,"lastSelectionReason":closed.last_selection_reason,"lastAction":closed.last_action,"lastReason":closed.last_reason}},
+        settings=settings(),account=account(),positions=[],timestamp_ms=2)
+    assert report["decision"]["kind"]=="OPEN"
+    assert report["decision"]["symbol"]=="BTCUSDT"
