@@ -384,7 +384,7 @@ def portfolio_protection_decision(config:Strategy2Config,portfolio:PortfolioStat
     cap=portfolio.equity*config.max_net_exposure_ratio;net=portfolio.long_exposure-portfolio.short_exposure
     if abs(net)<=cap:return None
     if portfolio.margin_ratio>=config.emergency_margin_ratio:
-        overweight="LONG" if net>0 else "SHORT";candidate=next((x for x in managed if x.side==overweight),None)
+        overweight="LONG" if net>0 else "SHORT";candidate=next((x for x in owned if x.side==overweight),None)
         if not candidate:return None
         amount=min(abs(net)-cap,candidate.quantity*candidate.weighted_entry*.25)
         return candidate,Decision("EMERGENCY_REDUCE",overweight,notional=max(0,amount),role=candidate.role,
