@@ -1,0 +1,74 @@
+name: Focus Shadow State Patch
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.focus-shadow-state-trigger]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Persist theoretical Focus cycles without Focus orders
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          maker=Path('web/components/aster-strategy2-maker.tsx')
+          text=maker.read_text()
+          old='mode:v.tradingMode==="focus"?"paper":v.mode,tradingMode:v.tradingMode'
+          new='mode:v.mode,tradingMode:v.tradingMode'
+          if old in text:text=text.replace(old,new,1)
+          elif new not in text:raise SystemExit('maker mode anchor missing')
+          maker.write_text(text)
+
+          adapter=Path('cloud_api/aster_strategy2_focus_adapter.py')
+          text=adapter.read_text()
+          marker='def advance_focus_shadow_state('
+          pos=text.find(marker)
+          if pos<0:raise SystemExit('advance function missing')
+          replacement='''def advance_focus_shadow_state(report: dict[str, Any], previous: FocusState, *, leverage: int,\n                               timestamp_ms: int) -> FocusState:\n    """Apply an immediate theoretical fill to shadow state only; never exchange state."""\n    decision = report.get("decision") if isinstance(report.get("decision"), dict) else {}\n    kind = str(decision.get("kind", "HOLD"))\n    symbol = str(decision.get("symbol", previous.active_pair)).upper()\n    ranking = report.get("ranking") if isinstance(report.get("ranking"), list) else []\n    row = next((x for x in ranking if isinstance(x, dict) and str(x.get("symbol", "")).upper() == symbol), None)\n    price = _f(row.get("price")) if row else 0.0\n    state_raw = report.get("state") if isinstance(report.get("state"), dict) else {}\n    planned = focus_state_from_mapping(state_raw) if state_raw else previous\n    performance = report.get("performance") if isinstance(report.get("performance"), dict) else {}\n    portfolio_base = previous.theoretical_portfolio_value or _f(performance.get("portfolioEquity"))\n    if kind in {"OPEN", "DCA"} and price > 0:\n        base = replace(planned, active_pair=symbol, theoretical_portfolio_value=portfolio_base)\n        return apply_focus_buy(base, price=price, notional=_f(decision.get("notional")), leverage=leverage,\n            timestamp_ms=timestamp_ms, is_dca=(kind == "DCA"), reason=str(decision.get("reason", "")))\n    if kind == "PARTIAL_TP" and price > 0 and previous.total_quantity > 0:\n        fraction=max(0.0,min(1.0,_f(decision.get("close_fraction"))))\n        close_qty=previous.total_quantity*fraction\n        realized=(price-previous.weighted_entry)*close_qty if previous.weighted_entry>0 else 0.0\n        remaining=max(0.0,1.0-fraction)\n        return replace(planned,total_quantity=previous.total_quantity*remaining,\n            total_notional=previous.total_notional*remaining,used_margin=previous.used_margin*remaining,\n            focus_budget_used=previous.focus_budget_used*remaining,realized_pnl=previous.realized_pnl+realized,\n            theoretical_portfolio_value=portfolio_base+realized,last_action="PARTIAL_TP",\n            last_reason=str(decision.get("reason", "partial winst theoretisch genomen")))\n    if kind == "CLOSE":\n        pnl = (price - previous.weighted_entry) * previous.total_quantity if price > 0 and previous.weighted_entry > 0 else 0.0\n        return reset_after_full_exit(planned, realized_pnl=pnl, theoretical_portfolio_value=portfolio_base+pnl)\n    return planned\n'''
+          text=text[:pos]+replacement
+          adapter.write_text(text)
+
+          main=Path('cloud_api/main.py')
+          text=main.read_text()
+          old_import='from aster_strategy2_focus_adapter import build_focus_shadow_report\n'
+          new_import='from aster_strategy2_focus_adapter import build_focus_shadow_report, focus_state_from_mapping, focus_state_to_mapping, advance_focus_shadow_state\n'
+          if old_import in text:text=text.replace(old_import,new_import,1)
+          elif new_import not in text:raise SystemExit('focus adapter import missing')
+          tick='def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,\n'
+          helper='''def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:Strategy2Config,now:datetime)->dict[str,Any]|None:\n    """Advance one persisted hypothetical Focus step; exchange mutation is structurally unavailable."""\n    if settings.trading_mode!="focus" or not settings.focus_shadow_enabled:return None\n    previous=focus_state_from_mapping(raw.get("focusShadowState"));previous_metrics=raw.get("focusShadowMetrics") if isinstance(raw.get("focusShadowMetrics"),dict) else {}\n    try:\n        secret=load_aster_secret({"uid":uid})\n        shadow_client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)\n        report=build_focus_shadow_report(client=shadow_client,raw_state=raw,timestamp_ms=int(now.timestamp()*1000))\n        next_state=advance_focus_shadow_state(report,previous,leverage=settings.leverage,timestamp_ms=int(now.timestamp()*1000))\n        decision=report.get("decision") if isinstance(report.get("decision"),dict) else {}\n        kind=str(decision.get("kind","HOLD")).upper();notional=max(0.0,safe_float(decision.get("notional")))\n        action_fee=notional*.0005 if kind in {"OPEN","DCA","PARTIAL_TP","CLOSE"} else 0.0\n        if action_fee>0 and next_state.theoretical_portfolio_value>0:\n            next_state=replace(next_state,theoretical_portfolio_value=max(0.0,next_state.theoretical_portfolio_value-action_fee))\n        ranking=report.get("ranking") if isinstance(report.get("ranking"),list) else []\n        active_symbol=next_state.active_pair or previous.active_pair\n        market=next((x for x in ranking if isinstance(x,dict) and str(x.get("symbol","")).upper()==active_symbol),None)\n        price=safe_float((market or {}).get("price"));unrealized=(price-next_state.weighted_entry)*next_state.total_quantity if price>0 and next_state.weighted_entry>0 else 0.0\n        actual=((report.get("currentStrategy2") or {}) if isinstance(report.get("currentStrategy2"),dict) else {})\n        actual_equity=safe_float(actual.get("portfolioEquity"));base_value=next_state.theoretical_portfolio_value or actual_equity\n        theoretical_equity=base_value+unrealized;previous_high=safe_float(previous_metrics.get("highWaterMark"),theoretical_equity)\n        high=max(previous_high,theoretical_equity);drawdown=max(0.0,(high-theoretical_equity)/high) if high>0 else 0.0\n        fees=safe_float(previous_metrics.get("fees"))+action_fee;actions=int(safe_float(previous_metrics.get("tradeActions")))+(1 if kind!="HOLD" else 0)\n        cycles=int(safe_float(previous_metrics.get("cycles")))+(1 if kind=="CLOSE" else 0)\n        duration_sum=safe_float(previous_metrics.get("cycleDurationSecondsSum"))\n        if kind=="CLOSE" and previous.opened_at_ms>0:duration_sum+=max(0.0,(int(now.timestamp()*1000)-previous.opened_at_ms)/1000)\n        peak_margin=max(safe_float(previous_metrics.get("peakUsedMargin")),next_state.used_margin,previous.used_margin)\n        metrics={"portfolioEquity":theoretical_equity,"realizedPnl":next_state.realized_pnl,"unrealizedPnl":unrealized,\n            "maxDrawdown":max(safe_float(previous_metrics.get("maxDrawdown")),drawdown),"fees":fees,"tradeActions":actions,\n            "dcaCount":next_state.dca_count,"capitalUsedMargin":next_state.used_margin,"peakUsedMargin":peak_margin,\n            "returnPerUsedMargin":((next_state.realized_pnl+unrealized-fees)/peak_margin if peak_margin>0 else 0.0),\n            "profitPerMarginDollar":((next_state.realized_pnl+unrealized-fees)/peak_margin if peak_margin>0 else 0.0),\n            "highWaterMark":high,"cycles":cycles,"cycleDurationSecondsSum":duration_sum,\n            "averageCycleDurationSeconds":(duration_sum/cycles if cycles>0 else 0.0)}\n        report["state"]=focus_state_to_mapping(next_state);report["performance"]=metrics;report["ordersSent"]=0;report["readOnly"]=True\n        stored_state=focus_state_to_mapping(next_state)\n        ref.set({"focusShadowState":stored_state,"focusShadowReport":report,"focusShadowMetrics":metrics,"focusShadowAt":now,"focusShadowOrdersSent":0},merge=True)\n        ref.collection("focusShadowAudit").add({"timestamp":now,"ordersSent":0,"cycleId":stored_state.get("cycleId",""),\n            "selectedPair":stored_state.get("activePair",""),"selectionReason":report.get("selectionReason",""),\n            "decision":report.get("decision",{}),"ranking":report.get("ranking",[]),"state":stored_state,"performance":metrics,\n            "currentStrategy2":report.get("currentStrategy2",{}),"theoreticalActions":report.get("theoreticalActions",[])})\n        return report\n    except (AsterApiError,AsterValidationError,KeyError,TypeError,ValueError) as exc:\n        failure={"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":f"Focus Shadow scheduler fail-closed: {exc}"}\n        ref.set({"focusShadowReport":failure,"focusShadowAt":now,"focusShadowOrdersSent":0},merge=True)\n        return failure\n\n\n'''
+          if '_run_focus_shadow_scheduler_step(' not in text:
+              if tick not in text:raise SystemExit('tick definition anchor missing')
+              text=text.replace(tick,helper+tick,1)
+          call_anchor='''    if not hedge:\n        reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)\n        return {"status":"blocked","reason":reason}\n    owned=[]\n'''
+          call_new='''    if not hedge:\n        reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)\n        return {"status":"blocked","reason":reason}\n    _run_focus_shadow_scheduler_step(uid,ref,raw,settings,now)\n    owned=[]\n'''
+          if call_anchor in text:text=text.replace(call_anchor,call_new,1)
+          elif '_run_focus_shadow_scheduler_step(uid,ref,raw,settings,now)' not in text:raise SystemExit('tick call anchor missing')
+          main.write_text(text)
+          PY
+      - name: Verify no Focus execution path was introduced
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          main=Path('cloud_api/main.py').read_text();maker=Path('web/components/aster-strategy2-maker.tsx').read_text();adapter=Path('cloud_api/aster_strategy2_focus_adapter.py').read_text()
+          assert 'mode:v.mode,tradingMode:v.tradingMode' in maker
+          assert 'live_authorized=False' in main[main.index('def _run_focus_shadow_scheduler_step'):main.index('def _run_aster_strategy2_tick')]
+          assert 'focusShadowAudit' in main
+          assert 'focusShadowOrdersSent":0' in main
+          assert 'kind == "PARTIAL_TP"' in adapter
+          assert 'execute_aster_strategy2_decision' not in Path('cloud_api/aster_strategy2_focus_adapter.py').read_text()
+          PY
+      - name: Remove patch mechanism and commit
+        run: |
+          rm -f .github/workflows/focus-shadow-state-patch.yml .focus-shadow-state-trigger
+          git config user.name "OpenAI"
+          git config user.email "noreply@openai.com"
+          git add -A
+          git commit -m "feat: persist Focus shadow cycles without disabling legacy management"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
