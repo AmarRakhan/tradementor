@@ -1,4 +1,4 @@
-name: Focus Surgical Patch
+name: Focus Final Integration
 on:
   push:
     branches: [amar-crypto-bot-2026-cloud]
@@ -13,35 +13,57 @@ jobs:
         with:
           ref: amar-crypto-bot-2026-cloud
           fetch-depth: 0
-      - name: Apply exact Focus safety patches
+      - name: Integrate Focus shadow endpoint and UI
         run: |
           python - <<'PY'
           from pathlib import Path
-          runtime=Path('cloud_api/aster_strategy2_runtime.py')
-          text=runtime.read_text()
-          old='''def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:\n    new_pair_margin=config.base_notional/max(1,config.leverage)'''
-          new='''def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:\n    # Focus deliberately suppresses normal Multi-pair seat refill. Existing owned\n    # positions continue through the unchanged management path.\n    if config.trading_mode=="focus":\n        return False\n    new_pair_margin=config.base_notional/max(1,config.leverage)'''
-          if old not in text: raise SystemExit('scanner_allowed anchor not found')
-          runtime.write_text(text.replace(old,new,1))
 
-          adapter=Path('cloud_api/aster_strategy2_shadow_adapter.py')
-          text=adapter.read_text()
-          old='''    """Return only currently executable entry symbols, without mutations."""\n    universe = build_snapshot('''
-          new='''    """Return only currently executable entry symbols, without mutations."""\n    if config.trading_mode == "focus":\n        return ()\n    universe = build_snapshot('''
-          if old not in text: raise SystemExit('shadow entry anchor not found')
-          adapter.write_text(text.replace(old,new,1))
+          main=Path('cloud_api/main.py')
+          text=main.read_text()
+          import_anchor='from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG\n'
+          import_line='from aster_strategy2_focus_adapter import build_focus_shadow_report\n'
+          if import_line not in text:
+              if import_anchor not in text: raise SystemExit('main import anchor not found')
+              text=text.replace(import_anchor, import_anchor+import_line, 1)
+          route='''\n\n@app.get("/v1/me/aster/strategy2/focus/shadow")\ndef strategy2_focus_shadow(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:\n    """Evaluate one Focus scan against fresh Aster data without an order-capable execution path."""\n    uid=str(user["uid"]);raw=aster_strategy2_reference(uid).get().to_dict() or {}\n    settings=Strategy2Config.from_mapping(raw.get("settings"))\n    if settings.trading_mode!="focus" or not settings.focus_shadow_enabled:\n        return {"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":"Focus Shadow staat uit"}\n    secret=load_aster_secret(user)\n    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)\n    try:\n        report=build_focus_shadow_report(client=client,raw_state=raw,timestamp_ms=int(time.time()*1000))\n    except (AsterApiError,AsterValidationError,KeyError,TypeError,ValueError) as exc:\n        return {"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":f"Focus Shadow fail-closed: {exc}"}\n    report["ordersSent"]=0\n    report["readOnly"]=True\n    return report\n'''
+          route_anchor='\n\n@app.get("/v1/me/aster/strategy2/money-grabber/shadow")\n'
+          if '/v1/me/aster/strategy2/focus/shadow' not in text:
+              if route_anchor not in text: raise SystemExit('main route anchor not found')
+              text=text.replace(route_anchor, route+route_anchor, 1)
+          main.write_text(text)
 
           maker=Path('web/components/aster-strategy2-maker.tsx')
           text=maker.read_text()
-          old='<IntegerField label="Aster USDT-handelsuniversum – Top-N" value={v.universe} set={x=>setV({...v,universe:x})}/>'
-          new='<label>Aster USDT-handelsuniversum – Top-N op volume en liquiditeit<input type="number" inputMode="numeric" min="1" step="1" value={v.universe} onChange={e=>setV({...v,universe:e.target.value})}/></label>'
-          if old not in text: raise SystemExit('Top-N anchor not found')
-          maker.write_text(text.replace(old,new,1))
+          maker_import='import { AsterStrategy2FocusShadow } from "@/components/aster-strategy2-focus-shadow";\n'
+          import_anchor='import { focusExposurePreview,focusStartNotional,MAX_FOCUS_DCA } from "@/lib/strategy2-focus";\n'
+          if maker_import not in text:
+              if import_anchor not in text: raise SystemExit('maker import anchor not found')
+              text=text.replace(import_anchor, import_anchor+maker_import, 1)
+          render_anchor='}<div className="strategy-message"><b>Nieuwe instappen:</b>'
+          render='}{v.tradingMode==="focus"&&<AsterStrategy2FocusShadow enabled={v.focusShadow} manualPair={v.focusPair} onSelect={symbol=>setV({...v,focusPair:symbol,focusSelection:"manual"})}/>}<div className="strategy-message"><b>Nieuwe instappen:</b>'
+          if 'AsterStrategy2FocusShadow enabled=' not in text:
+              if render_anchor not in text: raise SystemExit('maker render anchor not found')
+              text=text.replace(render_anchor, render, 1)
+          maker.write_text(text)
           PY
-      - name: Commit surgical patch
+      - name: Verify Focus integration contracts
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          main=Path('cloud_api/main.py').read_text()
+          maker=Path('web/components/aster-strategy2-maker.tsx').read_text()
+          assert '@app.get("/v1/me/aster/strategy2/focus/shadow")' in main
+          assert 'live_authorized=False' in main
+          assert 'report["ordersSent"]=0' in main
+          assert 'AsterStrategy2FocusShadow enabled=' in maker
+          assert 'if config.trading_mode=="focus":\n        return False' in Path('cloud_api/aster_strategy2_runtime.py').read_text()
+          assert 'if config.trading_mode == "focus":\n        return ()' in Path('cloud_api/aster_strategy2_shadow_adapter.py').read_text()
+          PY
+      - name: Remove temporary patch mechanism and commit
+        run: |
+          rm -f .github/workflows/focus-surgical-patch.yml .focus-patch-trigger
           git config user.name "OpenAI"
           git config user.email "noreply@openai.com"
-          git add cloud_api/aster_strategy2_runtime.py cloud_api/aster_strategy2_shadow_adapter.py web/components/aster-strategy2-maker.tsx
-          git commit -m "fix: suppress Multi-pair entries in Focus and preserve Top-N contract"
+          git add -A
+          git commit -m "feat: integrate Focus shadow endpoint and status panel"
           git push origin HEAD:amar-crypto-bot-2026-cloud
