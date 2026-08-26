@@ -1,0 +1,20 @@
+export const MAX_FOCUS_DCA=30;
+export const DEFAULT_FOCUS_DCA=5;
+
+export type FocusDcaMode="fixed"|"progressive";
+export type FocusPreviewInput={entryPrice:number;startNotional:number;dcaEnabled:boolean;dcaNotional:number;dcaMultiplier:number;maxDca:number;dcaDistancePct:number;dcaMode:FocusDcaMode;leverage:number;equity:number;availableMargin:number;focusBudgetNotional:number};
+export type FocusPreview={startNotional:number;dcaNotionals:number[];totalMaxOrderNotional:number;requiredMargin:number;maxLeveragedExposure:number;portfolioMarginPct:number;remainingFreeMargin:number;worstCaseAverageEntry:number;triggerPrices:number[];triggerDropsPct:number[];totalDropToLastDcaPct:number;focusBudgetNotional:number;focusBudgetRemainingNotional:number;availableMargin:number;safe:boolean;status:string};
+
+const finite=(x:number,def=0)=>Number.isFinite(x)?x:def;
+export function focusDcaNotionals(amount:number,multiplier:number,count:number){const n=Math.max(0,Math.min(MAX_FOCUS_DCA,Math.trunc(finite(count))));const a=Math.max(0,finite(amount));const m=Math.max(0,finite(multiplier));return Array.from({length:n},(_,i)=>a*Math.pow(m,i))}
+export function focusDcaDrops(distancePct:number,count:number,mode:FocusDcaMode){const n=Math.max(0,Math.min(MAX_FOCUS_DCA,Math.trunc(finite(count))));const d=Math.max(0,finite(distancePct));return Array.from({length:n},(_,i)=>mode==="progressive"?d*(i+1)*(i+2)/2:d*(i+1))}
+export function focusWeightedAverage(startPrice:number,startNotional:number,prices:number[],notionals:number[]){if(!(startPrice>0&&startNotional>0))return 0;let qty=startNotional/startPrice,total=startNotional;prices.forEach((price,i)=>{const notional=notionals[i]||0;if(price>0&&notional>0){qty+=notional/price;total+=notional}});return qty>0?total/qty:0}
+export function focusExposurePreview(input:FocusPreviewInput):FocusPreview{
+ const leverage=Math.max(1,Math.trunc(finite(input.leverage,1)));const count=input.dcaEnabled?Math.max(0,Math.min(MAX_FOCUS_DCA,Math.trunc(finite(input.maxDca)))):0;
+ const dcaNotionals=focusDcaNotionals(input.dcaNotional,input.dcaMultiplier,count);const triggerDropsPct=focusDcaDrops(input.dcaDistancePct,count,input.dcaMode);const triggerPrices=triggerDropsPct.map(drop=>Math.max(1e-8,input.entryPrice*(1-drop)));
+ const startNotional=Math.max(0,finite(input.startNotional));const totalMaxOrderNotional=startNotional+dcaNotionals.reduce((a,b)=>a+b,0);const requiredMargin=totalMaxOrderNotional/leverage;const budget=Math.max(0,finite(input.focusBudgetNotional));const available=Math.max(0,finite(input.availableMargin));
+ const safe=totalMaxOrderNotional<=budget+1e-9&&requiredMargin<=available+1e-9;const status=totalMaxOrderNotional>budget+1e-9?"budget overschreden":requiredMargin>available+1e-9?"onvoldoende beschikbare margin":"veilig";
+ return {startNotional,dcaNotionals,totalMaxOrderNotional,requiredMargin,maxLeveragedExposure:totalMaxOrderNotional,portfolioMarginPct:input.equity>0?requiredMargin/input.equity:0,remainingFreeMargin:Math.max(0,available-requiredMargin),worstCaseAverageEntry:focusWeightedAverage(input.entryPrice,startNotional,triggerPrices,dcaNotionals),triggerPrices,triggerDropsPct,totalDropToLastDcaPct:triggerDropsPct.at(-1)||0,focusBudgetNotional:budget,focusBudgetRemainingNotional:Math.max(0,budget-totalMaxOrderNotional),availableMargin:available,safe,status};
+}
+
+export function focusStartNotional({sizingMode,fixedUsd,equityPct,equity,maxStartUsd}:{sizingMode:"fixed_usd"|"equity_pct";fixedUsd:number;equityPct:number;equity:number;maxStartUsd:number}){let value=sizingMode==="equity_pct"?Math.max(0,equity)*Math.max(0,equityPct):Math.max(0,fixedUsd);if(maxStartUsd>0)value=Math.min(value,maxStartUsd);return value}
