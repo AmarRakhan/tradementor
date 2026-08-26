@@ -285,6 +285,10 @@ def next_dca_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list
 
 
 def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:
+    # Focus deliberately suppresses normal Multi-pair seat refill. Existing owned
+    # positions continue through the unchanged management path.
+    if config.trading_mode=="focus":
+        return False
     new_pair_margin=config.base_notional/max(1,config.leverage)
     # Seat refill is a Strategy-2 capacity invariant. Account-wide risk/recovery
     # modes may change management decisions, but may not strand configured empty

@@ -50,6 +50,8 @@ def validated_entry_symbols(
     captured_at_ms: int,
 ) -> tuple[str, ...]:
     """Return only currently executable entry symbols, without mutations."""
+    if config.trading_mode == "focus":
+        return ()
     universe = build_snapshot(
         exchange_info, tickers_24h, config.universe_top_n, minimum_quote_volume_24h_usdt=config.minimum_quote_volume_24h_usdt,
         fetched_at=datetime.fromtimestamp(captured_at_ms / 1000, tz=timezone.utc),
