@@ -1,0 +1,43 @@
+name: Focus Surgical Patch
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.focus-patch-trigger]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Apply exact Focus safety patches
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          runtime=Path('cloud_api/aster_strategy2_runtime.py')
+          text=runtime.read_text()
+          old='''def scanner_allowed(config: Strategy2Config, portfolio: PortfolioState, owned: list[OwnedPosition]) -> bool:\n    new_pair_margin = config.base_notional / max(1, config.leverage)'''
+          new='''def scanner_allowed(config: Strategy2Config, portfolio: PortfolioState, owned: list[OwnedPosition]) -> bool:\n    # Focus deliberately suppresses normal Multi-pair seat refill. Existing owned\n    # positions are still managed by the unchanged management path below.\n    if config.trading_mode == "focus":\n        return False\n    new_pair_margin = config.base_notional / max(1, config.leverage)'''
+          if old not in text:
+              raise SystemExit('scanner_allowed anchor not found')
+          runtime.write_text(text.replace(old,new,1))
+
+          maker=Path('web/components/aster-strategy2-maker.tsx')
+          text=maker.read_text()
+          old='<IntegerField label="Aster USDT-handelsuniversum – Top-N" value={v.universe} set={x=>setV({...v,universe:x})}/>'
+          new='<label>Aster USDT-handelsuniversum – Top-N<input type="number" inputMode="numeric" min="1" step="1" value={v.universe} onChange={e=>setV({...v,universe:e.target.value})}/></label>'
+          if old not in text:
+              raise SystemExit('Top-N anchor not found')
+          maker.write_text(text.replace(old,new,1))
+          PY
+      - name: Commit surgical patch
+        run: |
+          git config user.name "OpenAI"
+          git config user.email "noreply@openai.com"
+          git add cloud_api/aster_strategy2_runtime.py web/components/aster-strategy2-maker.tsx
+          git commit -m "fix: suppress seat refill in Focus and preserve Top-N input contract"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
