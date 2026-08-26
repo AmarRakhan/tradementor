@@ -5,17 +5,18 @@ import test from "node:test";
 const maker=readFileSync(new URL("../components/aster-strategy2-maker.tsx",import.meta.url),"utf8");
 const proxy=readFileSync(new URL("../lib/secure-strategy2-live.ts",import.meta.url),"utf8");
 
-test("Money Grabber is default off and separate from Portfolio Protection",()=>{
+test("Money Grabber is default off, separate from Portfolio Protection, and isolated to Multi-pair",()=>{
   assert.match(maker,/moneyGrabber:false/);
-  assert.match(maker,/moneyGrabberEnabled:v\.moneyGrabber/);
+  assert.match(maker,/moneyGrabberEnabled:v\.tradingMode==="multi_pair"&&v\.moneyGrabber/);
   assert.match(maker,/protectionEnabled:v\.protection/);
+  assert.match(maker,/v\.tradingMode==="multi_pair"&&mg\.enabled/);
 });
 
-test("wizard shows separate LONG and SHORT DCA plus activation preview",()=>{
-  assert.match(maker,/LONG-DCA/);
-  assert.match(maker,/SHORT-DCA/);
+test("wizard keeps separate LONG and SHORT DCA controls plus Money Grabber activation preview",()=>{
+  assert.match(maker,/Max LONG DCA/);
+  assert.match(maker,/Max SHORT DCA/);
   assert.match(maker,/Nieuwe Money Grabber-ronde starten/);
-  assert.match(maker,/Start ronde en beheer bestaande Strategy-2-posities/);
+  assert.match(maker,/Start ronde/);
 });
 
 test("both authenticated Money Grabber routes use the Strategy 2 proxy",()=>{
