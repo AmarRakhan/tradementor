@@ -1,0 +1,142 @@
+name: Focus Live Backend Deploy 2
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: focus-live-production-backend-v2
+  cancel-in-progress: false
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  ARTIFACT_REPOSITORY: tradementor
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+jobs:
+  deploy:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Guard exact safe source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          grep -q 'focus_live_enabled: bool = False' cloud_api/aster_strategy2.py
+          grep -q 'if settings.trading_mode!="focus" or not settings.focus_live_enabled:return None' cloud_api/aster_strategy2_focus_live.py
+          grep -q 'settings=replace(settings,focus_live_enabled=bool(settings.trading_mode=="focus" and settings.mode=="live"))' cloud_api/main.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Prove backend before deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install -r cloud_api/requirements.txt pytest
+          cd cloud_api
+          pytest -q
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Snapshot current service
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          svc=json.load(open(sys.argv[1]))
+          spec=svc['spec']['template']['spec']
+          env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='true'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='true'
+          live=[x for x in svc['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1
+          print('BEFORE_REVISION='+live[0]['revisionName'])
+          print('SERVICE_URL='+svc['status']['url'])
+          PY
+      - name: Build and push backend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$GITHUB_SHA"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Create zero-traffic candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="focus-live-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          SUFFIX="fl-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          b=json.load(open(sys.argv[1]));a=json.load(open(sys.argv[2]));tag=sys.argv[3]
+          bs=b['spec']['template']['spec'];as_=a['spec']['template']['spec']
+          assert bs.get('serviceAccountName')==as_.get('serviceAccountName')
+          assert bs.get('timeoutSeconds')==as_.get('timeoutSeconds')
+          assert bs.get('containerConcurrency')==as_.get('containerConcurrency')
+          assert bs['containers'][0].get('env',[])==as_['containers'][0].get('env',[])
+          row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          print('CANDIDATE_REVISION='+row['revisionName'])
+          print('CANDIDATE_URL='+row['url'])
+          PY
+      - name: Verify candidate before traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/health" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/health.json" <<'PY'
+          import json,sys
+          h=json.load(open(sys.argv[1]));assert h['status']=='ready';assert h['multiUser'] is True
+          PY
+          for p in /v1/me/aster/strategy2/focus/markets /v1/me/aster/strategy2/focus/shadow; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$CANDIDATE_URL$p")
+            test "$code" = 401 -o "$code" = 403
+          done
+      - name: Promote candidate and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100" --quiet
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$SERVICE_URL/health" > "$RUNNER_TEMP/live-health.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
+          python - "$RUNNER_TEMP/live-health.json" "$RUNNER_TEMP/after.json" "$CANDIDATE_REVISION" <<'PY'
+          import json,sys
+          h=json.load(open(sys.argv[1]));assert h['status']=='ready';assert h['multiUser'] is True
+          svc=json.load(open(sys.argv[2]));candidate=sys.argv[3]
+          live=[x for x in svc['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1 and live[0].get('revisionName')==candidate
+          PY
+      - name: Verify IAM unchanged and clean one-shots
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json,sys
+          assert json.load(open(sys.argv[1]))==json.load(open(sys.argv[2]))
+          PY
+          rm -f .github/workflows/focus-live-backend-deploy.yml .github/workflows/focus-live-backend-deploy2.yml .focus-live-backend-deploy-trigger
+          git config user.name OpenAI
+          git config user.email noreply@openai.com
+          git add -A
+          git commit -m 'chore: remove Focus live backend deploy helpers'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
