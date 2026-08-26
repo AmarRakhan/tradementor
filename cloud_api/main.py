@@ -90,6 +90,7 @@ from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, queued_entry_order_limit, management_preempts_initial_build
 from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
+from aster_strategy2_focus_adapter import build_focus_shadow_report
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -3811,6 +3812,24 @@ def start_money_grabber(request:MoneyGrabberRoundStartRequest,user:dict[str,Any]
     ref.collection("audit").add({"event":"MONEY_GRABBER_ROUND_STARTED","roundId":round_id,
         "startNetValue":domain.start_net_value,"targetNetValue":domain.target_net_value,"timestamp":datetime.now(timezone.utc)})
     return {"started":True,"ordersSent":0,"round":stored,**aster_strategy2_public(uid)}
+
+
+@app.get("/v1/me/aster/strategy2/focus/shadow")
+def strategy2_focus_shadow(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    """Evaluate one Focus scan against fresh Aster data without an order-capable execution path."""
+    uid=str(user["uid"]);raw=aster_strategy2_reference(uid).get().to_dict() or {}
+    settings=Strategy2Config.from_mapping(raw.get("settings"))
+    if settings.trading_mode!="focus" or not settings.focus_shadow_enabled:
+        return {"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":"Focus Shadow staat uit"}
+    secret=load_aster_secret(user)
+    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+    try:
+        report=build_focus_shadow_report(client=client,raw_state=raw,timestamp_ms=int(time.time()*1000))
+    except (AsterApiError,AsterValidationError,KeyError,TypeError,ValueError) as exc:
+        return {"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":f"Focus Shadow fail-closed: {exc}"}
+    report["ordersSent"]=0
+    report["readOnly"]=True
+    return report
 
 
 @app.get("/v1/me/aster/strategy2/money-grabber/shadow")
