@@ -448,9 +448,26 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const [detail, setDetail] = useState<AsterPairDetail | null>(null);
   const scrollYRef = useRef(0);
   const lastTapRef = useRef(0);
+  const touchGestureRef = useRef<{ valid: boolean; x: number; y: number }>({ valid: false, x: 0, y: 0 });
   const openDetail = (next: AsterPairDetail) => { scrollYRef.current = window.scrollY; setDetail(next); };
   const closeDetail = () => { setDetail(null); requestAnimationFrame(() => window.scrollTo({ top: scrollYRef.current, behavior: "auto" })); };
-  const handleDetailTouchEnd = () => { const now = Date.now(); if (now - lastTapRef.current < 320) closeDetail(); lastTapRef.current = now; };
+  const handleDetailTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 1) { touchGestureRef.current.valid = false; lastTapRef.current = 0; return; }
+    const touch = event.touches[0];
+    touchGestureRef.current = { valid: true, x: touch.clientX, y: touch.clientY };
+  };
+  const handleDetailTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (!touchGestureRef.current.valid || event.touches.length !== 1) { touchGestureRef.current.valid = false; lastTapRef.current = 0; return; }
+    const touch = event.touches[0];
+    if (Math.hypot(touch.clientX - touchGestureRef.current.x, touch.clientY - touchGestureRef.current.y) > 10) touchGestureRef.current.valid = false;
+  };
+  const handleDetailTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (!touchGestureRef.current.valid || event.touches.length !== 0 || event.changedTouches.length !== 1) { touchGestureRef.current.valid = false; lastTapRef.current = 0; return; }
+    touchGestureRef.current.valid = false;
+    const now = Date.now();
+    if (now - lastTapRef.current < 320) { lastTapRef.current = 0; closeDetail(); return; }
+    lastTapRef.current = now;
+  };
   const activity = snapshot.data?.recentTradeActivity && typeof snapshot.data.recentTradeActivity === "object"
     ? snapshot.data.recentTradeActivity as Record<string, unknown>
     : {};
@@ -472,7 +489,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
           <RecentTradesCard title="Laatste 5 uitgestapte trades" rows={exits} closed liveState={liveState} positions={allPositions} onClosed={onRetry} scanActions={scanActions} compactLimit={5} onOpenDetail={openDetail} />
           <RecentTradesCard title="Laatste 5 ingestapte trades" rows={entries} closed={false} liveState={liveState} positions={allPositions} onClosed={onRetry} compactLimit={5} onOpenDetail={openDetail} />
         </div>
-        <div className="aster-pair-detail-back" aria-hidden={!detail} inert={!detail ? true : undefined} onDoubleClick={closeDetail} onTouchEnd={handleDetailTouchEnd}>
+        <div className="aster-pair-detail-back" aria-hidden={!detail} inert={!detail ? true : undefined} onDoubleClick={closeDetail} onTouchStart={handleDetailTouchStart} onTouchMove={handleDetailTouchMove} onTouchEnd={handleDetailTouchEnd} onTouchCancel={() => { touchGestureRef.current.valid = false; lastTapRef.current = 0; }}>
           {detail && <>
             <header className="aster-pair-detail-header"><div><span>ASTER · TRADEDETAIL</span><h2>{detail.selection.symbol.replace(/USDT$/, "")} <i>/ USDT</i></h2><small>{String(detail.selection.side || "").toUpperCase()} · dubbel tikken om terug te gaan</small></div><button type="button" onClick={closeDetail} aria-label="Terug naar Aster">×</button></header>
             <SafeTradingChart selection={detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} averageEntry={detail.averageEntry ?? undefined} selectedActionId={detail.selectedActionId} />
