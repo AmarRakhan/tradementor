@@ -61,7 +61,7 @@ def test_live_dca_updates_weighted_entry_and_focus_ownership(monkeypatch):
     final=next(v for v in reversed(ref.values) if "ownedLegs" in v)
     assert final["focusLiveState"]["dcaCount"]==1
     assert final["focusLiveState"]["weightedEntry"]==99.0
-    assert final["ownedLegs"][0]["dcaCount"]==1
+    assert final["ownedLegs"][0]["dca_count"]==1
     assert final["ownedLegs"][0]["quantity"]==2.0
     assert reservations[0]["kind"]=="FOCUS_DCA"
 
@@ -74,7 +74,7 @@ def test_live_full_close_removes_focus_ownership_and_resets_for_next_cycle(monke
         "state":planned.public_dict(),"ranking":[{"symbol":"BTCUSDT","price":105}],"ordersSent":0}
     leg=focus_leg()
     monkeypatch.setattr("aster_strategy2_focus_live.build_focus_live_plan",lambda **_k:(report,previous,[leg]))
-    monkeypatch.setattr("aster_strategy2_focus_live._close_evidence",lambda **_k:CloseEvidence(
+    monkeypatch.setattr("aster_strategy2_focus_live._close_evidence",lambda *_a,**_k:CloseEvidence(
         "u","BTCUSDT","LONG","strategy2:FOCUS","trail",1,100,105,5,.05,.05,0,.1,True,True,True,True))
     reservations=[]
     def execute(_client,_plan,**kwargs):
