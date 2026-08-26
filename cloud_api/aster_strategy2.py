@@ -10,6 +10,7 @@ from typing import Any, Literal
 from statistics import fmean, pstdev
 import math
 from aster_universe import normalize_top_n
+from aster_strategy2_focus import DEFAULT_FOCUS_DCA, MAX_FOCUS_DCA
 
 Side = Literal["LONG", "SHORT"]
 Role = Literal["HARVEST", "HARVEST_PROTECTION", "PROTECTION"]
@@ -22,6 +23,7 @@ class Strategy2Config:
     name: str = "Dual Profit Harvest DCA"
     version: int = 1
     mode: Literal["paper", "live"] = "paper"
+    trading_mode: Literal["multi_pair", "focus"] = "multi_pair"
     base_notional: float = 10.0
     take_profit: float = .015
     auto_restart: bool = True
@@ -62,6 +64,33 @@ class Strategy2Config:
     money_grabber_full_ratio: float = 1.00
     money_grabber_pair_close_enabled: bool = True
 
+    # Focus / Coin van het moment. Defaults are deliberately off/conservative.
+    focus_shadow_enabled: bool = False
+    focus_selection_mode: Literal["automatic", "manual"] = "automatic"
+    focus_manual_pair: str = ""
+    focus_sizing_mode: Literal["fixed_usd", "equity_pct"] = "fixed_usd"
+    focus_start_order_notional: float = 100.0
+    focus_equity_pct: float = .50
+    focus_auto_compound: bool = False
+    focus_max_start_order_usd: float = 1000.0
+    focus_dca_enabled: bool = True
+    focus_dca_mode: Literal["fixed", "progressive"] = "fixed"
+    focus_dca_distance: float = .02
+    focus_dca_notional: float = 100.0
+    focus_max_dca: int = DEFAULT_FOCUS_DCA
+    focus_dca_multiplier: float = 1.0
+    focus_max_budget_usd: float = 1000.0
+    focus_trailing_activation_pct: float = .02
+    focus_trailing_distance_pct: float = .025
+    focus_minimum_profit_pct: float = .015
+    focus_partial_tp_enabled: bool = False
+    focus_first_partial_tp_pct: float = .05
+    focus_first_partial_close_pct: float = .25
+    focus_second_partial_tp_pct: float = .10
+    focus_second_partial_close_pct: float = .25
+    focus_wait_until_flat: bool = False
+    focus_min_liquidity_score: float = 0.0
+
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "Strategy2Config":
         raw = raw or {}
@@ -82,6 +111,7 @@ class Strategy2Config:
         value = cls(
             strategy_id=str(raw.get("strategyId", cls.strategy_id)), name=str(raw.get("name", cls.name)),
             version=i("version", 1), mode="live" if raw.get("mode") == "live" else "paper",
+            trading_mode="focus" if str(raw.get("tradingMode", "multi_pair")).lower() == "focus" else "multi_pair",
             base_notional=f("baseNotional", 10), take_profit=f("takeProfit", .015),
             auto_restart=bool(raw.get("autoRestart", True)), dca_enabled=bool(raw.get("dcaEnabled", True)),
             trend_bollinger_entry_enabled=bool(raw.get("trendBollingerEntryEnabled", False)),
@@ -109,6 +139,31 @@ class Strategy2Config:
             money_grabber_full_threshold=money_number("moneyGrabberFullThreshold", .04),
             money_grabber_full_ratio=money_number("moneyGrabberFullRatio", 1.00),
             money_grabber_pair_close_enabled=bool(raw.get("moneyGrabberPairCloseEnabled", True)),
+            focus_shadow_enabled=bool(raw.get("focusShadowEnabled", False)),
+            focus_selection_mode="manual" if str(raw.get("focusSelectionMode", "automatic")).lower() == "manual" else "automatic",
+            focus_manual_pair=str(raw.get("focusManualPair", "")).upper().strip(),
+            focus_sizing_mode="equity_pct" if str(raw.get("focusSizingMode", "fixed_usd")).lower() == "equity_pct" else "fixed_usd",
+            focus_start_order_notional=f("focusStartOrderNotional", 100),
+            focus_equity_pct=f("focusEquityPct", .50),
+            focus_auto_compound=bool(raw.get("focusAutoCompound", False)),
+            focus_max_start_order_usd=f("focusMaxStartOrderUsd", 1000),
+            focus_dca_enabled=bool(raw.get("focusDcaEnabled", True)),
+            focus_dca_mode="progressive" if str(raw.get("focusDcaMode", "fixed")).lower() == "progressive" else "fixed",
+            focus_dca_distance=f("focusDcaDistance", .02),
+            focus_dca_notional=f("focusDcaNotional", 100),
+            focus_max_dca=i("focusMaxDca", DEFAULT_FOCUS_DCA),
+            focus_dca_multiplier=f("focusDcaMultiplier", 1.0),
+            focus_max_budget_usd=f("focusMaxBudgetUsd", 1000),
+            focus_trailing_activation_pct=f("focusTrailingActivationPct", .02),
+            focus_trailing_distance_pct=f("focusTrailingDistancePct", .025),
+            focus_minimum_profit_pct=f("focusMinimumProfitPct", .015),
+            focus_partial_tp_enabled=bool(raw.get("focusPartialTpEnabled", False)),
+            focus_first_partial_tp_pct=f("focusFirstPartialTpPct", .05),
+            focus_first_partial_close_pct=f("focusFirstPartialClosePct", .25),
+            focus_second_partial_tp_pct=f("focusSecondPartialTpPct", .10),
+            focus_second_partial_close_pct=f("focusSecondPartialClosePct", .25),
+            focus_wait_until_flat=bool(raw.get("focusWaitUntilFlat", False)),
+            focus_min_liquidity_score=f("focusMinLiquidityScore", 0.0),
         )
         return value.validated()
 
@@ -138,6 +193,26 @@ class Strategy2Config:
         if not 0 < self.money_grabber_round_target <= .50: raise ValueError("Money Grabber-rondedoel moet tussen 0 en 50% liggen")
         if not 0 < self.money_grabber_first_threshold < self.money_grabber_full_threshold <= .80: raise ValueError("De volledige Money Grabber-beschermingsgrens moet groter zijn dan de eerste grens")
         if not 0 < self.money_grabber_first_ratio <= self.money_grabber_full_ratio <= 1: raise ValueError("De volledige Money Grabber-beschermingsratio mag niet kleiner zijn dan de eerste ratio")
+        if self.trading_mode not in {"multi_pair", "focus"}: raise ValueError("Ongeldige Strategy-2 tradingMode")
+        if self.focus_selection_mode not in {"automatic", "manual"}: raise ValueError("Ongeldige Focus-selectiemodus")
+        if self.focus_selection_mode == "manual" and self.trading_mode == "focus" and not self.focus_manual_pair: raise ValueError("Handmatige Focus-selectie vereist een pair")
+        if self.focus_sizing_mode not in {"fixed_usd", "equity_pct"}: raise ValueError("Ongeldige Focus sizing-mode")
+        if not 0 < self.focus_start_order_notional <= 1_000_000: raise ValueError("Focus startorder moet positief zijn")
+        if not 0 < self.focus_equity_pct <= .90: raise ValueError("Focus equity-percentage moet tussen 0 en 90% liggen")
+        if not 0 < self.focus_max_start_order_usd <= 1_000_000: raise ValueError("Focus max startorder moet positief zijn")
+        if not 0 <= self.focus_max_dca <= MAX_FOCUS_DCA: raise ValueError(f"Focus max DCA moet tussen 0 en {MAX_FOCUS_DCA} liggen")
+        if not 0 < self.focus_dca_distance < 1: raise ValueError("Focus DCA-afstand moet tussen 0 en 100% liggen")
+        if not 0 < self.focus_dca_notional <= 1_000_000: raise ValueError("Focus DCA-bedrag moet positief zijn")
+        if not 0 < self.focus_dca_multiplier <= 10: raise ValueError("Focus DCA multiplier moet groter dan 0 en maximaal 10 zijn")
+        if not 0 < self.focus_max_budget_usd <= 10_000_000: raise ValueError("Focus-budget moet positief zijn")
+        if self.focus_start_order_notional > self.focus_max_budget_usd and self.focus_sizing_mode == "fixed_usd": raise ValueError("Focus startorder overschrijdt Focus-budget")
+        if not 0 < self.focus_minimum_profit_pct <= .50: raise ValueError("Focus minimum profit moet tussen 0 en 50% liggen")
+        if not self.focus_minimum_profit_pct <= self.focus_trailing_activation_pct <= 2.0: raise ValueError("Focus trailing activation moet minimaal minimum profit zijn")
+        if not 0 < self.focus_trailing_distance_pct < 1: raise ValueError("Focus trailing distance moet tussen 0 en 100% liggen")
+        if not 0 < self.focus_first_partial_tp_pct < self.focus_second_partial_tp_pct <= 2.0: raise ValueError("Focus partial TP-drempels moeten oplopen")
+        if not 0 < self.focus_first_partial_close_pct < 1 or not 0 < self.focus_second_partial_close_pct < 1: raise ValueError("Focus partial sluitpercentages moeten tussen 0 en 100% liggen")
+        if self.focus_first_partial_close_pct + self.focus_second_partial_close_pct >= 1: raise ValueError("Focus partials moeten ruimte overlaten voor trailing exit")
+        if self.focus_min_liquidity_score < 0: raise ValueError("Focus liquidity-score kan niet negatief zijn")
         return self
 
     @property
@@ -148,7 +223,7 @@ class Strategy2Config:
 
     def public_dict(self) -> dict[str, Any]:
         long_target, short_target = self.entry_targets
-        return ({"strategyId":self.strategy_id,"name":self.name,"version":self.version,"mode":self.mode,
+        return ({"strategyId":self.strategy_id,"name":self.name,"version":self.version,"mode":self.mode,"tradingMode":self.trading_mode,
             "baseNotional":self.base_notional,"takeProfit":self.take_profit,"autoRestart":self.auto_restart,
             "dcaEnabled":self.dca_enabled,"trendBollingerEntryEnabled":self.trend_bollinger_entry_enabled,
             "dcaMode":self.dca_mode,"longDcaDistance":self.long_dca_distance,
@@ -163,15 +238,21 @@ class Strategy2Config:
             "emergencyDrawdown":self.emergency_drawdown,"cautionMarginRatio":self.caution_margin_ratio,
             "defensiveMarginRatio":self.defensive_margin_ratio,"emergencyMarginRatio":self.emergency_margin_ratio,
             "maxProtectionRatio":self.max_protection_ratio,"maxNetExposureRatio":self.max_net_exposure_ratio,
-            "maxGrossExposureRatio":self.max_gross_exposure_ratio}
-            | {"moneyGrabberEnabled":self.money_grabber_enabled,
-            "moneyGrabberRoundTarget":self.money_grabber_round_target,
-            "moneyGrabberAutoClose":self.money_grabber_auto_close,
-            "moneyGrabberFirstThreshold":self.money_grabber_first_threshold,
-            "moneyGrabberFirstRatio":self.money_grabber_first_ratio,
-            "moneyGrabberFullThreshold":self.money_grabber_full_threshold,
-            "moneyGrabberFullRatio":self.money_grabber_full_ratio,
-            "moneyGrabberPairCloseEnabled":self.money_grabber_pair_close_enabled})
+            "maxGrossExposureRatio":self.max_gross_exposure_ratio,
+            "moneyGrabberEnabled":self.money_grabber_enabled,"moneyGrabberRoundTarget":self.money_grabber_round_target,
+            "moneyGrabberAutoClose":self.money_grabber_auto_close,"moneyGrabberFirstThreshold":self.money_grabber_first_threshold,
+            "moneyGrabberFirstRatio":self.money_grabber_first_ratio,"moneyGrabberFullThreshold":self.money_grabber_full_threshold,
+            "moneyGrabberFullRatio":self.money_grabber_full_ratio,"moneyGrabberPairCloseEnabled":self.money_grabber_pair_close_enabled,
+            "focusShadowEnabled":self.focus_shadow_enabled,"focusSelectionMode":self.focus_selection_mode,"focusManualPair":self.focus_manual_pair,
+            "focusSizingMode":self.focus_sizing_mode,"focusStartOrderNotional":self.focus_start_order_notional,"focusEquityPct":self.focus_equity_pct,
+            "focusAutoCompound":self.focus_auto_compound,"focusMaxStartOrderUsd":self.focus_max_start_order_usd,"focusDcaEnabled":self.focus_dca_enabled,
+            "focusDcaMode":self.focus_dca_mode,"focusDcaDistance":self.focus_dca_distance,"focusDcaNotional":self.focus_dca_notional,
+            "focusMaxDca":self.focus_max_dca,"focusDcaMultiplier":self.focus_dca_multiplier,"focusMaxBudgetUsd":self.focus_max_budget_usd,
+            "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
+            "focusMinimumProfitPct":self.focus_minimum_profit_pct,"focusPartialTpEnabled":self.focus_partial_tp_enabled,
+            "focusFirstPartialTpPct":self.focus_first_partial_tp_pct,"focusFirstPartialClosePct":self.focus_first_partial_close_pct,
+            "focusSecondPartialTpPct":self.focus_second_partial_tp_pct,"focusSecondPartialClosePct":self.focus_second_partial_close_pct,
+            "focusWaitUntilFlat":self.focus_wait_until_flat,"focusMinLiquidityScore":self.focus_min_liquidity_score})
 
 
 def _ema(values: list[float], period: int) -> float:
@@ -231,9 +312,7 @@ class PortfolioState:
     exchange_reliable: bool = True
     ownership_reliable: bool = True
     open_orders_unknown: bool = False
-    # Actual margin reserved by Strategy 2. Exposure is leveraged notional.
     strategy_margin: float = 0.0
-    # Aster's authoritative free cross-margin after all current positions.
     available_balance: float = 0.0
 
     @property
@@ -284,7 +363,6 @@ def tp_due(config: Strategy2Config, leg: LegState, estimated_close_fee: float = 
 
 
 def required_protection(config: Strategy2Config, portfolio: PortfolioState, winning_side: Side) -> float:
-    """Minimum opposite exposure retained to keep net exposure inside its cap."""
     if not config.protection_enabled or risk_mode(config, portfolio) == "NORMAL": return 0.0
     cap = portfolio.equity * config.max_net_exposure_ratio
     if winning_side == "LONG": return max(0.0, portfolio.short_exposure - cap)
@@ -294,16 +372,9 @@ def required_protection(config: Strategy2Config, portfolio: PortfolioState, winn
 def decide_leg(config: Strategy2Config, leg: LegState, portfolio: PortfolioState, *, estimated_close_fee: float = 0.0) -> Decision:
     if not portfolio.exchange_reliable or not portfolio.ownership_reliable or portfolio.open_orders_unknown:
         return Decision("HOLD", leg.side, reason="Exchange-state, ownership of orderstatus is onzeker; geen nieuw risico", risk_reducing=True)
-    mode = risk_mode(config, portfolio)
     if tp_due(config, leg, estimated_close_fee):
-        # Hard Strategy-2 invariant: a proven net-profitable TP is harvested in
-        # full. Portfolio protection may rebalance the remaining portfolio on a
-        # later decision, but it may never retain or relabel the winning leg.
         return Decision("FULL_TP", leg.side, notional=leg.size, role="HARVEST",
             reason="Netto TP bereikt; winst oogsten heeft prioriteit op protection en risicomodus", risk_reducing=True)
-    # Portfolio risk modes stay visible/advisory. A user-configured DCA on an
-    # already-owned leg is admitted by actual Aster available margin, not by an
-    # internal Strategy Budget or CAUTION/DEFENSIVE/EMERGENCY label.
     if dca_due(config, leg):
         proposed = config.base_notional * config.dca_multiplier
         return Decision("ADD_DCA", leg.side, notional=proposed, role=leg.role, reason=f"DCA-level {leg.dca_count+1} bereikt")
@@ -355,10 +426,6 @@ def validate_worst_case(config: Strategy2Config, equity: float, contract_minimum
     if config.base_notional < contract_minimum: errors.append(f"Minimum order for this contract: ${contract_minimum:.2f}.")
     if config.leverage > maximum_leverage: errors.append(f"Leverage is hoger dan de contractlimiet van {maximum_leverage}x.")
     effective_leverage=max(1,min(config.leverage,maximum_leverage))
-    # DCA capacity is not reserved up front. Every real DCA is independently
-    # admitted against current exchange equity and current Strategy-2 margin.
-    # Normal entries alternate between one LONG and one SHORT opportunity.
-    # A same-symbol opposite hedge is added only by Portfolio Protection.
     initial_exposure=config.base_notional
     required_margin=initial_exposure/effective_leverage
     budget=equity*config.strategy_budget
