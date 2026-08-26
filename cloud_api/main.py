@@ -90,7 +90,7 @@ from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, queued_entry_order_limit, management_preempts_initial_build
 from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
-from aster_strategy2_focus_adapter import build_focus_shadow_report
+from aster_strategy2_focus_adapter import build_focus_shadow_report, focus_state_from_mapping, focus_state_to_mapping, advance_focus_shadow_state
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -1255,6 +1255,54 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "pendingReopenCount":len(queue_state.get("pendingReopens",[])) if isinstance(queue_state.get("pendingReopens"),list) else 0}}}
 
 
+def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:Strategy2Config,now:datetime)->dict[str,Any]|None:
+    """Advance one persisted hypothetical Focus step; exchange mutation is structurally unavailable."""
+    if settings.trading_mode!="focus" or not settings.focus_shadow_enabled:return None
+    previous=focus_state_from_mapping(raw.get("focusShadowState"));previous_metrics=raw.get("focusShadowMetrics") if isinstance(raw.get("focusShadowMetrics"),dict) else {}
+    try:
+        secret=load_aster_secret({"uid":uid})
+        shadow_client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+        report=build_focus_shadow_report(client=shadow_client,raw_state=raw,timestamp_ms=int(now.timestamp()*1000))
+        next_state=advance_focus_shadow_state(report,previous,leverage=settings.leverage,timestamp_ms=int(now.timestamp()*1000))
+        decision=report.get("decision") if isinstance(report.get("decision"),dict) else {}
+        kind=str(decision.get("kind","HOLD")).upper();notional=max(0.0,safe_float(decision.get("notional")))
+        action_fee=notional*.0005 if kind in {"OPEN","DCA","PARTIAL_TP","CLOSE"} else 0.0
+        if action_fee>0 and next_state.theoretical_portfolio_value>0:
+            next_state=replace(next_state,theoretical_portfolio_value=max(0.0,next_state.theoretical_portfolio_value-action_fee))
+        ranking=report.get("ranking") if isinstance(report.get("ranking"),list) else []
+        active_symbol=next_state.active_pair or previous.active_pair
+        market=next((x for x in ranking if isinstance(x,dict) and str(x.get("symbol","")).upper()==active_symbol),None)
+        price=safe_float((market or {}).get("price"));unrealized=(price-next_state.weighted_entry)*next_state.total_quantity if price>0 and next_state.weighted_entry>0 else 0.0
+        actual=((report.get("currentStrategy2") or {}) if isinstance(report.get("currentStrategy2"),dict) else {})
+        actual_equity=safe_float(actual.get("portfolioEquity"));base_value=next_state.theoretical_portfolio_value or actual_equity
+        theoretical_equity=base_value+unrealized;previous_high=safe_float(previous_metrics.get("highWaterMark"),theoretical_equity)
+        high=max(previous_high,theoretical_equity);drawdown=max(0.0,(high-theoretical_equity)/high) if high>0 else 0.0
+        fees=safe_float(previous_metrics.get("fees"))+action_fee;actions=int(safe_float(previous_metrics.get("tradeActions")))+(1 if kind!="HOLD" else 0)
+        cycles=int(safe_float(previous_metrics.get("cycles")))+(1 if kind=="CLOSE" else 0)
+        duration_sum=safe_float(previous_metrics.get("cycleDurationSecondsSum"))
+        if kind=="CLOSE" and previous.opened_at_ms>0:duration_sum+=max(0.0,(int(now.timestamp()*1000)-previous.opened_at_ms)/1000)
+        peak_margin=max(safe_float(previous_metrics.get("peakUsedMargin")),next_state.used_margin,previous.used_margin)
+        metrics={"portfolioEquity":theoretical_equity,"realizedPnl":next_state.realized_pnl,"unrealizedPnl":unrealized,
+            "maxDrawdown":max(safe_float(previous_metrics.get("maxDrawdown")),drawdown),"fees":fees,"tradeActions":actions,
+            "dcaCount":next_state.dca_count,"capitalUsedMargin":next_state.used_margin,"peakUsedMargin":peak_margin,
+            "returnPerUsedMargin":((next_state.realized_pnl+unrealized-fees)/peak_margin if peak_margin>0 else 0.0),
+            "profitPerMarginDollar":((next_state.realized_pnl+unrealized-fees)/peak_margin if peak_margin>0 else 0.0),
+            "highWaterMark":high,"cycles":cycles,"cycleDurationSecondsSum":duration_sum,
+            "averageCycleDurationSeconds":(duration_sum/cycles if cycles>0 else 0.0)}
+        report["state"]=focus_state_to_mapping(next_state);report["performance"]=metrics;report["ordersSent"]=0;report["readOnly"]=True
+        stored_state=focus_state_to_mapping(next_state)
+        ref.set({"focusShadowState":stored_state,"focusShadowReport":report,"focusShadowMetrics":metrics,"focusShadowAt":now,"focusShadowOrdersSent":0},merge=True)
+        ref.collection("focusShadowAudit").add({"timestamp":now,"ordersSent":0,"cycleId":stored_state.get("cycleId",""),
+            "selectedPair":stored_state.get("activePair",""),"selectionReason":report.get("selectionReason",""),
+            "decision":report.get("decision",{}),"ranking":report.get("ranking",[]),"state":stored_state,"performance":metrics,
+            "currentStrategy2":report.get("currentStrategy2",{}),"theoreticalActions":report.get("theoreticalActions",[])})
+        return report
+    except (AsterApiError,AsterValidationError,KeyError,TypeError,ValueError) as exc:
+        failure={"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":f"Focus Shadow scheduler fail-closed: {exc}"}
+        ref.set({"focusShadowReport":failure,"focusShadowAt":now,"focusShadowOrdersSent":0},merge=True)
+        return failure
+
+
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
                               before_order:Any=None)->dict[str,Any]:
     if _aster_close_all_active(uid):
@@ -1285,6 +1333,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
+    _run_focus_shadow_scheduler_step(uid,ref,raw,settings,now)
     owned=[]
     for item in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
         try:owned.append(owned_from_mapping(item))

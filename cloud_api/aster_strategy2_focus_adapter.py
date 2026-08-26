@@ -182,15 +182,25 @@ def advance_focus_shadow_state(report: dict[str, Any], previous: FocusState, *, 
     ranking = report.get("ranking") if isinstance(report.get("ranking"), list) else []
     row = next((x for x in ranking if isinstance(x, dict) and str(x.get("symbol", "")).upper() == symbol), None)
     price = _f(row.get("price")) if row else 0.0
+    state_raw = report.get("state") if isinstance(report.get("state"), dict) else {}
+    planned = focus_state_from_mapping(state_raw) if state_raw else previous
+    performance = report.get("performance") if isinstance(report.get("performance"), dict) else {}
+    portfolio_base = previous.theoretical_portfolio_value or _f(performance.get("portfolioEquity"))
     if kind in {"OPEN", "DCA"} and price > 0:
-        base = replace(previous, active_pair=symbol)
+        base = replace(planned, active_pair=symbol, theoretical_portfolio_value=portfolio_base)
         return apply_focus_buy(base, price=price, notional=_f(decision.get("notional")), leverage=leverage,
             timestamp_ms=timestamp_ms, is_dca=(kind == "DCA"), reason=str(decision.get("reason", "")))
+    if kind == "PARTIAL_TP" and price > 0 and previous.total_quantity > 0:
+        fraction=max(0.0,min(1.0,_f(decision.get("close_fraction"))))
+        close_qty=previous.total_quantity*fraction
+        realized=(price-previous.weighted_entry)*close_qty if previous.weighted_entry>0 else 0.0
+        remaining=max(0.0,1.0-fraction)
+        return replace(planned,total_quantity=previous.total_quantity*remaining,
+            total_notional=previous.total_notional*remaining,used_margin=previous.used_margin*remaining,
+            focus_budget_used=previous.focus_budget_used*remaining,realized_pnl=previous.realized_pnl+realized,
+            theoretical_portfolio_value=portfolio_base+realized,last_action="PARTIAL_TP",
+            last_reason=str(decision.get("reason", "partial winst theoretisch genomen")))
     if kind == "CLOSE":
         pnl = (price - previous.weighted_entry) * previous.total_quantity if price > 0 and previous.weighted_entry > 0 else 0.0
-        theoretical = previous.theoretical_portfolio_value + pnl
-        return reset_after_full_exit(previous, realized_pnl=pnl, theoretical_portfolio_value=theoretical)
-    # Partial fills are reported but not applied to theoretical quantity yet;
-    # this keeps the current release conservative and order-free.
-    state_raw = report.get("state") if isinstance(report.get("state"), dict) else {}
-    return focus_state_from_mapping(state_raw) if state_raw else previous
+        return reset_after_full_exit(planned, realized_pnl=pnl, theoretical_portfolio_value=portfolio_base+pnl)
+    return planned
