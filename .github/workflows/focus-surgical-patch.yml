@@ -17,27 +17,31 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
           runtime=Path('cloud_api/aster_strategy2_runtime.py')
           text=runtime.read_text()
-          old='''def scanner_allowed(config: Strategy2Config, portfolio: PortfolioState, owned: list[OwnedPosition]) -> bool:\n    new_pair_margin = config.base_notional / max(1, config.leverage)'''
-          new='''def scanner_allowed(config: Strategy2Config, portfolio: PortfolioState, owned: list[OwnedPosition]) -> bool:\n    # Focus deliberately suppresses normal Multi-pair seat refill. Existing owned\n    # positions are still managed by the unchanged management path below.\n    if config.trading_mode == "focus":\n        return False\n    new_pair_margin = config.base_notional / max(1, config.leverage)'''
-          if old not in text:
-              raise SystemExit('scanner_allowed anchor not found')
+          old='''def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:\n    new_pair_margin=config.base_notional/max(1,config.leverage)'''
+          new='''def scanner_allowed(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->bool:\n    # Focus deliberately suppresses normal Multi-pair seat refill. Existing owned\n    # positions continue through the unchanged management path.\n    if config.trading_mode=="focus":\n        return False\n    new_pair_margin=config.base_notional/max(1,config.leverage)'''
+          if old not in text: raise SystemExit('scanner_allowed anchor not found')
           runtime.write_text(text.replace(old,new,1))
+
+          adapter=Path('cloud_api/aster_strategy2_shadow_adapter.py')
+          text=adapter.read_text()
+          old='''    """Return only currently executable entry symbols, without mutations."""\n    universe = build_snapshot('''
+          new='''    """Return only currently executable entry symbols, without mutations."""\n    if config.trading_mode == "focus":\n        return ()\n    universe = build_snapshot('''
+          if old not in text: raise SystemExit('shadow entry anchor not found')
+          adapter.write_text(text.replace(old,new,1))
 
           maker=Path('web/components/aster-strategy2-maker.tsx')
           text=maker.read_text()
           old='<IntegerField label="Aster USDT-handelsuniversum – Top-N" value={v.universe} set={x=>setV({...v,universe:x})}/>'
-          new='<label>Aster USDT-handelsuniversum – Top-N<input type="number" inputMode="numeric" min="1" step="1" value={v.universe} onChange={e=>setV({...v,universe:e.target.value})}/></label>'
-          if old not in text:
-              raise SystemExit('Top-N anchor not found')
+          new='<label>Aster USDT-handelsuniversum – Top-N op volume en liquiditeit<input type="number" inputMode="numeric" min="1" step="1" value={v.universe} onChange={e=>setV({...v,universe:e.target.value})}/></label>'
+          if old not in text: raise SystemExit('Top-N anchor not found')
           maker.write_text(text.replace(old,new,1))
           PY
       - name: Commit surgical patch
         run: |
           git config user.name "OpenAI"
           git config user.email "noreply@openai.com"
-          git add cloud_api/aster_strategy2_runtime.py web/components/aster-strategy2-maker.tsx
-          git commit -m "fix: suppress seat refill in Focus and preserve Top-N input contract"
+          git add cloud_api/aster_strategy2_runtime.py cloud_api/aster_strategy2_shadow_adapter.py web/components/aster-strategy2-maker.tsx
+          git commit -m "fix: suppress Multi-pair entries in Focus and preserve Top-N contract"
           git push origin HEAD:amar-crypto-bot-2026-cloud
