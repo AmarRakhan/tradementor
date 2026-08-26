@@ -8,7 +8,7 @@ const proxy=fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/focus/
 
 test("Focus Shadow UI stays order-free and routed through Strategy 2 auth",()=>{
   assert.match(maker,/AsterStrategy2FocusShadow enabled=/);
-  assert.match(maker,/Focus blijft Shadow-only/);
+  assert.match(maker,/Shadow is optioneel om dezelfde Focus-beslissingen zonder orders te volgen/);
   assert.match(panel,/ordersSent = \{String\(report\.ordersSent\?\?0\)\}/);
   assert.match(panel,/Pair \| 24h % \| huidige prijs/);
   assert.match(proxy,/proxyStrategy2Live/);
