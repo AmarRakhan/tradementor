@@ -43,6 +43,7 @@ type OpenPosition = {
   roiPct?: number | null;
   leverage?: number | null;
   initialMarginUsd?: number | null;
+  dcaCount?: number | null;
   openedAt?: unknown;
   entryPrice?: number | null;
   averageEntry?: number | null;
@@ -68,6 +69,12 @@ type AsterPairDetail = {
   focusAtMs?: number;
   averageEntry?: number | null;
   selectedActionId?: string;
+  status?: "OPEN" | "CLOSED";
+  pnl?: number | null;
+  quantity?: number | null;
+  dcaCount?: number | null;
+  currentPrice?: number | null;
+  exitPrice?: number | null;
 };
 
 function averageEntry(position: OpenPosition | null) {
@@ -294,7 +301,7 @@ const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, 
   const tone = result === null ? "neutral" : result >= 0 ? "profit" : "loss";
   return (
     <div className="recent-trade-row aster-seven-column-row" role="row">
-      <button className="recent-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: String(trade.exchangeTradeId || trade.id || stableActivityId(trade)), symbol: normalizedSymbol(trade.symbol), exchange: "aster", side: String(trade.side || ""), closedAt: closed ? String(trade.closedAt || trade.executedAt || "") : undefined, openedAt: !closed ? String(trade.executedAt || "") : undefined }, focusAtMs: closed ? exchangeTimestampMs(trade.closedAt || trade.executedAt || trade.timestampMs) : undefined, averageEntry: averageEntry(openPosition) })}>
+      <button className="recent-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: String(trade.exchangeTradeId || trade.id || stableActivityId(trade)), symbol: normalizedSymbol(trade.symbol), exchange: "aster", side: String(trade.side || ""), closedAt: closed ? String(trade.closedAt || trade.executedAt || "") : undefined, openedAt: !closed ? String(trade.executedAt || "") : undefined, mark: finite(openPosition?.markPrice) ?? undefined }, focusAtMs: closed ? exchangeTimestampMs(trade.closedAt || trade.executedAt || trade.timestampMs) : undefined, averageEntry: averageEntry(openPosition), status: closed ? "CLOSED" : "OPEN", pnl: result, quantity: finite(trade.quantity) ?? finite(openPosition?.quantity), dcaCount: finite(openPosition?.dcaCount), currentPrice: finite(openPosition?.markPrice), exitPrice: closed ? null : undefined })}>
         <CoinIcon symbol={asset} />
         <span className="recent-pair-copy">
           <span className="recent-pair-title"><b>{asset}</b><span className={`recent-side ${String(trade.side).toLowerCase()}`}>{String(trade.side || "—").toUpperCase()}</span></span>
@@ -362,7 +369,7 @@ function TopProfitRow({ position, openedAt, onClosed, onOpenDetail }: { position
   const leverage = finite(position.leverage);
   return (
     <div className="recent-trade-row top-profit-row aster-seven-column-row" role="row">
-      <button className="recent-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: positionId(position), symbol: normalizedSymbol(position.symbol), exchange: "aster", side: String(position.side || ""), entry: averageEntry(position), openedAt: exchangeTimestampMs(openedAt) ? new Date(exchangeTimestampMs(openedAt)).toISOString() : undefined }, averageEntry: averageEntry(position) })}>
+      <button className="recent-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: positionId(position), symbol: normalizedSymbol(position.symbol), exchange: "aster", side: String(position.side || ""), entry: averageEntry(position), mark: finite(position.markPrice) ?? undefined, dcaCount: finite(position.dcaCount) ?? undefined, openedAt: exchangeTimestampMs(openedAt) ? new Date(exchangeTimestampMs(openedAt)).toISOString() : undefined }, averageEntry: averageEntry(position), status: "OPEN", pnl, quantity: finite(position.quantity), dcaCount: finite(position.dcaCount), currentPrice: finite(position.markPrice) })}>
         <CoinIcon symbol={asset} />
         <span className="recent-pair-copy">
           <span className="recent-pair-title"><b>{asset}</b><span className={`recent-side ${String(position.side).toLowerCase()}`}>{String(position.side || "—").toUpperCase()}</span></span>
@@ -422,7 +429,7 @@ function ScanActionsCard({ rows, completedAt, positions, exits, onOpenDetail }: 
             const margin = finite(action.marginUsd) ?? openPositionMargin(position);
             const dcaNumber = label === "bijgekocht" ? finite(action.dcaNumber) : null;
             return <div className="recent-trade-row aster-scan-row" role="row" key={`${String(action.clientOrderId || action.symbol || index)}:${index}`}>
-              <button className="scan-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: String(action.clientOrderId || action.orderId || `${normalizedSymbol(action.symbol)}:${exchangeTimestampMs(action.executedAt)}`), symbol: normalizedSymbol(action.symbol), exchange: "aster", side: String(action.side || ""), closedAt: label === "verkocht" && exchangeTimestampMs(action.executedAt) ? new Date(exchangeTimestampMs(action.executedAt)).toISOString() : undefined }, focusAtMs: exchangeTimestampMs(action.executedAt), averageEntry: averageEntry(position), selectedActionId: String(action.clientOrderId || action.orderId || "") })}>{baseAsset(action.symbol)}</button>
+              <button className="scan-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: String(action.clientOrderId || action.orderId || `${normalizedSymbol(action.symbol)}:${exchangeTimestampMs(action.executedAt)}`), symbol: normalizedSymbol(action.symbol), exchange: "aster", side: String(action.side || ""), mark: finite(position?.markPrice) ?? undefined, dcaCount: finite(position?.dcaCount) ?? undefined, closedAt: label === "verkocht" && exchangeTimestampMs(action.executedAt) ? new Date(exchangeTimestampMs(action.executedAt)).toISOString() : undefined }, focusAtMs: exchangeTimestampMs(action.executedAt), averageEntry: averageEntry(position), selectedActionId: String(action.clientOrderId || action.orderId || ""), status: label === "verkocht" ? "CLOSED" : "OPEN", pnl, quantity: finite(position?.quantity), dcaCount: finite(position?.dcaCount) ?? dcaNumber, currentPrice: finite(position?.markPrice) })}>{baseAsset(action.symbol)}</button>
               <span className={`scan-action ${label === "verkocht" ? "sold" : ""}`} role="cell">{label}</span>
               <span role="cell">{dcaNumber === null ? "—" : `#${Math.round(dcaNumber)}`}</span>
               <span role="cell">{leverage === null ? "—" : `${Math.round(leverage)}x`}</span>
@@ -467,8 +474,16 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
         </div>
         <div className="aster-pair-detail-back" aria-hidden={!detail} inert={!detail ? true : undefined} onDoubleClick={closeDetail} onTouchEnd={handleDetailTouchEnd}>
           {detail && <>
-            <header className="aster-pair-detail-header"><div><span>ASTER · TRADEDETAIL</span><h2>{detail.selection.symbol}</h2><small>Tik dubbel om terug te gaan</small></div><button type="button" onClick={closeDetail} aria-label="Terug naar Aster">← Terug</button></header>
+            <header className="aster-pair-detail-header"><div><span>ASTER · TRADEDETAIL</span><h2>{detail.selection.symbol.replace(/USDT$/, "")} <i>/ USDT</i></h2><small>{String(detail.selection.side || "").toUpperCase()} · dubbel tikken om terug te gaan</small></div><button type="button" onClick={closeDetail} aria-label="Terug naar Aster">×</button></header>
             <SafeTradingChart selection={detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} averageEntry={detail.averageEntry ?? undefined} selectedActionId={detail.selectedActionId} />
+            <div className="aster-pair-summary" aria-label="Positiedetails">
+              <div><span>Positie</span><strong className={detail.status === "OPEN" ? "profit" : "neutral"}>{detail.status || "—"}</strong></div>
+              <div><span>Entry prijs (gem.)</span><strong>{money(detail.averageEntry)}</strong></div>
+              <div><span>{detail.status === "CLOSED" ? "Exit prijs" : "Huidige prijs"}</span><strong>{money(detail.status === "CLOSED" ? detail.exitPrice : detail.currentPrice)}</strong></div>
+              <div><span>{detail.status === "CLOSED" ? "Realized P&L" : "Unrealized P&L"}</span><strong className={(detail.pnl ?? 0) >= 0 ? "profit" : "loss"}>{money(detail.pnl)}</strong></div>
+              <div><span>Aantal DCA</span><strong>{detail.dcaCount === null || detail.dcaCount === undefined ? "—" : Math.round(detail.dcaCount)}</strong></div>
+              <div><span>Totale hoeveelheid</span><strong>{detail.quantity === null || detail.quantity === undefined ? "—" : amount(detail.quantity)}</strong></div>
+            </div>
           </>}
         </div>
       </div>
