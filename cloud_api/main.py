@@ -1221,6 +1221,8 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         "orderQueue":{"enabled":queue_enabled,"maximumOrdersPerScan":MAX_ORDERS_PER_ACCOUNT_SCAN,
             "scanId":str(queue_state.get("scanId","")),"ordersUsed":int(safe_float(queue_state.get("ordersUsed"))),
             "haltedUncertain":bool(queue_state.get("haltedUncertain",False)),
+            "lastScanActions":queue_state.get("actions",[]) if isinstance(queue_state.get("actions"),list) else [],
+            "lastScanCompletedAt":queue_state.get("completedAt",queue_state.get("updatedAt")),
             "pendingReopenCount":len(queue_state.get("pendingReopens",[])) if isinstance(queue_state.get("pendingReopens"),list) else 0}}}
 
 
@@ -1490,7 +1492,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 reopened=execute_aster_leg(client,reopen,side=PositionSide(side),action="OPEN",
                     id_prefix=f"s2q-r-{hashlib.sha256((uid+package).encode()).hexdigest()[:12]}",confirm=True,
                     new_position_leverage=settings.leverage,
-                    before_submit=(lambda intent:before_order(intent,{"kind":"PENDING_REOPEN","cycleId":str(pending.get("closedCycleId","")),"packageId":package})) if before_order else None)
+                    before_submit=(lambda intent:before_order(intent,{"kind":"PENDING_REOPEN","cycleId":str(pending.get("closedCycleId","")),"packageId":package,
+                        "leverage":reopen.leverage,"marginUsd":float(reopen.notional_per_leg)/max(1,reopen.leverage),"dcaNumber":None})) if before_order else None)
                 rr=reopened.get("result",{});rq=safe_float(rr.get("executedQty"));rp=safe_float(rr.get("avgPrice"))
                 if rq<=0 or rp<=0:raise RuntimeError("Bevestigde pending heropening mist werkelijk gevulde hoeveelheid of prijs")
                 cycle=f"reopen-{str(pending.get('closedCycleId',pending.get('closed_cycle_id','cycle')))}"
@@ -1560,7 +1563,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 if before_order else f"s2h-{uid[-4:]}-{int(time.time())}")
             opened=execute_aster_leg(client,protection,side=PositionSide(decision.side),action="OPEN",
                 id_prefix=protection_prefix,confirm=True,
-                before_submit=(lambda intent:before_order(intent,{"kind":"OPEN_PROTECTION","cycleId":leg.cycle_id})) if before_order else None)
+                before_submit=(lambda intent:before_order(intent,{"kind":"OPEN_PROTECTION","cycleId":leg.cycle_id,
+                    "leverage":protection.leverage,"marginUsd":float(protection.notional_per_leg)/max(1,protection.leverage),"dcaNumber":None})) if before_order else None)
             rr=opened.get("result",{});q=safe_float(rr.get("executedQty")) or float(protection.quantity);p=safe_float(rr.get("avgPrice")) or price
             _record_aster_order_attribution(ref,rr,strategy_id=settings.strategy_id,strategy_name="Dual Profit Harvest DCA",
                 cycle_id=leg.cycle_id,config_version=settings.version,symbol=leg.symbol,side=str(decision.side),action="OPEN_PROTECTION")
@@ -1602,7 +1606,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             context=ExecutionContext(settings.strategy_id,leg.cycle_id,settings.version,leg,True,True,
                 account_uid=uid,cost_evidence_fresh=(leg.symbol,leg.side) in fresh_cost_keys,
                 audit=lambda event: ref.collection("audit").add({**event,"timestamp":now}),
-                before_submit=(lambda intent:before_order(intent,{"kind":decision.kind,"cycleId":leg.cycle_id})) if before_order else None)
+                before_submit=(lambda intent:before_order(intent,{"kind":decision.kind,"cycleId":leg.cycle_id,
+                    "leverage":current.leverage,"marginUsd":float(current.notional_per_leg)/max(1,current.leverage),
+                    "dcaNumber":leg.dca_count+1 if decision.kind=="ADD_DCA" else None})) if before_order else None)
             try:
                 result=execute_aster_strategy2_decision(client,decision,current,context,risk_approved=lambda margin:
                     decision.risk_reducing or
@@ -1668,7 +1674,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         reopened=execute_aster_leg(client,reopen,side=PositionSide(leg.side),action="OPEN",
                             id_prefix=f"s2q-r-{package_id[:12]}",confirm=True,
                             new_position_leverage=settings.leverage,
-                            before_submit=(lambda intent:before_order(intent,{"kind":"AUTO_RESTART","cycleId":reopen_cycle,"packageId":package_id})) if before_order else None)
+                            before_submit=(lambda intent:before_order(intent,{"kind":"AUTO_RESTART","cycleId":reopen_cycle,"packageId":package_id,
+                            "leverage":reopen.leverage,"marginUsd":float(reopen.notional_per_leg)/max(1,reopen.leverage),"dcaNumber":None})) if before_order else None)
                     except Exception as exc:
                         if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):raise
                         pending_reopens.append({"symbol":leg.symbol,"side":leg.side,"closedCycleId":leg.cycle_id,
@@ -1877,7 +1884,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         opened=execute_aster_leg(client,value,side=PositionSide(entry_side),action="OPEN",
                             id_prefix=entry_prefix,confirm=True,
                             new_position_leverage=settings.leverage,
-                            before_submit=(lambda intent:before_order(intent,{"kind":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG"})) if before_order else None)
+                            before_submit=(lambda intent:before_order(intent,{"kind":"INITIAL_OPEN_LEG" if not initial_build_complete else "OPEN_LEG",
+                            "leverage":value.leverage,"marginUsd":float(value.notional_per_leg)/max(1,value.leverage),"dcaNumber":None})) if before_order else None)
                     except Exception as exc:
                         if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):
                             raise
@@ -5125,7 +5133,10 @@ def _reserve_strategy2_queue_order(reference,scan_id:str,intent:AsterOrderIntent
         current={"clientOrderId":intent.intent_id,"symbol":intent.symbol,"side":intent.position_side.value,
             "action":intent.action,"quantity":str(intent.quantity),"reservedAt":now,"scanId":scan_id}
         current.update(details or {})
-        txn.set(reference,{"orderQueueState":{**state,"ordersUsed":used+1,"currentIntent":current,"updatedAt":now}},merge=True)
+        reserved=list(state.get("reservedActions",[])) if isinstance(state.get("reservedActions"),list) else []
+        reserved.append(current)
+        txn.set(reference,{"orderQueueState":{**state,"ordersUsed":used+1,"currentIntent":current,
+            "reservedActions":reserved[-MAX_ORDERS_PER_ACCOUNT_SCAN:],"updatedAt":now}},merge=True)
     reserve(transaction)
 
 
@@ -5236,7 +5247,7 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     starting_used=used
     state={"scanId":scan_id,"ordersUsed":used,"maximumOrders":scan_limit,
         "haltedUncertain":False,"startedAt":prior.get("startedAt") if used else now,
-        "pendingReopens":raw.get("pendingReopens",[])}
+        "pendingReopens":raw.get("pendingReopens",[]),"reservedActions":[],"actions":[]}
     ref.set({"orderQueueState":state},merge=True)
     results=[]
     while used<scan_limit:
@@ -5281,7 +5292,14 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
         latest=ref.get().to_dict() or {};latest_state=latest.get("orderQueueState",{})
         new_used=int(safe_float(latest_state.get("ordersUsed")));sent=max(0,new_used-used)
         if new_used>scan_limit:raise RuntimeError("Strategy-2 queue adapter overschreed het accountbudget")
-        used=new_used;state.update({"ordersUsed":used,"currentIntent":{},"updatedAt":datetime.now(timezone.utc),
+        confirmed_at=datetime.now(timezone.utc)
+        reserved=latest_state.get("reservedActions",[]) if isinstance(latest_state.get("reservedActions"),list) else []
+        confirmed_actions=list(state.get("actions",[])) if isinstance(state.get("actions"),list) else []
+        if sent>0:
+            for action in reserved[-sent:]:
+                if isinstance(action,dict):confirmed_actions.append({**action,"executedAt":confirmed_at})
+        used=new_used;state.update({"ordersUsed":used,"currentIntent":{},"updatedAt":confirmed_at,
+            "reservedActions":reserved,"actions":confirmed_actions[-MAX_ORDERS_PER_ACCOUNT_SCAN:],
             "pendingReopens":ref.get().to_dict().get("pendingReopens",[])})
         ref.set({"orderQueueState":state},merge=True);results.append(result)
         if drain_pending_only and not state.get("pendingReopens"):break
@@ -5302,7 +5320,7 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     # visible Strategy-2 check time. Otherwise the UI can falsely show an old
     # last check while fresh candidate/audit evidence is being produced.
     ref.set({"lastTickAt":completed_at,"queueLastCompletedAt":completed_at,
-        "orderQueueState":{**state,"ordersUsed":used,"updatedAt":completed_at}},merge=True)
+        "orderQueueState":{**state,"ordersUsed":used,"updatedAt":completed_at,"completedAt":completed_at}},merge=True)
     return {"status":final_status,
         "scanId":scan_id,"ordersSent":used-starting_used,"ordersUsed":used,"maximumOrders":scan_limit,
         "actions":results}

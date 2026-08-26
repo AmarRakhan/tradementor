@@ -6,11 +6,12 @@ import { pageActivity, reliableReturnPct, sortedActivity } from "../lib/recent-t
 const component = await readFile(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/aster-tables.css", import.meta.url), "utf8");
 
-test("top profit, latest entries and latest exits render in the approved order", () => {
+test("top profit, last scan actions and latest exits render in the approved order", () => {
   const top = component.indexOf('<TopProfitCard rows={positions}');
+  const scan = component.indexOf('<ScanActionsCard rows={scanActions}');
   const closed = component.indexOf('title="Laatste 5 uitgestapte trades" rows={exits}');
-  const opened = component.indexOf('title="Laatste 5 ingestapte trades" rows={entries}');
-  assert.ok(top >= 0 && closed > top && opened > closed);
+  assert.ok(top >= 0 && scan > top && closed > scan);
+  assert.doesNotMatch(component, /title="Laatste 5 ingestapte trades"/);
 });
 
 test("real exchange time wins over a newer import/update time", () => {
@@ -48,12 +49,12 @@ test("recent trade freshness window remains above the 60 second exchange refresh
   assert.doesNotMatch(component, /Date\.now\(\) - snapshot\.updatedAt < 45_000/);
 });
 
-test("all compact trade tables expose the exact six approved columns", () => {
-  assert.match(component, /<span>PAIR<\/span><span>LEV<\/span><span>CLOSE<\/span><span>MARGIN<\/span><span>%<\/span><span>P&amp;L<\/span>/);
+test("top profit and closed trades expose the exact seven approved columns", () => {
+  assert.match(component, /<span>PAIR<\/span><span>LEV<\/span><span>CLOSE<\/span><span>MARGIN<\/span><span>HUIDIGE PNL<\/span><span>%<\/span><span>P&amp;L<\/span>/);
   assert.match(component, />\s*Close\s*<\/button>/);
   assert.match(component, /function money\(value: unknown\)/);
   assert.match(component, /`\$\$\{amount\(n\)\}`/);
-  assert.equal((component.match(/compactLimit=\{5\}/g) || []).length, 2);
+  assert.equal((component.match(/compactLimit=\{5\}/g) || []).length, 1);
   assert.doesNotMatch(component, /Laatste 20 (?:in|uit)gestapte trades/);
   assert.doesNotMatch(component, /INGEKOCHT|INGESTAPT \(\$\)|VERKOCHT|NU WAARD|Perp ·|Niet aan strategie gekoppeld/);
 });
@@ -90,12 +91,12 @@ test("compact trade cards size to the visible face and align numeric columns cle
   assert.match(css, /font-size:9px!important/);
 });
 
-test("mobile six-column grid is bounded and keeps headers and Close position stable", () => {
-  assert.match(css, /\.aster-six-column-head,\.aster-six-column-row\{display:grid!important/);
-  assert.match(css, /grid-template-columns:minmax\(0,1fr\) 28px 46px 58px 40px 42px!important/);
-  assert.match(css, /\.recent-trades-head\.aster-six-column-head|\.aster-six-column-head\{display:grid!important/);
+test("mobile seven-column grid is bounded and keeps headers and Close position stable", () => {
+  assert.match(css, /\.aster-seven-column-head,\.aster-seven-column-row\{display:grid!important/);
+  assert.match(css, /grid-template-columns:minmax\(0,1fr\) 25px 39px 46px 48px 34px 38px!important/);
+  assert.match(css, /\.aster-seven-column-head/);
   assert.match(css, /overflow-x:hidden/);
-  assert.match(css, /width:44px;min-width:44px;max-width:44px/);
+  assert.match(css, /width:37px;min-width:37px;max-width:37px/);
   assert.match(css, /contain:layout/);
 });
 
@@ -109,13 +110,17 @@ test("manual Aster close is confirmed, idempotent in the browser and refreshes e
 });
 
 
-test("percent heading aligns with percent values", () => {
-  assert.match(css, /span:nth-child\(5\).*strong:first-of-type/);
+test("scan actions use the exact approved columns and restrained action styling", () => {
+  assert.match(component, /<span>PAIR<\/span><span>ACTIE<\/span><span>NR<\/span><span>LEV<\/span><span>MARGIN<\/span><span>HUIDIGE PNL<\/span><span>TIJD<\/span>/);
+  assert.match(component, /Laatste scan \{clockTime\(completedAt\)\}/);
+  assert.match(component, /dcaNumber === null \? "—" : `#\$\{Math\.round\(dcaNumber\)\}`/);
+  assert.match(css, /\.scan-action\.sold\{color:var\(--profit/);
 });
 
 
-test("closed trade rows keep the Close column empty instead of rendering a disabled button", () => {
-  assert.match(component, /recent-close-cell[^\n]*\{closed \? null : <ClosePositionControl/);
+test("closed trade rows show a real close status instead of a disabled button", () => {
+  assert.match(component, /recent-close-status/);
+  assert.match(component, /FULL_TP.*\? "TP" : "Gesloten"/);
 });
 
 

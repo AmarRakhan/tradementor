@@ -1,4 +1,5 @@
 import random
+from pathlib import Path
 
 from aster_strategy2_queue import (
     MAX_ORDERS_PER_ACCOUNT_SCAN, PendingReopen, QueueAction, QueueState,
@@ -170,3 +171,12 @@ def test_ten_thousand_shadow_plans_never_mutate_or_exceed_account_budget():
         assert plan["wouldSendCount"]<=15-state.orders_used
         assert plan["maximumOrders"]==15
         if state.halted_uncertain:assert plan["wouldSendCount"]==0
+
+
+def test_public_queue_exposes_last_scan_actions_contract():
+    source = Path(__file__).with_name("main.py").read_text()
+    assert '"lastScanActions":queue_state.get("actions",[])' in source
+    assert '"lastScanCompletedAt":queue_state.get("completedAt",queue_state.get("updatedAt"))' in source
+    assert '"reservedActions":reserved[-MAX_ORDERS_PER_ACCOUNT_SCAN:]' in source
+    assert 'confirmed_actions.append({**action,"executedAt":confirmed_at})' in source
+    assert '"dcaNumber":leg.dca_count+1 if decision.kind=="ADD_DCA" else None' in source

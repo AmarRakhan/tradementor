@@ -25,6 +25,7 @@ type Activity = {
   initialMarginUsd?: number | null;
   timestampMs?: number;
   executedAt?: string;
+  closedAt?: string;
 };
 
 type OpenPosition = {
@@ -42,6 +43,18 @@ type OpenPosition = {
   leverage?: number | null;
   initialMarginUsd?: number | null;
   openedAt?: unknown;
+};
+
+type ScanAction = {
+  clientOrderId?: string;
+  symbol?: string;
+  side?: string;
+  action?: string;
+  kind?: string;
+  leverage?: number | null;
+  marginUsd?: number | null;
+  dcaNumber?: number | null;
+  executedAt?: unknown;
 };
 
 const suffixes = ["USDT", "USDC", "USD"];
@@ -96,6 +109,12 @@ function exchangeTimestampMs(value: unknown) {
     if (seconds !== null && seconds > 0) return seconds * 1000 + Math.floor(nanoseconds / 1_000_000);
   }
   return 0;
+}
+
+function clockTime(value: unknown) {
+  const timestamp = exchangeTimestampMs(value);
+  if (timestamp <= 0) return "—";
+  return new Intl.DateTimeFormat("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(timestamp));
 }
 
 function dateTime(value: unknown) {
@@ -248,16 +267,17 @@ function ClosePositionControl({ position, onClosed, compact = true }: { position
   );
 }
 
-const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, onClosed }: { trade: Activity; closed: boolean; positions: OpenPosition[]; onClosed: () => void }) {
+const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, onClosed, scanActions = [] }: { trade: Activity; closed: boolean; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[] }) {
   const asset = baseAsset(trade.symbol);
   const result = finite(closed ? trade.realizedPnlUsd : trade.unrealizedPnlUsd);
   const pct = reliableReturnPct(trade);
   const openPosition = closed ? null : findOpenPosition(positions, trade);
-  const leverage = activityLeverage(trade, openPosition);
-  const margin = activityMargin(trade, openPosition, leverage);
+  const matchingScanAction = closed ? [...scanActions].reverse().find((action) => sideKey(action) === sideKey(trade) && scanActionLabel(action) === "verkocht") || null : null;
+  const leverage = activityLeverage(trade, openPosition) ?? finite(matchingScanAction?.leverage);
+  const margin = activityMargin(trade, openPosition, leverage) ?? finite(matchingScanAction?.marginUsd);
   const tone = result === null ? "neutral" : result >= 0 ? "profit" : "loss";
   return (
-    <div className="recent-trade-row aster-six-column-row" role="row">
+    <div className="recent-trade-row aster-seven-column-row" role="row">
       <div className="recent-pair" role="cell">
         <CoinIcon symbol={asset} />
         <span className="recent-pair-copy">
@@ -266,33 +286,34 @@ const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, 
         </span>
       </div>
       <span className="recent-leverage" role="cell">{leverage === null ? "—" : `${leverage}x`}</span>
-      <span className="recent-close-cell" role="cell">{closed ? null : <ClosePositionControl position={openPosition} onClosed={onClosed} />}</span>
+      <span className="recent-close-cell" role="cell">{closed ? <span className="recent-close-status">{String(matchingScanAction?.kind || "").toUpperCase() === "FULL_TP" ? "TP" : "Gesloten"}</span> : <ClosePositionControl position={openPosition} onClosed={onClosed} />}</span>
       <span className="recent-margin" role="cell">{money(margin)}</span>
+      <strong role="cell" className={tone}>{amount(result, true)}</strong>
       <strong role="cell" className={pct === null ? "neutral" : pct >= 0 ? "profit" : "loss"}>{percentage(pct)}</strong>
       <strong role="cell" className={tone}>{amount(result, true)}</strong>
     </div>
   );
 });
 
-function TradeRows({ rows, closed, positions, onClosed }: { rows: Activity[]; closed: boolean; positions: OpenPosition[]; onClosed: () => void }) {
+function TradeRows({ rows, closed, positions, onClosed, scanActions = [] }: { rows: Activity[]; closed: boolean; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[] }) {
   return (
     <div className="recent-trades-body" role="rowgroup">
       {rows.length
-        ? rows.map((trade) => <RecentTradeRow key={`${stableActivityId(trade)}:${trade.timestampMs || trade.executedAt}`} trade={trade} closed={closed} positions={positions} onClosed={onClosed} />)
+        ? rows.map((trade) => <RecentTradeRow key={`${stableActivityId(trade)}:${trade.timestampMs || trade.executedAt}`} trade={trade} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} />)
         : <div className="recent-trades-empty">{closed ? "Nog geen uitgestapte trades" : "Nog geen ingestapte trades"}</div>}
     </div>
   );
 }
 
-function SixColumnHead() {
+function SevenColumnHead() {
   return (
-    <div className="recent-trades-head aster-six-column-head" role="row">
-      <span>PAIR</span><span>LEV</span><span>CLOSE</span><span>MARGIN</span><span>%</span><span>P&amp;L</span>
+    <div className="recent-trades-head aster-seven-column-head" role="row">
+      <span>PAIR</span><span>LEV</span><span>CLOSE</span><span>MARGIN</span><span>HUIDIGE PNL</span><span>%</span><span>P&amp;L</span>
     </div>
   );
 }
 
-function RecentTradesCard({ title, rows, closed, liveState, positions, onClosed, compactLimit = 5 }: { title: string; rows: Activity[]; closed: boolean; liveState: string; positions: OpenPosition[]; onClosed: () => void; compactLimit?: number }) {
+function RecentTradesCard({ title, rows, closed, liveState, positions, onClosed, scanActions = [], compactLimit = 5 }: { title: string; rows: Activity[]; closed: boolean; liveState: string; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[]; compactLimit?: number }) {
   const [showAll, setShowAll] = useState(false);
   const [loadedPages, setLoadedPages] = useState(1);
   const sorted = useMemo(() => sortedActivity(rows) as Activity[], [rows]);
@@ -305,12 +326,12 @@ function RecentTradesCard({ title, rows, closed, liveState, positions, onClosed,
       <div className="recent-flip-inner">
         <section className="recent-flip-face recent-flip-front" aria-hidden={showAll} inert={showAll ? true : undefined}>
           <header><div><h2>{title}</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div><button type="button" onClick={toggle} aria-label={`Toon alle ${closed ? "uitgestapte" : "ingestapte"} trades`}>Toon alle <i>↻</i></button></header>
-          <SixColumnHead />
-          <TradeRows rows={compact} closed={closed} positions={positions} onClosed={onClosed} />
+          <SevenColumnHead />
+          <TradeRows rows={compact} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} />
         </section>
         <section className="recent-flip-face recent-flip-back" aria-hidden={!showAll} inert={!showAll ? true : undefined}>
           <header><div><h2>{closed ? "Alle uitgestapte trades" : "Alle ingestapte trades"}</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div><button type="button" onClick={toggle}>Terug naar laatste {compactLimit} <i>↻</i></button></header>
-          <div className="recent-trades-scroll"><SixColumnHead /><TradeRows rows={history} closed={closed} positions={positions} onClosed={onClosed} />{hasMore && <button className="recent-load-more" type="button" onClick={() => setLoadedPages((value) => value + 1)}>Laad nog 100</button>}</div>
+          <div className="recent-trades-scroll"><SevenColumnHead /><TradeRows rows={history} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} />{hasMore && <button className="recent-load-more" type="button" onClick={() => setLoadedPages((value) => value + 1)}>Laad nog 100</button>}</div>
         </section>
       </div>
     </article>
@@ -324,7 +345,7 @@ function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition
   const asset = baseAsset(position.symbol);
   const leverage = finite(position.leverage);
   return (
-    <div className="recent-trade-row top-profit-row aster-six-column-row" role="row">
+    <div className="recent-trade-row top-profit-row aster-seven-column-row" role="row">
       <div className="recent-pair" role="cell">
         <CoinIcon symbol={asset} />
         <span className="recent-pair-copy">
@@ -335,6 +356,7 @@ function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition
       <span className="recent-leverage" role="cell">{leverage === null ? "—" : `${Math.round(leverage)}x`}</span>
       <span className="recent-close-cell" role="cell"><ClosePositionControl position={position} onClosed={onClosed} /></span>
       <span className="recent-margin" role="cell">{money(openPositionMargin(position))}</span>
+      <strong role="cell" className={tone}>{amount(pnl, true)}</strong>
       <strong role="cell" className={pct === null ? "neutral" : pct >= 0 ? "profit" : "loss"}>{percentage(pct)}</strong>
       <strong role="cell" className={tone}>{amount(pnl, true)}</strong>
     </div>
@@ -346,11 +368,53 @@ function TopProfitCard({ rows, entries, exits, liveState, onClosed }: { rows: Op
     <article className="recent-trades-card top-profit-card">
       <section className="recent-flip-face">
         <header><div><h2>Top 5 hoogste profit</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div></header>
-        <SixColumnHead />
+        <SevenColumnHead />
         <div className="recent-trades-body" role="rowgroup">
           {rows.length
             ? rows.map((position) => <TopProfitRow key={positionId(position)} position={position} openedAt={currentCycleOpenedAt(position, entries, exits)} onClosed={onClosed} />)
             : <div className="recent-trades-empty">Geen actuele open posities beschikbaar</div>}
+        </div>
+      </section>
+    </article>
+  );
+}
+
+function scanActionLabel(action: ScanAction) {
+  const kind = String(action.kind || "").toUpperCase();
+  const orderAction = String(action.action || "").toUpperCase();
+  if (orderAction === "CLOSE" || ["FULL_TP", "PARTIAL_TP", "TAKE_PROFIT_CLOSE", "RISK_REDUCE"].includes(kind)) return "verkocht";
+  if (["ADD_DCA", "PROTECTION_INCREASE"].includes(kind)) return "bijgekocht";
+  return "gekocht";
+}
+
+function ScanActionsCard({ rows, completedAt, positions, exits }: { rows: ScanAction[]; completedAt?: unknown; positions: OpenPosition[]; exits: Activity[] }) {
+  return (
+    <article className="recent-trades-card scan-actions-card">
+      <section className="recent-flip-face">
+        <header><div><h2>Laatste 15 scan acties</h2></div><small className="scan-last-time">Laatste scan {clockTime(completedAt)}</small></header>
+        <div className="recent-trades-head aster-scan-head" role="row">
+          <span>PAIR</span><span>ACTIE</span><span>NR</span><span>LEV</span><span>MARGIN</span><span>HUIDIGE PNL</span><span>TIJD</span>
+        </div>
+        <div className="recent-trades-body" role="rowgroup">
+          {rows.length ? rows.slice(-15).reverse().map((action, index) => {
+            const position = findOpenPosition(positions, action);
+            const label = scanActionLabel(action);
+            const exit = label === "verkocht" ? exits.find((row) => sideKey(row) === sideKey(action)) : null;
+            const pnl = position ? finite(position.unrealizedPnl) : finite(exit?.realizedPnlUsd);
+            const tone = pnl === null ? "neutral" : pnl >= 0 ? "profit" : "loss";
+            const leverage = finite(action.leverage) ?? finite(position?.leverage);
+            const margin = finite(action.marginUsd) ?? openPositionMargin(position);
+            const dcaNumber = label === "bijgekocht" ? finite(action.dcaNumber) : null;
+            return <div className="recent-trade-row aster-scan-row" role="row" key={`${String(action.clientOrderId || action.symbol || index)}:${index}`}>
+              <span className="scan-pair" role="cell">{baseAsset(action.symbol)}</span>
+              <span className={`scan-action ${label === "verkocht" ? "sold" : ""}`} role="cell">{label}</span>
+              <span role="cell">{dcaNumber === null ? "—" : `#${Math.round(dcaNumber)}`}</span>
+              <span role="cell">{leverage === null ? "—" : `${Math.round(leverage)}x`}</span>
+              <span role="cell">{money(margin)}</span>
+              <strong role="cell" className={tone}>{amount(pnl, true)}</strong>
+              <time role="cell" dateTime={exchangeTimestampMs(action.executedAt) ? new Date(exchangeTimestampMs(action.executedAt)).toISOString() : undefined}>{clockTime(action.executedAt)}</time>
+            </div>;
+          }) : <div className="recent-trades-empty">Nog geen uitgevoerde acties in de laatste scan</div>}
         </div>
       </section>
     </article>
@@ -365,13 +429,16 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const exits = useMemo(() => sortedActivity(Array.isArray(activity.exits) ? activity.exits : []) as Activity[], [activity.exits]);
   const allPositions = useMemo(() => (Array.isArray(snapshot.data?.positions) ? snapshot.data.positions : []) as OpenPosition[], [snapshot.data?.positions]);
   const positions = useMemo(() => topProfitPositions(allPositions) as OpenPosition[], [allPositions]);
+  const strategy2 = snapshot.data?.strategy2 && typeof snapshot.data.strategy2 === "object" ? snapshot.data.strategy2 as Record<string, unknown> : {};
+  const orderQueue = strategy2.orderQueue && typeof strategy2.orderQueue === "object" ? strategy2.orderQueue as Record<string, unknown> : {};
+  const scanActions = useMemo(() => (Array.isArray(orderQueue.lastScanActions) ? orderQueue.lastScanActions : []) as ScanAction[], [orderQueue.lastScanActions]);
   const liveState = snapshot.error ? "Offline" : snapshot.loading ? "Reconnecting" : snapshot.updatedAt && Date.now() - snapshot.updatedAt < 90_000 ? "Live" : "Delayed";
   if (snapshot.error && !entries.length && !exits.length) return <section className="recent-trades-error"><span>Tradegegevens tijdelijk niet beschikbaar</span><button type="button" onClick={onRetry}>Opnieuw proberen</button></section>;
   return (
     <section className="aster-recent-trades" aria-label="Recente Aster trades">
       <TopProfitCard rows={positions} entries={entries} exits={exits} liveState={liveState} onClosed={onRetry} />
-      <RecentTradesCard title="Laatste 5 uitgestapte trades" rows={exits} closed liveState={liveState} positions={allPositions} onClosed={onRetry} compactLimit={5} />
-      <RecentTradesCard title="Laatste 5 ingestapte trades" rows={entries} closed={false} liveState={liveState} positions={allPositions} onClosed={onRetry} compactLimit={5} />
+      <ScanActionsCard rows={scanActions} completedAt={orderQueue.lastScanCompletedAt} positions={allPositions} exits={exits} />
+      <RecentTradesCard title="Laatste 5 uitgestapte trades" rows={exits} closed liveState={liveState} positions={allPositions} onClosed={onRetry} scanActions={scanActions} compactLimit={5} />
     </section>
   );
 }
