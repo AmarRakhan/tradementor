@@ -1,0 +1,128 @@
+name: Focus Live Integration Patch
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.focus-live-integration-trigger]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Integrate Focus live runtime and UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # ---- Market adapter: return all eligible risers, enrich leaders/manual with candles.
+          p=Path('cloud_api/aster_strategy2_focus_adapter.py');s=p.read_text()
+          old='''    # Technical analysis is deliberately bounded to the strongest 24h leaders;\n    # this preserves 24h performance as the primary selection criterion.\n    result: list[FocusMarket] = []\n    for symbol, change, volume in raw[:max(3, min(30, candidate_limit))]:\n        price = prices.get(symbol, 0.0)\n        if price <= 0: continue\n        closes: list[float] = []\n        try:\n            for candle in client.klines(symbol, "15m", 60):\n                if len(candle) > 4:\n                    close = _f(candle[4])\n                    if close > 0: closes.append(close)\n        except Exception:\n            # Ranking stays fail-closed technically when candles are missing;\n            # the pure domain still has the 24h and liquidity evidence.\n            closes = []\n        liquidity = min(1.0, volume / max(1.0, config.minimum_quote_volume_24h_usdt))\n        result.append(FocusMarket(symbol, price, change, volume, liquidity, tuple(closes)))\n    return tuple(result)\n'''
+          new='''    # Scan the complete positive USDT-perpetual universe for the selectable/audit list.\n    # Candle requests stay bounded to the strongest leaders plus the manual pair.\n    technical_limit=max(3,min(30,candidate_limit))\n    technical_symbols={symbol for symbol,_,_ in raw[:technical_limit]}\n    if config.focus_manual_pair:technical_symbols.add(config.focus_manual_pair.upper())\n    result: list[FocusMarket] = []\n    for symbol, change, volume in raw:\n        price = prices.get(symbol, 0.0)\n        if price <= 0: continue\n        closes: list[float] = []\n        if symbol in technical_symbols:\n            try:\n                for candle in client.klines(symbol, "15m", 60):\n                    if len(candle) > 4:\n                        close = _f(candle[4])\n                        if close > 0: closes.append(close)\n            except Exception:\n                closes = []\n        liquidity = min(1.0, volume / max(1.0, config.minimum_quote_volume_24h_usdt))\n        result.append(FocusMarket(symbol, price, change, volume, liquidity, tuple(closes)))\n    return tuple(result)\n'''
+          if old not in s:raise SystemExit('focus market block anchor missing')
+          p.write_text(s.replace(old,new,1))
+
+          # ---- Live module: persist ownership cleanup even on HOLD.
+          p=Path('cloud_api/aster_strategy2_focus_live.py');s=p.read_text()
+          old='''    if kind=="HOLD":\n        ref.set({"focusLiveState":focus_state_to_mapping(planned),"focusLiveReport":report,"focusLiveAt":time.time()},merge=True)\n        return {"status":"waiting","action":"FOCUS_HOLD","reason":str(decision.get("reason","runner blijft open")),"ordersSent":0,"focus":report}\n'''
+          new='''    if kind=="HOLD":\n        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveState":focus_state_to_mapping(planned),\n            "focusLiveReport":report,"focusLiveAt":time.time()},merge=True)\n        return {"status":"waiting","action":"FOCUS_HOLD","reason":str(decision.get("reason","runner blijft open")),"ordersSent":0,"focus":report}\n'''
+          if old not in s:raise SystemExit('live hold anchor missing')
+          p.write_text(s.replace(old,new,1))
+
+          # ---- Existing Strategy-2 management must not steal a Focus-owned leg while Focus mode is active.
+          p=Path('cloud_api/aster_strategy2_runtime.py');s=p.read_text()
+          s=s.replace('''    for leg in owned:\n        row=pos.get((leg.symbol,leg.side))\n''','''    for leg in owned:\n        if config.trading_mode=="focus" and str(leg.role).upper()=="FOCUS":continue\n        row=pos.get((leg.symbol,leg.side))\n''',1)
+          # next_management_decision first matching loop after its function declaration
+          marker='def next_management_decision('
+          i=s.index(marker);j=s.index('    for item in owned:',i)
+          s=s[:j]+s[j:].replace('    for item in owned:\n','    for item in owned:\n        if config.trading_mode=="focus" and str(item.role).upper()=="FOCUS":continue\n',1)
+          i=s.index('def next_dca_decision(');j=s.index('    for item in owned:',i)
+          s=s[:j]+s[j:].replace('    for item in owned:\n','    for item in owned:\n        if config.trading_mode=="focus" and str(item.role).upper()=="FOCUS":continue\n',1)
+          i=s.index('def same_pair_protection_decision(');j=s.index('    for leg in owned:',i)
+          s=s[:j]+s[j:].replace('    for leg in owned:\n','    for leg in owned:\n        if config.trading_mode=="focus" and str(leg.role).upper()=="FOCUS":continue\n',1)
+          old='''def portfolio_protection_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->tuple[OwnedLeg,Decision]|None:\n    mode=risk_mode(config,portfolio)\n    protected=[x for x in owned if x.role in {"PROTECTION","HARVEST_PROTECTION"}]\n'''
+          new='''def portfolio_protection_decision(config:Strategy2Config,portfolio:PortfolioState,owned:list[OwnedLeg])->tuple[OwnedLeg,Decision]|None:\n    mode=risk_mode(config,portfolio)\n    managed=[x for x in owned if not (config.trading_mode=="focus" and str(x.role).upper()=="FOCUS")]\n    protected=[x for x in managed if x.role in {"PROTECTION","HARVEST_PROTECTION"}]\n'''
+          if old not in s:raise SystemExit('portfolio protection anchor missing')
+          s=s.replace(old,new,1).replace('candidate=next((x for x in owned if x.side==overweight),None)','candidate=next((x for x in managed if x.side==overweight),None)',1)
+          p.write_text(s)
+
+          # ---- Backend integration.
+          p=Path('cloud_api/main.py');s=p.read_text()
+          imp='from aster_strategy2_focus_adapter import build_focus_shadow_report, focus_state_from_mapping, focus_state_to_mapping, advance_focus_shadow_state\n'
+          repl=imp+'from aster_strategy2_focus_adapter import current_focus_markets\nfrom aster_strategy2_focus import rank_focus_pairs\nfrom aster_strategy2_focus_live import run_focus_live_step\n'
+          if 'from aster_strategy2_focus_live import run_focus_live_step' not in s:
+              if imp not in s:raise SystemExit('main focus import anchor missing')
+              s=s.replace(imp,repl,1)
+          mg='''    mg_round=raw.get("moneyGrabberRound") if isinstance(raw.get("moneyGrabberRound"),dict) else None\n    mg_pairs=raw.get("moneyGrabberPairs") if isinstance(raw.get("moneyGrabberPairs"),list) else []\n'''
+          mgnew=mg+'''    focus_live_mode=str(settings.get("tradingMode",""))=="focus" and str(settings.get("mode",""))=="live"\n    focus_state=(raw.get("focusLiveState") if focus_live_mode else raw.get("focusShadowState"))\n    focus_state=focus_state if isinstance(focus_state,dict) else {}\n    focus_report=(raw.get("focusLiveReport") if focus_live_mode else raw.get("focusShadowReport"))\n    focus_report=focus_report if isinstance(focus_report,dict) else {}\n'''
+          if 'focus_live_mode=str(settings.get("tradingMode"' not in s:
+              if mg not in s:raise SystemExit('public focus vars anchor missing')
+              s=s.replace(mg,mgnew,1)
+          old='''        "focus":{"state":raw.get("focusShadowState",{}) if isinstance(raw.get("focusShadowState"),dict) else {},\n            "report":raw.get("focusShadowReport",{}) if isinstance(raw.get("focusShadowReport"),dict) else {},\n            "metrics":raw.get("focusShadowMetrics",{}) if isinstance(raw.get("focusShadowMetrics"),dict) else {},\n            "ordersSent":0,"updatedAt":raw.get("focusShadowAt")},\n'''
+          new='''        "focus":{**focus_state,"state":focus_state,"report":focus_report,\n            "metrics":raw.get("focusShadowMetrics",{}) if isinstance(raw.get("focusShadowMetrics"),dict) else {},\n            "ordersSent":int(safe_float(raw.get("focusLiveOrdersSent"))) if focus_live_mode else 0,\n            "live":bool(focus_live_mode and enabled),"shadowEnabled":bool(settings.get("focusShadowEnabled",False)),\n            "updatedAt":raw.get("focusLiveAt") if focus_live_mode else raw.get("focusShadowAt")},\n'''
+          if old not in s:raise SystemExit('public focus block anchor missing')
+          s=s.replace(old,new,1)
+          s=s.replace('seat_shortage=len(owned)<settings.maximum_pairs','seat_shortage=(settings.trading_mode!="focus" and len(owned)<settings.maximum_pairs)',1)
+          anchor='''    take_profit_selected=(management_selected if management_selected and\n        management_selected[1].kind in {"FULL_TP","PARTIAL_TP"} else None)\n'''
+          insert=anchor+'''    # Focus uses the same pure planner as Shadow. Safety/emergency protection may\n    # preempt it; otherwise Focus exit/partial/DCA/entry precede legacy management.\n    focus_emergency=bool(protection_selected and protection_selected[1].kind in {"EMERGENCY_REDUCE","CLOSE_PROTECTION"})\n    if settings.trading_mode=="focus" and enabled and not focus_emergency:\n        focus_result=run_focus_live_step(client=client,ref=ref,raw_state={**raw,"ownedLegs":[owned_to_mapping(x) for x in owned]},\n            settings=settings,uid=uid,account=account,positions=positions,timestamp_ms=now_ms,dry_run=dry_run,\n            order_budget=order_budget,before_order=before_order)\n        if focus_result and str(focus_result.get("action",""))!="FOCUS_HOLD":\n            ref.set({"lastTickAt":now},merge=True)\n            return focus_result\n'''
+          if 'focus_result=run_focus_live_step' not in s:
+              if anchor not in s:raise SystemExit('focus runtime insertion anchor missing')
+              s=s.replace(anchor,insert,1)
+          # Read-only market selector endpoint before the existing shadow endpoint.
+          shadow='''@app.get("/v1/me/aster/strategy2/focus/shadow")\ndef strategy2_focus_shadow'''
+          route='''@app.get("/v1/me/aster/strategy2/focus/markets")\ndef strategy2_focus_markets(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:\n    raw=aster_strategy2_reference(str(user["uid"])).get().to_dict() or {}\n    settings=Strategy2Config.from_mapping(raw.get("settings"))\n    secret=load_aster_secret(user)\n    client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)\n    markets=current_focus_markets(client,settings)\n    ranking=rank_focus_pairs(list(markets),minimum_quote_volume=settings.minimum_quote_volume_24h_usdt,\n        minimum_liquidity_score=settings.focus_min_liquidity_score)\n    return {"readOnly":True,"ordersSent":0,"ranking":[row.public_dict() for row in ranking],"marketCount":len(markets)}\n\n\n@app.get("/v1/me/aster/strategy2/focus/shadow")\ndef strategy2_focus_shadow'''
+          if '/strategy2/focus/markets' not in s:
+              if shadow not in s:raise SystemExit('focus markets route anchor missing')
+              s=s.replace(shadow,route,1)
+          p.write_text(s)
+
+          # ---- Web maker: Focus can explicitly start live after standard readiness/canary.
+          p=Path('web/components/aster-strategy2-maker.tsx');s=p.read_text()
+          s=s.replace('Bestaande accounts blijven standaard in Normaal / Multi-pair. Focus is optioneel en start nooit automatisch live.','Bestaande accounts blijven standaard in Normaal / Multi-pair. Focus is optioneel en vereist dezelfde expliciete live-bevestiging en safety checks.',1)
+          s=s.replace('Focus wordt in deze release niet automatisch live geactiveerd. Shadow neemt dezelfde beslissingen maar stuurt exact 0 orders.','Shadow is optioneel om dezelfde Focus-beslissingen zonder orders te volgen. Live Focus wordt alleen gestart na jouw expliciete live-bevestiging.',1)
+          s=s.replace('Iedere theoretische en toekomstige live DCA','Iedere Shadow- en live DCA',1)
+          s=s.replace('Focus mag shadowmatig daarnaast starten als de budget/riskchecks dit toestaan.','Focus mag daarnaast starten als de budget/riskchecks dit toestaan.',1)
+          s=s.replace('Opslaan configureert alleen Strategy 2 Focus en Shadow. Er worden geen Focus-orders live geactiveerd.','Opslaan configureert Focus. Start Live blijft een aparte expliciete stap na readiness/canary.',1)
+          guard='''  if(v.tradingMode==="focus"&&(kind==="start"||kind==="start-live")){setMessage("Focus is bewust Shadow-only in deze release. Er zijn geen Focus-orders geactiveerd.");return}\n'''
+          s=s.replace(guard,'',1)
+          s=s.replace('v.tradingMode==="focus"?"Focus-configuratie opgeslagen. Focus blijft Shadow-only; er zijn geen live Focus-orders geactiveerd.":"Configuratie opgeslagen en staat klaar om te starten."','v.tradingMode==="focus"?"Focus-configuratie opgeslagen. Gebruik de live-schakelaar of Start Live om hem expliciet te activeren.":"Configuratie opgeslagen en staat klaar om te starten."',1)
+          old='''async function toggleLive(){if(status.pending)return;if(enabled){await action("stop");return}if(v.tradingMode==="focus"){setMessage("Focus blijft Shadow-only en wordt niet live gestart.");return}if(paperOnly){await action("start");return}if(liveReady){await action("start-live");return}await checkReadiness()}'''
+          new='''async function toggleLive(){if(status.pending)return;if(enabled){await action("stop");return}if(paperOnly){await action("start");return}if(liveReady){await action("start-live");return}await checkReadiness()}'''
+          if old not in s:raise SystemExit('toggle live anchor missing')
+          s=s.replace(old,new,1)
+          old='''const liveStatus=status.pending?"Serverstatus controleren…":v.tradingMode==="focus"?"FOCUS SHADOW":paperOnly?"PAPER ONLY":liveReady?"LIVE READY":"LIVE LOCKED";const powerText=status.pending?"Serverstatus controleren…":enabled?(paperOnly?"AAN · simulatie draait":"AAN · bot draait"):v.tradingMode==="focus"?"Focus live-orders uitgeschakeld":paperOnly?"UIT · nul echte orders":liveReady?"UIT · klaar om te starten":"UIT · persoonlijke veiligheidscontrole nodig";'''
+          new='''const liveStatus=status.pending?"Serverstatus controleren…":v.tradingMode==="focus"?(enabled&&v.mode==="live"?"FOCUS LIVE":liveReady?"FOCUS LIVE READY":"FOCUS LIVE LOCKED"):paperOnly?"PAPER ONLY":liveReady?"LIVE READY":"LIVE LOCKED";const powerText=status.pending?"Serverstatus controleren…":enabled?(v.tradingMode==="focus"?"AAN · Focus handelt één LONG-pair":"AAN · bot draait"):paperOnly?"UIT · nul echte orders":liveReady?"UIT · klaar om te starten":"UIT · persoonlijke veiligheidscontrole nodig";'''
+          if old not in s:raise SystemExit('live status anchor missing')
+          s=s.replace(old,new,1)
+          s=s.replace('Eén sterke LONG-pair tegelijk · dip kopen · runner uitrijden · Shadow-only tot expliciete latere live-activatie.','Eén sterke LONG-pair tegelijk · dip kopen · runner uitrijden · na volledige exit automatisch opnieuw selecteren en instappen.',1)
+          old='''<button type="button" role="switch" aria-checked={v.tradingMode==="focus"?false:enabled} disabled={busy||status.pending||v.tradingMode==="focus"} onClick={toggleLive}><i />{v.tradingMode==="focus"?"Shadow-only":status.pending?"Controleren…":enabled?"Uitschakelen":"Inschakelen"}</button>'''
+          new='''<button type="button" role="switch" aria-checked={enabled} disabled={busy||status.pending} onClick={toggleLive}><i />{status.pending?"Controleren…":enabled?"Uitschakelen":"Inschakelen"}</button>'''
+          if old not in s:raise SystemExit('focus switch anchor missing')
+          s=s.replace(old,new,1)
+          s=s.replace('{v.tradingMode==="multi_pair"&&!paperOnly&&<button className="expand-settings" disabled={busy||status.pending} onClick={checkReadiness}>Controleer live-gereedheid</button>}','{!paperOnly&&<button className="expand-settings" disabled={busy||status.pending} onClick={checkReadiness}>Controleer live-gereedheid</button>}',1)
+          s=s.replace('{v.tradingMode==="multi_pair"&&!paperOnly&&Boolean(readiness?.softwareReady)&&!Boolean(readiness?.liveReady)&&<button className="stop-action" disabled={busy||status.pending} onClick={runCanary}>','{!paperOnly&&Boolean(readiness?.softwareReady)&&!Boolean(readiness?.liveReady)&&<button className="stop-action" disabled={busy||status.pending} onClick={runCanary}>',1)
+          s=s.replace('{checks.length>0&&v.tradingMode==="multi_pair"&&<div className="readiness-list">','{checks.length>0&&<div className="readiness-list">',1)
+          old='{v.tradingMode==="multi_pair"&&!paperOnly&&liveReady&&<button disabled={busy} onClick={()=>action("start-live")}>Start Live</button>}'
+          new='{!paperOnly&&liveReady&&<button disabled={busy} onClick={()=>action("start-live")}>{v.tradingMode==="focus"?"Start Focus Live":"Start Live"}</button>}'
+          if old not in s:raise SystemExit('wizard start live anchor missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Verify integration contracts
+        run: |
+          python -m py_compile cloud_api/aster_strategy2_focus_live.py cloud_api/main.py cloud_api/aster_strategy2_runtime.py
+          grep -q 'run_focus_live_step' cloud_api/main.py
+          grep -q '/v1/me/aster/strategy2/focus/markets' cloud_api/main.py
+          grep -q 'Start Focus Live' web/components/aster-strategy2-maker.tsx
+          ! grep -q 'Focus blijft Shadow-only' web/components/aster-strategy2-maker.tsx
+      - name: Commit and cleanup
+        run: |
+          rm -f .github/workflows/focus-live-integration-patch.yml .focus-live-integration-trigger
+          git config user.name OpenAI
+          git config user.email noreply@openai.com
+          git add -A
+          git commit -m "feat: integrate Focus live trading into Strategy 2"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
