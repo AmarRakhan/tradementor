@@ -6,6 +6,7 @@ import type { ExchangeSnapshot } from "@/lib/use-exchange-data";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { activityTime, pageActivity, reliableReturnPct, sortedActivity, stableActivityId } from "@/lib/recent-trades.mjs";
 import { authoritativePositionReturnPct, positionId, topProfitPositions } from "@/lib/top-profit-positions.mjs";
+import { SafeTradingChart, type TradeSelection } from "@/components/trading-chart";
 
 type Activity = {
   id?: string;
@@ -43,6 +44,8 @@ type OpenPosition = {
   leverage?: number | null;
   initialMarginUsd?: number | null;
   openedAt?: unknown;
+  entryPrice?: number | null;
+  averageEntry?: number | null;
 };
 
 type ScanAction = {
@@ -55,9 +58,22 @@ type ScanAction = {
   marginUsd?: number | null;
   dcaNumber?: number | null;
   executedAt?: unknown;
+  orderId?: string;
 };
 
 const suffixes = ["USDT", "USDC", "USD"];
+
+type AsterPairDetail = {
+  selection: TradeSelection;
+  focusAtMs?: number;
+  averageEntry?: number | null;
+  selectedActionId?: string;
+};
+
+function averageEntry(position: OpenPosition | null) {
+  return finite(position?.averageEntry) ?? finite(position?.entryPrice);
+}
+
 
 function normalizedSymbol(symbol = "") {
   return symbol.toUpperCase().replace(/[\/_-]/g, "");
@@ -267,7 +283,7 @@ function ClosePositionControl({ position, onClosed, compact = true }: { position
   );
 }
 
-const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, onClosed, scanActions = [] }: { trade: Activity; closed: boolean; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[] }) {
+const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, onClosed, scanActions = [], onOpenDetail }: { trade: Activity; closed: boolean; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[]; onOpenDetail: (detail: AsterPairDetail) => void }) {
   const asset = baseAsset(trade.symbol);
   const result = finite(closed ? trade.realizedPnlUsd : trade.unrealizedPnlUsd);
   const pct = reliableReturnPct(trade);
@@ -278,13 +294,13 @@ const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, 
   const tone = result === null ? "neutral" : result >= 0 ? "profit" : "loss";
   return (
     <div className="recent-trade-row aster-seven-column-row" role="row">
-      <div className="recent-pair" role="cell">
+      <button className="recent-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: String(trade.exchangeTradeId || trade.id || stableActivityId(trade)), symbol: normalizedSymbol(trade.symbol), exchange: "aster", side: String(trade.side || ""), closedAt: closed ? String(trade.closedAt || trade.executedAt || "") : undefined, openedAt: !closed ? String(trade.executedAt || "") : undefined }, focusAtMs: closed ? exchangeTimestampMs(trade.closedAt || trade.executedAt || trade.timestampMs) : undefined, averageEntry: averageEntry(openPosition) })}>
         <CoinIcon symbol={asset} />
         <span className="recent-pair-copy">
           <span className="recent-pair-title"><b>{asset}</b><span className={`recent-side ${String(trade.side).toLowerCase()}`}>{String(trade.side || "—").toUpperCase()}</span></span>
           <small><time dateTime={trade.executedAt}>{dateTime(trade.executedAt || trade.timestampMs)}</time></small>
         </span>
-      </div>
+      </button>
       <span className="recent-leverage" role="cell">{leverage === null ? "—" : `${leverage}x`}</span>
       <span className="recent-close-cell" role="cell">{closed ? <span className="recent-close-status">{String(matchingScanAction?.kind || "").toUpperCase() === "FULL_TP" ? "TP" : "Gesloten"}</span> : <ClosePositionControl position={openPosition} onClosed={onClosed} />}</span>
       <span className="recent-margin" role="cell">{money(margin)}</span>
@@ -295,11 +311,11 @@ const RecentTradeRow = memo(function RecentTradeRow({ trade, closed, positions, 
   );
 });
 
-function TradeRows({ rows, closed, positions, onClosed, scanActions = [] }: { rows: Activity[]; closed: boolean; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[] }) {
+function TradeRows({ rows, closed, positions, onClosed, scanActions = [], onOpenDetail }: { rows: Activity[]; closed: boolean; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[]; onOpenDetail: (detail: AsterPairDetail) => void }) {
   return (
     <div className="recent-trades-body" role="rowgroup">
       {rows.length
-        ? rows.map((trade) => <RecentTradeRow key={`${stableActivityId(trade)}:${trade.timestampMs || trade.executedAt}`} trade={trade} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} />)
+        ? rows.map((trade) => <RecentTradeRow key={`${stableActivityId(trade)}:${trade.timestampMs || trade.executedAt}`} trade={trade} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} onOpenDetail={onOpenDetail} />)
         : <div className="recent-trades-empty">{closed ? "Nog geen uitgestapte trades" : "Nog geen ingestapte trades"}</div>}
     </div>
   );
@@ -313,7 +329,7 @@ function SevenColumnHead() {
   );
 }
 
-function RecentTradesCard({ title, rows, closed, liveState, positions, onClosed, scanActions = [], compactLimit = 5 }: { title: string; rows: Activity[]; closed: boolean; liveState: string; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[]; compactLimit?: number }) {
+function RecentTradesCard({ title, rows, closed, liveState, positions, onClosed, scanActions = [], compactLimit = 5, onOpenDetail }: { title: string; rows: Activity[]; closed: boolean; liveState: string; positions: OpenPosition[]; onClosed: () => void; scanActions?: ScanAction[]; compactLimit?: number; onOpenDetail: (detail: AsterPairDetail) => void }) {
   const [showAll, setShowAll] = useState(false);
   const [loadedPages, setLoadedPages] = useState(1);
   const sorted = useMemo(() => sortedActivity(rows) as Activity[], [rows]);
@@ -327,18 +343,18 @@ function RecentTradesCard({ title, rows, closed, liveState, positions, onClosed,
         <section className="recent-flip-face recent-flip-front" aria-hidden={showAll} inert={showAll ? true : undefined}>
           <header><div><h2>{title}</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div><button type="button" onClick={toggle} aria-label={`Toon alle ${closed ? "uitgestapte" : "ingestapte"} trades`}>Toon alle <i>↻</i></button></header>
           <SevenColumnHead />
-          <TradeRows rows={compact} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} />
+          <TradeRows rows={compact} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} onOpenDetail={onOpenDetail} />
         </section>
         <section className="recent-flip-face recent-flip-back" aria-hidden={!showAll} inert={!showAll ? true : undefined}>
           <header><div><h2>{closed ? "Alle uitgestapte trades" : "Alle ingestapte trades"}</h2><span className={`recent-live ${liveState.toLowerCase()}`}>{liveState}</span></div><button type="button" onClick={toggle}>Terug naar laatste {compactLimit} <i>↻</i></button></header>
-          <div className="recent-trades-scroll"><SevenColumnHead /><TradeRows rows={history} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} />{hasMore && <button className="recent-load-more" type="button" onClick={() => setLoadedPages((value) => value + 1)}>Laad nog 100</button>}</div>
+          <div className="recent-trades-scroll"><SevenColumnHead /><TradeRows rows={history} closed={closed} positions={positions} onClosed={onClosed} scanActions={scanActions} onOpenDetail={onOpenDetail} />{hasMore && <button className="recent-load-more" type="button" onClick={() => setLoadedPages((value) => value + 1)}>Laad nog 100</button>}</div>
         </section>
       </div>
     </article>
   );
 }
 
-function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition; openedAt?: unknown; onClosed: () => void }) {
+function TopProfitRow({ position, openedAt, onClosed, onOpenDetail }: { position: OpenPosition; openedAt?: unknown; onClosed: () => void; onOpenDetail: (detail: AsterPairDetail) => void }) {
   const pnl = finite(position.unrealizedPnl);
   const tone = pnl === null ? "neutral" : pnl > 0 ? "profit" : pnl < 0 ? "loss" : "neutral";
   const pct = authoritativePositionReturnPct(position);
@@ -346,13 +362,13 @@ function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition
   const leverage = finite(position.leverage);
   return (
     <div className="recent-trade-row top-profit-row aster-seven-column-row" role="row">
-      <div className="recent-pair" role="cell">
+      <button className="recent-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: positionId(position), symbol: normalizedSymbol(position.symbol), exchange: "aster", side: String(position.side || ""), entry: averageEntry(position), openedAt: exchangeTimestampMs(openedAt) ? new Date(exchangeTimestampMs(openedAt)).toISOString() : undefined }, averageEntry: averageEntry(position) })}>
         <CoinIcon symbol={asset} />
         <span className="recent-pair-copy">
           <span className="recent-pair-title"><b>{asset}</b><span className={`recent-side ${String(position.side).toLowerCase()}`}>{String(position.side || "—").toUpperCase()}</span></span>
           <small><time dateTime={exchangeTimestampMs(openedAt) ? new Date(exchangeTimestampMs(openedAt)).toISOString() : undefined}>{dateTime(openedAt)}</time></small>
         </span>
-      </div>
+      </button>
       <span className="recent-leverage" role="cell">{leverage === null ? "—" : `${Math.round(leverage)}x`}</span>
       <span className="recent-close-cell" role="cell"><ClosePositionControl position={position} onClosed={onClosed} /></span>
       <span className="recent-margin" role="cell">{money(openPositionMargin(position))}</span>
@@ -363,7 +379,7 @@ function TopProfitRow({ position, openedAt, onClosed }: { position: OpenPosition
   );
 }
 
-function TopProfitCard({ rows, entries, exits, liveState, onClosed }: { rows: OpenPosition[]; entries: Activity[]; exits: Activity[]; liveState: string; onClosed: () => void }) {
+function TopProfitCard({ rows, entries, exits, liveState, onClosed, onOpenDetail }: { rows: OpenPosition[]; entries: Activity[]; exits: Activity[]; liveState: string; onClosed: () => void; onOpenDetail: (detail: AsterPairDetail) => void }) {
   return (
     <article className="recent-trades-card top-profit-card">
       <section className="recent-flip-face">
@@ -371,7 +387,7 @@ function TopProfitCard({ rows, entries, exits, liveState, onClosed }: { rows: Op
         <SevenColumnHead />
         <div className="recent-trades-body" role="rowgroup">
           {rows.length
-            ? rows.map((position) => <TopProfitRow key={positionId(position)} position={position} openedAt={currentCycleOpenedAt(position, entries, exits)} onClosed={onClosed} />)
+            ? rows.map((position) => <TopProfitRow key={positionId(position)} position={position} openedAt={currentCycleOpenedAt(position, entries, exits)} onClosed={onClosed} onOpenDetail={onOpenDetail} />)
             : <div className="recent-trades-empty">Geen actuele open posities beschikbaar</div>}
         </div>
       </section>
@@ -387,7 +403,7 @@ function scanActionLabel(action: ScanAction) {
   return "gekocht";
 }
 
-function ScanActionsCard({ rows, completedAt, positions, exits }: { rows: ScanAction[]; completedAt?: unknown; positions: OpenPosition[]; exits: Activity[] }) {
+function ScanActionsCard({ rows, completedAt, positions, exits, onOpenDetail }: { rows: ScanAction[]; completedAt?: unknown; positions: OpenPosition[]; exits: Activity[]; onOpenDetail: (detail: AsterPairDetail) => void }) {
   return (
     <article className="recent-trades-card scan-actions-card">
       <section className="recent-flip-face">
@@ -406,7 +422,7 @@ function ScanActionsCard({ rows, completedAt, positions, exits }: { rows: ScanAc
             const margin = finite(action.marginUsd) ?? openPositionMargin(position);
             const dcaNumber = label === "bijgekocht" ? finite(action.dcaNumber) : null;
             return <div className="recent-trade-row aster-scan-row" role="row" key={`${String(action.clientOrderId || action.symbol || index)}:${index}`}>
-              <span className="scan-pair" role="cell">{baseAsset(action.symbol)}</span>
+              <button className="scan-pair recent-pair-button" role="cell" type="button" onClick={() => onOpenDetail({ selection: { id: String(action.clientOrderId || action.orderId || `${normalizedSymbol(action.symbol)}:${exchangeTimestampMs(action.executedAt)}`), symbol: normalizedSymbol(action.symbol), exchange: "aster", side: String(action.side || ""), closedAt: label === "verkocht" && exchangeTimestampMs(action.executedAt) ? new Date(exchangeTimestampMs(action.executedAt)).toISOString() : undefined }, focusAtMs: exchangeTimestampMs(action.executedAt), averageEntry: averageEntry(position), selectedActionId: String(action.clientOrderId || action.orderId || "") })}>{baseAsset(action.symbol)}</button>
               <span className={`scan-action ${label === "verkocht" ? "sold" : ""}`} role="cell">{label}</span>
               <span role="cell">{dcaNumber === null ? "—" : `#${Math.round(dcaNumber)}`}</span>
               <span role="cell">{leverage === null ? "—" : `${Math.round(leverage)}x`}</span>
@@ -422,6 +438,12 @@ function ScanActionsCard({ rows, completedAt, positions, exits }: { rows: ScanAc
 }
 
 export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSnapshot; onRetry: () => void }) {
+  const [detail, setDetail] = useState<AsterPairDetail | null>(null);
+  const scrollYRef = useRef(0);
+  const lastTapRef = useRef(0);
+  const openDetail = (next: AsterPairDetail) => { scrollYRef.current = window.scrollY; setDetail(next); };
+  const closeDetail = () => { setDetail(null); requestAnimationFrame(() => window.scrollTo({ top: scrollYRef.current, behavior: "auto" })); };
+  const handleDetailTouchEnd = () => { const now = Date.now(); if (now - lastTapRef.current < 320) closeDetail(); lastTapRef.current = now; };
   const activity = snapshot.data?.recentTradeActivity && typeof snapshot.data.recentTradeActivity === "object"
     ? snapshot.data.recentTradeActivity as Record<string, unknown>
     : {};
@@ -435,11 +457,21 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const liveState = snapshot.error ? "Offline" : snapshot.loading ? "Reconnecting" : snapshot.updatedAt && Date.now() - snapshot.updatedAt < 90_000 ? "Live" : "Delayed";
   if (snapshot.error && !entries.length && !exits.length) return <section className="recent-trades-error"><span>Tradegegevens tijdelijk niet beschikbaar</span><button type="button" onClick={onRetry}>Opnieuw proberen</button></section>;
   return (
-    <section className="aster-recent-trades" aria-label="Recente Aster trades">
-      <TopProfitCard rows={positions} entries={entries} exits={exits} liveState={liveState} onClosed={onRetry} />
-      <ScanActionsCard rows={scanActions} completedAt={orderQueue.lastScanCompletedAt} positions={allPositions} exits={exits} />
-      <RecentTradesCard title="Laatste 5 uitgestapte trades" rows={exits} closed liveState={liveState} positions={allPositions} onClosed={onRetry} scanActions={scanActions} compactLimit={5} />
-      <RecentTradesCard title="Laatste 5 ingestapte trades" rows={entries} closed={false} liveState={liveState} positions={allPositions} onClosed={onRetry} compactLimit={5} />
+    <section className={`aster-recent-trades aster-pair-detail-shell ${detail ? "is-detail-open" : ""}`} aria-label="Recente Aster trades">
+      <div className="aster-pair-detail-inner">
+        <div className="aster-pair-detail-front" aria-hidden={Boolean(detail)} inert={detail ? true : undefined}>
+          <TopProfitCard rows={positions} entries={entries} exits={exits} liveState={liveState} onClosed={onRetry} onOpenDetail={openDetail} />
+          <ScanActionsCard rows={scanActions} completedAt={orderQueue.lastScanCompletedAt} positions={allPositions} exits={exits} onOpenDetail={openDetail} />
+          <RecentTradesCard title="Laatste 5 uitgestapte trades" rows={exits} closed liveState={liveState} positions={allPositions} onClosed={onRetry} scanActions={scanActions} compactLimit={5} onOpenDetail={openDetail} />
+          <RecentTradesCard title="Laatste 5 ingestapte trades" rows={entries} closed={false} liveState={liveState} positions={allPositions} onClosed={onRetry} compactLimit={5} onOpenDetail={openDetail} />
+        </div>
+        <div className="aster-pair-detail-back" aria-hidden={!detail} inert={!detail ? true : undefined} onDoubleClick={closeDetail} onTouchEnd={handleDetailTouchEnd}>
+          {detail && <>
+            <header className="aster-pair-detail-header"><div><span>ASTER · TRADEDETAIL</span><h2>{detail.selection.symbol}</h2><small>Tik dubbel om terug te gaan</small></div><button type="button" onClick={closeDetail} aria-label="Terug naar Aster">← Terug</button></header>
+            <SafeTradingChart selection={detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} averageEntry={detail.averageEntry ?? undefined} selectedActionId={detail.selectedActionId} />
+          </>}
+        </div>
+      </div>
     </section>
   );
 }

@@ -320,7 +320,7 @@ def recent_trade_activity_from_fills(
 
 
 def trade_events_from_fills(
-    fills: list[dict[str, Any]], *, symbol: str, position_side: str, closed_at_ms: int | None = None,
+    fills: list[dict[str, Any]], *, symbol: str, position_side: str, closed_at_ms: int | None = None, anchor_at_ms: int | None = None,
 ) -> list[dict[str, Any]]:
     """Reconstruct one position cycle solely from confirmed Aster fills."""
     wanted_symbol, wanted_side = symbol.upper(), position_side.upper()
@@ -375,4 +375,10 @@ def trade_events_from_fills(
             cycles.append(list(current)); current, increase_count = [], 0
     if closed_at_ms is not None:
         return min(cycles, key=lambda cycle: abs(int(cycle[-1]["timestampMs"]) - closed_at_ms)) if cycles else []
+    if anchor_at_ms is not None:
+        candidates = [*cycles, *( [list(current)] if current else [] )]
+        for cycle in candidates:
+            if int(cycle[0]["timestampMs"]) <= anchor_at_ms <= int(cycle[-1]["timestampMs"]):
+                return cycle
+        return min(candidates, key=lambda cycle: min(abs(int(event["timestampMs"]) - anchor_at_ms) for event in cycle)) if candidates else []
     return list(current)

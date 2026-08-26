@@ -24,8 +24,10 @@ class ChartErrorBoundary extends Component<{ children: ReactNode; resetKey: stri
   }
 }
 
-export function SafeTradingChart({ selection }: { selection: TradeSelection }) {
-  return <ChartErrorBoundary resetKey={`${selection.exchange}:${selection.id}:${selection.symbol}`}><TradingChart selection={selection} /></ChartErrorBoundary>;
+export type TradingChartMode = "default" | "aster-detail";
+
+export function SafeTradingChart({ selection, mode = "default", focusAtMs, averageEntry, selectedActionId }: { selection: TradeSelection; mode?: TradingChartMode; focusAtMs?: number; averageEntry?: number; selectedActionId?: string }) {
+  return <ChartErrorBoundary resetKey={`${selection.exchange}:${selection.id}:${selection.symbol}:${mode}`}><TradingChart selection={selection} mode={mode} focusAtMs={focusAtMs} averageEntry={averageEntry} selectedActionId={selectedActionId} /></ChartErrorBoundary>;
 }
 
 const timeframes = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1D", "1W"];
@@ -87,7 +89,7 @@ function indicatorData(candles: Candle[], id: IndicatorId) {
   return [];
 }
 
-export function TradingChart({ selection }: { selection: TradeSelection }) {
+export function TradingChart({ selection, mode = "default", focusAtMs, averageEntry, selectedActionId }: { selection: TradeSelection; mode?: TradingChartMode; focusAtMs?: number; averageEntry?: number; selectedActionId?: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -98,7 +100,7 @@ export function TradingChart({ selection }: { selection: TradeSelection }) {
   const [datasetVersion, setDatasetVersion] = useState(0);
   const [timeframe, setTimeframe] = useState("15m");
   const [chartType, setChartType] = useState<ChartType>("candles");
-  const [activeIndicators, setActiveIndicators] = useState<IndicatorId[]>(["volume"]);
+  const [activeIndicators, setActiveIndicators] = useState<IndicatorId[]>(mode === "aster-detail" ? ["bb"] : ["volume"]);
   const [indicatorOpen, setIndicatorOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -117,11 +119,12 @@ export function TradingChart({ selection }: { selection: TradeSelection }) {
   }, []);
 
   useEffect(() => {
+    if (mode === "aster-detail") { setTimeframe("15m"); setChartType("candles"); setActiveIndicators(["bb"]); return; }
     const saved = window.localStorage.getItem("tradementor.chart.preferences");
     if (!saved) return;
     try { const p=JSON.parse(saved); if(timeframes.includes(p.timeframe)) setTimeframe(p.timeframe); if(["candles","line","area","bars"].includes(p.chartType)) setChartType(p.chartType); if(Array.isArray(p.indicators)) setActiveIndicators(p.indicators); } catch { /* ignore corrupt local preference */ }
-  }, []);
-  useEffect(() => { window.localStorage.setItem("tradementor.chart.preferences", JSON.stringify({timeframe,chartType,indicators:activeIndicators})); }, [timeframe,chartType,activeIndicators]);
+  }, [mode]);
+  useEffect(() => { if (mode !== "aster-detail") window.localStorage.setItem("tradementor.chart.preferences", JSON.stringify({timeframe,chartType,indicators:activeIndicators})); }, [mode,timeframe,chartType,activeIndicators]);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -151,12 +154,12 @@ export function TradingChart({ selection }: { selection: TradeSelection }) {
     if (selection.closedAt) {
       const closedAtMs = new Date(selection.closedAt).getTime();
       if (Number.isFinite(closedAtMs) && closedAtMs > 0) query.set("closed_at_ms", String(closedAtMs));
-    }
+    } else if (focusAtMs && Number.isFinite(focusAtMs) && focusAtMs > 0) query.set("anchor_at_ms", String(Math.floor(focusAtMs)));
     authenticatedRequest(`/api/exchanges/aster/trade-events?${query}`)
       .then((payload) => { if (!cancelled) setTradeEvents(Array.isArray(payload.events) ? payload.events as TradeEvent[] : []); })
       .catch(() => { if (!cancelled) setTradeEvents([]); });
     return () => { cancelled = true; };
-  }, [selection.exchange, selection.symbol, selection.side, selection.closedAt]);
+  }, [selection.exchange, selection.symbol, selection.side, selection.closedAt, focusAtMs]);
 
   useEffect(() => {
     const chartCandles=candleDataRef.current;
@@ -181,12 +184,29 @@ export function TradingChart({ selection }: { selection: TradeSelection }) {
     if(selection.exchange!=="aster"&&selection.entry)fallbackEvents.push({id:`${selection.id}:entry`,side:short?"SHORT":"LONG",kind:"entry",action:"increase",price:selection.entry,at:selection.openedAt||new Date(chartCandles.at(-1)!.time*1000).toISOString(),timestampMs:selection.openedAt?new Date(selection.openedAt).getTime():chartCandles.at(-1)!.time*1000,exchange:selection.exchange});
     if(selection.exchange!=="aster"&&selection.exit)fallbackEvents.push({id:`${selection.id}:close`,side:short?"SHORT":"LONG",kind:"close",action:"close",price:selection.exit,at:selection.closedAt||new Date(chartCandles.at(-1)!.time*1000).toISOString(),timestampMs:selection.closedAt?new Date(selection.closedAt).getTime():chartCandles.at(-1)!.time*1000,exchange:selection.exchange});
     const markerGroups=layoutVerifiedTradeMarkers(chartCandles,selection.exchange==="aster"?tradeEvents:fallbackEvents,activeIndicators.includes("bb"));
-    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>({time:group.time as UTCTimestamp,position:"inBar",color:group.color,shape:group.shape,text:group.events.length>1?String(group.events.length):"",size:group.events.some(event=>event.kind!=="dca")?1.35:1.15})));}
+    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>{const highlighted=(Boolean(selectedActionId)&&group.events.some(event=>event.id===selectedActionId))||(mode==="aster-detail"&&Boolean(focusAtMs)&&group.events.some(event=>Math.abs(event.timestampMs-Number(focusAtMs))<=900_000));const label=mode==="aster-detail"?(group.events.length>1?`${group.events.length} ACTIES`:group.events[0]?.kind==="dca"?"ADD":group.events[0]?.kind==="close"?"SELL":"BUY"):(group.events.length>1?String(group.events.length):"");return{time:group.time as UTCTimestamp,position:"inBar",color:highlighted?"#ffd166":group.color,shape:group.shape,text:label,size:highlighted?1.8:group.events.some(event=>event.kind!=="dca")?1.35:1.15}}));}
     const onCrosshair=(param:any)=>{if(!param.time){setCrosshair(null);return;} const time=Number(param.time),c=candleDataRef.current.find(row=>row.time===time);if(c)setCrosshair(c);const group=markerGroups.filter(item=>item.time===time).flatMap(item=>item.events);if(group.length)setSelectedMarkerEvents(group)}; chart.subscribeCrosshairMove(onCrosshair);
-    chart.timeScale().fitContent();
+    if (mode === "aster-detail" && Number.isFinite(averageEntry) && Number(averageEntry) > 0) {
+      const entryValue = Number(averageEntry);
+      const entrySeries = chart.addSeries(LineSeries,{color:"#9fb3c8",lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:true,title:`Avg entry ${entryValue.toLocaleString("nl-NL",{maximumFractionDigits:8})}`});
+      entrySeries.setData(chartCandles.map(candle=>({time:candle.time as UTCTimestamp,value:entryValue})));
+    }
+    if (mode === "aster-detail") {
+      const targetSec = focusAtMs && Number.isFinite(focusAtMs) ? Math.floor(focusAtMs / 1000) : null;
+      let centerIndex = targetSec === null ? chartCandles.length - 1 : chartCandles.reduce((best,row,index)=>Math.abs(row.time-targetSec)<Math.abs(chartCandles[best].time-targetSec)?index:best,0);
+      if (targetSec === null && selection.openedAt) {
+        const openedSec = Math.floor(new Date(selection.openedAt).getTime()/1000);
+        const openedIndex = chartCandles.findIndex(row=>row.time>=openedSec);
+        if (openedIndex >= 0 && chartCandles.length - openedIndex <= 60) centerIndex = Math.max(centerIndex, openedIndex + 24);
+      }
+      const historical = targetSec !== null || Boolean(selection.closedAt);
+      const fromIndex = historical ? Math.max(0, centerIndex - 25) : Math.max(0, chartCandles.length - 50);
+      const toIndex = historical ? Math.min(chartCandles.length - 1, fromIndex + 49) : chartCandles.length - 1;
+      chart.timeScale().setVisibleRange({ from: chartCandles[fromIndex].time as UTCTimestamp, to: chartCandles[toIndex].time as UTCTimestamp });
+    } else chart.timeScale().fitContent();
     const observer=new ResizeObserver(()=>{if(chartRef.current!==chart||!container.isConnected)return;try{chart.applyOptions({width:Math.max(1,container.clientWidth),height:Math.max(390,container.clientHeight)})}catch{/* chart may already be disposing */}}); observer.observe(container);
     return()=>{observer.disconnect();if(chartRef.current===chart)chartRef.current=null;priceSeriesRef.current=null;volumeSeriesRef.current=null;try{chart.unsubscribeCrosshairMove(onCrosshair);chart.remove()}catch{/* already removed during navigation */}};
-  },[datasetVersion,chartType,activeIndicators,selection,tradeEvents,skin]);
+  },[datasetVersion,chartType,activeIndicators,selection,tradeEvents,skin,mode,focusAtMs,averageEntry,selectedActionId]);
 
   useEffect(()=>{
     const next=candles.at(-1);
@@ -208,7 +228,7 @@ export function TradingChart({ selection }: { selection: TradeSelection }) {
   const ticker=useMemo(()=>{if(!candles.length)return null;const recent=candles.slice(-Math.min(candles.length,Math.max(2,Math.floor(86400/({"1m":60,"3m":180,"5m":300,"15m":900,"30m":1800,"1h":3600,"2h":7200,"4h":14400,"6h":21600,"12h":43200,"1D":86400,"1W":604800}[timeframe]||900)))));const first=recent[0],last=recent.at(-1)!;return{price:last.close,change:first.open?((last.close-first.open)/first.open)*100:0,high:Math.max(...recent.map(c=>c.high)),low:Math.min(...recent.map(c=>c.low)),volume:recent.reduce((s,c)=>s+c.volume,0)}} , [candles,timeframe]);
   const toggleIndicator=(id:IndicatorId)=>setActiveIndicators(current=>current.includes(id)?current.filter(value=>value!==id):[...current,id]);
   const fullscreen=async()=>{if(!shellRef.current)return;if(document.fullscreenElement)await document.exitFullscreen();else await shellRef.current.requestFullscreen()};
-  return <section ref={shellRef} className="trading-terminal" aria-label={`Grafiek ${selection.symbol}`}>
+  return <section ref={shellRef} className={`trading-terminal ${mode === "aster-detail" ? "aster-detail-chart" : ""}`} aria-label={`Grafiek ${selection.symbol}`}>
     <header className="market-header"><div><span>{selection.exchange === "portfolio" ? "PERSOONLIJKE EQUITY · HISTORIE" : `${selection.exchange.toUpperCase()} · PERPETUAL`}</span><h1>{selection.exchange === "portfolio" ? "Jouw portfolio" : <>{selection.symbol.replace(/USDT$/,"")} <i>/ USDT</i></>}</h1><small>{selection.exchange === "portfolio" ? "Werkelijke portfoliowaarde als analyseerbare grafiek" : selection.side?`${selection.side.toUpperCase()} positie geselecteerd`:"Marktanalyse"}</small></div>{ticker&&<dl><div><dt>Actueel</dt><dd className={ticker.change>=0?"positive":"negative"}>{ticker.price.toLocaleString("nl-NL",{maximumFractionDigits:8})}</dd></div><div><dt>24h</dt><dd className={ticker.change>=0?"positive":"negative"}>{ticker.change>=0?"+":""}{ticker.change.toFixed(2)}%</dd></div><div><dt>High</dt><dd>{ticker.high.toLocaleString("nl-NL",{maximumFractionDigits:8})}</dd></div><div><dt>Low</dt><dd>{ticker.low.toLocaleString("nl-NL",{maximumFractionDigits:8})}</dd></div><div><dt>{selection.exchange === "portfolio" ? "Metingen" : "Volume"}</dt><dd>{selection.exchange === "portfolio" ? candles.length : ticker.volume.toLocaleString("nl-NL",{maximumFractionDigits:2})}</dd></div></dl>}</header>
     <div className="chart-toolbar"><div className="timeframe-strip">{timeframes.map(tf=><button key={tf} className={timeframe===tf?"active":""} onClick={()=>setTimeframe(tf)}>{tf}</button>)}</div><div className="chart-actions"><select aria-label="Grafiektype" value={chartType} onChange={e=>setChartType(e.target.value as ChartType)}><option value="candles">Candles</option><option value="line">Line</option><option value="area">Area</option><option value="bars">Bars</option></select><button className={indicatorOpen?"active":""} onClick={()=>setIndicatorOpen(v=>!v)}>Indicators · {activeIndicators.length}</button><button onClick={fullscreen} aria-label="Grafiek fullscreen">⛶</button></div></div>
     {indicatorOpen&&<div className="indicator-panel"><header><strong>Technische indicatoren</strong><button onClick={()=>setIndicatorOpen(false)}>Gereed</button></header><div>{indicators.map(([id,label])=>{const unavailable=selection.exchange==="portfolio"&&id==="volume";return <label key={id}><input type="checkbox" disabled={unavailable} checked={!unavailable&&activeIndicators.includes(id)} onChange={()=>toggleIndicator(id)}/><span>{unavailable?"Volume · niet van toepassing":label}</span></label>})}</div><small>{selection.exchange === "portfolio" ? "Indicatoren worden berekend uit jouw echte equitymetingen; handelsvolume is hier niet van toepassing." : "Indicatoren worden lokaal berekend uit de zichtbare exchange-candles."}</small></div>}

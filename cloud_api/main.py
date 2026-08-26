@@ -3543,6 +3543,7 @@ def aster_trade_events(
     symbol: str = Query(..., min_length=3, max_length=30, pattern=r"^[A-Za-z0-9]+$"),
     side: str = Query(..., pattern=r"^(?i:long|short)$"),
     closed_at_ms: int | None = Query(default=None, ge=1),
+    anchor_at_ms: int | None = Query(default=None, ge=1),
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
     """Return confirmed fills for exactly one selected Aster position cycle."""
@@ -3559,7 +3560,7 @@ def aster_trade_events(
         raise HTTPException(503, "Aster-fillhistorie is tijdelijk niet beschikbaar.") from exc
     events = trade_events_from_fills(
         fills if isinstance(fills, list) else [], symbol=normalized_symbol,
-        position_side=normalized_side, closed_at_ms=closed_at_ms,
+        position_side=normalized_side, closed_at_ms=closed_at_ms, anchor_at_ms=anchor_at_ms,
     )
     return {"symbol": normalized_symbol, "side": normalized_side, "events": events, "source": "aster-confirmed-fills"}
 
