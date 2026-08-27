@@ -15,7 +15,7 @@ FocusSelectionMode=Literal["automatic","manual"]
 FocusSizingMode=Literal["fixed_usd","equity_pct"]
 FocusDcaMode=Literal["fixed","progressive","custom"]
 FocusActionKind=Literal["HOLD","OPEN","DCA","PARTIAL_TP","CLOSE"]
-MAX_FOCUS_DCA=30
+MAX_FOCUS_DCA=float("inf")
 DEFAULT_FOCUS_DCA=5
 
 def _finite(value:Any,default:float=0.0)->float:
@@ -73,12 +73,12 @@ def focus_order_notional(*,sizing_mode:FocusSizingMode,fixed_usd:float,equity_pc
     return min(value,max_start_order_usd) if max_start_order_usd>0 else value
 
 def dca_notional_sequence(*,amount:float,multiplier:float,count:int,amount_mode:str="multiplier",increment:float=0.0)->tuple[float,...]:
-    count=max(0,min(MAX_FOCUS_DCA,int(count)));amount=max(0.0,float(amount));multiplier=max(0.0,float(multiplier));increment=max(0.0,float(increment))
+    count=max(0,int(count));amount=max(0.0,float(amount));multiplier=max(0.0,float(multiplier));increment=max(0.0,float(increment))
     if amount_mode=="linear": return tuple(amount+increment*index for index in range(count))
     return tuple(amount*(multiplier**index) for index in range(count))
 
 def dca_drop_sequence(*,distance_pct:float,count:int,mode:FocusDcaMode="fixed",custom_levels:tuple[float,...]=())->tuple[float,...]:
-    count=max(0,min(MAX_FOCUS_DCA,int(count)));distance=max(0.0,float(distance_pct))
+    count=max(0,int(count));distance=max(0.0,float(distance_pct))
     if mode=="custom": return tuple(max(0.0,float(x)) for x in custom_levels[:count])
     return tuple(distance*i*(i+1)/2 for i in range(1,count+1)) if mode=="progressive" else tuple(distance*i for i in range(1,count+1))
 
@@ -91,7 +91,7 @@ def weighted_average_entry(start_price:float,start_notional:float,trigger_prices
 
 def exposure_preview(*,entry_price:float,first_order_notional:float,dca_enabled:bool,dca_amount:float,dca_multiplier:float,max_dca:int,
                      dca_distance_pct:float,dca_mode:FocusDcaMode,leverage:int,equity:float,available_margin:float,focus_budget:float)->FocusExposurePreview:
-    leverage=max(1,int(leverage));count=max(0,min(MAX_FOCUS_DCA,int(max_dca))) if dca_enabled else 0
+    leverage=max(1,int(leverage));count=max(0,int(max_dca)) if dca_enabled else 0
     notionals=dca_notional_sequence(amount=dca_amount,multiplier=dca_multiplier,count=count)
     drops=dca_drop_sequence(distance_pct=dca_distance_pct,count=count,mode=dca_mode)
     prices=tuple(max(1e-8,entry_price*(1-drop)) for drop in drops);total=max(0.0,first_order_notional)+sum(notionals)
