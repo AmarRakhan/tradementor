@@ -114,6 +114,10 @@ def _preflight_state(raw: dict[str, Any], positions: list[dict[str, Any]]) -> tu
                     )
                     owned = [*owned, recovered]
                     return state, owned, True, "Focus-ownership hersteld uit bevestigde fill en exchange-positie"
+            if row is None:
+                state = reset_after_full_exit(state, realized_pnl=0.0,
+                    theoretical_portfolio_value=state.theoretical_portfolio_value)
+                return state, owned, True, "Stale Focus-state gewist na exchange-bevestigde flat"
             return state, owned, False, "Focus-state heeft exposure maar bewezen Focus-ownership ontbreekt"
         return state, owned, True, "flat"
     leg = focus[0]

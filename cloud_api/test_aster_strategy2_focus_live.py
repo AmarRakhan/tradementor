@@ -149,3 +149,20 @@ def test_missing_focus_ownership_is_recovered_from_confirmed_fill_and_exchange_p
     assert owned[0].symbol=="BTCUSDT"
     assert owned[0].cycle_id=="focus-recover-1"
     assert report["preflightReason"]=="Focus-ownership hersteld uit bevestigde fill en exchange-positie"
+
+
+def test_preflight_resets_stale_focus_state_when_exchange_is_flat():
+    from aster_strategy2_focus_live import _preflight_state
+    raw={
+        "focusLiveState": {"activePair":"SOLUSDT","cycleId":"focus-old","totalQuantity":1.21,"totalNotional":123.25,"usedMargin":6.15,"focusBudgetUsed":123.25},
+        "focusLiveReport": {"executedFill":{"quantity":1.21,"price":101.86}},
+        "focusLiveAt": 1787816465.0,
+        "settings": {"version":1},
+        "ownedLegs": [],
+    }
+    state,owned,ok,reason=_preflight_state(raw,[])
+    assert ok is True
+    assert owned == []
+    assert state.total_quantity == 0
+    assert state.active_pair == ""
+    assert "exchange-bevestigde flat" in reason
