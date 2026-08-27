@@ -106,3 +106,25 @@ def test_full_exit_state_is_immediately_eligible_for_next_focus_open():
         settings=settings(),account=account(),positions=[],timestamp_ms=2)
     assert report["decision"]["kind"]=="OPEN"
     assert report["decision"]["symbol"]=="BTCUSDT"
+
+
+def test_automatic_focus_skips_pair_that_rejects_configured_leverage():
+    class LeverageAwareClient(FakeClient):
+        def public_exchange_info(self):
+            base=super().public_exchange_info()["symbols"][0]
+            second={**base,"symbol":"ETHUSDT"}
+            return {"symbols":[base,second]}
+        def ticker_24h(self):
+            return [
+                {"symbol":"BTCUSDT","priceChangePercent":"10","quoteVolume":"100000000"},
+                {"symbol":"ETHUSDT","priceChangePercent":"8","quoteVolume":"90000000"},
+            ]
+        def ticker_prices(self):
+            return [{"symbol":"BTCUSDT","price":"100"},{"symbol":"ETHUSDT","price":"100"}]
+        def remaining_openable_notional_value(self,symbol,*_args):
+            if symbol=="BTCUSDT": raise RuntimeError("Invalid leverage")
+            return 1_000_000
+    report,_,_=build_focus_live_plan(client=LeverageAwareClient(),raw_state={},settings=settings(),
+        account=account(),positions=[],timestamp_ms=1)
+    assert report["decision"]["kind"]=="OPEN"
+    assert report["decision"]["symbol"]=="ETHUSDT"

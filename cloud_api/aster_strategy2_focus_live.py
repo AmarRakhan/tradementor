@@ -131,17 +131,38 @@ def build_focus_live_plan(*, client: Any, raw_state: dict[str, Any], settings: S
             "ranking":[],"selectionReason":preflight_reason,"readOnly":False}, state, owned)
     markets = current_focus_markets(client, settings)
     cycle_open = bool(state.active_pair and state.total_quantity > 0 and state.weighted_entry > 0)
-    selected, _, _ = select_focus_pair(list(markets), selection_mode=settings.focus_selection_mode,
+    selected, ranking, _ = select_focus_pair(list(markets), selection_mode=settings.focus_selection_mode,
         manual_pair=settings.focus_manual_pair, active_pair=state.active_pair, cycle_open=cycle_open,
         minimum_quote_volume=settings.minimum_quote_volume_24h_usdt,
         minimum_liquidity_score=settings.focus_min_liquidity_score)
     selected_symbol = state.active_pair or (selected.symbol if selected else "")
     remaining = 0.0
+    invalid_capacity_symbols: set[str] = set()
     if selected_symbol:
         try:
             remaining = _f(client.remaining_openable_notional_value(selected_symbol, settings.leverage))
         except Exception:
             remaining = 0.0
+            invalid_capacity_symbols.add(selected_symbol)
+    if not cycle_open and settings.focus_selection_mode == "automatic" and remaining <= 0:
+        for row in ranking:
+            symbol = str(row.symbol).upper()
+            if not row.eligible or symbol == selected_symbol:
+                continue
+            try:
+                candidate_remaining = _f(client.remaining_openable_notional_value(symbol, settings.leverage))
+            except Exception:
+                invalid_capacity_symbols.add(symbol)
+                continue
+            if candidate_remaining > 0:
+                selected_symbol = symbol
+                remaining = candidate_remaining
+                break
+            invalid_capacity_symbols.add(symbol)
+        if selected_symbol:
+            invalid_capacity_symbols.discard(selected_symbol)
+        if invalid_capacity_symbols:
+            markets = tuple(m for m in markets if m.symbol.upper() not in invalid_capacity_symbols)
     equity = _f(account.get("totalMarginBalance"), _f(account.get("totalWalletBalance")))
     available = _f(account.get("availableBalance"))
     focus_keys={(leg.symbol,leg.side) for leg in _focus_owned(owned)}
