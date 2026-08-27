@@ -91,3 +91,51 @@ def test_live_full_close_removes_focus_ownership_and_resets_for_next_cycle(monke
     assert final["focusLiveState"]["totalQuantity"]==0
     assert final["focusLiveState"]["realizedPnl"]==5.0
     assert reservations[0]["kind"]=="FOCUS_CLOSE"
+
+
+def short_position(qty=1.0,entry=98.0,mark=98.0):
+    return {"symbol":"BTCUSDT","positionSide":"SHORT","positionAmt":str(qty),"entryPrice":str(entry),"markPrice":str(mark),"leverage":"20"}
+
+
+def brake_config(**overrides):
+    raw={"tradingMode":"focus","mode":"live","focusLiveEnabled":True,"leverage":20,"focusMaxBudgetUsd":1000,
+         "focusDcaEnabled":True,"focusMaxDca":100,"focusDcaDistance":.001,"strategyBudget":.9,
+         "focusPortfolioBrakeMode":"usd","focusPortfolioBrakeValue":5,"focusMaxPairsPerCycle":3}
+    raw.update(overrides);return Strategy2Config.from_mapping(raw)
+
+
+def cycle_raw(leg):
+    return {"ownedLegs":[owned_to_mapping(leg)],"focusLiveState":FocusState(active_pair="BTCUSDT",cycle_id="focus-cycle",original_entry=100,weighted_entry=100,total_quantity=1,total_notional=100,focus_budget_used=100).public_dict(),
+            "focusCycleState":{"cycleId":"cycle","highWaterEquity":100,"currentEquity":100,"usedPairs":["BTCUSDT"],"parkedPairs":[]}}
+
+
+def test_brake_existing_full_hedge_parks_without_duplicate_order():
+    from aster_strategy2_focus_live import _focus_cycle_guard
+    class Client(FakeClient):
+        def submit_order_once(self,*a,**k): raise AssertionError("duplicate hedge order")
+    leg=focus_leg();ref=FakeRef();positions=[position(mark=90),short_position(qty=1,mark=90)]
+    result=_focus_cycle_guard(client=Client(),ref=ref,raw_state=cycle_raw(leg),settings=brake_config(),uid="u",account={"totalMarginBalance":"90","availableBalance":"50"},positions=positions,timestamp_ms=10,dry_run=False,order_budget=15,open_orders=[])
+    assert result["action"]=="FOCUS_PARKED" and result["ordersSent"]==0
+    final=next(v for v in reversed(ref.values) if "ownedLegs" in v)
+    assert {x["role"] for x in final["ownedLegs"]}=={"FOCUS_PARKED","FOCUS_HEDGE"}
+
+
+def test_brake_partial_hedge_fill_does_not_park():
+    from aster_strategy2_focus_live import _focus_cycle_guard
+    class Client(FakeClient):
+        def __init__(self):self.sent=0
+        def position_mode(self):return True
+        def submit_order_once(self,*a,**k):self.sent+=1;return ({"orderId":"h1","executedQty":"0.3","avgPrice":"90"},False)
+        def position_risk(self,*a):return [position(mark=90),short_position(qty=.7,mark=90)]
+    c=Client();leg=focus_leg();ref=FakeRef()
+    result=_focus_cycle_guard(client=c,ref=ref,raw_state=cycle_raw(leg),settings=brake_config(),uid="u",account={"totalMarginBalance":"90","availableBalance":"50"},positions=[position(mark=90),short_position(qty=.4,mark=90)],timestamp_ms=10,dry_run=False,order_budget=15,open_orders=[])
+    assert c.sent==1 and result["action"]=="FOCUS_HEDGE_CORRECTION"
+    assert not any(v.get("lastReason")=="FOCUS_PARKED" for v in ref.values)
+
+
+def test_brake_insufficient_margin_sends_no_hedge():
+    from aster_strategy2_focus_live import _focus_cycle_guard
+    class Client(FakeClient):
+        def submit_order_once(self,*a,**k):raise AssertionError("order must not be sent")
+    result=_focus_cycle_guard(client=Client(),ref=FakeRef(),raw_state=cycle_raw(focus_leg()),settings=brake_config(),uid="u",account={"totalMarginBalance":"90","availableBalance":"0.01"},positions=[position(mark=90)],timestamp_ms=10,dry_run=False,order_budget=15,open_orders=[])
+    assert result["action"]=="FOCUS_PAIR_SKIPPED_MARGIN" and result["ordersSent"]==0

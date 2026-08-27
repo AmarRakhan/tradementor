@@ -21,5 +21,5 @@ def test_focus_live_public_status_and_read_only_market_route_exist():
 
 def test_legacy_management_excludes_focus_owned_leg_only_while_focus_mode_active():
     source=Path("aster_strategy2_runtime.py").read_text()
-    assert 'config.trading_mode=="focus" and str(item.role).upper()=="FOCUS"' in source
-    assert 'config.trading_mode=="focus" and str(leg.role).upper()=="FOCUS"' in source
+    assert 'config.trading_mode=="focus" and str(item.role).upper().startswith("FOCUS")' in source
+    assert 'config.trading_mode=="focus" and str(leg.role).upper().startswith("FOCUS")' in source

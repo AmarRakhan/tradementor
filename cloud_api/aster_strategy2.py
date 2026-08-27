@@ -85,6 +85,9 @@ class Strategy2Config:
     focus_max_dca: int = DEFAULT_FOCUS_DCA
     focus_dca_multiplier: float = 1.0
     focus_max_budget_usd: float = 1000.0
+    focus_portfolio_brake_mode: Literal["off", "usd", "pct"] = "off"
+    focus_portfolio_brake_value: float = 0.0
+    focus_max_pairs_per_cycle: int = 0
     focus_trailing_activation_pct: float = .02
     focus_trailing_distance_pct: float = .025
     focus_minimum_profit_pct: float = .015
@@ -164,6 +167,9 @@ class Strategy2Config:
             focus_max_dca=i("focusMaxDca", DEFAULT_FOCUS_DCA),
             focus_dca_multiplier=f("focusDcaMultiplier", 1.0),
             focus_max_budget_usd=f("focusMaxBudgetUsd", 1000),
+            focus_portfolio_brake_mode=(str(raw.get("focusPortfolioBrakeMode", "off")).lower() if str(raw.get("focusPortfolioBrakeMode", "off")).lower() in {"off","usd","pct"} else "off"),
+            focus_portfolio_brake_value=f("focusPortfolioBrakeValue", 0),
+            focus_max_pairs_per_cycle=i("focusMaxPairsPerCycle", 0),
             focus_trailing_activation_pct=f("focusTrailingActivationPct", .02),
             focus_trailing_distance_pct=f("focusTrailingDistancePct", .025),
             focus_minimum_profit_pct=f("focusMinimumProfitPct", .015),
@@ -221,6 +227,10 @@ class Strategy2Config:
         if not 0 < self.focus_dca_notional <= 1_000_000: raise ValueError("Focus DCA-bedrag moet positief zijn")
         if not 0 < self.focus_dca_multiplier <= 10: raise ValueError("Focus DCA multiplier moet groter dan 0 en maximaal 10 zijn")
         if not 0 < self.focus_max_budget_usd <= 10_000_000: raise ValueError("Focus-budget moet positief zijn")
+        if self.focus_portfolio_brake_mode not in {"off","usd","pct"}: raise ValueError("Ongeldige Focus Portfolio Handrem-modus")
+        if self.focus_portfolio_brake_value < 0: raise ValueError("Focus Portfolio Handrem moet nul of positief zijn")
+        if not 0 <= self.focus_max_pairs_per_cycle <= 1000: raise ValueError("Max Focus-pairs per cyclus moet tussen 0 en 1000 liggen")
+        if self.focus_portfolio_brake_mode != "off" and self.focus_max_pairs_per_cycle < 1: raise ValueError("Portfolio Handrem vereist Max Focus-pairs per cyclus van minimaal 1")
         if self.focus_start_order_notional > self.focus_max_budget_usd and self.focus_sizing_mode == "fixed_usd": raise ValueError("Focus startorder overschrijdt Focus-budget")
         if not 0 < self.focus_minimum_profit_pct <= .50: raise ValueError("Focus minimum profit moet tussen 0 en 50% liggen")
         if not self.focus_minimum_profit_pct <= self.focus_trailing_activation_pct <= 2.0: raise ValueError("Focus trailing activation moet minimaal minimum profit zijn")
@@ -264,6 +274,7 @@ class Strategy2Config:
             "focusAutoCompound":self.focus_auto_compound,"focusMaxStartOrderUsd":self.focus_max_start_order_usd,"focusDcaEnabled":self.focus_dca_enabled,
             "focusDcaMode":self.focus_dca_mode,"focusProfile":self.focus_profile,"focusDcaAmountMode":self.focus_dca_amount_mode,"focusDcaIncrement":self.focus_dca_increment,"focusDcaCustomLevels":list(self.focus_dca_custom_levels),"focusDcaDistance":self.focus_dca_distance,"focusDcaNotional":self.focus_dca_notional,
             "focusMaxDca":self.focus_max_dca,"focusDcaMultiplier":self.focus_dca_multiplier,"focusMaxBudgetUsd":self.focus_max_budget_usd,
+            "focusPortfolioBrakeMode":self.focus_portfolio_brake_mode,"focusPortfolioBrakeValue":self.focus_portfolio_brake_value,"focusMaxPairsPerCycle":self.focus_max_pairs_per_cycle,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
             "focusMinimumProfitPct":self.focus_minimum_profit_pct,"focusPartialTpEnabled":self.focus_partial_tp_enabled,
             "focusFirstPartialTpPct":self.focus_first_partial_tp_pct,"focusFirstPartialClosePct":self.focus_first_partial_close_pct,

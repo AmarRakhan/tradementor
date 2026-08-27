@@ -92,8 +92,9 @@ from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next
 from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
 from aster_strategy2_focus_adapter import build_focus_shadow_report, focus_state_from_mapping, focus_state_to_mapping, advance_focus_shadow_state
 from aster_strategy2_focus_adapter import current_focus_markets
-from aster_strategy2_focus import rank_focus_pairs
+from aster_strategy2_focus import FocusState, rank_focus_pairs
 from aster_strategy2_focus_live import run_focus_live_step
+from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -334,6 +335,10 @@ class AsterStrategyStartRequest(BaseModel):
 
 
 class AsterStrategyStopRequest(BaseModel):
+    confirm: bool
+
+
+class AsterStrategy2FocusResetRequest(BaseModel):
     confirm: bool
 
 
@@ -4116,6 +4121,42 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
     return {"started":True,"mode":settings.mode,"firstTick":first,**public}
 
 
+@app.post("/v1/me/aster/strategy2/focus/reset-cycle")
+def reset_aster_strategy2_focus_cycle(request: AsterStrategy2FocusResetRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    if not request.confirm: raise HTTPException(422,"Bevestig volledige Focus-cycle reset expliciet")
+    uid=str(user["uid"]);ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {}
+    settings=Strategy2Config.from_mapping(raw.get("settings"))
+    secret=load_aster_secret(user);client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=True,before_order_submit=_block_order_during_close_all(uid))
+    if not client.position_mode(): raise HTTPException(409,"Focus reset vereist bevestigd Aster Hedge Mode")
+    owned=[]
+    for row in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
+        try: owned.append(owned_from_mapping(row))
+        except (TypeError,ValueError): pass
+    focus_owned=[x for x in owned if str(x.role).upper().startswith("FOCUS")]
+    focus_keys={(x.symbol,x.side) for x in focus_owned};positions=client.position_risk();orders=client.open_orders()
+    relevant_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in focus_keys]
+    for order in relevant_orders:
+        client.cancel_order(str(order.get("symbol","")).upper(),order_id=order.get("orderId"),client_order_id=str(order.get("clientOrderId","") or "") or None)
+    plans=[]
+    by_key={(str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()):x for x in positions if abs(safe_float(x.get("positionAmt")))>0}
+    for leg in focus_owned:
+        row=by_key.get((leg.symbol,leg.side))
+        if not row: continue
+        qty=abs(safe_float(row.get("positionAmt")));mark=safe_float(row.get("markPrice")) or safe_float(row.get("entryPrice"))
+        if qty<=0 or mark<=0: raise HTTPException(409,f"{leg.symbol} {leg.side}: onbetrouwbare exchange-truth voor reset")
+        rules=ContractRules.from_exchange_info(next(x for x in client.public_exchange_info().get("symbols",[]) if str(x.get("symbol","")).upper()==leg.symbol))
+        close_qty=rules.market_quantity(Decimal(str(qty)),Decimal(str(mark)))
+        plans.append((PairExecutionPlan(leg.symbol,close_qty,close_qty*Decimal(str(mark)),int(safe_float(row.get("leverage")) or settings.leverage),rules.tick_size,rules.market_quantity_step,rules.market_min_quantity,rules.min_notional),PositionSide(leg.side)))
+    if plans:
+        execute_aster_close_all(client,plans,id_prefix="s2frst-"+hashlib.sha256(f"{uid}|{int(time.time())}".encode()).hexdigest()[:12],confirm=True,explicit_loss_confirmation=True)
+    fresh_positions=client.position_risk();remaining=[x for x in fresh_positions if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in focus_keys and abs(safe_float(x.get("positionAmt")))>0]
+    if remaining: raise HTTPException(409,"Focus reset niet voltooid: exchange toont nog Focus-exposure")
+    account=client.account_information();equity=safe_float(account.get("totalMarginBalance")) or safe_float(account.get("totalWalletBalance"));now_ms=int(time.time()*1000)
+    ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned if not str(x.role).upper().startswith("FOCUS")],"focusLiveState":focus_state_to_mapping(FocusState()),"focusCycleState":cycle_state_to_mapping(reset_cycle(equity=equity,cycle_id="",timestamp_ms=now_ms)),"focusLiveReport":{},"updatedAt":datetime.now(timezone.utc),"lastReason":"FOCUS_CYCLE_RESET"},merge=True)
+    ref.collection("audit").add({"event":"FOCUS_CYCLE_RESET","strategyId":"aster-strategy-2","timestampMs":now_ms,"closedLegs":len(plans)})
+    return {"reset":True,"closedLegs":len(plans),"ordersSent":len(plans),**aster_strategy2_public(uid)}
+
+
 @app.post("/v1/me/aster/strategy2/stop")
 def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Bevestig veilig stoppen")
@@ -5322,20 +5363,20 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
         if existing:
             owned=[replace(leg,quantity=quantity,weighted_entry=entry,
                 dca_count=leg.dca_count+(1 if action_kind=="ADD_DCA" else 0),
-                role="PROTECTION" if action_kind in {"OPEN_PROTECTION","PROTECTION_INCREASE"} else leg.role,
+                role="FOCUS_HEDGE" if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and side=="SHORT" else "PROTECTION" if action_kind in {"OPEN_PROTECTION","PROTECTION_INCREASE"} else leg.role,
                 intent_ids=tuple(dict.fromkeys((*leg.intent_ids,client_order_id))),
                 fill_ids=tuple(dict.fromkeys((*leg.fill_ids,*fill_ids))),last_order_at_ms=int(time.time()*1000))
                 if leg==existing else leg for leg in owned]
         else:
             owned.append(OwnedLeg("aster-strategy-2","strategy2",symbol,side,f"recovered-{client_order_id}",
                 int(safe_float(raw.get("configVersion"))) or 1,quantity,entry,0,
-                "PROTECTION" if action_kind=="OPEN_PROTECTION" else "HARVEST",(client_order_id,),fill_ids,(),
+                "FOCUS_HEDGE" if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and side=="SHORT" else "PROTECTION" if action_kind=="OPEN_PROTECTION" else "HARVEST",(client_order_id,),fill_ids,(),
                 int(time.time()*1000),last_order_at_ms=int(time.time()*1000)))
     elif action=="CLOSE":
         if row is None:
             owned=[leg for leg in owned if (leg.symbol,leg.side)!=(symbol,side)]
             settings=Strategy2Config.from_mapping(raw.get("settings"))
-            if existing and bool(raw.get("enabled",False)) and settings.auto_restart:
+            if existing and not str(existing.role).upper().startswith("FOCUS") and bool(raw.get("enabled",False)) and settings.auto_restart:
                 package=hashlib.sha256(f"{uid}|{existing.cycle_id}|{symbol}|{side}".encode()).hexdigest()[:24]
                 if not any(str(item.get("packageId",""))==package for item in pending_reopens if isinstance(item,dict)):
                     pending_reopens.append({"symbol":symbol,"side":side,"closedCycleId":existing.cycle_id,

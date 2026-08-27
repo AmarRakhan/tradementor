@@ -96,3 +96,19 @@ def test_market_adapter_keeps_negative_and_zero_change_tradable_pairs_for_manual
         def klines(self,*_args): return []
     rows=current_focus_markets(AllPairsClient(),Strategy2Config.from_mapping({'tradingMode':'focus','minimumQuoteVolume24hUsdt':10_000_000}))
     assert {row.symbol for row in rows}=={'HYPEUSDT','MUUSDT'}
+
+
+def test_focus_candidate_pool_is_current_top20_by_quote_volume_not_top_risers():
+    class VolumeClient(FakeClient):
+        def public_exchange_info(self):
+            return {"symbols":[{"symbol":f"C{i:02d}USDT","quoteAsset":"USDT","status":"TRADING","contractType":"PERPETUAL"} for i in range(25)]}
+        def ticker_24h(self):
+            return [{"symbol":f"C{i:02d}USDT","priceChangePercent":str(100-i),"quoteVolume":str((i+1)*1_000_000)} for i in range(25)]
+        def ticker_prices(self):
+            return [{"symbol":f"C{i:02d}USDT","price":"10"} for i in range(25)]
+        def klines(self,*_args): return [[0,0,0,0,"10",0] for _ in range(60)]
+    rows=current_focus_markets(VolumeClient(),Strategy2Config.from_mapping({"tradingMode":"focus","minimumQuoteVolume24hUsdt":1}))
+    assert len(rows)==20
+    assert rows[0].symbol=="C24USDT"
+    assert rows[-1].symbol=="C05USDT"
+    assert "C00USDT" not in {x.symbol for x in rows}

@@ -15,7 +15,7 @@ import time
 
 from aster_close_guard import AsterCloseBlocked, CloseEvidence
 from aster_execution import PairExecutionPlan, execute_leg_once, plan_pair, planning_brackets
-from aster_gateway import ContractRules, PositionSide
+from aster_gateway import AsterAutomationConfig, AsterOrderIntent, ContractRules, PositionSide
 from aster_strategy2 import Strategy2Config
 from aster_strategy2_focus import (
     FocusState, apply_focus_buy, next_dca_trigger, reset_after_full_exit,
@@ -25,6 +25,7 @@ from aster_strategy2_focus_adapter import (
     current_focus_markets, focus_state_from_mapping, focus_state_to_mapping,
 )
 from aster_strategy2_focus_shadow import FocusRiskSnapshot, FocusShadowInputs, plan_focus_shadow
+from aster_strategy2_focus_cycle import (FocusCycleState, ParkedPair, brake_triggered, can_rotate, cycle_state_from_mapping, cycle_state_to_mapping, mark_pair_used, park_pair, reset_cycle, update_high_water)
 from aster_strategy2_runtime import active_position_map, owned_from_mapping, owned_to_mapping
 from aster_strategy2_state import OwnedLeg
 
@@ -35,6 +36,13 @@ def _f(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return result if math.isfinite(result) else default
+
+
+def _audit(ref: Any, event: str, *, symbol: str = "", side: str = "", reason: str = "", **details: Any) -> None:
+    try:
+        ref.collection("audit").add({"event":event,"strategyId":"aster-strategy-2","symbol":symbol,"side":side,"reason":reason,"details":details,"timestampMs":int(time.time()*1000)})
+    except Exception:
+        pass
 
 
 def _owned(raw: dict[str, Any]) -> list[OwnedLeg]:
@@ -49,6 +57,27 @@ def _owned(raw: dict[str, Any]) -> list[OwnedLeg]:
 
 def _focus_owned(owned: list[OwnedLeg]) -> list[OwnedLeg]:
     return [leg for leg in owned if str(leg.role).upper() == "FOCUS"]
+
+def _focus_cycle_owned(owned: list[OwnedLeg]) -> list[OwnedLeg]:
+    return [leg for leg in owned if str(leg.role).upper().startswith("FOCUS")]
+
+def _position_side_for(positions: list[dict[str, Any]], symbol: str, side: str) -> dict[str, Any] | None:
+    return active_position_map(positions).get((symbol.upper(), side.upper()))
+
+
+def _supports_minimum_leverage(client: Any, symbol: str, minimum: int) -> bool:
+    try:
+        rows=client.leverage_brackets(symbol)
+    except Exception:
+        return False
+    values=[]
+    for row in rows if isinstance(rows,list) else ():
+        if not isinstance(row,dict): continue
+        nested=row.get("brackets") if isinstance(row.get("brackets"),list) else [row]
+        for bracket in nested:
+            try: values.append(int(bracket.get("initialLeverage",0)))
+            except (AttributeError,TypeError,ValueError): pass
+    return bool(values) and max(values)>=max(1,int(minimum))
 
 
 def _strategy_margin(settings: Strategy2Config, owned: list[OwnedLeg], positions: list[dict[str, Any]]) -> float:
@@ -144,6 +173,99 @@ def _preflight_state(raw: dict[str, Any], positions: list[dict[str, Any]]) -> tu
     return state, owned, True, "Focus-positie gereconcilieerd"
 
 
+
+def _reconcile_parked_pairs(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:Strategy2Config,uid:str,
+                            positions:list[dict[str,Any]],account:dict[str,Any],timestamp_ms:int,dry_run:bool,
+                            order_budget:int|None,open_orders:list[dict[str,Any]]|None,reserve_order:Callable[[Any,dict[str,Any]],None]|None=None)->dict[str,Any]|None:
+    cycle=cycle_state_from_mapping(raw_state.get("focusCycleState"))
+    if not cycle.parked_pairs:return None
+    for parked in cycle.parked_pairs:
+        long_qty=abs(_f((_position_side_for(positions,parked.symbol,"LONG") or {}).get("positionAmt")))
+        short_qty=abs(_f((_position_side_for(positions,parked.symbol,"SHORT") or {}).get("positionAmt")))
+        target=long_qty; diff=target-short_qty
+        if max(target,short_qty)<=0:continue
+        if abs(diff)<=max(target,short_qty)*.005:continue
+        if dry_run or settings.mode!="live":return {"status":"simulated","action":"FOCUS_RECONCILED","symbol":parked.symbol,"ordersSent":0,"difference":diff}
+        if order_budget is not None and order_budget<1:return {"status":"budget-exhausted","action":"FOCUS_HEDGE_CORRECTION","symbol":parked.symbol,"ordersSent":0}
+        if any(str(x.get("symbol","")).upper()==parked.symbol for x in (open_orders or [])):
+            return {"status":"waiting","action":"FOCUS_HEDGE_PENDING","symbol":parked.symbol,"ordersSent":0}
+        if not client.position_mode():raise RuntimeError("FOCUS_RECONCILED: Aster Hedge Mode niet bevestigd")
+        row=_position_side_for(positions,parked.symbol,"LONG") or _position_side_for(positions,parked.symbol,"SHORT") or {}
+        mark=_f(row.get("markPrice")) or _f(row.get("entryPrice")); leverage=max(1,int(_f(row.get("leverage"),settings.leverage)))
+        qty_needed=abs(diff)
+        if diff>0 and qty_needed*mark/leverage*1.05>_f(account.get("availableBalance")):
+            return {"status":"waiting","action":"FOCUS_PAIR_SKIPPED_MARGIN","symbol":parked.symbol,"ordersSent":0,"reason":"Onvoldoende margin voor hedge-correctie"}
+        rules=ContractRules.from_exchange_info(_symbol_row(client,parked.symbol)); qty=rules.market_quantity(Decimal(str(qty_needed)),Decimal(str(mark)))
+        action="OPEN" if diff>0 else "CLOSE"
+        intent_id="s2fr-"+hashlib.sha256(f"{uid}|{parked.cycle_id}|{parked.symbol}|{action}|{round(qty_needed,12)}".encode()).hexdigest()[:16]
+        intent=AsterOrderIntent(intent_id,parked.symbol,PositionSide.SHORT,qty,action)
+        _audit(ref,"FOCUS_HEDGE_REQUESTED",symbol=parked.symbol,side="SHORT",reason="restart/cycle reconciliation",quantity=float(qty),action=action)
+        if reserve_order: reserve_order(intent,{"kind":"FOCUS_HEDGE_CORRECTION","cycleId":parked.cycle_id,"leverage":leverage,"marginUsd":float(qty)*mark/leverage if action=="OPEN" else 0.0,"riskReducing":action=="CLOSE"})
+        client.submit_order_once(intent,config=AsterAutomationConfig(enabled=True,mode="live"),confirm=True,hedge_mode_confirmed=True,risk_approved=True)
+        fresh=client.position_risk(parked.symbol); new_long=abs(_f((_position_side_for(fresh,parked.symbol,"LONG") or {}).get("positionAmt"))); new_short=abs(_f((_position_side_for(fresh,parked.symbol,"SHORT") or {}).get("positionAmt")))
+        if abs(new_long-new_short)>max(new_long,new_short,1e-12)*.005:
+            return {"status":"reconciling","action":"FOCUS_HEDGE_CORRECTION","symbol":parked.symbol,"ordersSent":1,"reason":"Correctie-fill nog niet delta-neutraal bevestigd"}
+        _audit(ref,"FOCUS_RECONCILED",symbol=parked.symbol,reason="parked hedge opnieuw exchange-bevestigd",longQuantity=new_long,shortQuantity=new_short)
+        return {"status":"executed","action":"FOCUS_RECONCILED","symbol":parked.symbol,"ordersSent":1}
+    return None
+
+
+def _focus_cycle_guard(*, client:Any, ref:Any, raw_state:dict[str,Any], settings:Strategy2Config, uid:str,
+                       account:dict[str,Any], positions:list[dict[str,Any]], timestamp_ms:int, dry_run:bool,
+                       order_budget:int|None, open_orders:list[dict[str,Any]]|None, reserve_order:Callable[[Any,dict[str,Any]],None]|None=None) -> dict[str,Any]|None:
+    reconcile=_reconcile_parked_pairs(client=client,ref=ref,raw_state=raw_state,settings=settings,uid=uid,positions=positions,account=account,timestamp_ms=timestamp_ms,dry_run=dry_run,order_budget=order_budget,open_orders=open_orders,reserve_order=reserve_order)
+    if reconcile is not None:return reconcile
+    prior_cycle=cycle_state_from_mapping(raw_state.get("focusCycleState"))
+    cycle=update_high_water(prior_cycle,equity=_f(account.get("totalMarginBalance"),_f(account.get("totalWalletBalance"))),timestamp_ms=timestamp_ms)
+    if cycle.high_water_equity>prior_cycle.high_water_equity:
+        _audit(ref,"FOCUS_HIGH_WATER_UPDATED",reason="nieuwe cycle equity high",highWaterEquity=cycle.high_water_equity)
+    active=_focus_owned(_owned(raw_state))
+    if not active and cycle.used_pairs and not cycle.parked_pairs:
+        cycle=reset_cycle(equity=cycle.current_equity,cycle_id="",timestamp_ms=timestamp_ms)
+        _audit(ref,"FOCUS_CYCLE_RESET",reason="normale Focus-exit was flat; nieuwe cyclus")
+    ref.set({"focusCycleState":cycle_state_to_mapping(cycle)},merge=True)
+    if not active or settings.focus_portfolio_brake_mode=="off" or settings.focus_portfolio_brake_value<=0:
+        return None
+    if not brake_triggered(cycle,mode=settings.focus_portfolio_brake_mode,value=settings.focus_portfolio_brake_value):
+        return None
+    leg=active[0]; _audit(ref,"FOCUS_BRAKE_TRIGGERED",symbol=leg.symbol,side="LONG",reason="portfolio high-water drawdown",drawdownUsd=cycle.drawdown_usd,drawdownPct=cycle.drawdown_pct)
+    long_row=_position_side_for(positions,leg.symbol,"LONG")
+    if not long_row:return {"status":"reconciling","action":"FOCUS_BRAKE_RECONCILE","ordersSent":0,"reason":"Actieve Focus LONG ontbreekt in exchange snapshot"}
+    long_qty=abs(_f(long_row.get("positionAmt"))); mark=_f(long_row.get("markPrice")) or _f(long_row.get("entryPrice")); leverage=max(1,int(_f(long_row.get("leverage"),settings.leverage)))
+    short_row=_position_side_for(positions,leg.symbol,"SHORT"); short_qty=abs(_f((short_row or {}).get("positionAmt")))
+    need=max(0.0,long_qty-short_qty)
+    if dry_run or settings.mode!="live":return {"status":"simulated","action":"FOCUS_BRAKE_TRIGGERED","symbol":leg.symbol,"ordersSent":0,"hedgeQuantity":need}
+    if order_budget is not None and order_budget<1 and need>long_qty*.005:return {"status":"budget-exhausted","action":"FOCUS_HEDGE_REQUESTED","symbol":leg.symbol,"ordersSent":0}
+    if any(str(x.get("symbol","")).upper()==leg.symbol for x in (open_orders or [])):
+        return {"status":"waiting","action":"FOCUS_HEDGE_PENDING","symbol":leg.symbol,"ordersSent":0,"reason":"Open order aanwezig; hedge niet gedupliceerd"}
+    intent_id="s2fh-"+hashlib.sha256(f"{uid}|{leg.cycle_id}|BRAKE".encode()).hexdigest()[:16]; order_id=""
+    if need>long_qty*.005:
+        required=need*mark/leverage*1.05
+        if required>_f(account.get("availableBalance")):
+            return {"status":"waiting","action":"FOCUS_PAIR_SKIPPED_MARGIN","symbol":leg.symbol,"ordersSent":0,"reason":"Onvoldoende available margin voor volledige neutralisatie"}
+        if not client.position_mode():raise RuntimeError("FOCUS_HEDGE_REQUESTED: Aster Hedge Mode niet bevestigd")
+        rules=ContractRules.from_exchange_info(_symbol_row(client,leg.symbol)); qty=rules.market_quantity(Decimal(str(need)),Decimal(str(mark)))
+        intent=AsterOrderIntent(intent_id,leg.symbol,PositionSide.SHORT,qty,"OPEN")
+        _audit(ref,"FOCUS_HEDGE_REQUESTED",symbol=leg.symbol,side="SHORT",reason="Portfolio Handrem",quantity=float(qty))
+        if reserve_order: reserve_order(intent,{"kind":"FOCUS_HEDGE","cycleId":leg.cycle_id,"leverage":leverage,"marginUsd":float(qty)*mark/leverage,"riskReducing":True})
+        result,_=client.submit_order_once(intent,config=AsterAutomationConfig(enabled=True,mode="live"),confirm=True,hedge_mode_confirmed=True,risk_approved=True)
+        order_id=str(result.get("orderId",intent_id)); positions=client.position_risk(leg.symbol); short_row=_position_side_for(positions,leg.symbol,"SHORT"); short_qty=abs(_f((short_row or {}).get("positionAmt")))
+    if long_qty<=0 or short_qty<long_qty*.995:
+        recovery=FocusCycleState(cycle.cycle_id,cycle.high_water_equity,cycle.current_equity,cycle.drawdown_usd,cycle.drawdown_pct,cycle.used_pairs,cycle.parked_pairs,cycle.current_pair_number,"HEDGE_CORRECTION_REQUIRED","FOCUS_HEDGE_REQUESTED",timestamp_ms)
+        ref.set({"focusCycleState":cycle_state_to_mapping(recovery)},merge=True)
+        return {"status":"reconciling","action":"FOCUS_HEDGE_CORRECTION","symbol":leg.symbol,"ordersSent":1 if order_id else 0,"reason":"Hedge nog niet delta-neutraal bevestigd"}
+    _audit(ref,"FOCUS_HEDGE_CONFIRMED",symbol=leg.symbol,side="SHORT",reason="delta-neutraal exchange-bevestigd",longQuantity=long_qty,shortQuantity=short_qty)
+    owned=_owned(raw_state); parked_leg=replace(leg,role="FOCUS_PARKED",last_order_at_ms=timestamp_ms)
+    hedge_existing=next((x for x in owned if x.symbol==leg.symbol and x.side=="SHORT" and str(x.role).upper()=="FOCUS_HEDGE"),None)
+    hedge_leg=replace(hedge_existing,quantity=short_qty,weighted_entry=_f((short_row or {}).get("entryPrice")),last_order_at_ms=timestamp_ms) if hedge_existing else OwnedLeg(settings.strategy_id,"strategy2",leg.symbol,"SHORT",leg.cycle_id,settings.version,short_qty,_f((short_row or {}).get("entryPrice")),0,"FOCUS_HEDGE",(intent_id,) if intent_id else (), (order_id,) if order_id else (),(),timestamp_ms,last_order_at_ms=timestamp_ms)
+    owned=[parked_leg if (x.symbol,x.side,x.cycle_id)==(leg.symbol,leg.side,leg.cycle_id) else x for x in owned if not (hedge_existing and (x.symbol,x.side,x.cycle_id)==(hedge_existing.symbol,hedge_existing.side,hedge_existing.cycle_id))]+[hedge_leg]
+    parked=ParkedPair(leg.symbol,leg.cycle_id,"LONG","SHORT",long_qty,short_qty,order_id,intent_id,timestamp_ms,"PARKED")
+    cycle=park_pair(cycle,parked,timestamp_ms=timestamp_ms)
+    flat=reset_after_full_exit(focus_state_from_mapping(raw_state.get("focusLiveState")),realized_pnl=0.0,theoretical_portfolio_value=cycle.current_equity)
+    ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveState":focus_state_to_mapping(flat),"focusCycleState":cycle_state_to_mapping(cycle),"focusLiveAt":time.time(),"lastReason":"FOCUS_PARKED"},merge=True)
+    _audit(ref,"FOCUS_PARKED",symbol=leg.symbol,reason="hedge bevestigd; pair uit normale Focus-engine")
+    return {"status":"executed","action":"FOCUS_PARKED","symbol":leg.symbol,"ordersSent":1 if order_id else 0,"hedgeQuantity":short_qty,"focusCycle":cycle_state_to_mapping(cycle)}
+
 def build_focus_live_plan(*, client: Any, raw_state: dict[str, Any], settings: Strategy2Config,
                           account: dict[str, Any], positions: list[dict[str, Any]],
                           timestamp_ms: int) -> tuple[dict[str, Any], FocusState, list[OwnedLeg]]:
@@ -153,7 +275,16 @@ def build_focus_live_plan(*, client: Any, raw_state: dict[str, Any], settings: S
             "reason":preflight_reason,"status":"Ownership hold"},"state":focus_state_to_mapping(state),
             "ranking":[],"selectionReason":preflight_reason,"readOnly":False}, state, owned)
     markets = current_focus_markets(client, settings)
+    unsupported={m.symbol.upper() for m in markets if not _supports_minimum_leverage(client,m.symbol,settings.leverage)}
+    markets=tuple(m for m in markets if m.symbol.upper() not in unsupported)
+    cycle_guard=cycle_state_from_mapping(raw_state.get("focusCycleState"))
     cycle_open = bool(state.active_pair and state.total_quantity > 0 and state.weighted_entry > 0)
+    if not cycle_open:
+        excluded=set(cycle_guard.used_pairs)
+        markets=tuple(m for m in markets if m.symbol.upper() not in excluded)
+        if settings.focus_max_pairs_per_cycle>0 and not can_rotate(cycle_guard,settings.focus_max_pairs_per_cycle):
+            reason="FOCUS_MAX_PAIRS_REACHED"
+            return ({"mode":"focus-live","ordersSent":0,"decision":{"kind":"HOLD","symbol":"","reason":reason,"status":"Cycle cap"},"state":focus_state_to_mapping(state),"ranking":[],"selectionReason":reason,"readOnly":False},state,owned)
     selected, ranking, _ = select_focus_pair(list(markets), selection_mode=settings.focus_selection_mode,
         manual_pair=settings.focus_manual_pair, active_pair=state.active_pair, cycle_open=cycle_open,
         minimum_quote_volume=settings.minimum_quote_volume_24h_usdt,
@@ -210,6 +341,7 @@ def build_focus_live_plan(*, client: Any, raw_state: dict[str, Any], settings: S
         current_strategy2_metrics={"portfolioEquity":equity,"strategyMarginUsed":risk.strategy_margin_used,
             "activePositionLegs":len(active_position_map(positions))}))
     report["mode"]="focus-live";report["readOnly"]=False;report["ordersSent"]=0;report["preflightReason"]=preflight_reason
+    report["skippedMinimumLeverage"]=sorted(unsupported)
     return report,state,owned
 
 
@@ -259,11 +391,17 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
                         dry_run:bool=False,order_budget:int|None=None,reserve_order:Callable[[Any,dict[str,Any]],None]|None=None,
                         open_orders:list[dict[str,Any]]|None=None)->dict[str,Any]|None:
     if settings.trading_mode!="focus" or not settings.focus_live_enabled:return None
+    guard=_focus_cycle_guard(client=client,ref=ref,raw_state=raw_state,settings=settings,uid=uid,account=account,positions=positions,timestamp_ms=timestamp_ms,dry_run=dry_run,order_budget=order_budget,open_orders=open_orders,reserve_order=reserve_order)
+    if guard is not None:return guard
     report,previous,owned=build_focus_live_plan(client=client,raw_state=raw_state,settings=settings,
         account=account,positions=positions,timestamp_ms=timestamp_ms)
     planned=focus_state_from_mapping(report.get("state"));decision=report.get("decision") if isinstance(report.get("decision"),dict) else {}
+    for skipped_symbol in report.get("skippedMinimumLeverage",()) if isinstance(report.get("skippedMinimumLeverage"),list) else ():
+        _audit(ref,"FOCUS_PAIR_SKIPPED_MIN_LEVERAGE",symbol=str(skipped_symbol),reason=f"minimum leverage {settings.leverage}x niet ondersteund")
     kind=str(decision.get("kind","HOLD")).upper();symbol=str(decision.get("symbol",planned.active_pair)).upper()
     if kind=="HOLD":
+        if str(decision.get("reason",""))=="FOCUS_MAX_PAIRS_REACHED":
+            _audit(ref,"FOCUS_MAX_PAIRS_REACHED",reason="cycle cap bereikt",maxPairs=settings.focus_max_pairs_per_cycle)
         ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveState":focus_state_to_mapping(planned),
             "focusLiveReport":report,"focusLiveAt":time.time()},merge=True)
         return {"status":"waiting","action":"FOCUS_HOLD","reason":str(decision.get("reason","runner blijft open")),"ordersSent":0,"focus":report}
@@ -302,8 +440,16 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
         owned=_upsert_focus_owned(owned,settings=settings,state=state,quantity=quantity,price=price,intent_id=intent_id,
             fill_id=fill_id,is_dca=(kind=="DCA"),timestamp_ms=timestamp_ms)
         report["state"]=focus_state_to_mapping(state);report["ordersSent"]=1;report["executedFill"]={"quantity":quantity,"price":price,"notional":notional}
-        ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveState":report["state"],"focusLiveReport":report,
+        cycle_state=cycle_state_from_mapping(raw_state.get("focusCycleState"))
+        if kind=="OPEN":
+            was_rotating=bool(cycle_state.used_pairs)
+            if not cycle_state.cycle_id:
+                cycle_state=replace(cycle_state,cycle_id=state.cycle_id)
+            cycle_state=mark_pair_used(cycle_state,symbol,timestamp_ms=timestamp_ms)
+            _audit(ref,"FOCUS_ROTATED" if was_rotating else "FOCUS_SELECTED",symbol=symbol,side="LONG",reason="fresh Top-20 Focus scan",pairNumber=cycle_state.current_pair_number)
+        ref.set({"focusCycleState":cycle_state_to_mapping(cycle_state),"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveState":report["state"],"focusLiveReport":report,
             "focusLiveAt":time.time(),"focusLiveOrdersSent":1,"phase":"FOCUS_LIVE","lastReason":str(decision.get("reason",""))},merge=True)
+        _audit(ref,"FOCUS_ENTRY_OPENED" if kind=="OPEN" else "FOCUS_DCA",symbol=symbol,side="LONG",reason=str(decision.get("reason","")),dcaNumber=state.dca_count if kind=="DCA" else 0)
         return {"status":"executed","action":f"FOCUS_{kind}","symbol":symbol,"side":"LONG","ordersSent":1,"focus":report}
 
     focus=_focus_owned(owned)

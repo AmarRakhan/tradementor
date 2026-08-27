@@ -102,12 +102,11 @@ def current_focus_markets(client: Any, config: Strategy2Config, *, candidate_lim
         change = _f(row.get("priceChangePercent")) / 100.0
         quote_volume = max(0.0, _f(row.get("quoteVolume")))
         raw.append((symbol, change, quote_volume))
-    raw.sort(key=lambda x: x[1], reverse=True)
-    # Scan the complete positive USDT-perpetual universe for the selectable/audit list.
-    # Candle requests stay bounded to the strongest leaders plus the manual pair.
-    technical_limit=max(3,min(30,candidate_limit))
-    technical_symbols={symbol for symbol,_,_ in raw[:technical_limit]}
-    if config.focus_manual_pair:technical_symbols.add(config.focus_manual_pair.upper())
+    # Focus candidate pool is exactly the current Top 20 tradable USDT perpetuals by quote volume.
+    # Volume defines the liquid pool only; technical Focus scoring ranks inside that pool.
+    raw.sort(key=lambda x: x[2], reverse=True)
+    raw=raw[:20]
+    technical_symbols={symbol for symbol,_,_ in raw}
     result: list[FocusMarket] = []
     for symbol, change, volume in raw:
         price = prices.get(symbol, 0.0)
