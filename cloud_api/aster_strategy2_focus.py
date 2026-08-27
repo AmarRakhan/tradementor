@@ -136,8 +136,8 @@ def select_focus_pair(markets:list[FocusMarket],*,selection_mode:FocusSelectionM
     if cycle_open and active_pair:
         return next((r for r in ranking if r.symbol==active_pair.upper()),None),ranking,"actieve cyclus behouden; geen pair-hopping"
     if selection_mode=="manual":
-        selected=next((r for r in ranking if r.symbol==manual_pair.upper().strip() and r.eligible),None)
-        return selected,ranking,"handmatige Focus-selectie" if selected else "handmatige pair niet beschikbaar/eligible"
+        selected=next((r for r in ranking if r.symbol==manual_pair.upper().strip()),None)
+        return selected,ranking,"handmatige Focus-selectie" if selected else "handmatige pair niet beschikbaar op Aster"
     selected=next((r for r in ranking if r.eligible),None);return selected,ranking,selected.reason if selected else "geen geschikte LONG-kandidaat"
 
 def next_dca_trigger(*,original_entry:float,dca_count:int,max_dca:int,distance_pct:float,mode:FocusDcaMode)->float:

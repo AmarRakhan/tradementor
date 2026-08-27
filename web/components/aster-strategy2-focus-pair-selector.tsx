@@ -7,7 +7,7 @@ export function AsterStrategy2FocusPairSelector({rows,value,onChange}:{rows:Reco
  useEffect(()=>{let active=true;authenticatedRequest("/api/exchanges/aster/strategy2/focus/markets").then(result=>{const value=result as Record<string,unknown>;if(active)setRemoteRows(Array.isArray(value.ranking)?value.ranking.filter((x):x is Record<string,unknown>=>Boolean(x&&typeof x==="object")):[])}).catch(()=>{if(active)setRemoteRows([])});return()=>{active=false}},[]);
  const selected=value.toUpperCase().trim();
  const source=rows.length?rows:remoteRows;
- const eligible=useMemo(()=>source.filter(row=>row.eligible!==false&&String(row.symbol||"").trim()).filter(row=>String(row.symbol||"").toUpperCase().includes(query.toUpperCase().trim())),[source,query]);
+ const eligible=useMemo(()=>source.filter(row=>String(row.symbol||"").trim()).filter(row=>String(row.symbol||"").toUpperCase().includes(query.toUpperCase().trim())),[source,query]);
  return <div>
   <label>Zoek pair<input value={query} onChange={e=>setQuery(e.target.value.toUpperCase())} placeholder="Bijv. BTC" autoComplete="off"/></label>
   <div style={{maxHeight:280,overflowY:"auto",display:"grid",gap:6,paddingRight:4}} aria-label="Focus pair selecteren">

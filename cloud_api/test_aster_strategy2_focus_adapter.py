@@ -86,3 +86,13 @@ def test_wait_until_flat_uses_current_position_count_without_closing_anything():
     assert report["ordersSent"]==0
     assert report["decision"]["kind"]=="HOLD"
     assert "bestaande" in report["decision"]["reason"]
+
+def test_market_adapter_keeps_negative_and_zero_change_tradable_pairs_for_manual_search():
+    class AllPairsClient(FakeClient):
+        def public_exchange_info(self):
+            return {'symbols':[{'symbol':'HYPEUSDT','quoteAsset':'USDT','status':'TRADING','contractType':'PERPETUAL'},{'symbol':'MUUSDT','quoteAsset':'USDT','status':'TRADING','contractType':'PERPETUAL'}]}
+        def ticker_24h(self): return [{'symbol':'HYPEUSDT','priceChangePercent':'-5','quoteVolume':'1000000'},{'symbol':'MUUSDT','priceChangePercent':'0','quoteVolume':'0'}]
+        def ticker_prices(self): return [{'symbol':'HYPEUSDT','price':'10'},{'symbol':'MUUSDT','price':'80'}]
+        def klines(self,*_args): return []
+    rows=current_focus_markets(AllPairsClient(),Strategy2Config.from_mapping({'tradingMode':'focus','minimumQuoteVolume24hUsdt':10_000_000}))
+    assert {row.symbol for row in rows}=={'HYPEUSDT','MUUSDT'}

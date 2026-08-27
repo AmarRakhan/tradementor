@@ -295,3 +295,10 @@ def test_partial_percentages_must_leave_runner_remainder():
 
 def test_trailing_activation_cannot_be_below_minimum_profit():
     with pytest.raises(ValueError): config(focusMinimumProfitPct=.03,focusTrailingActivationPct=.02)
+
+def test_manual_selection_can_choose_noneligible_tradable_pair():
+    markets=[FocusMarket('HYPEUSDT',10,-.05,50_000_000,1.0,())]
+    selected,ranking,reason=select_focus_pair(markets,selection_mode='manual',manual_pair='HYPEUSDT',minimum_quote_volume=10_000_000)
+    assert selected is not None and selected.symbol=='HYPEUSDT'
+    assert selected.eligible is False
+    assert reason=='handmatige Focus-selectie'

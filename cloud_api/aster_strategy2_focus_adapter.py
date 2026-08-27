@@ -95,14 +95,12 @@ def current_focus_markets(client: Any, config: Strategy2Config, *, candidate_lim
     allowed = _tradable_symbols(exchange_info)
     tickers = client.ticker_24h()
     prices = {str(x.get("symbol", "")).upper(): _f(x.get("price")) for x in client.ticker_prices() if isinstance(x, dict)}
+    ticker_by_symbol = {str(row.get("symbol", "")).upper(): row for row in tickers if isinstance(row, dict)}
     raw: list[tuple[str, float, float]] = []
-    for row in tickers:
-        if not isinstance(row, dict): continue
-        symbol = str(row.get("symbol", "")).upper()
-        if symbol not in allowed: continue
+    for symbol in allowed:
+        row = ticker_by_symbol.get(symbol, {})
         change = _f(row.get("priceChangePercent")) / 100.0
-        quote_volume = _f(row.get("quoteVolume"))
-        if change <= 0 or quote_volume <= 0: continue
+        quote_volume = max(0.0, _f(row.get("quoteVolume")))
         raw.append((symbol, change, quote_volume))
     raw.sort(key=lambda x: x[1], reverse=True)
     # Scan the complete positive USDT-perpetual universe for the selectable/audit list.
