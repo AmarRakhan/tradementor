@@ -51,16 +51,16 @@ def test_existing_accounts_default_to_multi_pair_and_focus_off():
     assert c.focus_shadow_enabled is False
 
 
-def test_default_focus_dca_is_conservative_and_max_is_30():
+def test_default_focus_dca_is_conservative_and_has_no_hard_max():
     c=Strategy2Config.from_mapping({})
     assert c.focus_max_dca==DEFAULT_FOCUS_DCA==5
-    assert MAX_FOCUS_DCA==30
-    assert c.focus_max_dca < MAX_FOCUS_DCA
+    assert math.isinf(MAX_FOCUS_DCA)
 
 
-def test_focus_max_30_is_valid_but_31_is_rejected():
-    assert config(focusMaxDca=30).focus_max_dca==30
-    with pytest.raises(ValueError): config(focusMaxDca=31)
+def test_focus_accepts_large_dca_counts():
+    assert config(focusMaxDca=31).focus_max_dca==31
+    assert config(focusMaxDca=100).focus_max_dca==100
+    assert config(focusMaxDca=1000).focus_max_dca==1000
 
 
 def test_manual_focus_requires_pair_when_focus_is_selected():
@@ -113,7 +113,6 @@ def test_selection_can_change_after_full_exit():
 
 
 def test_ranking_uses_only_supplied_current_data():
-    # Deterministic pure call proves no clock/network/future-data dependency.
     markets=[market("AAAUSDT",.12),market("BBBUSDT",.10)]
     assert [r.public_dict() for r in rank_focus_pairs(markets)]==[r.public_dict() for r in rank_focus_pairs(markets)]
 
@@ -140,6 +139,12 @@ def test_example_100_plus_30_dca_at_20x_is_3100_notional_and_155_margin():
     assert p.total_max_order_notional==3100
     assert p.required_margin==155
     assert p.max_leveraged_exposure==3100
+
+
+def test_more_than_30_dcas_are_not_truncated():
+    p=exposure_preview(entry_price=100,first_order_notional=10,dca_enabled=True,dca_amount=1,dca_multiplier=1,max_dca=100,dca_distance_pct=.001,dca_mode="fixed",leverage=20,equity=1000,available_margin=1000,focus_budget=5000)
+    assert len(p.dca_notionals)==100
+    assert p.total_max_order_notional==110
 
 
 def test_focus_budget_is_notional_not_margin():
