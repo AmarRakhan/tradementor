@@ -6,7 +6,7 @@ from aster_strategy2_focus import (
     DEFAULT_FOCUS_DCA, MAX_FOCUS_DCA, FocusMarket, FocusState,
     apply_focus_buy, can_add_focus_order, dca_drop_sequence,
     dca_notional_sequence, exit_decision, exposure_preview,
-    focus_order_notional, rank_focus_pairs, reset_after_full_exit,
+    focus_order_notional, next_dca_trigger, rank_focus_pairs, reset_after_full_exit,
     select_focus_pair, update_trailing, weighted_average_entry,
 )
 from aster_strategy2_focus_shadow import (
@@ -302,3 +302,9 @@ def test_manual_selection_can_choose_noneligible_tradable_pair():
     assert selected is not None and selected.symbol=='HYPEUSDT'
     assert selected.eligible is False
     assert reason=='handmatige Focus-selectie'
+
+def test_micro_dca_linear_amounts_and_custom_levels():
+    assert dca_notional_sequence(amount=25,multiplier=1,count=8,amount_mode="linear",increment=5) == (25,30,35,40,45,50,55,60)
+    levels=(.0025,.005,.008,.0115,.0155,.02,.025,.031)
+    assert dca_drop_sequence(distance_pct=.02,count=8,mode="custom",custom_levels=levels) == levels
+    assert next_dca_trigger(original_entry=100,dca_count=3,max_dca=8,distance_pct=.02,mode="custom",custom_levels=levels) == pytest.approx(98.85)

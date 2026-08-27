@@ -298,7 +298,7 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
         state=apply_focus_buy(pending,price=price,notional=notional,leverage=settings.leverage,timestamp_ms=timestamp_ms,
             is_dca=(kind=="DCA"),reason=str(decision.get("reason","")))
         state=replace(state,next_dca_trigger=next_dca_trigger(original_entry=state.original_entry,dca_count=state.dca_count,
-            max_dca=settings.focus_max_dca,distance_pct=settings.focus_dca_distance,mode=settings.focus_dca_mode))
+            max_dca=settings.focus_max_dca,distance_pct=settings.focus_dca_distance,mode=settings.focus_dca_mode,custom_levels=settings.focus_dca_custom_levels))
         owned=_upsert_focus_owned(owned,settings=settings,state=state,quantity=quantity,price=price,intent_id=intent_id,
             fill_id=fill_id,is_dca=(kind=="DCA"),timestamp_ms=timestamp_ms)
         report["state"]=focus_state_to_mapping(state);report["ordersSent"]=1;report["executedFill"]={"quantity":quantity,"price":price,"notional":notional}

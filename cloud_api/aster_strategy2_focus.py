@@ -13,7 +13,7 @@ import math, uuid
 
 FocusSelectionMode=Literal["automatic","manual"]
 FocusSizingMode=Literal["fixed_usd","equity_pct"]
-FocusDcaMode=Literal["fixed","progressive"]
+FocusDcaMode=Literal["fixed","progressive","custom"]
 FocusActionKind=Literal["HOLD","OPEN","DCA","PARTIAL_TP","CLOSE"]
 MAX_FOCUS_DCA=30
 DEFAULT_FOCUS_DCA=5
@@ -72,12 +72,14 @@ def focus_order_notional(*,sizing_mode:FocusSizingMode,fixed_usd:float,equity_pc
     value=max(0.0,equity)*max(0.0,equity_pct) if sizing_mode=="equity_pct" else max(0.0,fixed_usd)
     return min(value,max_start_order_usd) if max_start_order_usd>0 else value
 
-def dca_notional_sequence(*,amount:float,multiplier:float,count:int)->tuple[float,...]:
-    count=max(0,min(MAX_FOCUS_DCA,int(count)));amount=max(0.0,float(amount));multiplier=max(0.0,float(multiplier))
+def dca_notional_sequence(*,amount:float,multiplier:float,count:int,amount_mode:str="multiplier",increment:float=0.0)->tuple[float,...]:
+    count=max(0,min(MAX_FOCUS_DCA,int(count)));amount=max(0.0,float(amount));multiplier=max(0.0,float(multiplier));increment=max(0.0,float(increment))
+    if amount_mode=="linear": return tuple(amount+increment*index for index in range(count))
     return tuple(amount*(multiplier**index) for index in range(count))
 
-def dca_drop_sequence(*,distance_pct:float,count:int,mode:FocusDcaMode="fixed")->tuple[float,...]:
+def dca_drop_sequence(*,distance_pct:float,count:int,mode:FocusDcaMode="fixed",custom_levels:tuple[float,...]=())->tuple[float,...]:
     count=max(0,min(MAX_FOCUS_DCA,int(count)));distance=max(0.0,float(distance_pct))
+    if mode=="custom": return tuple(max(0.0,float(x)) for x in custom_levels[:count])
     return tuple(distance*i*(i+1)/2 for i in range(1,count+1)) if mode=="progressive" else tuple(distance*i for i in range(1,count+1))
 
 def weighted_average_entry(start_price:float,start_notional:float,trigger_prices:tuple[float,...],dca_notionals:tuple[float,...])->float:
@@ -140,9 +142,9 @@ def select_focus_pair(markets:list[FocusMarket],*,selection_mode:FocusSelectionM
         return selected,ranking,"handmatige Focus-selectie" if selected else "handmatige pair niet beschikbaar op Aster"
     selected=next((r for r in ranking if r.eligible),None);return selected,ranking,selected.reason if selected else "geen geschikte LONG-kandidaat"
 
-def next_dca_trigger(*,original_entry:float,dca_count:int,max_dca:int,distance_pct:float,mode:FocusDcaMode)->float:
+def next_dca_trigger(*,original_entry:float,dca_count:int,max_dca:int,distance_pct:float,mode:FocusDcaMode,custom_levels:tuple[float,...]=())->float:
     if original_entry<=0 or dca_count>=max_dca:return 0.0
-    drops=dca_drop_sequence(distance_pct=distance_pct,count=max_dca,mode=mode)
+    drops=dca_drop_sequence(distance_pct=distance_pct,count=max_dca,mode=mode,custom_levels=custom_levels)
     return max(0.0,original_entry*(1-drops[dca_count])) if dca_count<len(drops) else 0.0
 
 def can_add_focus_order(*,proposed_notional:float,leverage:int,focus_budget_used:float,focus_budget:float,strategy_margin_used:float,strategy_budget:float,

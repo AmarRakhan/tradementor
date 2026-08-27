@@ -75,7 +75,11 @@ class Strategy2Config:
     focus_auto_compound: bool = False
     focus_max_start_order_usd: float = 1000.0
     focus_dca_enabled: bool = True
-    focus_dca_mode: Literal["fixed", "progressive"] = "fixed"
+    focus_dca_mode: Literal["fixed", "progressive", "custom"] = "fixed"
+    focus_profile: Literal["trend_runner", "micro_dca"] = "trend_runner"
+    focus_dca_amount_mode: Literal["multiplier", "linear"] = "multiplier"
+    focus_dca_increment: float = 5.0
+    focus_dca_custom_levels: tuple[float, ...] = ()
     focus_dca_distance: float = .02
     focus_dca_notional: float = 100.0
     focus_max_dca: int = DEFAULT_FOCUS_DCA
@@ -150,7 +154,11 @@ class Strategy2Config:
             focus_auto_compound=bool(raw.get("focusAutoCompound", False)),
             focus_max_start_order_usd=f("focusMaxStartOrderUsd", 1000),
             focus_dca_enabled=bool(raw.get("focusDcaEnabled", True)),
-            focus_dca_mode="progressive" if str(raw.get("focusDcaMode", "fixed")).lower() == "progressive" else "fixed",
+            focus_dca_mode=(str(raw.get("focusDcaMode", "fixed")).lower() if str(raw.get("focusDcaMode", "fixed")).lower() in {"fixed","progressive","custom"} else "fixed"),
+            focus_profile="micro_dca" if str(raw.get("focusProfile", "trend_runner")).lower()=="micro_dca" else "trend_runner",
+            focus_dca_amount_mode="linear" if str(raw.get("focusDcaAmountMode", "multiplier")).lower()=="linear" else "multiplier",
+            focus_dca_increment=f("focusDcaIncrement", 5.0),
+            focus_dca_custom_levels=levels("focusDcaCustomLevels"),
             focus_dca_distance=f("focusDcaDistance", .02),
             focus_dca_notional=f("focusDcaNotional", 100),
             focus_max_dca=i("focusMaxDca", DEFAULT_FOCUS_DCA),
@@ -204,6 +212,12 @@ class Strategy2Config:
         if not 0 < self.focus_max_start_order_usd <= 1_000_000: raise ValueError("Focus max startorder moet positief zijn")
         if not 0 <= self.focus_max_dca <= MAX_FOCUS_DCA: raise ValueError(f"Focus max DCA moet tussen 0 en {MAX_FOCUS_DCA} liggen")
         if not 0 < self.focus_dca_distance < 1: raise ValueError("Focus DCA-afstand moet tussen 0 en 100% liggen")
+        if self.focus_dca_mode not in {"fixed","progressive","custom"}: raise ValueError("Ongeldige Focus DCA-modus")
+        if self.focus_profile not in {"trend_runner","micro_dca"}: raise ValueError("Ongeldig Focus-profiel")
+        if self.focus_dca_amount_mode not in {"multiplier","linear"}: raise ValueError("Ongeldige Focus DCA-bedragmodus")
+        if not 0 <= self.focus_dca_increment <= 1_000_000: raise ValueError("Focus DCA-increment moet geldig zijn")
+        if self.focus_dca_mode == "custom":
+            if len(self.focus_dca_custom_levels) < self.focus_max_dca or any(x<=0 or x>=1 for x in self.focus_dca_custom_levels[:self.focus_max_dca]) or any(b<=a for a,b in zip(self.focus_dca_custom_levels,self.focus_dca_custom_levels[1:])): raise ValueError("Focus custom DCA-levels moeten positief, oplopend en volledig zijn")
         if not 0 < self.focus_dca_notional <= 1_000_000: raise ValueError("Focus DCA-bedrag moet positief zijn")
         if not 0 < self.focus_dca_multiplier <= 10: raise ValueError("Focus DCA multiplier moet groter dan 0 en maximaal 10 zijn")
         if not 0 < self.focus_max_budget_usd <= 10_000_000: raise ValueError("Focus-budget moet positief zijn")
@@ -248,7 +262,7 @@ class Strategy2Config:
             "focusShadowEnabled":self.focus_shadow_enabled,"focusLiveEnabled":self.focus_live_enabled,"focusSelectionMode":self.focus_selection_mode,"focusManualPair":self.focus_manual_pair,
             "focusSizingMode":self.focus_sizing_mode,"focusStartOrderNotional":self.focus_start_order_notional,"focusEquityPct":self.focus_equity_pct,
             "focusAutoCompound":self.focus_auto_compound,"focusMaxStartOrderUsd":self.focus_max_start_order_usd,"focusDcaEnabled":self.focus_dca_enabled,
-            "focusDcaMode":self.focus_dca_mode,"focusDcaDistance":self.focus_dca_distance,"focusDcaNotional":self.focus_dca_notional,
+            "focusDcaMode":self.focus_dca_mode,"focusProfile":self.focus_profile,"focusDcaAmountMode":self.focus_dca_amount_mode,"focusDcaIncrement":self.focus_dca_increment,"focusDcaCustomLevels":list(self.focus_dca_custom_levels),"focusDcaDistance":self.focus_dca_distance,"focusDcaNotional":self.focus_dca_notional,
             "focusMaxDca":self.focus_max_dca,"focusDcaMultiplier":self.focus_dca_multiplier,"focusMaxBudgetUsd":self.focus_max_budget_usd,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
             "focusMinimumProfitPct":self.focus_minimum_profit_pct,"focusPartialTpEnabled":self.focus_partial_tp_enabled,
