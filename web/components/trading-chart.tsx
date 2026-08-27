@@ -151,6 +151,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, averageEn
     let cancelled = false;
     if (selection.exchange !== "aster" || !/^(long|short)$/i.test(selection.side)) { setTradeEvents([]); return; }
     const query = new URLSearchParams({ symbol: selection.symbol, side: selection.side });
+    if (mode === "aster-detail") query.set("all_cycles", "true");
     if (selection.closedAt) {
       const closedAtMs = new Date(selection.closedAt).getTime();
       if (Number.isFinite(closedAtMs) && closedAtMs > 0) query.set("closed_at_ms", String(closedAtMs));
@@ -159,7 +160,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, averageEn
       .then((payload) => { if (!cancelled) setTradeEvents(Array.isArray(payload.events) ? payload.events as TradeEvent[] : []); })
       .catch(() => { if (!cancelled) setTradeEvents([]); });
     return () => { cancelled = true; };
-  }, [selection.exchange, selection.symbol, selection.side, selection.closedAt, focusAtMs]);
+  }, [selection.exchange, selection.symbol, selection.side, selection.closedAt, focusAtMs, mode]);
 
   useEffect(() => {
     const chartCandles=candleDataRef.current;

@@ -225,3 +225,13 @@ def test_recent_activity_uses_exchange_percentage_or_trade_notional_fallback():
         {"symbol": "SOLUSDT", "positionSide": "SHORT", "positionAmt": "2", "unRealizedProfit": "4", "roe": "0.18"},
     ])["entries"][0]
     assert with_roe["returnPct"] == 18
+
+
+def test_trade_events_can_return_multiple_confirmed_cycles_for_chart_history():
+    fills = [
+        {"id":"entry-1","symbol":"SOLUSDT","positionSide":"LONG","side":"BUY","qty":"1","price":"100","time":1_000},
+        {"id":"exit-1","symbol":"SOLUSDT","positionSide":"LONG","side":"SELL","qty":"1","price":"101","time":2_000},
+        {"id":"entry-2","symbol":"SOLUSDT","positionSide":"LONG","side":"BUY","qty":"2","price":"102","time":3_000},
+    ]
+    events = trade_events_from_fills(fills, symbol="SOLUSDT", position_side="LONG", include_all_cycles=True)
+    assert [(row["id"], row["kind"]) for row in events] == [("entry-1","entry"),("exit-1","close"),("entry-2","entry")]

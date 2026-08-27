@@ -3619,6 +3619,7 @@ def aster_trade_events(
     side: str = Query(..., pattern=r"^(?i:long|short)$"),
     closed_at_ms: int | None = Query(default=None, ge=1),
     anchor_at_ms: int | None = Query(default=None, ge=1),
+    all_cycles: bool = Query(default=False),
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
     """Return confirmed fills for exactly one selected Aster position cycle."""
@@ -3636,6 +3637,7 @@ def aster_trade_events(
     events = trade_events_from_fills(
         fills if isinstance(fills, list) else [], symbol=normalized_symbol,
         position_side=normalized_side, closed_at_ms=closed_at_ms, anchor_at_ms=anchor_at_ms,
+        include_all_cycles=all_cycles,
     )
     return {"symbol": normalized_symbol, "side": normalized_side, "events": events, "source": "aster-confirmed-fills"}
 
