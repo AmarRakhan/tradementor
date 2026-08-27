@@ -7,7 +7,7 @@ permissions:
   id-token: write
 concurrency:
   group: focus-manual-full-universe-live
-  cancel-in-progress: false
+  cancel-in-progress: true
 env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
@@ -74,23 +74,29 @@ jobs:
           SUFFIX="fm-${GITHUB_SHA:0:8}"
           gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG" --quiet
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/candidate.json"
-          python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/candidate.json" "$TAG" <<'PY'
           import json,sys
           before=json.load(open(sys.argv[1]));after=json.load(open(sys.argv[2]));tag=sys.argv[3]
           assert before['spec']['template']['spec']['containers'][0].get('env',[])==after['spec']['template']['spec']['containers'][0].get('env',[])
-          row=next(x for x in after['status']['traffic'] if x.get('tag')==tag)
-          print('CANDIDATE_REVISION='+row['revisionName'])
-          print('CANDIDATE_URL='+row['url'])
+          assert any(x.get('tag')==tag for x in after['status']['traffic'])
           PY
+          CANDIDATE_REVISION=$(python -c 'import json,os; a=json.load(open(os.environ["RUNNER_TEMP"]+"/candidate.json")); tag="focus-manual-"+os.environ["GITHUB_RUN_NUMBER"]; print(next(x["revisionName"] for x in a["status"]["traffic"] if x.get("tag")==tag))')
+          CANDIDATE_URL=$(python -c 'import json,os; a=json.load(open(os.environ["RUNNER_TEMP"]+"/candidate.json")); tag="focus-manual-"+os.environ["GITHUB_RUN_NUMBER"]; print(next(x["url"] for x in a["status"]["traffic"] if x.get("tag")==tag))')
           curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/health" >/dev/null
+          echo "CANDIDATE_REVISION=$CANDIDATE_REVISION" >> "$GITHUB_ENV"
       - name: Promote candidate to production
         shell: bash
         run: |
           set -euo pipefail
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100" --quiet
           curl --fail --silent --show-error --retry 6 --retry-delay 3 "$SERVICE_URL/health" >/dev/null
-          live=$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.traffic[percent=100].revisionName)')
-          test "$live" = "$CANDIDATE_REVISION"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
+          python - "$RUNNER_TEMP/after.json" "$CANDIDATE_REVISION" <<'PY'
+          import json,sys
+          svc=json.load(open(sys.argv[1]));candidate=sys.argv[2]
+          live=[x for x in svc['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1 and live[0].get('revisionName')==candidate
+          PY
       - name: Remove one-shot workflow
         shell: bash
         run: |
