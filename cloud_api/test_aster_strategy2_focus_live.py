@@ -128,3 +128,24 @@ def test_automatic_focus_skips_pair_that_rejects_configured_leverage():
         account=account(),positions=[],timestamp_ms=1)
     assert report["decision"]["kind"]=="OPEN"
     assert report["decision"]["symbol"]=="ETHUSDT"
+
+
+def test_missing_focus_ownership_is_recovered_from_confirmed_fill_and_exchange_position():
+    raw={
+        "settings":{"version":7},
+        "focusLiveState":{
+            "activePair":"BTCUSDT","cycleId":"focus-recover-1","openedAt":1000,
+            "originalEntry":100,"weightedEntry":100,"totalQuantity":1,"totalNotional":100,
+            "usedMargin":5,"focusBudgetUsed":100,"lastAction":"OPEN"
+        },
+        "focusLiveReport":{"executedFill":{"quantity":1,"price":100}},
+        "focusLiveAt":2.0,
+    }
+    positions=[{"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"101","leverage":"20"}]
+    report,_,owned=build_focus_live_plan(client=FakeClient(),raw_state=raw,settings=settings(),
+        account=account(),positions=positions,timestamp_ms=3000)
+    assert len(owned)==1
+    assert owned[0].role=="FOCUS"
+    assert owned[0].symbol=="BTCUSDT"
+    assert owned[0].cycle_id=="focus-recover-1"
+    assert report["preflightReason"]=="Focus-ownership hersteld uit bevestigde fill en exchange-positie"

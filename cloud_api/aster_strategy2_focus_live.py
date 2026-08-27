@@ -95,6 +95,25 @@ def _preflight_state(raw: dict[str, Any], positions: list[dict[str, Any]]) -> tu
         return state, owned, False, "Meer dan één Focus-ownershipleg gevonden; live Focus fail-closed"
     if not focus:
         if state.total_quantity > 0:
+            report = raw.get("focusLiveReport") if isinstance(raw.get("focusLiveReport"), dict) else {}
+            fill = report.get("executedFill") if isinstance(report.get("executedFill"), dict) else {}
+            row = _position_for(positions, state.active_pair) if state.active_pair else None
+            if row is not None and state.cycle_id and abs(_f(fill.get("quantity"))) > 0 and _f(fill.get("price")) > 0:
+                quantity = abs(_f(row.get("positionAmt")))
+                entry = _f(row.get("entryPrice"))
+                if quantity > 0 and entry > 0:
+                    settings_raw = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+                    version = max(1, int(_f(settings_raw.get("version"), 1)))
+                    recovered = OwnedLeg(
+                        strategy_id="aster-strategy-2", engine_type="strategy2",
+                        symbol=state.active_pair, side="LONG", cycle_id=state.cycle_id,
+                        config_version=version, quantity=quantity, weighted_entry=entry,
+                        dca_count=state.dca_count, role="FOCUS",
+                        created_at_ms=state.opened_at_ms,
+                        last_order_at_ms=max(state.opened_at_ms, int(_f(raw.get("focusLiveAt")) * 1000)),
+                    )
+                    owned = [*owned, recovered]
+                    return state, owned, True, "Focus-ownership hersteld uit bevestigde fill en exchange-positie"
             return state, owned, False, "Focus-state heeft exposure maar bewezen Focus-ownership ontbreekt"
         return state, owned, True, "flat"
     leg = focus[0]
