@@ -86,6 +86,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
                 "unrealizedPnl": "totalUnrealizedProfit",
                 "maintenanceMargin": "totalMaintMargin",
                 "positionUnrealizedPnl": "unRealizedProfit",
+                "positionLiquidationPrice": "liquidationPrice",
             },
             "aggregated": {
                 "activePositions": "count(positionAmt != 0)",
@@ -104,6 +105,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
             "notionalUsd": abs(_number(row.get("positionAmt"))) * _number(row.get("markPrice")),
             "entryPrice": _number(row.get("entryPrice")),
             "markPrice": _number(row.get("markPrice")),
+            "liquidationPrice": _number(row.get("liquidationPrice")),
             "unrealizedPnl": _number(row.get("unRealizedProfit", row.get("unrealizedProfit"))),
             "initialMarginUsd": _number(row.get("positionInitialMargin", row.get("initialMargin"))),
             "dataSource": "ASTER_API",

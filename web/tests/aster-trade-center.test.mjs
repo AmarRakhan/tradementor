@@ -27,8 +27,8 @@ test("Tradecentrum derives every view from the existing confirmed Aster snapshot
 test("Tradecentrum keeps detail, close, show-all and pagination interactions functional", () => {
   assert.match(component, /authenticatedRequest\(`\/api\/exchanges\/aster\/positions\/\$\{encodeURIComponent/);
   assert.match(component, /<SafeTradingChart/);
-  assert.match(component, />Toon alles</);
-  assert.match(component, />Laad nog 100</);
+  assert.match(component, /"Toon alles"/);
+  assert.match(component, /Laad nog 100/);
   assert.match(component, /setPages\(value => value \+ 1\)/);
   assert.match(component, /onOpenDetail\(row\)/);
   assert.match(component, /Geen bevestigde gegevens voor dit filter/);

@@ -176,3 +176,20 @@ def test_dashboard_snapshot_does_not_invent_leveraged_return_percent():
     row=snapshot["positions"][0]
     assert "returnPct" not in row
     assert row["notionalUsd"] > 0
+
+
+def test_dashboard_snapshot_exposes_exchange_liquidation_price_without_estimation():
+    snapshot = dashboard_snapshot({"totalMarginBalance":"100"}, [{
+        "symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"0.01",
+        "entryPrice":"79000","markPrice":"80000","liquidationPrice":"69288",
+    }])
+    assert snapshot["positions"][0]["liquidationPrice"] == 69288.0
+    assert snapshot["financialDataContract"]["direct"]["positionLiquidationPrice"] == "liquidationPrice"
+
+
+def test_dashboard_snapshot_sanitizes_invalid_liquidation_price():
+    snapshot = dashboard_snapshot({}, [{
+        "symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"0.01",
+        "markPrice":"80000","liquidationPrice":"nan",
+    }])
+    assert snapshot["positions"][0]["liquidationPrice"] == 0.0

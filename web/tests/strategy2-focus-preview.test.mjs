@@ -5,8 +5,8 @@ import fs from "node:fs";
 const source=fs.readFileSync(new URL("../lib/strategy2-focus.ts",import.meta.url),"utf8");
 const maker=fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx",import.meta.url),"utf8");
 
-test("Focus helper fixes max DCA at 30 and conservative default at 5",()=>{
- assert.match(source,/MAX_FOCUS_DCA=30/);
+test("Focus helper preserves unlimited runtime DCA and conservative default at 5",()=>{
+ assert.match(source,/MAX_FOCUS_DCA=Number\.POSITIVE_INFINITY/);
  assert.match(source,/DEFAULT_FOCUS_DCA=5/);
 });
 

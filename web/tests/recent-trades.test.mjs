@@ -6,12 +6,15 @@ import { pageActivity, reliableReturnPct, sortedActivity } from "../lib/recent-t
 const component = await readFile(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/aster-tables.css", import.meta.url), "utf8");
 
-test("top profit, last scan actions and latest exits render in the approved order", () => {
-  const top = component.indexOf('<TopProfitCard rows={positions}');
-  const scan = component.indexOf('<ScanActionsCard rows={scanActions}');
-  const closed = component.indexOf('title="Laatste 5 uitgestapte trades" rows={exits}');
-  assert.ok(top >= 0 && scan > top && closed > scan);
-  assert.ok(component.indexOf('title="Laatste 5 ingestapte trades" rows={entries}') > closed);
+test("Tradecentrum keeps the approved eight filters in one compact overview", () => {
+  const labels = ["Live", "Ingestapt", "Gesloten", "TP", "DCA", "Hoogste winst", "Hoogste verlies", "Botacties"];
+  let previous = -1;
+  for (const label of labels) {
+    const index = component.indexOf(`label: "${label}"`);
+    assert.ok(index > previous, `${label} must follow the previous filter`);
+    previous = index;
+  }
+  assert.doesNotMatch(component, /TopProfitCard|ScanActionsCard/);
 });
 
 test("real exchange time wins over a newer import/update time", () => {
@@ -49,84 +52,55 @@ test("recent trade freshness window remains above the 60 second exchange refresh
   assert.doesNotMatch(component, /Date\.now\(\) - snapshot\.updatedAt < 45_000/);
 });
 
-test("top profit and closed trades expose the exact seven approved columns", () => {
-  assert.match(component, /<span>PAIR<\/span><span>LEV<\/span><span>CLOSE<\/span><span>MARGIN<\/span><span>HUIDIGE PNL<\/span><span>%<\/span><span>P&amp;L<\/span>/);
-  assert.match(component, />\s*Close\s*<\/button>/);
-  assert.match(component, /function money\(value: unknown\)/);
-  assert.match(component, /`\$\$\{amount\(n\)\}`/);
-  assert.equal((component.match(/compactLimit=\{5\}/g) || []).length, 2);
-  assert.doesNotMatch(component, /Laatste 20 (?:in|uit)gestapte trades/);
-  assert.doesNotMatch(component, /INGEKOCHT|INGESTAPT \(\$\)|VERKOCHT|NU WAARD|Perp ·|Niet aan strategie gekoppeld/);
+test("Tradecentrum exposes the compact approved columns and real close control", () => {
+  assert.match(component, /<span>PAIR<\/span><span>SIDE<\/span><span>LEV<\/span><span>MARGIN<\/span><span>PNL<\/span><span>STATUS<\/span>/);
+  assert.match(component, /function money\(value: unknown, signed = false\)/);
+  assert.match(component, /<ClosePositionControl position=\{row\.position\}/);
+  assert.match(component, /"Toon alles"/);
+  assert.match(component, /Laad nog 100/);
 });
 
-test("top profit entry timestamp is reconstructed from confirmed activity, never a poll timestamp", () => {
-  assert.match(component, /function currentCycleOpenedAt/);
-  assert.match(component, /activityTime\(a\) - activityTime\(b\)/);
-  assert.match(component, /openedAt=\{currentCycleOpenedAt\(position, entries, exits\)\}/);
-  assert.doesNotMatch(component, /Date\.now\(\).*openedAt|updatedAt.*openedAt/);
-});
-
-test("top profit renders Firestore and exchange timestamp shapes instead of a dash", () => {
+test("trade timestamps come from confirmed exchange or persisted position time, never a poll timestamp", () => {
   assert.match(component, /function exchangeTimestampMs/);
   assert.match(component, /row\.seconds/);
   assert.match(component, /row\.nanoseconds/);
-  assert.match(component, /new Date\(exchangeTimestampMs\(openedAt\)\)\.toISOString\(\)/);
+  assert.match(component, /timestamp: position\.openedAt/);
+  assert.match(component, /exchangeTimestampMs\(row\.timestamp\)/);
+  assert.doesNotMatch(component, /Date\.now\(\).*openedAt|updatedAt.*openedAt/);
 });
 
-test("margin prefers positive Aster initial margin and falls back to live position size divided by proven leverage", () => {
+test("margin prefers positive Aster initial margin and falls back to notional divided by proven leverage", () => {
   assert.match(component, /function openPositionMargin/);
   assert.match(component, /direct !== null && direct > 0/);
   assert.match(component, /notional \/ leverage/);
   assert.match(component, /trade\.marginUsd, trade\.initialMarginUsd/);
   assert.match(component, /basis \/ leverage/);
-  assert.match(component, /money\(openPositionMargin\(position\)\)/);
+  assert.match(component, /margin: openPositionMargin\(position\)/);
+  assert.match(component, /money\(row\.margin\)/);
 });
 
-test("compact trade cards size to the visible face and align numeric columns cleanly", () => {
-  assert.match(css, /recent-flip-inner\{display:block!important;transform:none!important/);
-  assert.match(css, /recent-flip-back\{display:none!important/);
-  assert.match(css, /is-flipped \.recent-flip-back\{display:block!important/);
-  assert.match(css, /recent-close-cell\{justify-content:center!important/);
-  assert.match(css, /recent-leverage\{text-align:center!important/);
-  assert.match(css, /font-size:9px!important/);
-});
-
-test("mobile seven-column grid is bounded and keeps headers and Close position stable", () => {
-  assert.match(css, /\.aster-seven-column-head,\.aster-seven-column-row\{display:grid!important/);
-  assert.match(css, /grid-template-columns:minmax\(0,1fr\) 25px 39px 46px 48px 34px 38px!important/);
-  assert.match(css, /\.aster-seven-column-head/);
-  assert.match(css, /overflow-x:hidden/);
-  assert.match(css, /width:37px;min-width:37px;max-width:37px/);
-  assert.match(css, /contain:layout/);
-});
-
-test("manual Aster close is confirmed, idempotent in the browser and refreshes exchange truth", () => {
+test("manual Aster close is confirmed, idempotent and refreshes exchange truth", () => {
   assert.match(component, /Weet je zeker dat je deze volledige positie market wilt sluiten\?/);
-  assert.match(component, /if \(busy\) return/);
+  assert.match(component, /if \(busy \|\| !position\?\.symbol/);
   assert.match(component, /crypto\.randomUUID\(\)/);
   assert.match(component, /expected_quantity/);
+  assert.match(component, /idempotency_key/);
   assert.match(component, /await onClosed\(\)/);
-  assert.match(component, />Annuleren</);
+  assert.match(component, />Annuleren<\/button>/);
 });
 
-
-test("scan actions use the exact approved columns and restrained action styling", () => {
-  assert.match(component, /<span>PAIR<\/span><span>ACTIE<\/span><span>NR<\/span><span>LEV<\/span><span>MARGIN<\/span><span>HUIDIGE PNL<\/span><span>TIJD<\/span>/);
-  assert.match(component, /Laatste scan \{clockTime\(completedAt\)\}/);
-  assert.match(component, /dcaNumber === null \? "—" : `#\$\{Math\.round\(dcaNumber\)\}`/);
-  assert.match(css, /\.scan-action\.sold\{color:var\(--profit/);
+test("scan actions and closed rows use real status labels in the shared Tradecentrum table", () => {
+  assert.match(component, /function scanActionLabel/);
+  assert.match(component, /TP_KINDS/);
+  assert.match(component, /DCA_KINDS/);
+  assert.match(component, /closed \? \(matching && TP_KINDS/);
+  assert.match(component, /\? "TP" : "Gesloten"/);
+  assert.match(component, /className=\{styles\.statusText\}>\{row\.status\}/);
 });
-
-
-test("closed trade rows show a real close status instead of a disabled button", () => {
-  assert.match(component, /recent-close-status/);
-  assert.match(component, /FULL_TP.*\? "TP" : "Gesloten"/);
-});
-
 
 test("Aster close confirmation is portalled to document.body so table containment cannot distort it", () => {
   assert.match(component, /import \{ createPortal \} from "react-dom"/);
   assert.match(component, /typeof document !== "undefined" && createPortal\(/);
   assert.match(component, /document\.body/);
-  assert.match(component, /aria-labelledby="aster-close-title"/);
+  assert.match(component, /role="dialog" aria-modal="true"/);
 });

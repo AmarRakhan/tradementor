@@ -26,6 +26,7 @@ import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplay
 import { AsterBotStatus } from "@/components/aster-bot-status";
 import { BotHealthCard } from "@/components/bot-health-card";
 import { JourneyView } from "@/components/journey-view";
+import { mostCriticalLiquidationPosition } from "@/lib/liquidation-risk.mjs";
 
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -407,9 +408,12 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
             <button className="status-chip refresh-chip" type="button" onClick={onRefresh} disabled={snapshot.loading}><i /> {snapshotStatus}</button>
           </div>
         </div>}
-        <div className={`risk-orbit risk-${view.riskTone}`} aria-label={view.riskLabel}>
-          <div className="orbit-lines" />
-          <div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div>
+        <div className={destination === "aster" ? "risk-orbits" : undefined}>
+          <div className={`risk-orbit risk-${view.riskTone}`} aria-label={view.riskLabel}>
+            <div className="orbit-lines" />
+            <div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div>
+          </div>
+          {destination === "aster" && <LiquidationRiskOrbit risk={view.liquidationRisk} />}
         </div>
       </section>}
 
@@ -652,7 +656,7 @@ function PremiumExchanges({ snapshots, onRefresh }: { snapshots: ExchangeSnapsho
 function PremiumUnavailable({ title }: { title: string }) { return <><PremiumPageHeading eyebrow="BINNENKORT BESCHIKBAAR" title={title} detail="Dit onderdeel zat nog niet als werkende functie in de huidige webapp." /><section className="premium-unavailable"><span>Binnenkort beschikbaar</span><h2>Geen nepknoppen of verzonnen gegevens</h2><p>De plaats in de navigatie is alvast zichtbaar. De functie wordt pas interactief wanneer de echte databron en veilige gebruikersflow beschikbaar zijn.</p></section></>; }
 
 type StrategyTpView = { netProfitUsd: number | null; takeProfitTargetUsd: number | null; takeProfitPercent: number | null; progressPercent: number | null; status: "TP bereikt" | "TP nog niet bereikt" | "Niet betrouwbaar te bepalen"; evaluatedAt: string | null; blockReason: string; paidFeesUsd: number | null; fundingUsd: number | null; estimatedCloseFeeUsd: number | null; ownershipProven: boolean; decision: string; phase: string; protection: { role: string | null; active: boolean }; trailing: { enabled: boolean; active: boolean; peakReturnPercent: number | null }; scheduler: { status: string; lastTickAt: unknown; ageSeconds: number | null; warning: string } };
-type PositionView = { symbol: string; side: string; size: number; entry: number; mark: number; pnl: number; leverage: number; dcaCount: number; lastOrderAt: number; openedAt: number; strategy: string; strategy2Tp: StrategyTpView | null };
+type PositionView = { symbol: string; side: string; size: number; entry: number; mark: number; liquidationPrice: number; pnl: number; leverage: number; dcaCount: number; lastOrderAt: number; openedAt: number; strategy: string; strategy2Tp: StrategyTpView | null };
 type ClosedTradeView = { symbol: string; side: string; size: number; entry: number; exit: number; pnl: number; openedAt: string; closedAt: string; strategy: string; dcaCount: number };
 
 const positionFilterOptions = [
@@ -885,7 +889,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
       const size = asNumber(row.szi);
       const symbol = String(row.coin ?? "—");
       const metadata=dealMeta.get(symbol.toUpperCase());
-      return { symbol, side: size >= 0 ? "long" : "short", size: Math.abs(asNumber(row.positionValue) || size * asNumber(row.entryPx)), entry: asNumber(row.entryPx), mark: asNumber(row.markPx), pnl: asNumber(row.unrealizedPnl), leverage: asNumber(asRecord(row.leverage).value), dcaCount: metadata?.dcaCount ?? 0, lastOrderAt:metadata?.lastOrderAt ?? asTimestamp(row.openedAt), openedAt: asTimestamp(row.openedAt), strategy: String(row.strategyName ?? row.strategyId ?? ""), strategy2Tp:null };
+      return { symbol, side: size >= 0 ? "long" : "short", size: Math.abs(asNumber(row.positionValue) || size * asNumber(row.entryPx)), entry: asNumber(row.entryPx), mark: asNumber(row.markPx), liquidationPrice: 0, pnl: asNumber(row.unrealizedPnl), leverage: asNumber(asRecord(row.leverage).value), dcaCount: metadata?.dcaCount ?? 0, lastOrderAt:metadata?.lastOrderAt ?? asTimestamp(row.openedAt), openedAt: asTimestamp(row.openedAt), strategy: String(row.strategyName ?? row.strategyId ?? ""), strategy2Tp:null };
     });
     openPnl = asNumber(data.unrealizedPnl);
     activeCount = asNumber(data.activePositionCount);
@@ -907,6 +911,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
       size: asNumber(row.notionalUsd),
       entry: asNumber(row.entryPrice),
       mark: asNumber(row.markPrice),
+      liquidationPrice: asNumber(row.liquidationPrice),
       pnl: asNumber(row.unrealizedPnl),
       leverage: asNumber(row.leverage),
       dcaCount: asNumber(row.dcaCount),
@@ -947,6 +952,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     riskTone: riskNumber === null ? "unknown" : riskNumber < 30 ? "safe" : riskNumber < 50 ? "caution" : riskNumber < 70 ? "high" : "critical",
     riskValue: riskNumber === null ? "—" : `${riskNumber.toFixed(2)}%`,
     riskDetail: riskNumber === null ? "Nog geen betrouwbare waarde" : exchange === "aster" ? "0% is ruim · 100% is liquidatiegrens" : "Rechtstreeks uit account- en positiedata",
+    liquidationRisk: exchange === "aster" && accountDataAvailable && snapshot.serverConfirmed && !snapshot.error && snapshot.updatedAt !== null && Date.now() - snapshot.updatedAt < 120_000 ? mostCriticalLiquidationPosition(positions) : null,
     maintenanceMargin: (exchange === "hyperliquid" || exchange === "aster") && accountDataAvailable ? formatUsd(asNumber(data.maintenanceMargin)) : "—",
     accountLeverage: exchange === "hyperliquid" && connected ? `${asNumber(data.unifiedAccountLeverage).toFixed(2)}×` : "—",
   };
@@ -958,6 +964,12 @@ function Brand({ compact = false }: { compact?: boolean }) {
 
 function NavButton({ item, active, onClick }: { item: { id: Destination; label: string; glyph: string }; active: boolean; onClick: () => void }) {
   return <button className={`nav-button ${active ? "active" : ""}`} data-destination={item.id} type="button" aria-pressed={active} onClick={onClick}><span>{item.glyph}</span><small>{item.label}</small></button>;
+}
+
+function LiquidationRiskOrbit({ risk }: { risk: ReturnType<typeof mostCriticalLiquidationPosition> }) {
+  if (!risk) return <div className="risk-orbit liquidation-risk risk-unknown" aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong className="unavailable">Niet beschikbaar</strong><small>Geen geldige Aster liquidationPrice</small></div></div>;
+  const position = risk.position as PositionView;
+  return <div className={`risk-orbit liquidation-risk risk-${risk.tone}`} aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong>{risk.distancePercent.toFixed(1)}%</strong><small>{position.symbol} · Liq. ${formatPrice(position.liquidationPrice)}</small></div></div>;
 }
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
