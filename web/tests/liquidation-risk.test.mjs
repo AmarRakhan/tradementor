@@ -11,6 +11,20 @@ test("SHORT liquidation distance uses live mark and exchange liquidationPrice", 
   assert.equal(liquidationDistancePercent({ side:"SHORT", markPrice:100, liquidationPrice:112 }), 12);
 });
 
+test("directionally impossible liquidation prices are rejected", () => {
+  assert.equal(liquidationDistancePercent({ side:"SHORT", markPrice:100, liquidationPrice:32.98 }), null);
+  assert.equal(liquidationDistancePercent({ side:"LONG", markPrice:100, liquidationPrice:112 }), null);
+});
+
+test("conflicting declared side and signed exchange amount fail closed", () => {
+  assert.equal(liquidationDistancePercent({ side:"LONG", positionAmt:-1, markPrice:100, liquidationPrice:70 }), null);
+  assert.equal(liquidationDistancePercent({ side:"SHORT", positionAmt:1, markPrice:100, liquidationPrice:112 }), null);
+});
+
+test("signed exchange amount can resolve a missing side", () => {
+  assert.equal(liquidationDistancePercent({ positionAmt:-2, markPrice:100, liquidationPrice:112 }), 12);
+});
+
 test("account liquidation meter selects the smallest valid distance", () => {
   const result=mostCriticalLiquidationPosition([
     {symbol:"ETHUSDT",side:"LONG",mark:100,liquidationPrice:70},
