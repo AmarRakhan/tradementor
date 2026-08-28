@@ -19,7 +19,9 @@ test("trade detail exposes transparent Airbag status and contribution",()=>{
   assert.match(trades,/Hedge bijdrage/);
   assert.match(trades,/Volgende actie:/);
   assert.match(trades,/airbagTimeline/);
-  assert.match(trades,/focusAirbagHedge !== true/);
+  assert.match(trades,/AIRBAG \/ HEDGE/);
+  assert.match(trades,/BOT BEHEERT/);
+  assert.match(trades,/livePositions = useMemo\(\(\) => \[\.\.\.allPositions\]/);
 });
 
 test("chart shows compact hedge markers without adding hedge price lines",()=>{

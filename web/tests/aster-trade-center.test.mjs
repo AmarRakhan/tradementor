@@ -18,7 +18,7 @@ test("Tradecentrum derives every view from the existing confirmed Aster snapshot
   assert.match(component, /recentTradeActivity/);
   assert.match(component, /snapshot\.data\?\.positions/);
   assert.match(component, /orderQueue\.lastScanActions/);
-  assert.match(component, /topProfitPositions\(displayPositions\)/);
+  assert.match(component, /topProfitPositions\(mainPositions\)/);
   assert.match(component, /TP_KINDS/);
   assert.match(component, /DCA_KINDS/);
   assert.doesNotMatch(component, /dummy|mockTrade|fakeTrade/i);
@@ -42,4 +42,13 @@ test("Tradecentrum is compact and mobile-safe", () => {
   assert.match(styles, /grid-template-columns:minmax\(112px,1\.35fr\)/);
   assert.match(styles, /\.long,.profit\{color:#58f0ae\}/);
   assert.match(styles, /\.short,.loss\{color:#ff617d\}/);
+});
+
+
+test("Live includes Airbag hedge as a clearly managed leg", () => {
+  assert.match(component, /livePositions = useMemo\(\(\) => \[\.\.\.allPositions\]/);
+  assert.match(component, /AIRBAG \/ HEDGE/);
+  assert.match(component, /HOOFDPOSITIE/);
+  assert.match(component, /BOT BEHEERT/);
+  assert.match(component, /focusAirbagHedge === true/);
 });

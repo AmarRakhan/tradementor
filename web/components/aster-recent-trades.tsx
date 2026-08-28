@@ -131,7 +131,9 @@ function ClosePositionControl({ position, onClosed }: { position: OpenPosition |
 }
 
 function rowFromPosition(position: OpenPosition, status = "Live"): TradeCenterRow {
-  const pnl = finite(position.unrealizedPnl); return { id: positionId(position), symbol: normalizedSymbol(position.symbol), side: String(position.side || "—").toUpperCase(), leverage: finite(position.leverage), margin: openPositionMargin(position), pnl, status, timestamp: position.openedAt, tone: toneFor(pnl), source: "position", position };
+  const pnl = finite(position.unrealizedPnl);
+  const roleStatus = position.focusAirbagHedge === true ? "AIRBAG / HEDGE" : position.focusAirbag?.enabled === true ? "HOOFDPOSITIE" : status;
+  return { id: positionId(position), symbol: normalizedSymbol(position.symbol), side: String(position.side || "—").toUpperCase(), leverage: finite(position.leverage), margin: openPositionMargin(position), pnl, status: roleStatus, timestamp: position.openedAt, tone: toneFor(pnl), source: "position", position };
 }
 function rowFromActivity(trade: Activity, closed: boolean, positions: OpenPosition[], scanActions: ScanAction[]): TradeCenterRow {
   const position = closed ? null : findOpenPosition(positions, trade); const matching = closed ? [...scanActions].reverse().find(action => sideKey(action) === sideKey(trade) && String(action.action || "").toUpperCase() === "CLOSE") || null : null;
@@ -144,7 +146,7 @@ function rowFromAction(action: ScanAction, positions: OpenPosition[], exits: Act
 }
 
 function TradeCenterTable({ rows, onOpenDetail, onClosed }: { rows: TradeCenterRow[]; onOpenDetail: (row: TradeCenterRow) => void; onClosed: () => void }) {
-  return <div className={styles.table} role="table" aria-label="Aster Tradecentrum"><div className={styles.head} role="row"><span>PAIR</span><span>SIDE</span><span>LEV</span><span>MARGIN</span><span>PNL</span><span>STATUS</span></div>{rows.length ? rows.map(row => <div className={styles.row} role="row" key={row.id}><button className={styles.pair} role="cell" type="button" onClick={() => onOpenDetail(row)}><CoinIcon symbol={row.symbol} /><span className={styles.pairCopy}><b>{baseAsset(row.symbol)}</b><small>{dateTime(row.timestamp)}</small></span></button><strong role="cell" className={`${styles.side} ${row.side === "LONG" ? styles.long : row.side === "SHORT" ? styles.short : styles.neutral}`}>{row.side}</strong><span role="cell">{row.leverage === null ? "—" : `${Math.round(row.leverage)}x`}</span><span role="cell">{money(row.margin)}</span><strong role="cell" className={styles[row.tone]}>{money(row.pnl, true)}</strong><span role="cell" className={styles.status}><span className={styles.statusText}>{row.status}</span>{row.source === "position" && row.position ? <ClosePositionControl position={row.position} onClosed={onClosed} /> : null}</span></div>) : <div className={styles.empty}>Geen bevestigde gegevens voor dit filter.</div>}</div>;
+  return <div className={styles.table} role="table" aria-label="Aster Tradecentrum"><div className={styles.head} role="row"><span>PAIR</span><span>SIDE</span><span>LEV</span><span>MARGIN</span><span>PNL</span><span>STATUS</span></div>{rows.length ? rows.map(row => <div className={styles.row} role="row" key={row.id}><button className={styles.pair} role="cell" type="button" onClick={() => onOpenDetail(row)}><CoinIcon symbol={row.symbol} /><span className={styles.pairCopy}><b>{baseAsset(row.symbol)}</b><small>{dateTime(row.timestamp)}</small></span></button><strong role="cell" className={`${styles.side} ${row.side === "LONG" ? styles.long : row.side === "SHORT" ? styles.short : styles.neutral}`}>{row.side}</strong><span role="cell">{row.leverage === null ? "—" : `${Math.round(row.leverage)}x`}</span><span role="cell">{money(row.margin)}</span><strong role="cell" className={styles[row.tone]}>{money(row.pnl, true)}</strong><span role="cell" className={styles.status}><span className={styles.statusText}>{row.status}</span>{row.source === "position" && row.position ? (row.position.focusAirbagHedge === true ? <span className={styles.managed}>BOT BEHEERT</span> : <ClosePositionControl position={row.position} onClosed={onClosed} />) : null}</span></div>) : <div className={styles.empty}>Geen bevestigde gegevens voor dit filter.</div>}</div>;
 }
 
 export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSnapshot; onRetry: () => void }) {
@@ -154,16 +156,19 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const entries = useMemo(() => sortedActivity(Array.isArray(activity.entries) ? activity.entries : []) as Activity[], [activity.entries]);
   const exits = useMemo(() => sortedActivity(Array.isArray(activity.exits) ? activity.exits : []) as Activity[], [activity.exits]);
   const allPositions = useMemo(() => (Array.isArray(snapshot.data?.positions) ? snapshot.data.positions : []) as OpenPosition[], [snapshot.data?.positions]);
-  const displayPositions = useMemo(() => allPositions.filter(position => position.focusAirbagHedge !== true), [allPositions]);
+  const mainPositions = useMemo(() => allPositions.filter(position => position.focusAirbagHedge !== true), [allPositions]);
   const strategy2 = snapshot.data?.strategy2 && typeof snapshot.data.strategy2 === "object" ? snapshot.data.strategy2 as Record<string, unknown> : {};
   const orderQueue = strategy2.orderQueue && typeof strategy2.orderQueue === "object" ? strategy2.orderQueue as Record<string, unknown> : {};
   const scanActions = useMemo(() => (Array.isArray(orderQueue.lastScanActions) ? orderQueue.lastScanActions : []) as ScanAction[], [orderQueue.lastScanActions]);
   const reversedActions = useMemo(() => [...scanActions].reverse(), [scanActions]);
   const tpActions = useMemo(() => reversedActions.filter(action => TP_KINDS.has(String(action.kind || "").toUpperCase())), [reversedActions]);
   const dcaActions = useMemo(() => reversedActions.filter(action => DCA_KINDS.has(String(action.kind || "").toUpperCase())), [reversedActions]);
-  const profitPositions = useMemo(() => topProfitPositions(displayPositions) as OpenPosition[], [displayPositions]);
-  const lossPositions = useMemo(() => [...displayPositions].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => (finite(a.unrealizedPnl) ?? 0) - (finite(b.unrealizedPnl) ?? 0)), [displayPositions]);
-  const livePositions = useMemo(() => [...displayPositions].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => exchangeTimestampMs(b.openedAt) - exchangeTimestampMs(a.openedAt)), [displayPositions]);
+  const profitPositions = useMemo(() => topProfitPositions(mainPositions) as OpenPosition[], [mainPositions]);
+  const lossPositions = useMemo(() => [...mainPositions].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => (finite(a.unrealizedPnl) ?? 0) - (finite(b.unrealizedPnl) ?? 0)), [mainPositions]);
+  const livePositions = useMemo(() => [...allPositions].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => {
+    const airbagOrder = Number(a.focusAirbagHedge === true) - Number(b.focusAirbagHedge === true);
+    return airbagOrder || exchangeTimestampMs(b.openedAt) - exchangeTimestampMs(a.openedAt);
+  }), [allPositions]);
   const datasets = useMemo<Record<FilterKey, TradeCenterRow[]>>(() => ({
     live: livePositions.map(position => rowFromPosition(position)), entered: entries.map(trade => rowFromActivity(trade, false, allPositions, scanActions)), closed: exits.map(trade => rowFromActivity(trade, true, allPositions, scanActions)),
     tp: tpActions.map(action => rowFromAction(action, allPositions, exits)), dca: dcaActions.map(action => rowFromAction(action, allPositions, exits)), profit: profitPositions.map(position => rowFromPosition(position, "Live")), loss: lossPositions.map(position => rowFromPosition(position, "Live")), actions: reversedActions.map(action => rowFromAction(action, allPositions, exits)),
