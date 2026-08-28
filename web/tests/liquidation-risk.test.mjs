@@ -25,6 +25,15 @@ test("signed exchange amount can resolve a missing side", () => {
   assert.equal(liquidationDistancePercent({ positionAmt:-2, markPrice:100, liquidationPrice:112 }), 12);
 });
 
+test("shared Aster hedge liquidation price only contributes the directionally valid leg", () => {
+  const result=mostCriticalLiquidationPosition([
+    {symbol:"SOLUSDT",side:"SHORT",mark:103.699,liquidationPrice:50.7354},
+    {symbol:"SOLUSDT",side:"LONG",mark:103.699,liquidationPrice:50.7354},
+  ]);
+  assert.equal(result.position.side,"LONG");
+  assert.ok(Math.abs(result.distancePercent - 51.074) < 0.01);
+});
+
 test("account liquidation meter selects the smallest valid distance", () => {
   const result=mostCriticalLiquidationPosition([
     {symbol:"ETHUSDT",side:"LONG",mark:100,liquidationPrice:70},
@@ -47,12 +56,13 @@ test("risk thresholds map to green yellow orange red and unknown", () => {
   assert.equal(liquidationRiskTone(Number.NaN),"unknown");
 });
 
-test("Aster hero renders separate maintenance and liquidation meters in a mobile two-column grid", async()=>{
+test("Aster hero renders separate maintenance and liquidation-distance meters in a mobile two-column grid", async()=>{
   const [page,css]=await Promise.all([
     readFile(new URL("../app/page.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/globals.css",import.meta.url),"utf8"),
   ]);
-  assert.match(page,/LIQUIDATIERISICO/);
+  assert.match(page,/LIQUIDATIEAFSTAND/);
+  assert.doesNotMatch(page,/LIQUIDATIERISICO/);
   assert.match(page,/destination === "aster" && <LiquidationRiskOrbit/);
   assert.match(page,/snapshot\.serverConfirmed.*snapshot\.updatedAt.*120_000/);
   assert.match(page,/risk-orbit risk-\$\{view\.riskTone\}/);
