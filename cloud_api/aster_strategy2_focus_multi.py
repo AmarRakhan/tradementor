@@ -214,6 +214,9 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                               order_budget:int|None=None,reserve_order:Callable[[Any,dict[str,Any]],None]|None=None,
                               open_orders:list[dict[str,Any]]|None=None)->dict[str,Any]:
     states=_state_map(raw_state);owned=_owned(raw_state);orders_sent=0;actions=[]
+    configured_count=len(settings.focus_slots)
+    desired_count=max(1,min(configured_count,max(1,int(_f(raw_state.get("focusDesiredSlotCount"),configured_count))))) if configured_count else 0
+    retired={str(x) for x in raw_state.get("focusRetiredSlotIds",[]) if str(x)} if isinstance(raw_state.get("focusRetiredSlotIds"),list) else set()
     remaining=max(0,int(order_budget)) if order_budget is not None else 15
     prices={str(x.get("symbol","")).upper():_f(x.get("price")) for x in client.ticker_prices() if isinstance(x,dict)}
     working_positions=list(positions)
@@ -423,6 +426,17 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             continue
         action="";notional=0.0;evidence=None
         if leg is None:
+            active_slot_count=sum(1 for x in owned if str(x.role).upper().startswith("FOCUS_SLOT:") and not str(x.role).upper().startswith("FOCUS_SLOT_HEDGE:") and x.quantity>0)
+            if slot_id in retired:
+                state.update({"status":"RETIRED","pendingAction":"TARGET_COUNT","quantity":0.0,"notional":0.0,"usedMargin":0.0,"recoveryStatus":"doelaantal bereikt; deze flat slot wordt niet heropend"});states[slot_id]=state;continue
+            if desired_count and active_slot_count>=desired_count:
+                if configured_count-len(retired)>desired_count:
+                    retired.add(slot_id);ref.set({"focusRetiredSlotIds":sorted(retired)},merge=True)
+                    state.update({"status":"RETIRED","pendingAction":"TARGET_COUNT","quantity":0.0,"notional":0.0,"usedMargin":0.0,"recoveryStatus":"doelaantal bereikt; eerste flat slot veilig uitgefaseerd"});states[slot_id]=state
+                    _audit(ref,"FOCUS_SLOT_RETIRED",slot_id=slot_id,symbol=symbol,side=side,reason="doelaantal Focus-posities bereikt; geen heropening",desiredSlotCount=desired_count,activeSlotCount=active_slot_count)
+                else:
+                    state.update({"status":"WAITING","pendingAction":"TARGET_COUNT"});states[slot_id]=state
+                continue
             if brake_block: state.update({"status":"BRAKE","pendingAction":""});states[slot_id]=state;continue
             action="OPEN";notional=start_notional
         else:
@@ -515,7 +529,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
         states[slot_id]=state;orders_sent+=1;remaining-=1;actions.append({"slotId":slot_id,"action":action,"symbol":symbol,"side":side,"ordersSent":1})
     ordered=[states.get(str(slot.get("slotId",f"slot-{i}"))) for i,slot in enumerate(settings.focus_slots,1)]
     ordered=[x for x in ordered if isinstance(x,dict)]
-    ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveSlots":ordered,"focusLiveAt":time.time(),
+    ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveSlots":ordered,"focusRetiredSlotIds":sorted(retired),"focusLiveAt":time.time(),
         "focusLiveOrdersSent":orders_sent,"phase":"FOCUS_LIVE","lastReason":"MULTI_FOCUS"},merge=True)
     return {"status":"executed" if orders_sent else "waiting","action":"FOCUS_MULTI" if orders_sent else "FOCUS_HOLD",
         "ordersSent":orders_sent,"actions":actions,"slots":ordered}

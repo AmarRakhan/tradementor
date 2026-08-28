@@ -1242,6 +1242,11 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     focus_state=focus_state if isinstance(focus_state,dict) else {}
     focus_report=(raw.get("focusLiveReport") if focus_live_mode else raw.get("focusShadowReport"))
     focus_report=focus_report if isinstance(focus_report,dict) else {}
+    active_focus_slot_ids={str(row.get("role","")).split(":",1)[1] for row in owned
+        if str(row.get("role","")).upper().startswith("FOCUS_SLOT:") and not str(row.get("role","")).upper().startswith("FOCUS_SLOT_HEDGE:")}
+    raw_focus_slots=raw.get("focusLiveSlots",[]) if isinstance(raw.get("focusLiveSlots"),list) else []
+    public_focus_slots=[dict(row) for row in raw_focus_slots if isinstance(row,dict) and str(row.get("slotId","")).strip() in active_focus_slot_ids]
+    desired_focus_slots=max(0,int(safe_float(raw.get("focusDesiredSlotCount",settings.get("focusDesiredSlotCount",len(settings.get("focusSlots",[])) if isinstance(settings.get("focusSlots"),list) else 0)))))
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
         "displayPhase":"UIT" if not enabled else str(raw.get("phase","DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": enabled,
@@ -1260,7 +1265,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "partialSymbols":sum(str(x.get("status",""))=="PARTIAL_PROTECTION" for x in mg_pairs if isinstance(x,dict)),
             "lockedSymbols":sum(str(x.get("status",""))=="LOCKED" for x in mg_pairs if isinstance(x,dict)),
             "recoverySymbols":sum(str(x.get("status",""))=="RECOVERY" for x in mg_pairs if isinstance(x,dict))},
-        "focus":{**focus_state,"state":focus_state,"slots":raw.get("focusLiveSlots",[]) if focus_live_mode and isinstance(raw.get("focusLiveSlots"),list) else [],"report":focus_report,
+        "focus":{**focus_state,"state":focus_state,"slots":public_focus_slots if focus_live_mode else [],"desiredSlotCount":desired_focus_slots,"report":focus_report,
             "metrics":raw.get("focusShadowMetrics",{}) if isinstance(raw.get("focusShadowMetrics"),dict) else {},
             "ordersSent":int(safe_float(raw.get("focusLiveOrdersSent"))) if focus_live_mode else 0,
             "live":bool(focus_live_mode and enabled),"shadowEnabled":bool(settings.get("focusShadowEnabled",False)),
@@ -3972,6 +3977,45 @@ def money_grabber_shadow(user:dict[str,Any]=Depends(authenticated_user))->dict[s
     return money_grabber_shadow_report(plan_money_grabber_scan(settings,snapshot))
 
 
+def _normalize_focus_slot_target(existing:dict[str,Any],candidate:Strategy2Config)->tuple[Strategy2Config,int]:
+    """Preserve every live Multi-Focus slot while allowing the desired count to shrink.
+
+    A reduction is a drain target, not permission to orphan an open position.
+    Active slots remain configured until exchange truth confirms one flat; the
+    runtime then retires that flat slot instead of reopening it.
+    """
+    requested=[dict(x) for x in candidate.focus_slots]
+    if candidate.trading_mode!="focus" or not requested:
+        return candidate,len(requested)
+    desired=max(1,min(8,len(requested)))
+    old_settings=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
+    old_slots=[dict(x) for x in old_settings.get("focusSlots",[]) if isinstance(x,dict)] if isinstance(old_settings.get("focusSlots"),list) else []
+    def sid(row:dict[str,Any],index:int)->str:
+        return str(row.get("slotId",f"slot-{index}")).strip() or f"slot-{index}"
+    requested_by={sid(row,i):row for i,row in enumerate(requested,1)}
+    old_by={sid(row,i):row for i,row in enumerate(old_slots,1)}
+    active:set[str]=set()
+    for raw in existing.get("ownedLegs",[]) if isinstance(existing.get("ownedLegs"),list) else []:
+        role=str(raw.get("role","")).strip() if isinstance(raw,dict) else ""
+        upper=role.upper()
+        if upper.startswith("FOCUS_SLOT:") and not upper.startswith("FOCUS_SLOT_HEDGE:") and safe_float(raw.get("quantity"))>0:
+            active.add(role.split(":",1)[1])
+    ordered_active=[sid(row,i) for i,row in enumerate(old_slots,1) if sid(row,i) in active]
+    ordered_active.extend(sorted(active-set(ordered_active)))
+    normalized:list[dict[str,Any]]=[];seen:set[str]=set()
+    for slot_id in ordered_active:
+        row=requested_by.get(slot_id) or old_by.get(slot_id)
+        if row is None: raise ValueError(f"Actieve Focus-slot {slot_id} mist configuratie; veilig afbouwen is geblokkeerd")
+        normalized.append(dict(row));seen.add(slot_id)
+    if len(active)<desired:
+        for i,row in enumerate(requested,1):
+            slot_id=sid(row,i)
+            if slot_id in seen: continue
+            normalized.append(dict(row));seen.add(slot_id)
+            if len(normalized)>=desired: break
+    return replace(candidate,focus_slots=tuple(normalized)),desired
+
+
 @app.put("/v1/me/aster/strategy2/settings")
 def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
@@ -3980,9 +4024,12 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     try: candidate = Strategy2Config.from_mapping(incoming)
     except ValueError as exc: raise HTTPException(422, str(exc)) from exc
     if candidate.trading_mode!="focus":candidate=replace(candidate,focus_live_enabled=False)
+    try: candidate,focus_desired_count=_normalize_focus_slot_target(existing,candidate)
+    except ValueError as exc: raise HTTPException(409,str(exc)) from exc
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
     saved=Strategy2Config.from_mapping({**candidate.public_dict(),"version":version});now=datetime.now(timezone.utc)
-    update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now}
+    saved_public={**saved.public_dict(),"focusDesiredSlotCount":focus_desired_count}
+    update={"settings":saved_public,"configVersion":version,"updatedAt":now,"focusDesiredSlotCount":focus_desired_count,"focusRetiredSlotIds":[]}
     # A live settings change applies to the next decision. It must never stop
     # the engine, invalidate a completed canary, or recreate existing exposure.
     if not existing:
@@ -3991,7 +4038,7 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     elif not bool(existing.get("enabled")) and str(existing.get("phase", "DRAFT")).upper() == "DRAFT":
         update.update({"phase":"CONFIGURED","lastReason":"Configuratie opgeslagen; strategie is nog niet gestart"})
     ref.set(update,merge=True)
-    ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved.public_dict(),"source":"user","timestamp":now})
+    ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved_public,"source":"user","timestamp":now})
     return {"saved":True,**aster_strategy2_public(uid)}
 
 
@@ -4118,15 +4165,19 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
     if not request.confirm: raise HTTPException(422,"Persoonlijke bevestiging ontbreekt")
     try: settings=Strategy2Config.from_mapping(request.settings)
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
-    settings=replace(settings,focus_live_enabled=bool(settings.trading_mode=="focus" and settings.mode=="live"))
     uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
+    try: settings,focus_desired_count=_normalize_focus_slot_target(existing,settings)
+    except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+    settings=replace(settings,focus_live_enabled=bool(settings.trading_mode=="focus" and settings.mode=="live"))
     if settings.mode=="live":
         if not bool(existing.get("liveReady")) or not bool(existing.get("canaryValidated")):
             raise HTTPException(423,"Strategy 2 is nog niet LIVE READY; voer eerst de volledige readinesscontrole en canary uit")
         if os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true":
             raise HTTPException(423,"Strategy 2 productie-uitvoering staat centraal uit")
     now=datetime.now(timezone.utc)
-    ref.set({"settings":settings.public_dict(),"phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
+    start_settings={**settings.public_dict(),"focusDesiredSlotCount":focus_desired_count}
+    ref.set({"settings":start_settings,"focusDesiredSlotCount":focus_desired_count,"focusRetiredSlotIds":[],
+        "phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
         "enabled":True,"monitor":True,"initialBuildComplete":False,"startedAt":now,"updatedAt":now},merge=True)
     first=_run_aster_strategy2_tick(uid,dry_run=settings.mode!="live")
     public=aster_strategy2_public(uid)

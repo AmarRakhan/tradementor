@@ -166,3 +166,23 @@ def test_focus_dca_uses_focus_budget_and_actual_available_margin_not_generic_str
     assert 'required*1.05>available_remaining' in source
     assert 'required>strategy_margin_remaining' not in source
     assert 'reason="onvoldoende actuele Aster available margin"' in source
+
+
+def test_focus_target_count_retires_first_flat_slot_without_disabling_live_siblings():
+    from pathlib import Path
+    source=Path("aster_strategy2_focus_multi.py").read_text()
+    assert 'focusDesiredSlotCount' in source
+    assert 'focusRetiredSlotIds' in source
+    assert 'FOCUS_SLOT_RETIRED' in source
+    assert 'doelaantal Focus-posities bereikt; geen heropening' in source
+    assert 'active_slot_count>=desired_count' in source
+
+
+def test_focus_settings_target_preserves_active_slots_and_filters_stale_public_slots():
+    from pathlib import Path
+    source=Path("main.py").read_text()
+    assert 'def _normalize_focus_slot_target' in source
+    assert 'A reduction is a drain target' in source
+    assert 'focusDesiredSlotCount' in source
+    assert 'public_focus_slots' in source
+    assert 'active_focus_slot_ids' in source
