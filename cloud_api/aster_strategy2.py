@@ -89,6 +89,15 @@ class Strategy2Config:
     focus_portfolio_brake_mode: Literal["off", "usd", "pct"] = "off"
     focus_portfolio_brake_value: float = 0.0
     focus_max_pairs_per_cycle: int = 0
+    # Optional adaptive opposite-side hedge. OFF is intentionally byte-compatible
+    # with the existing Focus runtime for every current account.
+    focus_airbag_enabled: bool = False
+    focus_airbag_start_ratio: float = .20
+    focus_airbag_max_ratio: float = .60
+    focus_airbag_min_ratio: float = 0.0
+    focus_airbag_drawdown_1: float = .015
+    focus_airbag_drawdown_2: float = .03
+    focus_airbag_drawdown_3: float = .05
     # Explicit manual Multi-Focus slots. Empty keeps the legacy single-Focus engine byte-for-byte compatible.
     focus_slots: tuple[dict[str, Any], ...] = ()
     focus_take_profit_mode: Literal["percent", "usdt"] = "percent"
@@ -176,6 +185,13 @@ class Strategy2Config:
             focus_portfolio_brake_mode=(str(raw.get("focusPortfolioBrakeMode", "off")).lower() if str(raw.get("focusPortfolioBrakeMode", "off")).lower() in {"off","usd","pct"} else "off"),
             focus_portfolio_brake_value=f("focusPortfolioBrakeValue", 0),
             focus_max_pairs_per_cycle=i("focusMaxPairsPerCycle", 0),
+            focus_airbag_enabled=bool(raw.get("focusAirbagEnabled", False)),
+            focus_airbag_start_ratio=f("focusAirbagStartRatio", .20),
+            focus_airbag_max_ratio=f("focusAirbagMaxRatio", .60),
+            focus_airbag_min_ratio=f("focusAirbagMinRatio", 0.0),
+            focus_airbag_drawdown_1=f("focusAirbagDrawdown1", .015),
+            focus_airbag_drawdown_2=f("focusAirbagDrawdown2", .03),
+            focus_airbag_drawdown_3=f("focusAirbagDrawdown3", .05),
             focus_slots=tuple(dict(x) for x in raw.get("focusSlots", ()) if isinstance(x, dict)) if isinstance(raw.get("focusSlots", ()), (list, tuple)) else (),
             focus_take_profit_mode="usdt" if str(raw.get("focusTakeProfitMode", "percent")).lower()=="usdt" else "percent",
             focus_take_profit_usdt=f("focusTakeProfitUsdt", 0),
@@ -241,6 +257,8 @@ class Strategy2Config:
         if self.focus_portfolio_brake_value < 0: raise ValueError("Focus Portfolio Handrem moet nul of positief zijn")
         if not 0 <= self.focus_max_pairs_per_cycle <= 1000: raise ValueError("Max Focus-pairs per cyclus moet tussen 0 en 1000 liggen")
         if self.focus_portfolio_brake_mode != "off" and self.focus_max_pairs_per_cycle < 1: raise ValueError("Portfolio Handrem vereist Max Focus-pairs per cyclus van minimaal 1")
+        if not 0 <= self.focus_airbag_min_ratio <= self.focus_airbag_start_ratio <= self.focus_airbag_max_ratio <= 1: raise ValueError("Focus Airbag hedgepercentages moeten oplopen tussen 0 en 100%")
+        if not 0 < self.focus_airbag_drawdown_1 < self.focus_airbag_drawdown_2 < self.focus_airbag_drawdown_3 < 1: raise ValueError("Focus Airbag drawdownniveaus moeten positief en oplopend zijn")
         if len(self.focus_slots) > 8: raise ValueError("Multi-Focus ondersteunt maximaal 8 actieve slots")
         seen_symbols:set[str]=set(); seen_ids:set[str]=set()
         for index, slot in enumerate(self.focus_slots, 1):
@@ -311,6 +329,8 @@ class Strategy2Config:
             "focusDcaMode":self.focus_dca_mode,"focusProfile":self.focus_profile,"focusDcaAmountMode":self.focus_dca_amount_mode,"focusDcaIncrement":self.focus_dca_increment,"focusDcaCustomLevels":list(self.focus_dca_custom_levels),"focusDcaDistance":self.focus_dca_distance,"focusDcaNotional":self.focus_dca_notional,
             "focusMaxDca":self.focus_max_dca,"focusDcaUnlimited":self.focus_dca_unlimited,"focusDcaMultiplier":self.focus_dca_multiplier,"focusMaxBudgetUsd":self.focus_max_budget_usd,
             "focusPortfolioBrakeMode":self.focus_portfolio_brake_mode,"focusPortfolioBrakeValue":self.focus_portfolio_brake_value,"focusMaxPairsPerCycle":self.focus_max_pairs_per_cycle,
+            "focusAirbagEnabled":self.focus_airbag_enabled,"focusAirbagStartRatio":self.focus_airbag_start_ratio,"focusAirbagMaxRatio":self.focus_airbag_max_ratio,"focusAirbagMinRatio":self.focus_airbag_min_ratio,
+            "focusAirbagDrawdown1":self.focus_airbag_drawdown_1,"focusAirbagDrawdown2":self.focus_airbag_drawdown_2,"focusAirbagDrawdown3":self.focus_airbag_drawdown_3,
             "focusSlots":[dict(x) for x in self.focus_slots],"focusTakeProfitMode":self.focus_take_profit_mode,"focusTakeProfitUsdt":self.focus_take_profit_usdt,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
             "focusMinimumProfitPct":self.focus_minimum_profit_pct,"focusPartialTpEnabled":self.focus_partial_tp_enabled,

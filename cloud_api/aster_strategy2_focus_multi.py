@@ -20,6 +20,7 @@ from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execu
 from aster_gateway import AsterAutomationConfig, AsterOrderIntent, ContractRules, LeverageBracket, PositionSide, maximum_allowed_leverage
 from aster_strategy2 import Strategy2Config
 from aster_strategy2_focus import dca_drop_sequence, dca_notional_sequence
+from aster_strategy2_focus_airbag import bollinger_1m, plan_focus_airbag
 from aster_strategy2_runtime import active_position_map, owned_from_mapping, owned_to_mapping
 from aster_strategy2_state import OwnedLeg
 
@@ -86,6 +87,34 @@ def _slot_hedge_owned(owned:list[OwnedLeg],slot_id:str)->OwnedLeg|None:
 
 def _opposite(side:str)->str:
     return "SHORT" if side=="LONG" else "LONG"
+
+
+def _airbag_role(slot_id:str)->str:
+    return f"FOCUS_SLOT_AIRBAG:{slot_id}"
+
+
+def _slot_airbag_owned(owned:list[OwnedLeg],slot_id:str)->OwnedLeg|None:
+    role=_airbag_role(slot_id)
+    matches=[x for x in owned if str(x.role).upper()==role.upper()]
+    if len(matches)>1: raise RuntimeError(f"{slot_id}: dubbele Portfolio Airbag ownership")
+    return matches[0] if matches else None
+
+
+def _airbag_event(state:dict[str,Any],timestamp_ms:int,kind:str,ratio:float,reason:str,price:float)->None:
+    events=[dict(x) for x in state.get("airbagEvents",[]) if isinstance(x,dict)] if isinstance(state.get("airbagEvents"),list) else []
+    events.append({"at":timestamp_ms,"kind":kind,"ratio":ratio,"reason":reason,"price":price})
+    state["airbagEvents"]=events[-10:]
+
+
+def _close_airbag_quantity(client:Any,*,symbol:str,side:str,quantity:float,mark:float,effective:int,prefix:str,before_submit:Callable[[Any],None]|None=None)->tuple[float,float,str,str,float,float]:
+    rules=ContractRules.from_exchange_info(next(x for x in client.public_exchange_info().get("symbols",()) if str(x.get("symbol","")).upper()==symbol))
+    order_qty=rules.market_quantity(Decimal(str(quantity)),Decimal(str(mark)))
+    intent=AsterOrderIntent(prefix,symbol,PositionSide(side),order_qty,"CLOSE")
+    if before_submit:before_submit(intent)
+    raw_result,_=client.submit_order_once(intent,config=AsterAutomationConfig(enabled=True,mode="live"),confirm=True,hedge_mode_confirmed=True,risk_approved=True)
+    result={"result":raw_result};q,p,intent_id,fill_id=_confirmed_fill(result)
+    fresh=client.position_risk(symbol);fresh_row=_position(fresh,symbol,side);new_qty=abs(_f((fresh_row or {}).get("positionAmt")));new_entry=_f((fresh_row or {}).get("entryPrice"),p)
+    return q,p,intent_id,fill_id,new_qty,new_entry
 
 
 def _position(positions: list[dict[str,Any]], symbol: str, side: str) -> dict[str,Any] | None:
@@ -223,6 +252,11 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
     equity=_f(account.get("totalMarginBalance"),_f(account.get("totalWalletBalance")))
     available_remaining=max(0.0,_f(account.get("availableBalance")))
     maint_ratio=_f(account.get("totalMaintMargin"))/equity if equity>0 else 1.0
+    airbag_prior_high=_f(raw_state.get("focusAirbagHighWaterEquity"),equity)
+    airbag_new_high=bool(airbag_prior_high>0 and equity>airbag_prior_high*1.0005)
+    airbag_high=max(airbag_prior_high,equity) if equity>0 else 0.0
+    airbag_portfolio_drawdown=max(0.0,(airbag_high-equity)/airbag_high) if airbag_high>0 else 0.0
+    if settings.focus_airbag_enabled and airbag_high>0:ref.set({"focusAirbagHighWaterEquity":airbag_high},merge=True)
     strategy_margin_used=0.0
     for row in working_positions:
         qty=abs(_f(row.get("positionAmt"))); mark=_f(row.get("markPrice")) or _f(row.get("entryPrice")); lev=max(1.0,_f(row.get("leverage"),settings.leverage))
@@ -254,6 +288,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             need=max(0.0,qty-opp_qty)
             _audit(ref,"FOCUS_BRAKE_TRIGGERED",slot_id=sid,symbol=symbol,side=side,reason="portfolio high-water drawdown",drawdownUsd=drop,drawdownPct=pct)
             if need<=max(qty,1e-12)*.005:
+                owned=[x for x in owned if str(x.role).upper()!=_airbag_role(sid).upper()]
                 hedge_leg=OwnedLeg(settings.strategy_id,"strategy2",symbol,opp,leg.cycle_id,settings.version,opp_qty,_f((opp_row or {}).get("entryPrice")),0,_hedge_role(sid),(),(),(),timestamp_ms,last_order_at_ms=timestamp_ms)
                 owned.append(hedge_leg);st=states.get(sid) or _empty_state(sid,symbol,side,str(slot.get("leverageMode","minimum")),int(_f(slot.get("leverage"),settings.leverage)),effective,maximum);st.update({"status":"PARKED","parkedAt":timestamp_ms,"hedgeSide":opp,"hedgeQuantity":opp_qty});states[sid]=st
                 ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveSlots":list(states.values()),"multiFocusHighWaterEquity":equity,"lastReason":"FOCUS_PARKED"},merge=True)
@@ -273,6 +308,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             if abs(active_qty-hedged_qty)>max(active_qty,hedged_qty,1e-12)*.005:
                 _audit(ref,"FOCUS_HEDGE_CONFIRMED",slot_id=sid,symbol=symbol,side=opp,reason="partial hedge; correction required",activeQuantity=active_qty,hedgeQuantity=hedged_qty)
                 return {"status":"reconciling","action":"FOCUS_HEDGE_CORRECTION","symbol":symbol,"ordersSent":1}
+            owned=[x for x in owned if str(x.role).upper()!=_airbag_role(sid).upper()]
             hedge_leg=OwnedLeg(settings.strategy_id,"strategy2",symbol,opp,leg.cycle_id,settings.version,hedged_qty,hp,0,_hedge_role(sid),(intent_id,) if intent_id else (), (fill_id,) if fill_id else (),(),timestamp_ms,last_order_at_ms=timestamp_ms)
             owned.append(hedge_leg);st=states.get(sid) or _empty_state(sid,symbol,side,str(slot.get("leverageMode","minimum")),int(_f(slot.get("leverage"),settings.leverage)),effective,maximum);st.update({"status":"PARKED","parkedAt":timestamp_ms,"hedgeSide":opp,"hedgeQuantity":hedged_qty});states[sid]=st
             ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveSlots":list(states.values()),"multiFocusHighWaterEquity":equity,"focusLiveOrdersSent":1,"lastReason":"FOCUS_PARKED"},merge=True)
@@ -417,6 +453,35 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                 else:
                     state.update({"status":"RECONCILING","recoveryStatus":"exchange exposure zonder bewezen Multi-Focus ownership"})
                     states[slot_id]=state;actions.append({"slotId":slot_id,"action":"RECONCILING"});continue
+        # If the main position was manually/externally closed, never leave an
+        # Airbag as a naked opposite-direction trade. Flatten only proven Airbag
+        # ownership before this configured slot may restart its main cycle.
+        orphan_airbag=_slot_airbag_owned(owned,slot_id)
+        if leg is None and orphan_airbag is not None:
+            opp=orphan_airbag.side;opp_row=_position(working_positions,symbol,opp);opp_qty=abs(_f((opp_row or {}).get("positionAmt")));opp_mark=_f((opp_row or {}).get("markPrice")) or prices.get(symbol,0.0)
+            if opp_qty<=0:
+                owned=[x for x in owned if str(x.role).upper()!=_airbag_role(slot_id).upper()]
+            elif any(isinstance(x,dict) and str(x.get("symbol","")).upper()==symbol for x in (open_orders or [])):
+                state.update({"status":"RECONCILING","pendingAction":"OPEN_ORDER_PENDING","recoveryStatus":"hoofdpositie flat; Airbag wacht op open-order reconciliation"});states[slot_id]=state;continue
+            elif dry_run or settings.mode!="live":
+                state.update({"status":"RECONCILING","pendingAction":"AIRBAG_CLEANUP"});states[slot_id]=state
+                return {"status":"simulated","action":"FOCUS_AIRBAG_ORPHAN_CLEANUP","slotId":slot_id,"symbol":symbol,"ordersSent":0}
+            elif remaining<=0:
+                state.update({"status":"RECONCILING","pendingAction":"ORDER_BUDGET"});states[slot_id]=state;continue
+            elif opp_mark>0:
+                prefix=f"s2ab-x-{hashlib.sha256(f'{uid}|{slot_id}|{orphan_airbag.cycle_id}|ORPHAN'.encode()).hexdigest()[:11]}"
+                def reserve_orphan(intent:Any)->None:
+                    if reserve_order:reserve_order(intent,{"kind":"FOCUS_AIRBAG_REDUCE","slotId":slot_id,"cycleId":orphan_airbag.cycle_id,"leverage":effective,"marginUsd":0.0,"riskReducing":True})
+                q,p,intent_id,fill_id,new_qty,new_entry=_close_airbag_quantity(client,symbol=symbol,side=opp,quantity=opp_qty,mark=opp_mark,effective=effective,prefix=prefix,before_submit=reserve_orphan)
+                if new_qty<=1e-12:owned=[x for x in owned if str(x.role).upper()!=_airbag_role(slot_id).upper()]
+                else:
+                    updated=replace(orphan_airbag,quantity=new_qty,weighted_entry=new_entry,intent_ids=tuple(dict.fromkeys((*orphan_airbag.intent_ids,*((intent_id,) if intent_id else ())))),fill_ids=tuple(dict.fromkeys((*orphan_airbag.fill_ids,*((fill_id,) if fill_id else ())))),last_order_at_ms=timestamp_ms)
+                    owned=[updated if str(x.role).upper()==_airbag_role(slot_id).upper() else x for x in owned]
+                _airbag_event(state,timestamp_ms,"HEDGE -",0.0 if new_qty<=1e-12 else 1.0,"Hoofdpositie is exchange-confirmed flat; Airbag veilig verwijderd",opp_mark)
+                state.update({"status":"RESTART_READY","pendingAction":"","airbag":{"enabled":settings.focus_airbag_enabled,"status":"WACHT","mainSide":side,"hedgeSide":opp,"hedgeNotional":new_qty*opp_mark,"hedgeRatio":0.0,"hedgePnl":0.0,"mainPnl":0.0,"combinedPnl":0.0,"reason":"Hoofdpositie flat; Airbag cleanup bevestigd","nextAction":"Hoofdslot mag na cleanup opnieuw starten","lastUpdatedAt":timestamp_ms,"events":state.get("airbagEvents",[])}});states[slot_id]=state
+                ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveSlots":list(states.values()),"focusLiveOrdersSent":1,"lastReason":"FOCUS_AIRBAG_ORPHAN_CLEANUP"},merge=True)
+                _audit(ref,"FOCUS_AIRBAG_CONFIRMED",slot_id=slot_id,symbol=symbol,side=opp,reason="hoofdpositie flat; naked hedge voorkomen",hedgeRatio=0.0,action="CLOSE")
+                return {"status":"executed","action":"FOCUS_AIRBAG_ORPHAN_CLEANUP","slotId":slot_id,"symbol":symbol,"ordersSent":1}
         mark=_f((row or {}).get("markPrice")) or prices.get(symbol,0.0)
         if mark<=0:
             state.update({"status":"WAITING","recoveryStatus":"geen betrouwbare actuele prijs"});states[slot_id]=state;continue
@@ -424,6 +489,99 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             state.update({"status":"WAITING","pendingAction":"OPEN_ORDER_PENDING"});states[slot_id]=state
             _audit(ref,"FOCUS_SLOT_OPEN_ORDER_PENDING",slot_id=slot_id,symbol=symbol,side=side,reason="open Aster order")
             continue
+
+        # TP/close keeps higher priority than hedge adjustment.
+        airbag_tp_due=False
+        if leg is not None:
+            _entry=leg.weighted_entry;_pnl=((mark/_entry)-1) if side=="LONG" and _entry>0 else ((_entry/mark)-1) if side=="SHORT" and mark>0 else 0.0
+            _tp_mode=str(slot.get("tpMode",settings.focus_take_profit_mode)).lower();_tp_usdt=max(0.0,_f(slot.get("tpTargetUsdt"),settings.focus_take_profit_usdt))
+            if _tp_mode=="percent":airbag_tp_due=_pnl>=settings.focus_minimum_profit_pct
+            elif _tp_mode=="usdt":
+                try:airbag_tp_due=_close_evidence(client,uid=uid,leg=leg,mark=mark,reason="airbag TP-priority check",target_usdt=_tp_usdt).expected_net>=max(.01,_tp_usdt)
+                except Exception:airbag_tp_due=False
+        # Optional Portfolio Airbag. With the switch OFF this block has no effect
+        # unless it must remove a hedge previously created by this same feature.
+        airbag_leg=_slot_airbag_owned(owned,slot_id);handbrake_hedge=_slot_hedge_owned(owned,slot_id)
+        if airbag_tp_due and leg is not None and handbrake_hedge is None and airbag_leg is not None:
+            opp=_opposite(side);opp_row=_position(working_positions,symbol,opp);opp_qty=abs(_f((opp_row or {}).get("positionAmt")))
+            if opp_qty>0:
+                if dry_run or settings.mode!="live":return {"status":"simulated","action":"FOCUS_AIRBAG_EXIT_FOR_TP","slotId":slot_id,"symbol":symbol,"ordersSent":0}
+                if remaining<=0:return {"status":"budget-exhausted","action":"FOCUS_AIRBAG_EXIT_FOR_TP","slotId":slot_id,"symbol":symbol,"ordersSent":0}
+                prefix=f"s2ab-tp-{hashlib.sha256(f'{uid}|{slot_id}|{leg.cycle_id}|TP'.encode()).hexdigest()[:10]}"
+                def reserve_tp_airbag(intent:Any)->None:
+                    if reserve_order:reserve_order(intent,{"kind":"FOCUS_AIRBAG_REDUCE","slotId":slot_id,"cycleId":leg.cycle_id,"leverage":effective,"marginUsd":0.0,"riskReducing":True})
+                q,p,intent_id,fill_id,new_qty,new_entry=_close_airbag_quantity(client,symbol=symbol,side=opp,quantity=opp_qty,mark=mark,effective=effective,prefix=prefix,before_submit=reserve_tp_airbag)
+                if new_qty<=1e-12:owned=[x for x in owned if str(x.role).upper()!=_airbag_role(slot_id).upper()]
+                else:
+                    updated=replace(airbag_leg,quantity=new_qty,weighted_entry=new_entry,intent_ids=tuple(dict.fromkeys((*airbag_leg.intent_ids,*((intent_id,) if intent_id else ())))),fill_ids=tuple(dict.fromkeys((*airbag_leg.fill_ids,*((fill_id,) if fill_id else ())))),last_order_at_ms=timestamp_ms);owned=[updated if str(x.role).upper()==_airbag_role(slot_id).upper() else x for x in owned]
+                _airbag_event(state,timestamp_ms,"HEDGE -",new_qty/max(leg.quantity,1e-12),"TP heeft prioriteit; Airbag wordt eerst veilig verwijderd",mark)
+                state["airbag"]={"enabled":settings.focus_airbag_enabled,"status":"AAN HET AFBOUWEN","mainSide":side,"mainNotional":leg.quantity*mark,"hedgeSide":opp,"hedgeNotional":new_qty*mark,"hedgeRatio":new_qty/max(leg.quantity,1e-12),"targetRatio":0.0,"reason":"TP bereikt; Airbag cleanup vóór hoofdsluiting","nextAction":"Hoofdpositie TP sluiten in volgende scan","lastUpdatedAt":timestamp_ms,"events":state.get("airbagEvents",[])};states[slot_id]=state
+                ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveSlots":list(states.values()),"focusLiveOrdersSent":1,"lastReason":"FOCUS_AIRBAG_EXIT_FOR_TP"},merge=True)
+                return {"status":"executed","action":"FOCUS_AIRBAG_EXIT_FOR_TP","slotId":slot_id,"symbol":symbol,"ordersSent":1}
+        if not airbag_tp_due and leg is not None and handbrake_hedge is None and (settings.focus_airbag_enabled or airbag_leg is not None):
+            opp=_opposite(side);opp_row=_position(working_positions,symbol,opp);opp_qty=abs(_f((opp_row or {}).get("positionAmt")))
+            # Never claim or mutate opposite exposure we cannot prove belongs to this Airbag.
+            if opp_qty>0 and airbag_leg is None:
+                state["airbag"]={"enabled":settings.focus_airbag_enabled,"status":"WACHT","mainSide":side,"hedgeSide":opp,"hedgeRatio":0.0,
+                    "reason":"Tegengestelde Aster-exposure heeft geen bewezen Airbag-ownership","nextAction":"Geen Airbag-order","lastUpdatedAt":timestamp_ms,"events":state.get("airbagEvents",[])}
+            else:
+                bands=None;local_extreme=None;candle_error=""
+                if settings.focus_airbag_enabled:
+                    try:
+                        rows=client.klines(symbol,"1m",21);closes=[_f(x[4]) for x in rows[:-1] if isinstance(x,list) and len(x)>4 and _f(x[4])>0]
+                        bands=bollinger_1m(closes);local_extreme=(max(closes[-20:]) if side=="LONG" else min(closes[-20:])) if len(closes)>=20 else None
+                        if bands is None:candle_error="Onvoldoende afgeronde 1m candles"
+                    except Exception as exc:candle_error=f"1m marktdata niet betrouwbaar: {exc}"
+                original=_f(state.get("originalEntry"),leg.weighted_entry) or leg.weighted_entry
+                adverse=max(0.0,(original-mark)/original) if side=="LONG" and original>0 else max(0.0,(mark-original)/original) if original>0 else 0.0
+                plan_airbag=plan_focus_airbag(enabled=settings.focus_airbag_enabled and not candle_error,main_side=side,main_quantity=leg.quantity,mark=mark,
+                    hedge_quantity=opp_qty,start_ratio=settings.focus_airbag_start_ratio,maximum_ratio=settings.focus_airbag_max_ratio,minimum_ratio=settings.focus_airbag_min_ratio,
+                    drawdown_levels=(settings.focus_airbag_drawdown_1,settings.focus_airbag_drawdown_2,settings.focus_airbag_drawdown_3),adverse_drawdown=adverse,
+                    portfolio_drawdown=airbag_portfolio_drawdown,bollinger=bands,local_extreme=local_extreme,new_portfolio_high=airbag_new_high)
+                if candle_error and settings.focus_airbag_enabled:
+                    plan_airbag=replace(plan_airbag,status="WACHT",action="HOLD",reason=candle_error,next_action="Wacht op betrouwbare 1m marktdata")
+                main_pnl=_gross_pnl(side,leg.weighted_entry,mark,leg.quantity);hedge_pnl=_gross_pnl(opp,_f((opp_row or {}).get("entryPrice"),mark),mark,opp_qty) if opp_qty>0 else 0.0
+                state["airbag"]={"enabled":settings.focus_airbag_enabled,"status":plan_airbag.status,"mainSide":side,"mainNotional":leg.quantity*mark,"hedgeSide":opp,
+                    "hedgeNotional":opp_qty*mark,"hedgeRatio":plan_airbag.current_ratio,"targetRatio":plan_airbag.target_ratio,"hedgePnl":hedge_pnl,"mainPnl":main_pnl,
+                    "combinedPnl":main_pnl+hedge_pnl,"reason":plan_airbag.reason,"nextAction":plan_airbag.next_action,"nextActionPrice":plan_airbag.next_action_price,
+                    "lastUpdatedAt":timestamp_ms,"events":state.get("airbagEvents",[])}
+                if plan_airbag.action in {"INCREASE","REDUCE","CLOSE"} and not dry_run and settings.mode=="live" and remaining>0:
+                    liq=_f((row or {}).get("liquidationPrice"));liq_distance=abs(mark-liq)/mark if liq>0 and mark>0 else 1.0
+                    target_qty=leg.quantity*plan_airbag.target_ratio if plan_airbag.action!="CLOSE" else 0.0
+                    delta=target_qty-opp_qty
+                    if abs(delta)>max(leg.quantity,1e-12)*.005:
+                        if delta>0 and (liq_distance<.05 or maint_ratio>=settings.emergency_margin_ratio):
+                            state["airbag"].update({"status":"WACHT","reason":"Liquidatie/maintenance-risico blokkeert nieuwe hedge-exposure","nextAction":"Geen hedgeverhoging"})
+                        else:
+                            adjust_qty=abs(delta);adjust_notional=adjust_qty*mark;adjust_margin=adjust_notional/max(1,effective) if delta>0 else 0.0
+                            if delta>0 and adjust_margin*1.05>available_remaining:
+                                state["airbag"].update({"status":"WACHT","reason":"Onvoldoende actuele Aster available margin","nextAction":"Wacht op beschikbare margin"})
+                            else:
+                                rules=ContractRules.from_exchange_info(next(x for x in client.public_exchange_info().get("symbols",()) if str(x.get("symbol","")).upper()==symbol))
+                                order_qty=rules.market_quantity(Decimal(str(adjust_qty)),Decimal(str(mark)))
+                                aplan=PairExecutionPlan(symbol,order_qty,order_qty*Decimal(str(mark)),effective,rules.tick_size,rules.market_quantity_step,rules.market_min_quantity,rules.min_notional)
+                                direction="OPEN" if delta>0 else "CLOSE";ratio_key=round(plan_airbag.target_ratio*10000)
+                                prefix=f"s2ab-{hashlib.sha256(f'{uid}|{slot_id}|{leg.cycle_id}|{direction}|{ratio_key}'.encode()).hexdigest()[:12]}"
+                                def reserve_airbag(intent:Any)->None:
+                                    if reserve_order:reserve_order(intent,{"kind":"FOCUS_AIRBAG_INCREASE" if delta>0 else "FOCUS_AIRBAG_REDUCE","slotId":slot_id,"cycleId":leg.cycle_id,"leverage":effective,"marginUsd":adjust_margin,"riskReducing":delta<0})
+                                _audit(ref,"FOCUS_AIRBAG_REQUESTED",slot_id=slot_id,symbol=symbol,side=opp,reason=plan_airbag.reason,targetRatio=plan_airbag.target_ratio,currentRatio=plan_airbag.current_ratio,action=direction)
+                                if delta>0:
+                                    result=execute_leg_once(client,aplan,side=PositionSide(opp),action="OPEN",id_prefix=prefix,confirm=True,before_submit=reserve_airbag,new_position_leverage=effective)
+                                else:
+                                    intent=AsterOrderIntent(prefix,symbol,PositionSide(opp),order_qty,"CLOSE");reserve_airbag(intent)
+                                    raw_result,_=client.submit_order_once(intent,config=AsterAutomationConfig(enabled=True,mode="live"),confirm=True,hedge_mode_confirmed=True,risk_approved=True);result={"result":raw_result}
+                                q,p,intent_id,fill_id=_confirmed_fill(result);fresh=client.position_risk(symbol);fresh_opp=_position(fresh,symbol,opp);new_qty=abs(_f((fresh_opp or {}).get("positionAmt")));new_entry=_f((fresh_opp or {}).get("entryPrice"),p)
+                                if new_qty<=1e-12:
+                                    owned=[x for x in owned if str(x.role).upper()!=_airbag_role(slot_id).upper()];airbag_leg=None
+                                elif airbag_leg is None:
+                                    airbag_leg=OwnedLeg(settings.strategy_id,"strategy2",symbol,opp,leg.cycle_id,settings.version,new_qty,new_entry,0,_airbag_role(slot_id),(intent_id,) if intent_id else (), (fill_id,) if fill_id else (),(),timestamp_ms,last_order_at_ms=timestamp_ms);owned.append(airbag_leg)
+                                else:
+                                    airbag_leg=replace(airbag_leg,quantity=new_qty,weighted_entry=new_entry,intent_ids=tuple(dict.fromkeys((*airbag_leg.intent_ids,*((intent_id,) if intent_id else ())))),fill_ids=tuple(dict.fromkeys((*airbag_leg.fill_ids,*((fill_id,) if fill_id else ())))),last_order_at_ms=timestamp_ms);owned=[airbag_leg if str(x.role).upper()==_airbag_role(slot_id).upper() else x for x in owned]
+                                kind="HEDGE +" if delta>0 else "HEDGE -";new_ratio=new_qty/max(leg.quantity,1e-12);_airbag_event(state,timestamp_ms,kind,new_ratio,plan_airbag.reason,mark)
+                                state["airbag"].update({"status":plan_airbag.status,"hedgeNotional":new_qty*mark,"hedgeRatio":new_ratio,"lastUpdatedAt":timestamp_ms,"events":state.get("airbagEvents",[])})
+                                states[slot_id]=state;ref.set({"ownedLegs":[owned_to_mapping(x) for x in owned],"focusLiveSlots":list(states.values()),"focusLiveOrdersSent":1,"lastReason":"FOCUS_AIRBAG"},merge=True)
+                                _audit(ref,"FOCUS_AIRBAG_CONFIRMED",slot_id=slot_id,symbol=symbol,side=opp,reason=plan_airbag.reason,hedgeRatio=new_ratio,targetRatio=plan_airbag.target_ratio,action=direction)
+                                return {"status":"executed","action":"FOCUS_AIRBAG_INCREASE" if delta>0 else "FOCUS_AIRBAG_REDUCE","slotId":slot_id,"symbol":symbol,"ordersSent":1}
         action="";notional=0.0;evidence=None
         if leg is None:
             active_slot_count=sum(1 for x in owned if str(x.role).upper().startswith("FOCUS_SLOT:") and not str(x.role).upper().startswith("FOCUS_SLOT_HEDGE:") and x.quantity>0)

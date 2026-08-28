@@ -1247,6 +1247,10 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     raw_focus_slots=raw.get("focusLiveSlots",[]) if isinstance(raw.get("focusLiveSlots"),list) else []
     public_focus_slots=[dict(row) for row in raw_focus_slots if isinstance(row,dict) and str(row.get("slotId","")).strip() in active_focus_slot_ids]
     desired_focus_slots=max(0,int(safe_float(raw.get("focusDesiredSlotCount",settings.get("focusDesiredSlotCount",len(settings.get("focusSlots",[])) if isinstance(settings.get("focusSlots"),list) else 0)))))
+    airbag_states=[dict(x.get("airbag")) for x in raw_focus_slots if isinstance(x,dict) and isinstance(x.get("airbag"),dict)]
+    airbag_active=[x for x in airbag_states if safe_float(x.get("hedgeRatio"))>0.002]
+    airbag_summary={"enabled":bool(settings.get("focusAirbagEnabled",False)),"activeCount":len(airbag_active),
+        "maxHedgeRatio":max([safe_float(x.get("hedgeRatio")) for x in airbag_states] or [0.0]),"hedgePnl":sum(safe_float(x.get("hedgePnl")) for x in airbag_states)}
     return {"strategy2": {"settings": settings,"universe":universe,"phase": str(raw.get("phase", "DRAFT")),
         "displayPhase":"UIT" if not enabled else str(raw.get("phase","DRAFT")),
         "liveReady": bool(raw.get("liveReady", False)), "enabled": enabled,
@@ -1265,7 +1269,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "partialSymbols":sum(str(x.get("status",""))=="PARTIAL_PROTECTION" for x in mg_pairs if isinstance(x,dict)),
             "lockedSymbols":sum(str(x.get("status",""))=="LOCKED" for x in mg_pairs if isinstance(x,dict)),
             "recoverySymbols":sum(str(x.get("status",""))=="RECOVERY" for x in mg_pairs if isinstance(x,dict))},
-        "focus":{**focus_state,"state":focus_state,"slots":public_focus_slots if focus_live_mode else [],"desiredSlotCount":desired_focus_slots,"report":focus_report,
+        "focus":{**focus_state,"state":focus_state,"slots":public_focus_slots if focus_live_mode else [],"desiredSlotCount":desired_focus_slots,"airbagSummary":airbag_summary,"report":focus_report,
             "metrics":raw.get("focusShadowMetrics",{}) if isinstance(raw.get("focusShadowMetrics"),dict) else {},
             "ordersSent":int(safe_float(raw.get("focusLiveOrdersSent"))) if focus_live_mode else 0,
             "live":bool(focus_live_mode and enabled),"shadowEnabled":bool(settings.get("focusShadowEnabled",False)),
@@ -1536,7 +1540,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     # next_management_decision ranks the largest net surplus first.
     now_ms=int(now.timestamp()*1000)
     cost_evidence_limit_ms=cost_evidence_max_age_seconds(owned)*1000
-    management_owned=[leg for leg in owned if leg.costs_updated_at_ms>0 and now_ms-leg.costs_updated_at_ms<=cost_evidence_limit_ms]
+    management_owned=[leg for leg in owned if not str(leg.role).upper().startswith("FOCUS_SLOT_AIRBAG:") and leg.costs_updated_at_ms>0 and now_ms-leg.costs_updated_at_ms<=cost_evidence_limit_ms]
     fresh_cost_keys={(leg.symbol,leg.side) for leg in management_owned}
     open_order_keys={(str(order.get("symbol","")).upper(),str(order.get("positionSide","")).upper())
         for order in orders if str(order.get("symbol","")).strip()}
@@ -1547,7 +1551,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     management_keys={(leg.symbol,leg.side) for leg in management_owned}
     management_positions=[row for row in strategy_positions if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in management_keys]
     cost_holds=[f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}"
-        for leg in owned if (leg.symbol,leg.side) not in fresh_cost_keys]
+        for leg in owned if not str(leg.role).upper().startswith("FOCUS_SLOT_AIRBAG:") and (leg.symbol,leg.side) not in fresh_cost_keys]
     seat_shortage=len(owned)<settings.maximum_pairs
     if settings.trading_mode=="focus":seat_shortage=False
     protection_selected=(None if seat_shortage else portfolio_protection_decision(settings,portfolio,management_owned))
@@ -3549,6 +3553,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         age=evidence_now-stamp
         return timedelta(0)<=age<=timedelta(minutes=5)
     strategy2_settings=Strategy2Config.from_mapping(strategy2_state.get("settings"))
+    strategy2_focus_slots=[dict(x) for x in strategy2_state.get("focusLiveSlots",[]) if isinstance(x,dict)] if isinstance(strategy2_state.get("focusLiveSlots"),list) else []
+    strategy2_airbag_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):dict(x.get("airbag")) for x in strategy2_focus_slots if isinstance(x.get("airbag"),dict)}
     strategy2_snapshot=strategy2_state.get("accountSnapshot") if isinstance(strategy2_state.get("accountSnapshot"),dict) else {}
     strategy2_portfolio=None
     strategy2_captured=strategy2_snapshot.get("capturedAt")
@@ -3583,7 +3589,12 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         strategy_id = str(owned_leg.get("strategy_id", owned_leg.get("strategyId", ""))).strip()
         row["strategyId"] = strategy_id
         row["strategyName"] = "Strategy 2 · Dual Profit Harvest DCA" if strategy_id == "aster-strategy-2" else ""
+        row["strategy2Role"] = str(owned_leg.get("role", "")) if owned_leg else ""
         if strategy_id=="aster-strategy-2":
+            if (symbol,side) in strategy2_airbag_by_key:
+                row["focusAirbag"]={**strategy2_airbag_by_key[(symbol,side)],"enabled":bool(strategy2_settings.focus_airbag_enabled)}
+            elif str(row.get("strategy2Role","")).upper().startswith("FOCUS_SLOT_AIRBAG:"):
+                row["focusAirbagHedge"]=True
             strategy2_owned=strategy2_costs_by_key.get((symbol,side))
             row["strategy2Tp"]=strategy2_position_tp_contract(row=row,
                 owned=strategy2_owned,config=strategy2_settings,
@@ -5394,6 +5405,7 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
     slot_id=str(intent.get("slotId","")).strip();intent_cycle=str(intent.get("cycleId","")).strip()
     def recovered_role(existing_role:str="HARVEST")->str:
         if action_kind in {"FOCUS_SLOT_OPEN","FOCUS_SLOT_DCA"} and slot_id:return f"FOCUS_SLOT:{slot_id}"
+        if action_kind in {"FOCUS_AIRBAG_INCREASE","FOCUS_AIRBAG_REDUCE"} and slot_id:return f"FOCUS_SLOT_AIRBAG:{slot_id}"
         if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and slot_id:return f"FOCUS_SLOT_HEDGE:{slot_id}"
         if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and side=="SHORT":return "FOCUS_HEDGE"
         if action_kind in {"OPEN_PROTECTION","PROTECTION_INCREASE"}:return "PROTECTION"
