@@ -115,7 +115,13 @@ def _empty_state(slot_id:str,symbol:str,side:str,mode:str,configured:int,effecti
 
 
 def _next_trigger(settings:Strategy2Config, *, side:str, original:float, dca_count:int)->float:
-    if original<=0 or dca_count>=settings.focus_max_dca:return 0.0
+    if original<=0:return 0.0
+    if settings.focus_dca_unlimited:
+        if settings.focus_dca_mode!="fixed" or not 0<settings.focus_dca_distance<1:return 0.0
+        step=max(0,int(dca_count))+1
+        factor=(1-settings.focus_dca_distance)**step if side=="LONG" else (1+settings.focus_dca_distance)**step
+        return original*factor
+    if dca_count>=settings.focus_max_dca:return 0.0
     levels=dca_drop_sequence(distance_pct=settings.focus_dca_distance,count=settings.focus_max_dca,
         mode=settings.focus_dca_mode,custom_levels=settings.focus_dca_custom_levels)
     if dca_count>=len(levels):return 0.0
@@ -124,9 +130,11 @@ def _next_trigger(settings:Strategy2Config, *, side:str, original:float, dca_cou
 
 
 def _dca_notional(settings:Strategy2Config,dca_count:int)->float:
-    seq=dca_notional_sequence(amount=settings.focus_dca_notional,multiplier=settings.focus_dca_multiplier,
-        count=max(settings.focus_max_dca, dca_count+1),amount_mode=settings.focus_dca_amount_mode,increment=settings.focus_dca_increment)
-    return seq[dca_count] if dca_count<len(seq) else 0.0
+    if settings.focus_dca_amount_mode=="linear":
+        return settings.focus_dca_notional+settings.focus_dca_increment*max(0,int(dca_count))
+    try:value=settings.focus_dca_notional*(settings.focus_dca_multiplier**max(0,int(dca_count)))
+    except OverflowError:return float("inf")
+    return value if math.isfinite(value) else float("inf")
 
 
 def _gross_pnl(side:str,entry:float,mark:float,quantity:float)->float:
@@ -379,7 +387,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                 except Exception as exc:
                     state.update({"status":"WAITING","recoveryStatus":f"TP kostendata onbetrouwbaar: {exc}"});states[slot_id]=state;continue
                 action="CLOSE"
-            if not action and settings.focus_dca_enabled and leg.dca_count<settings.focus_max_dca and not brake_block:
+            if not action and settings.focus_dca_enabled and (settings.focus_dca_unlimited or leg.dca_count<settings.focus_max_dca) and not brake_block:
                 trigger=_next_trigger(settings,side=side,original=_f(state.get("originalEntry"),entry) or entry,dca_count=leg.dca_count)
                 if trigger>0 and ((side=="LONG" and mark<=trigger) or (side=="SHORT" and mark>=trigger)):
                     action="DCA";notional=_dca_notional(settings,leg.dca_count)

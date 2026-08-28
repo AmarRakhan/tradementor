@@ -313,3 +313,8 @@ def test_micro_dca_linear_amounts_and_custom_levels():
     levels=(.0025,.005,.008,.0115,.0155,.02,.025,.031)
     assert dca_drop_sequence(distance_pct=.02,count=8,mode="custom",custom_levels=levels) == levels
     assert next_dca_trigger(original_entry=100,dca_count=3,max_dca=8,distance_pct=.02,mode="custom",custom_levels=levels) == pytest.approx(98.85)
+
+
+def test_unlimited_next_dca_trigger_ignores_finite_count_cap():
+    trigger=next_dca_trigger(original_entry=100,dca_count=1000,max_dca=5,distance_pct=.001,mode="fixed",unlimited=True)
+    assert trigger>0

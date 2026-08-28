@@ -7,6 +7,7 @@ state. It has no order-capable dependency. Every result explicitly reports
 from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
+import math
 
 from aster_strategy2 import Strategy2Config
 from aster_strategy2_focus import (
@@ -63,9 +64,12 @@ def _current_market(value: FocusShadowInputs) -> FocusMarket | None:
 
 
 def _next_focus_dca_notional(config: Strategy2Config, dca_count: int) -> float:
-    sequence = dca_notional_sequence(amount=config.focus_dca_notional,
-        multiplier=config.focus_dca_multiplier, count=config.focus_max_dca, amount_mode=config.focus_dca_amount_mode, increment=config.focus_dca_increment)
-    return sequence[dca_count] if 0 <= dca_count < len(sequence) else 0.0
+    index=max(0,int(dca_count))
+    if config.focus_dca_amount_mode=="linear":
+        return config.focus_dca_notional+config.focus_dca_increment*index
+    try:value=config.focus_dca_notional*(config.focus_dca_multiplier**index)
+    except OverflowError:return float("inf")
+    return value if math.isfinite(value) else float("inf")
 
 
 def plan_focus_shadow(value: FocusShadowInputs) -> dict[str, Any]:
@@ -128,7 +132,8 @@ def plan_focus_shadow(value: FocusShadowInputs) -> dict[str, Any]:
                     last_selection_reason=selection_reason,
                     next_dca_trigger=next_dca_trigger(original_entry=selected.price,
                         dca_count=0, max_dca=config.focus_max_dca,
-                        distance_pct=config.focus_dca_distance, mode=config.focus_dca_mode, custom_levels=config.focus_dca_custom_levels))
+                        distance_pct=config.focus_dca_distance, mode=config.focus_dca_mode, custom_levels=config.focus_dca_custom_levels,
+                        unlimited=config.focus_dca_unlimited))
                 decision = FocusDecision("OPEN", selected.symbol, notional=start_notional,
                     reason=selection_reason, status="Instap")
             else:
@@ -158,9 +163,10 @@ def plan_focus_shadow(value: FocusShadowInputs) -> dict[str, Any]:
             else:
                 trigger = next_dca_trigger(original_entry=state.original_entry,
                     dca_count=state.dca_count, max_dca=config.focus_max_dca,
-                    distance_pct=config.focus_dca_distance, mode=config.focus_dca_mode, custom_levels=config.focus_dca_custom_levels)
+                    distance_pct=config.focus_dca_distance, mode=config.focus_dca_mode, custom_levels=config.focus_dca_custom_levels,
+                    unlimited=config.focus_dca_unlimited)
                 if (config.focus_dca_enabled and trigger > 0 and market.price <= trigger
-                        and state.dca_count < config.focus_max_dca):
+                        and (config.focus_dca_unlimited or state.dca_count < config.focus_max_dca)):
                     proposed = _next_focus_dca_notional(config, state.dca_count)
                     allowed, reason = can_add_focus_order(proposed_notional=proposed,
                         leverage=config.leverage, focus_budget_used=state.focus_budget_used,

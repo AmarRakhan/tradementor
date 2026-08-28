@@ -80,3 +80,17 @@ def test_queue_recovery_preserves_multifocus_roles():
     assert 'FOCUS_SLOT:{slot_id}' in source
     assert 'FOCUS_SLOT_HEDGE:{slot_id}' in source
     assert '"FOCUS_SLOT_DCA"' in source
+
+
+def test_unlimited_dca_has_no_count_stop_and_keeps_triggering():
+    settings=cfg(focusDcaUnlimited=True,focusDcaMode="fixed",focusDcaDistance=.001,focusMaxDca=5)
+    assert settings.focus_dca_unlimited is True
+    # Well beyond configured max: there is still a valid next trigger.
+    assert _next_trigger(settings,side="LONG",original=100,dca_count=1000)>0
+    assert _next_trigger(settings,side="SHORT",original=100,dca_count=1000)>100
+
+
+def test_unlimited_dca_requires_fixed_spacing():
+    try: cfg(focusDcaUnlimited=True,focusDcaMode="custom")
+    except ValueError as exc: assert "vaste DCA-afstand" in str(exc)
+    else: raise AssertionError("unlimited custom ladder must fail")

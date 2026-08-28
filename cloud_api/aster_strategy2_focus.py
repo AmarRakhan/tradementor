@@ -142,8 +142,14 @@ def select_focus_pair(markets:list[FocusMarket],*,selection_mode:FocusSelectionM
         return selected,ranking,"handmatige Focus-selectie" if selected else "handmatige pair niet beschikbaar op Aster"
     selected=next((r for r in ranking if r.eligible),None);return selected,ranking,selected.reason if selected else "geen geschikte LONG-kandidaat"
 
-def next_dca_trigger(*,original_entry:float,dca_count:int,max_dca:int,distance_pct:float,mode:FocusDcaMode,custom_levels:tuple[float,...]=())->float:
-    if original_entry<=0 or dca_count>=max_dca:return 0.0
+def next_dca_trigger(*,original_entry:float,dca_count:int,max_dca:int,distance_pct:float,mode:FocusDcaMode,custom_levels:tuple[float,...]=(),unlimited:bool=False)->float:
+    if original_entry<=0:return 0.0
+    if unlimited:
+        if mode!="fixed" or not 0<distance_pct<1:return 0.0
+        # Geometric spacing keeps a next trigger available indefinitely instead
+        # of a linear original-entry ladder mathematically reaching zero.
+        return original_entry*((1-distance_pct)**(max(0,int(dca_count))+1))
+    if dca_count>=max_dca:return 0.0
     drops=dca_drop_sequence(distance_pct=distance_pct,count=max_dca,mode=mode,custom_levels=custom_levels)
     return max(0.0,original_entry*(1-drops[dca_count])) if dca_count<len(drops) else 0.0
 
