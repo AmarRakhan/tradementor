@@ -420,3 +420,43 @@ def test_custom_seat_target_refills_only_missing_side():
     owned += [OwnedLeg("s2","strategy2",f"S{i}USDT","SHORT",f"s{i}",1,1,100) for i in range(15)]
     assert next_balanced_entry_side(owned,80,60,20)=="SHORT"
     assert entry_order_limit(True,owned,80,60,20)==5
+
+def test_fixed_dca_ladder_shows_all_30_remaining_levels_for_new_long():
+    cfg=Strategy2Config(dca_mode="fixed",long_dca_distance=.01,long_max_dca=30,base_notional=30,dca_multiplier=1)
+    owned=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","c",1,1,100,dca_count=0)
+    ladder=strategy2_fixed_dca_ladder(row={"quantity":1,"entryPrice":100},owned=owned,config=cfg)
+    assert ladder["available"] is True and ladder["mode"]=="fixed"
+    assert len(ladder["levels"])==30 and ladder["levels"][0]["number"]==1 and ladder["levels"][-1]["number"]==30
+    assert ladder["levels"][0]["price"]==99
+
+
+def test_fixed_dca_ladder_with_7_fills_only_returns_23_future_levels():
+    cfg=Strategy2Config(dca_mode="fixed",long_dca_distance=.01,long_max_dca=30,base_notional=30,dca_multiplier=1)
+    owned=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","c",1,3,94,dca_count=7)
+    ladder=strategy2_fixed_dca_ladder(row={"quantity":3,"entryPrice":94},owned=owned,config=cfg)
+    assert len(ladder["levels"])==23
+    assert ladder["levels"][0]["number"]==8 and ladder["levels"][-1]["number"]==30
+
+
+def test_fixed_dca_ladder_short_levels_are_above_weighted_entry():
+    cfg=Strategy2Config(dca_mode="fixed",short_dca_distance=.02,short_max_dca=3,base_notional=20,dca_multiplier=1)
+    owned=OwnedLeg("aster-strategy-2","strategy2","ETHUSDT","SHORT","c",1,2,100,dca_count=0)
+    ladder=strategy2_fixed_dca_ladder(row={"quantity":2,"entryPrice":100},owned=owned,config=cfg)
+    assert [x["number"] for x in ladder["levels"]]==[1,2,3]
+    assert ladder["levels"][0]["price"]==102
+    assert all(x["price"]>100 for x in ladder["levels"])
+
+
+def test_progressive_dca_is_not_presented_as_fixed_future_ladder():
+    cfg=Strategy2Config(dca_mode="progressive",long_max_dca=30)
+    owned=OwnedLeg("aster-strategy-2","strategy2","BTCUSDT","LONG","c",1,1,100)
+    assert strategy2_fixed_dca_ladder(row={"quantity":1,"entryPrice":100},owned=owned,config=cfg)=={"available":False,"levels":[]}
+
+
+def test_break_even_price_includes_paid_fees_funding_and_estimated_close_fee():
+    now=datetime(2026,8,28,8,0,tzinfo=timezone.utc);cfg=Strategy2Config(mode="live")
+    owned=_tp_owned("BTCUSDT","LONG",2,100,now,fees=.20,funding=.05)
+    row={"symbol":"BTCUSDT","positionSide":"LONG","quantity":2,"entryPrice":100,"markPrice":100,"notionalUsd":200,"unrealizedPnl":0}
+    result=strategy2_position_tp_contract(row=row,owned=owned,config=cfg,state=_live_state(now),portfolio=None,now=now)
+    expected=(100+(.20-.05)/2)/(1-.0005)
+    assert abs(result["breakEvenPrice"]-expected)<1e-12

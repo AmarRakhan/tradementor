@@ -85,7 +85,7 @@ from aster_strategy2_runtime import owned_from_mapping, owned_to_mapping, recove
 from aster_strategy2_runtime import next_management_decision, next_dca_decision, scanner_allowed, active_position_map, cost_evidence_max_age_seconds
 from aster_strategy2_runtime import changed_owned_symbols, most_urgent_profitable_owned, isolate_unproven_ownership
 from aster_strategy2_runtime import enrich_confirmed_costs
-from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_position_tp_contract
+from aster_strategy2_runtime import scheduler_status as strategy2_scheduler_status, strategy2_fixed_dca_ladder, strategy2_position_tp_contract
 from aster_strategy2_runtime import transfer_active_ownership_to_strategy2
 from aster_strategy2_runtime import portfolio_protection_decision, same_pair_protection_decision
 from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next_balanced_entry_side, queued_entry_order_limit, management_preempts_initial_build
@@ -3579,10 +3579,12 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         row["strategyId"] = strategy_id
         row["strategyName"] = "Strategy 2 · Dual Profit Harvest DCA" if strategy_id == "aster-strategy-2" else ""
         if strategy_id=="aster-strategy-2":
+            strategy2_owned=strategy2_costs_by_key.get((symbol,side))
             row["strategy2Tp"]=strategy2_position_tp_contract(row=row,
-                owned=strategy2_costs_by_key.get((symbol,side)),config=strategy2_settings,
+                owned=strategy2_owned,config=strategy2_settings,
                 state={**strategy2_state,"runtimeEnabled":os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"},
                 portfolio=strategy2_portfolio)
+            row["strategy2DcaLadder"]=strategy2_fixed_dca_ladder(row=row,owned=strategy2_owned,config=strategy2_settings)
             if symbol in strategy2_cost_failures and row["strategy2Tp"]["status"]=="Niet betrouwbaar te bepalen":
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
         positions.append(row)

@@ -8,6 +8,8 @@ import { layoutVerifiedTradeMarkers, type VerifiedTradeEvent } from "@/lib/trade
 
 export type ChartExchange = "aster" | "hyperliquid" | "portfolio";
 export type TradeSelection = { id: string; symbol: string; exchange: ChartExchange; side: string; entry?: number; mark?: number; exit?: number; openedAt?: string; closedAt?: string; dcaCount?: number };
+export type DcaChartLevel = { number: number; price: number };
+const EMPTY_DCA_LEVELS: DcaChartLevel[] = [];
 type TradeEvent = VerifiedTradeEvent;
 type Candle = { time: number; open: number; high: number; low: number; close: number; volume: number };
 type ChartType = "candles" | "line" | "area" | "bars";
@@ -26,8 +28,8 @@ class ChartErrorBoundary extends Component<{ children: ReactNode; resetKey: stri
 
 export type TradingChartMode = "default" | "aster-detail";
 
-export function SafeTradingChart({ selection, mode = "default", focusAtMs, averageEntry, selectedActionId }: { selection: TradeSelection; mode?: TradingChartMode; focusAtMs?: number; averageEntry?: number; selectedActionId?: string }) {
-  return <ChartErrorBoundary resetKey={`${selection.exchange}:${selection.id}:${selection.symbol}:${mode}`}><TradingChart selection={selection} mode={mode} focusAtMs={focusAtMs} averageEntry={averageEntry} selectedActionId={selectedActionId} /></ChartErrorBoundary>;
+export function SafeTradingChart({ selection, mode = "default", focusAtMs, breakEvenPrice, dcaLevels = EMPTY_DCA_LEVELS, selectedActionId }: { selection: TradeSelection; mode?: TradingChartMode; focusAtMs?: number; breakEvenPrice?: number; dcaLevels?: DcaChartLevel[]; selectedActionId?: string }) {
+  return <ChartErrorBoundary resetKey={`${selection.exchange}:${selection.id}:${selection.symbol}:${mode}`}><TradingChart selection={selection} mode={mode} focusAtMs={focusAtMs} breakEvenPrice={breakEvenPrice} dcaLevels={dcaLevels} selectedActionId={selectedActionId} /></ChartErrorBoundary>;
 }
 
 const timeframes = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1D", "1W"];
@@ -89,7 +91,7 @@ function indicatorData(candles: Candle[], id: IndicatorId) {
   return [];
 }
 
-export function TradingChart({ selection, mode = "default", focusAtMs, averageEntry, selectedActionId }: { selection: TradeSelection; mode?: TradingChartMode; focusAtMs?: number; averageEntry?: number; selectedActionId?: string }) {
+export function TradingChart({ selection, mode = "default", focusAtMs, breakEvenPrice, dcaLevels = EMPTY_DCA_LEVELS, selectedActionId }: { selection: TradeSelection; mode?: TradingChartMode; focusAtMs?: number; breakEvenPrice?: number; dcaLevels?: DcaChartLevel[]; selectedActionId?: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -167,10 +169,10 @@ export function TradingChart({ selection, mode = "default", focusAtMs, averageEn
     if (!chartCandles.length || !containerRef.current) return;
     const container = containerRef.current;
     const heritage=skin==="suriname-heritage";
-    const chart = createChart(container, { width:container.clientWidth, height:Math.max(390,container.clientHeight), layout:{background:{type:ColorType.Solid,color:heritage?"#031008":"#061225"},textColor:heritage?"#d8c58e":"#8fa6c8",panes:{separatorColor:heritage?"#27351f":"#172c4a",separatorHoverColor:heritage?"#d9ad48":"#2dd4bf"}}, grid:{vertLines:{color:heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"},horzLines:{color:heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"}}, crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"},horzLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"}}, rightPriceScale:{borderColor:heritage?"#4b4325":"#1c3858"}, timeScale:{borderColor:heritage?"#4b4325":"#1c3858",timeVisible:true,secondsVisible:false,rightOffset:8}, handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false}, handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true} });
+    const chart = createChart(container, { width:container.clientWidth, height:Math.max(390,container.clientHeight), layout:{background:{type:ColorType.Solid,color:heritage?"#031008":"#061225"},textColor:heritage?"#d8c58e":"#8fa6c8",panes:{separatorColor:heritage?"#27351f":"#172c4a",separatorHoverColor:heritage?"#d9ad48":"#2dd4bf"}}, grid:{vertLines:{color:heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"},horzLines:{color:mode==="aster-detail"?"rgba(0,0,0,0)":heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"}}, crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"},horzLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"}}, rightPriceScale:{borderColor:heritage?"#4b4325":"#1c3858"}, timeScale:{borderColor:heritage?"#4b4325":"#1c3858",timeVisible:true,secondsVisible:false,rightOffset:8}, handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false}, handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true} });
     chartRef.current=chart;
     let priceSeries: ISeriesApi<any>;
-    const common={priceLineVisible:true,lastValueVisible:true};
+    const common={priceLineVisible:mode!=="aster-detail",lastValueVisible:mode!=="aster-detail"};
     if(chartType==="line") priceSeries=chart.addSeries(LineSeries,{...common,color:"#42d8ff",lineWidth:2});
     else if(chartType==="area") priceSeries=chart.addSeries(AreaSeries,{...common,lineColor:"#42d8ff",topColor:"rgba(66,216,255,.32)",bottomColor:"rgba(66,216,255,0)"});
     else if(chartType==="bars") priceSeries=chart.addSeries(BarSeries,{...common,upColor:"#21d6a2",downColor:"#ff5578"});
@@ -185,12 +187,16 @@ export function TradingChart({ selection, mode = "default", focusAtMs, averageEn
     if(selection.exchange!=="aster"&&selection.entry)fallbackEvents.push({id:`${selection.id}:entry`,side:short?"SHORT":"LONG",kind:"entry",action:"increase",price:selection.entry,at:selection.openedAt||new Date(chartCandles.at(-1)!.time*1000).toISOString(),timestampMs:selection.openedAt?new Date(selection.openedAt).getTime():chartCandles.at(-1)!.time*1000,exchange:selection.exchange});
     if(selection.exchange!=="aster"&&selection.exit)fallbackEvents.push({id:`${selection.id}:close`,side:short?"SHORT":"LONG",kind:"close",action:"close",price:selection.exit,at:selection.closedAt||new Date(chartCandles.at(-1)!.time*1000).toISOString(),timestampMs:selection.closedAt?new Date(selection.closedAt).getTime():chartCandles.at(-1)!.time*1000,exchange:selection.exchange});
     const markerGroups=layoutVerifiedTradeMarkers(chartCandles,selection.exchange==="aster"?tradeEvents:fallbackEvents,activeIndicators.includes("bb"));
-    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>{const highlighted=(Boolean(selectedActionId)&&group.events.some(event=>event.id===selectedActionId))||(mode==="aster-detail"&&Boolean(focusAtMs)&&group.events.some(event=>Math.abs(event.timestampMs-Number(focusAtMs))<=900_000));const label=mode==="aster-detail"?(group.events.length>1?`${group.events.length} ACTIES`:group.events[0]?.kind==="dca"?"ADD":group.events[0]?.kind==="close"?"SELL":"BUY"):(group.events.length>1?String(group.events.length):"");return{time:group.time as UTCTimestamp,position:"inBar",color:highlighted?"#ffd166":group.color,shape:group.shape,text:label,size:highlighted?1.8:group.events.some(event=>event.kind!=="dca")?1.35:1.15}}));}
+    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>{const highlighted=(Boolean(selectedActionId)&&group.events.some(event=>event.id===selectedActionId))||(mode==="aster-detail"&&Boolean(focusAtMs)&&group.events.some(event=>Math.abs(event.timestampMs-Number(focusAtMs))<=900_000));const label=mode==="aster-detail"?(group.events.length>1?`${group.events.length} ACTIES`:group.events[0]?.kind==="dca"?"":group.events[0]?.kind==="close"?"SELL":"BUY"):(group.events.length>1?String(group.events.length):"");return{time:group.time as UTCTimestamp,position:"inBar",color:highlighted?"#ffd166":group.color,shape:group.shape,text:label,size:highlighted?1.8:group.events.some(event=>event.kind!=="dca")?1.35:1.15}}));}
     const onCrosshair=(param:any)=>{if(!param.time){setCrosshair(null);return;} const time=Number(param.time),c=candleDataRef.current.find(row=>row.time===time);if(c)setCrosshair(c);const group=markerGroups.filter(item=>item.time===time).flatMap(item=>item.events);if(group.length)setSelectedMarkerEvents(group)}; chart.subscribeCrosshairMove(onCrosshair);
-    if (mode === "aster-detail" && Number.isFinite(averageEntry) && Number(averageEntry) > 0) {
-      const entryValue = Number(averageEntry);
-      const entrySeries = chart.addSeries(LineSeries,{color:"#9fb3c8",lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:false,title:""});
-      entrySeries.setData(chartCandles.map(candle=>({time:candle.time as UTCTimestamp,value:entryValue})));
+    if (mode === "aster-detail") {
+      if (Number.isFinite(breakEvenPrice) && Number(breakEvenPrice) > 0) {
+        priceSeries.createPriceLine({ price:Number(breakEvenPrice), color:"#21d6a2", lineWidth:2, lineStyle:0, axisLabelVisible:true, title:"WINST VANAF" });
+      }
+      for (const level of dcaLevels) {
+        if (!Number.isFinite(level?.price) || Number(level.price) <= 0 || !Number.isFinite(level?.number)) continue;
+        priceSeries.createPriceLine({ price:Number(level.price), color:"#496985", lineWidth:1, lineStyle:2, axisLabelVisible:true, title:`DCA ${Math.round(Number(level.number))}` });
+      }
     }
     if (mode === "aster-detail") {
       const targetSec = focusAtMs && Number.isFinite(focusAtMs) ? Math.floor(focusAtMs / 1000) : null;
@@ -207,7 +213,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, averageEn
     } else chart.timeScale().fitContent();
     const observer=new ResizeObserver(()=>{if(chartRef.current!==chart||!container.isConnected)return;try{chart.applyOptions({width:Math.max(1,container.clientWidth),height:Math.max(390,container.clientHeight)})}catch{/* chart may already be disposing */}}); observer.observe(container);
     return()=>{observer.disconnect();if(chartRef.current===chart)chartRef.current=null;priceSeriesRef.current=null;volumeSeriesRef.current=null;try{chart.unsubscribeCrosshairMove(onCrosshair);chart.remove()}catch{/* already removed during navigation */}};
-  },[datasetVersion,chartType,activeIndicators,selection,tradeEvents,skin,mode,focusAtMs,averageEntry,selectedActionId]);
+  },[datasetVersion,chartType,activeIndicators,selection,tradeEvents,skin,mode,focusAtMs,breakEvenPrice,dcaLevels,selectedActionId]);
 
   useEffect(()=>{
     const next=candles.at(-1);

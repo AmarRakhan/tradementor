@@ -4,7 +4,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import math
 from typing import Any
-from aster_strategy2 import Decision,LegState,PortfolioState,Strategy2Config,decide_leg,net_profit,risk_mode
+from aster_strategy2 import Decision,LegState,PortfolioState,Strategy2Config,apply_fill,decide_leg,dca_level,net_profit,risk_mode
 from aster_strategy2_state import OwnedLeg,number
 
 ASTER_ESTIMATED_CLOSE_FEE_RATE = .0005
@@ -226,6 +226,34 @@ def estimated_close_fee(row:dict[str,Any])->float:
     if notional<=0:
         notional=abs(number(row.get("positionAmt",row.get("quantity"))))*number(row.get("markPrice"))
     return notional*ASTER_ESTIMATED_CLOSE_FEE_RATE
+
+
+def strategy2_fixed_dca_ladder(*,row:dict[str,Any],owned:OwnedLeg|None,config:Strategy2Config)->dict[str,Any]:
+    """Project remaining fixed-DCA triggers from the same execution formula.
+
+    Each hypothetical fill is applied at its trigger price, then the weighted
+    entry is advanced before calculating the next level.  Confirmed exchange
+    fills therefore automatically rebuild the remaining ladder from reality.
+    """
+    if not owned or owned.strategy_id!="aster-strategy-2" or owned.engine_type!="strategy2":return {"available":False,"levels":[]}
+    if str(owned.role).upper().startswith("FOCUS"):return {"available":False,"levels":[]}
+    if not config.dca_enabled or config.dca_mode!="fixed":return {"available":False,"levels":[]}
+    side=str(owned.side).upper(); maximum=config.long_max_dca if side=="LONG" else config.short_max_dca
+    count=max(0,int(owned.dca_count)); quantity=abs(number(row.get("quantity",row.get("positionAmt"))))
+    weighted=number(row.get("entryPrice",row.get("averageEntry"))) or number(owned.weighted_entry)
+    mark=number(row.get("markPrice")) or weighted
+    if side not in {"LONG","SHORT"} or quantity<=0 or weighted<=0 or mark<=0 or count>=maximum:return {"available":True,"mode":"fixed","filledDcaCount":count,"maxDca":maximum,"levels":[]}
+    fill_notional=max(0.0,config.base_notional*config.dca_multiplier); levels=[]
+    projection=LegState(side,owned.cycle_id,quantity*mark,weighted,mark,count,owned.realized_pnl,0.0,owned.fees,owned.funding,owned.role,owned.config_version,"HARVEST")
+    for _ in range(count+1,maximum+1):
+        level_no=projection.dca_count+1
+        deviation=dca_level(config,side,level_no)
+        trigger=projection.weighted_entry*(1-deviation if side=="LONG" else 1+deviation)
+        if trigger<=0 or not math.isfinite(trigger):break
+        levels.append({"number":level_no,"price":trigger})
+        if fill_notional<=0:continue
+        projection=apply_fill(projection,fill_notional=fill_notional,fill_price=trigger)
+    return {"available":True,"mode":"fixed","filledDcaCount":count,"maxDca":maximum,"levels":levels,"source":"strategy2-execution"}
 
 def most_urgent_profitable_owned(config:Strategy2Config,owned:list[OwnedLeg],positions:list[dict[str,Any]])->OwnedLeg|None:
     """Pick the profitable owned leg furthest above its net TP threshold."""
@@ -468,10 +496,18 @@ def strategy2_position_tp_contract(*,row:dict[str,Any],owned:OwnedLeg|None,confi
         elif str(state.get("phase","")).upper() in {"DATA_HOLD","RECONCILING","CANARY_HOLD"}:
             block=str(state.get("lastReason") or f"Strategy 2 staat in {state.get('phase')}")
     progress=(net/target*100) if reliable and net is not None and target>0 else None
+    break_even=None
+    if reliable and owned is not None:
+        qty=abs(number(row.get("quantity",row.get("positionAmt"))))
+        entry=number(row.get("entryPrice",row.get("averageEntry"))) or number(owned.weighted_entry)
+        direction=1.0 if str(owned.side).upper()=="LONG" else -1.0
+        denominator=direction-ASTER_ESTIMATED_CLOSE_FEE_RATE
+        if qty>0 and entry>0 and abs(denominator)>1e-12:
+            break_even=(direction*entry+(owned.fees-owned.funding)/qty)/denominator
     evaluated_at=(datetime.fromtimestamp(owned.costs_updated_at_ms/1000,tz=timezone.utc).isoformat()
         if owned and owned.costs_updated_at_ms else None)
     phase=str(state.get("phase","UNKNOWN"))
-    return {"netProfitUsd":net,"takeProfitTargetUsd":target if ownership else None,
+    return {"netProfitUsd":net,"breakEvenPrice":break_even,"takeProfitTargetUsd":target if ownership else None,
         "takeProfitPercent":config.take_profit*100 if ownership else None,
         "progressPercent":progress,"status":status,"evaluatedAt":evaluated_at,"blockReason":block,
         "scheduler":scheduler,"ownershipProven":ownership,"paidFeesUsd":owned.fees if reliable and owned else None,
