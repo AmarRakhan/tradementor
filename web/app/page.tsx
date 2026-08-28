@@ -967,9 +967,9 @@ function NavButton({ item, active, onClick }: { item: { id: Destination; label: 
 }
 
 function LiquidationRiskOrbit({ risk }: { risk: ReturnType<typeof mostCriticalLiquidationPosition> }) {
-  if (!risk) return <div className="risk-orbit liquidation-risk risk-unknown" aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong className="unavailable">Niet beschikbaar</strong><small>Geen geldige Aster liquidationPrice</small></div></div>;
+  if (!risk) return <div className="risk-orbit liquidation-risk risk-unknown" aria-label="LIQUIDATIEAFSTAND"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIEAFSTAND</span><strong className="unavailable">Niet beschikbaar</strong><small>Geen geldige Aster liquidationPrice</small></div></div>;
   const position = risk.position as PositionView;
-  return <div className={`risk-orbit liquidation-risk risk-${risk.tone}`} aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong>{risk.distancePercent.toFixed(1)}%</strong><small>{position.symbol} · Liq. ${formatPrice(position.liquidationPrice)}</small></div></div>;
+  return <div className={`risk-orbit liquidation-risk risk-${risk.tone}`} aria-label="LIQUIDATIEAFSTAND"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIEAFSTAND</span><strong>{risk.distancePercent.toFixed(1)}%</strong><small>{position.symbol} · Liq. ${formatPrice(position.liquidationPrice)}</small></div></div>;
 }
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
