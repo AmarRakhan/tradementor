@@ -25,8 +25,8 @@ test("trade detail exposes transparent Airbag status and contribution",()=>{
 });
 
 test("chart shows compact hedge markers without adding hedge price lines",()=>{
-  assert.match(chart,/HEDGE \+/);
-  assert.match(chart,/HEDGE -/);
+  assert.match(chart,/onlyHedge/);
+  assert.doesNotMatch(chart,/\?"HEDGE \+":"HEDGE -"/);
   assert.match(chart,/airbagEvents/);
   assert.doesNotMatch(chart,/title:`HEDGE/);
 });
@@ -35,4 +35,12 @@ test("Airbag card has responsive Fold and phone layout",()=>{
   assert.match(css,/\.airbagGrid\{display:grid;grid-template-columns:repeat\(4,1fr\)/);
   assert.match(css,/@media\(max-width:700px\).*\.airbagGrid\{grid-template-columns:repeat\(2,1fr\)/s);
   assert.match(css,/@media\(max-width:380px\)/);
+});
+
+
+test("Airbag click resolves to linked main position and next DCA is server-fed",()=>{
+  assert.match(trades,/linkedMain/);
+  assert.match(trades,/Je bekijkt de Airbag van/);
+  assert.match(trades,/Volgende \{detailMainSide\} DCA/);
+  assert.match(trades,/strategy2DcaLadder\?\.levels/);
 });

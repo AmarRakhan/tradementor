@@ -3555,6 +3555,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     strategy2_settings=Strategy2Config.from_mapping(strategy2_state.get("settings"))
     strategy2_focus_slots=[dict(x) for x in strategy2_state.get("focusLiveSlots",[]) if isinstance(x,dict)] if isinstance(strategy2_state.get("focusLiveSlots"),list) else []
     strategy2_airbag_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):dict(x.get("airbag")) for x in strategy2_focus_slots if isinstance(x.get("airbag"),dict)}
+    strategy2_focus_slot_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):x for x in strategy2_focus_slots if str(x.get("pair","")).strip()}
     strategy2_snapshot=strategy2_state.get("accountSnapshot") if isinstance(strategy2_state.get("accountSnapshot"),dict) else {}
     strategy2_portfolio=None
     strategy2_captured=strategy2_snapshot.get("capturedAt")
@@ -3601,6 +3602,12 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 state={**strategy2_state,"runtimeEnabled":os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"},
                 portfolio=strategy2_portfolio)
             row["strategy2DcaLadder"]=strategy2_fixed_dca_ladder(row=row,owned=strategy2_owned,config=strategy2_settings)
+            focus_slot=strategy2_focus_slot_by_key.get((symbol,side))
+            if isinstance(focus_slot,dict) and str(row.get("strategy2Role","")).upper().startswith("FOCUS_SLOT:"):
+                next_focus_dca=safe_float(focus_slot.get("nextDcaTrigger"));filled=int(safe_float(focus_slot.get("dcaCount")))
+                row["strategy2DcaLadder"]={"available":next_focus_dca>0,"mode":str(focus_slot.get("cycleDcaMode",strategy2_settings.focus_dca_mode)),
+                    "filledDcaCount":filled,"maxDca":strategy2_settings.focus_max_dca,
+                    "levels":[{"number":filled+1,"price":next_focus_dca}] if next_focus_dca>0 else [],"source":"focus-runtime-state"}
             if symbol in strategy2_cost_failures and row["strategy2Tp"]["status"]=="Niet betrouwbaar te bepalen":
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
         positions.append(row)

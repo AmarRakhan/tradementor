@@ -101,7 +101,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
   const candleDataRef = useRef<Candle[]>([]);
   const [candles, setCandles] = useState<Candle[]>([]);
   const [datasetVersion, setDatasetVersion] = useState(0);
-  const [timeframe, setTimeframe] = useState("15m");
+  const [timeframe, setTimeframe] = useState(mode === "aster-detail" ? "1m" : "15m");
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [activeIndicators, setActiveIndicators] = useState<IndicatorId[]>(mode === "aster-detail" ? ["bb"] : ["volume"]);
   const [indicatorOpen, setIndicatorOpen] = useState(false);
@@ -122,7 +122,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
   }, []);
 
   useEffect(() => {
-    if (mode === "aster-detail") { setTimeframe("15m"); setChartType("candles"); setActiveIndicators(["bb"]); return; }
+    if (mode === "aster-detail") { setTimeframe("1m"); setChartType("candles"); setActiveIndicators(["bb"]); return; }
     const saved = window.localStorage.getItem("tradementor.chart.preferences");
     if (!saved) return;
     try { const p=JSON.parse(saved); if(timeframes.includes(p.timeframe)) setTimeframe(p.timeframe); if(["candles","line","area","bars"].includes(p.chartType)) setChartType(p.chartType); if(Array.isArray(p.indicators)) setActiveIndicators(p.indicators); } catch { /* ignore corrupt local preference */ }
@@ -189,16 +189,17 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
     if(selection.exchange!=="aster"&&selection.exit)fallbackEvents.push({id:`${selection.id}:close`,side:short?"SHORT":"LONG",kind:"close",action:"close",price:selection.exit,at:selection.closedAt||new Date(chartCandles.at(-1)!.time*1000).toISOString(),timestampMs:selection.closedAt?new Date(selection.closedAt).getTime():chartCandles.at(-1)!.time*1000,exchange:selection.exchange});
     const airbagTradeEvents:TradeEvent[]=airbagEvents.filter(event=>Number.isFinite(event.at)&&Number.isFinite(event.price)&&event.price>0).map((event,index)=>({id:`airbag:${event.at}:${index}`,side:(selection.side.toUpperCase()==="SHORT"?"LONG":"SHORT") as "LONG"|"SHORT",kind:"hedge",action:String(event.kind).includes("-")?"close":"increase",price:event.price,at:new Date(event.at).toISOString(),timestampMs:event.at,exchange:"aster"}));
     const markerGroups=layoutVerifiedTradeMarkers(chartCandles,selection.exchange==="aster"?[...tradeEvents,...airbagTradeEvents]:fallbackEvents,activeIndicators.includes("bb"));
-    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>{const highlighted=(Boolean(selectedActionId)&&group.events.some(event=>event.id===selectedActionId))||(mode==="aster-detail"&&Boolean(focusAtMs)&&group.events.some(event=>Math.abs(event.timestampMs-Number(focusAtMs))<=900_000));const label=mode==="aster-detail"?(group.events.length>1?`${group.events.length} ACTIES`:group.events[0]?.kind==="hedge"?(group.events[0]?.action==="increase"?"HEDGE +":"HEDGE -"):group.events[0]?.kind==="dca"?"":group.events[0]?.kind==="close"?"SELL":"BUY"):(group.events.length>1?String(group.events.length):"");return{time:group.time as UTCTimestamp,position:"inBar",color:highlighted?"#ffd166":group.color,shape:group.shape,text:label,size:highlighted?1.8:group.events.some(event=>event.kind!=="dca")?1.35:1.15}}));}
+    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>{const highlighted=(Boolean(selectedActionId)&&group.events.some(event=>event.id===selectedActionId))||(mode==="aster-detail"&&Boolean(focusAtMs)&&group.events.some(event=>Math.abs(event.timestampMs-Number(focusAtMs))<=900_000));const onlyHedge=group.events.every(event=>event.kind==="hedge");const label=mode==="aster-detail"?(onlyHedge?"":group.events.length>1?`${group.events.length} ACTIES`:group.events[0]?.kind==="dca"?"":group.events[0]?.kind==="close"?"SELL":"BUY"):(group.events.length>1?String(group.events.length):"");return{time:group.time as UTCTimestamp,position:"inBar",color:highlighted?"#ffd166":onlyHedge?"#55e3ff":group.color,shape:group.shape,text:label,size:onlyHedge?0.75:highlighted?1.8:group.events.some(event=>event.kind!=="dca")?1.35:1.15}}));}
     const onCrosshair=(param:any)=>{if(!param.time){setCrosshair(null);return;} const time=Number(param.time),c=candleDataRef.current.find(row=>row.time===time);if(c)setCrosshair(c);const group=markerGroups.filter(item=>item.time===time).flatMap(item=>item.events);if(group.length)setSelectedMarkerEvents(group)}; chart.subscribeCrosshairMove(onCrosshair);
     if (mode === "aster-detail") {
       if (Number.isFinite(breakEvenPrice) && Number(breakEvenPrice) > 0) {
         priceSeries.createPriceLine({ price:Number(breakEvenPrice), color:"#21d6a2", lineWidth:2, lineStyle:0, axisLabelVisible:true, title:"WINST VANAF" });
       }
-      for (const level of dcaLevels) {
-        if (!Number.isFinite(level?.price) || Number(level.price) <= 0 || !Number.isFinite(level?.number)) continue;
-        priceSeries.createPriceLine({ price:Number(level.price), color:"#496985", lineWidth:1, lineStyle:2, axisLabelVisible:true, title:`DCA ${Math.round(Number(level.number))}` });
-      }
+      const validDcaLevels=dcaLevels.filter(level=>Number.isFinite(level?.price)&&Number(level.price)>0&&Number.isFinite(level?.number));
+      validDcaLevels.forEach((level,index)=>{
+        const next=index===0;
+        priceSeries.createPriceLine({ price:Number(level.price), color:next?"#ffd166":"#496985", lineWidth:next?2:1, lineStyle:next?0:2, axisLabelVisible:true, title:next?`VOLGENDE ${selection.side.toUpperCase()} DCA`:`DCA ${Math.round(Number(level.number))}` });
+      });
     }
     if (mode === "aster-detail") {
       const targetSec = focusAtMs && Number.isFinite(focusAtMs) ? Math.floor(focusAtMs / 1000) : null;
