@@ -16,7 +16,7 @@ import math
 import time
 
 from aster_close_guard import CloseEvidence
-from aster_execution import PairExecutionPlan, execute_leg_once, plan_pair, contract_brackets
+from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, plan_pair, contract_brackets
 from aster_gateway import AsterAutomationConfig, AsterOrderIntent, ContractRules, LeverageBracket, PositionSide, maximum_allowed_leverage
 from aster_strategy2 import Strategy2Config
 from aster_strategy2_focus import dca_drop_sequence, dca_notional_sequence
@@ -454,7 +454,13 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             prefix=f"s2mf-{hashlib.sha256(f'{uid}|{slot_id}|{cycle}|{action}|{dca_no}'.encode()).hexdigest()[:12]}"
             def reserve(intent:Any, *, _action=action,_cycle=cycle,_dca=dca_no,_lev=effective,_margin=required)->None:
                 if reserve_order: reserve_order(intent,{"kind":f"FOCUS_SLOT_{_action}","slotId":slot_id,"cycleId":_cycle,"leverage":_lev,"marginUsd":_margin,"dcaNumber":_dca or None})
-            result=execute_leg_once(client,plan,side=PositionSide(side),action="OPEN",id_prefix=prefix,confirm=True,before_submit=reserve,new_position_leverage=effective)
+            try:
+                result=execute_leg_once(client,plan,side=PositionSide(side),action="OPEN",id_prefix=prefix,confirm=True,before_submit=reserve,new_position_leverage=effective)
+            except NewPositionLeverageBlocked as exc:
+                state.update({"status":"BLOCKED","pendingAction":"","recoveryStatus":exc.reason_code,"lastReconciledAt":timestamp_ms});states[slot_id]=state
+                _audit(ref,"FOCUS_SLOT_SKIPPED_MIN_LEVERAGE",slot_id=slot_id,symbol=symbol,side=side,reason=str(exc),configuredLeverage=configured,effectiveLeverage=effective)
+                actions.append({"slotId":slot_id,"action":"LEVERAGE_BLOCKED","symbol":symbol,"side":side,"reason":exc.reason_code})
+                continue
             q,p,intent_id,fill_id=_confirmed_fill(result);filled=q*p
             if leg is None:
                 leg=OwnedLeg(settings.strategy_id,"strategy2",symbol,side,cycle,settings.version,q,p,0,_slot_role(slot_id),

@@ -23,3 +23,13 @@ def test_legacy_management_excludes_focus_owned_leg_only_while_focus_mode_active
     source=Path("aster_strategy2_runtime.py").read_text()
     assert 'config.trading_mode=="focus" and str(item.role).upper().startswith("FOCUS")' in source
     assert 'config.trading_mode=="focus" and str(leg.role).upper().startswith("FOCUS")' in source
+
+
+def test_focus_leverage_rejection_is_pair_local_not_account_data_hold():
+    live=Path("aster_strategy2_focus_live.py").read_text()
+    multi=Path("aster_strategy2_focus_multi.py").read_text()
+    assert "except NewPositionLeverageBlocked as exc" in live
+    assert 'action":"FOCUS_LEVERAGE_BLOCKED"' in live
+    assert "except NewPositionLeverageBlocked as exc" in multi
+    assert 'action":"LEVERAGE_BLOCKED"' in multi
+    assert 'FOCUS_SLOT_SKIPPED_MIN_LEVERAGE' in multi

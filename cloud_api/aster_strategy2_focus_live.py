@@ -14,7 +14,7 @@ import math
 import time
 
 from aster_close_guard import AsterCloseBlocked, CloseEvidence
-from aster_execution import PairExecutionPlan, execute_leg_once, plan_pair, planning_brackets
+from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, plan_pair, planning_brackets
 from aster_gateway import AsterAutomationConfig, AsterOrderIntent, ContractRules, PositionSide
 from aster_strategy2 import Strategy2Config
 from aster_strategy2_focus import (
@@ -434,8 +434,14 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
         def reserve(intent:Any)->None:
             if reserve_order:reserve_order(intent,{"kind":f"FOCUS_{kind}","cycleId":cycle,"leverage":settings.leverage,
                 "marginUsd":float(plan.notional_per_leg)/max(1,settings.leverage),"dcaNumber":previous.dca_count+1 if kind=="DCA" else None})
-        result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True,
-            before_submit=reserve,new_position_leverage=settings.leverage)
+        try:
+            result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True,
+                before_submit=reserve,new_position_leverage=settings.leverage)
+        except NewPositionLeverageBlocked as exc:
+            _audit(ref,"FOCUS_PAIR_SKIPPED_MIN_LEVERAGE",symbol=symbol,side="LONG",reason=str(exc),configuredLeverage=settings.leverage)
+            hold=replace(previous,last_action="LEVERAGE_BLOCKED",last_reason=str(exc))
+            ref.set({"focusLiveState":focus_state_to_mapping(hold),"focusLiveReport":report,"focusLiveAt":time.time()},merge=True)
+            return {"status":"waiting","action":"FOCUS_LEVERAGE_BLOCKED","symbol":symbol,"reason":exc.reason_code,"ordersSent":0,"focus":report}
         quantity,price,intent_id,fill_id=_confirmed_fill(result);notional=quantity*price
         state=apply_focus_buy(pending,price=price,notional=notional,leverage=settings.leverage,timestamp_ms=timestamp_ms,
             is_dca=(kind=="DCA"),reason=str(decision.get("reason","")))
