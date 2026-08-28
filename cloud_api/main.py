@@ -1260,7 +1260,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "partialSymbols":sum(str(x.get("status",""))=="PARTIAL_PROTECTION" for x in mg_pairs if isinstance(x,dict)),
             "lockedSymbols":sum(str(x.get("status",""))=="LOCKED" for x in mg_pairs if isinstance(x,dict)),
             "recoverySymbols":sum(str(x.get("status",""))=="RECOVERY" for x in mg_pairs if isinstance(x,dict))},
-        "focus":{**focus_state,"state":focus_state,"report":focus_report,
+        "focus":{**focus_state,"state":focus_state,"slots":raw.get("focusLiveSlots",[]) if focus_live_mode and isinstance(raw.get("focusLiveSlots"),list) else [],"report":focus_report,
             "metrics":raw.get("focusShadowMetrics",{}) if isinstance(raw.get("focusShadowMetrics"),dict) else {},
             "ordersSent":int(safe_float(raw.get("focusLiveOrdersSent"))) if focus_live_mode else 0,
             "live":bool(focus_live_mode and enabled),"shadowEnabled":bool(settings.get("focusShadowEnabled",False)),
@@ -3901,10 +3901,23 @@ def strategy2_focus_markets(user:dict[str,Any]=Depends(authenticated_user))->dic
     settings=Strategy2Config.from_mapping(raw.get("settings"))
     secret=load_aster_secret(user)
     client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
-    markets=current_focus_markets(client,settings)
-    ranking=rank_focus_pairs(list(markets),minimum_quote_volume=settings.minimum_quote_volume_24h_usdt,
-        minimum_liquidity_score=settings.focus_min_liquidity_score)
-    return {"readOnly":True,"ordersSent":0,"ranking":[row.public_dict() for row in ranking],"marketCount":len(markets)}
+    # Manual Multi-Focus must be able to select every currently tradable Aster
+    # USDT perpetual. The automatic Focus engine still uses its separate Top-20
+    # volume pool via current_focus_markets().
+    info=client.public_exchange_info(); tickers=client.ticker_24h(); prices=client.ticker_prices()
+    ticker_by={str(x.get("symbol","")).upper():x for x in tickers if isinstance(x,dict)}
+    price_by={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in prices if isinstance(x,dict)}
+    rows=[]
+    for item in info.get("symbols",[]) if isinstance(info,dict) else []:
+        if not isinstance(item,dict): continue
+        symbol=str(item.get("symbol","")).upper(); quote=str(item.get("quoteAsset","")).upper()
+        status=str(item.get("status","TRADING")).upper(); contract=str(item.get("contractType","PERPETUAL")).upper()
+        if not symbol or quote!="USDT" or status!="TRADING" or contract not in {"PERPETUAL",""}: continue
+        ticker=ticker_by.get(symbol,{})
+        rows.append({"symbol":symbol,"price":price_by.get(symbol,0.0),"change_24h_pct":safe_float(ticker.get("priceChangePercent"))/100.0,
+            "quote_volume_24h":max(0.0,safe_float(ticker.get("quoteVolume"))),"tradable":True})
+    rows.sort(key=lambda x:(-safe_float(x.get("quote_volume_24h")),str(x.get("symbol",""))))
+    return {"readOnly":True,"ordersSent":0,"ranking":rows,"marketCount":len(rows)}
 
 
 @app.get("/v1/me/aster/strategy2/focus/shadow")
@@ -5325,6 +5338,13 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
     symbol=str(intent.get("symbol","")).upper();side=str(intent.get("side","")).upper()
     client_order_id=str(intent.get("clientOrderId",""));action=str(intent.get("action","")).upper()
     action_kind=str(intent.get("kind",action)).upper()
+    slot_id=str(intent.get("slotId","")).strip();intent_cycle=str(intent.get("cycleId","")).strip()
+    def recovered_role(existing_role:str="HARVEST")->str:
+        if action_kind in {"FOCUS_SLOT_OPEN","FOCUS_SLOT_DCA"} and slot_id:return f"FOCUS_SLOT:{slot_id}"
+        if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and slot_id:return f"FOCUS_SLOT_HEDGE:{slot_id}"
+        if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and side=="SHORT":return "FOCUS_HEDGE"
+        if action_kind in {"OPEN_PROTECTION","PROTECTION_INCREASE"}:return "PROTECTION"
+        return existing_role
     if not symbol or side not in {"LONG","SHORT"} or not client_order_id:
         return False,"Persistente intent mist betrouwbare identiteit"
     secret=load_aster_secret({"uid":uid})
@@ -5362,15 +5382,15 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
         if quantity<=0 or entry<=0:return False,"FILLED OPEN heeft geen betrouwbare positiehoeveelheid of entry"
         if existing:
             owned=[replace(leg,quantity=quantity,weighted_entry=entry,
-                dca_count=leg.dca_count+(1 if action_kind=="ADD_DCA" else 0),
-                role="FOCUS_HEDGE" if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and side=="SHORT" else "PROTECTION" if action_kind in {"OPEN_PROTECTION","PROTECTION_INCREASE"} else leg.role,
+                dca_count=leg.dca_count+(1 if action_kind=="ADD_DCA" or action_kind=="FOCUS_SLOT_DCA" else 0),
+                role=recovered_role(leg.role),
                 intent_ids=tuple(dict.fromkeys((*leg.intent_ids,client_order_id))),
                 fill_ids=tuple(dict.fromkeys((*leg.fill_ids,*fill_ids))),last_order_at_ms=int(time.time()*1000))
                 if leg==existing else leg for leg in owned]
         else:
-            owned.append(OwnedLeg("aster-strategy-2","strategy2",symbol,side,f"recovered-{client_order_id}",
-                int(safe_float(raw.get("configVersion"))) or 1,quantity,entry,0,
-                "FOCUS_HEDGE" if action_kind in {"FOCUS_HEDGE","FOCUS_HEDGE_CORRECTION"} and side=="SHORT" else "PROTECTION" if action_kind=="OPEN_PROTECTION" else "HARVEST",(client_order_id,),fill_ids,(),
+            owned.append(OwnedLeg("aster-strategy-2","strategy2",symbol,side,intent_cycle or f"recovered-{client_order_id}",
+                int(safe_float(raw.get("configVersion"))) or 1,quantity,entry,1 if action_kind=="FOCUS_SLOT_DCA" else 0,
+                recovered_role(),(client_order_id,),fill_ids,(),
                 int(time.time()*1000),last_order_at_ms=int(time.time()*1000)))
     elif action=="CLOSE":
         if row is None:

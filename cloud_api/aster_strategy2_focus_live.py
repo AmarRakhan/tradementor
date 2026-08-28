@@ -391,6 +391,10 @@ def run_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings:St
                         dry_run:bool=False,order_budget:int|None=None,reserve_order:Callable[[Any,dict[str,Any]],None]|None=None,
                         open_orders:list[dict[str,Any]]|None=None)->dict[str,Any]|None:
     if settings.trading_mode!="focus" or not settings.focus_live_enabled:return None
+    if settings.focus_slots:
+        from aster_strategy2_focus_multi import run_multi_focus_live_step
+        return run_multi_focus_live_step(client=client,ref=ref,raw_state=raw_state,settings=settings,uid=uid,account=account,positions=positions,
+            timestamp_ms=timestamp_ms,dry_run=dry_run,order_budget=order_budget,reserve_order=reserve_order,open_orders=open_orders)
     guard=_focus_cycle_guard(client=client,ref=ref,raw_state=raw_state,settings=settings,uid=uid,account=account,positions=positions,timestamp_ms=timestamp_ms,dry_run=dry_run,order_budget=order_budget,open_orders=open_orders,reserve_order=reserve_order)
     if guard is not None:return guard
     report,previous,owned=build_focus_live_plan(client=client,raw_state=raw_state,settings=settings,

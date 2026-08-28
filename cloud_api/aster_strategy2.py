@@ -88,6 +88,10 @@ class Strategy2Config:
     focus_portfolio_brake_mode: Literal["off", "usd", "pct"] = "off"
     focus_portfolio_brake_value: float = 0.0
     focus_max_pairs_per_cycle: int = 0
+    # Explicit manual Multi-Focus slots. Empty keeps the legacy single-Focus engine byte-for-byte compatible.
+    focus_slots: tuple[dict[str, Any], ...] = ()
+    focus_take_profit_mode: Literal["percent", "usdt"] = "percent"
+    focus_take_profit_usdt: float = 0.0
     focus_trailing_activation_pct: float = .02
     focus_trailing_distance_pct: float = .025
     focus_minimum_profit_pct: float = .015
@@ -170,6 +174,9 @@ class Strategy2Config:
             focus_portfolio_brake_mode=(str(raw.get("focusPortfolioBrakeMode", "off")).lower() if str(raw.get("focusPortfolioBrakeMode", "off")).lower() in {"off","usd","pct"} else "off"),
             focus_portfolio_brake_value=f("focusPortfolioBrakeValue", 0),
             focus_max_pairs_per_cycle=i("focusMaxPairsPerCycle", 0),
+            focus_slots=tuple(dict(x) for x in raw.get("focusSlots", ()) if isinstance(x, dict)) if isinstance(raw.get("focusSlots", ()), (list, tuple)) else (),
+            focus_take_profit_mode="usdt" if str(raw.get("focusTakeProfitMode", "percent")).lower()=="usdt" else "percent",
+            focus_take_profit_usdt=f("focusTakeProfitUsdt", 0),
             focus_trailing_activation_pct=f("focusTrailingActivationPct", .02),
             focus_trailing_distance_pct=f("focusTrailingDistancePct", .025),
             focus_minimum_profit_pct=f("focusMinimumProfitPct", .015),
@@ -211,7 +218,7 @@ class Strategy2Config:
         if not 0 < self.money_grabber_first_ratio <= self.money_grabber_full_ratio <= 1: raise ValueError("De volledige Money Grabber-beschermingsratio mag niet kleiner zijn dan de eerste ratio")
         if self.trading_mode not in {"multi_pair", "focus"}: raise ValueError("Ongeldige Strategy-2 tradingMode")
         if self.focus_selection_mode not in {"automatic", "manual"}: raise ValueError("Ongeldige Focus-selectiemodus")
-        if self.focus_selection_mode == "manual" and self.trading_mode == "focus" and not self.focus_manual_pair: raise ValueError("Handmatige Focus-selectie vereist een pair")
+        if self.focus_selection_mode == "manual" and self.trading_mode == "focus" and not self.focus_slots and not self.focus_manual_pair: raise ValueError("Handmatige Focus-selectie vereist een pair")
         if self.focus_sizing_mode not in {"fixed_usd", "equity_pct"}: raise ValueError("Ongeldige Focus sizing-mode")
         if not 0 < self.focus_start_order_notional <= 1_000_000: raise ValueError("Focus startorder moet positief zijn")
         if not 0 < self.focus_equity_pct <= .90: raise ValueError("Focus equity-percentage moet tussen 0 en 90% liggen")
@@ -231,6 +238,32 @@ class Strategy2Config:
         if self.focus_portfolio_brake_value < 0: raise ValueError("Focus Portfolio Handrem moet nul of positief zijn")
         if not 0 <= self.focus_max_pairs_per_cycle <= 1000: raise ValueError("Max Focus-pairs per cyclus moet tussen 0 en 1000 liggen")
         if self.focus_portfolio_brake_mode != "off" and self.focus_max_pairs_per_cycle < 1: raise ValueError("Portfolio Handrem vereist Max Focus-pairs per cyclus van minimaal 1")
+        if len(self.focus_slots) > 8: raise ValueError("Multi-Focus ondersteunt maximaal 8 actieve slots")
+        seen_symbols:set[str]=set(); seen_ids:set[str]=set()
+        for index, slot in enumerate(self.focus_slots, 1):
+            slot_id=str(slot.get("slotId", f"slot-{index}")).strip() or f"slot-{index}"
+            symbol=str(slot.get("pair", slot.get("symbol", ""))).upper().strip()
+            side=str(slot.get("side", "LONG")).upper()
+            mode=str(slot.get("leverageMode", "minimum")).lower()
+            try: configured=int(float(slot.get("leverage", self.leverage)))
+            except (TypeError,ValueError): raise ValueError(f"Focus-slot {index}: ongeldige leverage")
+            try: notional=float(slot.get("startNotional", self.focus_start_order_notional))
+            except (TypeError,ValueError): raise ValueError(f"Focus-slot {index}: ongeldig instapbedrag")
+            tp_mode=str(slot.get("tpMode", self.focus_take_profit_mode)).lower()
+            try: tp_usdt=float(slot.get("tpTargetUsdt", self.focus_take_profit_usdt))
+            except (TypeError,ValueError): raise ValueError(f"Focus-slot {index}: ongeldig netto USDT-doel")
+            if slot_id in seen_ids: raise ValueError(f"Dubbele Focus slotId: {slot_id}")
+            if not symbol: raise ValueError(f"Focus-slot {index}: pair ontbreekt")
+            if symbol in seen_symbols: raise ValueError(f"{symbol}: hetzelfde symbool kan maar één keer in Multi-Focus vanwege Aster symbol-wide leverage")
+            if side not in {"LONG","SHORT"}: raise ValueError(f"Focus-slot {index}: kies LONG of SHORT")
+            if mode not in {"minimum","exact"}: raise ValueError(f"Focus-slot {index}: leverageMode moet minimum of exact zijn")
+            if not 1 <= configured <= 200: raise ValueError(f"Focus-slot {index}: leverage moet tussen 1 en 200 liggen")
+            if not math.isfinite(notional) or notional <= 0: raise ValueError(f"Focus-slot {index}: instapbedrag moet positief zijn")
+            if tp_mode not in {"percent","usdt"}: raise ValueError(f"Focus-slot {index}: TP-modus moet percent of usdt zijn")
+            if tp_mode=="usdt" and (not math.isfinite(tp_usdt) or tp_usdt<=0): raise ValueError(f"Focus-slot {index}: netto USDT-doel moet positief zijn")
+            seen_ids.add(slot_id); seen_symbols.add(symbol)
+        if self.focus_take_profit_mode not in {"percent","usdt"}: raise ValueError("Ongeldige Focus Take Profit-modus")
+        if self.focus_take_profit_mode=="usdt" and (not math.isfinite(self.focus_take_profit_usdt) or self.focus_take_profit_usdt<=0): raise ValueError("Focus netto USDT-doel moet positief zijn")
         if self.focus_start_order_notional > self.focus_max_budget_usd and self.focus_sizing_mode == "fixed_usd": raise ValueError("Focus startorder overschrijdt Focus-budget")
         if not 0 < self.focus_minimum_profit_pct <= .50: raise ValueError("Focus minimum profit moet tussen 0 en 50% liggen")
         if not self.focus_minimum_profit_pct <= self.focus_trailing_activation_pct <= 2.0: raise ValueError("Focus trailing activation moet minimaal minimum profit zijn")
@@ -275,6 +308,7 @@ class Strategy2Config:
             "focusDcaMode":self.focus_dca_mode,"focusProfile":self.focus_profile,"focusDcaAmountMode":self.focus_dca_amount_mode,"focusDcaIncrement":self.focus_dca_increment,"focusDcaCustomLevels":list(self.focus_dca_custom_levels),"focusDcaDistance":self.focus_dca_distance,"focusDcaNotional":self.focus_dca_notional,
             "focusMaxDca":self.focus_max_dca,"focusDcaMultiplier":self.focus_dca_multiplier,"focusMaxBudgetUsd":self.focus_max_budget_usd,
             "focusPortfolioBrakeMode":self.focus_portfolio_brake_mode,"focusPortfolioBrakeValue":self.focus_portfolio_brake_value,"focusMaxPairsPerCycle":self.focus_max_pairs_per_cycle,
+            "focusSlots":[dict(x) for x in self.focus_slots],"focusTakeProfitMode":self.focus_take_profit_mode,"focusTakeProfitUsdt":self.focus_take_profit_usdt,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
             "focusMinimumProfitPct":self.focus_minimum_profit_pct,"focusPartialTpEnabled":self.focus_partial_tp_enabled,
             "focusFirstPartialTpPct":self.focus_first_partial_tp_pct,"focusFirstPartialClosePct":self.focus_first_partial_close_pct,
