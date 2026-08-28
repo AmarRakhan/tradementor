@@ -136,19 +136,35 @@ def _empty_state(slot_id:str,symbol:str,side:str,mode:str,configured:int,effecti
         "exchangeMaxLeverage":maximum,"pendingAction":"","recoveryStatus":"RECONCILED","lastReconciledAt":int(time.time()*1000)}
 
 
-def _next_trigger(settings:Strategy2Config, *, side:str, original:float, dca_count:int)->float:
+def _cycle_dca_policy(settings:Strategy2Config,state:dict[str,Any],raw_state:dict[str,Any],*,symbol:str,side:str)->tuple[str,float,tuple[float,...]]:
+    mode=str(state.get("cycleDcaMode",settings.focus_dca_mode)).lower()
+    distance=_f(state.get("cycleDcaDistance"),0.0)
+    custom=tuple(_f(x) for x in state.get("cycleDcaCustomLevels",()) if _f(x)>0) if isinstance(state.get("cycleDcaCustomLevels"),(list,tuple)) else ()
+    if distance>0:return mode,distance,custom
+    legacy=raw_state.get("focusLiveState") if isinstance(raw_state.get("focusLiveState"),dict) else {}
+    legacy_pair=str(legacy.get("activePair",legacy.get("active_pair",""))).upper();legacy_cycle=str(legacy.get("cycleId",legacy.get("cycle_id","")))
+    cycle=str(state.get("cycleId",""));original=_f(state.get("originalEntry"));count=int(_f(legacy.get("dcaCount",legacy.get("dca_count",0))))
+    next_trigger=_f(legacy.get("nextDcaTrigger",legacy.get("next_dca_trigger",0)))
+    if mode=="fixed" and symbol==legacy_pair and (not cycle or not legacy_cycle or cycle==legacy_cycle) and original>0 and next_trigger>0:
+        step=max(1,count+1);ratio=(1-next_trigger/original) if side=="LONG" else (next_trigger/original-1)
+        inferred=ratio/step
+        if 0<inferred<1:distance=inferred
+    if distance<=0:distance=settings.focus_dca_distance
+    return mode,distance,custom or tuple(settings.focus_dca_custom_levels)
+
+def _next_trigger(settings:Strategy2Config, *, side:str, original:float, dca_count:int,mode:str|None=None,distance:float|None=None,custom_levels:tuple[float,...]|None=None)->float:
     if original<=0:return 0.0
+    mode=str(mode or settings.focus_dca_mode);distance=_f(distance,settings.focus_dca_distance);custom_levels=tuple(custom_levels if custom_levels is not None else settings.focus_dca_custom_levels)
     if settings.focus_dca_unlimited:
-        if settings.focus_dca_mode!="fixed" or not 0<settings.focus_dca_distance<1:return 0.0
+        if mode!="fixed" or not 0<distance<1:return 0.0
         step=max(0,int(dca_count))+1
-        factor=(1-settings.focus_dca_distance)**step if side=="LONG" else (1+settings.focus_dca_distance)**step
+        factor=(1-distance)**step if side=="LONG" else (1+distance)**step
         return original*factor
     if dca_count>=settings.focus_max_dca:return 0.0
-    levels=dca_drop_sequence(distance_pct=settings.focus_dca_distance,count=settings.focus_max_dca,
-        mode=settings.focus_dca_mode,custom_levels=settings.focus_dca_custom_levels)
+    levels=dca_drop_sequence(distance_pct=distance,count=settings.focus_max_dca,mode=mode,custom_levels=custom_levels)
     if dca_count>=len(levels):return 0.0
-    distance=levels[dca_count]
-    return original*(1-distance) if side=="LONG" else original*(1+distance)
+    level_distance=levels[dca_count]
+    return original*(1-level_distance) if side=="LONG" else original*(1+level_distance)
 
 
 def _dca_notional(settings:Strategy2Config,dca_count:int)->float:
@@ -292,6 +308,8 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             leverageMode=mode,configuredLeverage=configured,effectiveLeverage=effective,exchangeMaxLeverage=maximum)
         state=states.get(slot_id) or _empty_state(slot_id,symbol,side,mode,configured,effective,maximum)
         state.update({"pair":symbol,"side":side,"leverageMode":mode,"configuredLeverage":configured,"effectiveLeverage":effective,"exchangeMaxLeverage":maximum})
+        cycle_mode,cycle_distance,cycle_custom=_cycle_dca_policy(settings,state,raw_state,symbol=symbol,side=side)
+        state.update({"cycleDcaMode":cycle_mode,"cycleDcaDistance":cycle_distance,"cycleDcaCustomLevels":list(cycle_custom)})
         leg=_slot_owned(owned,slot_id);hedge_leg=_slot_hedge_owned(owned,slot_id)
         if hedge_leg is not None:
             hedge_side=_opposite(side);hedge_row=_position(working_positions,symbol,hedge_side);active_qty=abs(_f((row or {}).get("positionAmt")));hedge_qty=abs(_f((hedge_row or {}).get("positionAmt")))
@@ -363,7 +381,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             owned=[leg if x.role==_slot_role(slot_id) else x for x in owned]
             state.update({"status":"ACTIVE","cycleId":leg.cycle_id,"originalEntry":_f(state.get("originalEntry"),entry) or entry,
                 "weightedEntry":entry,"quantity":qty,"notional":qty*entry,"usedMargin":qty*mark/max(1,effective),"dcaCount":leg.dca_count,
-                "nextDcaTrigger":_next_trigger(settings,side=side,original=_f(state.get("originalEntry"),entry) or entry,dca_count=leg.dca_count),
+                "nextDcaTrigger":_next_trigger(settings,side=side,original=_f(state.get("originalEntry"),entry) or entry,dca_count=leg.dca_count,mode=cycle_mode,distance=cycle_distance,custom_levels=cycle_custom),
                 "recoveryStatus":"RECONCILED","lastReconciledAt":timestamp_ms})
         elif row is not None:
             # Backward-compatible migration: an already proven legacy single-Focus
@@ -375,7 +393,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                 leg=migrated;legacy_cycle=leg.cycle_id;original=_f(legacy_state.get("originalEntry"),entry) or entry
                 state.update({"status":"ACTIVE","cycleId":legacy_cycle,"createdAt":int(_f(legacy_state.get("openedAt"),leg.created_at_ms)) or leg.created_at_ms,
                     "originalEntry":original,"weightedEntry":entry,"quantity":qty,"notional":qty*entry,"usedMargin":qty*mark/max(1,effective),
-                    "dcaCount":leg.dca_count,"nextDcaTrigger":_next_trigger(settings,side=side,original=original,dca_count=leg.dca_count),
+                    "dcaCount":leg.dca_count,"nextDcaTrigger":_next_trigger(settings,side=side,original=original,dca_count=leg.dca_count,mode=cycle_mode,distance=cycle_distance,custom_levels=cycle_custom),
                     "realizedPnl":_f(legacy_state.get("realizedPnl")),"recoveryStatus":"MIGRATED_FROM_SINGLE_FOCUS","lastReconciledAt":timestamp_ms})
                 _audit(ref,"FOCUS_SLOT_RECONCILED",slot_id=slot_id,symbol=symbol,side=side,reason="legacy single-Focus ownership veilig gemigreerd naar Multi-Focus slot",cycleId=legacy_cycle,dcaNumber=leg.dca_count)
             else:
@@ -424,7 +442,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                     state.update({"status":"WAITING","recoveryStatus":f"TP kostendata onbetrouwbaar: {exc}"});states[slot_id]=state;continue
                 action="CLOSE"
             if not action and settings.focus_dca_enabled and (settings.focus_dca_unlimited or leg.dca_count<settings.focus_max_dca) and not brake_block:
-                trigger=_next_trigger(settings,side=side,original=_f(state.get("originalEntry"),entry) or entry,dca_count=leg.dca_count)
+                trigger=_next_trigger(settings,side=side,original=_f(state.get("originalEntry"),entry) or entry,dca_count=leg.dca_count,mode=cycle_mode,distance=cycle_distance,custom_levels=cycle_custom)
                 if trigger>0 and ((side=="LONG" and mark<=trigger) or (side=="SHORT" and mark>=trigger)):
                     action="DCA";notional=_dca_notional(settings,leg.dca_count)
         if not action:
@@ -444,9 +462,9 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                 state.update({"status":"WAITING","pendingAction":"RISK"});states[slot_id]=state
                 _audit(ref,"FOCUS_SLOT_SKIPPED_MARGIN",slot_id=slot_id,symbol=symbol,side=side,reason="liquidation/maintenance risk blokkeert DCA",liquidationDistance=liq_distance,maintenanceMarginRatio=maint_ratio)
                 continue
-            if required*1.05>available_remaining or required>strategy_margin_remaining+1e-9:
+            if required*1.05>available_remaining:
                 state.update({"status":"WAITING","pendingAction":"MARGIN"});states[slot_id]=state
-                _audit(ref,"FOCUS_SLOT_SKIPPED_MARGIN",slot_id=slot_id,symbol=symbol,side=side,reason="onvoldoende available/Strategy-2 margin",requiredMargin=required,availableRemaining=available_remaining,strategyMarginRemaining=strategy_margin_remaining)
+                _audit(ref,"FOCUS_SLOT_SKIPPED_MARGIN",slot_id=slot_id,symbol=symbol,side=side,reason="onvoldoende actuele Aster available margin",requiredMargin=required,availableRemaining=available_remaining)
                 continue
             plan=_plan(client,symbol,mark,notional,effective,working_positions)
             cycle=state.get("cycleId") or f"mfocus-{hashlib.sha256(f'{uid}|{slot_id}|{symbol}|{side}|{timestamp_ms}'.encode()).hexdigest()[:16]}"
@@ -475,7 +493,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                 _audit(ref,"FOCUS_SLOT_DCA",slot_id=slot_id,symbol=symbol,side=side,reason="DCA trigger",dcaNumber=leg.dca_count,effectiveLeverage=effective)
             state.update({"status":"ACTIVE","cycleId":cycle,"createdAt":int(_f(state.get("createdAt"))) or timestamp_ms,"originalEntry":original,"weightedEntry":leg.weighted_entry,"quantity":leg.quantity,
                 "notional":leg.quantity*leg.weighted_entry,"usedMargin":leg.quantity*mark/max(1,effective),"dcaCount":leg.dca_count,
-                "nextDcaTrigger":_next_trigger(settings,side=side,original=original,dca_count=leg.dca_count),"pendingAction":"","lastReconciledAt":timestamp_ms})
+                "nextDcaTrigger":_next_trigger(settings,side=side,original=original,dca_count=leg.dca_count,mode=cycle_mode,distance=cycle_distance,custom_levels=cycle_custom),"pendingAction":"","lastReconciledAt":timestamp_ms})
             available_remaining=max(0.0,available_remaining-required);strategy_margin_remaining=max(0.0,strategy_margin_remaining-required)
         else:
             assert leg is not None and evidence is not None

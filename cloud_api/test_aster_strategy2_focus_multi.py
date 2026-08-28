@@ -1,5 +1,5 @@
 from aster_strategy2 import Strategy2Config
-from aster_strategy2_focus_multi import _migrate_legacy_focus_leg, _next_trigger, resolve_slot_leverage
+from aster_strategy2_focus_multi import _cycle_dca_policy, _migrate_legacy_focus_leg, _next_trigger, resolve_slot_leverage
 from aster_strategy2_state import OwnedLeg
 
 
@@ -139,3 +139,30 @@ def test_existing_exact_position_must_already_match_exact_leverage():
     try: resolve_slot_leverage(Client(100),slot,settings,existing_leverage=100)
     except ValueError as exc: assert "Exact vereist 50x" in str(exc)
     else: raise AssertionError("existing exact mismatch must fail")
+
+
+def test_active_cycle_keeps_legacy_fixed_spacing_when_settings_change():
+    settings=cfg(focusDcaDistance=.005,focusDcaMode="fixed",focusMaxDca=30)
+    state={"pair":"SOLUSDT","side":"LONG","cycleId":"focus-cycle","originalEntry":108.99}
+    raw={"focusLiveState":{"activePair":"SOLUSDT","cycleId":"focus-cycle","originalEntry":108.99,"dcaCount":5,"nextDcaTrigger":107.02818}}
+    mode,distance,custom=_cycle_dca_policy(settings,state,raw,symbol="SOLUSDT",side="LONG")
+    assert mode=="fixed"
+    assert abs(distance-.003)<1e-12
+    assert abs(_next_trigger(settings,side="LONG",original=108.99,dca_count=7,mode=mode,distance=distance,custom_levels=custom)-106.37424)<1e-9
+
+
+def test_persisted_cycle_spacing_wins_over_new_settings():
+    settings=cfg(focusDcaDistance=.02,focusDcaMode="fixed",focusMaxDca=30)
+    state={"cycleId":"cycle","originalEntry":100.0,"cycleDcaMode":"fixed","cycleDcaDistance":.003,"cycleDcaCustomLevels":[]}
+    mode,distance,custom=_cycle_dca_policy(settings,state,{},symbol="SOLUSDT",side="LONG")
+    assert distance==.003
+    assert abs(_next_trigger(settings,side="LONG",original=100,dca_count=9,mode=mode,distance=distance,custom_levels=custom)-97.0)<1e-9
+
+
+def test_focus_dca_uses_focus_budget_and_actual_available_margin_not_generic_strategy_budget():
+    from pathlib import Path
+    source=Path("aster_strategy2_focus_multi.py").read_text()
+    assert 'current_slot_notional+notional>settings.focus_max_budget_usd' in source
+    assert 'required*1.05>available_remaining' in source
+    assert 'required>strategy_margin_remaining' not in source
+    assert 'reason="onvoldoende actuele Aster available margin"' in source
