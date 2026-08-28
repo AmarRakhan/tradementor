@@ -18,7 +18,7 @@ test("Tradecentrum derives every view from the existing confirmed Aster snapshot
   assert.match(component, /recentTradeActivity/);
   assert.match(component, /snapshot\.data\?\.positions/);
   assert.match(component, /orderQueue\.lastScanActions/);
-  assert.match(component, /topProfitPositions\(allPositions\)/);
+  assert.match(component, /topProfitPositions\(displayPositions\)/);
   assert.match(component, /TP_KINDS/);
   assert.match(component, /DCA_KINDS/);
   assert.doesNotMatch(component, /dummy|mockTrade|fakeTrade/i);
