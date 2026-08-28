@@ -101,12 +101,21 @@ def _exchange_max_leverage(client: Any, symbol: str, notional: float) -> int:
     return int(maximum)
 
 
-def resolve_slot_leverage(client: Any, slot: dict[str,Any], settings: Strategy2Config) -> tuple[int,int]:
+def resolve_slot_leverage(client: Any, slot: dict[str,Any], settings: Strategy2Config, *, existing_leverage:int|None=None) -> tuple[int,int]:
     symbol=str(slot.get("pair",slot.get("symbol",""))).upper().strip()
     mode=str(slot.get("leverageMode","minimum")).lower()
     configured=max(1,int(_f(slot.get("leverage"),settings.leverage)))
     notional=max(0.01,_f(slot.get("startNotional"),settings.focus_start_order_notional))
     maximum=_exchange_max_leverage(client,symbol,notional)
+    # Never rewrite contract leverage underneath an already-open Aster position.
+    # Existing exchange truth is authoritative as long as it satisfies the slot policy.
+    if existing_leverage is not None:
+        current=max(1,int(existing_leverage))
+        if mode=="exact":
+            if current!=configured: raise ValueError(f"{symbol}: bestaande positie staat op {current}x maar Exact vereist {configured}x")
+            return current,maximum
+        if current<configured: raise ValueError(f"{symbol}: bestaande positie staat op {current}x, onder minimum {configured}x")
+        return current,maximum
     if mode=="exact":
         if configured>maximum: raise ValueError(f"{symbol}: exact {configured}x wordt niet ondersteund; Aster max is {maximum}x")
         return configured,maximum
@@ -271,7 +280,9 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
         symbol=str(slot.get("pair",slot.get("symbol",""))).upper().strip();side=str(slot.get("side","LONG")).upper()
         mode=str(slot.get("leverageMode","minimum")).lower();configured=max(1,int(_f(slot.get("leverage"),settings.leverage)))
         start_notional=max(0.0,_f(slot.get("startNotional"),settings.focus_start_order_notional))
-        try: effective,maximum=resolve_slot_leverage(client,slot,settings)
+        row=_position(working_positions,symbol,side)
+        current_leverage=(max(1,int(_f(row.get("leverage")))) if row is not None and _f(row.get("leverage"))>0 else None)
+        try: effective,maximum=resolve_slot_leverage(client,slot,settings,existing_leverage=current_leverage)
         except ValueError as exc:
             _audit(ref,"FOCUS_SLOT_SKIPPED_EXACT_LEVERAGE" if mode=="exact" else "FOCUS_SLOT_SKIPPED_MIN_LEVERAGE",
                 slot_id=slot_id,symbol=symbol,side=side,reason=str(exc),configuredLeverage=configured)
@@ -281,7 +292,7 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             leverageMode=mode,configuredLeverage=configured,effectiveLeverage=effective,exchangeMaxLeverage=maximum)
         state=states.get(slot_id) or _empty_state(slot_id,symbol,side,mode,configured,effective,maximum)
         state.update({"pair":symbol,"side":side,"leverageMode":mode,"configuredLeverage":configured,"effectiveLeverage":effective,"exchangeMaxLeverage":maximum})
-        leg=_slot_owned(owned,slot_id);hedge_leg=_slot_hedge_owned(owned,slot_id);row=_position(working_positions,symbol,side)
+        leg=_slot_owned(owned,slot_id);hedge_leg=_slot_hedge_owned(owned,slot_id)
         if hedge_leg is not None:
             hedge_side=_opposite(side);hedge_row=_position(working_positions,symbol,hedge_side);active_qty=abs(_f((row or {}).get("positionAmt")));hedge_qty=abs(_f((hedge_row or {}).get("positionAmt")))
             diff=active_qty-hedge_qty

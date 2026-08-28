@@ -115,3 +115,27 @@ def test_legacy_single_focus_migration_fails_closed_on_cycle_or_pair_mismatch():
     for raw,symbol in (({"focusLiveState":{"activePair":"SOLUSDT","cycleId":"other-cycle"}},"SOLUSDT"),({"focusLiveState":{"activePair":"BTCUSDT","cycleId":"focus-cycle"}},"SOLUSDT")):
         owned,migrated,_=_migrate_legacy_focus_leg([legacy],raw,slot_id="slot-1",symbol=symbol,side="LONG",row=row,timestamp_ms=3000)
         assert migrated is None and owned[0].role=="FOCUS"
+
+
+def test_existing_position_keeps_actual_leverage_when_minimum_is_satisfied():
+    settings=cfg()
+    slot={"pair":"SOLUSDT","leverageMode":"minimum","leverage":50,"startNotional":100}
+    assert resolve_slot_leverage(Client(100),slot,settings,existing_leverage=50)==(50,100)
+    assert resolve_slot_leverage(Client(100),slot,settings,existing_leverage=75)==(75,100)
+
+
+def test_existing_position_below_minimum_is_blocked_without_rewriting():
+    settings=cfg()
+    slot={"pair":"SOLUSDT","leverageMode":"minimum","leverage":50,"startNotional":100}
+    try: resolve_slot_leverage(Client(100),slot,settings,existing_leverage=25)
+    except ValueError as exc: assert "onder minimum 50x" in str(exc)
+    else: raise AssertionError("existing leverage below minimum must fail")
+
+
+def test_existing_exact_position_must_already_match_exact_leverage():
+    settings=cfg()
+    slot={"pair":"SOLUSDT","leverageMode":"exact","leverage":50,"startNotional":100}
+    assert resolve_slot_leverage(Client(100),slot,settings,existing_leverage=50)==(50,100)
+    try: resolve_slot_leverage(Client(100),slot,settings,existing_leverage=100)
+    except ValueError as exc: assert "Exact vereist 50x" in str(exc)
+    else: raise AssertionError("existing exact mismatch must fail")
