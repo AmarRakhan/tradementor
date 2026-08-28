@@ -60,6 +60,19 @@ def _slot_owned(owned: list[OwnedLeg], slot_id: str) -> OwnedLeg | None:
     return matches[0] if matches else None
 
 
+def _migrate_legacy_focus_leg(owned:list[OwnedLeg],raw_state:dict[str,Any],*,slot_id:str,symbol:str,side:str,row:dict[str,Any],timestamp_ms:int)->tuple[list[OwnedLeg],OwnedLeg|None,dict[str,Any]]:
+    legacy_state=raw_state.get("focusLiveState") if isinstance(raw_state.get("focusLiveState"),dict) else {}
+    legacy_cycle=str(legacy_state.get("cycleId","")).strip()
+    legacy_pair=str(legacy_state.get("activePair","")).upper().strip()
+    matches=[x for x in owned if str(x.role).upper()=="FOCUS" and x.symbol==symbol and x.side==side]
+    qty=abs(_f(row.get("positionAmt")));entry=_f(row.get("entryPrice"))
+    if len(matches)!=1 or legacy_pair!=symbol or not legacy_cycle or matches[0].cycle_id!=legacy_cycle or qty<=0 or entry<=0:
+        return owned,None,legacy_state
+    legacy=matches[0]
+    migrated=replace(legacy,role=_slot_role(slot_id),quantity=qty,weighted_entry=entry,last_order_at_ms=max(legacy.last_order_at_ms,timestamp_ms))
+    return [migrated if x is legacy else x for x in owned],migrated,legacy_state
+
+
 def _hedge_role(slot_id:str)->str:
     return f"FOCUS_SLOT_HEDGE:{slot_id}"
 
@@ -342,24 +355,36 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
                 "nextDcaTrigger":_next_trigger(settings,side=side,original=_f(state.get("originalEntry"),entry) or entry,dca_count=leg.dca_count),
                 "recoveryStatus":"RECONCILED","lastReconciledAt":timestamp_ms})
         elif row is not None:
-            # Recover only when the persisted slot cycle plus actual Aster fills prove ownership.
-            cycle=str(state.get("cycleId","")).strip();created=int(_f(state.get("createdAt")))
-            qty=abs(_f(row.get("positionAmt")));entry=_f(row.get("entryPrice"))
-            proven=[]
-            if cycle and qty>0 and entry>0:
-                try:
-                    proven=[x for x in client.user_trades(symbol,limit=500) if isinstance(x,dict)
-                        and str(x.get("symbol","")).upper()==symbol and str(x.get("positionSide","")).upper()==side
-                        and (created<=0 or int(_f(x.get("time",x.get("timestamp",0))))>=created)]
-                except Exception: proven=[]
-            if proven:
-                leg=OwnedLeg(settings.strategy_id,"strategy2",symbol,side,cycle,settings.version,qty,entry,int(_f(state.get("dcaCount"))),_slot_role(slot_id),
-                    (),tuple(str(x.get("id",x.get("tradeId",x.get("orderId","")))) for x in proven if str(x.get("id",x.get("tradeId",x.get("orderId",""))))),(),created or timestamp_ms,last_order_at_ms=timestamp_ms)
-                owned.append(leg);state.update({"status":"ACTIVE","weightedEntry":entry,"quantity":qty,"notional":qty*entry,"recoveryStatus":"RECOVERED_FROM_ASTER_FILLS","lastReconciledAt":timestamp_ms})
-                _audit(ref,"FOCUS_SLOT_RECONCILED",slot_id=slot_id,symbol=symbol,side=side,reason="ownership hersteld uit persisted cycle + Aster fills")
+            # Backward-compatible migration: an already proven legacy single-Focus
+            # leg may become slot-1 ownership only when symbol, side and cycle all
+            # match the persisted legacy Focus state and live Aster position.
+            qty=abs(_f(row.get("positionAmt")));entry=_f(row.get("entryPrice"));mark=_f(row.get("markPrice")) or prices.get(symbol,0.0)
+            owned,migrated,legacy_state=_migrate_legacy_focus_leg(owned,raw_state,slot_id=slot_id,symbol=symbol,side=side,row=row,timestamp_ms=timestamp_ms)
+            if migrated is not None:
+                leg=migrated;legacy_cycle=leg.cycle_id;original=_f(legacy_state.get("originalEntry"),entry) or entry
+                state.update({"status":"ACTIVE","cycleId":legacy_cycle,"createdAt":int(_f(legacy_state.get("openedAt"),leg.created_at_ms)) or leg.created_at_ms,
+                    "originalEntry":original,"weightedEntry":entry,"quantity":qty,"notional":qty*entry,"usedMargin":qty*mark/max(1,effective),
+                    "dcaCount":leg.dca_count,"nextDcaTrigger":_next_trigger(settings,side=side,original=original,dca_count=leg.dca_count),
+                    "realizedPnl":_f(legacy_state.get("realizedPnl")),"recoveryStatus":"MIGRATED_FROM_SINGLE_FOCUS","lastReconciledAt":timestamp_ms})
+                _audit(ref,"FOCUS_SLOT_RECONCILED",slot_id=slot_id,symbol=symbol,side=side,reason="legacy single-Focus ownership veilig gemigreerd naar Multi-Focus slot",cycleId=legacy_cycle,dcaNumber=leg.dca_count)
             else:
-                state.update({"status":"RECONCILING","recoveryStatus":"exchange exposure zonder bewezen Multi-Focus ownership"})
-                states[slot_id]=state;actions.append({"slotId":slot_id,"action":"RECONCILING"});continue
+                # Recover only when the persisted slot cycle plus actual Aster fills prove ownership.
+                cycle=str(state.get("cycleId","")).strip();created=int(_f(state.get("createdAt")))
+                proven=[]
+                if cycle and qty>0 and entry>0:
+                    try:
+                        proven=[x for x in client.user_trades(symbol,limit=500) if isinstance(x,dict)
+                            and str(x.get("symbol","")).upper()==symbol and str(x.get("positionSide","")).upper()==side
+                            and (created<=0 or int(_f(x.get("time",x.get("timestamp",0))))>=created)]
+                    except Exception: proven=[]
+                if proven:
+                    leg=OwnedLeg(settings.strategy_id,"strategy2",symbol,side,cycle,settings.version,qty,entry,int(_f(state.get("dcaCount"))),_slot_role(slot_id),
+                        (),tuple(str(x.get("id",x.get("tradeId",x.get("orderId","")))) for x in proven if str(x.get("id",x.get("tradeId",x.get("orderId",""))))),(),created or timestamp_ms,last_order_at_ms=timestamp_ms)
+                    owned.append(leg);state.update({"status":"ACTIVE","weightedEntry":entry,"quantity":qty,"notional":qty*entry,"recoveryStatus":"RECOVERED_FROM_ASTER_FILLS","lastReconciledAt":timestamp_ms})
+                    _audit(ref,"FOCUS_SLOT_RECONCILED",slot_id=slot_id,symbol=symbol,side=side,reason="ownership hersteld uit persisted cycle + Aster fills")
+                else:
+                    state.update({"status":"RECONCILING","recoveryStatus":"exchange exposure zonder bewezen Multi-Focus ownership"})
+                    states[slot_id]=state;actions.append({"slotId":slot_id,"action":"RECONCILING"});continue
         mark=_f((row or {}).get("markPrice")) or prices.get(symbol,0.0)
         if mark<=0:
             state.update({"status":"WAITING","recoveryStatus":"geen betrouwbare actuele prijs"});states[slot_id]=state;continue

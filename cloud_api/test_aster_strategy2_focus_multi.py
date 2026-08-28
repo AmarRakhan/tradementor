@@ -1,5 +1,6 @@
 from aster_strategy2 import Strategy2Config
-from aster_strategy2_focus_multi import _next_trigger, resolve_slot_leverage
+from aster_strategy2_focus_multi import _migrate_legacy_focus_leg, _next_trigger, resolve_slot_leverage
+from aster_strategy2_state import OwnedLeg
 
 
 class Client:
@@ -94,3 +95,23 @@ def test_unlimited_dca_requires_fixed_spacing():
     try: cfg(focusDcaUnlimited=True,focusDcaMode="custom")
     except ValueError as exc: assert "vaste DCA-afstand" in str(exc)
     else: raise AssertionError("unlimited custom ladder must fail")
+
+
+def test_legacy_single_focus_ownership_migrates_to_matching_slot_only():
+    legacy=OwnedLeg("aster-strategy-2","strategy2","SOLUSDT","LONG","focus-cycle",1,9.0,108.0133,5,"FOCUS",created_at_ms=1000,last_order_at_ms=2000)
+    raw={"focusLiveState":{"activePair":"SOLUSDT","cycleId":"focus-cycle","originalEntry":108.99,"openedAt":1000,"dcaCount":5}}
+    row={"symbol":"SOLUSDT","positionSide":"LONG","positionAmt":"9","entryPrice":"108.0133","markPrice":"106.9"}
+    owned,migrated,state=_migrate_legacy_focus_leg([legacy],raw,slot_id="slot-1",symbol="SOLUSDT",side="LONG",row=row,timestamp_ms=3000)
+    assert migrated is not None
+    assert migrated.role=="FOCUS_SLOT:slot-1"
+    assert migrated.cycle_id=="focus-cycle" and migrated.dca_count==5
+    assert migrated.quantity==9.0 and migrated.weighted_entry==108.0133
+    assert owned[0].role=="FOCUS_SLOT:slot-1" and state["originalEntry"]==108.99
+
+
+def test_legacy_single_focus_migration_fails_closed_on_cycle_or_pair_mismatch():
+    legacy=OwnedLeg("aster-strategy-2","strategy2","SOLUSDT","LONG","focus-cycle",1,9.0,108.0133,5,"FOCUS")
+    row={"symbol":"SOLUSDT","positionSide":"LONG","positionAmt":"9","entryPrice":"108.0133"}
+    for raw,symbol in (({"focusLiveState":{"activePair":"SOLUSDT","cycleId":"other-cycle"}},"SOLUSDT"),({"focusLiveState":{"activePair":"BTCUSDT","cycleId":"focus-cycle"}},"SOLUSDT")):
+        owned,migrated,_=_migrate_legacy_focus_leg([legacy],raw,slot_id="slot-1",symbol=symbol,side="LONG",row=row,timestamp_ms=3000)
+        assert migrated is None and owned[0].role=="FOCUS"
