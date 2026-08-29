@@ -1,4 +1,4 @@
-name: Focus 2.0 one-shot builder
+name: Hotfix V44 percentage and seat refill
 
 on:
   push:
@@ -7,15 +7,25 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
-  group: focus-v2-one-shot-builder
+  group: hotfix-v44-percentage-seat-refill
   cancel-in-progress: false
 
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
 jobs:
-  build-test-commit:
+  patch-test-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    environment: production
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,33 +34,188 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Apply isolated Focus 2.0 implementation
-        run: python tools/focus_v2_builder.py
-      - name: Install backend dependencies
-        run: pip install -r cloud_api/requirements.txt pytest
-      - name: Compile changed backend
-        run: python -m py_compile cloud_api/aster_strategy2.py cloud_api/aster_strategy2_focus_live.py cloud_api/aster_strategy2_focus_v2.py
-      - name: Run Focus 2.0 and legacy Focus regression tests
-        env:
-          PYTHONPATH: cloud_api
-        run: pytest -q cloud_api/test_aster_strategy2_focus_v2.py cloud_api/test_focus_hedge_profit_gate_contract.py cloud_api/test_aster_strategy2_focus.py cloud_api/test_aster_strategy2_focus_live.py cloud_api/test_aster_strategy2_focus_multi.py
-      - name: Run full backend suite
-        working-directory: cloud_api
-        run: pytest -q
-      - name: Build frontend
-        working-directory: web
+      - name: Apply percentage and seat refill fixes
+        shell: bash
         run: |
-          npm ci
-          npm run build
-      - name: Commit verified Focus 2.0 source
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('cloud_api/aster_state.py')
+          s=p.read_text()
+          old='''            "returnPct": (
+                _number(row.get("returnPct")) if row.get("returnPct") not in (None, "") else
+                _number(row.get("roePct")) if row.get("roePct") not in (None, "") else
+                _number(row.get("roiPct")) if row.get("roiPct") not in (None, "") else
+                (_number(row.get("unRealizedProfit", row.get("unrealizedProfit"))) / _number(row.get("positionInitialMargin", row.get("initialMargin"))) * 100
+                 if _number(row.get("positionInitialMargin", row.get("initialMargin"))) > 0 else 0.0)
+            ),
+'''
+          new='''            "returnPct": (
+                ((_number(row.get("markPrice")) - _number(row.get("entryPrice"))) / _number(row.get("entryPrice")) * 100.0)
+                * (-1.0 if str(row.get("positionSide", "")).upper() == "SHORT" else 1.0)
+                if _number(row.get("entryPrice")) > 0 else 0.0
+            ),
+'''
+          if old not in s: raise SystemExit('aster_state percentage block not found')
+          s=s.replace(old,new,1)
+          s=s.replace('"positionDisplayReturnPct": "Aster returnPct/roePct/roiPct or unRealizedProfit / positionInitialMargin * 100",','"positionDisplayReturnPct": "Aster markPrice versus entryPrice percentage; LONG=(mark-entry)/entry, SHORT=(entry-mark)/entry",',1)
+          p.write_text(s)
+
+          p=Path('cloud_api/aster_strategy2_runtime.py')
+          s=p.read_text()
+          old='''def harvest_counts(owned:list[OwnedLeg])->tuple[int,int]:
+    values=[x for x in owned if x.role!="PROTECTION"]
+    return (sum(1 for x in values if x.side=="LONG"),sum(1 for x in values if x.side=="SHORT"))
+'''
+          new='''def harvest_counts(owned:list[OwnedLeg])->tuple[int,int]:
+    # Every live LONG/SHORT leg consumes one configured account seat.
+    values=list(owned)
+    return (sum(1 for x in values if x.side=="LONG"),sum(1 for x in values if x.side=="SHORT"))
+'''
+          if old not in s: raise SystemExit('harvest_counts block not found')
+          p.write_text(s.replace(old,new,1))
+
+          p=Path('cloud_api/main.py')
+          s=p.read_text()
+          old='''    for index in range(order_limit):
+        entry_side=next_balanced_entry_side(owned,settings.maximum_pairs)
+        if not entry_side:break
+        candidates=side_entry_candidates(codes,active_keys,entry_side)
+        candidates.sort(key=lambda symbol:(symbol not in preferred_codes,
+            -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))
+        plan=None;symbol="";opened=None
+        for candidate in candidates:
+'''
+          new='''    for index in range(order_limit):
+        preferred_side=next_balanced_entry_side(owned,settings.maximum_pairs)
+        if not preferred_side:break
+        long_target_now,short_target_now=balanced_entry_targets(settings.maximum_pairs)
+        long_count_now,short_count_now=harvest_counts(owned)
+        alternate_side="SHORT" if preferred_side=="LONG" else "LONG"
+        entry_sides=[preferred_side]
+        if ((alternate_side=="LONG" and long_count_now<long_target_now) or
+            (alternate_side=="SHORT" and short_count_now<short_target_now)):
+            entry_sides.append(alternate_side)
+        plan=None;symbol="";opened=None
+        for entry_side in entry_sides:
+            candidates=side_entry_candidates(codes,active_keys,entry_side)
+            candidates.sort(key=lambda symbol:(symbol not in preferred_codes,
+                -changes.get(symbol,0) if entry_side=="LONG" else changes.get(symbol,0),symbol))
+            for candidate in candidates:
+'''
+          if old not in s: raise SystemExit('entry loop block not found')
+          s=s.replace(old,new,1)
+          start=s.index('            for candidate in candidates:\n',s.index('preferred_side=next_balanced_entry_side'))+len('            for candidate in candidates:\n')
+          end=s.index('        if not plan or opened is None:break',start)
+          body=s[start:end]
+          s=s[:start]+''.join(('    '+line if line.strip() else line) for line in body.splitlines(True))+s[end:]
+          needle='        if not plan or opened is None:break\n'
+          pos=s.index(needle,s.index('preferred_side=next_balanced_entry_side'))
+          s=s[:pos]+'            if plan is not None and opened is not None:break\n'+s[pos:]
+          # Honor an active contract cooldown before any expensive private leverage lookup.
+          marker='''            for candidate in candidates:
+                scan_checked+=1
+                try:
+                    candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)
+'''
+          replacement='''            for candidate in candidates:
+                scan_checked+=1
+                cooldown_key=f"{candidate}|{entry_side}|OPEN"
+                prior=cooldowns.get(cooldown_key,{})
+                if safe_float(prior.get("until"))>now_ms:
+                    scan_skipped+=1
+                    candidate_failures.append(f"{candidate}: tijdelijke contractcooldown")
+                    continue
+                try:
+                    candidate_brackets=planning_brackets(client,all_brackets,candidate,settings.leverage)
+'''
+          if marker not in s: raise SystemExit('candidate precheck marker not found')
+          s=s.replace(marker,replacement,1)
+          p.write_text(s)
+
+          p=Path('cloud_api/test_aster_state.py')
+          s=p.read_text()
+          old='assert round(snapshot["positions"][0]["returnPct"], 6) == round(2 / 6.5 * 100, 6)'
+          new='assert round(snapshot["positions"][0]["returnPct"], 6) == round((65000 - 64000) / 64000 * 100, 6)'
+          if old not in s: raise SystemExit('aster_state test assertion not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+
+          p=Path('cloud_api/test_aster_strategy2_runtime.py')
+          s=p.read_text()
+          old='''def test_protection_hedges_do_not_distort_harvest_balance():
+    owned=[OwnedLeg("s2","strategy2","BTCUSDT","LONG","l",1,1,100),OwnedLeg("s2","strategy2","BTCUSDT","SHORT","h",1,1,100,role="PROTECTION")]
+    assert harvest_counts(owned)==(1,0)
+    assert next_balanced_entry_side(owned,4)=="SHORT"
+'''
+          new='''def test_every_live_leg_counts_as_a_configured_seat():
+    owned=[OwnedLeg("s2","strategy2","BTCUSDT","LONG","l",1,1,100),OwnedLeg("s2","strategy2","BTCUSDT","SHORT","h",1,1,100,role="PROTECTION")]
+    assert harvest_counts(owned)==(1,1)
+    assert entry_order_limit(False,owned,4)==2
+    assert next_balanced_entry_side(owned,4)=="LONG"
+'''
+          if old not in s: raise SystemExit('runtime seat test not found')
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Add regression test for non-ROI percentage
+        shell: bash
         run: |
-          git config user.name 'TradeMentor Focus 2.0 Builder'
+          cat >> cloud_api/test_aster_state.py <<'PY'
+
+
+def test_dashboard_snapshot_percentage_is_price_move_not_leveraged_roi():
+    snapshot = dashboard_snapshot({}, [
+        {"symbol":"WLDUSDT","positionSide":"LONG","positionAmt":"10","entryPrice":"1.00","markPrice":"1.10","unRealizedProfit":"5","positionInitialMargin":"0.50","leverage":"50","roiPct":"1000"},
+        {"symbol":"XRPUSDT","positionSide":"SHORT","positionAmt":"-10","entryPrice":"1.00","markPrice":"0.90","unRealizedProfit":"5","positionInitialMargin":"0.50","leverage":"50","roePct":"1000"},
+    ])
+    assert round(snapshot["positions"][0]["returnPct"],6) == 10.0
+    assert round(snapshot["positions"][1]["returnPct"],6) == 10.0
+PY
+      - name: Install and run targeted regression tests
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          python -m py_compile cloud_api/main.py cloud_api/aster_state.py cloud_api/aster_strategy2_runtime.py
+          cd cloud_api
+          pytest -q test_aster_state.py test_aster_strategy2_runtime.py test_strategy2_test_deploy_source.py
+      - name: Commit hotfix source
+        shell: bash
+        run: |
+          git config user.name 'TradeMentor Control Plane'
           git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/aster_strategy2.py cloud_api/aster_strategy2_focus_live.py cloud_api/aster_strategy2_focus_v2.py cloud_api/test_aster_strategy2_focus_v2.py web/components/aster-strategy2-maker.tsx
-          git commit -m 'feat: add isolated Focus 2.0 protected long builder'
+          git add cloud_api/main.py cloud_api/aster_state.py cloud_api/aster_strategy2_runtime.py cloud_api/test_aster_state.py cloud_api/test_aster_strategy2_runtime.py
+          git commit -m 'Fix V44 percentage and hard seat refill rule'
           git push origin HEAD:amar-crypto-bot-2026-cloud
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build deploy and promote verified backend
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          python - "$RUNNER_TEMP/before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1]))
+          env={x['name']:x.get('value') for x in service['spec']['template']['spec']['containers'][0].get('env',[])}
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='true'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='true'
+          PY
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:hotfix-$GITHUB_RUN_ID"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          REV="hotfix-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$REV" --no-traffic --tag "$TAG"
+          CANDIDATE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json | python -c 'import json,sys; d=json.load(sys.stdin); tag=sys.argv[1]; print(next(x["url"] for x in d["status"]["traffic"] if x.get("tag")==tag))' "$TAG")"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready' and h['multiUser'] is True
+          PY
+          CANDIDATE_REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json | python -c 'import json,sys; d=json.load(sys.stdin); tag=sys.argv[1]; print(next(x["revisionName"] for x in d["status"]["traffic"] if x.get("tag")==tag))' "$TAG")"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 "$SERVICE_URL/health" >/dev/null
