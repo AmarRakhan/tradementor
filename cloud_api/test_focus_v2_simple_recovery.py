@@ -40,7 +40,7 @@ def test_07_new_saved_simple_cycle_selects_model_3():
     assert "RECOVERY_MODEL_SIMPLE=3" in ENGINE and "RECOVERY_MODEL_SIMPLE if settings.focus_v2_simple_mode_enabled else RECOVERY_MODEL_FAST" in ENGINE
 
 def test_08_simple_recovery_arms_stop_before_full_short_release():
-    start=ENGINE.index("release_pending=bool(recovery_ok and middle_ok"); end=ENGINE.index("# No recovery:",start); block=ENGINE[start:end]
+    start=ENGINE.index("release_pending=bool(direction_up and middle_ok"); end=ENGINE.index("# No recovery:",start); block=ENGINE[start:end]
     assert block.index("_arm_rehedge(") < block.index("_close_v2_leg(") and "quantity=target_qty" in block and "short_qty*mark" in block
 
 def test_09_simple_recovery_has_no_staged_33_percent_release():
@@ -152,7 +152,7 @@ def test_42_simple_hold_history_keeps_configured_harvest_values():
     assert '"profitTriggerUsdt":settings.focus_v2_profit_trigger_usdt' in ENGINE and '"profitHarvestUsdt":settings.focus_v2_profit_harvest_usdt' in ENGINE
 
 def test_43_stop_before_short_release_contract_is_unchanged():
-    start=ENGINE.index("release_pending=bool(recovery_ok and middle_ok"); end=ENGINE.index("FOCUS_V2_SIMPLE_SHORT_RELEASED",start); block=ENGINE[start:end]
+    start=ENGINE.index("release_pending=bool(direction_up and middle_ok"); end=ENGINE.index("FOCUS_V2_SIMPLE_SHORT_RELEASED",start); block=ENGINE[start:end]
     assert block.index("_arm_rehedge(") < block.index("_close_v2_leg(")
 
 def test_44_no_simple_full_tp_cycle_close_remains():
