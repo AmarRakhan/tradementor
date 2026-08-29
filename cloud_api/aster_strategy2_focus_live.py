@@ -197,6 +197,22 @@ def _reconcile_parked_pairs(*,client:Any,ref:Any,raw_state:dict[str,Any],setting
             return {"status":"waiting","action":"FOCUS_PAIR_SKIPPED_MARGIN","symbol":parked.symbol,"ordersSent":0,"reason":"Onvoldoende margin voor hedge-correctie"}
         rules=ContractRules.from_exchange_info(_symbol_row(client,parked.symbol)); qty=rules.market_quantity(Decimal(str(qty_needed)),Decimal(str(mark)))
         action="OPEN" if diff>0 else "CLOSE"
+        if action=="CLOSE":
+            hedge_leg=next((x for x in _owned(raw_state) if x.symbol==parked.symbol and x.side=="SHORT" and str(x.role).upper()=="FOCUS_HEDGE"),None)
+            equity=_f(account.get("totalMarginBalance"),_f(account.get("totalWalletBalance")));maint_ratio=_f(account.get("totalMaintMargin"))/equity if equity>0 else 1.0
+            hedge_row=_position_side_for(positions,parked.symbol,"SHORT") or {};hedge_liq=_f(hedge_row.get("liquidationPrice"));hedge_liq_distance=abs(mark-hedge_liq)/mark if hedge_liq>0 and mark>0 else 1.0
+            safety_override=maint_ratio>=settings.emergency_margin_ratio or hedge_liq_distance<.05
+            if hedge_leg is None:
+                _audit(ref,"FOCUS_HEDGE_CLOSE_BLOCKED",symbol=parked.symbol,side="SHORT",reason="bewezen hedge ownership ontbreekt",netPnl=None,quantity=qty_needed)
+                return {"status":"waiting","action":"FOCUS_HEDGE_CLOSE_BLOCKED","symbol":parked.symbol,"ordersSent":0,"reason":"bewezen hedge ownership ontbreekt"}
+            try:evidence=_close_evidence(client,uid=uid,leg=hedge_leg,row=hedge_row,quantity=qty_needed,mark=mark,reason="restart/cycle reconciliation")
+            except Exception as exc:
+                _audit(ref,"FOCUS_HEDGE_CLOSE_BLOCKED",symbol=parked.symbol,side="SHORT",reason=f"netto PnL niet betrouwbaar: {exc}",netPnl=None,quantity=qty_needed)
+                return {"status":"waiting","action":"FOCUS_HEDGE_CLOSE_BLOCKED","symbol":parked.symbol,"ordersSent":0,"reason":"netto PnL niet betrouwbaar"}
+            if not safety_override and evidence.expected_net<=0:
+                _audit(ref,"FOCUS_HEDGE_CLOSE_BLOCKED",symbol=parked.symbol,side="SHORT",reason="netto PnL <= 0; hedge blijft staan",netPnl=evidence.expected_net,grossPnl=evidence.gross_pnl,entryFees=evidence.entry_fees,closeFee=evidence.close_fee,funding=evidence.funding,slippageBuffer=evidence.slippage_buffer,quantity=qty_needed)
+                return {"status":"waiting","action":"FOCUS_HEDGE_CLOSE_BLOCKED","symbol":parked.symbol,"ordersSent":0,"reason":"netto PnL <= 0","netPnl":evidence.expected_net}
+            if safety_override:_audit(ref,"FOCUS_HEDGE_CLOSE_SAFETY_OVERRIDE",symbol=parked.symbol,side="SHORT",reason="expliciete margin/liquidatie-nood",netPnl=evidence.expected_net,maintenanceMarginRatio=maint_ratio,liquidationDistance=hedge_liq_distance)
         intent_id="s2fr-"+hashlib.sha256(f"{uid}|{parked.cycle_id}|{parked.symbol}|{action}|{round(qty_needed,12)}".encode()).hexdigest()[:16]
         intent=AsterOrderIntent(intent_id,parked.symbol,PositionSide.SHORT,qty,action)
         _audit(ref,"FOCUS_HEDGE_REQUESTED",symbol=parked.symbol,side="SHORT",reason="restart/cycle reconciliation",quantity=float(qty),action=action)
@@ -376,12 +392,12 @@ def _close_evidence(client:Any,*,uid:str,leg:OwnedLeg,row:dict[str,Any],quantity
     except Exception as exc:
         raise AsterCloseBlocked({"event":"AUTOMATIC_ASTER_CLOSE_BLOCKED","blockReason":f"Focus-kostendata onbetrouwbaar: {exc}","message":"Focus close fail-closed"}) from exc
     relevant=[x for x in trades if isinstance(x,dict) and str(x.get("symbol","")).upper()==leg.symbol
-        and str(x.get("positionSide","")).upper()=="LONG" and int(_f(x.get("time",x.get("timestamp",0))))>=leg.created_at_ms]
+        and str(x.get("positionSide","")).upper()==leg.side and int(_f(x.get("time",x.get("timestamp",0))))>=leg.created_at_ms]
     ratio=min(1.0,quantity/max(leg.quantity,1e-12));entry_fees=sum(abs(_f(x.get("commission"))) for x in relevant)*ratio
     funding=sum(_f(x.get("income")) for x in income if isinstance(x,dict) and str(x.get("symbol","")).upper()==leg.symbol
         and str(x.get("incomeType","")).upper()=="FUNDING_FEE" and int(_f(x.get("time",0)))>=leg.created_at_ms)*ratio
-    notional=quantity*mark;gross=(mark-leg.weighted_entry)*quantity
-    return CloseEvidence(uid,leg.symbol,"LONG","strategy2:FOCUS",reason,quantity,leg.weighted_entry,mark,gross,
+    notional=quantity*mark;gross=(mark-leg.weighted_entry)*quantity if leg.side=="LONG" else (leg.weighted_entry-mark)*quantity
+    return CloseEvidence(uid,leg.symbol,leg.side,"strategy2:FOCUS",reason,quantity,leg.weighted_entry,mark,gross,
         entry_fees,notional*.0005,funding,notional*.001,ownership_reliable=True,fills_reliable=bool(relevant),
         prices_reliable=mark>0,costs_reliable=True)
 

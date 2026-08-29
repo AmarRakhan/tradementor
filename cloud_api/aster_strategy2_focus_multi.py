@@ -208,16 +208,18 @@ def _gross_pnl(side:str,entry:float,mark:float,quantity:float)->float:
     return (mark-entry)*quantity if side=="LONG" else (entry-mark)*quantity
 
 
-def _close_evidence(client:Any,*,uid:str,leg:OwnedLeg,mark:float,reason:str,target_usdt:float=0.0)->CloseEvidence:
+def _close_evidence(client:Any,*,uid:str,leg:OwnedLeg,mark:float,reason:str,target_usdt:float=0.0,quantity:float|None=None)->CloseEvidence:
     trades=client.user_trades(leg.symbol,limit=500);income=client.income_history(limit=500)
     relevant=[x for x in trades if isinstance(x,dict) and str(x.get("symbol","")).upper()==leg.symbol
         and str(x.get("positionSide","")).upper()==leg.side and int(_f(x.get("time",x.get("timestamp",0))))>=leg.created_at_ms]
-    entry_fees=sum(abs(_f(x.get("commission"))) for x in relevant)
+    close_quantity=min(leg.quantity,max(0.0,_f(quantity,leg.quantity))) if quantity is not None else leg.quantity
+    ratio=min(1.0,close_quantity/max(leg.quantity,1e-12))
+    entry_fees=sum(abs(_f(x.get("commission"))) for x in relevant)*ratio
     funding=sum(_f(x.get("income")) for x in income if isinstance(x,dict) and str(x.get("symbol","")).upper()==leg.symbol
-        and str(x.get("incomeType","")).upper()=="FUNDING_FEE" and int(_f(x.get("time",0)))>=leg.created_at_ms)
-    notional=leg.quantity*mark
-    return CloseEvidence(uid,leg.symbol,leg.side,"strategy2:MULTI_FOCUS",reason,leg.quantity,leg.weighted_entry,mark,
-        _gross_pnl(leg.side,leg.weighted_entry,mark,leg.quantity),entry_fees,notional*.0005,funding,notional*.001,
+        and str(x.get("incomeType","")).upper()=="FUNDING_FEE" and int(_f(x.get("time",0)))>=leg.created_at_ms)*ratio
+    notional=close_quantity*mark
+    return CloseEvidence(uid,leg.symbol,leg.side,"strategy2:MULTI_FOCUS",reason,close_quantity,leg.weighted_entry,mark,
+        _gross_pnl(leg.side,leg.weighted_entry,mark,close_quantity),entry_fees,notional*.0005,funding,notional*.001,
         ownership_reliable=True,fills_reliable=bool(relevant),prices_reliable=mark>0,costs_reliable=True,
         minimum_positive_buffer=target_usdt if target_usdt>0 else None)
 
@@ -391,8 +393,20 @@ def run_multi_focus_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],setti
             if correction_action=="OPEN":
                 result=execute_leg_once(client,plan,side=PositionSide(correction_side),action="OPEN",id_prefix=prefix,confirm=True,before_submit=reserve_correction,new_position_leverage=effective)
             else:
-                # Protection correction is not a profit-taking exit. It may reduce
-                # an oversized hedge even when that hedge leg itself is negative.
+                hedge_liq=_f((hedge_row or {}).get("liquidationPrice"));hedge_liq_distance=abs(mark-hedge_liq)/mark if hedge_liq>0 and mark>0 else 1.0
+                safety_override=maint_ratio>=settings.emergency_margin_ratio or hedge_liq_distance<.05
+                try:
+                    hedge_evidence=_close_evidence(client,uid=uid,leg=hedge_leg,mark=mark,reason="parked hedge correction",quantity=float(plan.quantity))
+                except Exception as exc:
+                    state.update({"status":"PARKED","pendingAction":"HEDGE_CLOSE_BLOCKED","recoveryStatus":f"hedge-close kostendata onbetrouwbaar: {exc}","lastReconciledAt":timestamp_ms});states[slot_id]=state
+                    _audit(ref,"FOCUS_HEDGE_CLOSE_BLOCKED",slot_id=slot_id,symbol=symbol,side=correction_side,reason="netto PnL niet betrouwbaar; hedge blijft staan",netPnl=None,quantity=float(plan.quantity))
+                    return {"status":"waiting","action":"FOCUS_HEDGE_CLOSE_BLOCKED","slotId":slot_id,"symbol":symbol,"ordersSent":0,"reason":"netto PnL niet betrouwbaar"}
+                if not safety_override and hedge_evidence.expected_net<=0:
+                    state.update({"status":"PARKED","pendingAction":"HEDGE_CLOSE_BLOCKED","recoveryStatus":f"hedge-close geblokkeerd: netto PnL {hedge_evidence.expected_net:.8f} <= 0","lastReconciledAt":timestamp_ms});states[slot_id]=state
+                    _audit(ref,"FOCUS_HEDGE_CLOSE_BLOCKED",slot_id=slot_id,symbol=symbol,side=correction_side,reason="netto PnL <= 0; hedge blijft staan",netPnl=hedge_evidence.expected_net,grossPnl=hedge_evidence.gross_pnl,entryFees=hedge_evidence.entry_fees,closeFee=hedge_evidence.close_fee,funding=hedge_evidence.funding,slippageBuffer=hedge_evidence.slippage_buffer,quantity=float(plan.quantity))
+                    return {"status":"waiting","action":"FOCUS_HEDGE_CLOSE_BLOCKED","slotId":slot_id,"symbol":symbol,"ordersSent":0,"reason":"netto PnL <= 0","netPnl":hedge_evidence.expected_net}
+                if safety_override:
+                    _audit(ref,"FOCUS_HEDGE_CLOSE_SAFETY_OVERRIDE",slot_id=slot_id,symbol=symbol,side=correction_side,reason="expliciete margin/liquidatie-nood",netPnl=hedge_evidence.expected_net,maintenanceMarginRatio=maint_ratio,liquidationDistance=hedge_liq_distance)
                 intent=AsterOrderIntent(prefix,symbol,PositionSide(correction_side),plan.quantity,"CLOSE")
                 reserve_correction(intent)
                 raw_result,_recovered=client.submit_order_once(intent,config=AsterAutomationConfig(enabled=True,mode="live"),confirm=True,hedge_mode_confirmed=True,risk_approved=True)
