@@ -1,0 +1,29 @@
+name: Realtime Architecture Inspect
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/realtime-architecture-inspect.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect Aster runtime entrypoints
+        shell: bash
+        run: |
+          echo '=== ASTER ROUTES ==='
+          grep -nE 'aster-automation|strategy2.*tick|tick.*strategy2|internal/aster|run_focus_live_step' cloud_api/main.py | head -120 || true
+          echo '=== FUNCTION DEFINITIONS AROUND STRATEGY2 ==='
+          grep -nE '^def .*aster|^async def .*aster|^def .*strategy2|^async def .*strategy2' cloud_api/main.py | head -200 || true
+          echo '=== FIRESTORE LOCK / RESERVATION HELPERS ==='
+          grep -nE 'reserve_order|transaction|lock|idempot|pending.*order|order.*pending' cloud_api/main.py | head -160 || true
+          echo '=== STARTUP / SHUTDOWN ==='
+          grep -nE 'startup|shutdown|lifespan|on_event' cloud_api/main.py | head -80 || true
+          echo '=== FRONTEND REALTIME / POLL ==='
+          grep -RniE 'EventSource|WebSocket|setInterval|aster.*snapshot|portfolio.*value|available.*trade' --exclude-dir=node_modules . | head -160 || true
