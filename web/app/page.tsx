@@ -969,8 +969,8 @@ function NavButton({ item, active, onClick }: { item: { id: Destination; label: 
 
 function LiquidationRiskOrbit({ display }: { display: AsterAccountDisplay | null }) {
   const tone = display?.liquidationTone ?? "unknown";
-  const available = display?.liquidationDistancePercent !== null && display?.liquidationDistancePercent !== undefined;
-  return <div className={`risk-orbit liquidation-risk risk-${tone}`} aria-label="LIQUIDITEIT"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDITEIT</span><strong className={available ? "" : "unavailable"}>{display?.liquidationValue ?? "—"}</strong><small>{display?.liquidationDetail ?? "Geen betrouwbare Aster liquidatieafstand"}</small></div></div>;
+  const available = display?.liquidationRiskPercent !== null && display?.liquidationRiskPercent !== undefined;
+  return <div className={`risk-orbit liquidation-risk risk-${tone}`} aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong className={available ? "" : "unavailable"}>{display?.liquidationValue ?? "—"}</strong><small>{display?.liquidationDetail ?? "Geen betrouwbare Aster margin ratio"}</small></div></div>;
 }
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
