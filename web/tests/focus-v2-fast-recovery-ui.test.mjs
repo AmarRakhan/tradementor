@@ -5,11 +5,12 @@ import test from "node:test";
 const chart=fs.readFileSync(new URL("../components/trading-chart.tsx",import.meta.url),"utf8");
 const cockpit=fs.readFileSync(new URL("../components/aster-recent-trades.tsx",import.meta.url),"utf8");
 
-test("Focus 2.0 chart labels recovery stages as quantity releases",()=>{
-  assert.match(chart,/HERSTEL/);
-  assert.match(chart,/RELEASE/);
+test("Focus 2.0 v5 chart uses directional DCA and hedge-release labels",()=>{
+  assert.match(chart,/DCA \/ SHORT FILL/);
+  assert.match(chart,/SHORT LOS/);
   assert.match(chart,/className="breakeven">BE /);
-  assert.doesNotMatch(chart,/SHORT RELEASE · \$\{Math\.round/);
+  assert.doesNotMatch(chart,/HERSTELTRIGGER/);
+  assert.doesNotMatch(chart,/RE-HEDGE/);
 });
 
 test("Focus 2.0 chart allows horizontal and vertical interaction",()=>{
