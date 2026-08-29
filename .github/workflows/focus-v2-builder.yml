@@ -41,9 +41,11 @@ jobs:
       - name: Compile changed backend
         run: python -m py_compile cloud_api/aster_strategy2.py cloud_api/aster_strategy2_focus_live.py cloud_api/aster_strategy2_focus_v2.py
       - name: Run Focus 2.0 and existing Focus tests
-        run: pytest -q cloud_api/test_aster_strategy2_focus_v2.py cloud_api/test_focus_hedge_profit_gate_contract.py cloud_api/test_aster_strategy2_focus.py cloud_api/test_aster_strategy2_focus_live.py cloud_api/test_aster_strategy2_focus_multi.py
+        working-directory: cloud_api
+        run: pytest -q test_aster_strategy2_focus_v2.py test_focus_hedge_profit_gate_contract.py test_aster_strategy2_focus.py test_aster_strategy2_focus_live.py test_aster_strategy2_focus_multi.py
       - name: Run full backend tests
-        run: pytest -q cloud_api
+        working-directory: cloud_api
+        run: pytest -q
       - name: Build frontend
         working-directory: web
         run: |
