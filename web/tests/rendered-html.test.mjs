@@ -309,7 +309,8 @@ test("Positions reuses the trusted overview and adds an exchange-aware professio
   assert.match(chart, /Werkelijke prijs/);
   assert.match(chart, /EMA 200/);
   assert.match(chart, /Bollinger Bands/);
-  assert.match(chart, /\[\[upper,"#ff5578"\],\[middle,"#42a5ff"\],\[lower,"#21d6a2"\]\]/);
+  assert.match(chart, /\[\[upper,"rgba\(74,163,255,\.55\)"\],\[middle,"rgba\(85,227,255,\.42\)"\],\[lower,"rgba\(74,163,255,\.55\)"\]\]/);
+  assert.match(chart, /priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false/);
   assert.match(chart, /RSI 14/);
   assert.match(chart, /MACD/);
   assert.match(chart, /requestFullscreen/);
