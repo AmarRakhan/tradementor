@@ -1,0 +1,2 @@
+Deploy marker for Strategy 2 Focus hedge net-profit close gate.
+Source commit: 9adba7e53d05a17113df29ff40b4fd9b80722618
