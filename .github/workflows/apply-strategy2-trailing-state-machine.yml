@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/scripts/apply_strategy2_trailing_state_machine.py"
       - ".github/workflows/apply-strategy2-trailing-state-machine.yml"
+      - "cloud_api/test_focus_v2_simple_recovery.py"
 
 permissions:
   contents: write
