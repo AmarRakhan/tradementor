@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("webapp version 45 and deploy build number stay visible throughout app startup", async () => {
+test("webapp version 46 and deploy build number stay visible throughout app startup", async () => {
   const [versionSource, layout, registration, control] = await Promise.all([
     readFile(new URL("../lib/app-version.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -10,7 +10,7 @@ test("webapp version 45 and deploy build number stay visible throughout app star
     readFile(new URL("../components/app-version-control.tsx", import.meta.url), "utf8"),
   ]);
 
-  assert.match(versionSource, /WEBAPP_VERSION = "45"/);
+  assert.match(versionSource, /WEBAPP_VERSION = "46"/);
   assert.match(versionSource, /webappVersionLabel/);
   assert.match(versionSource, /Webapp versie/);
   assert.match(layout, /WEBAPP_BUILD_NUMBER/);
