@@ -1,4 +1,4 @@
-name: Deploy Shared V45 Testapp
+name: Deploy Shared V46 Testapp
 
 on:
   workflow_dispatch:
@@ -56,10 +56,10 @@ jobs:
         working-directory: web
         run: npm test
 
-      - name: Verify v45 production-data contract
+      - name: Verify v46 production-data contract
         shell: bash
         run: |
-          grep -q 'amar-bot-shell-v45' web/public/sw.js
+          grep -q 'amar-bot-shell-v46' web/public/sw.js
           grep -q 'tradementor-api-604335232956.europe-west4.run.app' web/lib/cloud-proxy.ts
           grep -q 'proxyCloud(request, "/v1/me/aster/status", "GET")' web/app/api/exchanges/aster/route.ts
           ! grep -Eqi 'proxyStrategy3Live|mergeAsterProjectStatus' web/app/api/exchanges/aster/route.ts
@@ -87,11 +87,11 @@ jobs:
           print(f'CANONICAL_URL={service["status"]["url"]}')
           PY
 
-      - name: Build and push V45 web image
+      - name: Build and push V46 web image
         shell: bash
         run: |
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/amar-bot-web-v45:$GITHUB_SHA"
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/amar-bot-web-v46:$GITHUB_SHA"
           docker build --tag "$IMAGE" web
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           TAG="c-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          SUFFIX="v45-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          SUFFIX="v46-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
@@ -130,10 +130,10 @@ jobs:
         shell: bash
         run: |
           curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/" > "$RUNNER_TEMP/root.html"
-          grep -q "Webapp versie 45 · build ${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/root.html"
+          grep -q "Webapp versie 46 · build ${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/root.html"
           curl --fail --silent --show-error "$CANDIDATE_URL/offline.html" > /dev/null
           curl --fail --silent --show-error "$CANDIDATE_URL/manifest.webmanifest" > /dev/null
-          curl --fail --silent --show-error "$CANDIDATE_URL/sw.js" | grep -q 'amar-bot-shell-v45'
+          curl --fail --silent --show-error "$CANDIDATE_URL/sw.js" | grep -q 'amar-bot-shell-v46'
 
       - name: Promote verified candidate to canonical shared testapp
         id: promote
@@ -148,7 +148,7 @@ jobs:
         shell: bash
         run: |
           curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANONICAL_URL/" > "$RUNNER_TEMP/canonical.html"
-          grep -q "Webapp versie 45 · build ${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/canonical.html"
+          grep -q "Webapp versie 46 · build ${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/canonical.html"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
           python - "$RUNNER_TEMP/service-after.json" "$CANDIDATE_REVISION" <<'PY'
           import json, sys
