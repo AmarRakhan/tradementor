@@ -98,6 +98,16 @@ class Strategy2Config:
     focus_airbag_drawdown_1: float = .015
     focus_airbag_drawdown_2: float = .03
     focus_airbag_drawdown_3: float = .05
+    # Focus 2.0 is deliberately opt-in. Existing Focus behavior is unchanged when false.
+    focus_v2_enabled: bool = False
+    focus_v2_min_net_long_usdt: float = 5.0
+    focus_v2_min_net_long_ratio: float = 0.02
+    focus_v2_max_hedge_ratio: float = 0.95
+    focus_v2_release_ratio: float = 0.33
+    focus_v2_recovery_rebound_pct: float = 0.003
+    focus_v2_portfolio_recovery_ratio: float = 0.99
+    focus_v2_rehedge_setback_pct: float = 0.003
+    focus_v2_require_bollinger_middle: bool = True
     # Explicit manual Multi-Focus slots. Empty keeps the legacy single-Focus engine byte-for-byte compatible.
     focus_slots: tuple[dict[str, Any], ...] = ()
     focus_take_profit_mode: Literal["percent", "usdt"] = "percent"
@@ -192,6 +202,15 @@ class Strategy2Config:
             focus_airbag_drawdown_1=f("focusAirbagDrawdown1", .015),
             focus_airbag_drawdown_2=f("focusAirbagDrawdown2", .03),
             focus_airbag_drawdown_3=f("focusAirbagDrawdown3", .05),
+            focus_v2_enabled=bool(raw.get("focusV2Enabled",False)),
+            focus_v2_min_net_long_usdt=f("focusV2MinNetLongUsdt",5.0),
+            focus_v2_min_net_long_ratio=f("focusV2MinNetLongRatio",0.02),
+            focus_v2_max_hedge_ratio=f("focusV2MaxHedgeRatio",0.95),
+            focus_v2_release_ratio=f("focusV2ReleaseRatio",0.33),
+            focus_v2_recovery_rebound_pct=f("focusV2RecoveryReboundPct",0.003),
+            focus_v2_portfolio_recovery_ratio=f("focusV2PortfolioRecoveryRatio",0.99),
+            focus_v2_rehedge_setback_pct=f("focusV2RehedgeSetbackPct",0.003),
+            focus_v2_require_bollinger_middle=bool(raw.get("focusV2RequireBollingerMiddle",True)),
             focus_slots=tuple(dict(x) for x in raw.get("focusSlots", ()) if isinstance(x, dict)) if isinstance(raw.get("focusSlots", ()), (list, tuple)) else (),
             focus_take_profit_mode="usdt" if str(raw.get("focusTakeProfitMode", "percent")).lower()=="usdt" else "percent",
             focus_take_profit_usdt=f("focusTakeProfitUsdt", 0),
@@ -293,6 +312,16 @@ class Strategy2Config:
         if not 0 < self.focus_first_partial_close_pct < 1 or not 0 < self.focus_second_partial_close_pct < 1: raise ValueError("Focus partial sluitpercentages moeten tussen 0 en 100% liggen")
         if self.focus_first_partial_close_pct + self.focus_second_partial_close_pct >= 1: raise ValueError("Focus partials moeten ruimte overlaten voor trailing exit")
         if self.focus_min_liquidity_score < 0: raise ValueError("Focus liquidity-score kan niet negatief zijn")
+
+        if self.focus_v2_enabled:
+            if self.trading_mode != "focus": raise ValueError("Focus 2.0 vereist tradingMode focus")
+            if self.focus_v2_min_net_long_usdt < 0: raise ValueError("Focus 2.0 netto LONG-bias USD mag niet negatief zijn")
+            if not 0 <= self.focus_v2_min_net_long_ratio < 1: raise ValueError("Focus 2.0 netto LONG-bias ratio moet tussen 0 en 1 liggen")
+            if not 0 < self.focus_v2_max_hedge_ratio < 1: raise ValueError("Focus 2.0 maximale hedge moet tussen 0 en 100% liggen")
+            if not 0 < self.focus_v2_release_ratio <= 1: raise ValueError("Focus 2.0 release moet tussen 0 en 100% liggen")
+            if not 0 < self.focus_v2_recovery_rebound_pct < .25: raise ValueError("Focus 2.0 recovery rebound is ongeldig")
+            if not .5 <= self.focus_v2_portfolio_recovery_ratio <= 1.05: raise ValueError("Focus 2.0 portfolio recovery ratio is ongeldig")
+            if not 0 < self.focus_v2_rehedge_setback_pct < .25: raise ValueError("Focus 2.0 re-hedge setback is ongeldig")
         return self
 
     @property
@@ -331,6 +360,9 @@ class Strategy2Config:
             "focusPortfolioBrakeMode":self.focus_portfolio_brake_mode,"focusPortfolioBrakeValue":self.focus_portfolio_brake_value,"focusMaxPairsPerCycle":self.focus_max_pairs_per_cycle,
             "focusAirbagEnabled":self.focus_airbag_enabled,"focusAirbagStartRatio":self.focus_airbag_start_ratio,"focusAirbagMaxRatio":self.focus_airbag_max_ratio,"focusAirbagMinRatio":self.focus_airbag_min_ratio,
             "focusAirbagDrawdown1":self.focus_airbag_drawdown_1,"focusAirbagDrawdown2":self.focus_airbag_drawdown_2,"focusAirbagDrawdown3":self.focus_airbag_drawdown_3,
+            "focusV2Enabled":self.focus_v2_enabled,"focusV2MinNetLongUsdt":self.focus_v2_min_net_long_usdt,"focusV2MinNetLongRatio":self.focus_v2_min_net_long_ratio,
+            "focusV2MaxHedgeRatio":self.focus_v2_max_hedge_ratio,"focusV2ReleaseRatio":self.focus_v2_release_ratio,"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,
+            "focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,"focusV2RehedgeSetbackPct":self.focus_v2_rehedge_setback_pct,"focusV2RequireBollingerMiddle":self.focus_v2_require_bollinger_middle,
             "focusSlots":[dict(x) for x in self.focus_slots],"focusTakeProfitMode":self.focus_take_profit_mode,"focusTakeProfitUsdt":self.focus_take_profit_usdt,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
             "focusMinimumProfitPct":self.focus_minimum_profit_pct,"focusPartialTpEnabled":self.focus_partial_tp_enabled,
