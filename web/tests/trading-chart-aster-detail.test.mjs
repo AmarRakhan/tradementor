@@ -28,7 +28,7 @@ test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", (
   assert.match(chart, /FOCUS_V2_LONG/);
   assert.match(chart, /hedgeQuery/);
   assert.match(chart, /kind:"hedge" as const/);
-  assert.match(chart, /REL/);
+  assert.match(chart, /SHORT RELEASE/);
   assert.match(chart, /HEDGE/);
 });
 
@@ -36,16 +36,17 @@ test("Focus 2.0 does not duplicate legacy detail overlays", () => {
   assert.match(chart, /if \(mode === "aster-detail" && !focusV2\)/);
 });
 
-test("Focus 2.0 v5 renders only short future trigger segments and compact chips", () => {
-  assert.match(chart, /activeIndicators\.includes\("bb"\)&&!focusV2/);
-  assert.match(chart, /const addSegment=/);
-  assert.match(chart, /priceLineVisible:false,lastValueVisible:true/);
-  assert.match(chart, /segmentEnd/);
-  assert.match(chart, /DCA \+ SHORT BIJ/);
+test("Focus 2.0 v5 renders Bollinger plus short future trigger segments and compact labels", () => {
+  assert.match(chart, /mode === "aster-detail" \? \["bb"\]/);
+  assert.match(chart, /activeIndicators\.includes\("bb"\)/);
+  assert.match(chart, /priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false/);
+  assert.match(chart, /focusSegmentRefs/);
+  assert.match(chart, /DCA \/ SHORT FILL/);
   assert.match(chart, /SHORT LOS/);
-  assert.match(chart, /stateVersion>=5/);
-  const focusBlock=chart.slice(chart.indexOf("if(focusV2&&cockpit){"),chart.indexOf("} else currentPriceLineRef.current=null",chart.indexOf("if(focusV2&&cockpit){")));
-  assert.doesNotMatch(focusBlock,/createPriceLine/);
+  assert.match(chart, /BREAK-EVEN/);
+  assert.match(chart, /distanceLabel/);
+  assert.match(chart, /hedgeState/);
+  assert.doesNotMatch(chart, /\[datasetVersion[^\]]*cockpit[^\]]*\]/s);
 });
 
 test("Focus 2.0 chart auto follows with right-side breathing room and can pause", () => {
@@ -60,15 +61,27 @@ test("Focus 2.0 markers keep long, DCA and hedge actions explicit", () => {
   assert.match(chart, /"BUY"/);
   assert.match(chart, /`DCA\$\{one\.dcaNumber/);
   assert.match(chart, /"HEDGE"/);
-  assert.match(chart, /"REL"/);
+  assert.match(chart, /"SHORT RELEASE"/);
+  assert.match(chart, /"DCA \/ HEDGE"/);
 });
 
-test("trade detail consumes the server-side Focus 2.0 cockpit", () => {
+test("trade detail consumes the server-side Focus 2.0 v5 cockpit", () => {
   assert.match(recent, /focusV2Cockpit/);
   assert.match(recent, /FocusV2CockpitPanel/);
-  assert.match(recent, /VOLGENDE BOTACTIE|nextAction/);
-  assert.match(recent, /LAATSTE ACTIES/);
-  assert.match(recent, /5m Bollinger-middle/);
+  assert.match(recent, /Laatste DCA/);
+  assert.match(recent, /Volgende DCA/);
+  assert.match(recent, /SHORT release/);
+  assert.match(recent, /Hedge state/);
+  assert.match(recent, /Hedge target qty/);
+  assert.match(recent, /Actuele SHORT/);
+  assert.match(recent, /Winst sinds harvest/);
+});
+
+test("trade detail can only close from the explicit control", () => {
+  assert.doesNotMatch(recent, /onDoubleClick=\{closeDetail\}/);
+  assert.doesNotMatch(recent, /handleTouchEnd/);
+  assert.match(recent, /onClick=\{closeDetail\}/);
+  assert.match(recent, /gebruik × om terug te gaan/);
 });
 
 test("historical Focus 2.0 rows keep opposite-side hedge history", () => {
