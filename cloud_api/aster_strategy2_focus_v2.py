@@ -17,6 +17,7 @@ from aster_gateway import AsterOrderIntent, ContractRules, PositionSide
 from aster_strategy2 import Strategy2Config
 from aster_strategy2_focus import dca_notional_sequence, next_dca_trigger, rank_focus_pairs
 from aster_strategy2_focus_adapter import current_focus_markets
+from aster_strategy2_focus_multi import resolve_slot_leverage
 from aster_strategy2_runtime import active_position_map, owned_from_mapping, owned_to_mapping
 from aster_strategy2_state import OwnedLeg
 
@@ -143,6 +144,18 @@ def _bb5(client:Any,symbol:str)->tuple[float,float,float]:
     w=closes[-20:];mid=sum(w)/len(w);var=sum((x-mid)**2 for x in w)/len(w);dev=var**.5
     return mid,mid+2*dev,min(closes[-10:])
 
+def _slot_for_symbol(settings:Strategy2Config,symbol:str)->dict[str,Any]:
+    for raw in settings.focus_slots:
+        if isinstance(raw,dict) and str(raw.get("pair",raw.get("symbol",""))).upper().strip()==symbol.upper():
+            return dict(raw)
+    return {"pair":symbol,"leverageMode":"exact","leverage":settings.leverage,"startNotional":settings.focus_start_order_notional}
+
+def _resolved_leverage(client:Any,settings:Strategy2Config,symbol:str,existing:dict[str,Any]|None=None)->int:
+    row=existing or {}
+    current=int(f(row.get("leverage"))) if f(row.get("leverage"))>0 else None
+    effective,_=resolve_slot_leverage(client,_slot_for_symbol(settings,symbol),settings,existing_leverage=current)
+    return effective
+
 def _selected_symbol(client:Any,settings:Strategy2Config,state:FocusV2State)->str:
     if state.symbol:return state.symbol
     if settings.focus_slots:
@@ -169,21 +182,37 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
     if dry_run or settings.mode!="live":return {"status":"simulated","action":"FOCUS_V2_HOLD","symbol":symbol,"ordersSent":0}
     if order_budget is not None and order_budget<1:return {"status":"budget-exhausted","action":"FOCUS_V2_HOLD","ordersSent":0}
 
-    # New clean cycle: LONG first, then protective SHORT to target bias.
+    # A new Focus 2.0 cycle is a protected pair: never intentionally create a naked LONG.
     if not state.cycle_id:
+        if order_budget is not None and order_budget<2:
+            return {"status":"budget-exhausted","action":"FOCUS_V2_WAIT_PROTECTED_OPEN","reason":"twee orderplaatsen vereist voor LONG + hedge","ordersSent":0}
         cycle=f"focusv2-{hashlib.sha256(f'{uid}|{symbol}|{timestamp_ms}'.encode()).hexdigest()[:16]}";start_notional=max(0.0,settings.focus_start_order_notional)
         if start_notional<=0:raise RuntimeError("Focus 2.0 startnotional is nul")
-        if start_notional/max(1,settings.leverage)>available: return {"status":"waiting","action":"FOCUS_V2_MARGIN_BLOCK","ordersSent":0}
+        leverage=_resolved_leverage(client,settings,symbol)
+        hedge_target=target_hedge_notional(start_notional,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)
+        required_margin=(start_notional+hedge_target)/max(1,leverage)
+        if required_margin>available: return {"status":"waiting","action":"FOCUS_V2_MARGIN_BLOCK","ordersSent":0}
         state=FocusV2State(cycle,symbol,equity,timestamp_ms,0,0,0,mark,mark,0,"",0,0,"OPEN_PENDING","nieuwe schone Focus 2.0 cycle")
-        plan=_plan(client,symbol,mark,start_notional,settings.leverage);prefix=f"s2fv2-{hashlib.sha256(f'{cycle}|long0'.encode()).hexdigest()[:12]}"
+        plan=_plan(client,symbol,mark,start_notional,leverage);prefix=f"s2fv2-{hashlib.sha256(f'{cycle}|long0'.encode()).hexdigest()[:12]}"
         def reserve(i:Any)->None:
-            if reserve_order:reserve_order(i,{"kind":"FOCUS_V2_OPEN_LONG","cycleId":cycle,"marginUsd":start_notional/max(1,settings.leverage)})
-        result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True,before_submit=reserve,new_position_leverage=settings.leverage)
+            if reserve_order:reserve_order(i,{"kind":"FOCUS_V2_OPEN_LONG","cycleId":cycle,"marginUsd":start_notional/max(1,leverage)})
+        result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True,before_submit=reserve,new_position_leverage=leverage)
         q,p,cid,oid=_fill(result);owned=_upsert(owned,settings=settings,state=state,role=ROLE_LONG,side="LONG",q=q,p=p,cid=cid,oid=oid,is_dca=False,ts=timestamp_ms);state=replace(state,original_entry=p,weighted_entry=p,recent_low=p,recovery_high=p,last_action="OPEN_LONG",last_reason="eerste LONG bevestigd")
-        # hedge is intentionally a second idempotent order; if budget only allowed one, next tick reconciles and opens it.
+        actual_long=q*p;actual_hedge_target=target_hedge_notional(actual_long,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)
+        try:
+            hplan=_plan(client,symbol,p,actual_hedge_target,leverage);hprefix=f"s2fv2-{hashlib.sha256(f'{cycle}|hedge0'.encode()).hexdigest()[:12]}"
+            hresult=execute_leg_once(client,hplan,side=PositionSide.SHORT,action="OPEN",id_prefix=hprefix,confirm=True,new_position_leverage=leverage)
+            hq,hp,hcid,hoid=_fill(hresult);owned=_upsert(owned,settings=settings,state=state,role=ROLE_HEDGE,side="SHORT",q=hq,p=hp,cid=hcid,oid=hoid,is_dca=False,ts=timestamp_ms)
+        except Exception:
+            # Fail closed: if protection cannot be confirmed, immediately flatten the just-opened LONG.
+            cplan=_plan(client,symbol,p,actual_long,leverage);cprefix=f"s2fv2-{hashlib.sha256(f'{cycle}|rollback'.encode()).hexdigest()[:12]}"
+            execute_leg_once(client,cplan,side=PositionSide.LONG,action="CLOSE",id_prefix=cprefix,confirm=True)
+            _audit(ref,"FOCUS_V2_PROTECTED_OPEN_ROLLBACK",cycleId=cycle,symbol=symbol,longNotional=actual_long,reason="protective SHORT kon niet bevestigd worden")
+            raise
+        state=replace(state,last_action="OPEN_PROTECTED",last_reason="LONG + beschermende SHORT bevestigd")
         ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned],"phase":"FOCUS_V2_LIVE"},merge=True)
-        _audit(ref,"FOCUS_V2_CYCLE_STARTED",cycleId=cycle,symbol=symbol,cycleStartEquity=equity,longNotional=q*p)
-        return {"status":"executed","action":"FOCUS_V2_OPEN_LONG","symbol":symbol,"ordersSent":1,"cycleId":cycle}
+        _audit(ref,"FOCUS_V2_CYCLE_STARTED",cycleId=cycle,symbol=symbol,cycleStartEquity=equity,longNotional=actual_long,shortNotional=hq*hp,effectiveLeverage=leverage)
+        return {"status":"executed","action":"FOCUS_V2_OPEN_PROTECTED","symbol":symbol,"ordersSent":2,"cycleId":cycle,"effectiveLeverage":leverage}
 
     long_notional=_notional(long_row);short_notional=_notional(short_row);long_qty=abs(f((long_row or {}).get("positionAmt")));short_qty=abs(f((short_row or {}).get("positionAmt")))
     if long_notional<=0:
@@ -215,7 +244,7 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
         focus_used=long_notional; remaining=max(0.0,settings.focus_max_budget_usd-focus_used);notional=min(notional,remaining)
         liq=f((long_row or {}).get("liquidationPrice"));liqdist=abs(mark-liq)/mark if liq>0 else 1.0
         if notional>0 and notional/max(1,settings.leverage)<=available and maint<settings.emergency_margin_ratio and liqdist>=.05:
-            plan=_plan(client,symbol,mark,notional,settings.leverage);prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|dca|{state.dca_count}'.encode()).hexdigest()[:12]}";result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True);q,p,cid,oid=_fill(result);owned=_upsert(owned,settings=settings,state=state,role=ROLE_LONG,side="LONG",q=q,p=p,cid=cid,oid=oid,is_dca=True,ts=timestamp_ms);new_qty=long_qty+q;new_entry=((long_qty*entry)+(q*p))/new_qty if new_qty else p;state=replace(state,dca_count=state.dca_count+1,weighted_entry=new_entry,last_action="DCA_LONG",last_reason="bestaande Focus DCA-ladder",recent_low=min(state.recent_low,p));ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True);_audit(ref,"FOCUS_V2_DCA_LONG",cycleId=state.cycle_id,symbol=symbol,dcaCount=state.dca_count,longNotional=(long_notional+q*p));return {"status":"executed","action":"FOCUS_V2_DCA_LONG","symbol":symbol,"ordersSent":1}
+            cycle_leverage=_resolved_leverage(client,settings,symbol,long_row);plan=_plan(client,symbol,mark,notional,cycle_leverage);prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|dca|{state.dca_count}'.encode()).hexdigest()[:12]}";result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True);q,p,cid,oid=_fill(result);owned=_upsert(owned,settings=settings,state=state,role=ROLE_LONG,side="LONG",q=q,p=p,cid=cid,oid=oid,is_dca=True,ts=timestamp_ms);new_qty=long_qty+q;new_entry=((long_qty*entry)+(q*p))/new_qty if new_qty else p;state=replace(state,dca_count=state.dca_count+1,weighted_entry=new_entry,last_action="DCA_LONG",last_reason="bestaande Focus DCA-ladder",recent_low=min(state.recent_low,p));ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True);_audit(ref,"FOCUS_V2_DCA_LONG",cycleId=state.cycle_id,symbol=symbol,dcaCount=state.dca_count,longNotional=(long_notional+q*p));return {"status":"executed","action":"FOCUS_V2_DCA_LONG","symbol":symbol,"ordersSent":1}
 
     # Reconcile protective hedge to current LONG. This is why old start-size is never used.
     hedge_target=target_hedge_notional(long_notional,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)
@@ -235,7 +264,7 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
         if isinstance(o,dict) and str(o.get("symbol","")).upper()==symbol and str(o.get("clientOrderId","")).startswith(REHEDGE_PREFIX):armed_qty+=abs(f(o.get("origQty",o.get("quantity"))))*mark
     gap=max(0.0,hedge_target-short_notional-armed_qty)
     if gap>max(1.0,long_notional*.002):
-        plan=_plan(client,symbol,mark,gap,settings.leverage);prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|hedge|{state.dca_count}|{round(gap,2)}'.encode()).hexdigest()[:12]}";result=execute_leg_once(client,plan,side=PositionSide.SHORT,action="OPEN",id_prefix=prefix,confirm=True);q,p,cid,oid=_fill(result);owned=_upsert(owned,settings=settings,state=state,role=ROLE_HEDGE,side="SHORT",q=q,p=p,cid=cid,oid=oid,is_dca=False,ts=timestamp_ms);state=replace(state,last_action="HEDGE_GROW",last_reason="hedge opnieuw berekend op actuele totale LONG");ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True);_audit(ref,"FOCUS_V2_HEDGE_GROW",cycleId=state.cycle_id,symbol=symbol,longNotional=long_notional,targetShortNotional=hedge_target);return {"status":"executed","action":"FOCUS_V2_HEDGE_GROW","symbol":symbol,"ordersSent":1}
+        cycle_leverage=_resolved_leverage(client,settings,symbol,long_row);plan=_plan(client,symbol,mark,gap,cycle_leverage);prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|hedge|{state.dca_count}|{round(gap,2)}'.encode()).hexdigest()[:12]}";result=execute_leg_once(client,plan,side=PositionSide.SHORT,action="OPEN",id_prefix=prefix,confirm=True);q,p,cid,oid=_fill(result);owned=_upsert(owned,settings=settings,state=state,role=ROLE_HEDGE,side="SHORT",q=q,p=p,cid=cid,oid=oid,is_dca=False,ts=timestamp_ms);state=replace(state,last_action="HEDGE_GROW",last_reason="hedge opnieuw berekend op actuele totale LONG");ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True);_audit(ref,"FOCUS_V2_HEDGE_GROW",cycleId=state.cycle_id,symbol=symbol,longNotional=long_notional,targetShortNotional=hedge_target);return {"status":"executed","action":"FOCUS_V2_HEDGE_GROW","symbol":symbol,"ordersSent":1}
 
     ref.set({"focusV2State":state_map(replace(state,last_action="HOLD",last_reason="bescherming in balans")),"focusV2History":{"cycleId":state.cycle_id,"cycleStartEquity":state.cycle_start_equity,"equity":equity,"longNotional":long_notional,"shortNotional":short_notional,"netExposure":long_notional-short_notional,"dcaCount":state.dca_count,"rehedgeTrigger":state.rehedge_stop_price,"cyclePnl":equity-state.cycle_start_equity}},merge=True)
     return {"status":"waiting","action":"FOCUS_V2_HOLD","symbol":symbol,"ordersSent":0,"cyclePnl":equity-state.cycle_start_equity}

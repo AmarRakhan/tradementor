@@ -73,3 +73,18 @@ def test_wizard_has_separate_focus_v2_opt_in():
     assert 'title:"Focus | Focus 2.0"' in ui
     assert 'label="Focus 2.0 gebruiken"' in ui
     assert "Focus 2.0 · Beschermd LONG opbouwen" in ui
+
+
+def test_new_cycle_requires_protected_two_leg_open_and_slot_leverage():
+    src=(HERE/"aster_strategy2_focus_v2.py").read_text()
+    assert "FOCUS_V2_WAIT_PROTECTED_OPEN" in src
+    assert 'action":"FOCUS_V2_OPEN_PROTECTED"' in src
+    assert 'ordersSent":2' in src
+    assert "resolve_slot_leverage" in src
+    assert "FOCUS_V2_PROTECTED_OPEN_ROLLBACK" in src
+    assert "new_position_leverage=leverage" in src
+
+def test_focus_v2_never_deliberately_returns_after_long_only_open():
+    src=(HERE/"aster_strategy2_focus_v2.py").read_text()
+    assert 'action":"FOCUS_V2_OPEN_LONG"' not in src
+    assert "next tick reconciles and opens it" not in src
