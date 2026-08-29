@@ -223,7 +223,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
       if(cockpit.cycleTargetActive)addLevel(cockpit.cycleTargetEquity,"#a970ff","DOEL / TAKE PROFIT",0,2);
     } else currentPriceLineRef.current=null;
     const onCrosshair=(param:any)=>{if(!param.time){setCrosshair(null);return;} const time=Number(param.time),c=candleDataRef.current.find(row=>row.time===time);if(c)setCrosshair(c);const group=markerGroups.filter(item=>item.time===time).flatMap(item=>item.events);if(group.length)setSelectedMarkerEvents(group)}; chart.subscribeCrosshairMove(onCrosshair);
-    if (mode === "aster-detail") {
+    if (mode === "aster-detail" && !focusV2) {
       if (Number.isFinite(breakEvenPrice) && Number(breakEvenPrice) > 0) {
         priceSeries.createPriceLine({ price:Number(breakEvenPrice), color:"#21d6a2", lineWidth:2, lineStyle:0, axisLabelVisible:true, title:"WINST VANAF" });
       }

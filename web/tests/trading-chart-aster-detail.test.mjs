@@ -32,6 +32,10 @@ test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", (
   assert.match(chart, /`HEDGE \$\{group\.events\[0\]\?\.side\|\|"SHORT"\}`/);
 });
 
+test("Focus 2.0 does not duplicate legacy detail overlays", () => {
+  assert.match(chart, /if \(mode === "aster-detail" && !focusV2\)/);
+});
+
 test("Focus 2.0 cockpit hides Bollinger overlays and renders server levels", () => {
   assert.match(chart, /activeIndicators\.includes\("bb"\)&&!focusV2/);
   assert.match(chart, /HUIDIGE PRIJS/);
