@@ -6,12 +6,13 @@ from aster_strategy2_focus_trailing import (
     DCA_TRAILING,
     dca_crossed,
     dca_distance,
-    hedge_release_distance,
+    hedge_ratio,
+    hedge_release_crossed,
+    hedge_release_recovery,
     next_dca_from_anchor,
-    release_distance_from_frozen,
+    recovery_from_last_dca,
+    release_price_from_last_dca,
 )
-
-# Activation regression suite for the live Strategy-2 trailing/frozen hedge state-machine.
 
 
 def test_long_trailing_dca_is_exact_configured_distance():
@@ -29,37 +30,57 @@ def test_short_trailing_dca_is_exact_mirror():
     assert not dca_crossed(100.299, 100.3, "SHORT")
 
 
-def test_frozen_long_dca_release_threshold_uses_live_denominator():
-    frozen = 99.7
-    at_release = frozen / (1 - 0.0035)
-    assert release_distance_from_frozen(100.0, frozen, "LONG") == pytest.approx(0.003)
-    assert release_distance_from_frozen(at_release, frozen, "LONG") == pytest.approx(0.0035)
-    assert release_distance_from_frozen(frozen / (1 - 0.004), frozen, "LONG") == pytest.approx(0.004)
+def test_v5_release_is_from_last_confirmed_dca_fill():
+    last_dca = 99.7
+    release = release_price_from_last_dca(last_dca, "LONG", 0.0015)
+    assert release == pytest.approx(99.84955)
+    assert not hedge_release_crossed(99.84, release, "LONG")
+    assert hedge_release_crossed(release, release, "LONG")
+    assert recovery_from_last_dca(release, last_dca, "LONG") == pytest.approx(0.0015)
 
 
-def test_frozen_short_dca_release_is_mirrored():
-    frozen = 100.3
-    at_release = frozen / (1 + 0.0035)
-    assert release_distance_from_frozen(at_release, frozen, "SHORT") == pytest.approx(0.0035)
+def test_v5_deeper_dca_replaces_both_fixed_levels():
+    last_dca = 99.4009
+    assert next_dca_from_anchor(last_dca, "LONG", 0.003) == pytest.approx(99.1026973)
+    assert release_price_from_last_dca(last_dca, "LONG", 0.0015) == pytest.approx(99.55000135)
 
 
-def test_release_setting_prefers_new_config_and_has_legacy_fallback():
-    legacy = Strategy2Config.from_mapping({"focusV2RecoveryReboundPct": 0.0042})
-    # Until the explicit alias is present on Strategy2Config the compatibility value is used.
-    assert hedge_release_distance(legacy) == pytest.approx(getattr(legacy, "focus_v2_hedge_release_distance_pct", legacy.focus_v2_recovery_rebound_pct))
+def test_v5_short_primary_is_mirrored():
+    last_dca = 100.3
+    release = release_price_from_last_dca(last_dca, "SHORT", 0.0015)
+    assert release == pytest.approx(100.14955)
+    assert not hedge_release_crossed(100.16, release, "SHORT")
+    assert hedge_release_crossed(release, release, "SHORT")
 
 
-def test_runtime_source_contains_required_state_machine_and_no_recovery_heuristics():
+def test_v5_config_defaults_and_explicit_values():
+    cfg = Strategy2Config.from_mapping({"tradingMode": "focus", "focusV2HedgeRatio": 1.0, "focusV2HedgeReleaseRecoveryPct": 0.0015})
+    assert hedge_ratio(cfg) == pytest.approx(1.0)
+    assert hedge_release_recovery(cfg) == pytest.approx(0.0015)
+    custom = Strategy2Config.from_mapping({"tradingMode": "focus", "focusV2HedgeRatio": 0.8, "focusV2HedgeReleaseRecoveryPct": 0.002})
+    assert hedge_ratio(custom) == pytest.approx(0.8)
+    assert hedge_release_recovery(custom) == pytest.approx(0.002)
+    # v4 fields must not silently preserve the old 95% / 0.35% business behavior in v5.
+    migrated = Strategy2Config.from_mapping({"tradingMode": "focus", "focusV2MaxHedgeRatio": 0.95, "focusV2HedgeReleaseDistancePct": 0.0035})
+    assert hedge_ratio(migrated) == pytest.approx(1.0)
+    assert hedge_release_recovery(migrated) == pytest.approx(0.0015)
+    public = migrated.public_dict()
+    assert public["focusV2HedgeRatio"] == pytest.approx(1.0)
+    assert public["focusV2HedgeReleaseRecoveryPct"] == pytest.approx(0.0015)
+
+
+def test_runtime_source_contains_v5_state_machine_and_no_frozen_release_trigger():
     from pathlib import Path
     src = (Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
     assert 'DCA_TRAILING = "TRAILING"' in src
-    assert 'DCA_FROZEN = "FROZEN_FOR_HEDGE"' in src
-    assert '"hedgeState": HEDGE_OFF' in src
-    assert '"hedgeState": HEDGE_ACTIVE' in src
-    assert "distance >= release_ratio" in src
+    assert 'DCA_FROZEN = "FIXED_DURING_HEDGE"' in src
+    assert '"lastDcaFillPrice"' in src
+    assert '"hedgeReleasePrice"' in src
+    assert "hedge_release_crossed(mark, release_price, primary_side)" in src
+    assert "fresh_primary_qty * configured_hedge_ratio" in src
     assert "FOCUS_V2_HEDGE_RELEASED" in src
     assert "FOCUS_V2_PARTIAL_PROFIT" in src
-    assert "Bollinger" not in src
+    assert "distance >= release_ratio" not in src
     assert "recovery_confirmed" not in src
 
 

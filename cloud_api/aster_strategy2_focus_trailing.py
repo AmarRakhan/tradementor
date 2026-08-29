@@ -4,11 +4,11 @@ This is the authoritative live engine for Focus 2.0 simple mode.
 
 Contract:
 - normal state is a naked primary leg (LONG by default) with a trailing DCA;
-- a DCA cross opens the primary DCA and the temporary opposite hedge as one cycle;
-- while the hedge is active, the *next* DCA reference is frozen;
-- the hedge is fully released once price has moved the configured release distance
-  away from that frozen DCA reference in the primary direction;
-- after release, trailing resumes from the current price;
+- a DCA cross adds primary exposure and hedges the configured ratio of the total primary position;
+- while the hedge is active, the next DCA stays fixed one configured DCA-step beyond the last confirmed DCA fill;
+- the hedge is fully released after the configured recovery from the last confirmed DCA fill;
+- each deeper DCA replaces both the next-DCA and hedge-release references;
+- after release, trailing resumes immediately from the confirmed release/current price;
 - partial profit only reduces the primary leg and never resets DCA state.
 
 Percent settings in Strategy2Config are stored as decimal ratios (0.003 == 0.30%).
@@ -35,7 +35,6 @@ from aster_strategy2_focus_v2 import (
     _row,
     _selected_symbol,
     f,
-    target_hedge_notional,
 )
 from aster_strategy2_runtime import active_position_map, owned_from_mapping, owned_to_mapping
 from aster_strategy2_state import OwnedLeg
@@ -45,9 +44,10 @@ ROLE_PRIMARY_SHORT = "FOCUS_V2_SHORT"
 ROLE_HEDGE_SHORT = "FOCUS_V2_HEDGE"
 ROLE_HEDGE_LONG = "FOCUS_V2_HEDGE_LONG"
 DCA_TRAILING = "TRAILING"
-DCA_FROZEN = "FROZEN_FOR_HEDGE"
+DCA_FROZEN = "FIXED_DURING_HEDGE"
 HEDGE_OFF = "OFF"
 HEDGE_ACTIVE = "ACTIVE"
+HEDGE_RELEASE_EXECUTING = "RELEASE_EXECUTING"
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -70,17 +70,25 @@ def dca_distance(settings: Strategy2Config) -> float:
     return _ratio(getattr(settings, "focus_dca_distance", 0.003), 0.003)
 
 
-def hedge_release_distance(settings: Strategy2Config) -> float:
-    """Current configurable hedge-release distance as a decimal ratio.
+def hedge_ratio(settings: Strategy2Config) -> float:
+    """Configured hedge ratio of total primary exposure after each DCA."""
+    return min(1.0, _ratio(getattr(settings, "focus_v2_hedge_ratio", 1.0), 1.0, maximum=1.0))
 
-    New configs use focus_v2_hedge_release_distance_pct. Older saved settings fall
-    back to the former Focus recovery rebound field so active accounts migrate
-    without losing their configured value.
-    """
-    explicit = getattr(settings, "focus_v2_hedge_release_distance_pct", None)
+
+def hedge_release_recovery(settings: Strategy2Config) -> float:
+    """Recovery from the last confirmed DCA fill required to fully release the hedge."""
+    explicit = getattr(settings, "focus_v2_hedge_release_recovery_pct", None)
     if explicit is not None:
-        return _ratio(explicit, 0.0035)
-    return _ratio(getattr(settings, "focus_v2_recovery_rebound_pct", 0.0035), 0.0035)
+        return _ratio(explicit, 0.0015)
+    legacy = getattr(settings, "focus_v2_hedge_release_distance_pct", None)
+    if legacy is not None:
+        return _ratio(legacy, 0.0015)
+    return _ratio(getattr(settings, "focus_v2_recovery_rebound_pct", 0.0015), 0.0015)
+
+
+def hedge_release_distance(settings: Strategy2Config) -> float:
+    """Backward-compatible alias for tests/older callers."""
+    return hedge_release_recovery(settings)
 
 
 def next_dca_from_anchor(anchor: float, side: str, distance: float) -> float:
@@ -95,8 +103,28 @@ def dca_crossed(mark: float, next_dca: float, side: str) -> bool:
     return mark <= next_dca if side.upper() == "LONG" else mark >= next_dca
 
 
+def release_price_from_last_dca(last_dca_fill: float, side: str, recovery: float) -> float:
+    if last_dca_fill <= 0 or recovery <= 0:
+        return 0.0
+    return last_dca_fill * (1.0 + recovery) if side.upper() == "LONG" else last_dca_fill * (1.0 - recovery)
+
+
+def hedge_release_crossed(mark: float, release_price: float, side: str) -> bool:
+    if mark <= 0 or release_price <= 0:
+        return False
+    return mark >= release_price if side.upper() == "LONG" else mark <= release_price
+
+
+def recovery_from_last_dca(mark: float, last_dca_fill: float, side: str) -> float:
+    if mark <= 0 or last_dca_fill <= 0:
+        return 0.0
+    if side.upper() == "LONG":
+        return max(0.0, (mark - last_dca_fill) / last_dca_fill)
+    return max(0.0, (last_dca_fill - mark) / last_dca_fill)
+
+
 def release_distance_from_frozen(mark: float, frozen_dca: float, side: str) -> float:
-    """Directional distance using live price as denominator, per product contract."""
+    """Legacy diagnostic helper only; v5 release no longer uses frozen-next-DCA distance."""
     if mark <= 0 or frozen_dca <= 0:
         return 0.0
     if side.upper() == "LONG":
@@ -191,7 +219,10 @@ def _state(raw_state: dict[str, Any], *, symbol: str, primary_side: str) -> dict
     state.setdefault("trailingHigh", 0.0)
     state.setdefault("trailingLow", 0.0)
     state.setdefault("nextDcaPrice", 0.0)
-    state.setdefault("frozenDcaReference", 0.0)
+    state.setdefault("frozenDcaReference", 0.0)  # legacy v4 field
+    state.setdefault("lastDcaFillPrice", 0.0)
+    state.setdefault("hedgeReleasePrice", 0.0)
+    state.setdefault("hedgeTargetQty", 0.0)
     state.setdefault("hedgeCycleId", "")
     state.setdefault("totalHarvestedProfit", 0.0)
     state.setdefault("lastHarvestProfit", 0.0)
@@ -277,6 +308,8 @@ def _long_or_short_pnl(row: dict[str, Any] | None, mark: float, side: str) -> fl
 def _history(state: dict[str, Any], *, mark: float, dca_ratio: float, release_ratio: float,
              primary_notional: float, hedge_notional: float, primary_pnl: float, hedge_pnl: float) -> dict[str, Any]:
     frozen = _finite(state.get("frozenDcaReference"))
+    last_dca = _finite(state.get("lastDcaFillPrice"))
+    release_price = _finite(state.get("hedgeReleasePrice"))
     side = str(state.get("primarySide", "LONG")).upper()
     return {
         "cycleId": state.get("cycleId", ""),
@@ -288,9 +321,13 @@ def _history(state: dict[str, Any], *, mark: float, dca_ratio: float, release_ra
         "dcaAnchorPrice": _finite(state.get("trailingHigh")) if side == "LONG" else _finite(state.get("trailingLow")),
         "dcaMode": state.get("dcaMode", DCA_TRAILING),
         "frozenDcaReference": frozen,
-        "distanceToFrozenDca": release_distance_from_frozen(mark, frozen, side),
+        "distanceToFrozenDca": release_distance_from_frozen(mark, frozen, side),  # legacy diagnostic
+        "lastDcaFillPrice": last_dca,
+        "hedgeReleasePrice": release_price,
+        "recoverySinceLastDcaPct": recovery_from_last_dca(mark, last_dca, side),
         "dcaDistancePct": dca_ratio,
-        "hedgeReleaseDistancePct": release_ratio,
+        "hedgeReleaseRecoveryPct": release_ratio,
+        "hedgeTargetQty": _finite(state.get("hedgeTargetQty")),
         "hedgeState": state.get("hedgeState", HEDGE_OFF),
         "dcaCount": int(_finite(state.get("dcaCount"))),
         "primaryNotional": primary_notional,
@@ -303,7 +340,7 @@ def _history(state: dict[str, Any], *, mark: float, dca_ratio: float, release_ra
         "profitHarvestUsdt": _finite(state.get("profitHarvestUsdt")),
         "totalHarvestedProfit": _finite(state.get("totalHarvestedProfit")),
         "lastHarvestProfit": _finite(state.get("lastHarvestProfit")),
-        "stateMachineVersion": 4,
+        "stateMachineVersion": 5,
     }
 
 
@@ -344,14 +381,17 @@ def run_focus_v2_live_step(
         return {"status": "simulated", "action": "FOCUS_V2_TRAILING_HOLD", "symbol": symbol, "ordersSent": 0}
 
     dca_ratio = dca_distance(settings)
-    release_ratio = hedge_release_distance(settings)
+    release_ratio = hedge_release_recovery(settings)
+    configured_hedge_ratio = hedge_ratio(settings)
     trigger_usdt = max(0.0, _finite(settings.focus_v2_profit_trigger_usdt))
     take_usdt = max(0.0, _finite(settings.focus_v2_profit_harvest_usdt))
     state["profitTriggerUsdt"] = trigger_usdt
     state["profitHarvestUsdt"] = take_usdt
     state["configSnapshotVersion"] = int(getattr(settings, "version", 1))
     state["dcaDistancePct"] = dca_ratio
-    state["hedgeReleaseDistancePct"] = release_ratio
+    state["hedgeReleaseRecoveryPct"] = release_ratio
+    state["hedgeRatio"] = configured_hedge_ratio
+    state["stateMachineVersion"] = 5
 
     primary_notional = _notional(primary_row)
     hedge_notional = _notional(hedge_row)
@@ -368,15 +408,21 @@ def run_focus_v2_live_step(
         if hedge_qty > 1e-12:
             state["dcaMode"] = DCA_FROZEN
             state["hedgeState"] = HEDGE_ACTIVE
-            if _finite(state.get("frozenDcaReference")) <= 0:
-                old_anchor = _finite(state.get("dcaAnchorPrice"), mark)
-                old_next = _finite(state.get("nextDcaPrice"))
-                state["frozenDcaReference"] = old_next if old_next > 0 else next_dca_from_anchor(old_anchor, primary_side, dca_ratio)
-                state["nextDcaPrice"] = state["frozenDcaReference"]
+            last_dca = _finite(state.get("lastDcaFillPrice"))
+            if last_dca <= 0:
+                # Safe migration from v4: dcaAnchorPrice was the most recent confirmed DCA fill.
+                last_dca = _finite(state.get("dcaAnchorPrice"), mark)
+                state["lastDcaFillPrice"] = last_dca
+            state["nextDcaPrice"] = next_dca_from_anchor(last_dca, primary_side, dca_ratio)
+            state["hedgeReleasePrice"] = release_price_from_last_dca(last_dca, primary_side, release_ratio)
+            state["frozenDcaReference"] = 0.0
+            state["hedgeTargetQty"] = primary_qty * configured_hedge_ratio
         else:
             state["dcaMode"] = DCA_TRAILING
             state["hedgeState"] = HEDGE_OFF
             state["frozenDcaReference"] = 0.0
+            state["hedgeReleasePrice"] = 0.0
+            state["hedgeTargetQty"] = 0.0
 
     # New Focus 2.0 cycle: primary only. No hedge exists until the first DCA retracement.
     if not state.get("cycleId"):
@@ -412,10 +458,10 @@ def run_focus_v2_live_step(
             "trailingHigh": p if primary_side == "LONG" else 0.0,
             "trailingLow": p if primary_side == "SHORT" else 0.0,
             "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio),
-            "frozenDcaReference": 0.0, "hedgeCycleId": "",
+            "frozenDcaReference": 0.0, "lastDcaFillPrice": 0.0, "hedgeReleasePrice": 0.0, "hedgeTargetQty": 0.0, "hedgeCycleId": "",
             "lastPrimaryOrderId": oid, "lastAction": "PRIMARY_OPEN",
             "lastReason": "primaire positie geopend zonder hedge; trailing DCA actief",
-            "stateMachineVersion": 4,
+            "stateMachineVersion": 5,
         })
         _persist(ref, state, owned, focusV2History=_history(
             state, mark=p, dca_ratio=dca_ratio, release_ratio=release_ratio,
@@ -442,14 +488,17 @@ def run_focus_v2_live_step(
         state["dcaMode"] = DCA_TRAILING
         state["hedgeState"] = HEDGE_OFF
         state["frozenDcaReference"] = 0.0
+        state["hedgeReleasePrice"] = 0.0
+        state["hedgeTargetQty"] = 0.0
     else:
-        # While the hedge is active the next DCA is intentionally frozen.
-        frozen = _finite(state.get("frozenDcaReference"))
-        if frozen <= 0:
-            anchor = _finite(state.get("dcaAnchorPrice"), mark)
-            frozen = next_dca_from_anchor(anchor, primary_side, dca_ratio)
-            state["frozenDcaReference"] = frozen
-        state["nextDcaPrice"] = frozen
+        # v5: while hedged, BOTH directions stay fixed from the last confirmed DCA fill:
+        # next DCA one step lower/higher against primary, hedge release one recovery step in favor.
+        last_dca = _finite(state.get("lastDcaFillPrice"), _finite(state.get("dcaAnchorPrice"), mark))
+        state["lastDcaFillPrice"] = last_dca
+        state["nextDcaPrice"] = next_dca_from_anchor(last_dca, primary_side, dca_ratio)
+        state["hedgeReleasePrice"] = release_price_from_last_dca(last_dca, primary_side, release_ratio)
+        state["hedgeTargetQty"] = primary_qty * configured_hedge_ratio
+        state["frozenDcaReference"] = 0.0
         state["dcaMode"] = DCA_FROZEN
         state["hedgeState"] = HEDGE_ACTIVE
 
@@ -472,12 +521,7 @@ def run_focus_v2_live_step(
         liq_distance = abs(mark - liq) / mark if liq > 0 else 1.0
         leverage = _resolved_leverage(client, settings, symbol, primary_row)
         expected_primary_after = primary_notional + dca_notional
-        hedge_target = target_hedge_notional(
-            expected_primary_after,
-            min_bias_usdt=settings.focus_v2_min_net_long_usdt,
-            min_bias_ratio=settings.focus_v2_min_net_long_ratio,
-            max_hedge_ratio=settings.focus_v2_max_hedge_ratio,
-        )
+        hedge_target = expected_primary_after * configured_hedge_ratio
         hedge_gap = max(0.0, hedge_target - hedge_notional)
         required_margin = (dca_notional + hedge_gap) / max(1, leverage)
         available = _finite(account.get("availableBalance"))
@@ -491,15 +535,14 @@ def run_focus_v2_live_step(
             side=primary_side, action="OPEN", prefix=dca_prefix, new_position_leverage=leverage,
         )
         actual_primary_after = primary_notional + q * p
-        target_after = target_hedge_notional(
-            actual_primary_after,
-            min_bias_usdt=settings.focus_v2_min_net_long_usdt,
-            min_bias_ratio=settings.focus_v2_min_net_long_ratio,
-            max_hedge_ratio=settings.focus_v2_max_hedge_ratio,
-        )
         fresh_positions = client.position_risk(symbol)
+        fresh_primary = _row(fresh_positions, symbol, primary_side)
         fresh_hedge = _row(fresh_positions, symbol, hedge_side)
+        fresh_primary_notional = _notional(fresh_primary) or actual_primary_after
+        fresh_primary_qty = abs(_finite((fresh_primary or {}).get("positionAmt"))) or (primary_qty + q)
         fresh_hedge_notional = _notional(fresh_hedge)
+        target_after = fresh_primary_notional * configured_hedge_ratio
+        target_qty_after = fresh_primary_qty * configured_hedge_ratio
         gap = max(0.0, target_after - fresh_hedge_notional)
         hq = hp = 0.0
         hcid = hoid = ""
@@ -533,65 +576,88 @@ def run_focus_v2_live_step(
         new_qty = primary_qty + q
         entry = _finite((primary_row or {}).get("entryPrice"), _finite(state.get("weightedEntry"), p))
         new_entry = ((primary_qty * entry) + (q * p)) / max(new_qty, 1e-12)
-        frozen = next_dca_from_anchor(p, primary_side, dca_ratio)
+        next_fixed_dca = next_dca_from_anchor(p, primary_side, dca_ratio)
+        release_price = release_price_from_last_dca(p, primary_side, release_ratio)
         state.update({
             "weightedEntry": new_entry,
             "dcaCount": cycle_no,
             "dcaMode": DCA_FROZEN,
             "hedgeState": HEDGE_ACTIVE,
-            "frozenDcaReference": frozen,
-            "nextDcaPrice": frozen,
+            "frozenDcaReference": 0.0,
+            "lastDcaFillPrice": p,
+            "nextDcaPrice": next_fixed_dca,
+            "hedgeReleasePrice": release_price,
+            "hedgeTargetQty": target_qty_after,
             "dcaAnchorPrice": p,
             "hedgeCycleId": f"{state['cycleId']}-dca-{cycle_no}",
             "lastDcaOrderId": oid,
             "lastHedgeEntryOrderId": hoid,
             "lastAction": "DCA_HEDGE_ACTIVE",
-            "lastReason": "DCA geraakt: primary DCA + tijdelijke hedge bevestigd; volgende DCA frozen",
+            "lastReason": "DCA geraakt: primary DCA + hedge bevestigd; volgende DCA lager en release vanaf laatste fill staan vast",
+            "stateMachineVersion": 5,
         })
         _persist(ref, state, owned, focusV2History=_history(
             state, mark=p, dca_ratio=dca_ratio, release_ratio=release_ratio,
             primary_notional=actual_primary_after, hedge_notional=fresh_hedge_notional + hq*hp,
             primary_pnl=primary_pnl, hedge_pnl=hedge_pnl,
         ))
-        _audit(ref, "FOCUS_V2_TRAILING_DCA_HEDGE", cycleId=state["cycleId"], symbol=symbol, dcaCount=cycle_no, frozenDca=frozen, hedgeTarget=target_after)
-        return {"status": "executed", "action": "FOCUS_V2_DCA_HEDGE_ACTIVE", "symbol": symbol, "ordersSent": 2 if hq > 0 else 1, "dcaCount": cycle_no, "frozenDcaReference": frozen}
+        _audit(ref, "FOCUS_V2_TRAILING_DCA_HEDGE", cycleId=state["cycleId"], symbol=symbol, dcaCount=cycle_no, lastDcaFill=p, nextDca=next_fixed_dca, hedgeReleasePrice=release_price, hedgeTarget=target_after, hedgeTargetQty=target_qty_after)
+        return {"status": "executed", "action": "FOCUS_V2_DCA_HEDGE_ACTIVE", "symbol": symbol, "ordersSent": 2 if hq > 0 else 1, "dcaCount": cycle_no, "lastDcaFillPrice": p, "nextDcaPrice": next_fixed_dca, "hedgeReleasePrice": release_price, "hedgeTargetQty": target_qty_after}
 
-    # With an active hedge, release 100% once the configurable distance from the frozen next-DCA is met.
+    # With an active hedge, release 100% after the configured recovery from the LAST confirmed DCA fill.
     if hedge_qty > 1e-12:
-        frozen = _finite(state.get("frozenDcaReference"))
-        distance = release_distance_from_frozen(mark, frozen, primary_side)
-        if distance >= release_ratio:
+        last_dca = _finite(state.get("lastDcaFillPrice"))
+        release_price = _finite(state.get("hedgeReleasePrice")) or release_price_from_last_dca(last_dca, primary_side, release_ratio)
+        recovery = recovery_from_last_dca(mark, last_dca, primary_side)
+        if hedge_release_crossed(mark, release_price, primary_side):
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}
+            state["hedgeState"] = HEDGE_RELEASE_EXECUTING
+            _persist(ref, state, owned)
             leverage = int(_finite((hedge_row or {}).get("leverage"), settings.leverage))
             release_prefix = _prefix(str(state["cycleId"]), int(_finite(state.get("dcaCount"))), "HEDGE_RELEASE")
             cq, cp, ccid, coid = _execute_with_precision_retry(
                 client=client, symbol=symbol, mark=mark, notional=hedge_qty*mark,
                 leverage=leverage, side=hedge_side, action="CLOSE", prefix=release_prefix,
             )
+            # Confirm exchange truth before re-enabling trailing.
+            confirmed_positions = client.position_risk(symbol)
+            confirmed_hedge = _row(confirmed_positions, symbol, hedge_side)
+            remaining_hedge_qty = abs(_finite((confirmed_hedge or {}).get("positionAmt")))
+            if remaining_hedge_qty > max(1e-12, hedge_qty * 0.001):
+                state.update({
+                    "hedgeState": HEDGE_RELEASE_EXECUTING,
+                    "lastHedgeReleaseOrderId": coid,
+                    "lastAction": "HEDGE_RELEASE_EXECUTING",
+                    "lastReason": "reduce-only release verzonden; exchange bevestigt nog resterende hedge",
+                })
+                _persist(ref, state, owned)
+                return {"status": "reconciling", "action": "FOCUS_V2_HEDGE_RELEASE_EXECUTING", "symbol": symbol, "ordersSent": 1, "hedgeRemainingQty": remaining_hedge_qty}
             owned = _reduce_owned(owned, hedge_role, cq, timestamp_ms)
-            # Resume trailing from the current release price; do not resurrect an old high/low.
             anchor = cp if cp > 0 else mark
             state.update({
                 "dcaMode": DCA_TRAILING,
                 "hedgeState": HEDGE_OFF,
                 "frozenDcaReference": 0.0,
                 "hedgeCycleId": "",
+                "hedgeReleasePrice": 0.0,
+                "hedgeTargetQty": 0.0,
                 "trailingHigh": anchor if primary_side == "LONG" else 0.0,
                 "trailingLow": anchor if primary_side == "SHORT" else 0.0,
                 "dcaAnchorPrice": anchor,
                 "nextDcaPrice": next_dca_from_anchor(anchor, primary_side, dca_ratio),
                 "lastHedgeReleaseOrderId": coid,
                 "lastAction": "HEDGE_RELEASED",
-                "lastReason": "hedge release threshold bereikt; hedge volledig weg; trailing hervat",
+                "lastReason": "herstel vanaf laatste DCA-fill bereikt; hedge volledig weg; trailing direct hervat",
+                "stateMachineVersion": 5,
             })
             _persist(ref, state, owned, focusV2History=_history(
                 state, mark=anchor, dca_ratio=dca_ratio, release_ratio=release_ratio,
                 primary_notional=primary_notional, hedge_notional=0.0,
                 primary_pnl=primary_pnl, hedge_pnl=0.0,
             ))
-            _audit(ref, "FOCUS_V2_TRAILING_HEDGE_RELEASE", cycleId=state["cycleId"], symbol=symbol, releaseDistance=distance, threshold=release_ratio, closeQty=cq, closePrice=cp)
-            return {"status": "executed", "action": "FOCUS_V2_HEDGE_RELEASED", "symbol": symbol, "ordersSent": 1, "releaseDistance": distance, "shortOrLongHedgeRemaining": 0.0}
+            _audit(ref, "FOCUS_V2_TRAILING_HEDGE_RELEASE", cycleId=state["cycleId"], symbol=symbol, lastDcaFill=last_dca, releasePrice=release_price, recovery=recovery, threshold=release_ratio, closeQty=cq, closePrice=cp)
+            return {"status": "executed", "action": "FOCUS_V2_HEDGE_RELEASED", "symbol": symbol, "ordersSent": 1, "recoverySinceLastDca": recovery, "releasePrice": release_price, "shortOrLongHedgeRemaining": 0.0}
 
     # Partial profit is only legal in primary-only state and never changes trailing/frozen DCA state.
     if hedge_qty <= 1e-12 and trigger_usdt > 0 and take_usdt > 0 and primary_pnl >= trigger_usdt:
@@ -630,7 +696,7 @@ def run_focus_v2_live_step(
 
     # Persist high/low movement and presentation state even when no order fires.
     state["lastAction"] = "HOLD"
-    state["lastReason"] = "trailing/frozen state bijgewerkt; geen ordertrigger"
+    state["lastReason"] = "trailing/fixed-hedge state bijgewerkt; geen ordertrigger"
     _persist(ref, state, owned, focusV2History=_history(
         state, mark=mark, dca_ratio=dca_ratio, release_ratio=release_ratio,
         primary_notional=primary_notional, hedge_notional=hedge_notional,
@@ -639,6 +705,7 @@ def run_focus_v2_live_step(
     return {
         "status": "holding", "action": "FOCUS_V2_TRAILING_HOLD", "symbol": symbol,
         "ordersSent": 0, "dcaMode": state["dcaMode"], "hedgeState": state["hedgeState"],
-        "nextDcaPrice": state["nextDcaPrice"], "frozenDcaReference": state["frozenDcaReference"],
-        "distanceToFrozenDca": release_distance_from_frozen(mark, _finite(state.get("frozenDcaReference")), primary_side),
+        "nextDcaPrice": state["nextDcaPrice"], "lastDcaFillPrice": _finite(state.get("lastDcaFillPrice")),
+        "hedgeReleasePrice": _finite(state.get("hedgeReleasePrice")), "hedgeTargetQty": _finite(state.get("hedgeTargetQty")),
+        "recoverySinceLastDca": recovery_from_last_dca(mark, _finite(state.get("lastDcaFillPrice")), primary_side),
     }

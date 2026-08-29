@@ -122,8 +122,8 @@ def test_32_wizard_has_exactly_five_focus_steps():
     assert sum(block.count(f'title:"{n} ·') for n in range(1,6))==5
 
 def test_33_step4_core_fields_match_trailing_hedge_release_contract():
-    assert 'label="Maximale hedge (%)"' in MAKER
-    assert 'label="Hedge release-afstand (%)"' in MAKER
+    assert 'label="Hedge grootte (%)"' in MAKER
+    assert 'label="SHORT loslaten na herstel vanaf laatste DCA (%)"' in MAKER
     assert 'label="Re-hedge terugval (%)"' not in MAKER
     assert 'label="Herstel vanaf recente low (%)"' not in MAKER
 

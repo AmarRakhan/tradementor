@@ -13,9 +13,9 @@ test("simple Focus 2.0 wizard stays five steps and exposes configurable harvest"
   assert.match(block,/Winst afromen \(USDT\)/);
   assert.doesNotMatch(block,/LONG sluiten bij netto winst/);
 });
-test("step 4 exposes hard trailing hedge-release controls",()=>{
-  assert.match(maker,/Maximale hedge \(%\)/);
-  assert.match(maker,/Hedge release-afstand \(%\)/);
+test("step 4 exposes last-DCA recovery hedge-release controls",()=>{
+  assert.match(maker,/Hedge grootte \(%\)/);
+  assert.match(maker,/SHORT loslaten na herstel vanaf laatste DCA \(%\)/);
   assert.doesNotMatch(maker,/Herstel vanaf recente low \(%\)/);
   assert.doesNotMatch(maker,/Re-hedge terugval \(%\)/);
   assert.match(maker,/Geavanceerde protection-instellingen/);
