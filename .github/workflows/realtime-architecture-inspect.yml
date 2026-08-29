@@ -14,16 +14,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect Aster runtime entrypoints
+      - name: Inspect realtime integration points
         shell: bash
         run: |
           echo '=== ASTER ROUTES ==='
-          grep -nE 'aster-automation|strategy2.*tick|tick.*strategy2|internal/aster|run_focus_live_step' cloud_api/main.py | head -120 || true
-          echo '=== FUNCTION DEFINITIONS AROUND STRATEGY2 ==='
-          grep -nE '^def .*aster|^async def .*aster|^def .*strategy2|^async def .*strategy2' cloud_api/main.py | head -200 || true
-          echo '=== FIRESTORE LOCK / RESERVATION HELPERS ==='
-          grep -nE 'reserve_order|transaction|lock|idempot|pending.*order|order.*pending' cloud_api/main.py | head -160 || true
-          echo '=== STARTUP / SHUTDOWN ==='
-          grep -nE 'startup|shutdown|lifespan|on_event' cloud_api/main.py | head -80 || true
-          echo '=== FRONTEND REALTIME / POLL ==='
-          grep -RniE 'EventSource|WebSocket|setInterval|aster.*snapshot|portfolio.*value|available.*trade' --exclude-dir=node_modules . | head -160 || true
+          grep -nE 'aster-automation|strategy2.*tick|tick.*strategy2|internal/aster|run_focus_live_step' cloud_api/main.py | head -140 || true
+          echo '=== FRONTEND SNAPSHOT FILES ==='
+          grep -RnlE 'fetchAsterSnapshot|loadAsterSnapshot|refreshAster|useExchangeSnapshots' web --exclude-dir=node_modules | head -80 || true
+          echo '=== FRONTEND REFRESH / PUSH ==='
+          grep -RniE 'fetchAsterSnapshot|setInterval|setTimeout|EventSource|WebSocket|useEffect|onRefresh' web/app web/components web/lib --exclude-dir=node_modules | head -260 || true
+          echo '=== PACKAGE ==='
+          cat web/package.json || true
+          echo '=== API ROUTES ==='
+          find web/app/api -type f -maxdepth 6 -print 2>/dev/null | sort | head -100 || true
+          echo '=== CLOUD CLIENT ==='
+          sed -n '1,240p' web/lib/cloud-client.ts || true
+          echo '=== MAIN APP TOP/REFRESH ==='
+          sed -n '1,220p' web/app/page.tsx || true
