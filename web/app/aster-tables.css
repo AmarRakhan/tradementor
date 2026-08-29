@@ -75,7 +75,7 @@
 @media(max-width:430px){.aster-detail-timeframes{gap:5px;padding:7px 10px}.aster-detail-timeframes button{min-width:39px;height:30px;padding:0 8px;font-size:9px}}
 
 /* Focus 2.0 live cockpit */
-.focus-cockpit-levels{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#020914;border-top:1px solid rgba(112,151,198,.13);border-bottom:1px solid rgba(112,151,198,.13)}
+.focus-cockpit-levels{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#020914;border-top:1px solid rgba(112,151,198,.13);border-bottom:1px solid rgba(112,151,198,.13);pointer-events:none;user-select:none}
 .focus-cockpit-levels span{border:1px solid currentColor;border-radius:999px;padding:4px 7px;font-size:7px;font-weight:850;letter-spacing:.04em;background:#07111f}
 .focus-cockpit-levels .current{color:#25df91}.focus-cockpit-levels .breakeven{color:#4aa3ff}.focus-cockpit-levels .dca{color:#ffd166}.focus-cockpit-levels .release{color:#ff9f43}.focus-cockpit-levels .rehedge{color:#ff5f7d}
 .aster-detail-timeframes .focus-go-live{color:#03100b!important;background:#25df91!important;border-color:#25df91!important;font-weight:950!important}

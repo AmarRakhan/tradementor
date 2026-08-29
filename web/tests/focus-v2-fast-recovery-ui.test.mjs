@@ -8,7 +8,7 @@ const cockpit=fs.readFileSync(new URL("../components/aster-recent-trades.tsx",im
 test("Focus 2.0 chart labels recovery stages as quantity releases",()=>{
   assert.match(chart,/HERSTEL/);
   assert.match(chart,/RELEASE/);
-  assert.match(chart,/LONG BREAK-EVEN/);
+  assert.match(chart,/className="breakeven">BE /);
   assert.doesNotMatch(chart,/SHORT RELEASE · \$\{Math\.round/);
 });
 

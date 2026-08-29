@@ -31,3 +31,15 @@ test("chart can render a partial harvest marker distinct from close",()=>{
   assert.match(markers,/\"harvest\"/);
   assert.match(chart,/one\?\.kind===\"harvest\"\?\"HARVEST\"/);
 });
+
+test("v5 chart uses compact non-blocking future trigger presentation",()=>{
+  assert.match(chart,/const addSegment=/);
+  assert.match(chart,/DCA \+ SHORT BIJ/);
+  assert.match(chart,/SHORT LOS/);
+  assert.doesNotMatch(chart,/stateVersion>=5[^\n]*RE-HEDGE/);
+});
+test("v5 cockpit hides armed rehedge copy and names both active trigger directions",()=>{
+  assert.match(cockpit,/v5\?"":` · armed/);
+  assert.match(cockpit,/VOLGENDE DCA \+ SHORT BIJKOPEN/);
+  assert.match(cockpit,/SHORT VOLLEDIG LOSLATEN/);
+});

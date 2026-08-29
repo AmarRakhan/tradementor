@@ -36,18 +36,20 @@ test("Focus 2.0 does not duplicate legacy detail overlays", () => {
   assert.match(chart, /if \(mode === "aster-detail" && !focusV2\)/);
 });
 
-test("Focus 2.0 cockpit hides Bollinger overlays and renders server levels", () => {
+test("Focus 2.0 v5 renders only short future trigger segments and compact chips", () => {
   assert.match(chart, /activeIndicators\.includes\("bb"\)&&!focusV2/);
-  assert.match(chart, /HUIDIGE PRIJS/);
-  assert.match(chart, /LONG BREAK-EVEN/);
-  assert.match(chart, /VOLGENDE LONG DCA/);
-  assert.match(chart, /HERSTEL/);
-  assert.match(chart, /RE-HEDGE/);
-  assert.match(chart, /cockpit\.cycleTargetActive/);
+  assert.match(chart, /const addSegment=/);
+  assert.match(chart, /priceLineVisible:false,lastValueVisible:true/);
+  assert.match(chart, /segmentEnd/);
+  assert.match(chart, /DCA \+ SHORT BIJ/);
+  assert.match(chart, /SHORT LOS/);
+  assert.match(chart, /stateVersion>=5/);
+  const focusBlock=chart.slice(chart.indexOf("if(focusV2&&cockpit){"),chart.indexOf("} else currentPriceLineRef.current=null",chart.indexOf("if(focusV2&&cockpit){")));
+  assert.doesNotMatch(focusBlock,/createPriceLine/);
 });
 
 test("Focus 2.0 chart auto follows with right-side breathing room and can pause", () => {
-  assert.match(chart, /setVisibleLogicalRange\(\{from:Math\.max\(0,chartCandles\.length-50\),to:chartCandles\.length\+10\}\)/);
+  assert.match(chart, /setVisibleLogicalRange\(\{from:Math\.max\(0,chartCandles\.length-50\),to:chartCandles\.length\+18\}\)/);
   assert.match(chart, /setAutoFollow\(false\)/);
   assert.match(chart, /NAAR LIVE/);
   assert.match(chart, /pointerdown/);
