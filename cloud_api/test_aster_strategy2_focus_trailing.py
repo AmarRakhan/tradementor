@@ -11,6 +11,8 @@ from aster_strategy2_focus_trailing import (
     release_distance_from_frozen,
 )
 
+# Activation regression suite for the live Strategy-2 trailing/frozen hedge state-machine.
+
 
 def test_long_trailing_dca_is_exact_configured_distance():
     cfg = Strategy2Config.from_mapping({"tradingMode": "focus", "focusDcaDistance": 0.003})
