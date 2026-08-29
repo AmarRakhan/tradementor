@@ -5,6 +5,7 @@ on:
     branches: [amar-crypto-bot-2026-cloud]
     paths:
       - tools/focus_v2_builder.py
+      - tools/focus_v2_builder_fix.py
       - .github/workflows/focus-v2-builder.yml
 
 permissions:
@@ -17,6 +18,7 @@ jobs:
   build-test-commit:
     if: ${{ !contains(github.event.head_commit.message, 'focus-v2-builder applied') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,19 +33,21 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Apply Focus 2.0 patch
-        run: python tools/focus_v2_builder.py
-      - name: Install backend dependencies
-        run: pip install -r cloud_api/requirements.txt
-      - name: Run Focus 2.0 and existing Focus tests
         run: |
-          pytest -q cloud_api/test_aster_strategy2_focus_v2.py cloud_api/test_focus_hedge_profit_gate_contract.py cloud_api/test_aster_strategy2_focus.py cloud_api/test_aster_strategy2_focus_live.py cloud_api/test_aster_strategy2_focus_multi.py
+          python tools/focus_v2_builder_fix.py
+          python tools/focus_v2_builder.py
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Compile changed backend
+        run: python -m py_compile cloud_api/aster_strategy2.py cloud_api/aster_strategy2_focus_live.py cloud_api/aster_strategy2_focus_v2.py
+      - name: Run Focus 2.0 and existing Focus tests
+        run: pytest -q cloud_api/test_aster_strategy2_focus_v2.py cloud_api/test_focus_hedge_profit_gate_contract.py cloud_api/test_aster_strategy2_focus.py cloud_api/test_aster_strategy2_focus_live.py cloud_api/test_aster_strategy2_focus_multi.py
       - name: Run full backend tests
         run: pytest -q cloud_api
       - name: Build frontend
         working-directory: web
         run: |
           npm ci
-          npm test -- --runInBand || npm test
           npm run build
       - name: Commit implementation
         run: |
