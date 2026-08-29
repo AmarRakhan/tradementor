@@ -16,6 +16,7 @@ import secrets as python_secrets
 import struct
 import threading
 import time
+import asyncio
 from urllib.parse import quote
 from dataclasses import replace
 from decimal import Decimal
@@ -27,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import firebase_admin
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.responses import StreamingResponse
 from firebase_admin import auth, firestore
 from google.cloud import secretmanager
 from google.cloud import tasks_v2
@@ -94,6 +96,7 @@ from aster_strategy2_focus_adapter import build_focus_shadow_report, focus_state
 from aster_strategy2_focus_adapter import current_focus_markets
 from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
+from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -1331,7 +1334,7 @@ def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:
 
 
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
-                              before_order:Any=None)->dict[str,Any]:
+                              before_order:Any=None,management_only:bool=False,event_symbol:str="")->dict[str,Any]:
     focus_queue_reserver=before_order
     if _aster_close_all_active(uid):
         return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
@@ -1548,6 +1551,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     # open order for it. Other proven legs remain manageable; open orders only
     # block new exposure account-wide.
     management_owned=[leg for leg in management_owned if (leg.symbol,leg.side) not in open_order_keys]
+    event_symbol=str(event_symbol).upper().strip()
+    if management_only and event_symbol:
+        management_owned=[leg for leg in management_owned if leg.symbol==event_symbol]
     management_keys={(leg.symbol,leg.side) for leg in management_owned}
     management_positions=[row for row in strategy_positions if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in management_keys]
     cost_holds=[f"{leg.symbol} {leg.side}: {cost_failures.get(leg.symbol,'fees/funding ouder dan vijf minuten')}"
@@ -1576,7 +1582,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     pending_reopen_cooldown_until=(int(safe_float(pending_reopens[0].get("cooldownUntilMs")))
         if pending_reopens and isinstance(pending_reopens[0],dict) else 0)
     pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms
-    if not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
+    if not management_only and not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
         if order_budget is not None and order_budget<1:
             return {"status":"budget-exhausted","action":"PENDING_REOPEN","ordersSent":0}
         pending=dict(pending_reopens[0]);symbol=str(pending.get("symbol","")).upper();side=str(pending.get("side","")).upper()
@@ -1818,6 +1824,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 "phase":"RUNNING","lastReason":decision.reason,"updatedAt":now},merge=True)
             ref.collection("audit").add({"event":decision.kind,"symbol":leg.symbol,"side":leg.side,"cycleId":leg.cycle_id,"timestamp":now})
             return {"status":"ok","action":decision.kind,"symbol":leg.symbol,"side":leg.side,"ordersSent":len(result)}
+    if management_only:
+        return {"status":"waiting","action":"REALTIME_HOLD","symbol":event_symbol,"ordersSent":0,"reason":"Realtime management afgerond; discovery blijft periodiek"}
     if cost_holds:
         reason="; ".join(cost_holds[:3])
         seat_shortage=len(owned)<settings.maximum_pairs
@@ -5583,7 +5591,7 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
 
 
 def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False,
-    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN)->dict[str,Any]:
+    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN,management_only:bool=False,event_symbol:str="")->dict[str,Any]:
     """Run one durable, account-local scan with a hard Aster request budget."""
     scan_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))
     # A queue scan may perform several signed Aster reads. Keep the HTTP scheduler
@@ -5627,7 +5635,7 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
                 "reason":"Strategy-2 accountscan tijdsbudget bereikt; volgende minuut gaat verder"})
             break
         try:
-            result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,
+            result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,management_only=management_only,event_symbol=event_symbol,
                 before_order=lambda intent,details=None:_reserve_strategy2_queue_order(
                     ref,scan_id,intent,details,maximum_orders=scan_limit))
         except Strategy2OrderBudgetExhausted:
@@ -5700,6 +5708,53 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
         "scanId":scan_id,"ordersSent":used-starting_used,"ordersUsed":used,"maximumOrders":scan_limit,
         "actions":results}
 
+
+_aster_realtime_worker: AsterRealtimeWorker | None = None
+_aster_realtime_thread: threading.Thread | None = None
+
+def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
+    mapping:dict[str,set[str]]={}
+    controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
+    for item in controls[:100]:
+        raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()
+        for row in raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []:
+            if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
+        queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {};intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
+        if intent.get("symbol"):symbols.add(str(intent.get("symbol")).upper())
+        for row in raw.get("pendingReopens",[]) if isinstance(raw.get("pendingReopens"),list) else []:
+            if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
+        for symbol in symbols:mapping.setdefault(symbol,set()).add(uid)
+    return mapping
+
+def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,Any]:
+    ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
+    if not token:return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}
+    started=time.monotonic()
+    try:
+        result=_run_aster_strategy2_queue_scan(uid,maximum_orders=1,management_only=True,event_symbol=event.symbol)
+        return {**result,"realtime":True,"marketEventAtMs":event.event_time_ms,"marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
+    finally:_release_strategy2_queue_lease(ref,str(token))
+
+def _persist_aster_realtime_health(payload:dict[str,Any])->None:
+    db.collection("systemStatus").document("asterRealtime").set({**payload,"updatedAt":datetime.now(timezone.utc)},merge=True)
+
+def _start_aster_realtime_worker()->None:
+    global _aster_realtime_worker
+    if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return
+    worker=AsterRealtimeWorker(load_subscriptions=_aster_realtime_subscription_mapping,evaluate=_run_aster_realtime_evaluation,persist_health=_persist_aster_realtime_health,execution_enabled=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true")
+    _aster_realtime_worker=worker;asyncio.run(worker.run())
+
+@app.on_event("startup")
+def start_aster_realtime_worker()->None:
+    global _aster_realtime_thread
+    if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return
+    if _aster_realtime_thread and _aster_realtime_thread.is_alive():return
+    _aster_realtime_thread=threading.Thread(target=_start_aster_realtime_worker,name="aster-realtime",daemon=True);_aster_realtime_thread.start()
+
+@app.get("/internal/aster-realtime/health")
+def aster_realtime_health(authorization:str|None=Header(default=None))->dict[str,Any]:
+    verify_internal_cloud_request(authorization);worker=_aster_realtime_worker
+    return {"workerEnabled":os.getenv("ASTER_REALTIME_WORKER","false").lower()=="true","executionEnabled":os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true",**(worker.health() if worker else {"connected":False,"subscriptions":0,"tenants":0})}
 
 @app.post("/internal/mexc-automation/tick")
 def run_mexc_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
