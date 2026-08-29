@@ -1,0 +1,65 @@
+name: Apply Realtime Aster Integration
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: ['.github/workflows/realtime-integration-apply.yml']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - name: Patch main safely
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/main.py');s=p.read_text()
+          def r(old,new):
+              global s
+              if s.count(old)!=1: raise SystemExit(f'anchor count {s.count(old)}: {old[:90]!r}')
+              s=s.replace(old,new,1)
+          r('import threading\nimport time\n','import threading\nimport time\nimport asyncio\n')
+          r('from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response\n','from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response\nfrom fastapi.responses import StreamingResponse\n')
+          r('from aster_strategy2_focus_live import run_focus_live_step\n','from aster_strategy2_focus_live import run_focus_live_step\nfrom aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct\n')
+          r('def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,\n                              before_order:Any=None)->dict[str,Any]:','def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,\n                              before_order:Any=None,management_only:bool=False,event_symbol:str="")->dict[str,Any]:')
+          r('    management_owned=[leg for leg in management_owned if (leg.symbol,leg.side) not in open_order_keys]\n    management_keys={(leg.symbol,leg.side) for leg in management_owned}\n','    management_owned=[leg for leg in management_owned if (leg.symbol,leg.side) not in open_order_keys]\n    event_symbol=str(event_symbol).upper().strip()\n    if management_only and event_symbol:\n        management_owned=[leg for leg in management_owned if leg.symbol==event_symbol]\n    management_keys={(leg.symbol,leg.side) for leg in management_owned}\n')
+          r('    if not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled:\n','    if not management_only and not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled:\n')
+          r('    if cost_holds:\n','    if management_only:\n        return {"status":"waiting","action":"REALTIME_HOLD","symbol":event_symbol,"ordersSent":0,"reason":"Realtime management afgerond; discovery blijft periodiek"}\n    if cost_holds:\n')
+          r('def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False,\n    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN)->dict[str,Any]:','def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False,\n    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN,management_only:bool=False,event_symbol:str="")->dict[str,Any]:')
+          r('            result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,\n                before_order=lambda intent,details=None:_reserve_strategy2_queue_order(\n                    ref,scan_id,intent,details,maximum_orders=scan_limit))\n','            result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,management_only=management_only,event_symbol=event_symbol,\n                before_order=lambda intent,details=None:_reserve_strategy2_queue_order(\n                    ref,scan_id,intent,details,maximum_orders=scan_limit))\n')
+          anchor='@app.post("/internal/mexc-automation/tick")\ndef run_mexc_automation_scheduler'
+          worker='''_aster_realtime_worker: AsterRealtimeWorker | None = None\n_aster_realtime_thread: threading.Thread | None = None\n\ndef _aster_realtime_subscription_mapping()->dict[str,set[str]]:\n    mapping:dict[str,set[str]]={}\n    controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())\n    for item in controls[:100]:\n        raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()\n        for row in raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []:\n            if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())\n        queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {};intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}\n        if intent.get("symbol"):symbols.add(str(intent.get("symbol")).upper())\n        for row in raw.get("pendingReopens",[]) if isinstance(raw.get("pendingReopens"),list) else []:\n            if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())\n        for symbol in symbols:mapping.setdefault(symbol,set()).add(uid)\n    return mapping\n\ndef _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,Any]:\n    ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)\n    if not token:return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}\n    started=time.monotonic()\n    try:\n        result=_run_aster_strategy2_queue_scan(uid,maximum_orders=1,management_only=True,event_symbol=event.symbol)\n        return {**result,"realtime":True,"marketEventAtMs":event.event_time_ms,"marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}\n    finally:_release_strategy2_queue_lease(ref,str(token))\n\ndef _persist_aster_realtime_health(payload:dict[str,Any])->None:\n    db.collection("systemStatus").document("asterRealtime").set({**payload,"updatedAt":datetime.now(timezone.utc)},merge=True)\n\ndef _start_aster_realtime_worker()->None:\n    global _aster_realtime_worker\n    if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return\n    worker=AsterRealtimeWorker(load_subscriptions=_aster_realtime_subscription_mapping,evaluate=_run_aster_realtime_evaluation,persist_health=_persist_aster_realtime_health,execution_enabled=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true")\n    _aster_realtime_worker=worker;asyncio.run(worker.run())\n\n@app.on_event("startup")\ndef start_aster_realtime_worker()->None:\n    global _aster_realtime_thread\n    if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return\n    if _aster_realtime_thread and _aster_realtime_thread.is_alive():return\n    _aster_realtime_thread=threading.Thread(target=_start_aster_realtime_worker,name="aster-realtime",daemon=True);_aster_realtime_thread.start()\n\n@app.get("/internal/aster-realtime/health")\ndef aster_realtime_health(authorization:str|None=Header(default=None))->dict[str,Any]:\n    verify_internal_cloud_request(authorization);worker=_aster_realtime_worker\n    return {"workerEnabled":os.getenv("ASTER_REALTIME_WORKER","false").lower()=="true","executionEnabled":os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true",**(worker.health() if worker else {"connected":False,"subscriptions":0,"tenants":0})}\n\n'''
+          if s.count(anchor)!=1: raise SystemExit('worker anchor missing/nonunique')
+          s=s.replace(anchor,worker+anchor,1);p.write_text(s)
+          PY
+      - name: Add integration tests
+        run: |
+          cat > cloud_api/test_aster_realtime_integration.py <<'PY'
+          from pathlib import Path
+          S=Path(__file__).with_name('main.py').read_text()
+          def test_scoped_management_path():
+              assert 'management_only:bool=False,event_symbol:str=""' in S and 'REALTIME_HOLD' in S
+          def test_existing_durable_queue_is_the_only_order_path():
+              assert 'token=_acquire_strategy2_queue_lease(ref)' in S
+              assert '_run_aster_strategy2_queue_scan(uid,maximum_orders=1,management_only=True,event_symbol=event.symbol)' in S
+              assert '_release_strategy2_queue_lease(ref,str(token))' in S
+          def test_periodic_scheduler_is_retained(): assert '@app.post("/internal/aster-automation/tick")' in S
+          def test_worker_is_gated(): assert 'ASTER_REALTIME_WORKER' in S and 'ASTER_REALTIME_EXECUTION_ENABLED' in S
+          PY
+      - name: Test and compile
+        working-directory: cloud_api
+        run: |
+          pip install -q -r requirements.txt pytest
+          pytest -q test_aster_realtime.py test_aster_realtime_integration.py
+          python -m compileall -q .
+      - name: Commit
+        run: |
+          git config user.name 'TradeMentor Realtime Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/main.py cloud_api/test_aster_realtime_integration.py
+          git diff --cached --check
+          git commit -m 'feat: route active Aster positions through realtime engine'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
