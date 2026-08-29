@@ -26,6 +26,7 @@ ROLE_LONG="FOCUS_V2_LONG"
 ROLE_HEDGE="FOCUS_V2_HEDGE"
 REHEDGE_PREFIX="s2fv2rh-"
 RECOVERY_MODEL_FAST=2
+RECOVERY_MODEL_SIMPLE=3
 RECOVERY_STAGE_PROGRESS=(0.22,0.48,0.72,0.95)
 
 def f(v:Any,d:float=0.0)->float:
@@ -218,11 +219,32 @@ def _cancel_rehedge(client:Any,state:FocusV2State)->None:
         try:client.cancel_order(state.symbol,client_order_id=cid)
         except Exception:pass
 
+def _cancel_rehedge_strict(client:Any,state:FocusV2State)->None:
+    """Cancel every cycle re-hedge order and prove none remains on Aster."""
+    if not state.symbol:return
+    for _ in range(3):
+        for cid in _rehedge_ids(state):
+            try:client.cancel_order(state.symbol,client_order_id=cid)
+            except Exception:pass
+        try:
+            remaining=_rehedge_orders(client.open_orders(state.symbol),state.symbol)
+        except Exception as exc:
+            if _==2:raise RuntimeError("Focus 2.0 kon re-hedge orders na TP niet verifiëren") from exc
+            continue
+        if not remaining:return
+    raise RuntimeError("Focus 2.0 re-hedge order bleef op Aster staan na TP")
+
 def _rehedge_orders(open_orders:list[dict[str,Any]]|None,symbol:str)->list[dict[str,Any]]:
     return [o for o in (open_orders or []) if isinstance(o,dict) and str(o.get("symbol","")).upper()==symbol.upper() and str(o.get("clientOrderId","")).startswith(REHEDGE_PREFIX)]
 
 def _open_rehedge_qty(open_orders:list[dict[str,Any]]|None,symbol:str)->float:
     return sum(abs(f(o.get("origQty",o.get("quantity")))) for o in _rehedge_orders(open_orders,symbol))
+
+def _open_rehedge_ids(open_orders:list[dict[str,Any]]|None,symbol:str)->tuple[str,...]:
+    return tuple(dict.fromkeys(str(o.get("clientOrderId","") or "") for o in _rehedge_orders(open_orders,symbol) if o.get("clientOrderId")))
+
+def _open_rehedge_stop(open_orders:list[dict[str,Any]]|None,symbol:str)->float:
+    return next((f(o.get("stopPrice")) for o in _rehedge_orders(open_orders,symbol) if f(o.get("stopPrice"))>0),0.0)
 
 def _open_rehedge_stage(open_orders:list[dict[str,Any]]|None,symbol:str)->int:
     stage=0
@@ -318,7 +340,7 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
         hedge_target=target_hedge_notional(start_notional,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)
         required_margin=(start_notional+hedge_target)/max(1,leverage)
         if required_margin>available: return {"status":"waiting","action":"FOCUS_V2_MARGIN_BLOCK","ordersSent":0}
-        state=FocusV2State(cycle,symbol,equity,timestamp_ms,0,0,0,mark,mark,0,"",0,0,equity,0,0,mark,"OPEN_PENDING","nieuwe schone Focus 2.0 cycle",recovery_model_version=RECOVERY_MODEL_FAST)
+        state=FocusV2State(cycle,symbol,equity,timestamp_ms,0,0,0,mark,mark,0,"",0,0,equity,0,0,mark,"OPEN_PENDING","nieuwe schone Focus 2.0 cycle",recovery_model_version=(RECOVERY_MODEL_SIMPLE if settings.focus_v2_simple_mode_enabled else RECOVERY_MODEL_FAST))
         plan=_plan(client,symbol,mark,start_notional,leverage);prefix=f"s2fv2-{hashlib.sha256(f'{cycle}|long0'.encode()).hexdigest()[:12]}"
         def reserve(i:Any)->None:
             if reserve_order:reserve_order(i,{"kind":"FOCUS_V2_OPEN_LONG","cycleId":cycle,"marginUsd":start_notional/max(1,leverage)})
@@ -357,9 +379,9 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
     costs_reliable=bool(long_leg and short_leg and long_leg.costs_updated_at_ms>0 and short_leg.costs_updated_at_ms>0 and timestamp_ms-long_leg.costs_updated_at_ms<=cost_max_age_ms and timestamp_ms-short_leg.costs_updated_at_ms<=cost_max_age_ms)
     full_net,full_costs=combined_close_evidence(uid=uid,symbol=symbol,mark=mark,long_leg=long_leg,short_leg=short_leg,long_qty=long_qty,short_qty=short_qty)
     harvest_available=min(equity_gain,full_net) if costs_reliable else 0.0
-    if trigger_usdt>0 and harvest_usdt>0 and equity_gain>=trigger_usdt and not costs_reliable:
+    if state.recovery_model_version<RECOVERY_MODEL_SIMPLE and trigger_usdt>0 and harvest_usdt>0 and equity_gain>=trigger_usdt and not costs_reliable:
         return {"status":"waiting","action":"FOCUS_V2_HARVEST_COST_EVIDENCE_WAIT","ordersSent":0,"reason":"fees/funding bewijs is niet vers genoeg"}
-    if trigger_usdt>0 and harvest_usdt>0 and equity_gain>=trigger_usdt and harvest_available>=harvest_usdt:
+    if state.recovery_model_version<RECOVERY_MODEL_SIMPLE and trigger_usdt>0 and harvest_usdt>0 and equity_gain>=trigger_usdt and harvest_available>=harvest_usdt:
         if order_budget is not None and order_budget<2:return {"status":"budget-exhausted","action":"FOCUS_V2_WAIT_PROFIT_HARVEST","ordersSent":0}
         fraction=harvest_fraction(harvest_available,harvest_usdt)
         lq=long_qty*fraction;sq=short_qty*fraction
@@ -438,6 +460,37 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
             _audit(ref,"FOCUS_V2_DCA_PROTECTED",cycleId=state.cycle_id,symbol=symbol,dcaCount=state.dca_count,longNotional=actual_long_after,targetShortNotional=hedge_target_after,hedgeAddedNotional=hq*hp)
             return {"status":"executed","action":"FOCUS_V2_DCA_PROTECTED","symbol":symbol,"ordersSent":2 if hq>0 else 1}
 
+    # Simple Focus 2.0: once the active SHORT is released, LONG TP closes the entire cycle.
+    if state.recovery_model_version>=RECOVERY_MODEL_SIMPLE:
+        tolerance_qty=max(1e-10,max(1.0,long_notional*.002)/max(mark,1e-12))
+        slot=_slot_for_symbol(settings,symbol)
+        tp_mode=str(slot.get("tpMode",settings.focus_take_profit_mode)).lower()
+        tp_usdt=max(0.0,f(slot.get("tpTargetUsdt"),settings.focus_take_profit_usdt))
+        tp_price=entry*(1+max(0.0,settings.focus_minimum_profit_pct))
+        long_leg=_v2(owned,ROLE_LONG)
+        max_age_ms=cost_evidence_max_age_seconds(owned)*1000
+        long_costs_reliable=bool(long_leg and long_leg.costs_updated_at_ms>0 and timestamp_ms-long_leg.costs_updated_at_ms<=max_age_ms)
+        long_net,long_costs=combined_close_evidence(uid=uid,symbol=symbol,mark=mark,long_leg=long_leg,short_leg=None,long_qty=long_qty,short_qty=0.0)
+        tp_profit_target=max(0.0,(long_leg.weighted_entry*long_qty*settings.focus_minimum_profit_pct) if long_leg else 0.0)
+        tp_signal=(tp_profit_target>0 and long_net>=tp_profit_target) if tp_mode=="percent" else (tp_usdt>0 and long_net>=tp_usdt)
+        if short_qty<=tolerance_qty and tp_signal and not long_costs_reliable:
+            return {"status":"waiting","action":"FOCUS_V2_TP_COST_EVIDENCE_WAIT","symbol":symbol,"ordersSent":0,"reason":"fees/funding bewijs voor LONG TP is niet vers genoeg"}
+        if short_qty<=tolerance_qty and tp_signal and long_costs_reliable:
+            if order_budget is not None and order_budget<1:return {"status":"budget-exhausted","action":"FOCUS_V2_WAIT_TP_CLOSE","ordersSent":0}
+            leverage=int(f((long_row or {}).get("leverage"),settings.leverage))
+            plan=_plan(client,symbol,mark,long_notional,leverage)
+            prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|simple-tp'.encode()).hexdigest()[:12]}"
+            result=_close_v2_leg(client=client,plan=plan,side=PositionSide.LONG,prefix=prefix);cq,cp,_,_=_fill(result)
+            owned=_reduce_owned(owned,ROLE_LONG,cq,timestamp_ms)
+            _cancel_rehedge_strict(client,state)
+            fresh=client.position_risk(symbol);fresh_long=_row(fresh,symbol,"LONG");fresh_short=_row(fresh,symbol,"SHORT")
+            if _notional(fresh_long)>max(1.0,long_notional*.002) or _notional(fresh_short)>max(1.0,long_notional*.002):
+                raise RuntimeError("Focus 2.0 TP-close is nog niet exchange-confirmed flat")
+            cycle_pnl=equity-state.cycle_start_equity
+            ref.set({"focusV2State":state_map(FocusV2State()),"ownedLegs":[owned_to_mapping(x) for x in owned if str(x.role).upper() not in {ROLE_LONG,ROLE_HEDGE}],"focusV2LastCycle":{"cycleId":state.cycle_id,"symbol":symbol,"resultUsd":cycle_pnl,"closedAt":timestamp_ms,"reason":"LONG_TP"},"phase":"FOCUS_LIVE"},merge=True)
+            _audit(ref,"FOCUS_V2_TP_CYCLE_CLOSED",cycleId=state.cycle_id,symbol=symbol,tpMode=tp_mode,tpPrice=tp_price,tpTargetUsdt=tp_usdt,closePrice=cp,closedQty=cq,expectedNet=long_net,costs=long_costs)
+            return {"status":"executed","action":"FOCUS_V2_TP_CYCLE_CLOSED","symbol":symbol,"ordersSent":1,"cyclePnl":cycle_pnl}
+
     # Reconcile protective hedge to current LONG. Existing cycles stay behavior-v1; new cycles use staged fast recovery.
     hedge_target=target_hedge_notional(long_notional,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)
     if state.recovery_model_version < RECOVERY_MODEL_FAST:
@@ -449,7 +502,7 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
             if reh_q>0:state=_arm_rehedge_legacy(client=client,state=state,settings=settings,mark=mark,quantity=float(reh_q),reserve_order=reserve_order)
             else:_cancel_rehedge(client,state);state=replace(state,rehedge_client_id="",rehedge_stop_price=0)
             ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned],"focusV2History":{"cycleId":state.cycle_id,"cycleStartEquity":state.cycle_start_equity,"equity":equity,"longNotional":long_notional,"shortNotional":max(0,short_notional-released_notional),"netExposure":long_notional-max(0,short_notional-released_notional),"dcaCount":state.dca_count,"releaseStage":state.release_stage,"rehedgeTrigger":state.rehedge_stop_price,"realizedHedgePnl":state.realized_hedge_pnl,"cyclePnl":equity-state.cycle_start_equity}},merge=True);_audit(ref,"FOCUS_V2_HEDGE_RELEASE",cycleId=state.cycle_id,symbol=symbol,releaseNotional=released_notional,realizedHedgePnl=realized,cyclePnl=equity-state.cycle_start_equity,rehedgeTrigger=state.rehedge_stop_price,fullRelease=full);return {"status":"executed","action":"FOCUS_V2_HEDGE_RELEASE","symbol":symbol,"ordersSent":2 if reh_q>0 else 1,"hedgeRealizedPnl":realized,"cyclePnl":equity-state.cycle_start_equity}
-    else:
+    elif state.recovery_model_version==RECOVERY_MODEL_FAST:
         armed_live_qty=_open_rehedge_qty(open_orders,symbol)
         armed_stage=_open_rehedge_stage(open_orders,symbol)
         target_qty=hedge_target/max(mark,1e-12)
@@ -524,6 +577,54 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
                 _audit(ref,"FOCUS_V2_FAST_HEDGE_RELEASE",cycleId=state.cycle_id,symbol=symbol,recoveryStage=desired_stage,recoveryProgressRatio=progress,releaseQty=cq,armedRehedgeQty=state.armed_rehedge_qty,rehedgeTrigger=state.rehedge_stop_price,fullRelease=(desired_stage>=len(RECOVERY_STAGE_PROGRESS)))
                 return {"status":"executed","action":f"FOCUS_V2_RECOVERY_{desired_stage}_RELEASE","symbol":symbol,"ordersSent":sent,"recoveryStage":desired_stage,"recoveryProgressRatio":progress}
 
+    else:
+        # Recovery model 3: one simple airbag cycle. Arm one exchange STOP, then release the active SHORT completely.
+        armed_live_qty=_open_rehedge_qty(open_orders,symbol)
+        armed_ids=_open_rehedge_ids(open_orders,symbol);armed_stage=_open_rehedge_stage(open_orders,symbol);armed_stop=_open_rehedge_stop(open_orders,symbol)
+        target_qty=hedge_target/max(mark,1e-12)
+        tolerance_qty=max(1e-10,max(1.0,long_notional*.002)/max(mark,1e-12))
+        # Exchange truth reconstructs the released state after a crash between STOP confirmation, SHORT close and Firestore persistence.
+        state=replace(state,armed_rehedge_qty=armed_live_qty,recovery_progress_ratio=0.0,next_release_price=0.0,release_stage=max(state.release_stage,armed_stage),rehedge_client_ids=(armed_ids or state.rehedge_client_ids),rehedge_client_id=(armed_ids[-1] if armed_ids else state.rehedge_client_id),rehedge_stop_price=(armed_stop or state.rehedge_stop_price))
+        if state.release_stage>0 and short_qty>=target_qty-tolerance_qty and armed_live_qty<=tolerance_qty:
+            state=replace(state,release_stage=0,released_short_qty=0.0,armed_rehedge_qty=0.0,rehedge_client_id="",rehedge_client_ids=(),rehedge_stop_price=0.0,last_rehedge_price=mark,last_action="REHEDGE_RESTORED",last_reason="TERUGVAL · HEDGE HERSTELD",recovery_high=mark)
+            ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True)
+            _audit(ref,"FOCUS_V2_REHEDGE_RESTORED",cycleId=state.cycle_id,symbol=symbol,currentShortQty=short_qty,targetQty=target_qty)
+            return {"status":"executed","action":"FOCUS_V2_REHEDGE_RESTORED","symbol":symbol,"ordersSent":0}
+        if short_qty>target_qty+tolerance_qty:
+            excess=short_qty-target_qty;plan=_plan(client,symbol,mark,excess*mark,int(f((short_row or {}).get("leverage"),settings.leverage)))
+            result=_close_v2_leg(client=client,plan=plan,side=PositionSide.SHORT,prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|simple-overhedge|{short_qty:.8f}'.encode()).hexdigest()[:12]}")
+            cq,_,_,_=_fill(result);owned=_reduce_owned(owned,ROLE_HEDGE,cq,timestamp_ms);state=replace(state,last_action="HEDGE_OVERPROTECTION_TRIM",last_reason="SHORT boven geldig protection-target getrimd")
+            ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True);_audit(ref,"FOCUS_V2_OVERHEDGE_TRIM",cycleId=state.cycle_id,symbol=symbol,trimQty=cq,targetQty=target_qty)
+            return {"status":"executed","action":"FOCUS_V2_OVERHEDGE_TRIM","symbol":symbol,"ordersSent":1}
+        rebound_price=state.recent_low*(1+max(0.0,settings.focus_v2_recovery_rebound_pct)) if state.recent_low>0 else 0.0
+        recovery_ok=bool(rebound_price>0 and mark>=rebound_price)
+        middle_ok=(not settings.focus_v2_require_bollinger_middle) or (mid>0 and mark>=mid)
+        release_pending=bool(recovery_ok and middle_ok and short_qty>tolerance_qty and (state.release_stage==0 or armed_live_qty>=target_qty-tolerance_qty))
+        if release_pending:
+            plan=_plan(client,symbol,mark,short_qty*mark,int(f((short_row or {}).get("leverage"),settings.leverage)));planned_qty=float(plan.quantity)
+            # The STOP is only an armed conditional entry; it is confirmed before the current SHORT is released.
+            arm_seed=replace(state,release_stage=1,released_short_qty=planned_qty,recovery_high=max(state.recovery_high,mark))
+            if armed_live_qty>=target_qty-tolerance_qty and armed_ids:
+                armed_state=replace(arm_seed,armed_rehedge_qty=armed_live_qty,rehedge_client_ids=armed_ids,rehedge_client_id=armed_ids[-1],rehedge_stop_price=(armed_stop or arm_seed.rehedge_stop_price))
+                new_backup_cid=""
+            else:
+                armed_state=_arm_rehedge(client=client,state=arm_seed,settings=settings,mark=mark,quantity=target_qty,reserve_order=reserve_order)
+                new_backup_cid=armed_state.rehedge_client_id
+            try:
+                result=_close_v2_leg(client=client,plan=plan,side=PositionSide.SHORT,prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|simple-release'.encode()).hexdigest()[:12]}")
+                cq,cp,_,_=_fill(result)
+            except Exception:
+                if new_backup_cid:
+                    try:client.cancel_order(symbol,client_order_id=new_backup_cid)
+                    except Exception:pass
+                raise
+            owned=_reduce_owned(owned,ROLE_HEDGE,cq,timestamp_ms);short_entry=f((short_row or {}).get("entryPrice"));realized=(short_entry-cp)*cq
+            state=replace(armed_state,release_stage=1,released_short_qty=cq,realized_hedge_pnl=state.realized_hedge_pnl+realized,last_release_price=cp,last_action="SHORT_RELEASED",last_reason="SHORT VRIJ · LONG KRIJGT RUIMTE",recovery_high=max(state.recovery_high,mark))
+            history={"cycleId":state.cycle_id,"cycleStartEquity":state.cycle_start_equity,"equity":equity,"longNotional":long_notional,"shortNotional":0.0,"targetShortNotional":hedge_target,"netExposure":long_notional,"grossExposure":long_notional,"hedgeRatio":0.0,"dcaCount":state.dca_count,"recoveryLow":state.recent_low,"recoveryHigh":state.recovery_high,"recoveryTrigger":rebound_price,"longBreakEven":entry,"releasedShortQty":cq,"armedRehedgeQty":state.armed_rehedge_qty,"rehedgeTrigger":state.rehedge_stop_price,"rehedgeArmed":True,"recoveryModelVersion":state.recovery_model_version,"recoveryStatus":"SHORT VRIJ · LONG KRIJGT RUIMTE","cyclePnl":equity-state.cycle_start_equity}
+            ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned],"focusV2History":history},merge=True)
+            _audit(ref,"FOCUS_V2_SIMPLE_SHORT_RELEASED",cycleId=state.cycle_id,symbol=symbol,releaseQty=cq,armedRehedgeQty=state.armed_rehedge_qty,rehedgeTrigger=state.rehedge_stop_price,recoveryTrigger=rebound_price)
+            return {"status":"executed","action":"FOCUS_V2_SIMPLE_SHORT_RELEASED","symbol":symbol,"ordersSent":2,"rehedgeTrigger":state.rehedge_stop_price}
+
     # No recovery: make sure hedge is large enough for current LONG, unless an already-armed stop covers the released tranche.
     armed_qty=_open_rehedge_qty(open_orders,symbol)*mark
     gap=max(0.0,hedge_target-short_notional-armed_qty)
@@ -536,7 +637,10 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
     configured_portfolio_met=state.cycle_start_equity>0 and equity>=state.cycle_start_equity*settings.focus_v2_portfolio_recovery_ratio
     portfolio_gate_met=configured_portfolio_met or (state.cycle_start_equity>0 and equity>=state.cycle_start_equity*.95)
     hold_history={"cycleId":state.cycle_id,"cycleStartEquity":state.cycle_start_equity,"equity":equity,"longNotional":long_notional,"shortNotional":short_notional,"netExposure":long_notional-short_notional,"grossExposure":long_notional+short_notional,"dcaCount":state.dca_count,"rehedgeTrigger":state.rehedge_stop_price,"rehedgeArmed":bool(state.rehedge_client_id and state.rehedge_stop_price>0),"cyclePnl":equity-state.cycle_start_equity,"currentPrice":mark,"longEntry":entry,"shortEntry":f((short_row or {}).get("entryPrice")),"bollinger5mMiddle":mid,"recoveryReboundPrice":rebound_price,"recoveryPriceMet":price_met,"bollinger5mConfirmed":middle_met,"portfolioRecoveryTarget":state.cycle_start_equity*settings.focus_v2_portfolio_recovery_ratio if state.cycle_start_equity>0 else 0.0,"portfolioRecoveryMet":portfolio_gate_met,"configuredPortfolioRecoveryMet":configured_portfolio_met,"shortReleaseRatio":settings.focus_v2_release_ratio,"shortReleaseReady":bool(price_met and middle_met and portfolio_gate_met),"dcaAnchorPrice":state.dca_anchor_price,"nextDcaTrigger":continuous_dca_trigger(state.dca_anchor_price,settings.focus_dca_distance),"harvestBaselineEquity":state.harvest_baseline_equity,"profitSinceHarvest":equity-state.harvest_baseline_equity,"profitTriggerUsdt":settings.focus_v2_profit_trigger_usdt,"profitHarvestUsdt":settings.focus_v2_profit_harvest_usdt,"profitRemainingUsdt":(max(0.0,settings.focus_v2_profit_trigger_usdt-(equity-state.harvest_baseline_equity)) if settings.focus_v2_profit_trigger_usdt>0 else 0.0),"totalHarvestedProfit":state.total_harvested_profit,"lastHarvestProfit":state.last_harvest_profit}
-    if state.recovery_model_version>=RECOVERY_MODEL_FAST:
+    if state.recovery_model_version==RECOVERY_MODEL_FAST:
         hold_history.update({"rehedgeArmed":_open_rehedge_qty(open_orders,symbol)>0,"recoveryModelVersion":state.recovery_model_version,"recoveryStage":state.release_stage,"recoveryProgressRatio":state.recovery_progress_ratio,"recoveryLow":state.recent_low,"recoveryHigh":state.recovery_high,"longBreakEven":entry,"nextReleasePrice":state.next_release_price,"nextReleaseQty":max(0.0,short_qty-(hedge_target/max(mark,1e-12))*recovery_remaining_ratio(min(len(RECOVERY_STAGE_PROGRESS),state.release_stage+1),settings.focus_v2_release_ratio)) if state.release_stage<len(RECOVERY_STAGE_PROGRESS) else 0.0,"releasedShortQty":state.released_short_qty,"armedRehedgeQty":_open_rehedge_qty(open_orders,symbol),"targetShortNotional":hedge_target,"hedgeRatio":short_notional/long_notional if long_notional>0 else 0.0,"recoveryStatus":recovery_status(state.release_stage,state.recovery_progress_ratio)})
+    elif state.recovery_model_version>=RECOVERY_MODEL_SIMPLE:
+        simple_status=("SHORT VRIJ · LONG KRIJGT RUIMTE" if state.release_stage>0 and short_qty<=max(1e-10,(max(1.0,long_notional*.002)/max(mark,1e-12))) else "DALING · BESCHERMD")
+        hold_history.update({"rehedgeArmed":_open_rehedge_qty(open_orders,symbol)>0,"recoveryModelVersion":state.recovery_model_version,"recoveryStage":state.release_stage,"recoveryLow":state.recent_low,"recoveryHigh":state.recovery_high,"recoveryTrigger":rebound_price,"longBreakEven":entry,"longTakeProfitPrice":entry*(1+settings.focus_minimum_profit_pct),"releasedShortQty":state.released_short_qty,"armedRehedgeQty":_open_rehedge_qty(open_orders,symbol),"targetShortNotional":hedge_target,"hedgeRatio":short_notional/long_notional if long_notional>0 else 0.0,"shortReleaseReady":bool(price_met and middle_met and state.release_stage==0),"recoveryStatus":simple_status,"profitTriggerUsdt":0.0,"profitHarvestUsdt":0.0,"profitRemainingUsdt":0.0})
     ref.set({"focusV2State":state_map(replace(state,last_action="HOLD",last_reason="bescherming in balans")),"phase":"FOCUS_V2_LIVE","lastReason":"FOCUS_V2_HOLD","focusV2History":hold_history},merge=True)
     return {"status":"waiting","action":"FOCUS_V2_HOLD","symbol":symbol,"ordersSent":0,"cyclePnl":equity-state.cycle_start_equity}

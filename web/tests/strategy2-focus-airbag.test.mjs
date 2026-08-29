@@ -7,11 +7,11 @@ const trades=readFileSync(new URL("../components/aster-recent-trades.tsx",import
 const chart=readFileSync(new URL("../components/trading-chart.tsx",import.meta.url),"utf8");
 const css=readFileSync(new URL("../components/aster-trade-center.module.css",import.meta.url),"utf8");
 
-test("Focus Airbag is explicit opt-in and explains legacy compatibility",()=>{
-  assert.match(maker,/Adaptieve Portfolio Airbag/);
+test("legacy Focus Airbag remains round-trippable but is outside the simple Focus 2.0 wizard",()=>{
   assert.match(maker,/focusAirbagEnabled:v\.focusAirbag/);
-  assert.match(maker,/UIT · huidige Focus ongewijzigd/);
-  assert.match(maker,/Lopende trades:/);
+  assert.match(maker,/focusAirbagEnabled/);
+  const focus=maker.slice(maker.indexOf(" const focusSteps=["),maker.indexOf(" const steps=",maker.indexOf(" const focusSteps=[")));
+  assert.doesNotMatch(focus,/Adaptieve Portfolio Airbag/);
 });
 
 test("trade detail exposes transparent Airbag status and contribution",()=>{

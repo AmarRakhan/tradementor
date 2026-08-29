@@ -65,17 +65,18 @@ def test_margin_liquidation_guard_precedes_dca():
     assert "maint<settings.emergency_margin_ratio" in src
     assert "liqdist>=.05" in src
 
-def test_focus_v2_replaces_full_tp_with_continuous_profit_harvest():
+def test_legacy_focus_v2_keeps_harvest_while_simple_mode_uses_full_tp():
     src=(HERE/"aster_strategy2_focus_v2.py").read_text()
     assert "FOCUS_V2_PROFIT_HARVEST" in src
-    assert "FOCUS_V2_TP_CLOSE" not in src
+    assert "state.recovery_model_version<RECOVERY_MODEL_SIMPLE" in src
+    assert "FOCUS_V2_TP_CYCLE_CLOSED" in src
     assert "harvest_baseline_equity" in src
 
-def test_wizard_has_separate_focus_v2_opt_in():
+def test_wizard_has_simplified_focus_v2_opt_in():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
-    assert 'title:"Focus | Focus 2.0"' in ui
+    assert 'title:"1 · Pair, richting & leverage"' in ui
     assert 'label="Focus 2.0 gebruiken"' in ui
-    assert "Focus 2.0 · Beschermd LONG opbouwen" in ui
+    assert "Focus 2.0 · simpele beschermde LONG" in ui
 
 
 def test_new_cycle_requires_protected_two_leg_open_and_slot_leverage():
@@ -124,10 +125,11 @@ def test_combined_cycle_evidence_allows_losing_hedge_only_when_combination_profi
     net,parts=combined_close_evidence(uid="u",symbol="SOLUSDT",mark=110,long_leg=long,short_leg=short,long_qty=1,short_qty=.9)
     assert parts["grossPnl"]>0 and net>0
 
-def test_wizard_exposes_continuous_harvest_fields():
+def test_simple_wizard_hides_harvest_controls_but_legacy_values_still_roundtrip():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
-    assert 'label="Winsttrigger (USDT)"' in ui
-    assert 'label="Winst nemen (USDT)"' in ui
+    block=ui[ui.index(" const focusSteps=["):ui.index(" const steps=",ui.index(" const focusSteps=["))]
+    assert 'label="Winsttrigger (USDT)"' not in block
+    assert 'label="Winst nemen (USDT)"' not in block
     assert "focusV2ProfitTriggerUsdt" in ui and "focusV2ProfitHarvestUsdt" in ui
 
 def test_focus_v2_dca_anchor_and_harvest_are_exposed_to_cockpit():

@@ -153,6 +153,7 @@ function focusActionLabel(event:unknown){
   const key=String(event||"").toUpperCase();
   if(key.includes("DCA_PROTECTED")||key.includes("DCA_LONG"))return "DCA LONG";
   if(key.includes("HEDGE_GROW"))return "HEDGE +";
+  if(key.includes("SIMPLE_SHORT_RELEASED"))return "SHORT VRIJ";
   if(key.includes("FAST_HEDGE_RELEASE")||key.includes("RECOVERY_"))return "HERSTEL RELEASE";
   if(key.includes("HEDGE_RELEASE"))return "HEDGE RELEASE";
   if(key.includes("REHEDGE"))return "RE-HEDGE";
@@ -163,7 +164,9 @@ function focusActionLabel(event:unknown){
 function FocusV2CockpitPanel({value}:{value:FocusV2Cockpit}){
   const actions=Array.isArray(value.recentActions)?value.recentActions:[];
   const check=(ok?:boolean)=>ok?<b className={styles.cockpitOk}>✓</b>:<b className={styles.cockpitWait}>WACHT</b>;
-  const fast=Number(value.recoveryModelVersion||1)>=2;
+  const model=Number(value.recoveryModelVersion||1);
+  const fast=model===2;
+  const simple=model>=3;
   const stage=Math.max(0,Math.round(Number(value.recoveryStage||0)));
   const progress=Math.max(0,Number(value.recoveryProgress||0));
   return <section className={styles.cockpit} aria-label="Focus 2.0 live cockpit">
@@ -173,7 +176,7 @@ function FocusV2CockpitPanel({value}:{value:FocusV2Cockpit}){
       <article><span>SHORT / TARGET</span><strong>{money(value.shortNotional)} / {money(value.targetShortNotional)}</strong><small>{amount(value.shortQuantity)} SHORT · armed {amount(value.armedRehedgeQty)}</small></article>
       <article><span>NETTO / GROSS</span><strong>{money(value.netExposure)} / {money(value.grossExposure)}</strong><small>DCA {Math.round(Number(value.dcaCount||0))} · cycle {money(value.cyclePnl,true)}</small></article>
     </div>
-    {fast?<div className={styles.cockpitRecovery}>
+    {simple?<div className={styles.cockpitRecovery}><div><span>Bescherming</span><b className={Number(value.shortQuantity||0)>0?styles.cockpitOk:styles.cockpitWait}>{Number(value.shortQuantity||0)>0?"SHORT ACTIEF":"SHORT VRIJ"}</b></div><div><span>Hersteltrigger</span><b>{amount(value.recoveryTrigger||value.recoveryReboundPrice)}</b></div><div><span>5m safety</span>{value.bollinger5mConfirmed||value.bollinger5mMiddle===0?check(value.bollinger5mConfirmed):<b>OPTIONEEL</b>}</div><div><span>Exchange backup</span><b className={value.rehedgeArmed?styles.cockpitOk:styles.cockpitWait}>{value.rehedgeArmed?"GEWAPEND":"NIET GEWAPEND"}</b></div></div>:fast?<div className={styles.cockpitRecovery}>
       <div><span>Recovery stage</span><b className={styles.cockpitOk}>{stage}/4</b></div>
       <div><span>Low → break-even</span><b>{Math.min(999,progress*100).toFixed(1)}%</b></div>
       <div><span>5m safety</span>{value.bollinger5mConfirmed||value.bollinger5mMiddle===0?check(value.bollinger5mConfirmed):<b>OPTIONEEL</b>}</div>
@@ -181,11 +184,11 @@ function FocusV2CockpitPanel({value}:{value:FocusV2Cockpit}){
     </div>:<div className={styles.cockpitRecovery}><div><span>Prijsherstel</span>{check(value.recoveryPriceMet)}</div><div><span>5m Bollinger-middle</span>{check(value.bollinger5mConfirmed)}</div><div><span>Portfolioherstel</span>{check(value.portfolioRecoveryMet)}</div><div><span>Volgende release</span><b className={value.shortReleaseReady?styles.cockpitOk:styles.cockpitWait}>{Math.round(Number(value.shortReleaseRatio||0)*100)}% SHORT</b></div></div>}
     <div className={styles.cockpitMetrics}>
       <span>Recovery low <b>{amount(value.recoveryLow)}</b></span><span>Recovery high <b>{amount(value.recoveryHigh)}</b></span>
-      <span>LONG break-even <b>{amount(value.longBreakEvenPrice)}</b></span><span>Volgende release <b>{Number(value.nextShortReleasePrice)>0?amount(value.nextShortReleasePrice):"—"}</b></span>
-      <span>Release quantity <b>{amount(value.nextShortReleaseQty)}</b></span><span>Totaal vrijgegeven <b>{amount(value.releasedShortQty)}</b></span>
+      <span>LONG break-even <b>{amount(value.longBreakEvenPrice)}</b></span><span>{simple?"LONG Take Profit":"Volgende release"} <b>{simple?amount(value.longTakeProfitPrice):Number(value.nextShortReleasePrice)>0?amount(value.nextShortReleasePrice):"—"}</b></span>
+      <span>{simple?"Hersteltrigger":"Release quantity"} <b>{simple?amount(value.recoveryTrigger||value.recoveryReboundPrice):amount(value.nextShortReleaseQty)}</b></span><span>Totaal vrijgegeven <b>{amount(value.releasedShortQty)}</b></span>
       <span>Re-hedge <b>{value.rehedgeArmed?`${amount(value.rehedgePrice)} · ${amount(value.armedRehedgeQty)} SHORT`:"Niet gewapend"}</b></span><span>Volgende DCA <b>{Number(value.nextLongDcaPrice)>0?`${amount(value.nextLongDcaPrice)} · ${Number(value.nextLongDcaDistancePct||0).toFixed(2)}%`:"—"}</b></span>
       <span>Cycle equity <b>{money(value.cycleEquity)} / start {money(value.cycleStartEquity)}</b></span><span>DCA anchor <b>{amount(value.dcaAnchorPrice)}</b></span>
-      <span>Profit sinds harvest <b>{money(value.profitSinceHarvest,true)} / trigger {money(value.profitTriggerUsdt)}</b></span><span>Nog tot harvest <b>{money(value.profitRemainingUsdt)} · neem {money(value.profitHarvestUsdt)}</b></span><span>Laatste / totaal harvest <b>{money(value.lastHarvestProfit,true)} / {money(value.totalHarvestedProfit,true)}</b></span>
+      {!simple&&<><span>Profit sinds harvest <b>{money(value.profitSinceHarvest,true)} / trigger {money(value.profitTriggerUsdt)}</b></span><span>Nog tot harvest <b>{money(value.profitRemainingUsdt)} · neem {money(value.profitHarvestUsdt)}</b></span><span>Laatste / totaal harvest <b>{money(value.lastHarvestProfit,true)} / {money(value.totalHarvestedProfit,true)}</b></span></>}
     </div>
     {actions.length>0&&<div className={styles.cockpitActions}><header><strong>LAATSTE ACTIES</strong><span>bevestigde Focus 2.0 audit</span></header>{actions.slice(0,20).map((raw,index)=>{const row=raw as Record<string,unknown>;return <div key={`${row.timestampMs||index}:${row.event||index}`}><time>{Number(row.timestampMs)?new Intl.DateTimeFormat("nl-NL",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(new Date(Number(row.timestampMs))):"—"}</time><b>{focusActionLabel(row.event)}</b><span>{Number(row.price)>0?amount(row.price):"—"}</span><span>{Number(row.quantity)>0?amount(row.quantity):"—"}</span><em>UITGEVOERD</em></div>})}</div>}
   </section>;

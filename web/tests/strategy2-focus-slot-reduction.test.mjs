@@ -7,9 +7,10 @@ const maker = await readFile(new URL("../components/aster-strategy2-maker.tsx", 
 test("Multi-Focus count can drain live slots without turning the bot off", () => {
   assert.match(maker, /focusDesiredSlotCount/);
   assert.match(maker, /focusSlotDraining/);
-  assert.match(maker, /Afbouwen naar/);
-  assert.match(maker, /blijven volledig beheerd/);
-  assert.match(maker, /niet opnieuw geopend/);
+  assert.match(maker, /setFocusSlotCount/);
+  assert.match(maker, /activeFocusSlots/);
+  assert.match(maker, /v\.focusV2Enabled\?1:/);
+  assert.match(maker, /side:v\.focusV2Enabled\?"LONG":slot\.side/);
   assert.doesNotMatch(maker, /focusSlotReductionBlocked/);
   assert.doesNotMatch(maker, /Verlaag eerst het live aantal/);
 });

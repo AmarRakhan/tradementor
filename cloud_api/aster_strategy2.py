@@ -100,6 +100,8 @@ class Strategy2Config:
     focus_airbag_drawdown_3: float = .05
     # Focus 2.0 is deliberately opt-in. Existing Focus behavior is unchanged when false.
     focus_v2_enabled: bool = False
+    # Saved by the simplified Focus 2.0 wizard. Absent/false keeps pre-existing behavior compatible.
+    focus_v2_simple_mode_enabled: bool = False
     focus_v2_min_net_long_usdt: float = 5.0
     focus_v2_min_net_long_ratio: float = 0.02
     focus_v2_max_hedge_ratio: float = 0.95
@@ -205,6 +207,7 @@ class Strategy2Config:
             focus_airbag_drawdown_2=f("focusAirbagDrawdown2", .03),
             focus_airbag_drawdown_3=f("focusAirbagDrawdown3", .05),
             focus_v2_enabled=bool(raw.get("focusV2Enabled",False)),
+            focus_v2_simple_mode_enabled=bool(raw.get("focusV2SimpleModeEnabled",False)),
             focus_v2_min_net_long_usdt=f("focusV2MinNetLongUsdt",5.0),
             focus_v2_min_net_long_ratio=f("focusV2MinNetLongRatio",0.02),
             focus_v2_max_hedge_ratio=f("focusV2MaxHedgeRatio",0.95),
@@ -367,7 +370,7 @@ class Strategy2Config:
             "focusPortfolioBrakeMode":self.focus_portfolio_brake_mode,"focusPortfolioBrakeValue":self.focus_portfolio_brake_value,"focusMaxPairsPerCycle":self.focus_max_pairs_per_cycle,
             "focusAirbagEnabled":self.focus_airbag_enabled,"focusAirbagStartRatio":self.focus_airbag_start_ratio,"focusAirbagMaxRatio":self.focus_airbag_max_ratio,"focusAirbagMinRatio":self.focus_airbag_min_ratio,
             "focusAirbagDrawdown1":self.focus_airbag_drawdown_1,"focusAirbagDrawdown2":self.focus_airbag_drawdown_2,"focusAirbagDrawdown3":self.focus_airbag_drawdown_3,
-            "focusV2Enabled":self.focus_v2_enabled,"focusV2MinNetLongUsdt":self.focus_v2_min_net_long_usdt,"focusV2MinNetLongRatio":self.focus_v2_min_net_long_ratio,
+            "focusV2Enabled":self.focus_v2_enabled,"focusV2SimpleModeEnabled":self.focus_v2_simple_mode_enabled,"focusV2MinNetLongUsdt":self.focus_v2_min_net_long_usdt,"focusV2MinNetLongRatio":self.focus_v2_min_net_long_ratio,
             "focusV2MaxHedgeRatio":self.focus_v2_max_hedge_ratio,"focusV2ReleaseRatio":self.focus_v2_release_ratio,"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,
             "focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,"focusV2RehedgeSetbackPct":self.focus_v2_rehedge_setback_pct,"focusV2RequireBollingerMiddle":self.focus_v2_require_bollinger_middle,
             "focusV2ProfitTriggerUsdt":self.focus_v2_profit_trigger_usdt,"focusV2ProfitHarvestUsdt":self.focus_v2_profit_harvest_usdt,

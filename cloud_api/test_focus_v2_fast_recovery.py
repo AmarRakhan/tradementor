@@ -126,7 +126,7 @@ def test_26_manual_flat_resets_cycle_state_without_migration():
 
 def test_27_new_cycle_starts_clean_on_fast_recovery_model():
     src=(HERE/'aster_strategy2_focus_v2.py').read_text()
-    assert 'recovery_model_version=RECOVERY_MODEL_FAST' in src
+    assert 'recovery_model_version=(RECOVERY_MODEL_SIMPLE if settings.focus_v2_simple_mode_enabled else RECOVERY_MODEL_FAST)' in src
     assert state_from({'cycleId':'existing-live'}).recovery_model_version==1
     assert 'recoveryModelVersion' not in state_map(state_from({'cycleId':'existing-live'}))
 
