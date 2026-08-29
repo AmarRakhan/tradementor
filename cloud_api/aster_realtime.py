@@ -133,6 +133,11 @@ class SymbolRegistry:
         with self._lock:
             return tuple(sorted(self._by_symbol))
 
+    def symbols_for(self, uid: str) -> tuple[str, ...]:
+        tenant = str(uid).strip()
+        with self._lock:
+            return tuple(sorted(symbol for symbol, members in self._by_symbol.items() if tenant in members))
+
     def tenant_count(self) -> int:
         with self._lock:
             return len({uid for members in self._by_symbol.values() for uid in members})
@@ -202,9 +207,14 @@ class AsterRealtimeWorker:
         self._last_health_persist = 0.0
         self._latest_lock = threading.RLock()
         self._latest_by_symbol: dict[str, RealtimeMarketEvent] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def stop(self) -> None:
-        self._stop.set()
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self._stop.set)
+        else:
+            self._stop.set()
 
     def health(self) -> dict[str, Any]:
         return self.metrics.snapshot(subscriptions=len(self.registry.symbols()), tenants=self.registry.tenant_count())
@@ -342,6 +352,7 @@ class AsterRealtimeWorker:
                 self._persist_health_if_due()
 
     async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
         backoff = 1.0
         first = True
         while not self._stop.is_set():

@@ -1582,7 +1582,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     pending_reopen_cooldown_until=(int(safe_float(pending_reopens[0].get("cooldownUntilMs")))
         if pending_reopens and isinstance(pending_reopens[0],dict) else 0)
     pending_reopen_attempt_ready=pending_reopen_cooldown_until<=now_ms
-    if not management_only and not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled:
+    if not ownership_isolated and not protection_selected and not take_profit_selected and pending_reopens and pending_reopen_attempt_ready and enabled and not management_only:
         if order_budget is not None and order_budget<1:
             return {"status":"budget-exhausted","action":"PENDING_REOPEN","ordersSent":0}
         pending=dict(pending_reopens[0]);symbol=str(pending.get("symbol","")).upper();side=str(pending.get("side","")).upper()
@@ -5755,6 +5755,36 @@ def start_aster_realtime_worker()->None:
 def aster_realtime_health(authorization:str|None=Header(default=None))->dict[str,Any]:
     verify_internal_cloud_request(authorization);worker=_aster_realtime_worker
     return {"workerEnabled":os.getenv("ASTER_REALTIME_WORKER","false").lower()=="true","executionEnabled":os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true",**(worker.health() if worker else {"connected":False,"subscriptions":0,"tenants":0})}
+
+@app.on_event("shutdown")
+def stop_aster_realtime_worker()->None:
+    worker=_aster_realtime_worker
+    if worker is not None:worker.stop()
+
+
+@app.get("/v1/me/aster/realtime/events")
+def aster_realtime_events(user:dict[str,Any]=Depends(authenticated_user))->StreamingResponse:
+    uid=str(user["uid"])
+    async def stream():
+        last_seen:dict[str,int]={};last_heartbeat=time.monotonic()
+        while True:
+            worker=_aster_realtime_worker
+            if worker is None:
+                yield "event: status\ndata: {\"connected\":false,\"reason\":\"worker-disabled\"}\n\n"
+                await asyncio.sleep(2.0);continue
+            allowed=worker.registry.symbols_for(uid)
+            latest=worker.latest(allowed)
+            for symbol,payload in latest.items():
+                stamp=int(payload.get("receivedAtMs",0) or 0)
+                if stamp<=last_seen.get(symbol,0):continue
+                last_seen[symbol]=stamp
+                yield f"event: mark\ndata: {json.dumps(payload,separators=(',',':'))}\n\n"
+            now=time.monotonic()
+            if now-last_heartbeat>=15:
+                yield ": heartbeat\n\n";last_heartbeat=now
+            await asyncio.sleep(.25)
+    return StreamingResponse(stream(),media_type="text/event-stream",headers={"Cache-Control":"no-cache, no-transform","X-Accel-Buffering":"no","Connection":"keep-alive"})
+
 
 @app.post("/internal/mexc-automation/tick")
 def run_mexc_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:

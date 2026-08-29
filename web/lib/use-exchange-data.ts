@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { authenticatedRequest } from "./cloud-client";
+import { authenticatedRequest, authenticatedStream } from "./cloud-client";
+import { applyAsterRealtimeMark, parseSseChunk } from "./aster-realtime.mjs";
 import { loadAsterSnapshot, mergeAsterSnapshotWithHistoryFallback, preserveConfirmedAsterValues, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
 import { createLatestAsterRequestGate } from "./aster-strategy2-server-status.mjs";
 
@@ -151,6 +152,47 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
     void request.finally(() => { if (refreshAllInFlight.current === request) refreshAllInFlight.current = null; });
     return request;
   }, [refresh]);
+
+  useEffect(() => {
+    if (!cloudReady || !uid) return;
+    const controller = new AbortController();
+    let stopped = false;
+    let retryMs = 1000;
+    const run = async () => {
+      while (!stopped) {
+        try {
+          const response = await authenticatedStream("/api/exchanges/aster/realtime", { signal: controller.signal });
+          const reader = response.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = ""; retryMs = 1000;
+          while (!stopped) {
+            const { value, done } = await reader.read();
+            if (done) throw new Error("Realtime Aster-stream gesloten");
+            const parsed = parseSseChunk(buffer, decoder.decode(value, { stream: true }));
+            buffer = parsed.rest;
+            for (const event of parsed.events) {
+              if (!event || typeof event !== "object" || !("symbol" in event) || !("markPrice" in event)) continue;
+              setState((current) => {
+                if (current.uid !== uid) return current;
+                const previous = current.snapshots.aster;
+                if (!previous.data) return current;
+                const data = applyAsterRealtimeMark(previous.data, event) as Record<string, unknown>;
+                if (data === previous.data) return current;
+                return { ...current, snapshots: { ...current.snapshots, aster: { ...previous, data, updatedAt: Date.now() } } };
+              });
+            }
+          }
+        } catch (error) {
+          if (stopped || controller.signal.aborted) return;
+          console.warn("[TradeMentor Aster realtime] reconnect", error);
+          await new Promise((resolve) => window.setTimeout(resolve, retryMs));
+          retryMs = Math.min(15_000, retryMs * 2);
+        }
+      }
+    };
+    void run();
+    return () => { stopped = true; controller.abort(); };
+  }, [cloudReady, uid]);
 
   useEffect(() => {
     if (!cloudReady) return;

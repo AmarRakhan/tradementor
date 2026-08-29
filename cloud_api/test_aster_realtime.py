@@ -110,3 +110,10 @@ def test_subscription_messages_use_lowercase_one_second_mark_stream():
     assert socket.messages[0]["params"] == ["btcusdt@markPrice@1s", "solusdt@markPrice@1s"]
     assert socket.messages[1]["method"] == "UNSUBSCRIBE"
     assert socket.messages[1]["params"] == ["dogeusdt@markPrice@1s"]
+
+
+def test_registry_symbols_for_tenant_isolated():
+    registry=SymbolRegistry();registry.replace({"SOLUSDT":["a","b"],"BTCUSDT":["a"],"DOGEUSDT":["b"]})
+    assert registry.symbols_for("a")== ("BTCUSDT","SOLUSDT")
+    assert registry.symbols_for("b")== ("DOGEUSDT","SOLUSDT")
+    assert registry.symbols_for("unknown")==()
