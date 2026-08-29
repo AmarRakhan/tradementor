@@ -3622,6 +3622,47 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             if symbol in strategy2_cost_failures and row["strategy2Tp"]["status"]=="Niet betrouwbaar te bepalen":
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
         positions.append(row)
+    # Focus 2.0 cockpit is read-only presentation state derived from the same persisted runtime truth.
+    focus_v2_cockpit:dict[str,Any]={}
+    v2_state=strategy2_state.get("focusV2State") if isinstance(strategy2_state.get("focusV2State"),dict) else {}
+    v2_history=strategy2_state.get("focusV2History") if isinstance(strategy2_state.get("focusV2History"),dict) else {}
+    v2_symbol=str(v2_state.get("symbol","")).upper()
+    if v2_symbol and str(v2_state.get("cycleId", "")):
+        v2_long=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="LONG"),{})
+        v2_short=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="SHORT"),{})
+        current=safe_float(v2_history.get("currentPrice")) or safe_float(v2_long.get("markPrice")) or safe_float(v2_short.get("markPrice"))
+        long_qty=abs(safe_float(v2_long.get("quantity",v2_long.get("positionAmt"))))
+        short_qty=abs(safe_float(v2_short.get("quantity",v2_short.get("positionAmt"))))
+        long_entry=safe_float(v2_long.get("entryPrice",v2_state.get("weightedEntry")))
+        short_entry=safe_float(v2_short.get("entryPrice"))
+        long_notional=long_qty*current if current>0 else safe_float(v2_history.get("longNotional"))
+        short_notional=short_qty*current if current>0 else safe_float(v2_history.get("shortNotional"))
+        next_dca=next_dca_trigger(original_entry=safe_float(v2_state.get("originalEntry")) or long_entry,dca_count=int(safe_float(v2_state.get("dcaCount"))),max_dca=strategy2_settings.focus_max_dca,distance_pct=strategy2_settings.focus_dca_distance,mode=strategy2_settings.focus_dca_mode,custom_levels=strategy2_settings.focus_dca_custom_levels,unlimited=strategy2_settings.focus_dca_unlimited) if strategy2_settings.focus_dca_enabled else 0.0
+        rebound=safe_float(v2_history.get("recoveryReboundPrice")) or ((safe_float(v2_state.get("recentLow"))*(1+strategy2_settings.focus_v2_recovery_rebound_pct)) if safe_float(v2_state.get("recentLow"))>0 else 0.0)
+        price_met=bool(v2_history.get("recoveryPriceMet", current>=rebound if rebound>0 else False))
+        middle_met=bool(v2_history.get("bollinger5mConfirmed", not strategy2_settings.focus_v2_require_bollinger_middle))
+        portfolio_met=bool(v2_history.get("portfolioRecoveryMet", False))
+        release_ready=bool(v2_history.get("shortReleaseReady", price_met and middle_met and portfolio_met))
+        rehedge_price=safe_float(v2_state.get("rehedgeStopPrice"))
+        rehedge_armed=bool(v2_state.get("rehedgeClientId") and rehedge_price>0)
+        if next_dca>0 and current>0 and current<=next_dca: next_action=f"DCA {int(safe_float(v2_state.get('dcaCount')))+1} gereed"
+        elif rehedge_armed: next_action=f"RE-HEDGE SHORT gewapend op {rehedge_price:.8g}"
+        elif release_ready: next_action=f"SHORT RELEASE {strategy2_settings.focus_v2_release_ratio*100:.0f}% gereed"
+        elif not price_met: next_action="Wacht op prijsherstel"
+        elif not middle_met: next_action="Herstel bezig · wacht op 5m Bollinger-middle"
+        elif not portfolio_met: next_action=f"Wacht op portfolioherstel tot {strategy2_settings.focus_v2_portfolio_recovery_ratio*100:.1f}%"
+        else: next_action="Hedge actief · bescherming in balans"
+        recent_actions=[]
+        try:
+            for doc in aster_strategy2_reference(uid).collection("audit").order_by("timestampMs",direction=firestore.Query.DESCENDING).limit(40).stream():
+                a=doc.to_dict() or {}; details=a.get("details") if isinstance(a.get("details"),dict) else {}
+                if str(a.get("mode","")).lower()!="focus_v2" or str(details.get("symbol",v2_symbol)).upper()!=v2_symbol: continue
+                recent_actions.append({"event":str(a.get("event","")),"timestampMs":int(safe_float(a.get("timestampMs"))),"price":safe_float(details.get("price",details.get("fillPrice",0))),"quantity":safe_float(details.get("quantity",details.get("fillQuantity",0))),"details":details})
+                if len(recent_actions)>=20: break
+        except Exception: pass
+        long_break_even=safe_float((v2_long.get("strategy2Tp") or {}).get("breakEvenPrice")) if isinstance(v2_long.get("strategy2Tp"),dict) else long_entry
+        cycle_start=safe_float(v2_state.get("cycleStartEquity")); cycle_equity=safe_float(v2_history.get("equity")) or safe_float(strategy2_snapshot.get("equity"))
+        focus_v2_cockpit={"symbol":v2_symbol,"cycleId":str(v2_state.get("cycleId","")),"currentPrice":current,"longQuantity":long_qty,"longEntry":long_entry,"longBreakEvenPrice":long_break_even or long_entry,"longNotional":long_notional,"longPnl":safe_float(v2_long.get("unrealizedPnl",v2_long.get("unRealizedProfit"))),"longLeverage":safe_float(v2_long.get("leverage")),"shortQuantity":short_qty,"shortEntry":short_entry,"shortNotional":short_notional,"shortPnl":safe_float(v2_short.get("unrealizedPnl",v2_short.get("unRealizedProfit"))),"shortLeverage":safe_float(v2_short.get("leverage")),"netExposure":long_notional-short_notional,"grossExposure":long_notional+short_notional,"hedgeRatio":(short_notional/long_notional if long_notional>0 else 0.0),"dcaCount":int(safe_float(v2_state.get("dcaCount"))),"nextLongDcaPrice":next_dca,"nextLongDcaDistancePct":((next_dca/current-1)*100 if next_dca>0 and current>0 else None),"recoveryReboundPrice":rebound,"recoveryPriceMet":price_met,"bollinger5mMiddle":safe_float(v2_history.get("bollinger5mMiddle")),"bollinger5mConfirmed":middle_met,"portfolioRecoveryTarget":safe_float(v2_history.get("portfolioRecoveryTarget")) or cycle_start*strategy2_settings.focus_v2_portfolio_recovery_ratio,"portfolioRecoveryMet":portfolio_met,"shortReleaseRatio":strategy2_settings.focus_v2_release_ratio,"shortReleaseReady":release_ready,"nextShortReleasePrice":rebound,"rehedgePrice":rehedge_price,"rehedgeArmed":rehedge_armed,"cycleStartEquity":cycle_start,"cycleEquity":cycle_equity,"cyclePnl":cycle_equity-cycle_start if cycle_start>0 else 0.0,"cycleTargetActive":False,"cycleTargetEquity":None,"nextAction":next_action,"status":str(v2_state.get("lastAction","HOLD")),"recentActions":recent_actions}
     closed_trades = _stored_aster_closed_trades(user)
     def confirmed_snapshot_number(key: str) -> float | None:
         value=snapshot.get(key)
@@ -3638,7 +3679,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "maintenanceMargin": confirmed_snapshot_number("maintenanceMargin"),
         "marginRatio": confirmed_snapshot_number("marginRatio"),
         "openOrders": int(safe_float(snapshot.get("openOrders"))),
-        "positions": positions, "closedTrades": closed_trades,
+        "positions": positions, "closedTrades": closed_trades, "focusV2Cockpit": focus_v2_cockpit,
         "tradableSymbols": int(safe_float(snapshot.get("tradableSymbols"))),
         "maximumLeverage": int(safe_float(snapshot.get("maximumLeverage"))),
         "liveReady": hedge_mode, "snapshotAt": snapshot.get("capturedAt"),

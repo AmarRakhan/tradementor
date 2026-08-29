@@ -31,3 +31,36 @@ test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", (
   assert.match(chart, /HEDGE RELEASE/);
   assert.match(chart, /`HEDGE \$\{group\.events\[0\]\?\.side\|\|"SHORT"\}`/);
 });
+
+test("Focus 2.0 cockpit hides Bollinger overlays and renders server levels", () => {
+  assert.match(chart, /activeIndicators\.includes\("bb"\)&&!focusV2/);
+  assert.match(chart, /HUIDIGE PRIJS/);
+  assert.match(chart, /LONG GROEN VANAF/);
+  assert.match(chart, /VOLGENDE LONG DCA/);
+  assert.match(chart, /SHORT RELEASE/);
+  assert.match(chart, /RE-HEDGE SHORT/);
+  assert.match(chart, /cockpit\.cycleTargetActive/);
+});
+
+test("Focus 2.0 chart auto follows with right-side breathing room and can pause", () => {
+  assert.match(chart, /setVisibleLogicalRange\(\{from:Math\.max\(0,chartCandles\.length-50\),to:chartCandles\.length\+10\}\)/);
+  assert.match(chart, /setAutoFollow\(false\)/);
+  assert.match(chart, /NAAR LIVE/);
+  assert.match(chart, /pointerdown/);
+  assert.match(chart, /touchstart/);
+});
+
+test("Focus 2.0 markers keep long, DCA and hedge actions explicit", () => {
+  assert.match(chart, /LONG \/ BUY/);
+  assert.match(chart, /DCA LONG/);
+  assert.match(chart, /HEDGE SHORT/);
+  assert.match(chart, /HEDGE RELEASE/);
+});
+
+test("trade detail consumes the server-side Focus 2.0 cockpit", () => {
+  assert.match(recent, /focusV2Cockpit/);
+  assert.match(recent, /FocusV2CockpitPanel/);
+  assert.match(recent, /VOLGENDE BOTACTIE|nextAction/);
+  assert.match(recent, /LAATSTE ACTIES/);
+  assert.match(recent, /5m Bollinger-middle/);
+});
