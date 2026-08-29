@@ -1,6 +1,6 @@
 """Realtime Aster market-data orchestration for active Strategy-2 positions.
 
-Public mark-price data is shared per symbol across tenants.  This module never
+Public mark-price data is shared per symbol across tenants. This module never
 submits an exchange order itself: an injected evaluation callback must pass each
 candidate event through the existing Strategy-2 lease/queue/idempotency gates.
 REST remains authoritative for reconciliation and order/account truth.
@@ -8,7 +8,7 @@ REST remains authoritative for reconciliation and order/account truth.
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass, field
 import json
 import logging
@@ -16,7 +16,7 @@ import math
 import random
 import threading
 import time
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from websockets.asyncio.client import connect
 
@@ -45,6 +45,15 @@ class RealtimeMarketEvent:
         if self.event_time_ms <= 0:
             return 0
         return max(0, self.received_at_ms - self.event_time_ms)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "markPrice": self.mark_price,
+            "eventTimeMs": self.event_time_ms,
+            "receivedAtMs": self.received_at_ms,
+            "transportLatencyMs": self.transport_latency_ms,
+        }
 
 
 @dataclass
@@ -130,12 +139,11 @@ class SymbolRegistry:
 
 
 class EvaluationThrottle:
-    """Coalesce noisy ticks while reacting immediately to meaningful moves.
+    """Coalesce ticks without forgetting a move that arrived during cooldown.
 
-    A user can own several symbols.  At most one authoritative Strategy-2 REST
-    reconciliation is started per account per interval.  A meaningful mark move
-    can make a symbol dirty immediately; the next available account slot evaluates
-    it.  This keeps the WebSocket realtime while preventing REST amplification.
+    ``_last_price`` deliberately means last *evaluated* price, not last observed
+    price. A move that occurs inside the account cooldown therefore remains dirty
+    and is evaluated as soon as the next account slot becomes available.
     """
 
     def __init__(self, minimum_interval: float = ACCOUNT_MIN_EVALUATION_INTERVAL_SECONDS,
@@ -151,7 +159,6 @@ class EvaluationThrottle:
         key = (uid, symbol.upper())
         with self._lock:
             prior_price = self._last_price.get(key)
-            self._last_price[key] = price
             last_eval = self._last_account_eval.get(uid, -1e12)
             elapsed = stamp - last_eval
             if elapsed < self.minimum_interval:
@@ -160,6 +167,7 @@ class EvaluationThrottle:
             if not moved and elapsed < max(self.minimum_interval, 5.0):
                 return False
             self._last_account_eval[uid] = stamp
+            self._last_price[key] = price
             return True
 
 
@@ -192,12 +200,20 @@ class AsterRealtimeWorker:
         self._subscription_version = 0
         self._health_lock = threading.Lock()
         self._last_health_persist = 0.0
+        self._latest_lock = threading.RLock()
+        self._latest_by_symbol: dict[str, RealtimeMarketEvent] = {}
 
     def stop(self) -> None:
         self._stop.set()
 
     def health(self) -> dict[str, Any]:
         return self.metrics.snapshot(subscriptions=len(self.registry.symbols()), tenants=self.registry.tenant_count())
+
+    def latest(self, symbols: Iterable[str] | None = None) -> dict[str, dict[str, Any]]:
+        allowed = None if symbols is None else {str(symbol).upper() for symbol in symbols}
+        with self._latest_lock:
+            return {symbol: event.public_dict() for symbol, event in self._latest_by_symbol.items()
+                    if allowed is None or symbol in allowed}
 
     @staticmethod
     def parse_event(payload: Any, received_at_ms: int | None = None) -> RealtimeMarketEvent | None:
@@ -320,6 +336,8 @@ class AsterRealtimeWorker:
                     continue
                 self.metrics.incoming_events += 1
                 self.metrics.last_event_at_ms = event.received_at_ms
+                with self._latest_lock:
+                    self._latest_by_symbol[event.symbol] = event
                 await self._evaluate_event(event)
                 self._persist_health_if_due()
 
