@@ -7,7 +7,7 @@ import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { layoutVerifiedTradeMarkers, type VerifiedTradeEvent } from "@/lib/trade-marker-layout";
 
 export type ChartExchange = "aster" | "hyperliquid" | "portfolio";
-export type TradeSelection = { id: string; symbol: string; exchange: ChartExchange; side: string; entry?: number; mark?: number; exit?: number; openedAt?: string; closedAt?: string; dcaCount?: number };
+export type TradeSelection = { id: string; symbol: string; exchange: ChartExchange; side: string; entry?: number; mark?: number; exit?: number; openedAt?: string; closedAt?: string; dcaCount?: number; strategy2Role?: string };
 export type DcaChartLevel = { number: number; price: number };
 export type AirbagChartEvent = { at:number; kind:string; ratio:number; reason?:string; price:number };
 const EMPTY_DCA_LEVELS: DcaChartLevel[] = [];
@@ -159,11 +159,24 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
       const closedAtMs = new Date(selection.closedAt).getTime();
       if (Number.isFinite(closedAtMs) && closedAtMs > 0) query.set("closed_at_ms", String(closedAtMs));
     } else if (focusAtMs && Number.isFinite(focusAtMs) && focusAtMs > 0) query.set("anchor_at_ms", String(Math.floor(focusAtMs)));
-    authenticatedRequest(`/api/exchanges/aster/trade-events?${query}`)
-      .then((payload) => { if (!cancelled) setTradeEvents(Array.isArray(payload.events) ? payload.events as TradeEvent[] : []); })
+    const focusV2Main = String(selection.strategy2Role || "").toUpperCase() === "FOCUS_V2_LONG" && !selection.closedAt;
+    const requests: Promise<any>[] = [authenticatedRequest(`/api/exchanges/aster/trade-events?${query}`)];
+    if (focusV2Main) {
+      const hedgeQuery = new URLSearchParams({ symbol: selection.symbol, side: selection.side.toUpperCase() === "LONG" ? "SHORT" : "LONG" });
+      const openedAtMs = selection.openedAt ? new Date(selection.openedAt).getTime() : 0;
+      if (Number.isFinite(openedAtMs) && openedAtMs > 0) hedgeQuery.set("anchor_at_ms", String(Math.floor(openedAtMs)));
+      requests.push(authenticatedRequest(`/api/exchanges/aster/trade-events?${hedgeQuery}`));
+    }
+    Promise.all(requests)
+      .then((payloads) => {
+        if (cancelled) return;
+        const primary = Array.isArray(payloads[0]?.events) ? payloads[0].events as TradeEvent[] : [];
+        const hedges = focusV2Main && Array.isArray(payloads[1]?.events) ? (payloads[1].events as TradeEvent[]).map(event => ({...event, kind:"hedge" as const})) : [];
+        setTradeEvents([...primary, ...hedges]);
+      })
       .catch(() => { if (!cancelled) setTradeEvents([]); });
     return () => { cancelled = true; };
-  }, [selection.exchange, selection.symbol, selection.side, selection.closedAt, focusAtMs, mode]);
+  }, [selection.exchange, selection.symbol, selection.side, selection.closedAt, selection.openedAt, selection.strategy2Role, focusAtMs, mode]);
 
   useEffect(() => {
     const chartCandles=candleDataRef.current;
@@ -189,7 +202,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
     if(selection.exchange!=="aster"&&selection.exit)fallbackEvents.push({id:`${selection.id}:close`,side:short?"SHORT":"LONG",kind:"close",action:"close",price:selection.exit,at:selection.closedAt||new Date(chartCandles.at(-1)!.time*1000).toISOString(),timestampMs:selection.closedAt?new Date(selection.closedAt).getTime():chartCandles.at(-1)!.time*1000,exchange:selection.exchange});
     const airbagTradeEvents:TradeEvent[]=airbagEvents.filter(event=>Number.isFinite(event.at)&&Number.isFinite(event.price)&&event.price>0).map((event,index)=>({id:`airbag:${event.at}:${index}`,side:(selection.side.toUpperCase()==="SHORT"?"LONG":"SHORT") as "LONG"|"SHORT",kind:"hedge",action:String(event.kind).includes("-")?"close":"increase",price:event.price,at:new Date(event.at).toISOString(),timestampMs:event.at,exchange:"aster"}));
     const markerGroups=layoutVerifiedTradeMarkers(chartCandles,selection.exchange==="aster"?[...tradeEvents,...airbagTradeEvents]:fallbackEvents,activeIndicators.includes("bb"));
-    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>{const highlighted=(Boolean(selectedActionId)&&group.events.some(event=>event.id===selectedActionId))||(mode==="aster-detail"&&Boolean(focusAtMs)&&group.events.some(event=>Math.abs(event.timestampMs-Number(focusAtMs))<=900_000));const onlyHedge=group.events.every(event=>event.kind==="hedge");const label=mode==="aster-detail"?(onlyHedge?"":group.events.length>1?`${group.events.length} ACTIES`:group.events[0]?.kind==="dca"?"":group.events[0]?.kind==="close"?"SELL":"BUY"):(group.events.length>1?String(group.events.length):"");return{time:group.time as UTCTimestamp,position:"inBar",color:highlighted?"#ffd166":onlyHedge?"#55e3ff":group.color,shape:group.shape,text:label,size:onlyHedge?0.75:highlighted?1.8:group.events.some(event=>event.kind!=="dca")?1.35:1.15}}));}
+    for(const placement of ["above","below"] as const){const groups=markerGroups.filter(group=>group.placement===placement);if(!groups.length)continue;const markerSeries=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineVisible:false,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});markerSeries.setData(groups.map(group=>({time:group.time as UTCTimestamp,value:group.displayPrice})));createSeriesMarkers(markerSeries,groups.map(group=>{const highlighted=(Boolean(selectedActionId)&&group.events.some(event=>event.id===selectedActionId))||(mode==="aster-detail"&&Boolean(focusAtMs)&&group.events.some(event=>Math.abs(event.timestampMs-Number(focusAtMs))<=900_000));const onlyHedge=group.events.every(event=>event.kind==="hedge");const label=mode==="aster-detail"?(onlyHedge?(group.events.some(event=>event.action==="close")?"HEDGE RELEASE":`HEDGE ${group.events[0]?.side||"SHORT"}`):group.events.length>1?`${group.events.length} ACTIES`:group.events[0]?.kind==="dca"?"":group.events[0]?.kind==="close"?"SELL":"BUY"):(group.events.length>1?String(group.events.length):"");return{time:group.time as UTCTimestamp,position:"inBar",color:highlighted?"#ffd166":onlyHedge?"#55e3ff":group.color,shape:group.shape,text:label,size:onlyHedge?0.75:highlighted?1.8:group.events.some(event=>event.kind!=="dca")?1.35:1.15}}));}
     const onCrosshair=(param:any)=>{if(!param.time){setCrosshair(null);return;} const time=Number(param.time),c=candleDataRef.current.find(row=>row.time===time);if(c)setCrosshair(c);const group=markerGroups.filter(item=>item.time===time).flatMap(item=>item.events);if(group.length)setSelectedMarkerEvents(group)}; chart.subscribeCrosshairMove(onCrosshair);
     if (mode === "aster-detail") {
       if (Number.isFinite(breakEvenPrice) && Number(breakEvenPrice) > 0) {

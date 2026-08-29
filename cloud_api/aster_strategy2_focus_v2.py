@@ -238,13 +238,43 @@ def run_focus_v2_live_step(*,client:Any,ref:Any,raw_state:dict[str,Any],settings
     # Long DCA has priority on a down move, using the existing Focus ladder/settings.
     trigger=next_dca_trigger(original_entry=state.original_entry,dca_count=state.dca_count,max_dca=settings.focus_max_dca,distance_pct=settings.focus_dca_distance,mode=settings.focus_dca_mode,custom_levels=settings.focus_dca_custom_levels,unlimited=settings.focus_dca_unlimited)
     if settings.focus_dca_enabled and trigger>0 and mark<=trigger:
+        # A Focus 2.0 DCA is also protected as one pair: LONG DCA + immediate hedge resize.
+        if order_budget is not None and order_budget<2:
+            return {"status":"budget-exhausted","action":"FOCUS_V2_WAIT_PROTECTED_DCA","reason":"twee orderplaatsen vereist voor LONG DCA + hedge","ordersSent":0}
         if settings.focus_dca_amount_mode=="linear":notional=settings.focus_dca_notional+settings.focus_dca_increment*state.dca_count
         else:
             seq=dca_notional_sequence(amount=settings.focus_dca_notional,multiplier=settings.focus_dca_multiplier,count=state.dca_count+1);notional=seq[-1] if seq else settings.focus_dca_notional
         focus_used=long_notional; remaining=max(0.0,settings.focus_max_budget_usd-focus_used);notional=min(notional,remaining)
         liq=f((long_row or {}).get("liquidationPrice"));liqdist=abs(mark-liq)/mark if liq>0 else 1.0
-        if notional>0 and notional/max(1,settings.leverage)<=available and maint<settings.emergency_margin_ratio and liqdist>=.05:
-            cycle_leverage=_resolved_leverage(client,settings,symbol,long_row);plan=_plan(client,symbol,mark,notional,cycle_leverage);prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|dca|{state.dca_count}'.encode()).hexdigest()[:12]}";result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True);q,p,cid,oid=_fill(result);owned=_upsert(owned,settings=settings,state=state,role=ROLE_LONG,side="LONG",q=q,p=p,cid=cid,oid=oid,is_dca=True,ts=timestamp_ms);new_qty=long_qty+q;new_entry=((long_qty*entry)+(q*p))/new_qty if new_qty else p;state=replace(state,dca_count=state.dca_count+1,weighted_entry=new_entry,last_action="DCA_LONG",last_reason="bestaande Focus DCA-ladder",recent_low=min(state.recent_low,p));ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True);_audit(ref,"FOCUS_V2_DCA_LONG",cycleId=state.cycle_id,symbol=symbol,dcaCount=state.dca_count,longNotional=(long_notional+q*p));return {"status":"executed","action":"FOCUS_V2_DCA_LONG","symbol":symbol,"ordersSent":1}
+        cycle_leverage=_resolved_leverage(client,settings,symbol,long_row)
+        expected_long_after=long_notional+max(0.0,notional)
+        expected_hedge=target_hedge_notional(expected_long_after,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)
+        expected_hedge_gap=max(0.0,expected_hedge-short_notional)
+        required_margin=(max(0.0,notional)+expected_hedge_gap)/max(1,cycle_leverage)
+        if notional>0 and required_margin<=available and maint<settings.emergency_margin_ratio and liqdist>=.05:
+            plan=_plan(client,symbol,mark,notional,cycle_leverage);prefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|dca|{state.dca_count}'.encode()).hexdigest()[:12]}"
+            result=execute_leg_once(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True);q,p,cid,oid=_fill(result)
+            actual_long_after=long_notional+q*p
+            hedge_target_after=target_hedge_notional(actual_long_after,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)
+            hedge_gap=max(0.0,hedge_target_after-short_notional)
+            try:
+                hq=hp=0.0;hcid=hoid=""
+                if hedge_gap>max(1.0,actual_long_after*.002):
+                    hplan=_plan(client,symbol,p,hedge_gap,cycle_leverage);hprefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|dcahedge|{state.dca_count}'.encode()).hexdigest()[:12]}"
+                    hresult=execute_leg_once(client,hplan,side=PositionSide.SHORT,action="OPEN",id_prefix=hprefix,confirm=True,new_position_leverage=cycle_leverage);hq,hp,hcid,hoid=_fill(hresult)
+            except Exception:
+                # Roll back exactly the just-added LONG quantity if protection cannot be confirmed.
+                rplan=_plan(client,symbol,p,q*p,cycle_leverage);rprefix=f"s2fv2-{hashlib.sha256(f'{state.cycle_id}|dcarollback|{state.dca_count}'.encode()).hexdigest()[:12]}"
+                execute_leg_once(client,rplan,side=PositionSide.LONG,action="CLOSE",id_prefix=rprefix,confirm=True)
+                _audit(ref,"FOCUS_V2_PROTECTED_DCA_ROLLBACK",cycleId=state.cycle_id,symbol=symbol,dcaNotional=q*p,reason="hedge na DCA kon niet bevestigd worden")
+                raise
+            owned=_upsert(owned,settings=settings,state=state,role=ROLE_LONG,side="LONG",q=q,p=p,cid=cid,oid=oid,is_dca=True,ts=timestamp_ms)
+            if hq>0:owned=_upsert(owned,settings=settings,state=state,role=ROLE_HEDGE,side="SHORT",q=hq,p=hp,cid=hcid,oid=hoid,is_dca=False,ts=timestamp_ms)
+            new_qty=long_qty+q;new_entry=((long_qty*entry)+(q*p))/new_qty if new_qty else p
+            state=replace(state,dca_count=state.dca_count+1,weighted_entry=new_entry,last_action="DCA_PROTECTED",last_reason="LONG DCA + hedge opnieuw op actuele LONG gezet",recent_low=min(state.recent_low,p))
+            ref.set({"focusV2State":state_map(state),"ownedLegs":[owned_to_mapping(x) for x in owned]},merge=True)
+            _audit(ref,"FOCUS_V2_DCA_PROTECTED",cycleId=state.cycle_id,symbol=symbol,dcaCount=state.dca_count,longNotional=actual_long_after,targetShortNotional=hedge_target_after,hedgeAddedNotional=hq*hp)
+            return {"status":"executed","action":"FOCUS_V2_DCA_PROTECTED","symbol":symbol,"ordersSent":2 if hq>0 else 1}
 
     # Reconcile protective hedge to current LONG. This is why old start-size is never used.
     hedge_target=target_hedge_notional(long_notional,min_bias_usdt=settings.focus_v2_min_net_long_usdt,min_bias_ratio=settings.focus_v2_min_net_long_ratio,max_hedge_ratio=settings.focus_v2_max_hedge_ratio)

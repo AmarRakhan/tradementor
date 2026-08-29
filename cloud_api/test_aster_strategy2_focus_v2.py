@@ -88,3 +88,13 @@ def test_focus_v2_never_deliberately_returns_after_long_only_open():
     src=(HERE/"aster_strategy2_focus_v2.py").read_text()
     assert 'action":"FOCUS_V2_OPEN_LONG"' not in src
     assert "next tick reconciles and opens it" not in src
+
+
+def test_focus_v2_dca_is_protected_pair_and_dashboard_exposes_ladder():
+    src=(HERE/"aster_strategy2_focus_v2.py").read_text()
+    main=(HERE/"main.py").read_text()
+    assert "FOCUS_V2_WAIT_PROTECTED_DCA" in src
+    assert "FOCUS_V2_DCA_PROTECTED" in src
+    assert "FOCUS_V2_PROTECTED_DCA_ROLLBACK" in src
+    assert 'str(row.get("strategy2Role","")).upper()=="FOCUS_V2_LONG"' in main
+    assert '"source":"focus-v2-runtime-state"' in main

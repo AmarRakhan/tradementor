@@ -92,7 +92,7 @@ from aster_strategy2_runtime import balanced_entry_targets, harvest_counts, next
 from aster_strategy2_queue import MAX_ORDERS_PER_ACCOUNT_SCAN, QUEUE_FEATURE_FLAG
 from aster_strategy2_focus_adapter import build_focus_shadow_report, focus_state_from_mapping, focus_state_to_mapping, advance_focus_shadow_state
 from aster_strategy2_focus_adapter import current_focus_markets
-from aster_strategy2_focus import FocusState, rank_focus_pairs
+from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
@@ -3608,6 +3608,17 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 row["strategy2DcaLadder"]={"available":next_focus_dca>0,"mode":str(focus_slot.get("cycleDcaMode",strategy2_settings.focus_dca_mode)),
                     "filledDcaCount":filled,"maxDca":strategy2_settings.focus_max_dca,
                     "levels":[{"number":filled+1,"price":next_focus_dca}] if next_focus_dca>0 else [],"source":"focus-runtime-state"}
+            elif str(row.get("strategy2Role","")).upper()=="FOCUS_V2_LONG":
+                v2=strategy2_state.get("focusV2State") if isinstance(strategy2_state.get("focusV2State"),dict) else {}
+                filled=max(0,int(safe_float(v2.get("dcaCount"))))
+                original=safe_float(v2.get("originalEntry")) or safe_float(row.get("entryPrice"))
+                next_focus_dca=next_dca_trigger(original_entry=original,dca_count=filled,max_dca=strategy2_settings.focus_max_dca,
+                    distance_pct=strategy2_settings.focus_dca_distance,mode=strategy2_settings.focus_dca_mode,
+                    custom_levels=strategy2_settings.focus_dca_custom_levels,unlimited=strategy2_settings.focus_dca_unlimited) if strategy2_settings.focus_dca_enabled else 0.0
+                row["dcaCount"]=filled
+                row["strategy2DcaLadder"]={"available":next_focus_dca>0,"mode":strategy2_settings.focus_dca_mode,
+                    "filledDcaCount":filled,"maxDca":strategy2_settings.focus_max_dca,
+                    "levels":[{"number":filled+1,"price":next_focus_dca}] if next_focus_dca>0 else [],"source":"focus-v2-runtime-state"}
             if symbol in strategy2_cost_failures and row["strategy2Tp"]["status"]=="Niet betrouwbaar te bepalen":
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
         positions.append(row)

@@ -23,8 +23,11 @@ test("open detail is refreshed from live Strategy 2 position state", () => {
 });
 
 
-test("Aster trade detail defaults to one minute and keeps hedge markers quiet", () => {
+test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", () => {
   assert.match(chart, /useState\(mode === "aster-detail" \? "1m" : "15m"\)/);
-  assert.match(chart, /onlyHedge\?""/);
-  assert.doesNotMatch(chart, /\?"HEDGE \+":"HEDGE -"/);
+  assert.match(chart, /FOCUS_V2_LONG/);
+  assert.match(chart, /hedgeQuery/);
+  assert.match(chart, /kind:"hedge" as const/);
+  assert.match(chart, /HEDGE RELEASE/);
+  assert.match(chart, /`HEDGE \$\{group\.events\[0\]\?\.side\|\|"SHORT"\}`/);
 });
