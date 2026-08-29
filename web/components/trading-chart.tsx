@@ -13,7 +13,7 @@ export type FocusV2Cockpit = {
   shortQuantity?:number; shortEntry?:number; shortNotional?:number; shortPnl?:number; shortLeverage?:number; netExposure?:number; grossExposure?:number; hedgeRatio?:number; dcaCount?:number;
   nextLongDcaPrice?:number; nextLongDcaDistancePct?:number|null; recoveryReboundPrice?:number; recoveryPriceMet?:boolean; bollinger5mMiddle?:number; bollinger5mConfirmed?:boolean;
   portfolioRecoveryTarget?:number; portfolioRecoveryMet?:boolean; shortReleaseRatio?:number; shortReleaseReady?:boolean; nextShortReleasePrice?:number; rehedgePrice?:number; rehedgeArmed?:boolean;
-  cycleStartEquity?:number; cycleEquity?:number; cyclePnl?:number; cycleTargetActive?:boolean; cycleTargetEquity?:number|null; nextAction?:string; status?:string; recentActions?:Array<Record<string,unknown>>;
+  cycleStartEquity?:number; cycleEquity?:number; cyclePnl?:number; cycleTargetActive?:boolean; cycleTargetEquity?:number|null; nextAction?:string; status?:string; runtimePhase?:string; runtimeHoldReason?:string; recentActions?:Array<Record<string,unknown>>;
 };
 export type DcaChartLevel = { number: number; price: number };
 export type AirbagChartEvent = { at:number; kind:string; ratio:number; reason?:string; price:number };
@@ -169,12 +169,13 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
       const closedAtMs = new Date(selection.closedAt).getTime();
       if (Number.isFinite(closedAtMs) && closedAtMs > 0) query.set("closed_at_ms", String(closedAtMs));
     } else if (focusAtMs && Number.isFinite(focusAtMs) && focusAtMs > 0) query.set("anchor_at_ms", String(Math.floor(focusAtMs)));
-    const focusV2Main = String(selection.strategy2Role || "").toUpperCase() === "FOCUS_V2_LONG" && !selection.closedAt;
+    const focusV2Main = String(selection.strategy2Role || "").toUpperCase() === "FOCUS_V2_LONG";
     const requests: Promise<any>[] = [authenticatedRequest(`/api/exchanges/aster/trade-events?${query}`)];
     if (focusV2Main) {
       const hedgeQuery = new URLSearchParams({ symbol: selection.symbol, side: selection.side.toUpperCase() === "LONG" ? "SHORT" : "LONG" });
       const openedAtMs = selection.openedAt ? new Date(selection.openedAt).getTime() : 0;
-      if (Number.isFinite(openedAtMs) && openedAtMs > 0) hedgeQuery.set("anchor_at_ms", String(Math.floor(openedAtMs)));
+      const hedgeAnchor = focusAtMs && Number.isFinite(focusAtMs) && focusAtMs > 0 ? Number(focusAtMs) : openedAtMs;
+      if (Number.isFinite(hedgeAnchor) && hedgeAnchor > 0) hedgeQuery.set("anchor_at_ms", String(Math.floor(hedgeAnchor)));
       requests.push(authenticatedRequest(`/api/exchanges/aster/trade-events?${hedgeQuery}`));
     }
     Promise.all(requests)

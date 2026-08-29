@@ -68,3 +68,11 @@ test("trade detail consumes the server-side Focus 2.0 cockpit", () => {
   assert.match(recent, /LAATSTE ACTIES/);
   assert.match(recent, /5m Bollinger-middle/);
 });
+
+test("historical Focus 2.0 rows keep opposite-side hedge history", () => {
+  assert.match(chart, /const focusV2Main = String\(selection\.strategy2Role/);
+  assert.doesNotMatch(chart, /FOCUS_V2_LONG" && !selection\.closedAt/);
+  assert.match(chart, /hedgeAnchor/);
+  assert.match(recent, /historicalFocusV2/);
+  assert.match(recent, /s2fv2-/);
+});

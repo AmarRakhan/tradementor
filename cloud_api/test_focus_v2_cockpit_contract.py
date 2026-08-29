@@ -17,3 +17,9 @@ def test_aster_status_exposes_focus_v2_cockpit_from_runtime_truth():
         assert token in src
     assert 'next_dca_trigger(' in src
     assert 'cycleTargetActive":False' in src
+
+
+def test_focus_v2_fill_prefix_is_preserved_for_historical_chart_attribution():
+    src=(HERE/'aster_history.py').read_text()
+    assert 'lowered.startswith("s2fv2-")' in src
+    assert 'Strategy 2 · Focus 2.0' in src

@@ -153,6 +153,8 @@ def strategy_by_order_id_from_orders(
         lowered = client_order_id.lower()
         if not strategy and lowered.startswith(("s3-", "s3i-", "s3h-", "s3r-")):
             strategy = "Strategy 3"
+        elif not strategy and lowered.startswith("s2fv2-"):
+            strategy = "Strategy 2 · Focus 2.0"
         elif not strategy and lowered.startswith(("s2-", "s2i-", "s2h-", "s2r-")):
             strategy = "Strategy 2"
         elif not strategy and lowered.startswith(("s1-", "s1i-", "aster-")):
@@ -182,6 +184,8 @@ def recent_trade_activity_from_fills(
         lowered = client_order_id.lower()
         if not strategy and lowered.startswith(("s3-", "s3i-", "s3h-", "s3r-")):
             strategy = "Strategy 3"
+        elif not strategy and lowered.startswith("s2fv2-"):
+            strategy = "Strategy 2 · Focus 2.0"
         elif not strategy and lowered.startswith(("s2-", "s2i-", "s2h-", "s2r-")):
             strategy = "Strategy 2"
         elif not strategy and lowered.startswith(("s1-", "s1i-", "aster-")):
