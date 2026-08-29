@@ -1,0 +1,7 @@
+Implement the two approved Focus 2.0 fixes on branch amar-crypto-bot-2026-cloud:
+
+1. Trading behavior: enforce the latest directional hedge contract for active Focus 2.0 cycles. Upward recovery must progressively reduce the SHORT airbag and eventually fully release it so sufficiently recovered/upward state becomes LONG-only. Downward movement must rebuild/re-arm the SHORT protection. Do not gate short release on the legacy fixed recovery trigger price. Preserve Strategy 2 queue/lease/idempotency/order safety, DCA priority, Money Grabber behavior, leverage, ownership and scheduler safety. Do not introduce direct order paths.
+
+2. UI/presentation: remove the obsolete `HERSTELTRIGGER · SHORT VRIJ` chart/status indication for Focus 2.0. Replace it with current directional protection information (e.g. current hedge/trim/rehedge state), so the chart cannot imply that a fixed recovery price is still the governing short-close condition.
+
+Add/update backend and web regression tests proving: upward recovery reduces short and can reach short=0; renewed downside rebuilds protection; no legacy fixed recovery trigger governs release; chart no longer renders the obsolete label. Run full relevant backend/web tests. Do not deploy automatically from this request file alone.
