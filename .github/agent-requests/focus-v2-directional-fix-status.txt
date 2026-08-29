@@ -1,0 +1,1 @@
+One-shot directional hedge fix started from PR #42 at 2026-08-29T13:40Z. Do not merge until Apply Focus V2 Directional Hedge Fix and relevant CI pass.

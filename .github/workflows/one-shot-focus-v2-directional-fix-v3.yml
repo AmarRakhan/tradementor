@@ -1,0 +1,75 @@
+name: Apply Focus V2 Directional Hedge Fix V3
+
+on:
+  push:
+    branches: [agent/focus-v2-directional-fix-20260829]
+    paths: ['.github/workflows/one-shot-focus-v2-directional-fix-v3.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/focus-v2-directional-fix-20260829
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Apply approved behavior and presentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_strategy2_focus_v2.py'); s=p.read_text()
+          old='''        rebound_price=state.recent_low*(1+max(0.0,settings.focus_v2_recovery_rebound_pct)) if state.recent_low>0 else 0.0\n        recovery_ok=bool(rebound_price>0 and mark>=rebound_price)\n        middle_ok=(not settings.focus_v2_require_bollinger_middle) or (mid>0 and mark>=mid)\n        release_pending=bool(recovery_ok and middle_ok and short_qty>tolerance_qty and (state.release_stage==0 or armed_live_qty>=target_qty-tolerance_qty))'''
+          new='''        # Simple Focus 2.0 is directional: any genuine move up from the live recent low releases the active airbag;\n        # the already-armed exchange STOP restores SHORT protection on renewed downside. No fixed recovery-price gate.\n        rebound_price=state.recent_low*(1+max(0.0,settings.focus_v2_recovery_rebound_pct)) if state.recent_low>0 else 0.0\n        direction_up=bool(state.recent_low>0 and mark>state.recent_low)\n        middle_ok=(not settings.focus_v2_require_bollinger_middle) or (mid>0 and mark>=mid)\n        release_pending=bool(direction_up and middle_ok and short_qty>tolerance_qty and (state.release_stage==0 or armed_live_qty>=target_qty-tolerance_qty))'''
+          if old not in s: raise SystemExit('simple release gate marker missing')
+          s=s.replace(old,new)
+          s=s.replace('last_reason="SHORT VRIJ · LONG KRIJGT RUIMTE"','last_reason="OMHOOG · SHORT VRIJ · LONG-ONLY"')
+          s=s.replace('"recoveryStatus":"SHORT VRIJ · LONG KRIJGT RUIMTE"','"recoveryStatus":"OMHOOG · SHORT VRIJ · LONG-ONLY"')
+          old='''        simple_status=("SHORT VRIJ · LONG KRIJGT RUIMTE" if state.release_stage>0 and short_qty<=max(1e-10,(max(1.0,long_notional*.002)/max(mark,1e-12))) else "DALING · BESCHERMD")'''
+          new='''        simple_status=("OMHOOG · LONG-ONLY" if state.release_stage>0 and short_qty<=max(1e-10,(max(1.0,long_notional*.002)/max(mark,1e-12))) else "OMLAAG · SHORT BESCHERMT")'''
+          if old not in s: raise SystemExit('simple status marker missing')
+          s=s.replace(old,new)
+          s=s.replace('"shortReleaseReady":bool(price_met and middle_met and state.release_stage==0),"recoveryStatus":simple_status','"shortReleaseReady":bool(mark>state.recent_low and middle_met and state.release_stage==0),"recoveryStatus":simple_status')
+          p.write_text(s)
+
+          # Update existing simple-mode static regression contracts to the directional gate.
+          t=Path('cloud_api/test_focus_v2_simple_recovery.py'); x=t.read_text()
+          x=x.replace('ENGINE.index("release_pending=bool(recovery_ok and middle_ok")','ENGINE.index("release_pending=bool(direction_up and middle_ok")')
+          t.write_text(x)
+          Path('cloud_api/test_focus_v2_directional_contract.py').write_text('''from pathlib import Path\n\nENGINE=Path(__file__).with_name("aster_strategy2_focus_v2.py").read_text()\n\ndef test_simple_release_is_directional_without_fixed_recovery_gate():\n    start=ENGINE.index("# Simple Focus 2.0 is directional")\n    end=ENGINE.index("# No recovery:", start)\n    block=ENGINE[start:end]\n    assert "direction_up=bool(state.recent_low>0 and mark>state.recent_low)" in block\n    assert "release_pending=bool(direction_up and middle_ok" in block\n    assert "release_pending=bool(recovery_ok" not in block\n    assert block.index("_arm_rehedge(") < block.index("_close_v2_leg(")\n\ndef test_directional_status_contract():\n    assert "OMHOOG · SHORT VRIJ · LONG-ONLY" in ENGINE\n    assert "OMLAAG · SHORT BESCHERMT" in ENGINE\n    assert "FOCUS_V2_REHEDGE_RESTORED" in ENGINE\n''')
+
+          chart=Path('web/components/trading-chart.tsx'); c=chart.read_text()
+          old='''      if(Number(cockpit.recoveryModelVersion||1)>=3)addLevel(cockpit.recoveryTrigger||cockpit.nextShortReleasePrice,"#ff9f43",`HERSTELTRIGGER · SHORT VRIJ${cockpit.shortReleaseReady?" · KLAAR":""}`,2,2);'''
+          new='''      if(Number(cockpit.recoveryModelVersion||1)>=3){\n        if(cockpit.rehedgeArmed)addLevel(cockpit.rehedgePrice,"#ff5f7d","OMLAAG · SHORT HEROPENEN",2,2);\n      }'''
+          if old not in c: raise SystemExit('legacy chart trigger marker missing')
+          c=c.replace(old,new)
+          # Avoid duplicate rehedge line in simple mode; keep legacy/fast display unchanged.
+          c=c.replace('''      if(cockpit.rehedgeArmed)addLevel(cockpit.rehedgePrice,"#ff5f7d","RE-HEDGE · GEWAPEND",2,2);''','''      if(Number(cockpit.recoveryModelVersion||1)<3&&cockpit.rehedgeArmed)addLevel(cockpit.rehedgePrice,"#ff5f7d","RE-HEDGE · GEWAPEND",2,2);''')
+          chart.write_text(c)
+          Path('web/tests/focus-v2-directional-hedge-ui.test.mjs').write_text('''import test from "node:test";\nimport assert from "node:assert/strict";\nimport fs from "node:fs";\nconst chart=fs.readFileSync(new URL("../components/trading-chart.tsx",import.meta.url),"utf8");\ntest("simple Focus chart has no obsolete fixed recovery trigger",()=>{\n  assert.equal(chart.includes("HERSTELTRIGGER · SHORT VRIJ"),false);\n  assert.ok(chart.includes("OMLAAG · SHORT HEROPENEN"));\n});\n''')
+          PY
+      - name: Install backend test tooling
+        run: |
+          python -m pip install -r cloud_api/requirements.txt pytest
+      - name: Backend focused regressions
+        run: |
+          cd cloud_api
+          pytest -q test_focus_v2_directional_contract.py test_aster_strategy2_focus_v2.py test_focus_v2_simple_recovery.py
+      - name: Web full regressions
+        run: |
+          cd web
+          npm ci
+          npm test
+      - name: Commit only after green tests
+        run: |
+          git config user.name 'TradeMentor Directional Fix Agent'
+          git config user.email 'noreply@openai.com'
+          git add cloud_api/aster_strategy2_focus_v2.py cloud_api/test_focus_v2_simple_recovery.py cloud_api/test_focus_v2_directional_contract.py web/components/trading-chart.tsx web/tests/focus-v2-directional-hedge-ui.test.mjs
+          git commit -m 'fix: make Focus 2.0 directionally long-up short-down'
+          git push origin HEAD:agent/focus-v2-directional-fix-20260829
