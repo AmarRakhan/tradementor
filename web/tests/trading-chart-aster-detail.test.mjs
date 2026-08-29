@@ -42,7 +42,7 @@ test("Focus 2.0 v5 renders Bollinger plus short future trigger segments and comp
   assert.match(chart, /priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false/);
   assert.match(chart, /focusSegmentRefs/);
   assert.match(chart, /DCA \/ SHORT FILL/);
-  assert.match(chart, /SHORT LOS/);
+  assert.match(chart, /SHORT RELEASE/);
   assert.match(chart, /BREAK-EVEN/);
   assert.match(chart, /distanceLabel/);
   assert.match(chart, /hedgeState/);

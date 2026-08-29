@@ -7,7 +7,7 @@ const cockpit=fs.readFileSync(new URL("../components/aster-recent-trades.tsx",im
 
 test("Focus 2.0 v5 chart uses directional DCA and hedge-release labels",()=>{
   assert.match(chart,/DCA \/ SHORT FILL/);
-  assert.match(chart,/SHORT LOS/);
+  assert.match(chart,/SHORT RELEASE/);
   assert.match(chart,/className="breakeven">BE /);
   assert.doesNotMatch(chart,/HERSTELTRIGGER/);
   assert.doesNotMatch(chart,/RE-HEDGE/);

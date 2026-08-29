@@ -92,7 +92,7 @@
 
 .focus-level-overlay{position:absolute;z-index:3;inset:0;pointer-events:none;overflow:hidden}
 .focus-level-segment{position:absolute;left:74%;width:23%;height:0;display:flex;align-items:center;justify-content:flex-end;gap:6px;pointer-events:none;transform:translateY(-50%)}
-.focus-level-segment i{display:none}
+.focus-level-segment i{display:block;flex:1 1 auto;height:2px;background:currentColor;box-shadow:0 0 9px color-mix(in srgb,currentColor 65%,transparent);opacity:.96}
 .focus-level-segment span{flex:0 0 auto;max-width:70%;padding:3px 6px;border:1px solid currentColor;border-radius:6px;background:rgba(3,11,23,.92);font-size:7px;font-weight:900;line-height:1.1;letter-spacing:.035em;white-space:nowrap;box-shadow:0 0 12px rgba(0,0,0,.35)}
 .focus-level-segment.live i{height:2.5px}
 @media(max-width:700px){.focus-level-segment{left:72%;width:26%;gap:4px}.focus-level-segment span{max-width:76%;padding:3px 5px;font-size:6.5px}}

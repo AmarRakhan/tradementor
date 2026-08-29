@@ -8,5 +8,5 @@ test("simple Focus chart has no obsolete fixed recovery trigger",()=>{
   assert.match(chart,/hedgeReleasePrice/);
   assert.match(chart,/hedgeState/);
   assert.match(chart,/DCA \/ SHORT FILL/);
-  assert.match(chart,/SHORT LOS/);
+  assert.match(chart,/SHORT RELEASE/);
 });
