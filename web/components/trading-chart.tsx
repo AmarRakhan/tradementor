@@ -221,9 +221,11 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
       addLevel(cockpit.longBreakEvenPrice,"#4aa3ff","LONG BREAK-EVEN",0,2);
       if(Number(cockpit.recoveryModelVersion||1)>=3)addLevel(cockpit.longTakeProfitPrice,"#21d6a2","LONG TAKE PROFIT",0,2);
       addLevel(cockpit.nextLongDcaPrice,"#ffd166",`VOLGENDE LONG DCA${Number.isFinite(Number(cockpit.nextLongDcaDistancePct))?` · ${Number(cockpit.nextLongDcaDistancePct).toFixed(2)}%`:""}`,0,2);
-      if(Number(cockpit.recoveryModelVersion||1)>=3)addLevel(cockpit.recoveryTrigger||cockpit.nextShortReleasePrice,"#ff9f43",`HERSTELTRIGGER · SHORT VRIJ${cockpit.shortReleaseReady?" · KLAAR":""}`,2,2);
+      if(Number(cockpit.recoveryModelVersion||1)>=3){
+        if(cockpit.rehedgeArmed)addLevel(cockpit.rehedgePrice,"#ff5f7d","OMLAAG · SHORT HEROPENEN",2,2);
+      }
       else addLevel(cockpit.nextShortReleasePrice,"#ff9f43",`${Number(cockpit.recoveryModelVersion||1)>=2?`HERSTEL ${Math.min(4,Number(cockpit.recoveryStage||0)+1)} · RELEASE`:`SHORT RELEASE`} ${Math.round(Number(cockpit.shortReleaseRatio||0)*100)}%${cockpit.shortReleaseReady?" · KLAAR":""}`,2,2);
-      if(cockpit.rehedgeArmed)addLevel(cockpit.rehedgePrice,"#ff5f7d","RE-HEDGE · GEWAPEND",2,2);
+      if(Number(cockpit.recoveryModelVersion||1)<3&&cockpit.rehedgeArmed)addLevel(cockpit.rehedgePrice,"#ff5f7d","RE-HEDGE · GEWAPEND",2,2);
       if(cockpit.cycleTargetActive)addLevel(cockpit.cycleTargetEquity,"#a970ff","DOEL / TAKE PROFIT",0,2);
     } else currentPriceLineRef.current=null;
     const onCrosshair=(param:any)=>{if(!param.time){setCrosshair(null);return;} const time=Number(param.time),c=candleDataRef.current.find(row=>row.time===time);if(c)setCrosshair(c);const group=markerGroups.filter(item=>item.time===time).flatMap(item=>item.events);if(group.length)setSelectedMarkerEvents(group)}; chart.subscribeCrosshairMove(onCrosshair);
