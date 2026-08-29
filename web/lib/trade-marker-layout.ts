@@ -1,5 +1,5 @@
 export type MarkerCandle={time:number;open:number;high:number;low:number;close:number};
-export type VerifiedTradeEvent={id:string;side:"LONG"|"SHORT";kind:"entry"|"dca"|"close"|"hedge";action:"increase"|"close";price:number;at:string;timestampMs:number;quantity?:number;notional?:number;dcaNumber?:number;realizedPnl?:number;exchange?:string};
+export type VerifiedTradeEvent={id:string;side:"LONG"|"SHORT";kind:"entry"|"dca"|"close"|"hedge"|"harvest";action:"increase"|"close";price:number;at:string;timestampMs:number;quantity?:number;notional?:number;dcaNumber?:number;realizedPnl?:number;exchange?:string};
 export type TradeMarkerGroup={time:number;displayPrice:number;placement:"above"|"below";color:string;shape:"arrowUp"|"arrowDown";events:VerifiedTradeEvent[]};
 
 function bands(candles:MarkerCandle[],period=20,deviation=2){

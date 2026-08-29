@@ -65,12 +65,12 @@ def test_margin_liquidation_guard_precedes_dca():
     assert "maint<settings.emergency_margin_ratio" in src
     assert "liqdist>=.05" in src
 
-def test_legacy_focus_v2_keeps_harvest_while_simple_mode_uses_full_tp():
+def test_legacy_focus_v2_and_simple_mode_both_keep_harvest_with_separate_contracts():
     src=(HERE/"aster_strategy2_focus_v2.py").read_text()
     assert "FOCUS_V2_PROFIT_HARVEST" in src
     assert "state.recovery_model_version<RECOVERY_MODEL_SIMPLE" in src
-    assert "FOCUS_V2_TP_CYCLE_CLOSED" in src
-    assert "harvest_baseline_equity" in src
+    assert "state.recovery_model_version>=RECOVERY_MODEL_SIMPLE and trigger_usdt>0" in src
+    assert "harvest_baseline_equity" in src and "cycleContinues" in src
 
 def test_wizard_has_simplified_focus_v2_opt_in():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
@@ -125,18 +125,18 @@ def test_combined_cycle_evidence_allows_losing_hedge_only_when_combination_profi
     net,parts=combined_close_evidence(uid="u",symbol="SOLUSDT",mark=110,long_leg=long,short_leg=short,long_qty=1,short_qty=.9)
     assert parts["grossPnl"]>0 and net>0
 
-def test_simple_wizard_hides_harvest_controls_but_legacy_values_still_roundtrip():
+def test_simple_wizard_exposes_configurable_harvest_controls():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
     block=ui[ui.index(" const focusSteps=["):ui.index(" const steps=",ui.index(" const focusSteps=["))]
-    assert 'label="Winsttrigger (USDT)"' not in block
-    assert 'label="Winst nemen (USDT)"' not in block
+    assert 'label="Winsttrigger (USDT)"' in block
+    assert 'label="Winst afromen (USDT)"' in block
     assert "focusV2ProfitTriggerUsdt" in ui and "focusV2ProfitHarvestUsdt" in ui
 
 def test_focus_v2_dca_anchor_and_harvest_are_exposed_to_cockpit():
     main=(HERE/"main.py").read_text(); chart=(HERE.parent/"web/components/aster-recent-trades.tsx").read_text()
     assert '"dcaAnchorPrice":dca_anchor' in main
     assert '"profitSinceHarvest":profit_since_harvest' in main
-    assert "Profit sinds harvest" in chart and "Nog tot harvest" in chart
+    assert "Winst sinds harvest" in chart and "Nog tot afromen" in chart
 
 
 def test_successful_focus_v2_hold_clears_stale_data_hold_and_disabled_harvest_has_zero_remaining():

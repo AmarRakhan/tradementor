@@ -3652,7 +3652,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         harvest_baseline=safe_float(v2_state.get("harvestBaselineEquity")) or safe_float(v2_history.get("harvestBaselineEquity")) or safe_float(v2_state.get("cycleStartEquity"))
         profit_since_harvest=(safe_float(v2_history.get("profitSinceHarvest")) if "profitSinceHarvest" in v2_history else 0.0)
         if not profit_since_harvest and harvest_baseline>0: profit_since_harvest=(safe_float(v2_history.get("equity")) or safe_float(strategy2_snapshot.get("equity")))-harvest_baseline
-        profit_trigger=(0.0 if recovery_model_version>=3 else strategy2_settings.focus_v2_profit_trigger_usdt);profit_harvest=(0.0 if recovery_model_version>=3 else strategy2_settings.focus_v2_profit_harvest_usdt)
+        profit_trigger=strategy2_settings.focus_v2_profit_trigger_usdt;profit_harvest=strategy2_settings.focus_v2_profit_harvest_usdt
         profit_remaining=max(0.0,profit_trigger-profit_since_harvest) if profit_trigger>0 else 0.0
         recovery_stage=int(safe_float(v2_history.get("recoveryStage",v2_state.get("releaseStage"))))
         recovery_progress=safe_float(v2_history.get("recoveryProgressRatio",v2_state.get("recoveryProgressRatio")))
@@ -3665,6 +3665,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         elif recovery_model_version>=3 and str(v2_state.get("lastAction",""))=="REHEDGE_RESTORED": next_action="TERUGVAL · HEDGE HERSTELD"
         elif recovery_model_version>=3 and short_qty<=max(1e-10,max(1.0,long_notional*.002)/max(current,1e-12)) and rehedge_armed: next_action="SHORT VRIJ · LONG KRIJGT RUIMTE"
         elif recovery_model_version>=3 and release_ready: next_action="BODEM / HERSTEL · SHORT STOP EERST GEWAPEND"
+        elif recovery_model_version>=3 and profit_trigger>0 and profit_since_harvest>=profit_trigger: next_action=f"WINSTTRIGGER BEREIKT · AFROMEN ${profit_harvest:.2f}"
+        elif recovery_model_version>=3 and str(v2_state.get("lastAction",""))=="PROFIT_HARVEST": next_action="WINST AFGEROOMD · CYCLE BLIJFT ACTIEF"
         elif recovery_model_version>=3 and not price_met: next_action="DALING · BESCHERMD"
         elif profit_trigger>0 and profit_since_harvest>=profit_trigger: next_action=f"PROFIT HARVEST GEREED · ${profit_harvest:.2f}"
         elif next_dca>0 and current>0 and current<=next_dca: next_action=f"DCA {int(safe_float(v2_state.get('dcaCount')))+1} gereed"
@@ -3678,7 +3680,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         elif not price_met: next_action="Wacht op prijsherstel"
         elif not middle_met: next_action="Herstel bezig · wacht op 5m Bollinger-middle"
         elif recovery_model_version<2 and not portfolio_met: next_action=f"Wacht op portfolioherstel tot {strategy2_settings.focus_v2_portfolio_recovery_ratio*100:.1f}%"
-        elif profit_trigger>0 and profit_remaining>0: next_action=f"NOG ${profit_remaining:.2f} TOT PROFIT HARVEST"
+        elif profit_trigger>0 and profit_remaining>0: next_action=(f"NOG ${profit_remaining:.2f} TOT WINST AFROMEN" if recovery_model_version>=3 else f"NOG ${profit_remaining:.2f} TOT PROFIT HARVEST")
         else: next_action="DALING · BESCHERMD" if recovery_model_version>=3 else ("DALING · VOLLEDIG BESCHERMD" if recovery_model_version>=2 else "Hedge actief · bescherming in balans")
         recent_actions=[]
         try:
@@ -3690,7 +3692,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         except Exception: pass
         long_break_even=safe_float((v2_long.get("strategy2Tp") or {}).get("breakEvenPrice")) if isinstance(v2_long.get("strategy2Tp"),dict) else long_entry
         cycle_start=safe_float(v2_state.get("cycleStartEquity")); cycle_equity=safe_float(v2_history.get("equity")) or safe_float(strategy2_snapshot.get("equity"))
-        focus_v2_cockpit={"symbol":v2_symbol,"cycleId":str(v2_state.get("cycleId","")),"currentPrice":current,"longQuantity":long_qty,"longEntry":long_entry,"longBreakEvenPrice":long_break_even or long_entry,"longNotional":long_notional,"longPnl":safe_float(v2_long.get("unrealizedPnl",v2_long.get("unRealizedProfit"))),"longLeverage":safe_float(v2_long.get("leverage")),"shortQuantity":short_qty,"shortEntry":short_entry,"shortNotional":short_notional,"shortPnl":safe_float(v2_short.get("unrealizedPnl",v2_short.get("unRealizedProfit"))),"shortLeverage":safe_float(v2_short.get("leverage")),"netExposure":long_notional-short_notional,"grossExposure":long_notional+short_notional,"hedgeRatio":(short_notional/long_notional if long_notional>0 else 0.0),"dcaCount":int(safe_float(v2_state.get("dcaCount"))),"dcaAnchorPrice":dca_anchor,"nextLongDcaPrice":next_dca,"nextLongDcaDistancePct":((next_dca/current-1)*100 if next_dca>0 and current>0 else None),"recoveryReboundPrice":rebound,"recoveryTrigger":rebound,"longTakeProfitPrice":safe_float(v2_history.get("longTakeProfitPrice")) or (long_entry*(1+strategy2_settings.focus_minimum_profit_pct) if long_entry>0 else 0.0),"recoveryPriceMet":price_met,"bollinger5mMiddle":safe_float(v2_history.get("bollinger5mMiddle")),"bollinger5mConfirmed":middle_met,"portfolioRecoveryTarget":safe_float(v2_history.get("portfolioRecoveryTarget")) or cycle_start*strategy2_settings.focus_v2_portfolio_recovery_ratio,"portfolioRecoveryMet":portfolio_met,"shortReleaseRatio":strategy2_settings.focus_v2_release_ratio,"shortReleaseReady":release_ready,"nextShortReleasePrice":next_release_price,"nextShortReleaseQty":next_release_qty,"recoveryModelVersion":recovery_model_version,"recoveryStage":recovery_stage,"recoveryProgress":recovery_progress,"recoveryLow":recovery_low,"recoveryHigh":recovery_high,"releasedShortQty":released_short_qty,"targetShortNotional":target_short_notional,"rehedgePrice":rehedge_price,"rehedgeArmed":rehedge_armed,"armedRehedgeQty":armed_rehedge_qty,"cycleStartEquity":cycle_start,"cycleEquity":cycle_equity,"cyclePnl":cycle_equity-cycle_start if cycle_start>0 else 0.0,"cycleTargetActive":False,"cycleTargetEquity":None,"harvestBaselineEquity":harvest_baseline,"profitSinceHarvest":profit_since_harvest,"profitTriggerUsdt":profit_trigger,"profitHarvestUsdt":profit_harvest,"profitRemainingUsdt":profit_remaining,"lastHarvestProfit":safe_float(v2_state.get("lastHarvestProfit",v2_history.get("lastHarvestProfit"))),"totalHarvestedProfit":safe_float(v2_state.get("totalHarvestedProfit",v2_history.get("totalHarvestedProfit"))),"nextAction":next_action,"status":str(v2_state.get("lastAction","HOLD")),"runtimePhase":runtime_phase,"runtimeHoldReason":runtime_hold_reason,"recentActions":recent_actions}
+        focus_v2_cockpit={"symbol":v2_symbol,"cycleId":str(v2_state.get("cycleId","")),"currentPrice":current,"longQuantity":long_qty,"longEntry":long_entry,"longBreakEvenPrice":long_break_even or long_entry,"longNotional":long_notional,"longPnl":safe_float(v2_long.get("unrealizedPnl",v2_long.get("unRealizedProfit"))),"longLeverage":safe_float(v2_long.get("leverage")),"shortQuantity":short_qty,"shortEntry":short_entry,"shortNotional":short_notional,"shortPnl":safe_float(v2_short.get("unrealizedPnl",v2_short.get("unRealizedProfit"))),"shortLeverage":safe_float(v2_short.get("leverage")),"netExposure":long_notional-short_notional,"grossExposure":long_notional+short_notional,"hedgeRatio":(short_notional/long_notional if long_notional>0 else 0.0),"dcaCount":int(safe_float(v2_state.get("dcaCount"))),"dcaAnchorPrice":dca_anchor,"nextLongDcaPrice":next_dca,"nextLongDcaDistancePct":((next_dca/current-1)*100 if next_dca>0 and current>0 else None),"recoveryReboundPrice":rebound,"recoveryTrigger":rebound,"longTakeProfitPrice":(0.0 if recovery_model_version>=3 else (safe_float(v2_history.get("longTakeProfitPrice")) or (long_entry*(1+strategy2_settings.focus_minimum_profit_pct) if long_entry>0 else 0.0))),"recoveryPriceMet":price_met,"bollinger5mMiddle":safe_float(v2_history.get("bollinger5mMiddle")),"bollinger5mConfirmed":middle_met,"portfolioRecoveryTarget":safe_float(v2_history.get("portfolioRecoveryTarget")) or cycle_start*strategy2_settings.focus_v2_portfolio_recovery_ratio,"portfolioRecoveryMet":portfolio_met,"shortReleaseRatio":strategy2_settings.focus_v2_release_ratio,"shortReleaseReady":release_ready,"nextShortReleasePrice":next_release_price,"nextShortReleaseQty":next_release_qty,"recoveryModelVersion":recovery_model_version,"recoveryStage":recovery_stage,"recoveryProgress":recovery_progress,"recoveryLow":recovery_low,"recoveryHigh":recovery_high,"releasedShortQty":released_short_qty,"targetShortNotional":target_short_notional,"rehedgePrice":rehedge_price,"rehedgeArmed":rehedge_armed,"armedRehedgeQty":armed_rehedge_qty,"cycleStartEquity":cycle_start,"cycleEquity":cycle_equity,"cyclePnl":cycle_equity-cycle_start if cycle_start>0 else 0.0,"cycleTargetActive":False,"cycleTargetEquity":None,"harvestBaselineEquity":harvest_baseline,"profitSinceHarvest":profit_since_harvest,"profitTriggerUsdt":profit_trigger,"profitHarvestUsdt":profit_harvest,"profitRemainingUsdt":profit_remaining,"lastHarvestProfit":safe_float(v2_state.get("lastHarvestProfit",v2_history.get("lastHarvestProfit"))),"totalHarvestedProfit":safe_float(v2_state.get("totalHarvestedProfit",v2_history.get("totalHarvestedProfit"))),"nextAction":next_action,"status":str(v2_state.get("lastAction","HOLD")),"runtimePhase":runtime_phase,"runtimeHoldReason":runtime_hold_reason,"recentActions":recent_actions}
     closed_trades = _stored_aster_closed_trades(user)
     def confirmed_snapshot_number(key: str) -> float | None:
         value=snapshot.get(key)
@@ -3749,7 +3751,21 @@ def aster_trade_events(
         position_side=normalized_side, closed_at_ms=closed_at_ms, anchor_at_ms=anchor_at_ms,
         include_all_cycles=all_cycles,
     )
-    return {"symbol": normalized_symbol, "side": normalized_side, "events": events, "source": "aster-confirmed-fills"}
+    # Partial Focus 2.0 harvest is an intentional reduction, not a full close.
+    # Overlay confirmed audit evidence so the chart can label it HARVEST instead of CLOSE.
+    if normalized_side == "LONG":
+        try:
+            strategy_ref=aster_strategy2_reference(str(user["uid"]))
+            for doc in strategy_ref.collection("audit").order_by("timestampMs",direction=firestore.Query.DESCENDING).limit(100).stream():
+                row=doc.to_dict() or {}; details=row.get("details") if isinstance(row.get("details"),dict) else {}
+                if str(row.get("event","")).upper()!="FOCUS_V2_PROFIT_HARVEST" or str(details.get("symbol","")).upper()!=normalized_symbol: continue
+                ts=int(safe_float(row.get("timestampMs"))); price=safe_float(details.get("closePrice")); qty=safe_float(details.get("longReducedQty"))
+                if ts<=0 or price<=0 or qty<=0: continue
+                events.append({"id":f"focus-v2-harvest:{doc.id}","symbol":normalized_symbol,"side":"LONG","kind":"harvest","action":"close","price":price,"quantity":qty,"notionalUsd":price*qty,"notional":price*qty,"exchange":"Aster","at":datetime.fromtimestamp(ts/1000,tz=timezone.utc).isoformat(),"timestampMs":ts,"realizedPnl":safe_float(details.get("realizedNetProfitUsd"))})
+            events.sort(key=lambda item:(int(safe_float(item.get("timestampMs"))),str(item.get("id",""))))
+        except Exception:
+            pass
+    return {"symbol": normalized_symbol, "side": normalized_side, "events": events, "source": "aster-confirmed-fills+focus-audit"}
 
 
 def _epoch_ms(value: Any) -> int:

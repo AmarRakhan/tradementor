@@ -332,6 +332,7 @@ class Strategy2Config:
             if self.focus_v2_profit_trigger_usdt < 0 or self.focus_v2_profit_harvest_usdt < 0: raise ValueError("Focus 2.0 profit harvest bedragen mogen niet negatief zijn")
             if (self.focus_v2_profit_trigger_usdt > 0) != (self.focus_v2_profit_harvest_usdt > 0): raise ValueError("Focus 2.0 profit trigger en harvest moeten samen aan of uit staan")
             if self.focus_v2_profit_harvest_usdt > self.focus_v2_profit_trigger_usdt and self.focus_v2_profit_trigger_usdt > 0: raise ValueError("Focus 2.0 winst nemen mag niet groter zijn dan de winsttrigger")
+            if self.focus_v2_simple_mode_enabled and (self.focus_v2_profit_trigger_usdt <= 0 or self.focus_v2_profit_harvest_usdt <= 0): raise ValueError("Simple Focus 2.0 vereist een positieve winsttrigger en een positief afroom-bedrag")
         return self
 
     @property
