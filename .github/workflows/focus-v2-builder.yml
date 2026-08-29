@@ -6,6 +6,7 @@ on:
     paths:
       - tools/focus_v2_builder.py
       - tools/focus_v2_builder_fix.py
+      - tools/focus_v2_postfix.py
       - .github/workflows/focus-v2-builder.yml
 
 permissions:
@@ -36,6 +37,7 @@ jobs:
         run: |
           python tools/focus_v2_builder_fix.py
           python tools/focus_v2_builder.py
+          python tools/focus_v2_postfix.py
       - name: Install backend dependencies
         run: pip install -r cloud_api/requirements.txt pytest
       - name: Compile changed backend
@@ -46,15 +48,15 @@ jobs:
       - name: Run full backend tests
         working-directory: cloud_api
         run: pytest -q
-      - name: Build frontend
+      - name: Run full frontend regression suite
         working-directory: web
         run: |
           npm ci
-          npm run build
+          npm test
       - name: Commit implementation
         run: |
           git config user.name "TradeMentor Focus 2.0 Builder"
           git config user.email "actions@users.noreply.github.com"
           git add cloud_api/aster_strategy2.py cloud_api/aster_strategy2_focus_live.py cloud_api/aster_strategy2_focus_v2.py cloud_api/test_aster_strategy2_focus_v2.py web/components/aster-strategy2-maker.tsx
-          git commit -m "feat: add isolated Focus 2.0 protected long builder [focus-v2-builder applied]"
+          git commit -m "fix: preserve Focus while adding Focus 2.0 [focus-v2-builder applied]"
           git push origin HEAD:amar-crypto-bot-2026-cloud
