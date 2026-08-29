@@ -1,33 +1,27 @@
 name: Realtime Architecture Inspect
-
 on:
   push:
     branches: [amar-crypto-bot-2026-cloud]
-    paths:
-      - '.github/workflows/realtime-architecture-inspect.yml'
-
+    paths: ['.github/workflows/realtime-architecture-inspect.yml']
 permissions:
   contents: read
-
 jobs:
   inspect:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect realtime integration points
+      - name: Inspect auth, Aster status shape and frontend position mapping
         shell: bash
         run: |
-          echo '=== ASTER ROUTES ==='
-          grep -nE 'aster-automation|strategy2.*tick|tick.*strategy2|internal/aster|run_focus_live_step' cloud_api/main.py | head -140 || true
-          echo '=== FRONTEND SNAPSHOT FILES ==='
-          grep -RnlE 'fetchAsterSnapshot|loadAsterSnapshot|refreshAster|useExchangeSnapshots' web --exclude-dir=node_modules | head -80 || true
-          echo '=== FRONTEND REFRESH / PUSH ==='
-          grep -RniE 'fetchAsterSnapshot|setInterval|setTimeout|EventSource|WebSocket|useEffect|onRefresh' web/app web/components web/lib --exclude-dir=node_modules | head -260 || true
-          echo '=== PACKAGE ==='
-          cat web/package.json || true
-          echo '=== API ROUTES ==='
-          find web/app/api -type f -maxdepth 6 -print 2>/dev/null | sort | head -100 || true
-          echo '=== CLOUD CLIENT ==='
-          sed -n '1,240p' web/lib/cloud-client.ts || true
-          echo '=== MAIN APP TOP/REFRESH ==='
-          sed -n '1,220p' web/app/page.tsx || true
+          echo '=== AUTH HELPERS ==='
+          grep -nE 'verify.*token|decode.*token|Bearer|Depends\(|current.*user|authenticated|authorization' cloud_api/main.py | head -260 || true
+          echo '=== ASTER STATUS ROUTE ==='
+          grep -nE 'v1/me/aster/status|aster/status|def .*aster.*status' cloud_api/main.py | head -80 || true
+          echo '=== ASTER STATUS SURROUNDING ==='
+          L=$(grep -n 'v1/me/aster/status' cloud_api/main.py | head -1 | cut -d: -f1); if [ -n "$L" ]; then S=$((L-30)); E=$((L+180)); sed -n "${S},${E}p" cloud_api/main.py; fi
+          echo '=== FRONTEND POSITION/VIEW HELPERS ==='
+          grep -nE '^function exchangeView|function .*Position|positions.*snapshot|liquidationPrice|markPrice|unrealizedPnl|unRealizedProfit|positionAmt' web/app/page.tsx web/lib/*.ts web/lib/*.mjs | head -260 || true
+          echo '=== EXCHANGE VIEW SURROUNDING ==='
+          L=$(grep -n '^function exchangeView' web/app/page.tsx | head -1 | cut -d: -f1); if [ -n "$L" ]; then S=$((L-20)); E=$((L+180)); sed -n "${S},${E}p" web/app/page.tsx; fi
+          echo '=== FASTAPI APP CREATION ==='
+          grep -nE '^app *= *FastAPI|FastAPI\(' cloud_api/main.py | head -20 || true
