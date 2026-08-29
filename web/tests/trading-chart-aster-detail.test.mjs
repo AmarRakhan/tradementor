@@ -77,13 +77,17 @@ test("trade detail consumes the server-side Focus 2.0 v5 cockpit", () => {
   assert.match(recent, /Winst sinds harvest/);
 });
 
-test("trade detail can only close from the explicit control", () => {
+test("trade detail supports guarded mobile double-tap back without desktop double-click close", () => {
   assert.doesNotMatch(recent, /onDoubleClick=\{closeDetail\}/);
-  assert.doesNotMatch(recent, /handleTouchEnd/);
+  assert.match(recent, /handleDetailTouchStart/);
+  assert.match(recent, /handleDetailTouchMove/);
+  assert.match(recent, /handleDetailTouchEnd/);
+  assert.match(recent, /Math\.hypot\(touch\.clientX-detailTouchRef\.current\.x/);
+  assert.match(recent, /now-previous\.at<=360/);
+  assert.match(recent, /detailTargetIsInteractive/);
   assert.match(recent, /onClick=\{closeDetail\}/);
-  assert.match(recent, /gebruik × om terug te gaan/);
+  assert.match(recent, /dubbel tikken of × om terug te gaan/);
 });
-
 test("historical Focus 2.0 rows keep opposite-side hedge history", () => {
   assert.match(chart, /const focusV2Main = String\(selection\.strategy2Role/);
   assert.doesNotMatch(chart, /FOCUS_V2_LONG" && !selection\.closedAt/);
