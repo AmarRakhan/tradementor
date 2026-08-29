@@ -1,5 +1,7 @@
+import pytest
+from aster_strategy2_state import OwnedLeg
 from pathlib import Path
-from aster_strategy2_focus_v2 import target_hedge_notional,release_quantity,recovery_confirmed,full_recovery,rehedge_stop,state_from,state_map,FocusV2State
+from aster_strategy2_focus_v2 import target_hedge_notional,release_quantity,recovery_confirmed,full_recovery,rehedge_stop,state_from,state_map,FocusV2State,continuous_dca_trigger,harvest_fraction,combined_close_evidence
 from aster_strategy2 import Strategy2Config
 
 HERE=Path(__file__).resolve().parent
@@ -41,7 +43,7 @@ def test_red_hedge_release_is_isolated_from_legacy_close_guard():
     src=(HERE/"aster_strategy2_focus_v2.py").read_text()
     assert "FOCUS_V2_HEDGE_RELEASE" in src
     assert "AsterCloseBlocked" not in src
-    assert "expected_net" not in src
+    assert "hedge_evidence.expected_net" not in src
 
 def test_exchange_side_rehedge_is_stop_market_and_current_long_based():
     src=(HERE/"aster_strategy2_focus_v2.py").read_text()
@@ -63,10 +65,11 @@ def test_margin_liquidation_guard_precedes_dca():
     assert "maint<settings.emergency_margin_ratio" in src
     assert "liqdist>=.05" in src
 
-def test_tp_is_cycle_equity_based_and_cancels_rehedge():
+def test_focus_v2_replaces_full_tp_with_continuous_profit_harvest():
     src=(HERE/"aster_strategy2_focus_v2.py").read_text()
-    assert "cycle_start_equity+settings.focus_take_profit_usdt" in src
-    assert "_cancel_rehedge(client,state)" in src
+    assert "FOCUS_V2_PROFIT_HARVEST" in src
+    assert "FOCUS_V2_TP_CLOSE" not in src
+    assert "harvest_baseline_equity" in src
 
 def test_wizard_has_separate_focus_v2_opt_in():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
@@ -98,3 +101,37 @@ def test_focus_v2_dca_is_protected_pair_and_dashboard_exposes_ladder():
     assert "FOCUS_V2_PROTECTED_DCA_ROLLBACK" in src
     assert 'str(row.get("strategy2Role","")).upper()=="FOCUS_V2_LONG"' in main
     assert '"source":"focus-v2-runtime-state"' in main
+
+
+def test_continuous_dca_trigger_uses_latest_anchor_not_original_low():
+    assert continuous_dca_trigger(104,.003)==pytest.approx(103.688)
+    assert continuous_dca_trigger(110,.01)==pytest.approx(108.9)
+
+def test_harvest_fraction_realizes_requested_slice_but_keeps_remainder():
+    assert harvest_fraction(15,10)==pytest.approx(2/3)
+    assert harvest_fraction(100,80)==pytest.approx(.8)
+    assert harvest_fraction(1000,300)==pytest.approx(.3)
+    assert harvest_fraction(10,100)==pytest.approx(.95)
+
+def test_focus_v2_profit_harvest_config_validation():
+    cfg=Strategy2Config.from_mapping({"tradingMode":"focus","focusV2Enabled":True,"focusV2ProfitTriggerUsdt":15,"focusV2ProfitHarvestUsdt":10})
+    assert cfg.focus_v2_profit_trigger_usdt==15 and cfg.focus_v2_profit_harvest_usdt==10
+    with pytest.raises(ValueError): Strategy2Config.from_mapping({"tradingMode":"focus","focusV2Enabled":True,"focusV2ProfitTriggerUsdt":10,"focusV2ProfitHarvestUsdt":15})
+
+def test_combined_cycle_evidence_allows_losing_hedge_only_when_combination_profitable():
+    long=OwnedLeg("aster-strategy-2","strategy2","SOLUSDT","LONG","c",1,2,100,0,"FOCUS_V2_LONG",(),("l",),(),1,fees=.1,funding=0)
+    short=OwnedLeg("aster-strategy-2","strategy2","SOLUSDT","SHORT","c",1,1.8,100,0,"FOCUS_V2_HEDGE",(),("s",),(),1,fees=.1,funding=0)
+    net,parts=combined_close_evidence(uid="u",symbol="SOLUSDT",mark=110,long_leg=long,short_leg=short,long_qty=1,short_qty=.9)
+    assert parts["grossPnl"]>0 and net>0
+
+def test_wizard_exposes_continuous_harvest_fields():
+    ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
+    assert 'label="Winsttrigger (USDT)"' in ui
+    assert 'label="Winst nemen (USDT)"' in ui
+    assert "focusV2ProfitTriggerUsdt" in ui and "focusV2ProfitHarvestUsdt" in ui
+
+def test_focus_v2_dca_anchor_and_harvest_are_exposed_to_cockpit():
+    main=(HERE/"main.py").read_text(); chart=(HERE.parent/"web/components/aster-recent-trades.tsx").read_text()
+    assert '"dcaAnchorPrice":dca_anchor' in main
+    assert '"profitSinceHarvest":profit_since_harvest' in main
+    assert "Profit sinds harvest" in chart and "Nog tot harvest" in chart

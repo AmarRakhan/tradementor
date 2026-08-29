@@ -108,6 +108,8 @@ class Strategy2Config:
     focus_v2_portfolio_recovery_ratio: float = 0.99
     focus_v2_rehedge_setback_pct: float = 0.003
     focus_v2_require_bollinger_middle: bool = True
+    focus_v2_profit_trigger_usdt: float = 0.0
+    focus_v2_profit_harvest_usdt: float = 0.0
     # Explicit manual Multi-Focus slots. Empty keeps the legacy single-Focus engine byte-for-byte compatible.
     focus_slots: tuple[dict[str, Any], ...] = ()
     focus_take_profit_mode: Literal["percent", "usdt"] = "percent"
@@ -211,6 +213,8 @@ class Strategy2Config:
             focus_v2_portfolio_recovery_ratio=f("focusV2PortfolioRecoveryRatio",0.99),
             focus_v2_rehedge_setback_pct=f("focusV2RehedgeSetbackPct",0.003),
             focus_v2_require_bollinger_middle=bool(raw.get("focusV2RequireBollingerMiddle",True)),
+            focus_v2_profit_trigger_usdt=f("focusV2ProfitTriggerUsdt",0.0),
+            focus_v2_profit_harvest_usdt=f("focusV2ProfitHarvestUsdt",0.0),
             focus_slots=tuple(dict(x) for x in raw.get("focusSlots", ()) if isinstance(x, dict)) if isinstance(raw.get("focusSlots", ()), (list, tuple)) else (),
             focus_take_profit_mode="usdt" if str(raw.get("focusTakeProfitMode", "percent")).lower()=="usdt" else "percent",
             focus_take_profit_usdt=f("focusTakeProfitUsdt", 0),
@@ -322,6 +326,9 @@ class Strategy2Config:
             if not 0 < self.focus_v2_recovery_rebound_pct < .25: raise ValueError("Focus 2.0 recovery rebound is ongeldig")
             if not .5 <= self.focus_v2_portfolio_recovery_ratio <= 1.05: raise ValueError("Focus 2.0 portfolio recovery ratio is ongeldig")
             if not 0 < self.focus_v2_rehedge_setback_pct < .25: raise ValueError("Focus 2.0 re-hedge setback is ongeldig")
+            if self.focus_v2_profit_trigger_usdt < 0 or self.focus_v2_profit_harvest_usdt < 0: raise ValueError("Focus 2.0 profit harvest bedragen mogen niet negatief zijn")
+            if (self.focus_v2_profit_trigger_usdt > 0) != (self.focus_v2_profit_harvest_usdt > 0): raise ValueError("Focus 2.0 profit trigger en harvest moeten samen aan of uit staan")
+            if self.focus_v2_profit_harvest_usdt > self.focus_v2_profit_trigger_usdt and self.focus_v2_profit_trigger_usdt > 0: raise ValueError("Focus 2.0 winst nemen mag niet groter zijn dan de winsttrigger")
         return self
 
     @property
@@ -363,6 +370,7 @@ class Strategy2Config:
             "focusV2Enabled":self.focus_v2_enabled,"focusV2MinNetLongUsdt":self.focus_v2_min_net_long_usdt,"focusV2MinNetLongRatio":self.focus_v2_min_net_long_ratio,
             "focusV2MaxHedgeRatio":self.focus_v2_max_hedge_ratio,"focusV2ReleaseRatio":self.focus_v2_release_ratio,"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,
             "focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,"focusV2RehedgeSetbackPct":self.focus_v2_rehedge_setback_pct,"focusV2RequireBollingerMiddle":self.focus_v2_require_bollinger_middle,
+            "focusV2ProfitTriggerUsdt":self.focus_v2_profit_trigger_usdt,"focusV2ProfitHarvestUsdt":self.focus_v2_profit_harvest_usdt,
             "focusSlots":[dict(x) for x in self.focus_slots],"focusTakeProfitMode":self.focus_take_profit_mode,"focusTakeProfitUsdt":self.focus_take_profit_usdt,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
             "focusMinimumProfitPct":self.focus_minimum_profit_pct,"focusPartialTpEnabled":self.focus_partial_tp_enabled,

@@ -15,7 +15,7 @@ def test_aster_status_exposes_focus_v2_cockpit_from_runtime_truth():
     assert '"focusV2Cockpit": focus_v2_cockpit' in src
     for token in ('nextLongDcaPrice','nextLongDcaDistancePct','longBreakEvenPrice','nextShortReleasePrice','grossExposure','hedgeRatio','cyclePnl','nextAction','recentActions'):
         assert token in src
-    assert 'next_dca_trigger(' in src
+    assert 'dcaAnchorPrice' in src and 'focus_dca_distance' in src
     assert 'cycleTargetActive":False' in src
 
 
