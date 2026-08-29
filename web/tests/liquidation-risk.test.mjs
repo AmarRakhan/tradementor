@@ -56,15 +56,23 @@ test("risk thresholds map to green yellow orange red and unknown", () => {
   assert.equal(liquidationRiskTone(Number.NaN),"unknown");
 });
 
-test("Aster hero renders separate maintenance and liquidation-distance meters in a mobile two-column grid", async()=>{
-  const [page,css]=await Promise.all([
+test("Aster hero renders maintenance plus shared two-decimal liquidity status in a mobile two-column grid", async()=>{
+  const [page,css,display,chart]=await Promise.all([
     readFile(new URL("../app/page.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/globals.css",import.meta.url),"utf8"),
+    readFile(new URL("../lib/aster-account-display.ts",import.meta.url),"utf8"),
+    readFile(new URL("../components/trading-chart.tsx",import.meta.url),"utf8"),
   ]);
-  assert.match(page,/LIQUIDATIEAFSTAND/);
+  assert.match(page,/LIQUIDITEIT/);
   assert.doesNotMatch(page,/LIQUIDATIERISICO/);
   assert.match(page,/destination === "aster" && <LiquidationRiskOrbit/);
-  assert.match(page,/snapshot\.serverConfirmed.*snapshot\.updatedAt.*120_000/);
+  assert.match(display,/mostCriticalLiquidationPosition/);
+  assert.match(display,/minimumFractionDigits: 2, maximumFractionDigits: 2/);
+  assert.match(display,/serverConfirmed.*120_000/);
+  assert.match(chart,/aster-detail-account-strip/);
+  assert.match(chart,/accountDisplay\?\.liquidationValue/);
+  assert.match(chart,/accountDisplay\?\.equity/);
+  assert.match(chart,/accountDisplay\?\.available/);
   assert.match(page,/risk-orbit risk-\$\{view\.riskTone\}/);
   assert.match(css,/risk-orbits[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(page,/riskNumber\s*=.*liquidation/i);
