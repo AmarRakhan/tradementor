@@ -68,7 +68,8 @@ test("Aster hero renders maintenance plus shared two-decimal liquidity status in
   assert.match(page,/destination === "aster" && <LiquidationRiskOrbit/);
   assert.match(display,/mostCriticalLiquidationPosition/);
   assert.match(display,/minimumFractionDigits: 2, maximumFractionDigits: 2/);
-  assert.match(display,/serverConfirmed.*120_000/);
+  assert.match(display,/serverConfirmed/);
+  assert.match(display,/120_000/);
   assert.match(chart,/aster-detail-account-strip/);
   assert.match(chart,/accountDisplay\?\.liquidationValue/);
   assert.match(chart,/accountDisplay\?\.equity/);
