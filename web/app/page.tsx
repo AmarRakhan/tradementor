@@ -26,7 +26,7 @@ import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplay
 import { AsterBotStatus } from "@/components/aster-bot-status";
 import { BotHealthCard } from "@/components/bot-health-card";
 import { JourneyView } from "@/components/journey-view";
-import { mostCriticalLiquidationPosition } from "@/lib/liquidation-risk.mjs";
+import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
 
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -413,7 +413,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
             <div className="orbit-lines" />
             <div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div>
           </div>
-          {destination === "aster" && <LiquidationRiskOrbit risk={view.liquidationRisk} />}
+          {destination === "aster" && <LiquidationRiskOrbit display={view.asterAccountDisplay} />}
         </div>
       </section>}
 
@@ -869,6 +869,7 @@ function formatPrice(value: number): string {
 
 function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
   const data = snapshot.data ?? {};
+  const asterAccountDisplay = exchange === "aster" ? deriveAsterAccountDisplay({ data: snapshot.data, serverConfirmed: snapshot.serverConfirmed, error: snapshot.error, updatedAt: snapshot.updatedAt }) : null;
   let equity = 0;
   let available = 0;
   let openPnl = 0;
@@ -902,8 +903,8 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     const walletRecognized = data.walletRecognized === true;
     connected = connected && (configured || walletRecognized);
     accountDataAvailable = connected && configured;
-    equity = asNumber(data.equity);
-    available = asNumber(data.availableBalance);
+    equity = asterAccountDisplay?.equityNumber ?? asNumber(data.equity);
+    available = asterAccountDisplay?.availableNumber ?? asNumber(data.availableBalance);
     openPnl = asNumber(data.unrealizedPnl);
     positions = (Array.isArray(data.positions) ? data.positions : []).map((row) => asRecord(row)).map((row) => ({
       symbol: String(row.symbol ?? "—"),
@@ -940,9 +941,9 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     tradingEnabled,
     statusText,
     metricDetail,
-    equity: accountDataAvailable ? formatUsd(equity) : "—",
-    equityNumber: accountDataAvailable ? equity : null,
-    available: accountDataAvailable ? formatUsd(available) : "—",
+    equity: exchange === "aster" ? (asterAccountDisplay?.equity ?? "—") : accountDataAvailable ? formatUsd(equity) : "—",
+    equityNumber: exchange === "aster" ? (asterAccountDisplay?.equityNumber ?? null) : accountDataAvailable ? equity : null,
+    available: exchange === "aster" ? (asterAccountDisplay?.available ?? "—") : accountDataAvailable ? formatUsd(available) : "—",
     openPnl: accountDataAvailable ? formatUsd(openPnl) : "—",
     activeTradeCapital: accountDataAvailable && activeTradeCapital !== null ? formatUsd(activeTradeCapital) : "\u2014",
     activeCount,
@@ -952,7 +953,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     riskTone: riskNumber === null ? "unknown" : riskNumber < 30 ? "safe" : riskNumber < 50 ? "caution" : riskNumber < 70 ? "high" : "critical",
     riskValue: riskNumber === null ? "—" : `${riskNumber.toFixed(2)}%`,
     riskDetail: riskNumber === null ? "Nog geen betrouwbare waarde" : exchange === "aster" ? "0% is ruim · 100% is liquidatiegrens" : "Rechtstreeks uit account- en positiedata",
-    liquidationRisk: exchange === "aster" && accountDataAvailable && snapshot.serverConfirmed && !snapshot.error && snapshot.updatedAt !== null && Date.now() - snapshot.updatedAt < 120_000 ? mostCriticalLiquidationPosition(positions) : null,
+    asterAccountDisplay,
     maintenanceMargin: (exchange === "hyperliquid" || exchange === "aster") && accountDataAvailable ? formatUsd(asNumber(data.maintenanceMargin)) : "—",
     accountLeverage: exchange === "hyperliquid" && connected ? `${asNumber(data.unifiedAccountLeverage).toFixed(2)}×` : "—",
   };
@@ -966,10 +967,10 @@ function NavButton({ item, active, onClick }: { item: { id: Destination; label: 
   return <button className={`nav-button ${active ? "active" : ""}`} data-destination={item.id} type="button" aria-pressed={active} onClick={onClick}><span>{item.glyph}</span><small>{item.label}</small></button>;
 }
 
-function LiquidationRiskOrbit({ risk }: { risk: ReturnType<typeof mostCriticalLiquidationPosition> }) {
-  if (!risk) return <div className="risk-orbit liquidation-risk risk-unknown" aria-label="LIQUIDATIEAFSTAND"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIEAFSTAND</span><strong className="unavailable">Niet beschikbaar</strong><small>Geen geldige Aster liquidationPrice</small></div></div>;
-  const position = risk.position as PositionView;
-  return <div className={`risk-orbit liquidation-risk risk-${risk.tone}`} aria-label="LIQUIDATIEAFSTAND"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIEAFSTAND</span><strong>{risk.distancePercent.toFixed(1)}%</strong><small>{position.symbol} · Liq. ${formatPrice(position.liquidationPrice)}</small></div></div>;
+function LiquidationRiskOrbit({ display }: { display: AsterAccountDisplay | null }) {
+  const tone = display?.liquidationTone ?? "unknown";
+  const available = display?.liquidationDistancePercent !== null && display?.liquidationDistancePercent !== undefined;
+  return <div className={`risk-orbit liquidation-risk risk-${tone}`} aria-label="LIQUIDITEIT"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDITEIT</span><strong className={available ? "" : "unavailable"}>{display?.liquidationValue ?? "—"}</strong><small>{display?.liquidationDetail ?? "Geen betrouwbare Aster liquidatieafstand"}</small></div></div>;
 }
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
