@@ -3664,9 +3664,9 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             middle_met=bool(v2_history.get("bollinger5mConfirmed", not strategy2_settings.focus_v2_require_bollinger_middle))
             portfolio_met=bool(v2_history.get("portfolioRecoveryMet", False))
             release_ready=(bool(next_release_price>0 and current>=next_release_price and middle_met) if recovery_model_version==2 else (bool(v2_history.get("shortReleaseReady", price_met and middle_met and int(safe_float(v2_history.get("recoveryStage",v2_state.get("releaseStage"))))==0)) if recovery_model_version>=3 else bool(v2_history.get("shortReleaseReady", price_met and middle_met and portfolio_met))))
-        rehedge_price=safe_float(v2_state.get("rehedgeStopPrice",v2_history.get("rehedgeTrigger")))
-        armed_rehedge_qty=safe_float(v2_history.get("armedRehedgeQty",v2_state.get("armedRehedgeQty")))
-        rehedge_armed=bool((armed_rehedge_qty>0 or v2_state.get("rehedgeClientId")) and rehedge_price>0)
+        rehedge_price=0.0 if state_machine_version>=5 else safe_float(v2_state.get("rehedgeStopPrice",v2_history.get("rehedgeTrigger")))
+        armed_rehedge_qty=0.0 if state_machine_version>=5 else safe_float(v2_history.get("armedRehedgeQty",v2_state.get("armedRehedgeQty")))
+        rehedge_armed=False if state_machine_version>=5 else bool((armed_rehedge_qty>0 or v2_state.get("rehedgeClientId")) and rehedge_price>0)
         runtime_phase=str(strategy2_state.get("phase",""))
         runtime_hold_reason=str(strategy2_state.get("lastReason","")) if runtime_phase=="DATA_HOLD" else ""
         harvest_baseline=safe_float(v2_state.get("harvestBaselineEquity")) or safe_float(v2_history.get("harvestBaselineEquity")) or safe_float(v2_state.get("cycleStartEquity"))
