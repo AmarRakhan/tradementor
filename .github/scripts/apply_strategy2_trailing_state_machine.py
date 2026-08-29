@@ -36,8 +36,8 @@ replace_once(
 )
 replace_once(
     "cloud_api/aster_strategy2.py",
-    '"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,"focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,',
-    '"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,"focusV2HedgeReleaseDistancePct":self.focus_v2_hedge_release_distance_pct,"focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,',
+    '"focusV2MaxHedgeRatio":self.focus_v2_max_hedge_ratio,"focusV2ReleaseRatio":self.focus_v2_release_ratio,"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,\n            "focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,',
+    '"focusV2MaxHedgeRatio":self.focus_v2_max_hedge_ratio,"focusV2ReleaseRatio":self.focus_v2_release_ratio,"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,\n            "focusV2HedgeReleaseDistancePct":self.focus_v2_hedge_release_distance_pct,"focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,',
 )
 
 # Wizard defaults and persisted mapping. The existing internal UI variable
