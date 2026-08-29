@@ -13,6 +13,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: amar-crypto-bot-2026-cloud
+      - name: Preserve pending-reopen contract
+        run: python .github/scripts/fix_realtime_pending_contract.py
       - name: Apply migration
         run: python .github/scripts/apply_realtime_ui.py
       - name: Backend full tests
