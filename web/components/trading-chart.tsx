@@ -194,6 +194,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
     return () => { cancelled = true; };
   }, [selection.exchange, selection.symbol, selection.side, selection.closedAt, selection.openedAt, selection.strategy2Role, focusAtMs, mode]);
 
+  const tradeEventsSignature=useMemo(()=>tradeEvents.map(event=>`${String(event.id||"")}:${Number(event.at)}:${String(event.kind||"")}:${String(event.action||"")}:${Number(event.price)}`).join("|"),[tradeEvents]);
   const dcaLevelsSignature=useMemo(()=>dcaLevels.map(level=>`${Number(level.number)}:${Number(level.price)}`).join("|"),[dcaLevels]);
   const airbagEventsSignature=useMemo(()=>airbagEvents.map(event=>`${Number(event.at)}:${event.kind}:${Number(event.price)}:${Number(event.ratio)}`).join("|"),[airbagEvents]);
 
@@ -259,7 +260,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
     container.addEventListener("pointermove",syncOverlay,{passive:true});container.addEventListener("touchmove",syncOverlay,{passive:true});
     const observer=new ResizeObserver(()=>{if(chartRef.current!==chart||!container.isConnected)return;try{chart.applyOptions({width:Math.max(1,container.clientWidth),height:Math.max(390,container.clientHeight)});syncOverlay()}catch{/* chart may already be disposing */}}); observer.observe(container);syncOverlay();
     return()=>{observer.disconnect();chart.timeScale().unsubscribeVisibleLogicalRangeChange(syncOverlay);container.removeEventListener("pointerdown",pauseFollow);container.removeEventListener("wheel",pauseFollow);container.removeEventListener("touchstart",pauseFollow);container.removeEventListener("pointermove",syncOverlay);container.removeEventListener("touchmove",syncOverlay);if(chartRef.current===chart)chartRef.current=null;priceSeriesRef.current=null;volumeSeriesRef.current=null;currentPriceLineRef.current=null;focusSegmentRefs.current={};try{chart.unsubscribeCrosshairMove(onCrosshair);chart.remove()}catch{/* already removed during navigation */}};
-  },[datasetVersion,chartType,activeIndicators,selection,tradeEvents,skin,mode,focusAtMs,breakEvenPrice,dcaLevelsSignature,selectedActionId,airbagEventsSignature,focusV2]);
+  },[datasetVersion,chartType,activeIndicators,selection,tradeEventsSignature,skin,mode,focusAtMs,breakEvenPrice,dcaLevelsSignature,selectedActionId,airbagEventsSignature,focusV2]);
 
   useEffect(()=>{
     const next=candles.at(-1);

@@ -18,6 +18,8 @@ test("live cockpit data updates segments without becoming a chart rebuild depend
   const rebuild = chart.match(/\},\[datasetVersion[^\]]+\]\);/)?.[0] || "";
   assert.ok(rebuild, "chart rebuild dependency list exists");
   assert.doesNotMatch(rebuild, /cockpit/);
+  assert.match(rebuild, /tradeEventsSignature/);
+  assert.doesNotMatch(rebuild, /,tradeEvents,/);
   assert.match(rebuild, /dcaLevelsSignature/);
   assert.match(rebuild, /airbagEventsSignature/);
 });
