@@ -27,7 +27,7 @@ test("service worker uses Samsung Internet native installation without an in-app
   assert.match(registration, /visibilitychange/);
   assert.match(registration, /setInterval\(.*60_000/);
   assert.match(registration, /window\.location\.replace/);
-  assert.match(worker, /amar-bot-shell-v45-auto-update-1/);
+  assert.match(worker, /amar-bot-shell-v46-auto-update-1/);
   assert.match(worker, /request\.url\.includes\("\/api\/"\)/);
 });
 
@@ -42,5 +42,5 @@ test("private staging fetches its manifest with the signed-in session", async ()
   assert.match(registration, /sw\.js\?v=\$\{WEBAPP_VERSION\}&build=\$\{buildNumber\}/);
   assert.match(registration, /buildNumber/);
   assert.match(registration, /WEBAPP_VERSION/);
-  assert.match(version, /WEBAPP_VERSION = "45"/);
+  assert.match(version, /WEBAPP_VERSION = "46"/);
 });
