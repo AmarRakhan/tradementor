@@ -29,7 +29,7 @@ test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", (
   assert.match(chart, /hedgeQuery/);
   assert.match(chart, /kind:"hedge" as const/);
   assert.match(chart, /HEDGE RELEASE/);
-  assert.match(chart, /`HEDGE \$\{group\.events\[0\]\?\.side\|\|"SHORT"\}`/);
+  assert.match(chart, /HEDGE SHORT/);
 });
 
 test("Focus 2.0 does not duplicate legacy detail overlays", () => {
