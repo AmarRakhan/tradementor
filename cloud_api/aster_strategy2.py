@@ -107,6 +107,8 @@ class Strategy2Config:
     focus_v2_max_hedge_ratio: float = 0.95
     focus_v2_release_ratio: float = 0.33
     focus_v2_recovery_rebound_pct: float = 0.003
+    # State-machine v4: distance from the frozen next-DCA at which the temporary hedge is fully released.
+    focus_v2_hedge_release_distance_pct: float = 0.0035
     focus_v2_portfolio_recovery_ratio: float = 0.99
     focus_v2_rehedge_setback_pct: float = 0.003
     focus_v2_require_bollinger_middle: bool = True
@@ -213,6 +215,7 @@ class Strategy2Config:
             focus_v2_max_hedge_ratio=f("focusV2MaxHedgeRatio",0.95),
             focus_v2_release_ratio=f("focusV2ReleaseRatio",0.33),
             focus_v2_recovery_rebound_pct=f("focusV2RecoveryReboundPct",0.003),
+            focus_v2_hedge_release_distance_pct=f("focusV2HedgeReleaseDistancePct", f("focusV2RecoveryReboundPct",0.0035)),
             focus_v2_portfolio_recovery_ratio=f("focusV2PortfolioRecoveryRatio",0.99),
             focus_v2_rehedge_setback_pct=f("focusV2RehedgeSetbackPct",0.003),
             focus_v2_require_bollinger_middle=bool(raw.get("focusV2RequireBollingerMiddle",True)),
@@ -327,6 +330,7 @@ class Strategy2Config:
             if not 0 < self.focus_v2_max_hedge_ratio < 1: raise ValueError("Focus 2.0 maximale hedge moet tussen 0 en 100% liggen")
             if not 0 < self.focus_v2_release_ratio <= 1: raise ValueError("Focus 2.0 release moet tussen 0 en 100% liggen")
             if not 0 < self.focus_v2_recovery_rebound_pct < .25: raise ValueError("Focus 2.0 recovery rebound is ongeldig")
+            if not 0 < self.focus_v2_hedge_release_distance_pct < .25: raise ValueError("Focus 2.0 hedge release distance is ongeldig")
             if not .5 <= self.focus_v2_portfolio_recovery_ratio <= 1.05: raise ValueError("Focus 2.0 portfolio recovery ratio is ongeldig")
             if not 0 < self.focus_v2_rehedge_setback_pct < .25: raise ValueError("Focus 2.0 re-hedge setback is ongeldig")
             if self.focus_v2_profit_trigger_usdt < 0 or self.focus_v2_profit_harvest_usdt < 0: raise ValueError("Focus 2.0 profit harvest bedragen mogen niet negatief zijn")
@@ -373,7 +377,7 @@ class Strategy2Config:
             "focusAirbagDrawdown1":self.focus_airbag_drawdown_1,"focusAirbagDrawdown2":self.focus_airbag_drawdown_2,"focusAirbagDrawdown3":self.focus_airbag_drawdown_3,
             "focusV2Enabled":self.focus_v2_enabled,"focusV2SimpleModeEnabled":self.focus_v2_simple_mode_enabled,"focusV2MinNetLongUsdt":self.focus_v2_min_net_long_usdt,"focusV2MinNetLongRatio":self.focus_v2_min_net_long_ratio,
             "focusV2MaxHedgeRatio":self.focus_v2_max_hedge_ratio,"focusV2ReleaseRatio":self.focus_v2_release_ratio,"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,
-            "focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,"focusV2RehedgeSetbackPct":self.focus_v2_rehedge_setback_pct,"focusV2RequireBollingerMiddle":self.focus_v2_require_bollinger_middle,
+            "focusV2HedgeReleaseDistancePct":self.focus_v2_hedge_release_distance_pct,"focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,"focusV2RehedgeSetbackPct":self.focus_v2_rehedge_setback_pct,"focusV2RequireBollingerMiddle":self.focus_v2_require_bollinger_middle,
             "focusV2ProfitTriggerUsdt":self.focus_v2_profit_trigger_usdt,"focusV2ProfitHarvestUsdt":self.focus_v2_profit_harvest_usdt,
             "focusSlots":[dict(x) for x in self.focus_slots],"focusTakeProfitMode":self.focus_take_profit_mode,"focusTakeProfitUsdt":self.focus_take_profit_usdt,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,

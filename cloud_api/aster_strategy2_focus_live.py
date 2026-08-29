@@ -26,7 +26,7 @@ from aster_strategy2_focus_adapter import (
 )
 from aster_strategy2_focus_shadow import FocusRiskSnapshot, FocusShadowInputs, plan_focus_shadow
 from aster_strategy2_focus_cycle import (FocusCycleState, ParkedPair, brake_triggered, can_rotate, cycle_state_from_mapping, cycle_state_to_mapping, mark_pair_used, park_pair, reset_cycle, update_high_water)
-from aster_strategy2_focus_v2 import run_focus_v2_live_step
+from aster_strategy2_focus_trailing import run_focus_v2_live_step
 from aster_strategy2_runtime import active_position_map, owned_from_mapping, owned_to_mapping
 from aster_strategy2_state import OwnedLeg
 
