@@ -1,0 +1,50 @@
+name: Apply Focus hedge profit gate final
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/apply-focus-hedge-profit-gate-final.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Reuse validated patch script
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          lines=Path('.github/workflows/apply-focus-hedge-profit-gate-once.yml').read_text().splitlines()
+          start=next(i for i,line in enumerate(lines) if "python - <<'PY'" in line)+1
+          end=next(i for i in range(start,len(lines)) if lines[i].strip()=='PY')
+          body=[]
+          for line in lines[start:end]:
+              body.append(line[10:] if line.startswith('          ') else line)
+          exec(compile('\n'.join(body),'focus-hedge-patch','exec'))
+          PY
+      - name: Install backend test dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+      - name: Run focused tests
+        run: |
+          python -m pytest -q \
+            cloud_api/test_focus_hedge_profit_gate_contract.py \
+            cloud_api/test_aster_close_guard.py \
+            cloud_api/test_aster_strategy2_focus_live.py \
+            cloud_api/test_aster_strategy2_focus_multi.py
+      - name: Commit patch and remove one-shot workflows
+        run: |
+          rm .github/workflows/apply-focus-hedge-profit-gate-once.yml
+          rm .github/workflows/apply-focus-hedge-profit-gate-retry.yml
+          rm .github/workflows/apply-focus-hedge-profit-gate-final.yml
+          git config user.name "OpenAI Focus Patch"
+          git config user.email "actions@users.noreply.github.com"
+          git add cloud_api/aster_strategy2_focus_live.py cloud_api/aster_strategy2_focus_multi.py cloud_api/test_focus_hedge_profit_gate_contract.py .github/workflows/apply-focus-hedge-profit-gate-once.yml .github/workflows/apply-focus-hedge-profit-gate-retry.yml .github/workflows/apply-focus-hedge-profit-gate-final.yml
+          git commit -m "fix: keep Focus hedge until net profitable"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
