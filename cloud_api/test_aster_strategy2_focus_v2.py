@@ -135,3 +135,9 @@ def test_focus_v2_dca_anchor_and_harvest_are_exposed_to_cockpit():
     assert '"dcaAnchorPrice":dca_anchor' in main
     assert '"profitSinceHarvest":profit_since_harvest' in main
     assert "Profit sinds harvest" in chart and "Nog tot harvest" in chart
+
+
+def test_successful_focus_v2_hold_clears_stale_data_hold_and_disabled_harvest_has_zero_remaining():
+    src=(HERE/"aster_strategy2_focus_v2.py").read_text()
+    assert '"phase":"FOCUS_V2_LIVE","lastReason":"FOCUS_V2_HOLD"' in src
+    assert 'if settings.focus_v2_profit_trigger_usdt>0 else 0.0' in src
