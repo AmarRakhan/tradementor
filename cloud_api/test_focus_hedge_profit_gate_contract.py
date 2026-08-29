@@ -1,8 +1,11 @@
 from pathlib import Path
 
 
+HERE = Path(__file__).resolve().parent
+
+
 def test_multi_focus_hedge_close_is_net_profit_gated():
-    src=Path("cloud_api/aster_strategy2_focus_multi.py").read_text()
+    src=(HERE / "aster_strategy2_focus_multi.py").read_text()
     assert "FOCUS_HEDGE_CLOSE_BLOCKED" in src
     assert "hedge_evidence.expected_net<=0" in src
     assert "FOCUS_HEDGE_CLOSE_SAFETY_OVERRIDE" in src
@@ -10,7 +13,7 @@ def test_multi_focus_hedge_close_is_net_profit_gated():
 
 
 def test_single_focus_parked_short_close_is_net_profit_gated():
-    src=Path("cloud_api/aster_strategy2_focus_live.py").read_text()
+    src=(HERE / "aster_strategy2_focus_live.py").read_text()
     assert "FOCUS_HEDGE_CLOSE_BLOCKED" in src
     assert "evidence.expected_net<=0" in src
     assert "bewezen hedge ownership ontbreekt" in src
