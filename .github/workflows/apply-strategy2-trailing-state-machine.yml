@@ -1,0 +1,79 @@
+name: Apply Strategy 2 Trailing State Machine
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/scripts/apply_strategy2_trailing_state_machine.py"
+      - ".github/workflows/apply-strategy2-trailing-state-machine.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-strategy2-trailing-state-machine
+  cancel-in-progress: false
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - name: Apply integration patch
+        run: python .github/scripts/apply_strategy2_trailing_state_machine.py
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Compile Strategy 2 modules
+        working-directory: cloud_api
+        run: python -m py_compile aster_strategy2.py aster_strategy2_focus_live.py aster_strategy2_focus_trailing.py
+
+      - name: Run Focus 2.0 regression tests
+        working-directory: cloud_api
+        run: pytest -q test_aster_strategy2_focus_trailing.py test_aster_strategy2_focus_v2.py
+
+      - name: Run full backend tests
+        working-directory: cloud_api
+        run: pytest -q
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build and test web
+        working-directory: web
+        run: npm test
+
+      - name: Commit tested integration
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No integration diff to commit"
+            exit 0
+          fi
+          git config user.name "tradementor-strategy2-bot"
+          git config user.email "strategy2-bot@users.noreply.github.com"
+          git add cloud_api/aster_strategy2.py cloud_api/aster_strategy2_focus_live.py web/components/aster-strategy2-maker.tsx
+          git commit -m "Activate Strategy 2 trailing DCA hedge state machine"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
