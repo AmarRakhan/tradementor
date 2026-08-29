@@ -28,8 +28,8 @@ test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", (
   assert.match(chart, /FOCUS_V2_LONG/);
   assert.match(chart, /hedgeQuery/);
   assert.match(chart, /kind:"hedge" as const/);
-  assert.match(chart, /HEDGE RELEASE/);
-  assert.match(chart, /HEDGE SHORT/);
+  assert.match(chart, /REL/);
+  assert.match(chart, /HEDGE/);
 });
 
 test("Focus 2.0 does not duplicate legacy detail overlays", () => {
@@ -39,10 +39,10 @@ test("Focus 2.0 does not duplicate legacy detail overlays", () => {
 test("Focus 2.0 cockpit hides Bollinger overlays and renders server levels", () => {
   assert.match(chart, /activeIndicators\.includes\("bb"\)&&!focusV2/);
   assert.match(chart, /HUIDIGE PRIJS/);
-  assert.match(chart, /LONG GROEN VANAF/);
+  assert.match(chart, /LONG BREAK-EVEN/);
   assert.match(chart, /VOLGENDE LONG DCA/);
-  assert.match(chart, /SHORT RELEASE/);
-  assert.match(chart, /RE-HEDGE SHORT/);
+  assert.match(chart, /HERSTEL/);
+  assert.match(chart, /RE-HEDGE/);
   assert.match(chart, /cockpit\.cycleTargetActive/);
 });
 
@@ -55,10 +55,10 @@ test("Focus 2.0 chart auto follows with right-side breathing room and can pause"
 });
 
 test("Focus 2.0 markers keep long, DCA and hedge actions explicit", () => {
-  assert.match(chart, /LONG \/ BUY/);
-  assert.match(chart, /DCA LONG/);
-  assert.match(chart, /HEDGE SHORT/);
-  assert.match(chart, /HEDGE RELEASE/);
+  assert.match(chart, /"BUY"/);
+  assert.match(chart, /`DCA\$\{one\.dcaNumber/);
+  assert.match(chart, /"HEDGE"/);
+  assert.match(chart, /"REL"/);
 });
 
 test("trade detail consumes the server-side Focus 2.0 cockpit", () => {

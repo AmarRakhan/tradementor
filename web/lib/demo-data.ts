@@ -59,5 +59,5 @@ export function demoModeEnabled(): boolean {
 }
 
 export function demoSnapshot(exchange: ExchangeId): ExchangeSnapshot {
-  return { loading: false, data: demo[exchange], error: "", updatedAt: Date.now() };
+  return { loading: false, data: demo[exchange], error: "", updatedAt: Date.now(), source: "server", serverConfirmed: true };
 }

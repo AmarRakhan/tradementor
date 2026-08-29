@@ -322,7 +322,7 @@ test("Positions reuses the trusted overview and adds an exchange-aware professio
   assert.match(styles, /@media\(max-width:760px\)/);
   assert.match(styles, /\.chart-canvas\s*\{[^}]*touch-action:\s*pan-y/i);
   assert.doesNotMatch(styles, /\.chart-canvas\s*\{[^}]*touch-action:\s*none/i);
-  assert.match(chart, /handleScroll:\{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false\}/);
+  assert.match(chart, /handleScroll:\{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true\}/);
   assert.match(chart, /handleScale:\{mouseWheel:true,pinch:true,axisPressedMouseMove:true\}/);
   assert.match(chart, /sanitizePortfolioEquityRows/);
   assert.match(page, /isCompletePortfolioSnapshot/);
