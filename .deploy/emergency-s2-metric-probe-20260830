@@ -1,1 +1,2 @@
 Encode current HYPE Strategy-2 state and audit counts as Cloud Run task exit codes; no exchange access and no strategy writes.
+Retry with production parallelism <= 20.
