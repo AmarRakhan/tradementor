@@ -1,16 +1,1 @@
-Deploy verified Strategy-2 portfolio-cycle v7.
-Emergency equity-lock hotfix commit: ac99ddac36613cde99ed10d32b818b4ab76622a1
-Net-green protected SHORT release commit: 070ba4187681e6189924adbd140cd12d4e5c2a25
-DCA-below-baseline fix commit: 454a5073c3de0c317dd38429c5e02c070f6a1d21
-Equity release gate removed commit: 70df0332cfc66bc8345103df3c6dbf86821aaebd
-Regression tests aligned commit: 49a21e6544679503446d53529591793e1cb54cac
-Release requires only: configured recovery price reached + exact remaining hedge net profitable after conservative round-trip fee/slippage model.
-Re-hedge remains anchored to the last confirmed DCA fill. No other strategy behavior is changed by this deployment trigger.
-
-Re-hedge margin safety guard: release only when full re-hedge is financeable from current available + conservatively estimated freed hedge margin; runtime re-hedge keeps trigger armed if live available margin is insufficient. No DCA/release distance/portfolio target changes.
-Production trigger after verified 1011-test pass for commit 9110e6894dbf9c5da4301ad7bfa0529ee217e315.
-
-Manual hedge-close reconciliation: if Aster confirms the Focus hedge was manually flattened while LONG remains open, reconcile stale ownership, keep the cycle alive, arm re-hedge at the last confirmed DCA, and do not let emergency equity repair override an intentionally armed re-hedge. No DCA distance, release distance, fee model, or portfolio target changes.
-Production trigger after full-suite verification for manual-close commit 8f44736c1d24d88d63564e332b98c263a05ae924.
-
-Emergency protection margin wait fix: protection hedge now prechecks available margin and converts Aster -2019 into EMERGENCY_EQUITY_LOCK_WAIT_MARGIN without exception spam. Verified full backend suite for commit 3272794.
+8806cd7 bottom-rebound-v8 backend
