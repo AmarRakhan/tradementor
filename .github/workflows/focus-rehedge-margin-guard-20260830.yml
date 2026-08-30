@@ -54,6 +54,7 @@ jobs:
                   cloud_api/test_aster_strategy2_focus_trailing.py \
                   cloud_api/test_focus_portfolio_cycle_v7.py \
                   cloud_api/test_focus_v7_net_green_release.py \
+                  cloud_api/test_focus_v7_emergency_equity_lock.py \
                   .github/workflows/deploy-focus-portfolio-v7-production-20260830.yml \
                   .deploy/focus-portfolio-v7-20260830
           if git diff --cached --quiet; then
