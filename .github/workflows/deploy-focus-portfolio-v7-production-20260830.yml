@@ -39,7 +39,8 @@ jobs:
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
           grep -q 'FOCUS_HEDGE_RELEASED_NET_GREEN' cloud_api/aster_strategy2_focus_trailing.py
-          grep -q 'if price_release_ready and net_green_ready:' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'if price_release_ready and net_green_ready and rehedge_funding_ready:' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'REHEDGE_WAIT_MARGIN' cloud_api/aster_strategy2_focus_trailing.py
           ! grep -q 'equity_release_ready' cloud_api/aster_strategy2_focus_trailing.py
           grep -q 'expected_net_hedge_close_pnl' cloud_api/aster_strategy2_focus_trailing.py
           grep -q 'FOCUS_REHEDGE_ACTIVE' cloud_api/aster_strategy2_focus_trailing.py
