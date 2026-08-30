@@ -1,0 +1,56 @@
+name: Emergency Diagnose S2 Bleed 20260830
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .deploy/emergency-diagnose-s2-bleed-20260830
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read last 90 minutes of Strategy 2 production logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND timestamp>="2026-08-30T14:50:00Z"' \
+            --project "$GCP_PROJECT_ID" --limit=2000 --order=asc --format=json > "$RUNNER_TEMP/logs.json"
+          python - "$RUNNER_TEMP/logs.json" <<'PY'
+          import json,sys,re
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          keep=[]
+          for r in rows:
+              text=' '.join(str(r.get(k,'')) for k in ('textPayload','jsonPayload','protoPayload'))
+              low=text.lower()
+              if any(x in low for x in ('focus_', 'strategy2', 'dca', 'hedge', 'hype', 'portfolio_target', 'rehedge')):
+                  text=re.sub(r'(?i)(api[_-]?key|secret|token|authorization)[^, }]*', r'\1=REDACTED', text)
+                  keep.append((r.get('timestamp',''), text[:2500]))
+          print('MATCHED_LOG_ROWS',len(keep))
+          for ts,text in keep[-400:]:
+              print(ts, text)
+          PY
+      - name: Inspect production service revision only
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName,status.url)'
