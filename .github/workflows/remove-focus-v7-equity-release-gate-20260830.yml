@@ -14,7 +14,7 @@ permissions:
 jobs:
   patch-test-commit:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,28 +26,28 @@ jobs:
           cache: pip
           cache-dependency-path: cloud_api/requirements.txt
 
-      - name: Remove third hedge-release condition
+      - name: Migrate stale release regression tests only
         run: python tools/remove_focus_v7_equity_release_gate_20260830.py
 
       - name: Install test dependencies
         run: pip install -r cloud_api/requirements.txt pytest
 
-      - name: Run focused Strategy-2 tests
+      - name: Run complete backend suite
         working-directory: cloud_api
-        run: |
-          pytest -q \
-            test_focus_simple_deterministic_flow.py \
-            test_aster_strategy2_focus_trailing.py \
-            test_aster_strategy2_focus_live_execution_paths.py
+        run: pytest -q
 
-      - name: Commit verified change
+      - name: Commit test-only migration
         run: |
           git config user.name 'focus-flow-automation'
           git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/aster_strategy2_focus_trailing.py
+          git add \
+            cloud_api/test_aster_strategy2_focus_trailing.py \
+            cloud_api/test_focus_portfolio_cycle_v7.py \
+            cloud_api/test_focus_v7_emergency_equity_lock.py \
+            cloud_api/test_focus_v7_net_green_release.py
           if git diff --cached --quiet; then
-            echo 'No implementation diff to commit.'
+            echo 'No stale test diff to commit.'
             exit 0
           fi
-          git commit -m 'Remove equity gate from Focus hedge release'
+          git commit -m 'Align Focus release tests with approved gate removal'
           git push origin HEAD:amar-crypto-bot-2026-cloud
