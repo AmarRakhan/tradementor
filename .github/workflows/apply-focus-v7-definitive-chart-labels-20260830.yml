@@ -1,0 +1,88 @@
+name: Apply Focus V7 Definitive Chart Labels 20260830
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .deploy/focus-v7-definitive-chart-labels-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-and-trigger-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply definitive chart-label patch
+        run: python tools/apply_focus_v7_definitive_chart_labels_20260830.py
+      - name: Verify backend and strategy files untouched
+        run: |
+          CHANGED="$(git diff --name-only)"
+          printf '%s\n' "$CHANGED"
+          test -n "$CHANGED"
+          ! printf '%s\n' "$CHANGED" | grep -E '^(cloud_api/|.*strategy2.*\.py$)'
+          printf '%s\n' "$CHANGED" | grep -q '^web/components/trading-chart.tsx$'
+          printf '%s\n' "$CHANGED" | grep -q '^web/lib/focus-chart-label-layout.mjs$'
+          printf '%s\n' "$CHANGED" | grep -q '^web/app/globals.css$'
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run definitive label acceptance tests
+        working-directory: web
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          import { layoutFocusLabelYs } from './lib/focus-chart-label-layout.mjs';
+
+          const chart = fs.readFileSync('./components/trading-chart.tsx','utf8');
+          const css = fs.readFileSync('./app/globals.css','utf8');
+          for (const label of ['LIVE','TERUGVAL -','LAATSTE KOOP','RELEASE +','RE-HEDGE']) assert.ok(chart.includes(label), label);
+          assert.ok(chart.includes('<span className="focus-line-label"'), 'labels must render as text spans');
+          assert.ok(chart.includes('focus-label-leader'), 'connector required for displaced labels');
+          assert.ok(chart.includes('realY') && chart.includes('labelY'), 'true line Y and label Y must remain separate');
+          assert.ok(chart.includes('focusPortfolioTargetLabel'));
+          assert.ok(!chart.includes('key:"portfolio"'), 'portfolio target must not be a price line');
+          assert.ok(css.includes('right:92px'), '72px price scale + 20px safety gap must be reserved');
+          assert.ok(css.includes('overflow:hidden'), 'chart overlay must stay inside plot area');
+
+          const widths = [360,390,420,500,1024];
+          const scenarios = [
+            [120,121,122,123,124],
+            [180,181.2,183,184.8,186],
+            [250,254,258,262,266],
+            [16,18,20,22,24],
+            [565,567,569,571,573],
+          ];
+          for (const width of widths) {
+            for (const ys of scenarios) {
+              const real = Object.fromEntries(['live','dca','lastfill','release','rehedge'].map((k,i)=>[k,ys[i]]));
+              const out = layoutFocusLabelYs(real, 590, 24, 16);
+              const ordered = Object.values(out).sort((a,b)=>a-b);
+              assert.equal(ordered.length,5);
+              for (const y of ordered) assert.ok(y>=16 && y<=574, `${width}: label inside chart`);
+              for (let i=1;i<ordered.length;i++) assert.ok(ordered[i]-ordered[i-1]>=23.999, `${width}: labels cannot overlap`);
+            }
+          }
+          console.log('definitive Strategy-2 chart label acceptance tests passed');
+          NODE
+      - name: Build web production bundle
+        working-directory: web
+        run: npm run build
+      - name: Commit verified display-only fix and deployment trigger
+        run: |
+          printf '\nDeploy definitive Strategy-2 in-chart labels.\n' >> .deploy/focus-portfolio-v7-web-20260830
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/trading-chart.tsx web/lib/focus-chart-label-layout.mjs web/app/globals.css .deploy/focus-portfolio-v7-web-20260830
+          git commit -m 'Make Strategy 2 chart labels always readable'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
