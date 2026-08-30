@@ -4355,9 +4355,14 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
             raise HTTPException(423,"Strategy 2 productie-uitvoering staat centraal uit")
     now=datetime.now(timezone.utc)
     start_settings={**settings.public_dict(),"focusDesiredSlotCount":focus_desired_count}
-    ref.set({"settings":start_settings,"focusDesiredSlotCount":focus_desired_count,"focusRetiredSlotIds":[],
+    start_update={"settings":start_settings,"focusDesiredSlotCount":focus_desired_count,"focusRetiredSlotIds":[],
         "phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
-        "enabled":True,"monitor":True,"initialBuildComplete":False,"startedAt":now,"updatedAt":now},merge=True)
+        "enabled":True,"monitor":True,"initialBuildComplete":False,"startedAt":now,"updatedAt":now}
+    # Simple Focus owns its complete LONG/SHORT lifecycle and must never inherit
+    # legacy multi-pair reopen work from an older stopped configuration.
+    if settings.focus_v2_enabled and settings.focus_v2_simple_mode_enabled:
+        start_update["pendingReopens"]=[]
+    ref.set(start_update,merge=True)
     first=_run_aster_strategy2_tick(uid,dry_run=settings.mode!="live")
     public=aster_strategy2_public(uid)
     public_state=public.get("strategy2") if isinstance(public.get("strategy2"),dict) else {}
@@ -4405,7 +4410,12 @@ def reset_aster_strategy2_focus_cycle(request: AsterStrategy2FocusResetRequest, 
 @app.post("/v1/me/aster/strategy2/stop")
 def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Bevestig veilig stoppen")
-    uid=str(user["uid"]);aster_strategy2_reference(uid).set({"enabled":False,"monitor":True,"phase":"PROTECTIVE_ONLY","updatedAt":datetime.now(timezone.utc)},merge=True)
+    uid=str(user["uid"]);ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {}
+    cfg=Strategy2Config.from_mapping(raw.get("settings"))
+    update={"enabled":False,"monitor":True,"phase":"PROTECTIVE_ONLY","updatedAt":datetime.now(timezone.utc)}
+    if cfg.focus_v2_enabled and cfg.focus_v2_simple_mode_enabled:
+        update["pendingReopens"]=[]
+    ref.set(update,merge=True)
     return {"stopped":True,**aster_strategy2_public(uid)}
 
 
@@ -5659,6 +5669,8 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     scan_id=f"{now.strftime('%Y%m%dT%H%M%S')}-{python_secrets.token_hex(4)}"
     raw=ref.get().to_dict() or {};prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
     current_intent=prior.get("currentIntent") if isinstance(prior.get("currentIntent"),dict) else {}
+    if not bool(raw.get("enabled",False)) and not (raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []) and not current_intent:
+        return {"status":"stopped-flat","scanId":scan_id,"ordersSent":0,"ordersUsed":0,"maximumOrders":scan_limit,"actions":[]}
     if current_intent:
         reconciled,reconcile_reason=_reconcile_strategy2_queue_intent(uid,ref,raw,current_intent)
         if not reconciled:
@@ -5780,11 +5792,16 @@ def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
         raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()
         settings_raw=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
         cfg=Strategy2Config.from_mapping(settings_raw)
+        owned_rows=raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []
+        queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {};intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
+        # A stopped + exchange-flat account has nothing to protect in realtime.
+        # Do not let stale legacy pendingReopens keep hammering the config doc.
+        if not bool(raw.get("enabled",False)) and not owned_rows and not intent:
+            continue
         if cfg.focus_v2_enabled and cfg.focus_v2_simple_mode_enabled:
             simple_uids.add(uid)
-        for row in raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []:
+        for row in owned_rows:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
-        queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {};intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
         if intent.get("symbol"):symbols.add(str(intent.get("symbol")).upper())
         for row in raw.get("pendingReopens",[]) if isinstance(raw.get("pendingReopens"),list) else []:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
