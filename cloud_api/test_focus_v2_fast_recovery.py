@@ -138,11 +138,11 @@ def test_29_regular_strategy2_runtime_remains_separate():
     live=(HERE/'aster_strategy2_focus_live.py').read_text(); runtime=(HERE/'aster_strategy2_runtime.py').read_text()
     assert 'run_focus_v2_live_step' in live and 'RECOVERY_MODEL_FAST' not in runtime
 
-def test_30_chart_and_cockpit_contract_exposes_recovery_semantics():
+def test_30_chart_and_cockpit_contract_exposes_current_focus_trigger_semantics():
     chart=(ROOT/'web/components/trading-chart.tsx').read_text(); cockpit=(ROOT/'web/components/aster-recent-trades.tsx').read_text(); main=(HERE/'main.py').read_text()
-    for token in ('HERSTEL ${Math.min(4','LONG BREAK-EVEN','vertTouchDrag:true'): assert token in chart
-    for token in ('Recovery stage','Totaal vrijgegeven','armedRehedgeQty'): assert token in cockpit
-    for token in ('recoveryModelVersion','nextShortReleaseQty','targetShortNotional'): assert token in main
+    for token in ('BREAK-EVEN','DCA / SHORT FILL','SHORT RELEASE','vertTouchDrag:true'): assert token in chart
+    for token in ('Cycle status','Starthedge','Hedge target','Take Profit','Auto-herstart'): assert token in cockpit
+    for token in ('stateMachineVersion','nextShortReleaseQty','targetShortNotional','startHedgePercent','distanceToTp','autoRestart'): assert token in main
 
 
 def test_31_release_arms_exchange_backup_before_closing_short():

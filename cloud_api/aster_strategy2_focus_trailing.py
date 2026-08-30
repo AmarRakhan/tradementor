@@ -3,13 +3,13 @@
 This is the authoritative live engine for Focus 2.0 simple mode.
 
 Contract:
-- normal state is a naked primary leg (LONG by default) with a trailing DCA;
+- every new v6 cycle starts with a primary leg plus configurable start hedge;
 - a DCA cross adds primary exposure and hedges the configured ratio of the total primary position;
 - while the hedge is active, the next DCA stays fixed one configured DCA-step beyond the last confirmed DCA fill;
 - the hedge is fully released after the configured recovery from the last confirmed DCA fill;
 - each deeper DCA replaces both the next-DCA and hedge-release references;
 - after release, trailing resumes immediately from the confirmed release/current price;
-- partial profit only reduces the primary leg and never resets DCA state.
+- full TP closes the primary only when the hedge is flat, then optionally auto-restarts the complete cycle.
 
 Percent settings in Strategy2Config are stored as decimal ratios (0.003 == 0.30%).
 """
@@ -48,6 +48,7 @@ DCA_FROZEN = "FIXED_DURING_HEDGE"
 HEDGE_OFF = "OFF"
 HEDGE_ACTIVE = "ACTIVE"
 HEDGE_RELEASE_EXECUTING = "RELEASE_EXECUTING"
+HEDGE_STARTING = "START_HEDGE_EXECUTING"
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -73,6 +74,28 @@ def dca_distance(settings: Strategy2Config) -> float:
 def hedge_ratio(settings: Strategy2Config) -> float:
     """Configured hedge ratio of total primary exposure after each DCA."""
     return min(1.0, _ratio(getattr(settings, "focus_v2_hedge_ratio", 1.0), 1.0, maximum=1.0))
+
+
+
+def start_hedge_ratio(settings: Strategy2Config) -> float:
+    """Configured hedge ratio opened together with every new v6 cycle."""
+    return min(1.0, _ratio(getattr(settings, "focus_v2_start_hedge_ratio", 1.0), 1.0, maximum=1.0))
+
+
+def _amount_to_notional(settings: Strategy2Config, amount: float, leverage: int) -> float:
+    """v6 wizard amounts are real margin USD; legacy configs remain notional until re-saved."""
+    value = max(0.0, amount)
+    return value * max(1, leverage) if getattr(settings, "focus_v2_amounts_are_margin", False) else value
+
+
+def take_profit_reached(settings: Strategy2Config, primary_pnl: float, primary_notional: float) -> bool:
+    value = max(0.0, _finite(getattr(settings, "focus_v2_take_profit_value", 0.0)))
+    if value <= 0 or primary_pnl <= 0:
+        return False
+    mode = str(getattr(settings, "focus_v2_take_profit_mode", "usdt")).lower()
+    if mode == "percent":
+        return primary_notional > 0 and primary_pnl / primary_notional >= value
+    return primary_pnl >= value
 
 
 def hedge_release_recovery(settings: Strategy2Config) -> float:
@@ -224,6 +247,13 @@ def _state(raw_state: dict[str, Any], *, symbol: str, primary_side: str) -> dict
     state.setdefault("hedgeReleasePrice", 0.0)
     state.setdefault("hedgeTargetQty", 0.0)
     state.setdefault("hedgeCycleId", "")
+    state.setdefault("startHedgePercent", 0.0)
+    state.setdefault("hedgeTargetPercent", 0.0)
+    state.setdefault("tpMode", "usdt")
+    state.setdefault("tpValue", 0.0)
+    state.setdefault("autoRestart", False)
+    state.setdefault("pausedAfterTp", False)
+    state.setdefault("restartPending", False)
     state.setdefault("totalHarvestedProfit", 0.0)
     state.setdefault("lastHarvestProfit", 0.0)
     state.setdefault("lastAction", "IDLE")
@@ -336,11 +366,15 @@ def _history(state: dict[str, Any], *, mark: float, dca_ratio: float, release_ra
         "shortNotional": primary_notional if side == "SHORT" else hedge_notional,
         "primaryPnl": primary_pnl,
         "hedgePnl": hedge_pnl,
-        "profitTriggerUsdt": _finite(state.get("profitTriggerUsdt")),
-        "profitHarvestUsdt": _finite(state.get("profitHarvestUsdt")),
-        "totalHarvestedProfit": _finite(state.get("totalHarvestedProfit")),
-        "lastHarvestProfit": _finite(state.get("lastHarvestProfit")),
-        "stateMachineVersion": 5,
+        "startHedgePercent": _finite(state.get("startHedgePercent")),
+        "hedgeTargetPercent": _finite(state.get("hedgeTargetPercent")),
+        "tpMode": str(state.get("tpMode", "usdt")),
+        "tpValue": _finite(state.get("tpValue")),
+        "autoRestart": bool(state.get("autoRestart", False)),
+        "cycleStatus": str(state.get("cycleStatus", state.get("lastAction", "HOLD"))),
+        "distanceToDcaPct": ((mark / _finite(state.get("nextDcaPrice")) - 1.0) if _finite(state.get("nextDcaPrice")) > 0 else 0.0),
+        "distanceToTp": max(0.0, _finite(state.get("tpValue")) - primary_pnl) if str(state.get("tpMode", "usdt")) == "usdt" else 0.0,
+        "stateMachineVersion": 6,
     }
 
 
@@ -383,40 +417,77 @@ def run_focus_v2_live_step(
     dca_ratio = dca_distance(settings)
     release_ratio = hedge_release_recovery(settings)
     configured_hedge_ratio = hedge_ratio(settings)
-    trigger_usdt = max(0.0, _finite(settings.focus_v2_profit_trigger_usdt))
-    take_usdt = max(0.0, _finite(settings.focus_v2_profit_harvest_usdt))
-    state["profitTriggerUsdt"] = trigger_usdt
-    state["profitHarvestUsdt"] = take_usdt
+    configured_start_hedge_ratio = start_hedge_ratio(settings)
+    tp_mode = str(getattr(settings, "focus_v2_take_profit_mode", "usdt")).lower()
+    tp_value = max(0.0, _finite(getattr(settings, "focus_v2_take_profit_value", 0.0)))
+    state["startHedgePercent"] = configured_start_hedge_ratio
+    state["hedgeTargetPercent"] = configured_hedge_ratio
+    state["tpMode"] = tp_mode
+    state["tpValue"] = tp_value
+    state["autoRestart"] = bool(getattr(settings, "focus_v2_auto_restart", True))
     state["configSnapshotVersion"] = int(getattr(settings, "version", 1))
     state["dcaDistancePct"] = dca_ratio
     state["hedgeReleaseRecoveryPct"] = release_ratio
     state["hedgeRatio"] = configured_hedge_ratio
-    state["stateMachineVersion"] = 5
+    state["stateMachineVersion"] = 6
 
     primary_notional = _notional(primary_row)
     hedge_notional = _notional(hedge_row)
     primary_qty = abs(_finite((primary_row or {}).get("positionAmt")))
     hedge_qty = abs(_finite((hedge_row or {}).get("positionAmt")))
 
+    if bool(state.get("pausedAfterTp")) and not bool(getattr(settings, "focus_v2_auto_restart", True)):
+        return {"status": "waiting", "action": "FOCUS_V2_TP_CLOSED_PAUSED", "symbol": symbol, "ordersSent": 0}
+    if bool(state.get("pausedAfterTp")) and bool(getattr(settings, "focus_v2_auto_restart", True)):
+        state["pausedAfterTp"] = False
+
+    # Crash/restart recovery between confirmed primary open and confirmed start hedge.
+    if state.get("cycleId") and str(state.get("hedgeState", "")) == HEDGE_STARTING and primary_qty > 0 and hedge_qty <= 1e-12:
+        if order_budget is not None and order_budget < 1:
+            return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_START_HEDGE_RECOVERY", "ordersSent": 0}
+        leverage = _resolved_leverage(client, settings, symbol, primary_row)
+        target = primary_notional * configured_start_hedge_ratio
+        required_margin = target / max(1, leverage)
+        if required_margin > _finite(account.get("availableBalance")):
+            return {"status": "waiting", "action": "FOCUS_V2_START_HEDGE_MARGIN_BLOCK", "ordersSent": 0}
+        prefix = _prefix(str(state["cycleId"]), 0, "START_HEDGE_OPEN")
+        hq, hp, hcid, hoid = _execute_with_precision_retry(client=client, symbol=symbol, mark=mark, notional=target,
+            leverage=leverage, side=hedge_side, action="OPEN", prefix=prefix, new_position_leverage=leverage)
+        owned = _upsert_owned(owned, settings=settings, cycle_id=str(state["cycleId"]), symbol=symbol, role=hedge_role,
+            side=hedge_side, quantity=hq, price=hp, client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms)
+        state.update({"hedgeState": HEDGE_ACTIVE, "cycleStatus": "TRAILING_HEDGED", "lastHedgeEntryOrderId": hoid,
+            "lastAction": "START_HEDGE_RECOVERED", "lastReason": "starthedge na restart exact hervat"})
+        _persist(ref, state, owned)
+        _audit(ref, "FOCUS_V2_START_HEDGE_RECOVERED", cycleId=state["cycleId"], symbol=symbol, hedgeQty=hq, hedgePrice=hp)
+        return {"status": "executed", "action": "FOCUS_V2_START_HEDGE_RECOVERED", "symbol": symbol, "ordersSent": 1}
+
     # Existing live Focus V2 cycles are reconciled rather than blindly closed.
     if state.get("cycleId"):
         if primary_notional <= 0:
-            # The primary leg is gone: clear only this engine's ownership/state.
             remaining = [x for x in owned if not str(x.role).upper().startswith("FOCUS_V2")]
-            _persist(ref, {}, remaining, focusV2LastCycle={"cycleId": state.get("cycleId"), "closedAt": timestamp_ms})
+            if bool(getattr(settings, "focus_v2_auto_restart", True)):
+                _persist(ref, {}, remaining, focusV2LastCycle={"cycleId": state.get("cycleId"), "closedAt": timestamp_ms})
+            else:
+                paused = {"cycleId": "", "symbol": symbol, "primarySide": primary_side, "pausedAfterTp": True, "autoRestart": False, "cycleStatus": "TP_CLOSED"}
+                _persist(ref, paused, remaining, focusV2LastCycle={"cycleId": state.get("cycleId"), "closedAt": timestamp_ms})
             return {"status": "executed", "action": "FOCUS_V2_CYCLE_FLAT", "symbol": symbol, "ordersSent": 0}
         if hedge_qty > 1e-12:
-            state["dcaMode"] = DCA_FROZEN
             state["hedgeState"] = HEDGE_ACTIVE
             last_dca = _finite(state.get("lastDcaFillPrice"))
-            if last_dca <= 0:
-                # Safe migration from v4: dcaAnchorPrice was the most recent confirmed DCA fill.
-                last_dca = _finite(state.get("dcaAnchorPrice"), mark)
-                state["lastDcaFillPrice"] = last_dca
-            state["nextDcaPrice"] = next_dca_from_anchor(last_dca, primary_side, dca_ratio)
-            state["hedgeReleasePrice"] = release_price_from_last_dca(last_dca, primary_side, release_ratio)
+            if int(_finite(state.get("dcaCount"))) == 0 and last_dca <= 0:
+                # Start hedge is active, but DCA #1 MUST keep trailing with every new favorable extreme.
+                state["dcaMode"] = DCA_TRAILING
+                state["hedgeReleasePrice"] = 0.0
+                state["hedgeTargetQty"] = primary_qty * configured_start_hedge_ratio
+            else:
+                if last_dca <= 0:
+                    last_dca = _finite(state.get("dcaAnchorPrice"), mark)
+                    state["lastDcaFillPrice"] = last_dca
+                state["dcaMode"] = DCA_FROZEN
+                state["nextDcaPrice"] = next_dca_from_anchor(last_dca, primary_side, dca_ratio)
+                state["hedgeReleasePrice"] = release_price_from_last_dca(last_dca, primary_side, release_ratio)
+                state["hedgeTargetQty"] = primary_qty * configured_hedge_ratio
             state["frozenDcaReference"] = 0.0
-            state["hedgeTargetQty"] = primary_qty * configured_hedge_ratio
         else:
             state["dcaMode"] = DCA_TRAILING
             state["hedgeState"] = HEDGE_OFF
@@ -424,20 +495,22 @@ def run_focus_v2_live_step(
             state["hedgeReleasePrice"] = 0.0
             state["hedgeTargetQty"] = 0.0
 
-    # New Focus 2.0 cycle: primary only. No hedge exists until the first DCA retracement.
+    # New Focus 2.0 v6 cycle: primary + configurable start hedge, persisted between confirmed legs.
     if not state.get("cycleId"):
-        if order_budget is not None and order_budget < 1:
-            return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_PRIMARY_OPEN", "ordersSent": 0}
-        # Never adopt an unrelated exchange position.
+        if order_budget is not None and order_budget < 2:
+            return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_START_HEDGE", "ordersSent": 0}
         focus_owned = [x for x in owned if str(x.role).upper().startswith("FOCUS")]
         if focus_owned or primary_row or hedge_row:
             return {"status": "waiting", "action": "FOCUS_V2_WAIT_FLAT", "reason": "bestaande positie wordt niet blind geadopteerd", "ordersSent": 0}
-        start_notional = max(0.0, settings.focus_start_order_notional)
-        if start_notional <= 0:
-            raise RuntimeError("Focus 2.0 startnotional is nul")
-        available = _finite(account.get("availableBalance"))
         leverage = _resolved_leverage(client, settings, symbol)
-        if start_notional / max(1, leverage) > available:
+        start_amount = max(0.0, settings.focus_start_order_notional)
+        start_notional = _amount_to_notional(settings, start_amount, leverage)
+        if start_notional <= 0:
+            raise RuntimeError("Focus 2.0 startbedrag is nul")
+        start_hedge_notional = start_notional * configured_start_hedge_ratio
+        available = _finite(account.get("availableBalance"))
+        required_margin = (start_notional + start_hedge_notional) / max(1, leverage)
+        if required_margin > available:
             return {"status": "waiting", "action": "FOCUS_V2_MARGIN_BLOCK", "ordersSent": 0}
         cycle_id = f"focusv2t-{hashlib.sha256(f'{uid}|{symbol}|{primary_side}|{timestamp_ms}'.encode()).hexdigest()[:14]}"
         prefix = _prefix(cycle_id, 0, "PRIMARY_OPEN")
@@ -445,37 +518,54 @@ def run_focus_v2_live_step(
             client=client, symbol=symbol, mark=mark, notional=start_notional, leverage=leverage,
             side=primary_side, action="OPEN", prefix=prefix, new_position_leverage=leverage,
         )
-        owned = _upsert_owned(
-            owned, settings=settings, cycle_id=cycle_id, symbol=symbol, role=primary_role,
-            side=primary_side, quantity=q, price=p, client_id=cid, order_id=oid,
-            dca=False, timestamp_ms=timestamp_ms,
-        )
+        owned = _upsert_owned(owned, settings=settings, cycle_id=cycle_id, symbol=symbol, role=primary_role,
+            side=primary_side, quantity=q, price=p, client_id=cid, order_id=oid, dca=False, timestamp_ms=timestamp_ms)
+        # Hedge the CONFIRMED primary fill, not the pre-fill requested notional.
+        start_hedge_notional = q * p * configured_start_hedge_ratio
         state.update({
-            "cycleId": cycle_id, "symbol": symbol, "primarySide": primary_side,
+            "cycleId": cycle_id, "symbol": symbol, "primarySide": primary_side, "restartPending": False,
             "cycleStartEquity": _finite(account.get("totalMarginBalance"), _finite(account.get("totalWalletBalance"))),
-            "openedAt": timestamp_ms, "originalEntry": p, "weightedEntry": p,
-            "dcaCount": 0, "dcaMode": DCA_TRAILING, "hedgeState": HEDGE_OFF,
-            "trailingHigh": p if primary_side == "LONG" else 0.0,
-            "trailingLow": p if primary_side == "SHORT" else 0.0,
-            "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio),
-            "frozenDcaReference": 0.0, "lastDcaFillPrice": 0.0, "hedgeReleasePrice": 0.0, "hedgeTargetQty": 0.0, "hedgeCycleId": "",
-            "lastPrimaryOrderId": oid, "lastAction": "PRIMARY_OPEN",
-            "lastReason": "primaire positie geopend zonder hedge; trailing DCA actief",
-            "stateMachineVersion": 5,
+            "openedAt": timestamp_ms, "originalEntry": p, "weightedEntry": p, "dcaCount": 0,
+            "dcaMode": DCA_TRAILING, "hedgeState": HEDGE_STARTING, "cycleStatus": "START_HEDGED",
+            "trailingHigh": p if primary_side == "LONG" else 0.0, "trailingLow": p if primary_side == "SHORT" else 0.0,
+            "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio), "lastDcaFillPrice": 0.0,
+            "hedgeReleasePrice": 0.0, "hedgeTargetQty": q * configured_start_hedge_ratio,
+            "startHedgePercent": configured_start_hedge_ratio, "hedgeTargetPercent": configured_hedge_ratio,
+            "tpMode": tp_mode, "tpValue": tp_value, "autoRestart": bool(getattr(settings, "focus_v2_auto_restart", True)),
+            "lastPrimaryOrderId": oid, "lastAction": "PRIMARY_OPEN_CONFIRMED", "stateMachineVersion": 6,
         })
-        _persist(ref, state, owned, focusV2History=_history(
-            state, mark=p, dca_ratio=dca_ratio, release_ratio=release_ratio,
-            primary_notional=q*p, hedge_notional=0.0, primary_pnl=0.0, hedge_pnl=0.0,
-        ))
-        _audit(ref, "FOCUS_V2_TRAILING_CYCLE_STARTED", cycleId=cycle_id, symbol=symbol, primarySide=primary_side, nextDca=state["nextDcaPrice"])
-        return {"status": "executed", "action": "FOCUS_V2_PRIMARY_OPEN", "symbol": symbol, "ordersSent": 1, "cycleId": cycle_id}
+        _persist(ref, state, owned)
+        try:
+            hedge_prefix = _prefix(cycle_id, 0, "START_HEDGE_OPEN")
+            hq, hp, hcid, hoid = _execute_with_precision_retry(
+                client=client, symbol=symbol, mark=p, notional=start_hedge_notional, leverage=leverage,
+                side=hedge_side, action="OPEN", prefix=hedge_prefix, new_position_leverage=leverage,
+            )
+        except Exception:
+            rollback_prefix = _prefix(cycle_id, 0, "START_PRIMARY_ROLLBACK")
+            _execute_with_precision_retry(client=client, symbol=symbol, mark=p, notional=q*p, leverage=leverage,
+                side=primary_side, action="CLOSE", prefix=rollback_prefix)
+            remaining = [x for x in owned if not str(x.role).upper().startswith("FOCUS_V2")]
+            _persist(ref, {}, remaining)
+            _audit(ref, "FOCUS_V2_START_HEDGE_ROLLBACK", cycleId=cycle_id, symbol=symbol, reason="starthedge kon niet bevestigd worden")
+            raise
+        owned = _upsert_owned(owned, settings=settings, cycle_id=cycle_id, symbol=symbol, role=hedge_role,
+            side=hedge_side, quantity=hq, price=hp, client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms)
+        state.update({"hedgeState": HEDGE_ACTIVE, "cycleStatus": "TRAILING_HEDGED", "lastHedgeEntryOrderId": hoid,
+            "lastAction": "START_HEDGE_ACTIVE", "lastReason": "nieuwe cycle gestart met primary + starthedge; eerste DCA trailt volledig mee"})
+        _persist(ref, state, owned, focusV2History=_history(state, mark=p, dca_ratio=dca_ratio, release_ratio=release_ratio,
+            primary_notional=q*p, hedge_notional=hq*hp, primary_pnl=0.0, hedge_pnl=0.0))
+        _audit(ref, "FOCUS_V2_TRAILING_CYCLE_STARTED_HEDGED", cycleId=cycle_id, symbol=symbol, primarySide=primary_side,
+            startNotional=q*p, startHedgeNotional=hq*hp, startHedgePercent=configured_start_hedge_ratio, nextDca=state["nextDcaPrice"])
+        return {"status": "executed", "action": "FOCUS_V2_START_HEDGED", "symbol": symbol, "ordersSent": 2, "cycleId": cycle_id}
 
     # Re-read current state values for active cycle.
     primary_pnl = _long_or_short_pnl(primary_row, mark, primary_side)
     hedge_pnl = _long_or_short_pnl(hedge_row, mark, hedge_side)
 
-    # In LONG_ONLY_TRAILING the high/low and next DCA move on every fresh extreme.
-    if hedge_qty <= 1e-12:
+    # Primary-only OR initial start-hedge phase: DCA #1 moves on every fresh extreme.
+    initial_hedged_trailing = hedge_qty > 1e-12 and int(_finite(state.get("dcaCount"))) == 0 and _finite(state.get("lastDcaFillPrice")) <= 0
+    if hedge_qty <= 1e-12 or initial_hedged_trailing:
         if primary_side == "LONG":
             anchor = max(_finite(state.get("trailingHigh"), mark), mark)
             state["trailingHigh"] = anchor
@@ -486,10 +576,11 @@ def run_focus_v2_live_step(
         state["nextDcaPrice"] = next_dca_from_anchor(anchor, primary_side, dca_ratio)
         state["dcaAnchorPrice"] = anchor
         state["dcaMode"] = DCA_TRAILING
-        state["hedgeState"] = HEDGE_OFF
+        state["hedgeState"] = HEDGE_ACTIVE if initial_hedged_trailing else HEDGE_OFF
+        state["cycleStatus"] = "TRAILING_HEDGED" if initial_hedged_trailing else "PRIMARY_ONLY"
         state["frozenDcaReference"] = 0.0
         state["hedgeReleasePrice"] = 0.0
-        state["hedgeTargetQty"] = 0.0
+        state["hedgeTargetQty"] = primary_qty * configured_start_hedge_ratio if initial_hedged_trailing else 0.0
     else:
         # v5: while hedged, BOTH directions stay fixed from the last confirmed DCA fill:
         # next DCA one step lower/higher against primary, hedge release one recovery step in favor.
@@ -511,15 +602,18 @@ def run_focus_v2_live_step(
             return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_DCA_HEDGE", "ordersSent": 0}
         current_count = int(_finite(state.get("dcaCount")))
         used = primary_notional
-        remaining_budget = max(0.0, settings.focus_max_budget_usd - used)
-        dca_notional = _dca_notional(settings, current_count, remaining_budget)
+        leverage = _resolved_leverage(client, settings, symbol, primary_row)
+        budget_notional = _amount_to_notional(settings, settings.focus_max_budget_usd, leverage)
+        remaining_budget = max(0.0, budget_notional - used)
+        raw_dca_amount = _dca_notional(settings, current_count, settings.focus_max_budget_usd if getattr(settings, "focus_v2_amounts_are_margin", False) else remaining_budget)
+        dca_notional = _amount_to_notional(settings, raw_dca_amount, leverage) if getattr(settings, "focus_v2_amounts_are_margin", False) else raw_dca_amount
+        dca_notional = min(dca_notional, remaining_budget)
         if dca_notional <= 0:
             return {"status": "waiting", "action": "FOCUS_V2_DCA_BUDGET_BLOCK", "ordersSent": 0}
         equity = _finite(account.get("totalMarginBalance"), _finite(account.get("totalWalletBalance")))
         maint = _finite(account.get("totalMaintMargin")) / equity if equity > 0 else 1.0
         liq = _finite((primary_row or {}).get("liquidationPrice"))
         liq_distance = abs(mark - liq) / mark if liq > 0 else 1.0
-        leverage = _resolved_leverage(client, settings, symbol, primary_row)
         expected_primary_after = primary_notional + dca_notional
         hedge_target = expected_primary_after * configured_hedge_ratio
         hedge_gap = max(0.0, hedge_target - hedge_notional)
@@ -592,9 +686,10 @@ def run_focus_v2_live_step(
             "hedgeCycleId": f"{state['cycleId']}-dca-{cycle_no}",
             "lastDcaOrderId": oid,
             "lastHedgeEntryOrderId": hoid,
+            "cycleStatus": "DCA_HEDGE_ACTIVE",
             "lastAction": "DCA_HEDGE_ACTIVE",
             "lastReason": "DCA geraakt: primary DCA + hedge bevestigd; volgende DCA lager en release vanaf laatste fill staan vast",
-            "stateMachineVersion": 5,
+            "stateMachineVersion": 6,
         })
         _persist(ref, state, owned, focusV2History=_history(
             state, mark=p, dca_ratio=dca_ratio, release_ratio=release_ratio,
@@ -609,7 +704,7 @@ def run_focus_v2_live_step(
         last_dca = _finite(state.get("lastDcaFillPrice"))
         release_price = _finite(state.get("hedgeReleasePrice")) or release_price_from_last_dca(last_dca, primary_side, release_ratio)
         recovery = recovery_from_last_dca(mark, last_dca, primary_side)
-        if hedge_release_crossed(mark, release_price, primary_side):
+        if last_dca > 0 and hedge_release_crossed(mark, release_price, primary_side):
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}
             state["hedgeState"] = HEDGE_RELEASE_EXECUTING
@@ -647,9 +742,10 @@ def run_focus_v2_live_step(
                 "dcaAnchorPrice": anchor,
                 "nextDcaPrice": next_dca_from_anchor(anchor, primary_side, dca_ratio),
                 "lastHedgeReleaseOrderId": coid,
+                "cycleStatus": "PRIMARY_ONLY",
                 "lastAction": "HEDGE_RELEASED",
                 "lastReason": "herstel vanaf laatste DCA-fill bereikt; hedge volledig weg; trailing direct hervat",
-                "stateMachineVersion": 5,
+                "stateMachineVersion": 6,
             })
             _persist(ref, state, owned, focusV2History=_history(
                 state, mark=anchor, dca_ratio=dca_ratio, release_ratio=release_ratio,
@@ -659,40 +755,40 @@ def run_focus_v2_live_step(
             _audit(ref, "FOCUS_V2_TRAILING_HEDGE_RELEASE", cycleId=state["cycleId"], symbol=symbol, lastDcaFill=last_dca, releasePrice=release_price, recovery=recovery, threshold=release_ratio, closeQty=cq, closePrice=cp)
             return {"status": "executed", "action": "FOCUS_V2_HEDGE_RELEASED", "symbol": symbol, "ordersSent": 1, "recoverySinceLastDca": recovery, "releasePrice": release_price, "shortOrLongHedgeRemaining": 0.0}
 
-    # Partial profit is only legal in primary-only state and never changes trailing/frozen DCA state.
-    if hedge_qty <= 1e-12 and trigger_usdt > 0 and take_usdt > 0 and primary_pnl >= trigger_usdt:
-        entry = _finite((primary_row or {}).get("entryPrice"), _finite(state.get("weightedEntry")))
-        per_unit_profit = (mark - entry) if primary_side == "LONG" else (entry - mark)
-        if per_unit_profit > 0:
-            raw_close_qty = take_usdt / per_unit_profit
-            close_qty = min(primary_qty * 0.95, raw_close_qty)
-            if close_qty > 0:
-                leverage = int(_finite((primary_row or {}).get("leverage"), settings.leverage))
-                harvest_no = int(round(_finite(state.get("totalHarvestedProfit")) * 100))
-                profit_prefix = _prefix(str(state["cycleId"]), harvest_no, "PARTIAL_PROFIT")
-                cq, cp, ccid, coid = _execute_with_precision_retry(
-                    client=client, symbol=symbol, mark=mark, notional=close_qty*mark,
-                    leverage=leverage, side=primary_side, action="CLOSE", prefix=profit_prefix,
-                )
-                if cq >= primary_qty - 1e-12:
-                    raise RuntimeError("Focus 2.0 partial profit mag de volledige primaire positie niet sluiten")
-                owned = _reduce_owned(owned, primary_role, cq, timestamp_ms)
-                realized = max(0.0, per_unit_profit * cq)
-                # Preserve trailingHigh/Low, nextDcaPrice, dcaMode, frozen ref and dcaCount exactly.
-                state.update({
-                    "totalHarvestedProfit": _finite(state.get("totalHarvestedProfit")) + realized,
-                    "lastHarvestProfit": realized,
-                    "lastPartialProfitOrderId": coid,
-                    "lastAction": "PARTIAL_PROFIT",
-                    "lastReason": "configureerbare winst afgeroomd; DCA-state ongewijzigd",
-                })
-                _persist(ref, state, owned, focusV2History=_history(
-                    state, mark=mark, dca_ratio=dca_ratio, release_ratio=release_ratio,
-                    primary_notional=max(0.0, primary_notional-cq*mark), hedge_notional=0.0,
-                    primary_pnl=max(0.0, primary_pnl-realized), hedge_pnl=0.0,
-                ))
-                _audit(ref, "FOCUS_V2_TRAILING_PARTIAL_PROFIT", cycleId=state["cycleId"], symbol=symbol, requestedUsd=take_usdt, realizedGrossUsd=realized, closeQty=cq, closePrice=cp)
-                return {"status": "executed", "action": "FOCUS_V2_PARTIAL_PROFIT", "symbol": symbol, "ordersSent": 1, "realizedProfitUsd": realized, "cycleContinues": True}
+    # v6 full-close TP is only legal in primary-only state.
+    if hedge_qty <= 1e-12 and take_profit_reached(settings, primary_pnl, primary_notional):
+        if order_budget is not None and order_budget < 1:
+            return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_FULL_TP", "ordersSent": 0}
+        leverage = int(_finite((primary_row or {}).get("leverage"), settings.leverage))
+        old_cycle_id = str(state["cycleId"])
+        state.update({"cycleStatus": "TP_EXECUTING", "lastAction": "TP_EXECUTING", "lastReason": "full-close TP geraakt; primary volledig sluiten"})
+        _persist(ref, state, owned)
+        tp_prefix = _prefix(old_cycle_id, int(_finite(state.get("dcaCount"))), "FULL_TP")
+        cq, cp, ccid, coid = _execute_with_precision_retry(client=client, symbol=symbol, mark=mark,
+            notional=primary_qty*mark, leverage=leverage, side=primary_side, action="CLOSE", prefix=tp_prefix)
+        confirmed_positions = client.position_risk(symbol)
+        remaining_primary = _row(confirmed_positions, symbol, primary_side)
+        remaining_qty = abs(_finite((remaining_primary or {}).get("positionAmt")))
+        if remaining_qty > max(1e-12, primary_qty * 0.001):
+            state.update({"lastPrimaryTpOrderId": coid, "lastReason": "full TP verzonden; exchange bevestigt nog resterende primary"})
+            _persist(ref, state, owned)
+            return {"status": "reconciling", "action": "FOCUS_V2_TP_EXECUTING", "symbol": symbol, "ordersSent": 1, "primaryRemainingQty": remaining_qty}
+        owned = _reduce_owned(owned, primary_role, cq, timestamp_ms)
+        last_cycle = {"cycleId": old_cycle_id, "closedAt": timestamp_ms, "closePrice": cp, "tpMode": tp_mode, "tpValue": tp_value, "fullTp": True}
+        remaining_owned = [x for x in owned if not str(x.role).upper().startswith("FOCUS_V2")]
+        auto_restart = bool(getattr(settings, "focus_v2_auto_restart", True))
+        if auto_restart:
+            restarting = {"cycleId": "", "symbol": symbol, "primarySide": primary_side, "restartPending": True,
+                "autoRestart": True, "cycleStatus": "RESTARTING", "tpMode": tp_mode, "tpValue": tp_value, "stateMachineVersion": 6}
+            _persist(ref, restarting, remaining_owned, focusV2LastCycle=last_cycle)
+        else:
+            paused = {"cycleId": "", "symbol": symbol, "primarySide": primary_side, "pausedAfterTp": True,
+                "autoRestart": False, "cycleStatus": "TP_CLOSED", "tpMode": tp_mode, "tpValue": tp_value, "stateMachineVersion": 6}
+            _persist(ref, paused, remaining_owned, focusV2LastCycle=last_cycle)
+        _audit(ref, "FOCUS_V2_FULL_TP", cycleId=old_cycle_id, symbol=symbol, closeQty=cq, closePrice=cp, tpMode=tp_mode, tpValue=tp_value, primaryPnl=primary_pnl, autoRestart=auto_restart)
+        if auto_restart:
+            return {"status": "executed", "action": "FOCUS_V2_TP_CLOSED_RESTART_PENDING", "symbol": symbol, "ordersSent": 1, "autoRestart": True}
+        return {"status": "executed", "action": "FOCUS_V2_TP_CLOSED_PAUSED", "symbol": symbol, "ordersSent": 1, "autoRestart": False}
 
     # Persist high/low movement and presentation state even when no order fires.
     state["lastAction"] = "HOLD"

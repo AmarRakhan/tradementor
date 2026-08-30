@@ -30,8 +30,9 @@ def test_03_trigger_50_harvest_5_are_configurable():
 def test_04_harvest_cannot_exceed_trigger():
     with pytest.raises(ValueError): simple_cfg(10,15)
 
-def test_05_simple_harvest_requires_positive_pair():
-    with pytest.raises(ValueError): simple_cfg(0,0)
+def test_05_v6_simple_mode_no_longer_requires_legacy_harvest_pair():
+    cfg=simple_cfg(0,0)
+    assert cfg.focus_v2_take_profit_value>0
 
 def test_06_legacy_active_state_is_not_version_stamped():
     state=state_from({"cycleId":"legacy-live","symbol":"SOLUSDT"}); assert state.recovery_model_version==1 and "recoveryModelVersion" not in state_map(state)
@@ -122,19 +123,22 @@ def test_32_wizard_has_exactly_five_focus_steps():
     assert sum(block.count(f'title:"{n} ·') for n in range(1,6))==5
 
 def test_33_step4_core_fields_match_trailing_hedge_release_contract():
-    assert 'label="Hedge grootte (%)"' in MAKER
-    assert 'label="SHORT loslaten na herstel vanaf laatste DCA (%)"' in MAKER
+    assert 'label="Hedge target (% van totale LONG)"' in MAKER
+    assert 'label="SHORT volledig los na herstel (%)"' in MAKER
     assert 'label="Re-hedge terugval (%)"' not in MAKER
-    assert 'label="Herstel vanaf recente low (%)"' not in MAKER
 
-def test_34_step4_advanced_is_collapsed_by_default():
-    assert 'advanced:false' in MAKER and 'label="Geavanceerde protection-instellingen"' in MAKER
+def test_34_wizard_exposes_start_hedge_and_margin_semantics():
+    assert 'label="Starthedge (%)"' in MAKER
+    assert 'Start LONG inzet / margin (USDT)' in MAKER
+    assert 'focusV2AmountsAreMargin:v.focusV2Enabled' in MAKER
 
-def test_35_step5_is_profit_harvest_not_take_profit():
-    assert 'title:"5 · Winst afromen & controle"' in MAKER and 'label="Winsttrigger (USDT)"' in MAKER and 'label="Winst afromen (USDT)"' in MAKER
+def test_35_step5_is_full_take_profit_with_auto_restart():
+    assert 'title:"5 · Full Take Profit & auto-herstart"' in MAKER
+    assert 'label="Take Profit modus"' in MAKER
+    assert 'label="Na Take Profit direct opnieuw starten"' in MAKER
 
-def test_36_simple_summary_says_cycle_stays_active():
-    assert "cycle blijft actief" in MAKER and "LONG sluiten bij netto winst" not in MAKER
+def test_36_simple_summary_describes_full_close_cycle():
+    assert "full close" in MAKER and "auto-herstart" in MAKER
 
 def test_37_cockpit_exposes_harvest_progress_for_simple_mode():
     for token in ("Winst sinds harvest","Nog tot afromen","Laatste / totaal afgeroomd"): assert token in COCKPIT
@@ -162,5 +166,6 @@ def test_44_no_simple_full_tp_cycle_close_remains():
     simple_start=ENGINE.index("# Recovery model 3: one simple airbag cycle")
     assert "FOCUS_V2_TP_CYCLE_CLOSED" not in ENGINE[simple_start:]
 
-def test_45_configured_harvest_is_not_hardcoded_100_10():
-    assert 'focusV2ProfitTriggerUsdt:num(v.focusV2ProfitTrigger)' in MAKER and 'focusV2ProfitHarvestUsdt:num(v.focusV2ProfitHarvest)' in MAKER
+def test_45_configured_v6_tp_and_hedge_are_not_hardcoded():
+    assert 'focusV2TakeProfitValue:v.focusTpMode==="percent"?num(v.focusTpUsdt)/100:num(v.focusTpUsdt)' in MAKER
+    assert 'focusV2StartHedgeRatio:num(v.focusV2StartHedge)/100' in MAKER
