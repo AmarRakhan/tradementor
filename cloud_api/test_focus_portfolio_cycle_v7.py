@@ -23,7 +23,7 @@ def test_portfolio_target_is_equity_based_not_position_pnl():
     assert portfolio_target_reached(p, 110.0, 100.0)
 
 
-def test_mechanical_release_is_exactly_from_last_filled_buy():
+def test_release_price_is_exactly_from_last_filled_buy():
     last = 100.0
     release = release_price_from_last_dca(last, 'LONG', 0.0015)
     assert abs(release - 100.15) < 1e-9
@@ -43,18 +43,19 @@ def test_10000_randomized_trailing_paths_never_put_next_buy_above_high_or_farthe
             trigger = next_dca_from_anchor(high, 'LONG', distance)
             assert trigger < high
             assert abs((high - trigger) / high - distance) < 1e-12
-            # Before a crossing, live >= trigger and displayed distance is <= configured distance.
             if price >= trigger:
                 shown = max(0.0, min(distance, (price - trigger) / price))
                 assert 0.0 <= shown <= distance
 
 
-def test_simple_flow_source_has_no_green_or_reserve_release_gate_and_has_rehedge_and_priority_exit():
+def test_simple_flow_release_requires_price_net_green_and_equity_and_keeps_rehedge_priority_exit():
     src = Path('aster_strategy2_focus_trailing.py').read_text(encoding='utf-8')
-    section = src.split('# v7 mechanical SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]
-    assert 'net_green_ready' not in section
-    assert 'protectionReserveReady' not in section
+    section = src.split('# v7 protected SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]
+    assert 'price_release_ready and net_green_ready and equity_release_ready' in section
+    assert 'expected_net_close_pnl = hedge_unrealized_pnl - close_cost_buffer' in section
+    assert 'close_cost_buffer = exact_close_notional * 0.0007' in section
     assert 'reHedgeArmed' in section
+    assert 'FOCUS_HEDGE_RELEASED_NET_GREEN' in section
     priority = src.index('target_now = bool(simple_flow')
     dca = src.index('# Hard invariant: a confirmed LONG DCA')
     assert priority < dca
