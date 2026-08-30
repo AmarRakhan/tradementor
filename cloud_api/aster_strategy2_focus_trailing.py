@@ -1029,8 +1029,8 @@ def run_focus_v2_live_step(
         dca_trigger_pending = True
     dca_triggered = bool(dca_trigger_pending or crossed_now)
 
-    # v7 equity protection: below the persisted cycle baseline, never reduce protection.
-    # SHORT release is blocked separately by equity_release_ready, but normal trailing
+    # v7 equity protection may repair missing protection below the cycle baseline, but
+    # it must not block a valid hedge release; normal trailing
     # DCA remains active. Every confirmed LONG DCA must still be followed immediately
     # by a SHORT sync to the total LONG quantity. This block only repairs a missing
     # hedge; it must never freeze the DCA recovery mechanism.
@@ -1376,12 +1376,11 @@ def run_focus_v2_live_step(
             client, symbol, hedge_side, hedge_row, mark
         )
         net_green_ready = expected_net_close_pnl > 0.0
-        equity_release_ready = cycle_start_equity <= 0 or current_equity + 1e-9 >= cycle_start_equity
         state["shortReleasePriceReady"] = bool(price_release_ready)
         state["shortReleaseNetGreenReady"] = bool(net_green_ready)
         state["expectedNetShortClosePnl"] = expected_net_close_pnl
         state["shortNetGreenReleasePrice"] = net_green_hedge_release_price(hedge_row, hedge_side)
-        if price_release_ready and net_green_ready and equity_release_ready:
+        if price_release_ready and net_green_ready:
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}
             state.update({"hedgeState": HEDGE_RELEASE_EXECUTING, "cycleStatus": "HEDGE_RELEASE_EXECUTING"})
