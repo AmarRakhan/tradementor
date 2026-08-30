@@ -103,8 +103,11 @@ jobs:
             --tag "$TAG" \
             --no-traffic \
             --quiet
-          CANDIDATE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format="value(status.traffic[?tag='$TAG'].url)")"
-          test -n "$CANDIDATE_URL"
+          CANDIDATE_REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          test -n "$CANDIDATE_REVISION"
+          BASE_HOST="${SERVICE_URL#https://}"
+          CANDIDATE_URL="https://${TAG}---${BASE_HOST}"
+          echo "CANDIDATE_REVISION=$CANDIDATE_REVISION" >> "$GITHUB_ENV"
           echo "CANDIDATE_URL=$CANDIDATE_URL" >> "$GITHUB_ENV"
 
       - name: Health-check candidate
@@ -126,9 +129,8 @@ jobs:
       - name: Promote verified candidate to 100 percent
         shell: bash
         run: |
-          REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
-          test -n "$REVISION"
-          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$REVISION=100" --quiet
+          test -n "$CANDIDATE_REVISION"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100" --quiet
 
       - name: Verify IAM unchanged
         shell: bash
