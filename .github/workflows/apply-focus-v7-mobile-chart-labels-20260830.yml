@@ -1,0 +1,63 @@
+name: Apply Focus V7 Mobile Chart Labels 20260830
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .deploy/focus-v7-mobile-chart-labels-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-and-trigger-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Apply mobile chart-label patch
+        run: python tools/apply_focus_v7_mobile_chart_labels_20260830.py
+
+      - name: Verify only intended display files changed before tests
+        run: |
+          git status --short
+          python - <<'PY'
+          import subprocess
+          allowed={
+            'web/components/trading-chart.tsx',
+            'web/tests/focus-v7-mobile-chart-labels.test.mjs',
+            '.deploy/focus-portfolio-v7-web-20260830',
+          }
+          changed={line[3:] for line in subprocess.check_output(['git','status','--short'], text=True).splitlines() if line.strip()}
+          unexpected=changed-allowed
+          assert not unexpected, f'unexpected files changed: {sorted(unexpected)}'
+          PY
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run focused mobile label acceptance tests
+        working-directory: web
+        run: node --test tests/focus-v7-mobile-chart-labels.test.mjs
+
+      - name: Build web production bundle
+        working-directory: web
+        run: npm run build
+
+      - name: Commit verified display-only patch and deploy trigger
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/trading-chart.tsx web/tests/focus-v7-mobile-chart-labels.test.mjs .deploy/focus-portfolio-v7-web-20260830
+          git commit -m 'Fix Strategy 2 mobile chart labels'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
