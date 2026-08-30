@@ -8,6 +8,7 @@ on:
       - tools/apply_focus_portfolio_cycle_v7_20260830.py
       - tools/fix_focus_portfolio_v7_test_newlines.py
       - tools/update_focus_portfolio_v7_contract_tests.py
+      - tools/fix_focus_portfolio_v7_contract_migration.py
       - .github/workflows/apply-focus-portfolio-cycle-v7-20260830.yml
 
 permissions:
@@ -36,6 +37,7 @@ jobs:
         run: |
           python tools/apply_focus_portfolio_cycle_v7_20260830.py
           python tools/fix_focus_portfolio_v7_test_newlines.py
+          python tools/fix_focus_portfolio_v7_contract_migration.py
           python tools/update_focus_portfolio_v7_contract_tests.py
 
       - name: Install backend test dependencies
