@@ -1029,6 +1029,40 @@ def run_focus_v2_live_step(
         dca_trigger_pending = True
     dca_triggered = bool(dca_trigger_pending or crossed_now)
 
+    # Manual Aster hedge-close reconciliation: exchange truth wins. If the hedge
+    # was present in Focus ownership/state but Aster now confirms it flat, treat
+    # that as an intentional manual hedge release. Keep the LONG cycle alive and
+    # arm the exact same last-DCA re-hedge anchor used after a bot-managed release.
+    # Start/DCA sync states are intentionally excluded so a missing required hedge
+    # is never misclassified as a manual close.
+    manual_hedge_closed = bool(
+        simple_flow and state.get("cycleId") and primary_qty > 1e-12 and hedge_qty <= 1e-12 and
+        _finite(state.get("lastDcaFillPrice")) > 0 and not bool(state.get("reHedgeArmed")) and
+        str(state.get("hedgeState", "")) == HEDGE_ACTIVE and
+        str(state.get("cycleStatus", "")) not in {
+            "START_HEDGE_SYNC_PENDING", "DCA_HEDGE_SYNC_PENDING",
+            "EMERGENCY_EQUITY_LOCK_WAIT_BUDGET", "PORTFOLIO_EXIT_EXECUTING",
+        } and
+        _leg(owned, hedge_role) is not None
+    )
+    if manual_hedge_closed:
+        last_dca_manual = _finite(state.get("lastDcaFillPrice"))
+        stale_owned_hedge = _leg(owned, hedge_role)
+        if stale_owned_hedge is not None:
+            owned = _reduce_owned(owned, hedge_role, stale_owned_hedge.quantity, timestamp_ms)
+        state.update({
+            "dcaMode": DCA_TRAILING, "hedgeState": HEDGE_OFF, "hedgeTargetQty": 0.0,
+            "hedgeCycleId": "", "hedgeReleasePrice": 0.0,
+            "shortReleasePriceReady": False, "shortReleaseNetGreenReady": False,
+            "expectedNetShortClosePnl": 0.0, "shortNetGreenReleasePrice": 0.0,
+            "reHedgeArmed": True, "reHedgePrice": last_dca_manual,
+            "cycleStatus": "LONG_ONLY", "lastAction": "MANUAL_HEDGE_CLOSE_RECONCILED",
+            "lastReason": "Aster bevestigt handmatig gesloten SHORT; LONG-cycle blijft actief en re-hedge is gewapend op laatste DCA-fill",
+        })
+        _persist(ref, state, owned)
+        _audit(ref, "FOCUS_MANUAL_HEDGE_CLOSE_RECONCILED", cycleId=state.get("cycleId"), symbol=symbol,
+            lastDcaFill=last_dca_manual, reHedgePrice=last_dca_manual)
+
     # v7 equity protection may repair missing protection below the cycle baseline, but
     # it must not block a valid hedge release; normal trailing
     # DCA remains active. Every confirmed LONG DCA must still be followed immediately
@@ -1036,7 +1070,8 @@ def run_focus_v2_live_step(
     # hedge; it must never freeze the DCA recovery mechanism.
     equity_lock_active = bool(
         simple_flow and cycle_start_equity > 0 and current_equity > 0 and
-        current_equity + 1e-9 < cycle_start_equity
+        current_equity + 1e-9 < cycle_start_equity and
+        not bool(state.get("reHedgeArmed"))
     )
     if equity_lock_active and primary_qty > 1e-12:
         target_lock_qty = primary_qty * configured_hedge_ratio
