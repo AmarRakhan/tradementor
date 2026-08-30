@@ -138,7 +138,7 @@ def test_30_chart_and_cockpit_contract_exposes_current_focus_trigger_semantics()
 
 def test_31_v7_rehedge_is_armed_only_after_exchange_confirms_hedge_flat():
     src=(HERE/'aster_strategy2_focus_trailing.py').read_text()
-    start=src.index('# v7 mechanical SHORT release')
+    start=src.index('# v7 protected SHORT release')
     end=src.index('# Legacy non-simple Focus TP only', start)
     block=src[start:end]
     assert block.index('remaining_hedge_qty') < block.index('"reHedgeArmed": last_dca > 0')
