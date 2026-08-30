@@ -36,7 +36,7 @@ def test_short_must_be_meaningfully_green_after_round_trip_costs():
 
 def test_simple_flow_contract_has_no_fixed_release_gate():
     source = Path(focus.__file__).read_text(encoding='utf-8')
-    assert 'release_allowed = expected_net > 0.0 if simple_flow' in source
+    assert 'release_allowed = (price_release_ready and net_green_ready) if simple_flow' in source
     assert 'cycleStatus": "DCA_HEDGE_SYNC_PENDING"' in source
     assert 'target_qty_after = fresh_primary_qty * configured_hedge_ratio' in source
     assert 'fresh_hedge_qty' in source

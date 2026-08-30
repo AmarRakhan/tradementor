@@ -7,6 +7,8 @@ test("simple Focus chart has no obsolete fixed recovery trigger",()=>{
   assert.equal(chart.includes("cockpit.rehedgeArmed"),false);
   assert.match(chart,/hedgeReleasePrice/);
   assert.match(chart,/hedgeState/);
-  assert.match(chart,/DCA \/ SHORT FILL/);
+  assert.match(chart,/DCA \/ SHORT SYNC/);
   assert.match(chart,/SHORT RELEASE/);
+  assert.match(chart,/FULL SHORT RE-HEDGE/);
+  assert.equal(chart.includes("SHORT REBUILD"),false);
 });

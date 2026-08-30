@@ -36,7 +36,7 @@ test("chart can render a partial harvest marker distinct from close",()=>{
 
 test("v5 chart uses compact non-blocking future trigger presentation",()=>{
   assert.match(chart,/const addSegment=/);
-  assert.match(chart,/DCA \/ SHORT FILL/);
+  assert.match(chart,/DCA \/ SHORT SYNC/);
   assert.match(chart,/SHORT RELEASE/);
   assert.doesNotMatch(chart,/stateVersion>=5[^\n]*RE-HEDGE/);
 });

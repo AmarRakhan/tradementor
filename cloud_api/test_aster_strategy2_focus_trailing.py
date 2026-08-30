@@ -368,25 +368,36 @@ def test_v6_dca_stays_pending_when_post_hedge_exchange_truth_is_not_equal(monkey
     assert result["ordersSent"]==2
 
 
-def test_v6_short_rebuild_backup_is_separate_from_dca():
-    from aster_strategy2_focus_trailing import short_rebuild_price_from_release, short_rebuild_crossed
-    assert short_rebuild_price_from_release(100.0, "LONG", .003) == pytest.approx(99.7)
-    assert not short_rebuild_crossed(99.71, 99.7, "LONG")
-    assert short_rebuild_crossed(99.7, 99.7, "LONG")
 
-
-def test_v6_release_arms_rebuild_before_close_and_rebuild_precedes_dca():
+def test_v6_dca_is_the_only_short_rehedge_point():
     from pathlib import Path
     src=(Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
-    release=src.index('planned_rebuild_price = short_rebuild_price_from_release')
-    close=src.index('_execute_with_precision_retry(', release)
-    rebuild=src.index('if rebuild_armed and hedge_qty <= 1e-12')
-    dca=src.index('if dca_allowed and dca_crossed', rebuild)
-    assert release < close
-    assert rebuild < dca
-    assert 'cycleStatus":"SHORT_REBUILD_SYNC_PENDING"' in src
-    assert 'abs(confirmed_primary_qty-confirmed_hedge_qty) > tolerance' in src
-    assert '"shortRebuildArmed":False,"shortRebuildPrice":0.0' in src
+    assert "short_rebuild_price_from_release" not in src
+    assert "SHORT_REBUILD_SYNC_PENDING" not in src
+    assert "FOCUS_SHORT_REBUILT" not in src
+    dca=src.index('if dca_allowed and dca_crossed')
+    assert src.index('fresh_primary_qty = abs(', dca) < src.index('gap_qty = max(0.0, target_qty_after - fresh_hedge_qty)', dca)
+    assert 'cycleStatus": "DCA_HEDGE_SYNC_PENDING"' in src
+
+
+def test_v6_short_release_requires_last_dca_plus_point15_and_net_green():
+    from pathlib import Path
+    src=(Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
+    gate=src.index('price_release_ready = last_dca > 0 and hedge_release_crossed')
+    allowed=src.index('release_allowed = (price_release_ready and net_green_ready)', gate)
+    close=src.index('_execute_with_precision_retry(', allowed)
+    assert gate < allowed < close
+    assert 'state["hedgeReleasePrice"] = release_price' in src
+    assert 'state["shortReleaseNetGreenReady"] = bool(net_green_ready)' in src
+
+
+def test_v6_simple_dca_ratchets_in_both_hedged_and_long_only_states():
+    from pathlib import Path
+    src=(Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
+    block=src[src.index('# Simple Mode: EVERY DCA ratchets'):src.index('next_dca = _finite(state.get("nextDcaPrice"))')]
+    assert 'if simple_flow or hedge_qty <= 1e-12' in block
+    assert 'anchor = max(_finite(state.get("trailingHigh"), mark), mark)' in block
+    assert 'state["nextDcaPrice"] = next_dca_from_anchor(anchor, primary_side, dca_ratio)' in block
 
 
 def test_v6_net_green_release_line_matches_execution_cost_model():

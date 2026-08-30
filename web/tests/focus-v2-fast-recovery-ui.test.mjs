@@ -6,11 +6,11 @@ const chart=fs.readFileSync(new URL("../components/trading-chart.tsx",import.met
 const cockpit=fs.readFileSync(new URL("../components/aster-recent-trades.tsx",import.meta.url),"utf8");
 
 test("Focus 2.0 v5 chart uses directional DCA and hedge-release labels",()=>{
-  assert.match(chart,/DCA \/ SHORT FILL/);
+  assert.match(chart,/DCA \/ SHORT SYNC/);
   assert.match(chart,/SHORT RELEASE/);
   assert.match(chart,/className="breakeven">BE /);
   assert.doesNotMatch(chart,/HERSTELTRIGGER/);
-  assert.doesNotMatch(chart,/RE-HEDGE/);
+  assert.doesNotMatch(chart,/SHORT REBUILD/);
 });
 
 test("Focus 2.0 chart allows horizontal and vertical interaction",()=>{

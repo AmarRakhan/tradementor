@@ -140,7 +140,7 @@ def test_29_regular_strategy2_runtime_remains_separate():
 
 def test_30_chart_and_cockpit_contract_exposes_current_focus_trigger_semantics():
     chart=(ROOT/'web/components/trading-chart.tsx').read_text(); cockpit=(ROOT/'web/components/aster-recent-trades.tsx').read_text(); main=(HERE/'main.py').read_text()
-    for token in ('BREAK-EVEN','DCA / SHORT FILL','SHORT RELEASE','vertTouchDrag:true'): assert token in chart
+    for token in ('BREAK-EVEN','DCA / SHORT SYNC','SHORT RELEASE','vertTouchDrag:true'): assert token in chart
     for token in ('Cycle status','Starthedge','Hedge target','Take Profit','Auto-herstart'): assert token in cockpit
     for token in ('stateMachineVersion','nextShortReleaseQty','targetShortNotional','startHedgePercent','distanceToTp','autoRestart'): assert token in main
 
