@@ -1,2 +1,3 @@
 Emergency: stop repeated DCA/release churn below cycleStartEquity; restore/hold 1:1 hedge.
 Retry after focused test assertion fix.
+Retry after stale v2 chart contract migration.
