@@ -136,7 +136,10 @@ def test_30_chart_and_cockpit_contract_exposes_current_focus_trigger_semantics()
     for token in ('stateMachineVersion','nextShortReleaseQty','targetShortNotional','startHedgePercent','distanceToTp','autoRestart'): assert token in main
 
 
-def test_31_release_arms_exchange_backup_before_closing_short():
-    src=(HERE/'aster_strategy2_focus_v2.py').read_text()
-    block=src[src.index('# Safety ordering: exchange-side fallback'):src.index('next_release=recovery_stage_price',src.index('# Safety ordering: exchange-side fallback'))]
-    assert block.index('client.place_order') < block.index('_close_v2_leg')
+def test_31_v7_rehedge_is_armed_only_after_exchange_confirms_hedge_flat():
+    src=(HERE/'aster_strategy2_focus_trailing.py').read_text()
+    start=src.index('# v7 mechanical SHORT release')
+    end=src.index('# Legacy non-simple Focus TP only', start)
+    block=src[start:end]
+    assert block.index('remaining_hedge_qty') < block.index('"reHedgeArmed": last_dca > 0')
+    assert block.index('client.position_risk(symbol)') < block.index('"reHedgeArmed": last_dca > 0')
