@@ -180,6 +180,35 @@ def test_v6_new_cycle_opens_confirmed_long_and_equal_start_hedge(monkeypatch):
     assert saved["focusV2State"]["nextDcaPrice"]==pytest.approx(99.7)
 
 
+def test_v6_manual_flat_stale_cycle_is_reconciled_before_new_start(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    calls=[]
+    monkeypatch.setattr(engine,"_selected_symbol",lambda *_a,**_k:"BTCUSDT")
+    monkeypatch.setattr(engine,"_resolved_leverage",lambda *_a,**_k:100)
+    client=_RuntimeClient(mark=100)
+    def execute(**kw):
+        calls.append((kw["side"],kw["action"],kw["notional"]))
+        qty=kw["notional"]/kw["mark"]
+        if kw["side"]=="LONG":
+            client.positions=[_pos("LONG",qty,kw["mark"],kw["mark"])]
+        else:
+            long_row=next(row for row in client.positions if row["positionSide"]=="LONG")
+            client.positions=[long_row,_pos("SHORT",qty,kw["mark"],kw["mark"])]
+        return (qty,kw["mark"],f"cid-{len(calls)}",f"oid-{len(calls)}")
+    monkeypatch.setattr(engine,"_execute_with_precision_retry",execute)
+    raw={"focusV2State":{"cycleId":"old-cycle","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":2,
+         "lastDcaFillPrice":99,"dcaTriggerPending":True,"hedgeState":"ACTIVE","cycleStatus":"HEDGED","stateMachineVersion":6},
+         "ownedLegs":[]}
+    ref=_Ref()
+    result=engine.run_focus_v2_live_step(client=client,ref=ref,raw_state=raw,settings=_v6_settings(),uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},positions=[],timestamp_ms=9)
+    assert result["action"]=="FOCUS_V2_START_HEDGED"
+    assert result["cycleId"]!="old-cycle"
+    assert calls==[("LONG","OPEN",7000.0),("SHORT","OPEN",7000.0)]
+    # Exchange-flat stale state must never be revived: the observable result is a fresh cycle.
+    assert result["cycleId"] and result["cycleId"]!="old-cycle"
+
+
 def test_v6_first_dca_trails_up_even_with_start_hedge_active(monkeypatch):
     import aster_strategy2_focus_trailing as engine
     monkeypatch.setattr(engine,"_selected_symbol",lambda *_a,**_k:"BTCUSDT")

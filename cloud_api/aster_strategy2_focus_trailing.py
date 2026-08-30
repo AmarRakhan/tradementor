@@ -520,6 +520,31 @@ def run_focus_v2_live_step(
     primary_qty = abs(_finite((primary_row or {}).get("positionAmt")))
     hedge_qty = abs(_finite((hedge_row or {}).get("positionAmt")))
 
+    # If a user manually flattened the Focus pair on Aster while the bot was stopped,
+    # exchange truth wins over stale persisted cycle state. Only reset when both
+    # sides are confirmed flat and there are no owned Focus-v2 legs. This lets the
+    # same start tick create a genuinely new 1:1 cycle instead of reviving an old id.
+    focus_v2_owned = [x for x in owned if str(x.role).upper().startswith("FOCUS_V2")]
+    if simple_flow and state.get("cycleId") and primary_qty <= 1e-12 and hedge_qty <= 1e-12 and not focus_v2_owned:
+        stale_cycle_id = str(state.get("cycleId"))
+        state = _state({}, symbol=symbol, primary_side=primary_side)
+        state.update({
+            "startHedgePercent": configured_start_hedge_ratio,
+            "hedgeTargetPercent": configured_hedge_ratio,
+            "tpMode": tp_mode,
+            "tpValue": tp_value,
+            "autoRestart": bool(getattr(settings, "focus_v2_auto_restart", True)),
+            "configSnapshotVersion": int(getattr(settings, "version", 1)),
+            "dcaDistancePct": dca_ratio,
+            "hedgeReleaseRecoveryPct": release_ratio,
+            "hedgeRatio": configured_hedge_ratio,
+            "stateMachineVersion": 6,
+            "lastAction": "FOCUS_V2_STALE_FLAT_RECONCILED",
+            "lastReason": "Aster bevestigt LONG en SHORT flat; oude Focus-cycle state veilig gereset voor nieuwe start",
+        })
+        _persist(ref, state, owned)
+        _audit(ref, "FOCUS_V2_STALE_FLAT_RECONCILED", cycleId=stale_cycle_id, symbol=symbol)
+
     if bool(state.get("pausedAfterTp")) and not bool(getattr(settings, "focus_v2_auto_restart", True)):
         return {"status": "waiting", "action": "FOCUS_V2_TP_CLOSED_PAUSED", "symbol": symbol, "ordersSent": 0}
     if bool(state.get("pausedAfterTp")) and bool(getattr(settings, "focus_v2_auto_restart", True)):
