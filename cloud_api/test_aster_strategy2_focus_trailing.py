@@ -384,7 +384,7 @@ def test_v6_short_release_requires_last_dca_plus_point15_and_net_green():
     from pathlib import Path
     src=(Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
     gate=src.index('price_release_ready = last_dca > 0 and hedge_release_crossed')
-    allowed=src.index('release_allowed = (price_release_ready and net_green_ready)', gate)
+    allowed=src.index('release_allowed = (price_release_ready and net_green_ready and reserve_release_ready)', gate)
     close=src.index('_execute_with_precision_retry(', allowed)
     assert gate < allowed < close
     assert 'state["hedgeReleasePrice"] = release_price' in src
@@ -455,3 +455,79 @@ def test_v6_pending_sync_confirmation_restores_release_from_latest_dca(monkeypat
     state=[x["focusV2State"] for x in ref.values if "focusV2State" in x][-1]
     assert state["hedgeReleasePrice"]==pytest.approx(last_fill*1.0015)
     assert state["cycleStatus"]=="HEDGED"
+
+def test_v6_protection_reserve_blocks_atomic_dca_before_any_order(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine, "_selected_symbol", lambda *_a, **_k: "BTCUSDT")
+    monkeypatch.setattr(engine, "_resolved_leverage", lambda *_a, **_k: 100)
+    calls=[]
+    monkeypatch.setattr(engine, "_execute_with_precision_retry", lambda **kw: calls.append(kw) or (1,99.7,"cid","oid"))
+    positions=[_pos("LONG",70,100,99.69),_pos("SHORT",70,100,99.69)]
+    raw={"focusV2State":{"cycleId":"c","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":0,
+         "lastDcaFillPrice":0,"trailingHigh":100,"nextDcaPrice":99.7,"hedgeState":"ACTIVE",
+         "cycleStatus":"HEDGED","stateMachineVersion":6}}
+    ref=_Ref()
+    result=engine.run_focus_v2_live_step(client=_RuntimeClient(positions,99.69),ref=ref,raw_state=raw,
+        settings=_v6_settings(focusProtectionReserveBufferPct=.05),uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"50","totalMaintMargin":"0"},
+        positions=positions,timestamp_ms=400,order_budget=2)
+    assert result["action"]=="DCA_PROTECTION_MARGIN_BLOCKED"
+    assert calls==[]
+    state=[x["focusV2State"] for x in ref.values if "focusV2State" in x][-1]
+    assert state["dcaTriggerPending"] is True
+    assert state["protectionReserveReady"] is False
+    assert state["protectionReserveRequired"]==pytest.approx(52.5)
+    assert state["protectionReserveShortfall"]==pytest.approx(2.5)
+
+
+def test_v6_release_is_blocked_when_protection_reserve_is_not_ready(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine, "_selected_symbol", lambda *_a, **_k: "BTCUSDT")
+    monkeypatch.setattr(engine, "expected_net_hedge_close_pnl", lambda *_a, **_k: (5.0,100.15,5.5,.4,.1))
+    calls=[]
+    monkeypatch.setattr(engine, "_execute_with_precision_retry", lambda **kw: calls.append(kw) or (1,100.15,"cid","oid"))
+    positions=[_pos("LONG",70,100,100.15),_pos("SHORT",70,101,100.15)]
+    raw={"focusV2State":{"cycleId":"c","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":1,
+         "lastDcaFillPrice":100,"trailingHigh":100.15,"nextDcaPrice":99.7,"hedgeReleasePrice":100.15,
+         "hedgeState":"ACTIVE","cycleStatus":"HEDGED","stateMachineVersion":6}}
+    ref=_Ref()
+    result=engine.run_focus_v2_live_step(client=_RuntimeClient(positions,100.15),ref=ref,raw_state=raw,
+        settings=_v6_settings(focusProtectionReserveBufferPct=.05),uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"50","totalMaintMargin":"0"},
+        positions=positions,timestamp_ms=401,order_budget=2)
+    assert calls==[]
+    state=[x["focusV2State"] for x in ref.values if "focusV2State" in x][-1]
+    assert state["lastAction"]=="FOCUS_SHORT_RELEASE_BLOCKED_PROTECTION_RESERVE"
+    assert state["shortReleasePriceReady"] is True
+    assert state["shortReleaseNetGreenReady"] is True
+    assert state["protectionReserveReady"] is False
+
+
+def test_v6_latency_telemetry_is_written_for_successful_atomic_dca(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine, "_selected_symbol", lambda *_a, **_k: "BTCUSDT")
+    monkeypatch.setattr(engine, "_resolved_leverage", lambda *_a, **_k: 100)
+    mark=99.7; long_qty=70.; short_qty=70.
+    client=_RuntimeClient([_pos("LONG",long_qty,100,mark),_pos("SHORT",short_qty,100,mark)],mark)
+    def execute(**kw):
+        qty=kw["notional"]/kw["mark"]
+        if kw["side"]=="LONG":
+            client.positions=[_pos("LONG",long_qty+qty,99.9,mark),_pos("SHORT",short_qty,100,mark)]
+        else:
+            l=next(r for r in client.positions if r["positionSide"]=="LONG")
+            client.positions=[l,_pos("SHORT",short_qty+qty,99.9,mark)]
+        return (qty,kw["mark"],"cid","oid")
+    monkeypatch.setattr(engine,"_execute_with_precision_retry",execute)
+    raw={"focusV2State":{"cycleId":"c","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":0,
+         "lastDcaFillPrice":0,"trailingHigh":100,"nextDcaPrice":99.7,"hedgeState":"ACTIVE","cycleStatus":"HEDGED","stateMachineVersion":6}}
+    ref=_Ref()
+    result=engine.run_focus_v2_live_step(client=client,ref=ref,raw_state=raw,settings=_v6_settings(),uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},
+        positions=client.positions,timestamp_ms=402,order_budget=2)
+    assert result["action"]=="FOCUS_V2_DCA_HEDGE_ACTIVE"
+    state=[x["focusV2State"] for x in ref.values if "focusV2State" in x][-1]
+    assert state["dcaLongOrderSubmittedAt"]>0
+    assert state["dcaLongFillConfirmedAt"]>=state["dcaLongOrderSubmittedAt"]
+    assert state["shortSyncSubmittedAt"]>=state["dcaLongFillConfirmedAt"]
+    assert state["shortSyncConfirmedAt"]>=state["shortSyncSubmittedAt"]
+    assert state["triggerToFullHedgeMs"]>=0

@@ -246,6 +246,21 @@ def _state(raw_state: dict[str, Any], *, symbol: str, primary_side: str) -> dict
     state.setdefault("dcaTriggerPrice", 0.0)
     state.setdefault("dcaTriggerMarkPrice", 0.0)
     state.setdefault("dcaTriggerAtMs", 0)
+    state.setdefault("protectionReserveRequired", 0.0)
+    state.setdefault("protectionReserveAvailable", 0.0)
+    state.setdefault("protectionReserveSpendableMargin", 0.0)
+    state.setdefault("protectionReserveReady", False)
+    state.setdefault("protectionReserveShortfall", 0.0)
+    state.setdefault("protectionReserveBufferPct", 0.0)
+    state.setdefault("marketEventReceivedAt", 0)
+    state.setdefault("dcaTriggerDetectedAt", 0)
+    state.setdefault("dcaLongOrderSubmittedAt", 0)
+    state.setdefault("dcaLongFillConfirmedAt", 0)
+    state.setdefault("shortSyncSubmittedAt", 0)
+    state.setdefault("shortSyncConfirmedAt", 0)
+    state.setdefault("triggerToLongSubmitMs", 0)
+    state.setdefault("longFillToShortSubmitMs", 0)
+    state.setdefault("triggerToFullHedgeMs", 0)
     state.setdefault("frozenDcaReference", 0.0)  # legacy v4 field
     state.setdefault("lastDcaFillPrice", 0.0)
     state.setdefault("hedgeReleasePrice", 0.0)
@@ -829,13 +844,47 @@ def run_focus_v2_live_step(
 
     next_dca = _finite(state.get("nextDcaPrice"))
     dca_allowed = settings.focus_dca_enabled and (settings.focus_dca_unlimited or int(_finite(state.get("dcaCount"))) < settings.focus_max_dca)
+
+    # Protection reserve: continuously prove that the *next* DCA can fund both
+    # the LONG add and the resulting full SHORT refill before we ever release
+    # protection or submit a DCA order. This is a server-side budget reservation,
+    # not an exchange wallet lock.
+    reserve_leverage = max(1, int(_finite((primary_row or {}).get("leverage"), settings.leverage)))
+    reserve_count = int(_finite(state.get("dcaCount")))
+    reserve_budget_notional = _amount_to_notional(settings, settings.focus_max_budget_usd, reserve_leverage)
+    reserve_remaining_budget = max(0.0, reserve_budget_notional - primary_notional)
+    reserve_raw_dca_amount = _dca_notional(settings, reserve_count, settings.focus_max_budget_usd if getattr(settings, "focus_v2_amounts_are_margin", False) else reserve_remaining_budget)
+    reserve_dca_notional = _amount_to_notional(settings, reserve_raw_dca_amount, reserve_leverage) if getattr(settings, "focus_v2_amounts_are_margin", False) else reserve_raw_dca_amount
+    reserve_dca_notional = min(max(0.0, reserve_dca_notional), reserve_remaining_budget)
+    reserve_expected_primary_after = primary_notional + reserve_dca_notional
+    reserve_target_hedge_notional = reserve_expected_primary_after * configured_hedge_ratio
+    reserve_short_gap_notional = max(0.0, reserve_target_hedge_notional - hedge_notional)
+    reserve_base_margin = (reserve_dca_notional + reserve_short_gap_notional) / max(1, reserve_leverage)
+    reserve_buffer_pct = max(0.0, min(.25, _finite(getattr(settings, "focus_v2_protection_reserve_buffer_pct", .05), .05)))
+    reserve_required = reserve_base_margin * (1.0 + reserve_buffer_pct)
+    reserve_available = max(0.0, _finite(account.get("availableBalance")))
+    reserve_ready = bool(dca_allowed and reserve_dca_notional > 0 and reserve_available + 1e-9 >= reserve_required)
+    state.update({
+        "protectionReserveRequired": reserve_required,
+        "protectionReserveAvailable": reserve_available,
+        "protectionReserveSpendableMargin": max(0.0, reserve_available - reserve_required),
+        "protectionReserveReady": reserve_ready,
+        "protectionReserveShortfall": max(0.0, reserve_required - reserve_available),
+        "protectionReserveBufferPct": reserve_buffer_pct,
+        "protectionReserveDcaNotional": reserve_dca_notional,
+        "protectionReserveShortRefillNotional": reserve_short_gap_notional,
+    })
+
     crossed_now = dca_allowed and dca_crossed(mark, next_dca, primary_side)
     if simple_flow and crossed_now and not dca_trigger_pending:
+        detected_ms = int(time.time() * 1000)
         state.update({
             "dcaTriggerPending": True,
             "dcaTriggerPrice": next_dca,
             "dcaTriggerMarkPrice": mark,
             "dcaTriggerAtMs": timestamp_ms,
+            "marketEventReceivedAt": timestamp_ms,
+            "dcaTriggerDetectedAt": detected_ms,
             "lastAction": "DCA_TRIGGER_PENDING",
             "lastReason": "realtime DCA-crossing bewezen; trigger blijft durable tot LONG DCA + SHORT sync bevestigd zijn",
         })
@@ -869,27 +918,49 @@ def run_focus_v2_live_step(
         expected_primary_after = primary_notional + dca_notional
         hedge_target = expected_primary_after * configured_hedge_ratio
         hedge_gap = max(0.0, hedge_target - hedge_notional)
-        required_margin = (dca_notional + hedge_gap) / max(1, leverage)
+        required_margin_base = (dca_notional + hedge_gap) / max(1, leverage)
+        required_margin = required_margin_base * (1.0 + reserve_buffer_pct)
         available = _finite(account.get("availableBalance"))
         if required_margin > available or maint >= settings.emergency_margin_ratio or liq_distance < 0.05:
             block_reason = "INSUFFICIENT_MARGIN" if required_margin > available else ("EMERGENCY_MARGIN_RATIO" if maint >= settings.emergency_margin_ratio else "LIQUIDATION_DISTANCE")
+            if block_reason == "INSUFFICIENT_MARGIN" and simple_flow:
+                state.update({
+                    "cycleStatus": "DCA_PROTECTION_MARGIN_BLOCKED",
+                    "lastAction": "DCA_PROTECTION_MARGIN_BLOCKED",
+                    "lastReason": "DCA-crossing blijft pending: volledige LONG DCA + SHORT refill + buffer is nog niet financierbaar",
+                    "protectionReserveRequired": required_margin,
+                    "protectionReserveAvailable": available,
+                    "protectionReserveReady": False,
+                    "protectionReserveShortfall": max(0.0, required_margin - available),
+                })
+                _persist(ref, state, owned)
             reason = {
                 "reason": block_reason, "markPrice": mark, "nextDcaPrice": next_dca,
                 "dcaEnabled": bool(settings.focus_dca_enabled), "dcaCount": current_count,
                 "maxDca": settings.focus_max_dca, "dcaUnlimited": bool(settings.focus_dca_unlimited),
-                "orderBudget": order_budget, "requiredMargin": required_margin, "availableMargin": available,
+                "orderBudget": order_budget, "requiredMargin": required_margin, "requiredMarginBeforeBuffer": required_margin_base, "availableMargin": available,
+                "protectionReserveBufferPct": reserve_buffer_pct,
                 "maintenanceRatio": maint, "liquidationDistance": liq_distance,
                 "dcaNotional": dca_notional, "hedgeGapNotional": hedge_gap,
             }
             _audit(ref, "FOCUS_DCA_BLOCKED", cycleId=state.get("cycleId"), symbol=symbol, **reason)
-            return {"status": "waiting", "action": "FOCUS_DCA_BLOCKED", "ordersSent": 0, **reason}
+            action = "DCA_PROTECTION_MARGIN_BLOCKED" if simple_flow and block_reason == "INSUFFICIENT_MARGIN" else "FOCUS_DCA_BLOCKED"
+            return {"status": "waiting", "action": action, "ordersSent": 0, **reason}
 
         cycle_no = current_count + 1
+        submit_ms = int(time.time() * 1000)
+        trigger_ms = int(_finite(state.get("dcaTriggerDetectedAt"), _finite(state.get("dcaTriggerAtMs"), timestamp_ms)))
+        state.update({
+            "dcaLongOrderSubmittedAt": submit_ms,
+            "triggerToLongSubmitMs": max(0, submit_ms - trigger_ms),
+        })
         dca_prefix = _prefix(str(state["cycleId"]), cycle_no, "DCA_ENTRY")
         q, p, cid, oid = _execute_with_precision_retry(
             client=client, symbol=symbol, mark=mark, notional=dca_notional, leverage=leverage,
             side=primary_side, action="OPEN", prefix=dca_prefix, new_position_leverage=leverage,
         )
+        long_fill_confirmed_ms = int(time.time() * 1000)
+        state["dcaLongFillConfirmedAt"] = long_fill_confirmed_ms
         actual_primary_after = primary_notional + q * p
         fresh_positions = client.position_risk(symbol)
         fresh_primary = _row(fresh_positions, symbol, primary_side)
@@ -907,6 +978,11 @@ def run_focus_v2_live_step(
         hcid = hoid = ""
         try:
             if gap_qty > qty_tolerance:
+                short_submit_ms = int(time.time() * 1000)
+                state.update({
+                    "shortSyncSubmittedAt": short_submit_ms,
+                    "longFillToShortSubmitMs": max(0, short_submit_ms - long_fill_confirmed_ms),
+                })
                 hedge_prefix = _prefix(str(state["cycleId"]), cycle_no, "HEDGE_ENTRY")
                 hq, hp, hcid, hoid = _execute_with_precision_retry(
                     client=client, symbol=symbol, mark=p, notional=gap, leverage=leverage,
@@ -944,6 +1020,11 @@ def run_focus_v2_live_step(
                 client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms,
             )
         post_sync_positions = client.position_risk(symbol)
+        short_confirmed_ms = int(time.time() * 1000)
+        state.update({
+            "shortSyncConfirmedAt": short_confirmed_ms,
+            "triggerToFullHedgeMs": max(0, short_confirmed_ms - trigger_ms),
+        })
         post_primary = _row(post_sync_positions, symbol, primary_side)
         post_hedge = _row(post_sync_positions, symbol, hedge_side)
         post_primary_qty = abs(_finite((post_primary or {}).get("positionAmt")))
@@ -1017,7 +1098,26 @@ def run_focus_v2_live_step(
         state["shortReleasePriceReady"] = bool(price_release_ready)
         state["shortReleaseNetGreenReady"] = bool(net_green_ready)
         state["expectedNetShortClosePnl"] = expected_net
-        release_allowed = (price_release_ready and net_green_ready) if simple_flow else price_release_ready
+        reserve_release_ready = bool(state.get("protectionReserveReady", False))
+        if simple_flow and price_release_ready and net_green_ready and not reserve_release_ready:
+            _audit(ref, "FOCUS_SHORT_RELEASE_BLOCKED_PROTECTION_RESERVE",
+                cycleId=state.get("cycleId"), symbol=symbol,
+                requiredProtectionReserve=_finite(state.get("protectionReserveRequired")),
+                availableMargin=_finite(state.get("protectionReserveAvailable")),
+                reserveShortfall=_finite(state.get("protectionReserveShortfall")))
+            state.update({
+                "lastAction": "FOCUS_SHORT_RELEASE_BLOCKED_PROTECTION_RESERVE",
+                "lastReason": "SHORT release gereed op prijs/netto winst, maar protection reserve voor volgende DCA + full refill is onvoldoende",
+            })
+            _persist(ref, state, owned)
+            return {
+                "status": "waiting", "action": "FOCUS_SHORT_RELEASE_BLOCKED_PROTECTION_RESERVE",
+                "symbol": symbol, "ordersSent": 0,
+                "requiredProtectionReserve": _finite(state.get("protectionReserveRequired")),
+                "availableMargin": _finite(state.get("protectionReserveAvailable")),
+                "reserveShortfall": _finite(state.get("protectionReserveShortfall")),
+            }
+        release_allowed = (price_release_ready and net_green_ready and reserve_release_ready) if simple_flow else price_release_ready
         if release_allowed:
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}

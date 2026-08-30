@@ -122,6 +122,8 @@ class Strategy2Config:
     focus_v2_auto_restart: bool = True
     focus_v2_take_profit_mode: Literal["percent", "usdt"] = "usdt"
     focus_v2_take_profit_value: float = 15.0
+    # Safety reserve for the next atomic DCA + full SHORT refill.
+    focus_v2_protection_reserve_buffer_pct: float = 0.05
     focus_v2_profit_trigger_usdt: float = 0.0  # legacy compatibility only
     focus_v2_profit_harvest_usdt: float = 0.0  # legacy compatibility only
     # Explicit manual Multi-Focus slots. Empty keeps the legacy single-Focus engine byte-for-byte compatible.
@@ -236,6 +238,7 @@ class Strategy2Config:
             focus_v2_auto_restart=bool(raw.get("focusV2AutoRestart", raw.get("autoRestart", True))),
             focus_v2_take_profit_mode=("usdt" if str(raw.get("focusV2TakeProfitMode", raw.get("focusTakeProfitMode", "usdt"))).lower() in {"usdt","$","usd"} else "percent"),
             focus_v2_take_profit_value=f("focusV2TakeProfitValue", f("focusTakeProfitUsdt",15.0) if str(raw.get("focusV2TakeProfitMode", raw.get("focusTakeProfitMode","usdt"))).lower() in {"usdt","$","usd"} else f("focusMinimumProfitPct",0.015)),
+            focus_v2_protection_reserve_buffer_pct=f("focusProtectionReserveBufferPct",0.05),
             focus_v2_profit_trigger_usdt=f("focusV2ProfitTriggerUsdt",0.0),
             focus_v2_profit_harvest_usdt=f("focusV2ProfitHarvestUsdt",0.0),
             focus_slots=tuple(dict(x) for x in raw.get("focusSlots", ()) if isinstance(x, dict)) if isinstance(raw.get("focusSlots", ()), (list, tuple)) else (),
@@ -355,6 +358,7 @@ class Strategy2Config:
             if not 0 < self.focus_v2_start_hedge_ratio <= 1: raise ValueError("Focus 2.0 starthedge moet groter dan 0 en maximaal 100% zijn")
             if self.focus_v2_take_profit_mode not in {"percent","usdt"}: raise ValueError("Focus 2.0 Take Profit-modus moet percent of usdt zijn")
             if not math.isfinite(self.focus_v2_take_profit_value) or self.focus_v2_take_profit_value <= 0: raise ValueError("Focus 2.0 Take Profit-waarde moet positief zijn")
+            if not 0 <= self.focus_v2_protection_reserve_buffer_pct <= .25: raise ValueError("Focus 2.0 protection reserve buffer moet tussen 0 en 25% liggen")
             if self.focus_v2_take_profit_mode == "percent" and self.focus_v2_take_profit_value >= 1: raise ValueError("Focus 2.0 Take Profit-percentage moet als decimale ratio kleiner dan 100% zijn")
             if self.focus_v2_profit_trigger_usdt < 0 or self.focus_v2_profit_harvest_usdt < 0: raise ValueError("Focus 2.0 legacy profit harvest bedragen mogen niet negatief zijn")
             if (self.focus_v2_profit_trigger_usdt > 0) != (self.focus_v2_profit_harvest_usdt > 0): raise ValueError("Focus 2.0 profit trigger en harvest moeten samen aan of uit staan")
@@ -401,7 +405,7 @@ class Strategy2Config:
             "focusV2Enabled":self.focus_v2_enabled,"focusV2SimpleModeEnabled":self.focus_v2_simple_mode_enabled,"focusV2MinNetLongUsdt":self.focus_v2_min_net_long_usdt,"focusV2MinNetLongRatio":self.focus_v2_min_net_long_ratio,
             "focusV2HedgeRatio":self.focus_v2_hedge_ratio,"focusV2MaxHedgeRatio":self.focus_v2_max_hedge_ratio,"focusV2ReleaseRatio":self.focus_v2_release_ratio,"focusV2RecoveryReboundPct":self.focus_v2_recovery_rebound_pct,
             "focusV2HedgeReleaseRecoveryPct":self.focus_v2_hedge_release_recovery_pct,"focusV2HedgeReleaseDistancePct":self.focus_v2_hedge_release_distance_pct,"focusV2PortfolioRecoveryRatio":self.focus_v2_portfolio_recovery_ratio,"focusV2RehedgeSetbackPct":self.focus_v2_rehedge_setback_pct,"focusV2RequireBollingerMiddle":self.focus_v2_require_bollinger_middle,
-            "focusV2AmountsAreMargin":self.focus_v2_amounts_are_margin,"focusV2StartHedgeRatio":self.focus_v2_start_hedge_ratio,"focusV2AutoRestart":self.focus_v2_auto_restart,"focusV2TakeProfitMode":self.focus_v2_take_profit_mode,"focusV2TakeProfitValue":self.focus_v2_take_profit_value,
+            "focusV2AmountsAreMargin":self.focus_v2_amounts_are_margin,"focusV2StartHedgeRatio":self.focus_v2_start_hedge_ratio,"focusV2AutoRestart":self.focus_v2_auto_restart,"focusV2TakeProfitMode":self.focus_v2_take_profit_mode,"focusV2TakeProfitValue":self.focus_v2_take_profit_value,"focusProtectionReserveBufferPct":self.focus_v2_protection_reserve_buffer_pct,
             "focusV2ProfitTriggerUsdt":self.focus_v2_profit_trigger_usdt,"focusV2ProfitHarvestUsdt":self.focus_v2_profit_harvest_usdt,
             "focusSlots":[dict(x) for x in self.focus_slots],"focusTakeProfitMode":self.focus_take_profit_mode,"focusTakeProfitUsdt":self.focus_take_profit_usdt,
             "focusTrailingActivationPct":self.focus_trailing_activation_pct,"focusTrailingDistancePct":self.focus_trailing_distance_pct,
