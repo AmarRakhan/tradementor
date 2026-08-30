@@ -115,12 +115,13 @@ jobs:
         run: |
           for i in {1..20}; do
             if curl -fsS --max-time 10 "$CANDIDATE_URL/health" | tee "$RUNNER_TEMP/health.json"; then
-              python - "$RUNNER_TEMP/health.json" <<'PY'
+              if python - "$RUNNER_TEMP/health.json" <<'PY'
           import json,sys
           x=json.load(open(sys.argv[1],encoding='utf-8'))
-          assert x.get('ready') is True
+          assert x.get('ready') is True or str(x.get('status','')).lower() == 'ready'
+          assert x.get('multiUser') is True
           PY
-              exit 0
+              then exit 0; fi
             fi
             sleep 3
           done
