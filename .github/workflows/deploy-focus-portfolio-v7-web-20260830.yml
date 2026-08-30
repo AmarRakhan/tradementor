@@ -1,0 +1,120 @@
+name: Deploy Focus Portfolio V7 Web 20260830
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .deploy/focus-portfolio-v7-web-20260830
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-web
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify-and-deploy-web:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+
+      - name: Verify v7 wizard contract
+        run: |
+          grep -q 'Start LONG + SHORT 1:1' web/components/aster-strategy2-maker.tsx
+          grep -q 'Trailing terugvalkoop' web/components/aster-strategy2-maker.tsx
+          grep -q '100% hedge → release → re-hedge' web/components/aster-strategy2-maker.tsx
+          grep -q 'Alles sluiten bij portfoliogroei' web/components/aster-strategy2-maker.tsx
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Clean build web app
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture current service and IAM
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+
+      - name: Build and push immutable web image
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/amar-bot-v44-direct-install:$GITHUB_SHA"
+          docker build --tag "$IMAGE" web
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy zero-traffic web candidate preserving runtime config
+        shell: bash
+        run: |
+          REVISION_SUFFIX="v7-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          TAG="focusv7web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$REVISION_SUFFIX" --no-traffic --tag "$TAG"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
+          python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          b=json.load(open(sys.argv[1],encoding='utf-8')); a=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
+          bs=b['spec']['template']['spec']; ass=a['spec']['template']['spec']
+          assert bs.get('serviceAccountName')==ass.get('serviceAccountName')
+          assert bs.get('timeoutSeconds')==ass.get('timeoutSeconds')
+          assert bs.get('containerConcurrency')==ass.get('containerConcurrency')
+          be={x['name']:x.get('value') for x in bs['containers'][0].get('env',[])}
+          ae={x['name']:x.get('value') for x in ass['containers'][0].get('env',[])}
+          assert be==ae
+          candidate=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          print('CANDIDATE_URL='+candidate['url']); print('CANDIDATE_REVISION='+candidate['revisionName'])
+          PY
+
+      - name: Verify web candidate serves successfully
+        shell: bash
+        run: |
+          HTML="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/")"
+          test -n "$HTML"
+
+      - name: Promote verified web candidate to 100 percent
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+          URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          HTML="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$URL/")"
+          test -n "$HTML"
+
+      - name: Verify web IAM unchanged
+        shell: bash
+        run: |
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json,sys
+          assert json.load(open(sys.argv[1])) == json.load(open(sys.argv[2]))
+          PY
