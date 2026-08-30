@@ -73,7 +73,6 @@ jobs:
                   try:return max(0,min(248,int(round(float(v)*scale))))
                   except:return 0
               cyc=float(st.get('cycleStartEquity') or 0)
-              # Index legend is printed by workflow after execution.
               metrics=[
                 len(candidates), int(bool(d.get('enabled'))), int(bool(d.get('monitor'))), n(st.get('dcaCount')),
                 n(cyc), n((cyc-int(cyc))*100), n(cfg.get('leverage',0)),
@@ -92,7 +91,7 @@ jobs:
           raise SystemExit(min(248,max(0,int(value)))+1)
           PY
           )"
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 32 --parallelism 32 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 32 --parallelism 20 --max-retries 0 --task-timeout 180s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
