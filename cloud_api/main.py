@@ -1334,7 +1334,8 @@ def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:
 
 
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
-                              before_order:Any=None,management_only:bool=False,event_symbol:str="")->dict[str,Any]:
+                              before_order:Any=None,management_only:bool=False,event_symbol:str="",
+                              event_mark_price:float|None=None)->dict[str,Any]:
     focus_queue_reserver=before_order
     if _aster_close_all_active(uid):
         return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
@@ -1364,6 +1365,16 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
+    # Realtime Simple Mode must make DCA/release decisions from the exact websocket
+    # mark event that triggered this evaluation. REST position_risk markPrice may lag
+    # the stream enough to leave LIVE below DCA without execution. Preserve all
+    # quantities/entries from Aster exchange truth; override only markPrice for the
+    # matching event symbol during this single decision tick.
+    event_symbol_norm=str(event_symbol).upper().strip()
+    event_mark=safe_float(event_mark_price)
+    if event_symbol_norm and event_mark>0:
+        positions=[({**row,"markPrice":event_mark} if str(row.get("symbol","")).upper()==event_symbol_norm else row)
+            for row in positions]
     _run_focus_shadow_scheduler_step(uid,ref,raw,settings,now)
     owned=[]
     for item in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
@@ -5623,7 +5634,8 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
 
 
 def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False,
-    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN,management_only:bool=False,event_symbol:str="")->dict[str,Any]:
+    maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN,management_only:bool=False,event_symbol:str="",
+    event_mark_price:float|None=None)->dict[str,Any]:
     """Run one durable, account-local scan with a hard Aster request budget."""
     scan_limit=max(1,min(int(maximum_orders),MAX_ORDERS_PER_ACCOUNT_SCAN))
     # A queue scan may perform several signed Aster reads. Keep the HTTP scheduler
@@ -5668,6 +5680,7 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
             break
         try:
             result=_run_aster_strategy2_tick(uid,order_budget=scan_limit-used,management_only=management_only,event_symbol=event_symbol,
+                event_mark_price=event_mark_price,
                 before_order=lambda intent,details=None:_reserve_strategy2_queue_order(
                     ref,scan_id,intent,details,maximum_orders=scan_limit))
         except Strategy2OrderBudgetExhausted:
@@ -5773,7 +5786,7 @@ def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,
     if not token:return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}
     started=time.monotonic()
     try:
-        result=_run_aster_strategy2_queue_scan(uid,maximum_orders=1,management_only=True,event_symbol=event.symbol)
+        result=_run_aster_strategy2_queue_scan(uid,maximum_orders=1,management_only=True,event_symbol=event.symbol,event_mark_price=event.mark_price)
         return {**result,"realtime":True,"marketEventAtMs":event.event_time_ms,"marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
     finally:_release_strategy2_queue_lease(ref,str(token))
 
