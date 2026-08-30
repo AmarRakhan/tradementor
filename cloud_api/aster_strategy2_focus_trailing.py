@@ -525,7 +525,7 @@ def run_focus_v2_live_step(
     state["dcaDistancePct"] = dca_ratio
     state["hedgeReleaseRecoveryPct"] = release_ratio
     state["hedgeRatio"] = configured_hedge_ratio
-    state["stateMachineVersion"] = 7
+    state["stateMachineVersion"] = 8 if simple_flow else 7
     if simple_flow:
         # v7 uses only the explicit re-hedge trigger below. Legacy rebuild fields
         # are ignored but not allowed to drive strategy decisions.
@@ -979,7 +979,7 @@ def run_focus_v2_live_step(
         state["hedgeState"] = HEDGE_ACTIVE
 
     next_dca = _finite(state.get("nextDcaPrice"))
-    dca_allowed = settings.focus_dca_enabled and (settings.focus_dca_unlimited or int(_finite(state.get("dcaCount"))) < settings.focus_max_dca)
+    dca_allowed = (not simple_flow) and settings.focus_dca_enabled and (settings.focus_dca_unlimited or int(_finite(state.get("dcaCount"))) < settings.focus_max_dca)
 
     # Protection reserve: continuously prove that the *next* DCA can fund both
     # the LONG add and the resulting full SHORT refill before we ever release
@@ -1187,15 +1187,44 @@ def run_focus_v2_live_step(
         _persist(ref, state, owned)
         # Intentionally continue into normal DCA evaluation below.
 
-    # v7 post-release re-hedge: once SHORT has actually been confirmed flat, arm one
-    # server-side trigger at the last filled buy. It never opens a second SHORT while
-    # protection is still active. A higher trailing-buy crossing has priority.
+    # v8 core flow: no DCA in Simple Mode. The original primary position is the
+    # earning leg; the hedge only protects while price searches for a bottom/top.
+    # While hedged we trail the most adverse protected extreme. A rebound of the
+    # configured recovery ratio may release the hedge only when the exact close is
+    # net green and its released margin can finance a full 1:1 re-hedge.
+    if simple_flow:
+        state["dcaMode"] = "OFF_CORE_V8"
+        state["nextDcaPrice"] = 0.0
+        state["dcaTriggerPending"] = False
+        state["dcaTriggerPrice"] = 0.0
+        state["dcaTriggerMarkPrice"] = 0.0
+        if hedge_qty > 1e-12:
+            if primary_side == "LONG":
+                previous_extreme = _finite(state.get("protectedFloorPrice"))
+                protected_extreme = min(previous_extreme, mark) if previous_extreme > 0 else mark
+                state["protectedFloorPrice"] = protected_extreme
+                state["protectedCeilingPrice"] = 0.0
+                state["hedgeReleasePrice"] = protected_extreme * (1.0 + release_ratio)
+            else:
+                previous_extreme = _finite(state.get("protectedCeilingPrice"))
+                protected_extreme = max(previous_extreme, mark) if previous_extreme > 0 else mark
+                state["protectedCeilingPrice"] = protected_extreme
+                state["protectedFloorPrice"] = 0.0
+                state["hedgeReleasePrice"] = protected_extreme * (1.0 - release_ratio)
+            state["reHedgeAnchorPrice"] = protected_extreme
+            state["hedgeTargetQty"] = primary_qty
+
+    # v8 post-release re-hedge: once the hedge is confirmed flat, the trigger is
+    # the exact protected bottom/top that caused the release. No additional 0.3%
+    # give-back is allowed.
     rehedge_price = _finite(state.get("reHedgePrice"))
     rehedge_crossed = bool(
         simple_flow and hedge_qty <= 1e-12 and state.get("reHedgeArmed") and rehedge_price > 0 and
         ((mark <= rehedge_price) if primary_side == "LONG" else (mark >= rehedge_price))
     )
-    if rehedge_crossed and not crossed_now:
+    if rehedge_crossed:
+        rehedge_detected_ms = int(time.time() * 1000)
+        state["reHedgeTriggerDetectedAt"] = rehedge_detected_ms
         if order_budget is not None and order_budget < 1:
             return {"status": "budget-exhausted", "action": "REHEDGE_WAIT_BUDGET", "ordersSent": 0}
         leverage = _resolved_leverage(client, settings, symbol, primary_row)
@@ -1222,6 +1251,9 @@ def run_focus_v2_live_step(
                 "reHedgePrice": rehedge_price, "requiredMargin": rehedge_required_margin_live,
                 "availableMargin": rehedge_available_live,
             }
+        rehedge_submit_ms = int(time.time() * 1000)
+        state["reHedgeOrderSubmittedAt"] = rehedge_submit_ms
+        state["reHedgeTriggerToSubmitMs"] = max(0, rehedge_submit_ms - rehedge_detected_ms)
         hq, hp, hcid, hoid = _execute_with_precision_retry(
             client=client, symbol=symbol, mark=mark, notional=target_qty * mark, leverage=leverage,
             side=hedge_side, action="OPEN", prefix=_prefix(str(state.get("cycleId")), int(_finite(state.get("dcaCount"))), "REHEDGE"),
@@ -1242,13 +1274,17 @@ def run_focus_v2_live_step(
             })
             _persist(ref, state, owned)
             return {"status": "reconciling", "action": "REHEDGE_SYNC_PENDING", "ordersSent": 1}
-        last_dca = _finite(state.get("lastDcaFillPrice"))
+        protected_extreme = min(rehedge_price, mark) if primary_side == "LONG" else max(rehedge_price, mark)
         state.update({
             "hedgeState": HEDGE_ACTIVE, "hedgeTargetQty": confirmed_primary_qty,
-            "hedgeReleasePrice": release_price_from_last_dca(last_dca, primary_side, release_ratio) if last_dca > 0 else 0.0,
+            "protectedFloorPrice": protected_extreme if primary_side == "LONG" else 0.0,
+            "protectedCeilingPrice": protected_extreme if primary_side == "SHORT" else 0.0,
+            "reHedgeAnchorPrice": protected_extreme,
+            "hedgeReleasePrice": protected_extreme * (1.0 + release_ratio) if primary_side == "LONG" else protected_extreme * (1.0 - release_ratio),
             "reHedgeArmed": False, "reHedgePrice": 0.0, "cycleStatus": "HEDGED",
             "lastHedgeEntryOrderId": hoid, "lastAction": "REHEDGE_ACTIVE",
-            "lastReason": "koers keerde terug naar beschermingsniveau; SHORT opnieuw exact gelijk aan totale LONG",
+            "lastReason": "koers keerde terug naar beschermde bodem/top; hedge opnieuw exact 1:1 en bodem/top-tracking hervat",
+            "reHedgeConfirmedAt": int(time.time() * 1000),
         })
         _persist(ref, state, owned)
         _audit(ref, "FOCUS_REHEDGE_ACTIVE", cycleId=state.get("cycleId"), symbol=symbol, reHedgePrice=rehedge_price,
@@ -1455,9 +1491,20 @@ def run_focus_v2_live_step(
     # This makes a red hedge close server-side impossible in simple portfolio-cycle mode.
     if hedge_qty > 1e-12:
         last_dca = _finite(state.get("lastDcaFillPrice"))
-        release_price = _finite(state.get("hedgeReleasePrice")) or (release_price_from_last_dca(last_dca, primary_side, release_ratio) if last_dca > 0 else 0.0)
-        state["hedgeReleasePrice"] = release_price
-        price_release_ready = last_dca > 0 and hedge_release_crossed(mark, release_price, primary_side)
+        if simple_flow:
+            protected_extreme = _finite(state.get("protectedFloorPrice")) if primary_side == "LONG" else _finite(state.get("protectedCeilingPrice"))
+            if protected_extreme <= 0:
+                protected_extreme = mark
+                state["protectedFloorPrice" if primary_side == "LONG" else "protectedCeilingPrice"] = protected_extreme
+            release_price = protected_extreme * (1.0 + release_ratio) if primary_side == "LONG" else protected_extreme * (1.0 - release_ratio)
+            state["hedgeReleasePrice"] = release_price
+            state["reHedgeAnchorPrice"] = protected_extreme
+            price_release_ready = hedge_release_crossed(mark, release_price, primary_side)
+        else:
+            protected_extreme = 0.0
+            release_price = _finite(state.get("hedgeReleasePrice")) or (release_price_from_last_dca(last_dca, primary_side, release_ratio) if last_dca > 0 else 0.0)
+            state["hedgeReleasePrice"] = release_price
+            price_release_ready = last_dca > 0 and hedge_release_crossed(mark, release_price, primary_side)
         expected_net_close_pnl, executable_close_price, gross_close_pnl, estimated_close_fees, estimated_slippage = expected_net_hedge_close_pnl(
             client, symbol, hedge_side, hedge_row, mark
         )
@@ -1466,7 +1513,8 @@ def run_focus_v2_live_step(
         # that the margin freed by closing the current hedge plus current available
         # balance can fund the full hedge again at the persisted last-DCA anchor.
         release_leverage = max(1, int(_finite((hedge_row or {}).get("leverage"), settings.leverage)))
-        rehedge_target_notional = primary_qty * (last_dca if last_dca > 0 else mark)
+        rehedge_anchor = protected_extreme if simple_flow and protected_extreme > 0 else (last_dca if last_dca > 0 else mark)
+        rehedge_target_notional = primary_qty * rehedge_anchor
         rehedge_required_margin = rehedge_target_notional / release_leverage
         released_hedge_margin_estimate = hedge_notional / release_leverage
         rehedge_available_after_release = max(0.0, _finite(account.get("availableBalance"))) + released_hedge_margin_estimate
@@ -1482,9 +1530,14 @@ def run_focus_v2_live_step(
         state["expectedNetShortClosePnl"] = expected_net_close_pnl
         state["shortNetGreenReleasePrice"] = net_green_hedge_release_price(hedge_row, hedge_side)
         if price_release_ready and net_green_ready and rehedge_funding_ready:
+            release_detected_ms = int(time.time() * 1000)
+            state["hedgeReleaseTriggerDetectedAt"] = release_detected_ms
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}
-            state.update({"hedgeState": HEDGE_RELEASE_EXECUTING, "cycleStatus": "HEDGE_RELEASE_EXECUTING"})
+            release_submit_ms = int(time.time() * 1000)
+            state.update({"hedgeState": HEDGE_RELEASE_EXECUTING, "cycleStatus": "HEDGE_RELEASE_EXECUTING",
+                "hedgeReleaseOrderSubmittedAt": release_submit_ms,
+                "hedgeReleaseTriggerToSubmitMs": max(0, release_submit_ms - release_detected_ms)})
             _persist(ref, state, owned)
             leverage = int(_finite((hedge_row or {}).get("leverage"), settings.leverage))
             cq, cp, _ccid, coid = _execute_with_precision_retry(
@@ -1512,12 +1565,14 @@ def run_focus_v2_live_step(
                 "shortNetGreenReleasePrice": 0.0,
                 "trailingHigh": trailing_anchor if primary_side == "LONG" else _finite(state.get("trailingHigh")),
                 "trailingLow": trailing_anchor if primary_side == "SHORT" else _finite(state.get("trailingLow")),
-                "dcaAnchorPrice": trailing_anchor, "nextDcaPrice": next_dca_from_anchor(trailing_anchor, primary_side, dca_ratio),
-                "reHedgeArmed": last_dca > 0, "reHedgePrice": last_dca if last_dca > 0 else 0.0,
+                "dcaAnchorPrice": trailing_anchor, "nextDcaPrice": 0.0 if simple_flow else next_dca_from_anchor(trailing_anchor, primary_side, dca_ratio),
+                "reHedgeArmed": (protected_extreme > 0 if simple_flow else last_dca > 0),
+                "reHedgePrice": protected_extreme if simple_flow and protected_extreme > 0 else (last_dca if last_dca > 0 else 0.0),
                 "lastHedgeReleaseOrderId": coid, "cycleStatus": "LONG_ONLY",
                 "lastAction": "HEDGE_RELEASED_NET_GREEN",
-                "lastReason": "release-afstand geraakt en SHORT netto groen na kostenbuffer; volledige SHORT gesloten en re-hedge gewapend",
-                "stateMachineVersion": 7,
+                "lastReason": "rebound vanaf beschermde bodem/top geraakt en hedge netto groen; hedge gesloten en re-hedge exact op bodem/top gewapend" if simple_flow else "release-afstand geraakt en SHORT netto groen na kostenbuffer; volledige SHORT gesloten en re-hedge gewapend",
+                "hedgeReleaseConfirmedAt": int(time.time() * 1000),
+                "stateMachineVersion": 8 if simple_flow else 7,
             })
             _persist(ref, state, owned, focusV2History=_history(
                 state, mark=anchor, dca_ratio=dca_ratio, release_ratio=release_ratio,
@@ -1526,7 +1581,7 @@ def run_focus_v2_live_step(
             _audit(ref, "FOCUS_HEDGE_RELEASED_NET_GREEN", cycleId=state["cycleId"], symbol=symbol,
                 lastDcaFill=last_dca, releasePrice=release_price, closeQty=cq, closePrice=cp,
                 executableClosePrice=executable_close_price, grossClosePnl=gross_close_pnl, estimatedCloseFees=estimated_close_fees,
-                estimatedSlippage=estimated_slippage, expectedNetShortClosePnl=expected_net_close_pnl, reHedgePrice=state.get("reHedgePrice"))
+                estimatedSlippage=estimated_slippage, expectedNetShortClosePnl=expected_net_close_pnl, reHedgePrice=state.get("reHedgePrice"), protectedExtreme=protected_extreme)
             return {
                 "status": "executed", "action": "FOCUS_HEDGE_RELEASED_NET_GREEN", "symbol": symbol,
                 "ordersSent": 1, "reHedgePrice": state.get("reHedgePrice"), "shortOrLongHedgeRemaining": 0.0,

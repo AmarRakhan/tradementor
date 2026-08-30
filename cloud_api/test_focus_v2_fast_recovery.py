@@ -136,10 +136,12 @@ def test_30_chart_and_cockpit_contract_exposes_current_focus_trigger_semantics()
     for token in ('stateMachineVersion','nextShortReleaseQty','targetShortNotional','startHedgePercent','distanceToTp','autoRestart'): assert token in main
 
 
-def test_31_v7_rehedge_is_armed_only_after_exchange_confirms_hedge_flat():
+def test_31_v8_rehedge_is_armed_only_after_exchange_confirms_hedge_flat():
     src=(HERE/'aster_strategy2_focus_trailing.py').read_text()
     start=src.index('# v7 protected SHORT release')
     end=src.index('# Legacy non-simple Focus TP only', start)
     block=src[start:end]
-    assert block.index('remaining_hedge_qty') < block.index('"reHedgeArmed": last_dca > 0')
-    assert block.index('client.position_risk(symbol)') < block.index('"reHedgeArmed": last_dca > 0')
+    armed='"reHedgeArmed": (protected_extreme > 0 if simple_flow else last_dca > 0)'
+    assert block.index('remaining_hedge_qty') < block.index(armed)
+    assert block.index('client.position_risk(symbol)') < block.index(armed)
+    assert '"reHedgePrice": protected_extreme if simple_flow' in block

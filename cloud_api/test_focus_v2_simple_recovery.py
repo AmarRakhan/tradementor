@@ -126,7 +126,8 @@ def test_33_step4_core_fields_match_trailing_hedge_release_contract():
     assert 'title:"4 · 100% hedge → release → re-hedge"' in MAKER
     assert 'label="Hedge target (% van totale LONG)"' not in MAKER
     assert 'label="SHORT volledig los na herstel (%)"' in MAKER
-    assert 'Geen PnL- of break-even-gate' in MAKER
+    assert 'SHORT netto groen' in MAKER
+    assert 're-hedge exact op bodem' in MAKER
 
 def test_34_wizard_exposes_fixed_start_hedge_and_margin_semantics():
     assert 'title:"2 · Start LONG + SHORT 1:1"' in MAKER

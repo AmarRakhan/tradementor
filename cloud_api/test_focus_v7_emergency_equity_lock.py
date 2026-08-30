@@ -2,13 +2,13 @@ from pathlib import Path
 
 
 def _block(src: str) -> str:
-    return src[src.index("# v7 equity protection may repair missing protection below the cycle baseline, but"):src.index("# v7 post-release re-hedge")]
+    return src[src.index("# v7 equity protection may repair missing protection below the cycle baseline, but"):src.index("# v8 core flow: no DCA in Simple Mode.")]
 
 
-def test_equity_protection_precedes_rehedge_and_dca():
+def test_equity_protection_precedes_v8_bottom_tracker_and_legacy_dca_block():
     src = Path("aster_strategy2_focus_trailing.py").read_text(encoding="utf-8")
     lock = src.index("# v7 equity protection may repair missing protection below the cycle baseline, but")
-    rehedge = src.index("# v7 post-release re-hedge")
+    rehedge = src.index("# v8 core flow: no DCA in Simple Mode.")
     dca = src.index("# DCA is the ONLY re-hedge point")
     release = src.index("# v7 protected SHORT release")
     assert lock < rehedge < dca < release
@@ -24,12 +24,11 @@ def test_equity_protection_uses_real_account_equity_and_repairs_missing_hedge():
     assert "DCA-trigger blijft behouden" in block
 
 
-def test_equity_protection_does_not_freeze_normal_dca_and_release_stays_net_green_guarded():
+def test_equity_protection_remains_fail_safe_and_v8_release_stays_net_green_guarded():
     src = Path("aster_strategy2_focus_trailing.py").read_text(encoding="utf-8")
     block = _block(src)
-    assert "Intentionally continue into normal DCA evaluation below." in block
-    assert "equityDcaRearmedAfterLock" in block
-    assert "Do NOT backfill missed historical DCA orders" in block
+    assert "EMERGENCY_EQUITY_LOCK_REHEDGED" in block
+    assert "reHedgeArmed" in block
     assert "FOCUS_HEDGE_RELEASED_NET_GREEN" not in block
     release = src[src.index("# v7 protected SHORT release"):src.index("# Legacy non-simple Focus TP only.")]
     assert "equity_release_ready" not in release
