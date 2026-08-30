@@ -79,7 +79,7 @@ jobs:
         shell: bash
         run: |
           REVISION_SUFFIX="v7-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
-          TAG="focusv7web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TAG="v7w-${GITHUB_RUN_ATTEMPT}"
           gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$REVISION_SUFFIX" --no-traffic --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
           python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
