@@ -1,0 +1,64 @@
+name: Focus Rehedge Margin Guard 20260830
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - tools/add_focus_rehedge_margin_guard_20260830.py
+      - .github/workflows/focus-rehedge-margin-guard-20260830.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Apply re-hedge margin safety guard
+        run: python tools/add_focus_rehedge_margin_guard_20260830.py
+
+      - name: Install test dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run complete backend suite
+        working-directory: cloud_api
+        run: pytest -q
+
+      - name: Verify safety-only contract
+        run: |
+          grep -q 'if price_release_ready and net_green_ready and rehedge_funding_ready:' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'REHEDGE_WAIT_MARGIN' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'reHedgeArmed": True' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'reHedgePrice": rehedge_price' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q '0.0015' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q '0.003' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'FOCUS_PORTFOLIO_TARGET_CLOSED' cloud_api/aster_strategy2_focus_trailing.py
+
+      - name: Commit verified safety fix
+        run: |
+          git config user.name 'focus-flow-automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_strategy2_focus_trailing.py \
+                  cloud_api/test_aster_strategy2_focus_trailing.py \
+                  cloud_api/test_focus_portfolio_cycle_v7.py \
+                  cloud_api/test_focus_v7_net_green_release.py \
+                  .github/workflows/deploy-focus-portfolio-v7-production-20260830.yml \
+                  .deploy/focus-portfolio-v7-20260830
+          if git diff --cached --quiet; then
+            echo 'No diff to commit.'
+            exit 0
+          fi
+          git commit -m 'Guard Focus hedge release with rehedge margin'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
