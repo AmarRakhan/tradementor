@@ -76,7 +76,7 @@ def test_wizard_has_simplified_focus_v2_opt_in():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
     assert 'title:"1 · Pair & leverage"' in ui
     assert 'label="Focus 2.0 gebruiken"' in ui
-    assert "Focus 2.0 · beschermde cycle" in ui
+    assert "Strategy-2 · portfolio-cyclus" in ui
 
 
 def test_new_cycle_requires_protected_two_leg_open_and_slot_leverage():
@@ -125,14 +125,18 @@ def test_combined_cycle_evidence_allows_losing_hedge_only_when_combination_profi
     net,parts=combined_close_evidence(uid="u",symbol="SOLUSDT",mark=110,long_leg=long,short_leg=short,long_qty=1,short_qty=.9)
     assert parts["grossPnl"]>0 and net>0
 
-def test_simple_wizard_exposes_configurable_full_tp_and_start_hedge_controls():
+def test_simple_wizard_exposes_fixed_1to1_hedge_and_portfolio_target_controls():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
     block=ui[ui.index(" const focusSteps=["):ui.index(" const steps=",ui.index(" const focusSteps=["))]
-    assert 'label="Starthedge (%)"' in block
-    assert 'label="Take Profit modus"' in block
-    assert 'label={v.focusTpMode==="percent"?"Take Profit (%)":"Take Profit ($ / USDT)"}' in block
-    assert 'label="Na Take Profit direct opnieuw starten"' in block
-    assert "focusV2TakeProfitValue" in ui and "focusV2StartHedgeRatio" in ui
+    assert 'title:"2 · Start LONG + SHORT 1:1"' in block
+    assert 'label="Startinzet / margin per zijde (USDT)"' in block
+    assert 'label="Starthedge (%)"' not in block
+    assert 'label="Hedge target (% van totale LONG)"' not in block
+    assert 'title:"5 · Alles sluiten bij portfoliogroei"' in block
+    assert 'label="Portfolio-doel modus"' in block
+    assert 'label={v.focusTpMode==="percent"?"Alles sluiten bij groei (%)":"Alles sluiten bij groei ($ / USDT)"}' in block
+    assert 'label="Na volledige cyclus direct opnieuw starten"' in block
+    assert 'focusV2StartHedge:"100"' in block and 'focusV2MaxHedge:"100"' in block
 
 def test_focus_v2_dca_anchor_and_harvest_are_exposed_to_cockpit():
     main=(HERE/"main.py").read_text(); chart=(HERE.parent/"web/components/aster-recent-trades.tsx").read_text()

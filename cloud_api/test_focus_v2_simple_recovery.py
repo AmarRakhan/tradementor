@@ -123,22 +123,27 @@ def test_32_wizard_has_exactly_five_focus_steps():
     assert sum(block.count(f'title:"{n} ·') for n in range(1,6))==5
 
 def test_33_step4_core_fields_match_trailing_hedge_release_contract():
-    assert 'label="Hedge target (% van totale LONG)"' in MAKER
+    assert 'title:"4 · 100% hedge → release → re-hedge"' in MAKER
+    assert 'label="Hedge target (% van totale LONG)"' not in MAKER
     assert 'label="SHORT volledig los na herstel (%)"' in MAKER
-    assert 'label="Re-hedge terugval (%)"' not in MAKER
+    assert 'Geen PnL- of break-even-gate' in MAKER
 
-def test_34_wizard_exposes_start_hedge_and_margin_semantics():
-    assert 'label="Starthedge (%)"' in MAKER
-    assert 'Start LONG inzet / margin (USDT)' in MAKER
+def test_34_wizard_exposes_fixed_start_hedge_and_margin_semantics():
+    assert 'title:"2 · Start LONG + SHORT 1:1"' in MAKER
+    assert 'label="Starthedge (%)"' not in MAKER
+    assert 'Startinzet / margin per zijde (USDT)' in MAKER
+    assert 'focusV2StartHedge:"100"' in MAKER
     assert 'focusV2AmountsAreMargin:v.focusV2Enabled' in MAKER
 
-def test_35_step5_is_full_take_profit_with_auto_restart():
-    assert 'title:"5 · Full Take Profit & auto-herstart"' in MAKER
-    assert 'label="Take Profit modus"' in MAKER
-    assert 'label="Na Take Profit direct opnieuw starten"' in MAKER
+def test_35_step5_is_portfolio_growth_target_with_auto_restart():
+    assert 'title:"5 · Alles sluiten bij portfoliogroei"' in MAKER
+    assert 'label="Portfolio-doel modus"' in MAKER
+    assert 'Alles sluiten bij groei ($ / USDT)' in MAKER
+    assert 'label="Na volledige cyclus direct opnieuw starten"' in MAKER
 
-def test_36_simple_summary_describes_full_close_cycle():
-    assert "full close" in MAKER and "auto-herstart" in MAKER
+def test_36_simple_summary_describes_portfolio_close_cycle():
+    assert "Strategy-2 · portfolio-cyclus" in MAKER
+    assert "Portfolio-doel:" in MAKER and "auto-herstart" in MAKER
 
 def test_37_cockpit_exposes_harvest_progress_for_simple_mode():
     for token in ("Winst sinds harvest","Nog tot afromen","Laatste / totaal afgeroomd"): assert token in COCKPIT
