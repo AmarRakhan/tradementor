@@ -117,3 +117,19 @@ def test_registry_symbols_for_tenant_isolated():
     assert registry.symbols_for("a")== ("BTCUSDT","SOLUSDT")
     assert registry.symbols_for("b")== ("DOGEUSDT","SOLUSDT")
     assert registry.symbols_for("unknown")==()
+
+
+def test_forced_simple_mode_evaluates_every_received_event_even_when_throttle_would_skip():
+    calls=[]
+    worker=AsterRealtimeWorker(
+        load_subscriptions=lambda:{"SOLUSDT":["simple"]},
+        evaluate=lambda uid,event:calls.append((uid,event.mark_price)) or {"ordersSent":0},
+        execution_enabled=True,
+        throttle=EvaluationThrottle(minimum_interval=60,move_trigger_pct=99),
+        force_evaluate=lambda uid,symbol: uid=="simple",
+    )
+    worker.registry.replace({"SOLUSDT":["simple"]})
+    asyncio.run(worker._evaluate_event(RealtimeMarketEvent("SOLUSDT",100,1,2)))
+    asyncio.run(worker._evaluate_event(RealtimeMarketEvent("SOLUSDT",100.0001,3,4)))
+    assert calls==[("simple",100),("simple",100.0001)]
+    assert worker.metrics.evaluation_skips==0

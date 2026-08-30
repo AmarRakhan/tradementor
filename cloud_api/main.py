@@ -5742,12 +5742,18 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
 
 _aster_realtime_worker: AsterRealtimeWorker | None = None
 _aster_realtime_thread: threading.Thread | None = None
+_aster_realtime_simple_uids: set[str] = set()
 
 def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
-    mapping:dict[str,set[str]]={}
+    global _aster_realtime_simple_uids
+    mapping:dict[str,set[str]]={};simple_uids:set[str]=set()
     controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
     for item in controls[:100]:
         raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()
+        settings_raw=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+        cfg=Strategy2Config.from_mapping(settings_raw)
+        if cfg.focus_v2_enabled and cfg.focus_v2_simple_mode_enabled:
+            simple_uids.add(uid)
         for row in raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
         queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {};intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
@@ -5755,7 +5761,11 @@ def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
         for row in raw.get("pendingReopens",[]) if isinstance(raw.get("pendingReopens"),list) else []:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
         for symbol in symbols:mapping.setdefault(symbol,set()).add(uid)
+    _aster_realtime_simple_uids=simple_uids
     return mapping
+
+def _aster_realtime_force_evaluate(uid:str,symbol:str)->bool:
+    return uid in _aster_realtime_simple_uids
 
 def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,Any]:
     ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
@@ -5772,7 +5782,7 @@ def _persist_aster_realtime_health(payload:dict[str,Any])->None:
 def _start_aster_realtime_worker()->None:
     global _aster_realtime_worker
     if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return
-    worker=AsterRealtimeWorker(load_subscriptions=_aster_realtime_subscription_mapping,evaluate=_run_aster_realtime_evaluation,persist_health=_persist_aster_realtime_health,execution_enabled=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true")
+    worker=AsterRealtimeWorker(load_subscriptions=_aster_realtime_subscription_mapping,evaluate=_run_aster_realtime_evaluation,persist_health=_persist_aster_realtime_health,execution_enabled=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true",force_evaluate=_aster_realtime_force_evaluate)
     _aster_realtime_worker=worker;asyncio.run(worker.run())
 
 @app.on_event("startup")

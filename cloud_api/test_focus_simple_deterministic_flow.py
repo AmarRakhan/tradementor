@@ -42,3 +42,11 @@ def test_simple_flow_contract_has_no_fixed_release_gate():
     assert 'fresh_hedge_qty' in source
     assert 'FOCUS_DCA_BLOCKED' in source
     assert 'FOCUS_HEDGE_RELEASED_NET_GREEN' in source
+
+
+def test_start_and_dca_require_post_fill_exchange_truth():
+    source = Path(focus.__file__).read_text(encoding='utf-8')
+    assert 'START_HEDGE_SYNC_PENDING' in source
+    assert 'confirmed_positions = client.position_risk(symbol)' in source
+    assert 'post_sync_positions = client.position_risk(symbol)' in source
+    assert 'abs(post_primary_qty - post_hedge_qty) > post_tolerance' in source

@@ -486,25 +486,73 @@ def run_focus_v2_live_step(
     if bool(state.get("pausedAfterTp")) and bool(getattr(settings, "focus_v2_auto_restart", True)):
         state["pausedAfterTp"] = False
 
-    # Crash/restart recovery between confirmed primary open and confirmed start hedge.
-    if state.get("cycleId") and str(state.get("hedgeState", "")) == HEDGE_STARTING and primary_qty > 0 and hedge_qty <= 1e-12:
+    # Crash/restart recovery and hard start invariant: START is complete only when
+    # Aster confirms SHORT quantity equals the actual LONG quantity. Partial start
+    # hedges are repaired; an oversized hedge is held for manual/reconciliation
+    # handling rather than automatically closing a possibly-red SHORT.
+    start_sync_pending = str(state.get("cycleStatus", "")) == "START_HEDGE_SYNC_PENDING"
+    if state.get("cycleId") and primary_qty > 0 and (str(state.get("hedgeState", "")) == HEDGE_STARTING or start_sync_pending):
+        target_qty = primary_qty if simple_flow else primary_qty * configured_start_hedge_ratio
+        qty_tolerance = max(1e-12, target_qty * 0.001)
+        delta_qty = target_qty - hedge_qty
+        if abs(delta_qty) <= qty_tolerance:
+            state.update({
+                "hedgeState": HEDGE_ACTIVE, "cycleStatus": "FOCUS_HEDGED",
+                "hedgeTargetQty": target_qty, "lastAction": "START_HEDGE_SYNC_CONFIRMED",
+                "lastReason": "Aster bevestigt LONG en SHORT quantities gelijk binnen tolerance",
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_START_HEDGE_SYNC_CONFIRMED", cycleId=state["cycleId"], symbol=symbol, longQty=primary_qty, shortQty=hedge_qty)
+            return {"status": "executed", "action": "FOCUS_START_HEDGE_SYNC_CONFIRMED", "symbol": symbol, "ordersSent": 0}
+        if delta_qty < -qty_tolerance:
+            state.update({
+                "hedgeState": HEDGE_STARTING, "cycleStatus": "START_HEDGE_SYNC_PENDING",
+                "hedgeTargetQty": target_qty, "lastAction": "START_HEDGE_OVER_SYNC",
+                "lastReason": "Aster SHORT is groter dan LONG; geen automatische verlieslatende SHORT-close",
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_START_HEDGE_OVER_SYNC", cycleId=state["cycleId"], symbol=symbol, longQty=primary_qty, shortQty=hedge_qty)
+            return {"status": "reconciling", "action": "FOCUS_START_HEDGE_SYNC_PENDING", "symbol": symbol, "ordersSent": 0, "longQty": primary_qty, "shortQty": hedge_qty}
         if order_budget is not None and order_budget < 1:
-            return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_START_HEDGE_RECOVERY", "ordersSent": 0}
+            return {"status": "budget-exhausted", "action": "FOCUS_START_HEDGE_SYNC_PENDING", "ordersSent": 0, "requiredShortQty": delta_qty}
         leverage = _resolved_leverage(client, settings, symbol, primary_row)
-        target = primary_notional * configured_start_hedge_ratio
-        required_margin = target / max(1, leverage)
-        if required_margin > _finite(account.get("availableBalance")):
-            return {"status": "waiting", "action": "FOCUS_V2_START_HEDGE_MARGIN_BLOCK", "ordersSent": 0}
-        prefix = _prefix(str(state["cycleId"]), 0, "START_HEDGE_OPEN")
-        hq, hp, hcid, hoid = _execute_with_precision_retry(client=client, symbol=symbol, mark=mark, notional=target,
-            leverage=leverage, side=hedge_side, action="OPEN", prefix=prefix, new_position_leverage=leverage)
+        required_notional = delta_qty * mark
+        required_margin = required_notional / max(1, leverage)
+        available = _finite(account.get("availableBalance"))
+        if required_margin > available:
+            _audit(ref, "FOCUS_START_HEDGE_SYNC_BLOCKED", cycleId=state["cycleId"], symbol=symbol, reason="INSUFFICIENT_MARGIN", requiredMargin=required_margin, availableMargin=available, requiredShortQty=delta_qty)
+            return {"status": "waiting", "action": "FOCUS_START_HEDGE_SYNC_PENDING", "ordersSent": 0, "reason": "INSUFFICIENT_MARGIN", "requiredMargin": required_margin, "availableMargin": available}
+        prefix = _prefix(str(state["cycleId"]), 0, "START_HEDGE_SYNC")
+        hq, hp, hcid, hoid = _execute_with_precision_retry(
+            client=client, symbol=symbol, mark=mark, notional=required_notional, leverage=leverage,
+            side=hedge_side, action="OPEN", prefix=prefix, new_position_leverage=leverage,
+        )
         owned = _upsert_owned(owned, settings=settings, cycle_id=str(state["cycleId"]), symbol=symbol, role=hedge_role,
             side=hedge_side, quantity=hq, price=hp, client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms)
-        state.update({"hedgeState": HEDGE_ACTIVE, "cycleStatus": "TRAILING_HEDGED", "lastHedgeEntryOrderId": hoid,
-            "lastAction": "START_HEDGE_RECOVERED", "lastReason": "starthedge na restart exact hervat"})
+        confirmed_positions = client.position_risk(symbol)
+        confirmed_primary = _row(confirmed_positions, symbol, primary_side)
+        confirmed_hedge = _row(confirmed_positions, symbol, hedge_side)
+        confirmed_primary_qty = abs(_finite((confirmed_primary or {}).get("positionAmt")))
+        confirmed_hedge_qty = abs(_finite((confirmed_hedge or {}).get("positionAmt")))
+        confirmed_tolerance = max(1e-12, confirmed_primary_qty * 0.001)
+        if confirmed_primary_qty <= 0 or abs(confirmed_primary_qty - confirmed_hedge_qty) > confirmed_tolerance:
+            state.update({
+                "hedgeState": HEDGE_STARTING, "cycleStatus": "START_HEDGE_SYNC_PENDING",
+                "hedgeTargetQty": confirmed_primary_qty or target_qty, "lastHedgeEntryOrderId": hoid,
+                "lastAction": "START_HEDGE_SYNC_PENDING",
+                "lastReason": "starthedge fill bevestigd maar Aster quantities nog niet 1:1; volgende realtime tick herstellen",
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_START_HEDGE_SYNC_PENDING", cycleId=state["cycleId"], symbol=symbol, longQty=confirmed_primary_qty, shortQty=confirmed_hedge_qty)
+            return {"status": "reconciling", "action": "FOCUS_START_HEDGE_SYNC_PENDING", "symbol": symbol, "ordersSent": 1, "longQty": confirmed_primary_qty, "shortQty": confirmed_hedge_qty}
+        state.update({
+            "hedgeState": HEDGE_ACTIVE, "cycleStatus": "FOCUS_HEDGED", "hedgeTargetQty": confirmed_primary_qty,
+            "lastHedgeEntryOrderId": hoid, "lastAction": "START_HEDGE_SYNCED",
+            "lastReason": "Aster bevestigt LONG en SHORT quantities exact gesynchroniseerd",
+        })
         _persist(ref, state, owned)
-        _audit(ref, "FOCUS_V2_START_HEDGE_RECOVERED", cycleId=state["cycleId"], symbol=symbol, hedgeQty=hq, hedgePrice=hp)
-        return {"status": "executed", "action": "FOCUS_V2_START_HEDGE_RECOVERED", "symbol": symbol, "ordersSent": 1}
+        _audit(ref, "FOCUS_START_HEDGE_SYNCED", cycleId=state["cycleId"], symbol=symbol, longQty=confirmed_primary_qty, shortQty=confirmed_hedge_qty, orderId=hoid)
+        return {"status": "executed", "action": "FOCUS_START_HEDGE_SYNCED", "symbol": symbol, "ordersSent": 1}
 
     # Existing live Focus V2 cycles are reconciled rather than blindly closed.
     if state.get("cycleId"):
@@ -596,12 +644,29 @@ def run_focus_v2_live_step(
             raise
         owned = _upsert_owned(owned, settings=settings, cycle_id=cycle_id, symbol=symbol, role=hedge_role,
             side=hedge_side, quantity=hq, price=hp, client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms)
-        state.update({"hedgeState": HEDGE_ACTIVE, "cycleStatus": "TRAILING_HEDGED", "lastHedgeEntryOrderId": hoid,
-            "lastAction": "START_HEDGE_ACTIVE", "lastReason": "nieuwe cycle gestart met primary + starthedge; eerste DCA trailt volledig mee"})
+        confirmed_positions = client.position_risk(symbol)
+        confirmed_primary = _row(confirmed_positions, symbol, primary_side)
+        confirmed_hedge = _row(confirmed_positions, symbol, hedge_side)
+        confirmed_primary_qty = abs(_finite((confirmed_primary or {}).get("positionAmt")))
+        confirmed_hedge_qty = abs(_finite((confirmed_hedge or {}).get("positionAmt")))
+        start_tolerance = max(1e-12, confirmed_primary_qty * 0.001)
+        if confirmed_primary_qty <= 0 or abs(confirmed_primary_qty - confirmed_hedge_qty) > start_tolerance:
+            state.update({
+                "hedgeState": HEDGE_STARTING, "cycleStatus": "START_HEDGE_SYNC_PENDING",
+                "hedgeTargetQty": confirmed_primary_qty or q, "lastHedgeEntryOrderId": hoid,
+                "lastAction": "START_HEDGE_SYNC_PENDING",
+                "lastReason": "startorders gevuld maar Aster quantities nog niet 1:1; volgende realtime tick synchroniseren",
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_START_HEDGE_SYNC_PENDING", cycleId=cycle_id, symbol=symbol, longQty=confirmed_primary_qty, shortQty=confirmed_hedge_qty)
+            return {"status": "reconciling", "action": "FOCUS_START_HEDGE_SYNC_PENDING", "symbol": symbol, "ordersSent": 2, "cycleId": cycle_id}
+        state.update({"hedgeState": HEDGE_ACTIVE, "cycleStatus": "FOCUS_HEDGED", "hedgeTargetQty": confirmed_primary_qty,
+            "lastHedgeEntryOrderId": hoid, "lastAction": "START_HEDGE_ACTIVE",
+            "lastReason": "nieuwe cycle: Aster bevestigt LONG en SHORT quantities 1:1; eerste DCA trailt mee"})
         _persist(ref, state, owned, focusV2History=_history(state, mark=p, dca_ratio=dca_ratio, release_ratio=release_ratio,
             primary_notional=q*p, hedge_notional=hq*hp, primary_pnl=0.0, hedge_pnl=0.0))
         _audit(ref, "FOCUS_V2_TRAILING_CYCLE_STARTED_HEDGED", cycleId=cycle_id, symbol=symbol, primarySide=primary_side,
-            startNotional=q*p, startHedgeNotional=hq*hp, startHedgePercent=configured_start_hedge_ratio, nextDca=state["nextDcaPrice"])
+            startNotional=q*p, startHedgeNotional=hq*hp, startHedgePercent=configured_start_hedge_ratio, nextDca=state["nextDcaPrice"], longQty=confirmed_primary_qty, shortQty=confirmed_hedge_qty)
         return {"status": "executed", "action": "FOCUS_V2_START_HEDGED", "symbol": symbol, "ordersSent": 2, "cycleId": cycle_id}
 
     # Re-read current state values for active cycle.
@@ -813,7 +878,26 @@ def run_focus_v2_live_step(
                 role=hedge_role, side=hedge_side, quantity=hq, price=hp,
                 client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms,
             )
-        new_qty = primary_qty + q
+        post_sync_positions = client.position_risk(symbol)
+        post_primary = _row(post_sync_positions, symbol, primary_side)
+        post_hedge = _row(post_sync_positions, symbol, hedge_side)
+        post_primary_qty = abs(_finite((post_primary or {}).get("positionAmt")))
+        post_hedge_qty = abs(_finite((post_hedge or {}).get("positionAmt")))
+        post_tolerance = max(1e-12, post_primary_qty * 0.001)
+        if simple_flow and (post_primary_qty <= 0 or abs(post_primary_qty - post_hedge_qty) > post_tolerance):
+            state.update({
+                "weightedEntry": _finite((post_primary or {}).get("entryPrice"), p),
+                "dcaCount": cycle_no, "dcaMode": DCA_FROZEN, "hedgeState": HEDGE_ACTIVE,
+                "lastDcaFillPrice": p, "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio),
+                "hedgeReleasePrice": 0.0, "hedgeTargetQty": post_primary_qty or target_qty_after,
+                "cycleStatus": "DCA_HEDGE_SYNC_PENDING", "lastAction": "DCA_HEDGE_SYNC_PENDING",
+                "lastReason": "DCA + SHORT fill bevestigd maar Aster quantities nog niet 1:1; volgende realtime tick herstellen",
+                "lastDcaOrderId": oid, "lastHedgeEntryOrderId": hoid,
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_DCA_HEDGE_SYNC_PENDING", cycleId=state["cycleId"], symbol=symbol, dcaCount=cycle_no, longQty=post_primary_qty, shortQty=post_hedge_qty)
+            return {"status": "reconciling", "action": "DCA_HEDGE_SYNC_PENDING", "symbol": symbol, "ordersSent": 2 if hq > 0 else 1, "longQty": post_primary_qty, "shortQty": post_hedge_qty}
+        new_qty = post_primary_qty or (primary_qty + q)
         entry = _finite((primary_row or {}).get("entryPrice"), _finite(state.get("weightedEntry"), p))
         new_entry = ((primary_qty * entry) + (q * p)) / max(new_qty, 1e-12)
         next_fixed_dca = next_dca_from_anchor(p, primary_side, dca_ratio)

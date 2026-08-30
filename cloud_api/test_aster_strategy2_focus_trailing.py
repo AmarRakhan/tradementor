@@ -162,7 +162,13 @@ def test_v6_new_cycle_opens_confirmed_long_and_equal_start_hedge(monkeypatch):
     monkeypatch.setattr(engine,"_resolved_leverage",lambda *_a,**_k:100)
     def execute(**kw):
         calls.append((kw["side"],kw["action"],kw["notional"]))
-        return (kw["notional"]/kw["mark"],kw["mark"],f"cid-{len(calls)}",f"oid-{len(calls)}")
+        qty=kw["notional"]/kw["mark"]
+        if kw["side"]=="LONG" and kw["action"]=="OPEN":
+            client.positions=[_pos("LONG",qty,kw["mark"],kw["mark"])]
+        elif kw["side"]=="SHORT" and kw["action"]=="OPEN":
+            long_row=next(row for row in client.positions if row["positionSide"]=="LONG")
+            client.positions=[long_row,_pos("SHORT",qty,kw["mark"],kw["mark"])]
+        return (qty,kw["mark"],f"cid-{len(calls)}",f"oid-{len(calls)}")
     monkeypatch.setattr(engine,"_execute_with_precision_retry",execute)
     ref=_Ref(); client=_RuntimeClient(mark=100)
     result=engine.run_focus_v2_live_step(client=client,ref=ref,raw_state={},settings=_v6_settings(),uid="u",
@@ -170,7 +176,7 @@ def test_v6_new_cycle_opens_confirmed_long_and_equal_start_hedge(monkeypatch):
     assert result["action"]=="FOCUS_V2_START_HEDGED" and result["ordersSent"]==2
     assert calls==[("LONG","OPEN",7000.0),("SHORT","OPEN",7000.0)]
     saved=next(v for v in reversed(ref.values) if "focusV2History" in v)
-    assert saved["focusV2State"]["cycleStatus"]=="TRAILING_HEDGED"
+    assert saved["focusV2State"]["cycleStatus"]=="FOCUS_HEDGED"
     assert saved["focusV2State"]["nextDcaPrice"]==pytest.approx(99.7)
 
 
@@ -232,7 +238,13 @@ def test_v6_auto_restart_boundary_is_persisted_and_next_tick_reopens_same_margin
     opens=[]
     def open_order(**kw):
         opens.append((kw["side"],kw["action"],kw["notional"]))
-        return (kw["notional"]/kw["mark"],kw["mark"],f"cid-{len(opens)}",f"oid-{len(opens)}")
+        qty=kw["notional"]/kw["mark"]
+        if kw["side"]=="LONG" and kw["action"]=="OPEN":
+            client2.positions=[_pos("LONG",qty,kw["mark"],kw["mark"])]
+        elif kw["side"]=="SHORT" and kw["action"]=="OPEN":
+            long_row=next(row for row in client2.positions if row["positionSide"]=="LONG")
+            client2.positions=[long_row,_pos("SHORT",qty,kw["mark"],kw["mark"])]
+        return (qty,kw["mark"],f"cid-{len(opens)}",f"oid-{len(opens)}")
     monkeypatch.setattr(engine,"_execute_with_precision_retry",open_order)
     ref2=_Ref(); client2=_RuntimeClient([],115)
     again=engine.run_focus_v2_live_step(client=client2,ref=ref2,raw_state={"focusV2State":boundary},settings=settings,uid="u",
@@ -257,6 +269,9 @@ def test_v6_dca_adds_long_then_tops_short_only_to_total_target(monkeypatch):
         if kw["side"]=="LONG" and kw["action"]=="OPEN":
             new_qty=long_qty+qty
             client.positions=[_pos("LONG",new_qty,99.92,mark),_pos("SHORT",short_qty,100,mark)]
+        elif kw["side"]=="SHORT" and kw["action"]=="OPEN":
+            long_row=next(row for row in client.positions if row["positionSide"]=="LONG")
+            client.positions=[long_row,_pos("SHORT",short_qty+qty,100,mark)]
         return (qty,kw["mark"],f"cid-{len(calls)}",f"oid-{len(calls)}")
     monkeypatch.setattr(engine,"_execute_with_precision_retry",execute)
     raw={"focusV2State":{"cycleId":"c","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":0,
@@ -269,3 +284,49 @@ def test_v6_dca_adds_long_then_tops_short_only_to_total_target(monkeypatch):
     assert calls[1][0:2]==("SHORT","OPEN")
     assert calls[1][2]==pytest.approx(2500.0)
     assert result["hedgeTargetQty"]==pytest.approx((7000/100)+(2500/mark))
+
+
+
+def test_v6_start_stays_pending_when_exchange_truth_does_not_confirm_short(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine,"_selected_symbol",lambda *_a,**_k:"BTCUSDT")
+    monkeypatch.setattr(engine,"_resolved_leverage",lambda *_a,**_k:100)
+    calls=[]
+    client=_RuntimeClient(mark=100)
+    def execute(**kw):
+        calls.append((kw["side"],kw["action"]))
+        qty=kw["notional"]/kw["mark"]
+        if kw["side"]=="LONG":
+            client.positions=[_pos("LONG",qty,kw["mark"],kw["mark"])]
+        # Deliberately do NOT expose the mocked SHORT fill via position_risk.
+        return (qty,kw["mark"],f"cid-{len(calls)}",f"oid-{len(calls)}")
+    monkeypatch.setattr(engine,"_execute_with_precision_retry",execute)
+    result=engine.run_focus_v2_live_step(client=client,ref=_Ref(),raw_state={},settings=_v6_settings(),uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},positions=[],timestamp_ms=100)
+    assert result["action"]=="FOCUS_START_HEDGE_SYNC_PENDING"
+    assert result["ordersSent"]==2
+
+
+def test_v6_dca_stays_pending_when_post_hedge_exchange_truth_is_not_equal(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine,"_selected_symbol",lambda *_a,**_k:"BTCUSDT")
+    monkeypatch.setattr(engine,"_resolved_leverage",lambda *_a,**_k:100)
+    mark=99.7
+    long_qty=70.0
+    short_qty=70.0
+    client=_RuntimeClient([_pos("LONG",long_qty,100,mark,-21),_pos("SHORT",short_qty,100,mark,21)],mark)
+    calls=[]
+    def execute(**kw):
+        calls.append((kw["side"],kw["action"],kw["notional"]))
+        qty=kw["notional"]/kw["mark"]
+        if kw["side"]=="LONG" and kw["action"]=="OPEN":
+            client.positions=[_pos("LONG",long_qty+qty,99.92,mark),_pos("SHORT",short_qty,100,mark)]
+        # Deliberately keep Aster SHORT stale after mocked hedge fill.
+        return (qty,kw["mark"],f"cid-{len(calls)}",f"oid-{len(calls)}")
+    monkeypatch.setattr(engine,"_execute_with_precision_retry",execute)
+    raw={"focusV2State":{"cycleId":"c","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":0,
+         "lastDcaFillPrice":0,"trailingHigh":100,"nextDcaPrice":99.7,"hedgeState":"ACTIVE","stateMachineVersion":6}}
+    result=engine.run_focus_v2_live_step(client=client,ref=_Ref(),raw_state=raw,settings=_v6_settings(),uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},positions=client.positions,timestamp_ms=101)
+    assert result["action"]=="DCA_HEDGE_SYNC_PENDING"
+    assert result["ordersSent"]==2

@@ -190,6 +190,7 @@ class AsterRealtimeWorker:
         stale_after_seconds: float = STALE_AFTER_SECONDS,
         execution_enabled: bool = True,
         throttle: EvaluationThrottle | None = None,
+        force_evaluate: Callable[[str, str], bool] | None = None,
     ) -> None:
         self.load_subscriptions = load_subscriptions
         self.evaluate = evaluate
@@ -201,6 +202,7 @@ class AsterRealtimeWorker:
         self.registry = SymbolRegistry()
         self.metrics = RealtimeMetrics()
         self.throttle = throttle or EvaluationThrottle()
+        self.force_evaluate = force_evaluate
         self._stop = asyncio.Event()
         self._subscription_version = 0
         self._health_lock = threading.Lock()
@@ -268,7 +270,8 @@ class AsterRealtimeWorker:
             if not self.execution_enabled:
                 self.metrics.evaluation_skips += 1
                 continue
-            if not self.throttle.allow(uid, event.symbol, event.mark_price):
+            forced = bool(self.force_evaluate and self.force_evaluate(uid, event.symbol))
+            if not forced and not self.throttle.allow(uid, event.symbol, event.mark_price):
                 self.metrics.evaluation_skips += 1
                 continue
             self.metrics.evaluation_attempts += 1
