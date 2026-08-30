@@ -60,3 +60,5 @@ jobs:
           fi
           git commit -m 'Simplify Focus Strategy-2 deterministic hedge flow'
           git push origin HEAD:amar-crypto-bot-2026-cloud
+
+# trigger: 2026-08-30 deterministic-flow
