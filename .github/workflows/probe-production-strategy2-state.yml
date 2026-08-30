@@ -33,6 +33,11 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE_PROBE STARTED commit=$GITHUB_SHA"
+
+          PROD_REVISION="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RUNTIME revision=$PROD_REVISION image=$PROD_IMAGE"
+
           RUNTIME_SA="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
           IMAGE="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].image)')"
           JOB="tm-s2-state-${GITHUB_RUN_ID: -6}"
@@ -43,15 +48,28 @@ jobs:
           def states(name):
               return [(d.to_dict() or {}) for d in db.collection(name).stream()]
           s2=states('asterStrategy2'); s1=states('asterAutomation'); s3=states('asterStrategy3')
+          def active(x):
+              return bool(x.get('enabled') or x.get('monitor'))
+          def focus_enabled(x):
+              return bool(x.get('focusV2Enabled') or x.get('focus_v2_enabled'))
+          def simple_enabled(x):
+              return bool(x.get('focusV2SimpleModeEnabled') or x.get('focus_v2_simple_mode_enabled'))
+          def has_cycle(x):
+              st=x.get('focusV2State') or {}
+              return bool(isinstance(st,dict) and st.get('cycleId'))
           metrics=[
               len(s2),
-              sum(1 for x in s2 if x.get('enabled') or x.get('monitor')),
+              sum(1 for x in s2 if active(x)),
               sum(len(x.get('ownedLegs') or []) for x in s2),
               sum(1 for x in s2 if x.get('liveReady')),
               sum(1 for x in s2 if x.get('canaryValidated')),
-              sum(1 for x in s1 if x.get('enabled') or x.get('monitor')),
-              sum(1 for x in s3 if x.get('enabled') or x.get('monitor')),
+              sum(1 for x in s1 if active(x)),
+              sum(1 for x in s3 if active(x)),
               sum(1 for x in s2 if x.get('monitor')),
+              sum(1 for x in s2 if focus_enabled(x)),
+              sum(1 for x in s2 if simple_enabled(x)),
+              sum(1 for x in s2 if active(x) and focus_enabled(x) and simple_enabled(x)),
+              sum(1 for x in s2 if active(x) and focus_enabled(x) and simple_enabled(x) and has_cycle(x)),
           ]
           i=int(os.environ['CLOUD_RUN_TASK_INDEX'])
           raise SystemExit(min(max(int(metrics[i]),0),249)+1)
@@ -60,7 +78,7 @@ jobs:
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           set +e
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 8 --parallelism 8 --max-retries 0 --task-timeout 120s --quiet > /tmp/deploy.out 2> /tmp/deploy.err
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 12 --parallelism 12 --max-retries 0 --task-timeout 120s --quiet > /tmp/deploy.out 2> /tmp/deploy.err
           DEPLOY_RC=$?
           set -e
           if [ "$DEPLOY_RC" -ne 0 ]; then
@@ -78,7 +96,7 @@ jobs:
           METRICS="$(python - "$STATUS_FIELDS" <<'PY'
           import json,sys
           rows=json.loads(sys.argv[1]); values={int(r['index']):max(0,int(r['exitCode'])-1) for r in rows if int(r.get('exitCode',-1))>=1}
-          names=['documents','active','ownedLegs','liveReady','canaryValidated','legacyStrategy1Active','legacyStrategy3Active','monitoring']
+          names=['documents','active','ownedLegs','liveReady','canaryValidated','legacyStrategy1Active','legacyStrategy3Active','monitoring','focusV2Enabled','simpleModeEnabled','activeFocusSimple','activeFocusSimpleWithCycle']
           print(','.join(f'{names[i]}={values.get(i,-1)}' for i in range(len(names))))
           PY
           )"
