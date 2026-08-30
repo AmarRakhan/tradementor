@@ -2,3 +2,4 @@ Deploy Strategy-2 portfolio-cycle v7 wizard/UI after backend verification.
 Retry after Cloud Run traffic-tag length fix.
 Deploy chart contract commit 40cf97d9201e8639e2e6a3244df1378c5698a191.
 Deploy compact mobile Strategy-2 chart labels.
+Manual deployment trigger for verified commit 4d02f5b0ef8b97d58e62a27ed7bc2c6953f406b5.
