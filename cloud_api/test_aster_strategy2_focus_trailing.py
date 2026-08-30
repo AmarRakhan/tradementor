@@ -424,7 +424,7 @@ def test_v7_short_release_requires_price_plus_net_green_only():
     from pathlib import Path
     src = (Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
     gate = src.index('price_release_ready = last_dca > 0 and hedge_release_crossed')
-    protected = src.index('if price_release_ready and net_green_ready:', gate)
+    protected = src.index('if price_release_ready and net_green_ready and rehedge_funding_ready:', gate)
     end = src.index('# Legacy non-simple Focus TP only.', protected)
     section = src[gate:end]
     assert protected > gate

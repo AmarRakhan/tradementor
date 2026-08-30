@@ -33,4 +33,4 @@ def test_equity_protection_does_not_freeze_normal_dca_and_release_stays_net_gree
     assert "FOCUS_HEDGE_RELEASED_NET_GREEN" not in block
     release = src[src.index("# v7 protected SHORT release"):src.index("# Legacy non-simple Focus TP only.")]
     assert "equity_release_ready" not in release
-    assert "price_release_ready and net_green_ready:" in release
+    assert "price_release_ready and net_green_ready and rehedge_funding_ready:" in release

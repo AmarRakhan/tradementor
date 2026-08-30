@@ -6,3 +6,5 @@ Equity release gate removed commit: 70df0332cfc66bc8345103df3c6dbf86821aaebd
 Regression tests aligned commit: 49a21e6544679503446d53529591793e1cb54cac
 Release requires only: configured recovery price reached + exact remaining hedge net profitable after conservative round-trip fee/slippage model.
 Re-hedge remains anchored to the last confirmed DCA fill. No other strategy behavior is changed by this deployment trigger.
+
+Re-hedge margin safety guard: release only when full re-hedge is financeable from current available + conservatively estimated freed hedge margin; runtime re-hedge keeps trigger armed if live available margin is insufficient. No DCA/release distance/portfolio target changes.

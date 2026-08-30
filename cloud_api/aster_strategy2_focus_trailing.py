@@ -1136,6 +1136,26 @@ def run_focus_v2_live_step(
         target_qty = primary_qty
         if target_qty <= 1e-12:
             return {"status": "waiting", "action": "REHEDGE_WAIT_PRIMARY", "ordersSent": 0}
+        rehedge_required_margin_live = (target_qty * mark) / max(1, leverage)
+        rehedge_available_live = max(0.0, _finite(account.get("availableBalance")))
+        if rehedge_required_margin_live > rehedge_available_live + 1e-9:
+            state.update({
+                "cycleStatus": "REHEDGE_WAIT_MARGIN",
+                "lastAction": "REHEDGE_WAIT_MARGIN",
+                "lastReason": "re-hedge trigger geraakt maar actuele Aster available margin is nog onvoldoende; trigger blijft armed",
+                "reHedgeArmed": True,
+                "reHedgePrice": rehedge_price,
+                "rehedgeRequiredMargin": rehedge_required_margin_live,
+                "rehedgeAvailableMargin": rehedge_available_live,
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_REHEDGE_WAIT_MARGIN", cycleId=state.get("cycleId"), symbol=symbol,
+                reHedgePrice=rehedge_price, requiredMargin=rehedge_required_margin_live, availableMargin=rehedge_available_live)
+            return {
+                "status": "waiting", "action": "REHEDGE_WAIT_MARGIN", "ordersSent": 0,
+                "reHedgePrice": rehedge_price, "requiredMargin": rehedge_required_margin_live,
+                "availableMargin": rehedge_available_live,
+            }
         hq, hp, hcid, hoid = _execute_with_precision_retry(
             client=client, symbol=symbol, mark=mark, notional=target_qty * mark, leverage=leverage,
             side=hedge_side, action="OPEN", prefix=_prefix(str(state.get("cycleId")), int(_finite(state.get("dcaCount"))), "REHEDGE"),
@@ -1376,11 +1396,26 @@ def run_focus_v2_live_step(
             client, symbol, hedge_side, hedge_row, mark
         )
         net_green_ready = expected_net_close_pnl > 0.0
+        # Re-hedge funding guard: before releasing protection, conservatively prove
+        # that the margin freed by closing the current hedge plus current available
+        # balance can fund the full hedge again at the persisted last-DCA anchor.
+        release_leverage = max(1, int(_finite((hedge_row or {}).get("leverage"), settings.leverage)))
+        rehedge_target_notional = primary_qty * (last_dca if last_dca > 0 else mark)
+        rehedge_required_margin = rehedge_target_notional / release_leverage
+        released_hedge_margin_estimate = hedge_notional / release_leverage
+        rehedge_available_after_release = max(0.0, _finite(account.get("availableBalance"))) + released_hedge_margin_estimate
+        rehedge_funding_ready = bool(
+            rehedge_target_notional > 0 and
+            rehedge_available_after_release + 1e-9 >= rehedge_required_margin
+        )
+        state["releaseRehedgeMarginReady"] = rehedge_funding_ready
+        state["releaseRehedgeRequiredMargin"] = rehedge_required_margin
+        state["releaseRehedgeAvailableAfterCloseEstimate"] = rehedge_available_after_release
         state["shortReleasePriceReady"] = bool(price_release_ready)
         state["shortReleaseNetGreenReady"] = bool(net_green_ready)
         state["expectedNetShortClosePnl"] = expected_net_close_pnl
         state["shortNetGreenReleasePrice"] = net_green_hedge_release_price(hedge_row, hedge_side)
-        if price_release_ready and net_green_ready:
+        if price_release_ready and net_green_ready and rehedge_funding_ready:
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}
             state.update({"hedgeState": HEDGE_RELEASE_EXECUTING, "cycleStatus": "HEDGE_RELEASE_EXECUTING"})
@@ -1435,7 +1470,8 @@ def run_focus_v2_live_step(
                 "cycleStatus": "HEDGED", "lastAction": "HEDGE_HOLD_PROTECTED_RELEASE",
                 "lastReason": ("releaseprijs nog niet geraakt" if not price_release_ready else
                     ("SHORT nog niet netto groen na kostenbuffer" if not net_green_ready else
-                     "equity onder cycleStartEquity; hedge mag niet worden verlaagd")),
+                     ("re-hedge na release niet financierbaar met beschikbare + vrijvallende SHORT-margin" if not rehedge_funding_ready else
+                      "release wacht op uitvoerbare voorwaarden"))),
                 "hedgeReleasePrice": release_price,
             })
 
