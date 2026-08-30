@@ -1,2 +1,2 @@
-Require release price + net-profitable hedge close after conservative fee/slippage buffer + equity at/above cycle baseline before reducing SHORT.
-Retry after migrating stale mechanical-release contract test.
+Require release price + exact net-profitable hedge close using existing round-trip cost model + equity at/above cycle baseline before reducing SHORT.
+Retry after migrating all stale mechanical-release tests.
