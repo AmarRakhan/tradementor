@@ -1088,12 +1088,43 @@ def run_focus_v2_live_step(
                 return {"status": "budget-exhausted", "action": "EMERGENCY_EQUITY_LOCK_WAIT_BUDGET", "ordersSent": 0}
             leverage = _resolved_leverage(client, settings, symbol, primary_row)
             lock_notional = missing_lock_qty * mark
-            hq, hp, hcid, hoid = _execute_with_precision_retry(
-                client=client, symbol=symbol, mark=mark, notional=lock_notional, leverage=leverage,
-                side=hedge_side, action="OPEN",
-                prefix=_prefix(str(state.get("cycleId")), int(_finite(state.get("dcaCount"))), "EMERGENCY_EQUITY_LOCK"),
-                new_position_leverage=leverage,
-            )
+            lock_required_margin = lock_notional / max(1, leverage)
+            lock_available_margin = max(0.0, _finite(account.get("availableBalance")))
+            if lock_required_margin > lock_available_margin + 1e-9:
+                state.update({
+                    "cycleStatus": "EMERGENCY_EQUITY_LOCK_WAIT_MARGIN",
+                    "lastAction": "EMERGENCY_EQUITY_LOCK_WAIT_MARGIN",
+                    "lastReason": "volledige protection hedge vereist maar actuele Aster available margin is onvoldoende; trigger blijft actief",
+                    "equityProtectionActive": True,
+                    "equityLockRequiredMargin": lock_required_margin,
+                    "equityLockAvailableMargin": lock_available_margin,
+                })
+                _persist(ref, state, owned)
+                _audit(ref, "FOCUS_EMERGENCY_EQUITY_LOCK_WAIT_MARGIN", cycleId=state.get("cycleId"), symbol=symbol,
+                    requiredMargin=lock_required_margin, availableMargin=lock_available_margin)
+                return {"status": "waiting", "action": "EMERGENCY_EQUITY_LOCK_WAIT_MARGIN", "ordersSent": 0}
+            try:
+                hq, hp, hcid, hoid = _execute_with_precision_retry(
+                    client=client, symbol=symbol, mark=mark, notional=lock_notional, leverage=leverage,
+                    side=hedge_side, action="OPEN",
+                    prefix=_prefix(str(state.get("cycleId")), int(_finite(state.get("dcaCount"))), "EMERGENCY_EQUITY_LOCK"),
+                    new_position_leverage=leverage,
+                )
+            except Exception as exc:
+                if "-2019" not in str(exc) and "Margin is insufficient" not in str(exc):
+                    raise
+                state.update({
+                    "cycleStatus": "EMERGENCY_EQUITY_LOCK_WAIT_MARGIN",
+                    "lastAction": "EMERGENCY_EQUITY_LOCK_WAIT_MARGIN",
+                    "lastReason": "Aster weigerde protection hedge wegens onvoldoende margin; trigger blijft actief en wordt later opnieuw geprobeerd",
+                    "equityProtectionActive": True,
+                    "equityLockRequiredMargin": lock_required_margin,
+                    "equityLockAvailableMargin": lock_available_margin,
+                })
+                _persist(ref, state, owned)
+                _audit(ref, "FOCUS_EMERGENCY_EQUITY_LOCK_WAIT_MARGIN", cycleId=state.get("cycleId"), symbol=symbol,
+                    requiredMargin=lock_required_margin, availableMargin=lock_available_margin, exchangeError=str(exc))
+                return {"status": "waiting", "action": "EMERGENCY_EQUITY_LOCK_WAIT_MARGIN", "ordersSent": 0}
             if hq > 0:
                 owned = _upsert_owned(
                     owned, settings=settings, cycle_id=str(state.get("cycleId")), symbol=symbol,

@@ -34,3 +34,12 @@ def test_equity_protection_does_not_freeze_normal_dca_and_release_stays_net_gree
     release = src[src.index("# v7 protected SHORT release"):src.index("# Legacy non-simple Focus TP only.")]
     assert "equity_release_ready" not in release
     assert "price_release_ready and net_green_ready and rehedge_funding_ready:" in release
+
+
+def test_emergency_equity_lock_waits_cleanly_when_margin_is_insufficient():
+    src = Path("aster_strategy2_focus_trailing.py").read_text(encoding="utf-8")
+    assert '"EMERGENCY_EQUITY_LOCK_WAIT_MARGIN"' in src
+    assert 'lock_required_margin = lock_notional / max(1, leverage)' in src
+    assert 'lock_available_margin = max(0.0, _finite(account.get("availableBalance")))' in src
+    assert '"-2019" not in str(exc)' in src
+    assert 'return {"status": "waiting", "action": "EMERGENCY_EQUITY_LOCK_WAIT_MARGIN", "ordersSent": 0}' in src
