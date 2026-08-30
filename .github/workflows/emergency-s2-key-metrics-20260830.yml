@@ -1,0 +1,70 @@
+name: Emergency S2 Key Metrics 20260830
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.deploy/emergency-s2-key-metrics-20260830]
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Probe critical HYPE cycle metrics
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REV="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          IMAGE="$(gcloud run revisions describe "$REV" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          JOB="s2-key-${GITHUB_RUN_ID: -7}"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          import os
+          db=firestore.Client(project='tradementor-production'); c=[]
+          for s in db.collection('asterStrategy2').stream():
+              d=s.to_dict() or {}; st=d.get('focusV2State') if isinstance(d.get('focusV2State'),dict) else {}
+              if str(st.get('symbol') or '').upper() in {'HYPE','HYPEUSDT'}: c.append((s,d,st))
+          c.sort(key=lambda x:int(bool(x[1].get('monitor') or x[1].get('enabled'))),reverse=True)
+          if not c: vals=[0]*12
+          else:
+              s,d,st=c[0]; start=int(datetime(2026,8,30,15,0,tzinfo=timezone.utc).timestamp()*1000); counts={}
+              for a in s.reference.collection('audit').where('timestampMs','>=',start).stream():
+                  e=str((a.to_dict() or {}).get('event') or ''); counts[e]=counts.get(e,0)+1
+              cfg={}
+              for src in (d,d.get('settings') if isinstance(d.get('settings'),dict) else {},d.get('config') if isinstance(d.get('config'),dict) else {}): cfg.update(src)
+              def n(v,sc=1):
+                  try:return max(0,min(249,int(round(float(v)*sc))))
+                  except:return 0
+              vals=[len(c),n(st.get('dcaCount')),counts.get('FOCUS_HEDGE_RELEASED_MECHANICAL',0),counts.get('FOCUS_REHEDGE_ACTIVE',0),n(st.get('cycleStartEquity')),n(cfg.get('leverage')),n(cfg.get('focus_dca_distance'),10000),n(cfg.get('focus_dca_notional'),1),n(cfg.get('focus_v2_hedge_release_recovery_pct',cfg.get('focus_v2_hedge_release_distance_pct',0)),10000),n(cfg.get('focus_v2_take_profit_value')),int(bool(cfg.get('focus_v2_amounts_are_margin'))),counts.get('FOCUS_DCA_TRIGGER_PENDING',0)]
+          i=int(os.environ['CLOUD_RUN_TASK_INDEX']); raise SystemExit(vals[i]+1)
+          PY
+          )"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }; trap cleanup EXIT
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 12 --parallelism 12 --max-retries 0 --task-timeout 120s --quiet
+          set +e; gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1; set -e
+          EXEC="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          J="$(gcloud run jobs executions tasks list --execution "$EXEC" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          F="$(jq -c '[.. | objects | select((.index? | type)=="number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type=="number")][0]//-1)}] | unique_by(.index)|sort_by(.index)' <<<"$J")"
+          METRICS="$(python - "$F" <<'PY'
+          import json,sys
+          r=json.loads(sys.argv[1]); v={int(x['index']):int(x['exitCode'])-1 for x in r if int(x.get('exitCode',-1))>=1}; n=['candidates','dcaCount','releaseCount','rehedgeCount','cycleStartEquityRounded','leverage','dcaDistanceBps','dcaAmount','releaseBps','portfolioTarget','amountsAreMargin','dcaTriggers']; print(' '.join(f'{k}={v.get(i,-1)}' for i,k in enumerate(n)))
+          PY
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="EMERGENCY_S2_KEY_METRICS $METRICS"
