@@ -1029,6 +1029,78 @@ def run_focus_v2_live_step(
         dca_trigger_pending = True
     dca_triggered = bool(dca_trigger_pending or crossed_now)
 
+    # EMERGENCY v7 equity lock: once actual account equity is below the persisted
+    # cycle baseline, stop the churn that can otherwise repeatedly crystallize
+    # hedge losses. Keep/restore the hedge to 1:1 and freeze DCA/release actions
+    # until account equity is back at or above the cycle baseline. Portfolio TP
+    # still has priority above this block and can close the cycle normally.
+    equity_lock_active = bool(
+        simple_flow and cycle_start_equity > 0 and current_equity > 0 and
+        current_equity + 1e-9 < cycle_start_equity
+    )
+    if equity_lock_active and primary_qty > 1e-12:
+        target_lock_qty = primary_qty * configured_hedge_ratio
+        lock_tolerance = max(1e-12, target_lock_qty * 0.001)
+        missing_lock_qty = max(0.0, target_lock_qty - hedge_qty)
+        if missing_lock_qty > lock_tolerance:
+            if order_budget is not None and order_budget < 1:
+                state.update({
+                    "cycleStatus": "EMERGENCY_EQUITY_LOCK_WAIT_BUDGET",
+                    "lastAction": "EMERGENCY_EQUITY_LOCK_WAIT_BUDGET",
+                    "lastReason": "equity onder cycleStartEquity; volledige hedge vereist maar orderbudget ontbreekt",
+                })
+                _persist(ref, state, owned)
+                return {"status": "budget-exhausted", "action": "EMERGENCY_EQUITY_LOCK_WAIT_BUDGET", "ordersSent": 0}
+            leverage = _resolved_leverage(client, settings, symbol, primary_row)
+            lock_notional = missing_lock_qty * mark
+            hq, hp, hcid, hoid = _execute_with_precision_retry(
+                client=client, symbol=symbol, mark=mark, notional=lock_notional, leverage=leverage,
+                side=hedge_side, action="OPEN",
+                prefix=_prefix(str(state.get("cycleId")), int(_finite(state.get("dcaCount"))), "EMERGENCY_EQUITY_LOCK"),
+                new_position_leverage=leverage,
+            )
+            if hq > 0:
+                owned = _upsert_owned(
+                    owned, settings=settings, cycle_id=str(state.get("cycleId")), symbol=symbol,
+                    role=hedge_role, side=hedge_side, quantity=hq, price=hp,
+                    client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms,
+                )
+            confirmed = client.position_risk(symbol)
+            confirmed_primary_qty = abs(_finite((_row(confirmed, symbol, primary_side) or {}).get("positionAmt")))
+            confirmed_hedge_qty = abs(_finite((_row(confirmed, symbol, hedge_side) or {}).get("positionAmt")))
+            confirmed_tolerance = max(1e-12, confirmed_primary_qty * 0.001)
+            state.update({
+                "hedgeState": HEDGE_ACTIVE,
+                "hedgeTargetQty": confirmed_primary_qty or target_lock_qty,
+                "reHedgeArmed": False, "reHedgePrice": 0.0,
+                "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
+                "cycleStatus": "EMERGENCY_EQUITY_LOCK",
+                "lastAction": "EMERGENCY_EQUITY_LOCK_REHEDGED",
+                "lastReason": "equity onder cycleStartEquity; hedge direct hersteld en verdere DCA/release churn geblokkeerd",
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_EMERGENCY_EQUITY_LOCK", cycleId=state.get("cycleId"), symbol=symbol,
+                currentEquity=current_equity, cycleStartEquity=cycle_start_equity,
+                longQty=confirmed_primary_qty, shortQty=confirmed_hedge_qty)
+            if confirmed_primary_qty <= 0 or abs(confirmed_primary_qty - confirmed_hedge_qty) > confirmed_tolerance:
+                return {"status": "reconciling", "action": "EMERGENCY_EQUITY_LOCK_REHEDGE_PENDING", "ordersSent": 1}
+            return {"status": "executed", "action": "EMERGENCY_EQUITY_LOCK_REHEDGED", "ordersSent": 1}
+        state.update({
+            "hedgeState": HEDGE_ACTIVE,
+            "hedgeTargetQty": target_lock_qty,
+            "reHedgeArmed": False, "reHedgePrice": 0.0,
+            "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
+            "cycleStatus": "EMERGENCY_EQUITY_LOCK",
+            "lastAction": "EMERGENCY_EQUITY_LOCK_HOLD",
+            "lastReason": "equity onder cycleStartEquity; 1:1 hedge vasthouden en geen DCA/release uitvoeren",
+        })
+        _persist(ref, state, owned)
+        return {
+            "status": "holding", "action": "EMERGENCY_EQUITY_LOCK_HOLD", "ordersSent": 0,
+            "currentEquity": current_equity, "cycleStartEquity": cycle_start_equity,
+            "primaryQty": primary_qty, "hedgeQty": hedge_qty,
+        }
+
     # v7 post-release re-hedge: once SHORT has actually been confirmed flat, arm one
     # server-side trigger at the last filled buy. It never opens a second SHORT while
     # protection is still active. A higher trailing-buy crossing has priority.
