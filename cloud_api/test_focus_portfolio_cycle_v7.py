@@ -52,8 +52,8 @@ def test_simple_flow_release_requires_price_net_green_and_equity_and_keeps_rehed
     src = Path('aster_strategy2_focus_trailing.py').read_text(encoding='utf-8')
     section = src.split('# v7 protected SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]
     assert 'price_release_ready and net_green_ready and equity_release_ready' in section
-    assert 'expected_net_close_pnl = hedge_unrealized_pnl - close_cost_buffer' in section
-    assert 'close_cost_buffer = exact_close_notional * 0.0007' in section
+    assert 'expected_net_hedge_close_pnl(' in section
+    assert 'expected_net_close_pnl > 0.0' in section
     assert 'reHedgeArmed' in section
     assert 'FOCUS_HEDGE_RELEASED_NET_GREEN' in section
     priority = src.index('target_now = bool(simple_flow')
