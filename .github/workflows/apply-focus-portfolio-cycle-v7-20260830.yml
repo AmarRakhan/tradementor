@@ -9,6 +9,7 @@ on:
       - tools/fix_focus_portfolio_v7_test_newlines.py
       - tools/update_focus_portfolio_v7_contract_tests.py
       - tools/fix_focus_portfolio_v7_contract_migration.py
+      - tools/update_focus_portfolio_v7_ui_contract_tests.py
       - .github/workflows/apply-focus-portfolio-cycle-v7-20260830.yml
 
 permissions:
@@ -39,6 +40,7 @@ jobs:
           python tools/fix_focus_portfolio_v7_test_newlines.py
           python tools/fix_focus_portfolio_v7_contract_migration.py
           python tools/update_focus_portfolio_v7_contract_tests.py
+          python tools/update_focus_portfolio_v7_ui_contract_tests.py
 
       - name: Install backend test dependencies
         run: pip install -r cloud_api/requirements.txt pytest
@@ -98,6 +100,8 @@ jobs:
             cloud_api/test_focus_portfolio_cycle_v7.py \
             cloud_api/test_focus_simple_deterministic_flow.py \
             cloud_api/test_aster_strategy2_focus_trailing.py \
+            cloud_api/test_aster_strategy2_focus_v2.py \
+            cloud_api/test_focus_v2_simple_recovery.py \
             web/components/aster-strategy2-maker.tsx
           if git diff --cached --quiet; then
             echo 'No implementation diff to commit.'
