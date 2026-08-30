@@ -195,6 +195,42 @@ def test_v6_first_dca_trails_up_even_with_start_hedge_active(monkeypatch):
     assert saved["hedgeReleasePrice"]==0
 
 
+def test_v6_every_dca_ratchets_up_with_live_high_even_while_hedged(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine, "_selected_symbol", lambda *_a, **_k: "BTCUSDT")
+    settings = _v6_settings(focusV2AmountsAreMargin=False, focusDcaDistance=.003)
+    raw = {"focusV2State": {
+        "cycleId": "c", "symbol": "BTCUSDT", "primarySide": "LONG", "dcaCount": 2,
+        "lastDcaFillPrice": 99.0, "trailingHigh": 100.0, "nextDcaPrice": 98.703,
+        "hedgeState": "ACTIVE", "cycleStatus": "HEDGED", "stateMachineVersion": 6,
+    }}
+    positions_up = [_pos("LONG", 70, 100, 112, 840), _pos("SHORT", 70, 100, 112, -840)]
+    ref = _Ref()
+    up = engine.run_focus_v2_live_step(
+        client=_RuntimeClient(positions_up, 112), ref=ref, raw_state=raw, settings=settings, uid="u",
+        account={"totalMarginBalance": "500", "availableBalance": "400", "totalMaintMargin": "0"},
+        positions=positions_up, timestamp_ms=20,
+    )
+    assert up["ordersSent"] == 0
+    raised = ref.values[-1]["focusV2State"]
+    assert raised["dcaMode"] == DCA_TRAILING
+    assert raised["trailingHigh"] == pytest.approx(112.0)
+    assert raised["nextDcaPrice"] == pytest.approx(111.664)
+
+    positions_down = [_pos("LONG", 70, 100, 111.9, 833), _pos("SHORT", 70, 100, 111.9, -833)]
+    ref2 = _Ref()
+    down = engine.run_focus_v2_live_step(
+        client=_RuntimeClient(positions_down, 111.9), ref=ref2, raw_state={"focusV2State": raised},
+        settings=settings, uid="u",
+        account={"totalMarginBalance": "500", "availableBalance": "400", "totalMaintMargin": "0"},
+        positions=positions_down, timestamp_ms=21,
+    )
+    assert down["ordersSent"] == 0
+    held = ref2.values[-1]["focusV2State"]
+    assert held["trailingHigh"] == pytest.approx(112.0)
+    assert held["nextDcaPrice"] == pytest.approx(111.664)
+
+
 def test_v6_full_tp_is_blocked_by_hedge_and_closes_when_flat(monkeypatch):
     import aster_strategy2_focus_trailing as engine
     monkeypatch.setattr(engine,"_selected_symbol",lambda *_a,**_k:"BTCUSDT")
