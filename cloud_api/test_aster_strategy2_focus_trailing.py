@@ -366,3 +366,31 @@ def test_v6_dca_stays_pending_when_post_hedge_exchange_truth_is_not_equal(monkey
         account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},positions=client.positions,timestamp_ms=101)
     assert result["action"]=="DCA_HEDGE_SYNC_PENDING"
     assert result["ordersSent"]==2
+
+
+def test_v6_short_rebuild_backup_is_separate_from_dca():
+    from aster_strategy2_focus_trailing import short_rebuild_price_from_release, short_rebuild_crossed
+    assert short_rebuild_price_from_release(100.0, "LONG", .003) == pytest.approx(99.7)
+    assert not short_rebuild_crossed(99.71, 99.7, "LONG")
+    assert short_rebuild_crossed(99.7, 99.7, "LONG")
+
+
+def test_v6_release_arms_rebuild_before_close_and_rebuild_precedes_dca():
+    from pathlib import Path
+    src=(Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
+    release=src.index('planned_rebuild_price = short_rebuild_price_from_release')
+    close=src.index('_execute_with_precision_retry(', release)
+    rebuild=src.index('if rebuild_armed and hedge_qty <= 1e-12')
+    dca=src.index('if dca_allowed and dca_crossed', rebuild)
+    assert release < close
+    assert rebuild < dca
+    assert 'cycleStatus":"SHORT_REBUILD_SYNC_PENDING"' in src
+    assert 'abs(confirmed_primary_qty-confirmed_hedge_qty) > tolerance' in src
+    assert '"shortRebuildArmed":False,"shortRebuildPrice":0.0' in src
+
+
+def test_v6_net_green_release_line_matches_execution_cost_model():
+    from aster_strategy2_focus_trailing import net_green_hedge_release_price
+    row={"entryPrice":"100"}
+    expected=100*(1-.0005)/(1+.0005+.0002)
+    assert net_green_hedge_release_price(row,"SHORT")==pytest.approx(expected)
