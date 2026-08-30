@@ -38,6 +38,7 @@ for rel in [
     'cloud_api/test_aster_strategy2_focus_trailing.py',
     'cloud_api/test_focus_portfolio_cycle_v7.py',
     'cloud_api/test_focus_v7_net_green_release.py',
+    'cloud_api/test_focus_v7_emergency_equity_lock.py',
 ]:
     p = Path(rel)
     if not p.exists():
