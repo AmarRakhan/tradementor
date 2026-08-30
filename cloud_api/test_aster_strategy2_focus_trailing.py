@@ -81,7 +81,7 @@ def test_runtime_source_contains_v6_start_hedge_full_tp_and_no_frozen_release_tr
     assert '"hedgeReleasePrice"' in src
     assert "hedge_release_crossed(mark, release_price, primary_side)" in src
     assert "fresh_primary_qty * configured_hedge_ratio" in src
-    assert "FOCUS_V2_HEDGE_RELEASED" in src
+    assert "FOCUS_HEDGE_RELEASED_NET_GREEN" in src
     assert "FOCUS_V2_START_HEDGED" in src
     assert "FOCUS_V2_FULL_TP" in src
     assert "FOCUS_V2_TP_CLOSED_RESTART_PENDING" in src

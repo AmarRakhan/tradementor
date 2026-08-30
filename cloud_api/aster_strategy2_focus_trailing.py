@@ -335,6 +335,49 @@ def _long_or_short_pnl(row: dict[str, Any] | None, mark: float, side: str) -> fl
     return (mark - entry) * qty if side == "LONG" else (entry - mark) * qty
 
 
+def _executable_hedge_close_price(client: Any, symbol: str, hedge_side: str, mark: float) -> float:
+    """Best executable close proxy: ask to buy back SHORT, bid to sell LONG hedge.
+
+    Fail closed to mark when bookTicker is unavailable; the explicit fee/slippage
+    buffers below keep the green gate conservative rather than optimistic.
+    """
+    try:
+        payload = client._public_get(
+            f"/fapi/v1/ticker/bookTicker?symbol={symbol.upper()}",
+            ttl_seconds=1,
+            invalid_message="Aster bookTicker niet beschikbaar voor hedge-release",
+        )
+        if isinstance(payload, dict):
+            key = "askPrice" if hedge_side.upper() == "SHORT" else "bidPrice"
+            value = _finite(payload.get(key))
+            if value > 0:
+                return value
+    except Exception:
+        pass
+    return mark
+
+
+def expected_net_hedge_close_pnl(
+    client: Any, symbol: str, hedge_side: str, hedge_row: dict[str, Any] | None, mark: float,
+) -> tuple[float, float, float, float, float]:
+    """Expected full round-trip net PnL for the remaining protection hedge."""
+    if not hedge_row:
+        return 0.0, mark, 0.0, 0.0, 0.0
+    qty = abs(_finite(hedge_row.get("positionAmt")))
+    entry = _finite(hedge_row.get("entryPrice"))
+    if qty <= 0 or entry <= 0 or mark <= 0:
+        return 0.0, mark, 0.0, 0.0, 0.0
+    close_price = _executable_hedge_close_price(client, symbol, hedge_side, mark)
+    gross = (entry - close_price) * qty if hedge_side.upper() == "SHORT" else (close_price - entry) * qty
+    # Conservative defaults; the gate requires strictly positive result after a
+    # complete estimated round trip, not merely green mark-price PnL.
+    fee_rate = 0.0005
+    slippage_rate = 0.0002
+    fees = (entry + close_price) * qty * fee_rate
+    slippage = close_price * qty * slippage_rate
+    return gross - fees - slippage, close_price, gross, fees, slippage
+
+
 def _history(state: dict[str, Any], *, mark: float, dca_ratio: float, release_ratio: float,
              primary_notional: float, hedge_notional: float, primary_pnl: float, hedge_pnl: float) -> dict[str, Any]:
     frozen = _finite(state.get("frozenDcaReference"))
@@ -392,7 +435,8 @@ def run_focus_v2_live_step(
     if not symbol:
         return {"status": "waiting", "action": "FOCUS_V2_NO_PAIR", "ordersSent": 0}
 
-    primary_side = str(existing_state.get("primarySide", "") or _slot_side(settings, symbol)).upper()
+    simple_requested = bool(getattr(settings, "focus_v2_simple_mode_enabled", False))
+    primary_side = "LONG" if simple_requested else str(existing_state.get("primarySide", "") or _slot_side(settings, symbol)).upper()
     if primary_side not in {"LONG", "SHORT"}:
         primary_side = "LONG"
     hedge_side = _opposite(primary_side)
@@ -416,8 +460,9 @@ def run_focus_v2_live_step(
 
     dca_ratio = dca_distance(settings)
     release_ratio = hedge_release_recovery(settings)
-    configured_hedge_ratio = hedge_ratio(settings)
-    configured_start_hedge_ratio = start_hedge_ratio(settings)
+    simple_flow = bool(getattr(settings, "focus_v2_simple_mode_enabled", False))
+    configured_hedge_ratio = 1.0 if simple_flow else hedge_ratio(settings)
+    configured_start_hedge_ratio = 1.0 if simple_flow else start_hedge_ratio(settings)
     tp_mode = str(getattr(settings, "focus_v2_take_profit_mode", "usdt")).lower()
     tp_value = max(0.0, _finite(getattr(settings, "focus_v2_take_profit_value", 0.0)))
     state["startHedgePercent"] = configured_start_hedge_ratio
@@ -485,7 +530,7 @@ def run_focus_v2_live_step(
                     state["lastDcaFillPrice"] = last_dca
                 state["dcaMode"] = DCA_FROZEN
                 state["nextDcaPrice"] = next_dca_from_anchor(last_dca, primary_side, dca_ratio)
-                state["hedgeReleasePrice"] = release_price_from_last_dca(last_dca, primary_side, release_ratio)
+                state["hedgeReleasePrice"] = 0.0 if simple_flow else release_price_from_last_dca(last_dca, primary_side, release_ratio)
                 state["hedgeTargetQty"] = primary_qty * configured_hedge_ratio
             state["frozenDcaReference"] = 0.0
         else:
@@ -563,6 +608,81 @@ def run_focus_v2_live_step(
     primary_pnl = _long_or_short_pnl(primary_row, mark, primary_side)
     hedge_pnl = _long_or_short_pnl(hedge_row, mark, hedge_side)
 
+    # Hard invariant: a confirmed LONG DCA is not complete until SHORT equals total LONG.
+    # This recovery path runs before normal DCA/release/TP logic, so a second DCA
+    # cannot start while the hedge synchronization is pending.
+    if simple_flow and str(state.get("cycleStatus", "")) == "DCA_HEDGE_SYNC_PENDING":
+        target_qty = primary_qty
+        qty_tolerance = max(1e-12, target_qty * 0.001)
+        missing_qty = max(0.0, target_qty - hedge_qty)
+        if missing_qty <= qty_tolerance:
+            state.update({
+                "hedgeState": HEDGE_ACTIVE if hedge_qty > qty_tolerance else HEDGE_OFF,
+                "cycleStatus": "HEDGED" if hedge_qty > qty_tolerance else "LONG_ONLY",
+                "lastAction": "DCA_HEDGE_SYNC_CONFIRMED",
+                "lastReason": "pending DCA-hedge sync door actuele Aster-quantities bevestigd",
+                "hedgeTargetQty": target_qty,
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_DCA_HEDGE_SYNC_CONFIRMED", cycleId=state.get("cycleId"), symbol=symbol, longQty=primary_qty, shortQty=hedge_qty)
+            return {"status": "executed", "action": "DCA_HEDGE_SYNC_CONFIRMED", "symbol": symbol, "ordersSent": 0}
+
+        if order_budget is not None and order_budget < 1:
+            reason = {"reason": "ORDER_BUDGET_HEDGE_SYNC", "requiredShortQty": missing_qty, "longQty": primary_qty, "shortQty": hedge_qty, "orderBudget": order_budget}
+            _audit(ref, "FOCUS_DCA_BLOCKED", cycleId=state.get("cycleId"), symbol=symbol, **reason)
+            return {"status": "budget-exhausted", "action": "DCA_HEDGE_SYNC_PENDING", "ordersSent": 0, **reason}
+
+        leverage = _resolved_leverage(client, settings, symbol, primary_row)
+        required_notional = missing_qty * mark
+        required_margin = required_notional / max(1, leverage)
+        available = _finite(account.get("availableBalance"))
+        equity = _finite(account.get("totalMarginBalance"), _finite(account.get("totalWalletBalance")))
+        maint = _finite(account.get("totalMaintMargin")) / equity if equity > 0 else 1.0
+        liq = _finite((primary_row or {}).get("liquidationPrice"))
+        liq_distance = abs(mark - liq) / mark if liq > 0 else 1.0
+        if required_margin > available or maint >= settings.emergency_margin_ratio or liq_distance < 0.05:
+            block_reason = "INSUFFICIENT_MARGIN" if required_margin > available else ("EMERGENCY_MARGIN_RATIO" if maint >= settings.emergency_margin_ratio else "LIQUIDATION_DISTANCE")
+            reason = {
+                "reason": block_reason, "requiredShortQty": missing_qty, "requiredMargin": required_margin,
+                "availableMargin": available, "maintenanceRatio": maint, "liquidationDistance": liq_distance,
+                "longQty": primary_qty, "shortQty": hedge_qty,
+            }
+            _audit(ref, "FOCUS_DCA_BLOCKED", cycleId=state.get("cycleId"), symbol=symbol, **reason)
+            return {"status": "waiting", "action": "DCA_HEDGE_SYNC_PENDING", "ordersSent": 0, **reason}
+
+        cycle_no = int(_finite(state.get("dcaCount")))
+        retry_prefix = _prefix(str(state.get("cycleId")), cycle_no, "DCA_HEDGE_SYNC_RETRY")
+        hq, hp, hcid, hoid = _execute_with_precision_retry(
+            client=client, symbol=symbol, mark=mark, notional=required_notional, leverage=leverage,
+            side=hedge_side, action="OPEN", prefix=retry_prefix, new_position_leverage=leverage,
+        )
+        owned = _upsert_owned(
+            owned, settings=settings, cycle_id=str(state.get("cycleId")), symbol=symbol, role=hedge_role,
+            side=hedge_side, quantity=hq, price=hp, client_id=hcid, order_id=hoid, dca=False, timestamp_ms=timestamp_ms,
+        )
+        estimated_short_after = hedge_qty + hq
+        remaining = max(0.0, target_qty - estimated_short_after)
+        if remaining > qty_tolerance:
+            state.update({
+                "hedgeState": HEDGE_ACTIVE, "cycleStatus": "DCA_HEDGE_SYNC_PENDING",
+                "lastAction": "DCA_HEDGE_SYNC_PENDING",
+                "lastReason": "SHORT sync gedeeltelijk gevuld; volgende realtime tick opnieuw proberen",
+                "hedgeTargetQty": target_qty,
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_DCA_HEDGE_SYNC_PARTIAL", cycleId=state.get("cycleId"), symbol=symbol, fillQty=hq, remainingShortQty=remaining)
+            return {"status": "reconciling", "action": "DCA_HEDGE_SYNC_PENDING", "symbol": symbol, "ordersSent": 1, "requiredShortQty": remaining}
+
+        state.update({
+            "hedgeState": HEDGE_ACTIVE, "cycleStatus": "HEDGED",
+            "lastAction": "DCA_HEDGE_SYNCED",
+            "lastReason": "pending DCA-hedge sync voltooid; SHORT is weer gelijk aan totale LONG",
+            "hedgeTargetQty": target_qty, "lastHedgeEntryOrderId": hoid,
+        })
+        _persist(ref, state, owned)
+        _audit(ref, "FOCUS_DCA_HEDGE_SYNCED", cycleId=state.get("cycleId"), symbol=symbol, longQty=primary_qty, shortQty=estimated_short_after, orderId=hoid)
+        return {"status": "executed", "action": "DCA_HEDGE_SYNCED", "symbol": symbol, "ordersSent": 1}
+
     # Primary-only OR initial start-hedge phase: DCA #1 moves on every fresh extreme.
     initial_hedged_trailing = hedge_qty > 1e-12 and int(_finite(state.get("dcaCount"))) == 0 and _finite(state.get("lastDcaFillPrice")) <= 0
     if hedge_qty <= 1e-12 or initial_hedged_trailing:
@@ -587,7 +707,7 @@ def run_focus_v2_live_step(
         last_dca = _finite(state.get("lastDcaFillPrice"), _finite(state.get("dcaAnchorPrice"), mark))
         state["lastDcaFillPrice"] = last_dca
         state["nextDcaPrice"] = next_dca_from_anchor(last_dca, primary_side, dca_ratio)
-        state["hedgeReleasePrice"] = release_price_from_last_dca(last_dca, primary_side, release_ratio)
+        state["hedgeReleasePrice"] = 0.0 if simple_flow else release_price_from_last_dca(last_dca, primary_side, release_ratio)
         state["hedgeTargetQty"] = primary_qty * configured_hedge_ratio
         state["frozenDcaReference"] = 0.0
         state["dcaMode"] = DCA_FROZEN
@@ -599,7 +719,9 @@ def run_focus_v2_live_step(
     # DCA has priority on renewed downside/upside-against-primary, including while hedge is active.
     if dca_allowed and dca_crossed(mark, next_dca, primary_side):
         if order_budget is not None and order_budget < 2:
-            return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_DCA_HEDGE", "ordersSent": 0}
+            reason = {"reason": "ORDER_BUDGET", "markPrice": mark, "nextDcaPrice": next_dca, "orderBudget": order_budget}
+            _audit(ref, "FOCUS_DCA_BLOCKED", cycleId=state.get("cycleId"), symbol=symbol, **reason)
+            return {"status": "budget-exhausted", "action": "FOCUS_DCA_BLOCKED", "ordersSent": 0, **reason}
         current_count = int(_finite(state.get("dcaCount")))
         used = primary_notional
         leverage = _resolved_leverage(client, settings, symbol, primary_row)
@@ -609,7 +731,9 @@ def run_focus_v2_live_step(
         dca_notional = _amount_to_notional(settings, raw_dca_amount, leverage) if getattr(settings, "focus_v2_amounts_are_margin", False) else raw_dca_amount
         dca_notional = min(dca_notional, remaining_budget)
         if dca_notional <= 0:
-            return {"status": "waiting", "action": "FOCUS_V2_DCA_BUDGET_BLOCK", "ordersSent": 0}
+            reason = {"reason": "DCA_BUDGET", "markPrice": mark, "nextDcaPrice": next_dca, "dcaCount": current_count, "remainingBudget": remaining_budget}
+            _audit(ref, "FOCUS_DCA_BLOCKED", cycleId=state.get("cycleId"), symbol=symbol, **reason)
+            return {"status": "waiting", "action": "FOCUS_DCA_BLOCKED", "ordersSent": 0, **reason}
         equity = _finite(account.get("totalMarginBalance"), _finite(account.get("totalWalletBalance")))
         maint = _finite(account.get("totalMaintMargin")) / equity if equity > 0 else 1.0
         liq = _finite((primary_row or {}).get("liquidationPrice"))
@@ -620,7 +744,17 @@ def run_focus_v2_live_step(
         required_margin = (dca_notional + hedge_gap) / max(1, leverage)
         available = _finite(account.get("availableBalance"))
         if required_margin > available or maint >= settings.emergency_margin_ratio or liq_distance < 0.05:
-            return {"status": "waiting", "action": "FOCUS_V2_DCA_RISK_BLOCK", "ordersSent": 0}
+            block_reason = "INSUFFICIENT_MARGIN" if required_margin > available else ("EMERGENCY_MARGIN_RATIO" if maint >= settings.emergency_margin_ratio else "LIQUIDATION_DISTANCE")
+            reason = {
+                "reason": block_reason, "markPrice": mark, "nextDcaPrice": next_dca,
+                "dcaEnabled": bool(settings.focus_dca_enabled), "dcaCount": current_count,
+                "maxDca": settings.focus_max_dca, "dcaUnlimited": bool(settings.focus_dca_unlimited),
+                "orderBudget": order_budget, "requiredMargin": required_margin, "availableMargin": available,
+                "maintenanceRatio": maint, "liquidationDistance": liq_distance,
+                "dcaNotional": dca_notional, "hedgeGapNotional": hedge_gap,
+            }
+            _audit(ref, "FOCUS_DCA_BLOCKED", cycleId=state.get("cycleId"), symbol=symbol, **reason)
+            return {"status": "waiting", "action": "FOCUS_DCA_BLOCKED", "ordersSent": 0, **reason}
 
         cycle_no = current_count + 1
         dca_prefix = _prefix(str(state["cycleId"]), cycle_no, "DCA_ENTRY")
@@ -635,26 +769,38 @@ def run_focus_v2_live_step(
         fresh_primary_notional = _notional(fresh_primary) or actual_primary_after
         fresh_primary_qty = abs(_finite((fresh_primary or {}).get("positionAmt"))) or (primary_qty + q)
         fresh_hedge_notional = _notional(fresh_hedge)
+        fresh_hedge_qty = abs(_finite((fresh_hedge or {}).get("positionAmt")))
         target_after = fresh_primary_notional * configured_hedge_ratio
         target_qty_after = fresh_primary_qty * configured_hedge_ratio
-        gap = max(0.0, target_after - fresh_hedge_notional)
+        gap_qty = max(0.0, target_qty_after - fresh_hedge_qty)
+        qty_tolerance = max(1e-12, target_qty_after * 0.001)
+        gap = gap_qty * max(p, mark)
         hq = hp = 0.0
         hcid = hoid = ""
         try:
-            if gap > max(1.0, actual_primary_after * 0.002):
+            if gap_qty > qty_tolerance:
                 hedge_prefix = _prefix(str(state["cycleId"]), cycle_no, "HEDGE_ENTRY")
                 hq, hp, hcid, hoid = _execute_with_precision_retry(
                     client=client, symbol=symbol, mark=p, notional=gap, leverage=leverage,
                     side=hedge_side, action="OPEN", prefix=hedge_prefix, new_position_leverage=leverage,
                 )
-        except Exception:
-            rollback_prefix = _prefix(str(state["cycleId"]), cycle_no, "DCA_ROLLBACK")
-            _execute_with_precision_retry(
-                client=client, symbol=symbol, mark=p, notional=q*p, leverage=leverage,
-                side=primary_side, action="CLOSE", prefix=rollback_prefix,
+        except Exception as exc:
+            owned = _upsert_owned(
+                owned, settings=settings, cycle_id=str(state["cycleId"]), symbol=symbol,
+                role=primary_role, side=primary_side, quantity=q, price=p,
+                client_id=cid, order_id=oid, dca=True, timestamp_ms=timestamp_ms,
             )
-            _audit(ref, "FOCUS_V2_TRAILING_DCA_ROLLBACK", cycleId=state["cycleId"], symbol=symbol, reason="tijdelijke hedge kon niet bevestigd worden")
-            raise
+            state.update({
+                "weightedEntry": _finite((fresh_primary or {}).get("entryPrice"), p),
+                "dcaCount": cycle_no, "dcaMode": DCA_FROZEN, "hedgeState": HEDGE_ACTIVE,
+                "lastDcaFillPrice": p, "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio),
+                "hedgeReleasePrice": 0.0, "hedgeTargetQty": target_qty_after,
+                "cycleStatus": "DCA_HEDGE_SYNC_PENDING", "lastAction": "DCA_HEDGE_SYNC_PENDING",
+                "lastReason": f"LONG DCA bevestigd; SHORT sync opnieuw proberen: {exc}",
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_DCA_HEDGE_SYNC_PENDING", cycleId=state["cycleId"], symbol=symbol, dcaCount=cycle_no, requiredShortQty=gap_qty, error=str(exc))
+            return {"status": "reconciling", "action": "DCA_HEDGE_SYNC_PENDING", "symbol": symbol, "ordersSent": 1, "requiredShortQty": gap_qty}
 
         owned = _upsert_owned(
             owned, settings=settings, cycle_id=str(state["cycleId"]), symbol=symbol,
@@ -671,7 +817,7 @@ def run_focus_v2_live_step(
         entry = _finite((primary_row or {}).get("entryPrice"), _finite(state.get("weightedEntry"), p))
         new_entry = ((primary_qty * entry) + (q * p)) / max(new_qty, 1e-12)
         next_fixed_dca = next_dca_from_anchor(p, primary_side, dca_ratio)
-        release_price = release_price_from_last_dca(p, primary_side, release_ratio)
+        release_price = 0.0 if simple_flow else release_price_from_last_dca(p, primary_side, release_ratio)
         state.update({
             "weightedEntry": new_entry,
             "dcaCount": cycle_no,
@@ -686,9 +832,9 @@ def run_focus_v2_live_step(
             "hedgeCycleId": f"{state['cycleId']}-dca-{cycle_no}",
             "lastDcaOrderId": oid,
             "lastHedgeEntryOrderId": hoid,
-            "cycleStatus": "DCA_HEDGE_ACTIVE",
-            "lastAction": "DCA_HEDGE_ACTIVE",
-            "lastReason": "DCA geraakt: primary DCA + hedge bevestigd; volgende DCA lager en release vanaf laatste fill staan vast",
+            "cycleStatus": "HEDGED",
+            "lastAction": "DCA_HEDGE_SYNCED",
+            "lastReason": "DCA geraakt: LONG bevestigd en SHORT naar totale LONG-quantity gesynchroniseerd",
             "stateMachineVersion": 6,
         })
         _persist(ref, state, owned, focusV2History=_history(
@@ -699,12 +845,15 @@ def run_focus_v2_live_step(
         _audit(ref, "FOCUS_V2_TRAILING_DCA_HEDGE", cycleId=state["cycleId"], symbol=symbol, dcaCount=cycle_no, lastDcaFill=p, nextDca=next_fixed_dca, hedgeReleasePrice=release_price, hedgeTarget=target_after, hedgeTargetQty=target_qty_after)
         return {"status": "executed", "action": "FOCUS_V2_DCA_HEDGE_ACTIVE", "symbol": symbol, "ordersSent": 2 if hq > 0 else 1, "dcaCount": cycle_no, "lastDcaFillPrice": p, "nextDcaPrice": next_fixed_dca, "hedgeReleasePrice": release_price, "hedgeTargetQty": target_qty_after}
 
-    # With an active hedge, release 100% after the configured recovery from the LAST confirmed DCA fill.
+    # Active protection is checked on EVERY execution tick. In simple mode the
+    # only strategic release gate is strictly positive expected NET hedge PnL.
     if hedge_qty > 1e-12:
         last_dca = _finite(state.get("lastDcaFillPrice"))
-        release_price = _finite(state.get("hedgeReleasePrice")) or release_price_from_last_dca(last_dca, primary_side, release_ratio)
+        release_price = 0.0 if simple_flow else (_finite(state.get("hedgeReleasePrice")) or release_price_from_last_dca(last_dca, primary_side, release_ratio))
         recovery = recovery_from_last_dca(mark, last_dca, primary_side)
-        if last_dca > 0 and hedge_release_crossed(mark, release_price, primary_side):
+        expected_net, executable_close, gross_close_pnl, estimated_fees, slippage_buffer = expected_net_hedge_close_pnl(client, symbol, hedge_side, hedge_row, mark)
+        release_allowed = expected_net > 0.0 if simple_flow else (last_dca > 0 and hedge_release_crossed(mark, release_price, primary_side))
+        if release_allowed:
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}
             state["hedgeState"] = HEDGE_RELEASE_EXECUTING
@@ -742,9 +891,9 @@ def run_focus_v2_live_step(
                 "dcaAnchorPrice": anchor,
                 "nextDcaPrice": next_dca_from_anchor(anchor, primary_side, dca_ratio),
                 "lastHedgeReleaseOrderId": coid,
-                "cycleStatus": "PRIMARY_ONLY",
-                "lastAction": "HEDGE_RELEASED",
-                "lastReason": "herstel vanaf laatste DCA-fill bereikt; hedge volledig weg; trailing direct hervat",
+                "cycleStatus": "LONG_ONLY",
+                "lastAction": "HEDGE_RELEASED_NET_GREEN",
+                "lastReason": "SHORT netto groen; volledige beschermingshedge gesloten; LONG blijft actief",
                 "stateMachineVersion": 6,
             })
             _persist(ref, state, owned, focusV2History=_history(
@@ -752,8 +901,15 @@ def run_focus_v2_live_step(
                 primary_notional=primary_notional, hedge_notional=0.0,
                 primary_pnl=primary_pnl, hedge_pnl=0.0,
             ))
-            _audit(ref, "FOCUS_V2_TRAILING_HEDGE_RELEASE", cycleId=state["cycleId"], symbol=symbol, lastDcaFill=last_dca, releasePrice=release_price, recovery=recovery, threshold=release_ratio, closeQty=cq, closePrice=cp)
-            return {"status": "executed", "action": "FOCUS_V2_HEDGE_RELEASED", "symbol": symbol, "ordersSent": 1, "recoverySinceLastDca": recovery, "releasePrice": release_price, "shortOrLongHedgeRemaining": 0.0}
+            _audit(ref, "FOCUS_HEDGE_RELEASED_NET_GREEN", cycleId=state["cycleId"], symbol=symbol, lastDcaFill=last_dca, expectedNetClosePnl=expected_net, executableClosePrice=executable_close, grossClosePnl=gross_close_pnl, estimatedFees=estimated_fees, slippageBuffer=slippage_buffer, closeQty=cq, closePrice=cp)
+            return {"status": "executed", "action": "FOCUS_HEDGE_RELEASED_NET_GREEN", "symbol": symbol, "ordersSent": 1, "expectedNetClosePnl": expected_net, "executableClosePrice": executable_close, "shortOrLongHedgeRemaining": 0.0}
+
+        if simple_flow:
+            state.update({
+                "cycleStatus": "HEDGED", "lastAction": "HEDGE_HOLD_RED",
+                "lastReason": "SHORT nog niet netto groen; volgende realtime tick opnieuw controleren",
+                "hedgeReleasePrice": 0.0,
+            })
 
     # v6 full-close TP is only legal in primary-only state.
     if hedge_qty <= 1e-12 and take_profit_reached(settings, primary_pnl, primary_notional):
