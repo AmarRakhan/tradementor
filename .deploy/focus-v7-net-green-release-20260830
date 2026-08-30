@@ -1,2 +1,2 @@
 Require release price + exact net-profitable hedge close using existing round-trip cost model + equity at/above cycle baseline before reducing SHORT.
-Retry after migrating all stale mechanical-release tests.
+Final rerun after aligning the portfolio-cycle regression test with the existing exact net-close cost model.
