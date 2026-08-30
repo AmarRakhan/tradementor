@@ -48,10 +48,10 @@ def test_10000_randomized_trailing_paths_never_put_next_buy_above_high_or_farthe
                 assert 0.0 <= shown <= distance
 
 
-def test_simple_flow_release_requires_price_net_green_and_equity_and_keeps_rehedge_priority_exit():
+def test_simple_flow_release_requires_price_net_green_and_keeps_rehedge_priority_exit():
     src = Path('aster_strategy2_focus_trailing.py').read_text(encoding='utf-8')
     section = src.split('# v7 protected SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]
-    assert 'price_release_ready and net_green_ready and equity_release_ready' in section
+    assert 'price_release_ready and net_green_ready:' in section
     assert 'expected_net_hedge_close_pnl(' in section
     assert 'expected_net_close_pnl > 0.0' in section
     assert 'reHedgeArmed' in section
@@ -63,7 +63,7 @@ def test_simple_flow_release_requires_price_net_green_and_equity_and_keeps_rehed
 
 def test_equity_protection_keeps_dca_active_and_does_not_backfill_missed_orders():
     src = Path('aster_strategy2_focus_trailing.py').read_text(encoding='utf-8')
-    section = src.split('# v7 equity protection:', 1)[1].split('# v7 post-release re-hedge:', 1)[0]
+    section = src.split('# v7 equity protection may repair missing protection below the cycle baseline, but', 1)[1].split('# v7 post-release re-hedge:', 1)[0]
     assert 'normal trailing\n    # DCA remains active' in section
     assert 'Intentionally continue into normal DCA evaluation below.' in section
     assert 'equityDcaRearmedAfterLock' in section
@@ -71,5 +71,5 @@ def test_equity_protection_keeps_dca_active_and_does_not_backfill_missed_orders(
     assert 'next_dca_from_anchor(mark, primary_side, dca_ratio)' in section
     assert 'dcaTriggerPending": False' in section  # only one-time legacy re-arm, not steady-state hold
     release = src.split('# v7 protected SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]
-    assert 'equity_release_ready' in release
-    assert 'price_release_ready and net_green_ready and equity_release_ready' in release
+    assert 'equity_release_ready' not in release
+    assert 'price_release_ready and net_green_ready:' in release

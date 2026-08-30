@@ -8,16 +8,16 @@ def block():
     return src[a:b]
 
 
-def test_release_requires_price_net_green_and_equity():
+def test_release_requires_price_and_net_green():
     s=block()
-    assert "price_release_ready and net_green_ready and equity_release_ready" in s
+    assert "price_release_ready and net_green_ready:" in s
     assert "expected_net_hedge_close_pnl(" in s
     assert "expected_net_close_pnl > 0.0" in s
 
 
 def test_red_short_cannot_reach_close_executor():
     s=block()
-    gate=s.index("if price_release_ready and net_green_ready and equity_release_ready:")
+    gate=s.index("if price_release_ready and net_green_ready:")
     close=s.index('action="CLOSE"')
     assert gate < close
 

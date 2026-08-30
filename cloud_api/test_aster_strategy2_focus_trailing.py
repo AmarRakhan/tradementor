@@ -420,17 +420,17 @@ def test_v6_dca_is_the_only_short_rehedge_point():
     assert 'cycleStatus": "DCA_HEDGE_SYNC_PENDING"' in src
 
 
-def test_v7_short_release_requires_price_plus_net_green_plus_equity():
+def test_v7_short_release_requires_price_plus_net_green_only():
     from pathlib import Path
     src = (Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
     gate = src.index('price_release_ready = last_dca > 0 and hedge_release_crossed')
-    protected = src.index('if price_release_ready and net_green_ready and equity_release_ready:', gate)
+    protected = src.index('if price_release_ready and net_green_ready:', gate)
     end = src.index('# Legacy non-simple Focus TP only.', protected)
     section = src[gate:end]
     assert protected > gate
     assert 'expected_net_hedge_close_pnl' in section
     assert 'net_green_ready' in section
-    assert 'equity_release_ready' in section
+    assert 'equity_release_ready' not in section
     assert 'FOCUS_HEDGE_RELEASED_NET_GREEN' in section
 
 
