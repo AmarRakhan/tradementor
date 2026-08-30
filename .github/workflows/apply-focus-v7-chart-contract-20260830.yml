@@ -1,0 +1,48 @@
+name: Apply Focus V7 Chart Contract 20260830
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .deploy/focus-v7-chart-contract-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply v7 chart patch
+        run: python tools/apply_focus_v7_chart_contract_20260830.py
+      - name: Verify forbidden legacy chart gates are gone
+        run: |
+          ! grep -q 'PRICE READY · WAIT NET GREEN' web/components/trading-chart.tsx
+          ! grep -q 'READY · NET GREEN' web/components/trading-chart.tsx
+          grep -q 'TRAILING TERUGVALKOOP' web/components/trading-chart.tsx
+          grep -q 'STRATEGY INVARIANT VIOLATION' web/components/trading-chart.tsx
+          grep -q 'PORTFOLIO DOEL' web/components/trading-chart.tsx
+      - name: Build web
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Commit chart contract
+        run: |
+          if git diff --quiet -- web/components/trading-chart.tsx; then
+            echo 'No chart changes required'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/trading-chart.tsx
+          git commit -m 'Align Strategy 2 v7 chart with portfolio-cycle contract'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
