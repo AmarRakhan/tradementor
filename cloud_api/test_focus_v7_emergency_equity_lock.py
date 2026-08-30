@@ -6,7 +6,7 @@ def test_emergency_equity_lock_precedes_rehedge_and_dca():
     lock = src.index("# EMERGENCY v7 equity lock")
     rehedge = src.index("# v7 post-release re-hedge")
     dca = src.index("# DCA is the ONLY re-hedge point")
-    release = src.index("# v7 mechanical SHORT release")
+    release = src.index("# v7 protected SHORT release")
     assert lock < rehedge < dca < release
 
 
@@ -25,4 +25,4 @@ def test_equity_lock_blocks_release_churn_by_early_return():
     src = Path("aster_strategy2_focus_trailing.py").read_text(encoding="utf-8")
     block = src[src.index("# EMERGENCY v7 equity lock"):src.index("# v7 post-release re-hedge")]
     assert '"status": "holding", "action": "EMERGENCY_EQUITY_LOCK_HOLD"' in block
-    assert "FOCUS_HEDGE_RELEASED_MECHANICAL" not in block
+    assert "FOCUS_HEDGE_RELEASED_NET_GREEN" not in block

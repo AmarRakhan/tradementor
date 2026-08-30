@@ -6,7 +6,7 @@ Contract:
 - every new v6 cycle starts with a primary leg plus configurable start hedge;
 - a DCA cross adds primary exposure and hedges the configured ratio of the total primary position;
 - in Simple Mode every DCA is a ratcheting trailing level: it follows fresh highs upward and never moves down during a pullback;
-- the full hedge is mechanically released at the configured recovery from the last confirmed buy fill;
+- the full hedge may release only after the configured recovery AND when the exact hedge close is net profitable after conservative round-trip fees/slippage;
 - after each confirmed DCA the trailing anchor resets to that fill/current price and the next DCA starts one configured step below it;
 - after release, trailing resumes immediately from the confirmed release/current price;
 - the only full-cycle exit is portfolio equity growth versus cycleStartEquity; it closes both legs and can auto-restart.
@@ -1342,18 +1342,26 @@ def run_focus_v2_live_step(
         _audit(ref, "FOCUS_V2_TRAILING_DCA_HEDGE", cycleId=state["cycleId"], symbol=symbol, dcaCount=cycle_no, lastDcaFill=p, nextDca=next_dca_after_fill, hedgeReleasePrice=release_price, hedgeTarget=target_after, hedgeTargetQty=target_qty_after)
         return {"status": "executed", "action": "FOCUS_V2_DCA_HEDGE_ACTIVE", "symbol": symbol, "ordersSent": 2 if hq > 0 else 1, "dcaCount": cycle_no, "lastDcaFillPrice": p, "nextDcaPrice": next_dca_after_fill, "hedgeReleasePrice": release_price, "hedgeTargetQty": target_qty_after}
 
-    # v7 mechanical SHORT release. No green-PnL, break-even or protection-reserve gate.
-    # The configured +recovery from the last confirmed buy fill is the sole release trigger.
+    # v7 protected SHORT release. The configured recovery is only the earliest point
+    # at which a release may be considered. The exact hedge being reduced/closed must
+    # also be net profitable after the existing conservative round-trip fee/slippage
+    # model, and account equity may not be below the persisted cycle baseline.
+    # This makes a red hedge close server-side impossible in simple portfolio-cycle mode.
     if hedge_qty > 1e-12:
         last_dca = _finite(state.get("lastDcaFillPrice"))
         release_price = _finite(state.get("hedgeReleasePrice")) or (release_price_from_last_dca(last_dca, primary_side, release_ratio) if last_dca > 0 else 0.0)
         state["hedgeReleasePrice"] = release_price
         price_release_ready = last_dca > 0 and hedge_release_crossed(mark, release_price, primary_side)
+        expected_net_close_pnl, executable_close_price, gross_close_pnl, estimated_close_fees, estimated_slippage = expected_net_hedge_close_pnl(
+            client, symbol, hedge_side, hedge_row, mark
+        )
+        net_green_ready = expected_net_close_pnl > 0.0
+        equity_release_ready = cycle_start_equity <= 0 or current_equity + 1e-9 >= cycle_start_equity
         state["shortReleasePriceReady"] = bool(price_release_ready)
-        state["shortReleaseNetGreenReady"] = False
-        state["expectedNetShortClosePnl"] = 0.0
-        state["shortNetGreenReleasePrice"] = 0.0
-        if price_release_ready:
+        state["shortReleaseNetGreenReady"] = bool(net_green_ready)
+        state["expectedNetShortClosePnl"] = expected_net_close_pnl
+        state["shortNetGreenReleasePrice"] = net_green_hedge_release_price(hedge_row, hedge_side)
+        if price_release_ready and net_green_ready and equity_release_ready:
             if order_budget is not None and order_budget < 1:
                 return {"status": "budget-exhausted", "action": "FOCUS_V2_WAIT_HEDGE_RELEASE", "ordersSent": 0}
             state.update({"hedgeState": HEDGE_RELEASE_EXECUTING, "cycleStatus": "HEDGE_RELEASE_EXECUTING"})
@@ -1370,7 +1378,7 @@ def run_focus_v2_live_step(
                 state.update({
                     "hedgeState": HEDGE_RELEASE_EXECUTING, "lastHedgeReleaseOrderId": coid,
                     "lastAction": "HEDGE_RELEASE_EXECUTING",
-                    "lastReason": "mechanische reduce-only release verzonden; Aster bevestigt nog resterende SHORT",
+                    "lastReason": "net-groene reduce-only release verzonden; Aster bevestigt nog resterende SHORT",
                 })
                 _persist(ref, state, owned)
                 return {"status": "reconciling", "action": "FOCUS_V2_HEDGE_RELEASE_EXECUTING", "symbol": symbol, "ordersSent": 1, "hedgeRemainingQty": remaining_hedge_qty}
@@ -1387,24 +1395,28 @@ def run_focus_v2_live_step(
                 "dcaAnchorPrice": trailing_anchor, "nextDcaPrice": next_dca_from_anchor(trailing_anchor, primary_side, dca_ratio),
                 "reHedgeArmed": last_dca > 0, "reHedgePrice": last_dca if last_dca > 0 else 0.0,
                 "lastHedgeReleaseOrderId": coid, "cycleStatus": "LONG_ONLY",
-                "lastAction": "HEDGE_RELEASED_MECHANICAL",
-                "lastReason": "release-afstand geraakt; volledige SHORT gesloten en re-hedge op laatste gevulde terugvalkoop gewapend",
+                "lastAction": "HEDGE_RELEASED_NET_GREEN",
+                "lastReason": "release-afstand geraakt en SHORT netto groen na kostenbuffer; volledige SHORT gesloten en re-hedge gewapend",
                 "stateMachineVersion": 7,
             })
             _persist(ref, state, owned, focusV2History=_history(
                 state, mark=anchor, dca_ratio=dca_ratio, release_ratio=release_ratio,
                 primary_notional=primary_notional, hedge_notional=0.0, primary_pnl=primary_pnl, hedge_pnl=0.0,
             ))
-            _audit(ref, "FOCUS_HEDGE_RELEASED_MECHANICAL", cycleId=state["cycleId"], symbol=symbol,
-                lastDcaFill=last_dca, releasePrice=release_price, closeQty=cq, closePrice=cp, reHedgePrice=state.get("reHedgePrice"))
+            _audit(ref, "FOCUS_HEDGE_RELEASED_NET_GREEN", cycleId=state["cycleId"], symbol=symbol,
+                lastDcaFill=last_dca, releasePrice=release_price, closeQty=cq, closePrice=cp,
+                executableClosePrice=executable_close_price, grossClosePnl=gross_close_pnl, estimatedCloseFees=estimated_close_fees,
+                estimatedSlippage=estimated_slippage, expectedNetShortClosePnl=expected_net_close_pnl, reHedgePrice=state.get("reHedgePrice"))
             return {
-                "status": "executed", "action": "FOCUS_HEDGE_RELEASED_MECHANICAL", "symbol": symbol,
+                "status": "executed", "action": "FOCUS_HEDGE_RELEASED_NET_GREEN", "symbol": symbol,
                 "ordersSent": 1, "reHedgePrice": state.get("reHedgePrice"), "shortOrLongHedgeRemaining": 0.0,
             }
         if simple_flow:
             state.update({
-                "cycleStatus": "HEDGED", "lastAction": "HEDGE_HOLD_UNTIL_RELEASE_PRICE",
-                "lastReason": "mechanische releaseprijs vanaf laatste gevulde terugvalkoop nog niet geraakt",
+                "cycleStatus": "HEDGED", "lastAction": "HEDGE_HOLD_PROTECTED_RELEASE",
+                "lastReason": ("releaseprijs nog niet geraakt" if not price_release_ready else
+                    ("SHORT nog niet netto groen na kostenbuffer" if not net_green_ready else
+                     "equity onder cycleStartEquity; hedge mag niet worden verlaagd")),
                 "hedgeReleasePrice": release_price,
             })
 

@@ -34,13 +34,13 @@ def test_short_must_be_meaningfully_green_after_round_trip_costs():
     assert net > 0
 
 
-def test_simple_flow_contract_is_mechanical_release_plus_full_rehedge():
+def test_simple_flow_contract_is_protected_release_plus_full_rehedge():
     source = Path(focus.__file__).read_text(encoding='utf-8')
-    release = source.split('# v7 mechanical SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]
-    assert 'net_green_ready' not in release
+    release = source.split('# v7 protected SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]
+    assert 'net_green_ready' in release
     assert 'protectionReserveReady' not in release
     assert 'price_release_ready = last_dca > 0 and hedge_release_crossed' in release
-    assert 'FOCUS_HEDGE_RELEASED_MECHANICAL' in release
+    assert 'FOCUS_HEDGE_RELEASED_NET_GREEN' in release
     assert 'reHedgeArmed' in release and 'reHedgePrice' in release
     assert 'cycleStatus": "DCA_HEDGE_SYNC_PENDING"' in source
     assert 'target_qty_after = fresh_primary_qty * configured_hedge_ratio' in source

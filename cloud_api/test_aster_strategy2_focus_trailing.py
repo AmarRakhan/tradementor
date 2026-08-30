@@ -73,7 +73,7 @@ def test_v5_config_defaults_and_explicit_values():
     assert public["focusV2HedgeReleaseRecoveryPct"] == pytest.approx(0.0015)
 
 
-def test_runtime_source_contains_v7_portfolio_cycle_and_mechanical_release():
+def test_runtime_source_contains_v7_portfolio_cycle_and_protected_release():
     from pathlib import Path
     src = (Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
     assert 'DCA_TRAILING = "TRAILING"' in src
@@ -81,7 +81,7 @@ def test_runtime_source_contains_v7_portfolio_cycle_and_mechanical_release():
     assert '"hedgeReleasePrice"' in src
     assert "hedge_release_crossed(mark, release_price, primary_side)" in src
     assert "fresh_primary_qty * configured_hedge_ratio" in src
-    assert "FOCUS_HEDGE_RELEASED_MECHANICAL" in src
+    assert "FOCUS_HEDGE_RELEASED_NET_GREEN" in src
     assert "FOCUS_REHEDGE_ACTIVE" in src
     assert "FOCUS_V2_START_HEDGED" in src
     assert "def portfolio_target_reached" in src
@@ -420,17 +420,18 @@ def test_v6_dca_is_the_only_short_rehedge_point():
     assert 'cycleStatus": "DCA_HEDGE_SYNC_PENDING"' in src
 
 
-def test_v7_short_release_requires_only_last_buy_plus_point15():
+def test_v7_short_release_requires_price_plus_net_green_plus_equity():
     from pathlib import Path
     src = (Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
     gate = src.index('price_release_ready = last_dca > 0 and hedge_release_crossed')
-    mechanical = src.index('if price_release_ready:', gate)
-    end = src.index('# Legacy non-simple Focus TP only.', mechanical)
+    protected = src.index('if price_release_ready and net_green_ready and equity_release_ready:', gate)
+    end = src.index('# Legacy non-simple Focus TP only.', protected)
     section = src[gate:end]
-    assert mechanical > gate
-    assert 'net_green_ready' not in section
-    assert 'protectionReserveReady' not in section
-    assert 'FOCUS_HEDGE_RELEASED_MECHANICAL' in section
+    assert protected > gate
+    assert 'expected_net_hedge_close_pnl' in section
+    assert 'net_green_ready' in section
+    assert 'equity_release_ready' in section
+    assert 'FOCUS_HEDGE_RELEASED_NET_GREEN' in section
 
 
 def test_v6_simple_dca_ratchets_in_both_hedged_and_long_only_states():
@@ -542,7 +543,7 @@ def test_v7_release_ignores_old_protection_reserve_gate(monkeypatch):
         account={"totalMarginBalance":"500","availableBalance":"50","totalMaintMargin":"0"},
         positions=positions,timestamp_ms=401,order_budget=2)
     assert len(calls)==1 and calls[0]["action"]=="CLOSE"
-    assert result["action"]=="FOCUS_HEDGE_RELEASED_MECHANICAL"
+    assert result["action"]=="FOCUS_HEDGE_RELEASED_NET_GREEN"
 
 def test_v6_latency_telemetry_is_written_for_successful_atomic_dca(monkeypatch):
     import aster_strategy2_focus_trailing as engine
