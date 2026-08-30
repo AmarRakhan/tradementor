@@ -242,6 +242,10 @@ def _state(raw_state: dict[str, Any], *, symbol: str, primary_side: str) -> dict
     state.setdefault("trailingHigh", 0.0)
     state.setdefault("trailingLow", 0.0)
     state.setdefault("nextDcaPrice", 0.0)
+    state.setdefault("dcaTriggerPending", False)
+    state.setdefault("dcaTriggerPrice", 0.0)
+    state.setdefault("dcaTriggerMarkPrice", 0.0)
+    state.setdefault("dcaTriggerAtMs", 0)
     state.setdefault("frozenDcaReference", 0.0)  # legacy v4 field
     state.setdefault("lastDcaFillPrice", 0.0)
     state.setdefault("hedgeReleasePrice", 0.0)
@@ -641,7 +645,9 @@ def run_focus_v2_live_step(
             "openedAt": timestamp_ms, "originalEntry": p, "weightedEntry": p, "dcaCount": 0,
             "dcaMode": DCA_TRAILING, "hedgeState": HEDGE_STARTING, "cycleStatus": "START_HEDGED",
             "trailingHigh": p if primary_side == "LONG" else 0.0, "trailingLow": p if primary_side == "SHORT" else 0.0,
-            "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio), "lastDcaFillPrice": 0.0,
+            "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio),
+            "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
+            "lastDcaFillPrice": 0.0,
             "hedgeReleasePrice": 0.0, "hedgeTargetQty": q * configured_start_hedge_ratio,
             "startHedgePercent": configured_start_hedge_ratio, "hedgeTargetPercent": configured_hedge_ratio,
             "tpMode": tp_mode, "tpValue": tp_value, "autoRestart": bool(getattr(settings, "focus_v2_auto_restart", True)),
@@ -701,11 +707,15 @@ def run_focus_v2_live_step(
         qty_tolerance = max(1e-12, target_qty * 0.001)
         missing_qty = max(0.0, target_qty - hedge_qty)
         if missing_qty <= qty_tolerance:
+            last_dca = _finite(state.get("lastDcaFillPrice"))
+            restored_release = release_price_from_last_dca(last_dca, primary_side, release_ratio) if last_dca > 0 and hedge_qty > qty_tolerance else 0.0
             state.update({
                 "hedgeState": HEDGE_ACTIVE if hedge_qty > qty_tolerance else HEDGE_OFF,
                 "cycleStatus": "HEDGED" if hedge_qty > qty_tolerance else "LONG_ONLY",
+                "hedgeReleasePrice": restored_release,
+                "shortReleasePriceReady": False, "shortReleaseNetGreenReady": False, "expectedNetShortClosePnl": 0.0,
                 "lastAction": "DCA_HEDGE_SYNC_CONFIRMED",
-                "lastReason": "pending DCA-hedge sync door actuele Aster-quantities bevestigd",
+                "lastReason": "pending DCA-hedge sync door actuele Aster-quantities bevestigd; release opnieuw vanaf nieuwste DCA-fill gezet",
                 "hedgeTargetQty": target_qty,
             })
             _persist(ref, state, owned)
@@ -758,10 +768,14 @@ def run_focus_v2_live_step(
             _audit(ref, "FOCUS_DCA_HEDGE_SYNC_PARTIAL", cycleId=state.get("cycleId"), symbol=symbol, fillQty=hq, remainingShortQty=remaining)
             return {"status": "reconciling", "action": "DCA_HEDGE_SYNC_PENDING", "symbol": symbol, "ordersSent": 1, "requiredShortQty": remaining}
 
+        last_dca = _finite(state.get("lastDcaFillPrice"))
+        restored_release = release_price_from_last_dca(last_dca, primary_side, release_ratio) if last_dca > 0 else 0.0
         state.update({
             "hedgeState": HEDGE_ACTIVE, "cycleStatus": "HEDGED",
+            "hedgeReleasePrice": restored_release,
+            "shortReleasePriceReady": False, "shortReleaseNetGreenReady": False, "expectedNetShortClosePnl": 0.0,
             "lastAction": "DCA_HEDGE_SYNCED",
-            "lastReason": "pending DCA-hedge sync voltooid; SHORT is weer gelijk aan totale LONG",
+            "lastReason": "pending DCA-hedge sync voltooid; SHORT is weer gelijk aan totale LONG; release opnieuw vanaf nieuwste DCA-fill gezet",
             "hedgeTargetQty": target_qty, "lastHedgeEntryOrderId": hoid,
         })
         _persist(ref, state, owned)
@@ -771,9 +785,12 @@ def run_focus_v2_live_step(
     # Simple Mode: EVERY DCA ratchets from the freshest favorable extreme.
     # LONG: fresh highs raise the DCA; falling ticks never lower it.
     # After each fill the anchor is reset (see DCA execution below), so the next
-    # DCA starts one configured step below the new fill/current price.
+    # DCA starts one configured step below the new fill/current price. Once a
+    # crossing is proven it becomes durable and the trigger must NOT trail away
+    # while execution is pending or the market rebounds.
+    dca_trigger_pending = simple_flow and bool(state.get("dcaTriggerPending", False))
     initial_hedged_trailing = hedge_qty > 1e-12 and int(_finite(state.get("dcaCount"))) == 0 and _finite(state.get("lastDcaFillPrice")) <= 0
-    if simple_flow or hedge_qty <= 1e-12 or initial_hedged_trailing:
+    if (simple_flow and not dca_trigger_pending) or (not simple_flow and (hedge_qty <= 1e-12 or initial_hedged_trailing)):
         if primary_side == "LONG":
             anchor = max(_finite(state.get("trailingHigh"), mark), mark)
             state["trailingHigh"] = anchor
@@ -812,11 +829,25 @@ def run_focus_v2_live_step(
 
     next_dca = _finite(state.get("nextDcaPrice"))
     dca_allowed = settings.focus_dca_enabled and (settings.focus_dca_unlimited or int(_finite(state.get("dcaCount"))) < settings.focus_max_dca)
+    crossed_now = dca_allowed and dca_crossed(mark, next_dca, primary_side)
+    if simple_flow and crossed_now and not dca_trigger_pending:
+        state.update({
+            "dcaTriggerPending": True,
+            "dcaTriggerPrice": next_dca,
+            "dcaTriggerMarkPrice": mark,
+            "dcaTriggerAtMs": timestamp_ms,
+            "lastAction": "DCA_TRIGGER_PENDING",
+            "lastReason": "realtime DCA-crossing bewezen; trigger blijft durable tot LONG DCA + SHORT sync bevestigd zijn",
+        })
+        _persist(ref, state, owned)
+        _audit(ref, "FOCUS_DCA_TRIGGER_PENDING", cycleId=state.get("cycleId"), symbol=symbol, markPrice=mark, nextDcaPrice=next_dca)
+        dca_trigger_pending = True
+    dca_triggered = bool(dca_trigger_pending or crossed_now)
 
     # DCA is the ONLY re-hedge point: LONG DCA first, then SHORT sync to total LONG.
-    if dca_allowed and dca_crossed(mark, next_dca, primary_side):
+    if dca_allowed and dca_triggered:
         if order_budget is not None and order_budget < 2:
-            reason = {"reason": "ORDER_BUDGET", "markPrice": mark, "nextDcaPrice": next_dca, "orderBudget": order_budget}
+            reason = {"reason": "ORDER_BUDGET", "markPrice": mark, "nextDcaPrice": next_dca, "orderBudget": order_budget, "dcaTriggerPending": bool(dca_trigger_pending)}
             _audit(ref, "FOCUS_DCA_BLOCKED", cycleId=state.get("cycleId"), symbol=symbol, **reason)
             return {"status": "budget-exhausted", "action": "FOCUS_DCA_BLOCKED", "ordersSent": 0, **reason}
         current_count = int(_finite(state.get("dcaCount")))
@@ -891,6 +922,7 @@ def run_focus_v2_live_step(
                 "weightedEntry": _finite((fresh_primary or {}).get("entryPrice"), p),
                 "dcaCount": cycle_no, "dcaMode": DCA_TRAILING if simple_flow else DCA_FROZEN, "hedgeState": HEDGE_ACTIVE,
                 "lastDcaFillPrice": p, "trailingHigh": p if primary_side == "LONG" else _finite(state.get("trailingHigh")), "trailingLow": p if primary_side == "SHORT" else _finite(state.get("trailingLow")), "dcaAnchorPrice": p, "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio),
+                "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
                 "hedgeReleasePrice": 0.0, "hedgeTargetQty": target_qty_after,
                 "shortNetGreenReleasePrice": 0.0,
                 "cycleStatus": "DCA_HEDGE_SYNC_PENDING", "lastAction": "DCA_HEDGE_SYNC_PENDING",
@@ -922,6 +954,7 @@ def run_focus_v2_live_step(
                 "weightedEntry": _finite((post_primary or {}).get("entryPrice"), p),
                 "dcaCount": cycle_no, "dcaMode": DCA_TRAILING if simple_flow else DCA_FROZEN, "hedgeState": HEDGE_ACTIVE,
                 "lastDcaFillPrice": p, "trailingHigh": p if primary_side == "LONG" else _finite(state.get("trailingHigh")), "trailingLow": p if primary_side == "SHORT" else _finite(state.get("trailingLow")), "dcaAnchorPrice": p, "nextDcaPrice": next_dca_from_anchor(p, primary_side, dca_ratio),
+                "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
                 "hedgeReleasePrice": 0.0, "hedgeTargetQty": post_primary_qty or target_qty_after,
                 "shortNetGreenReleasePrice": 0.0,
                 "cycleStatus": "DCA_HEDGE_SYNC_PENDING", "lastAction": "DCA_HEDGE_SYNC_PENDING",
@@ -947,6 +980,7 @@ def run_focus_v2_live_step(
             "trailingLow": p if primary_side == "SHORT" else _finite(state.get("trailingLow")),
             "dcaAnchorPrice": p,
             "nextDcaPrice": next_dca_after_fill,
+            "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
             "hedgeReleasePrice": release_price,
             "hedgeTargetQty": target_qty_after,
             "shortReleasePriceReady": False, "shortReleaseNetGreenReady": False, "expectedNetShortClosePnl": 0.0,

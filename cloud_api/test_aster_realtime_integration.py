@@ -4,7 +4,7 @@ def test_scoped_management_path():
     assert 'management_only:bool=False,event_symbol:str=""' in S and 'REALTIME_HOLD' in S
 def test_existing_durable_queue_is_the_only_order_path():
     assert 'token=_acquire_strategy2_queue_lease(ref)' in S
-    assert '_run_aster_strategy2_queue_scan(uid,maximum_orders=1,management_only=True,event_symbol=event.symbol,event_mark_price=event.mark_price)' in S
+    assert '_run_aster_strategy2_queue_scan(uid,maximum_orders=2,management_only=True,event_symbol=event.symbol,event_mark_price=event.mark_price)' in S
     assert '_release_strategy2_queue_lease(ref,str(token))' in S
 def test_periodic_scheduler_is_retained(): assert '@app.post("/internal/aster-automation/tick")' in S
 def test_worker_is_gated(): assert 'ASTER_REALTIME_WORKER' in S and 'ASTER_REALTIME_EXECUTION_ENABLED' in S
@@ -25,3 +25,8 @@ def test_realtime_mark_override_changes_only_matching_symbol_mark_not_exchange_q
     assert 'positions=[({**row,"markPrice":event_mark}' in block
     assert 'str(row.get("symbol","")).upper()==event_symbol_norm' in block
     assert 'positionAmt' not in block
+
+
+def test_realtime_simple_focus_budget_can_complete_atomic_dca_and_short_sync():
+    assert '_run_aster_strategy2_queue_scan(uid,maximum_orders=2,management_only=True,event_symbol=event.symbol,event_mark_price=event.mark_price)' in S
+    assert 'maximum_orders=1,management_only=True,event_symbol=event.symbol' not in S

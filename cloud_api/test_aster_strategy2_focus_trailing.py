@@ -375,7 +375,7 @@ def test_v6_dca_is_the_only_short_rehedge_point():
     assert "short_rebuild_price_from_release" not in src
     assert "SHORT_REBUILD_SYNC_PENDING" not in src
     assert "FOCUS_SHORT_REBUILT" not in src
-    dca=src.index('if dca_allowed and dca_crossed')
+    dca=src.index('if dca_allowed and dca_triggered')
     assert src.index('fresh_primary_qty = abs(', dca) < src.index('gap_qty = max(0.0, target_qty_after - fresh_hedge_qty)', dca)
     assert 'cycleStatus": "DCA_HEDGE_SYNC_PENDING"' in src
 
@@ -395,7 +395,7 @@ def test_v6_simple_dca_ratchets_in_both_hedged_and_long_only_states():
     from pathlib import Path
     src=(Path(__file__).resolve().parent / "aster_strategy2_focus_trailing.py").read_text()
     block=src[src.index('# Simple Mode: EVERY DCA ratchets'):src.index('next_dca = _finite(state.get("nextDcaPrice"))')]
-    assert 'if simple_flow or hedge_qty <= 1e-12' in block
+    assert 'if (simple_flow and not dca_trigger_pending)' in block
     assert 'anchor = max(_finite(state.get("trailingHigh"), mark), mark)' in block
     assert 'state["nextDcaPrice"] = next_dca_from_anchor(anchor, primary_side, dca_ratio)' in block
 
@@ -405,3 +405,53 @@ def test_v6_net_green_release_line_matches_execution_cost_model():
     row={"entryPrice":"100"}
     expected=100*(1-.0005)/(1+.0005+.0002)
     assert net_green_hedge_release_price(row,"SHORT")==pytest.approx(expected)
+
+
+def test_v6_crossing_becomes_durable_when_budget_temporarily_too_small(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine,"_selected_symbol",lambda *_a,**_k:"BTCUSDT")
+    settings=_v6_settings(focusV2AmountsAreMargin=False,focusDcaDistance=.003)
+    positions=[_pos("LONG",70,100,99.69),_pos("SHORT",70,100,99.69)]
+    raw={"focusV2State":{"cycleId":"c","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":1,
+         "lastDcaFillPrice":100,"trailingHigh":100,"nextDcaPrice":99.7,"hedgeState":"ACTIVE",
+         "cycleStatus":"HEDGED","stateMachineVersion":6}}
+    ref=_Ref()
+    blocked=engine.run_focus_v2_live_step(client=_RuntimeClient(positions,99.69),ref=ref,raw_state=raw,
+        settings=settings,uid="u",account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},
+        positions=positions,timestamp_ms=200,order_budget=1)
+    assert blocked["action"]=="FOCUS_DCA_BLOCKED"
+    persisted=[x["focusV2State"] for x in ref.values if "focusV2State" in x][-1]
+    assert persisted["dcaTriggerPending"] is True
+    assert persisted["dcaTriggerPrice"]==pytest.approx(99.7)
+
+    # Market rebounds above the trigger: durable crossing must remain pending and must not trail away.
+    rebound=[_pos("LONG",70,100,100.2),_pos("SHORT",70,100,100.2)]
+    ref2=_Ref()
+    blocked_again=engine.run_focus_v2_live_step(client=_RuntimeClient(rebound,100.2),ref=ref2,
+        raw_state={"focusV2State":persisted},settings=settings,uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},
+        positions=rebound,timestamp_ms=201,order_budget=1)
+    assert blocked_again["action"]=="FOCUS_DCA_BLOCKED"
+    assert blocked_again["dcaTriggerPending"] is True
+    # The already persisted trigger remains authoritative; rebound did not create a new trailing state.
+    assert persisted["nextDcaPrice"]==pytest.approx(99.7)
+    assert persisted["trailingHigh"]==pytest.approx(100.0)
+
+
+def test_v6_pending_sync_confirmation_restores_release_from_latest_dca(monkeypatch):
+    import aster_strategy2_focus_trailing as engine
+    monkeypatch.setattr(engine,"_selected_symbol",lambda *_a,**_k:"BTCUSDT")
+    last_fill=83.25
+    positions=[_pos("LONG",105,last_fill,83.30),_pos("SHORT",105,last_fill,83.30)]
+    raw={"focusV2State":{"cycleId":"c","symbol":"BTCUSDT","primarySide":"LONG","dcaCount":3,
+         "lastDcaFillPrice":last_fill,"trailingHigh":last_fill,"nextDcaPrice":last_fill*.997,
+         "hedgeReleasePrice":0,"hedgeState":"ACTIVE","cycleStatus":"DCA_HEDGE_SYNC_PENDING","stateMachineVersion":6}}
+    ref=_Ref()
+    result=engine.run_focus_v2_live_step(client=_RuntimeClient(positions,83.30),ref=ref,raw_state=raw,
+        settings=_v6_settings(focusV2AmountsAreMargin=False),uid="u",
+        account={"totalMarginBalance":"500","availableBalance":"400","totalMaintMargin":"0"},
+        positions=positions,timestamp_ms=300,order_budget=2)
+    assert result["action"]=="DCA_HEDGE_SYNC_CONFIRMED"
+    state=[x["focusV2State"] for x in ref.values if "focusV2State" in x][-1]
+    assert state["hedgeReleasePrice"]==pytest.approx(last_fill*1.0015)
+    assert state["cycleStatus"]=="HEDGED"
