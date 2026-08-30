@@ -3,5 +3,6 @@ Emergency equity-lock hotfix commit: ac99ddac36613cde99ed10d32b818b4ab76622a1
 Net-green protected SHORT release commit: 070ba4187681e6189924adbd140cd12d4e5c2a25
 DCA-below-baseline fix commit: 454a5073c3de0c317dd38429c5e02c070f6a1d21
 Equity release gate removed commit: 70df0332cfc66bc8345103df3c6dbf86821aaebd
+Regression tests aligned commit: 49a21e6544679503446d53529591793e1cb54cac
 Release requires only: configured recovery price reached + exact remaining hedge net profitable after conservative round-trip fee/slippage model.
 Re-hedge remains anchored to the last confirmed DCA fill. No other strategy behavior is changed by this deployment trigger.
