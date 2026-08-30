@@ -26,7 +26,7 @@ jobs:
         run: python tools/apply_focus_v7_definitive_chart_labels_20260830.py
       - name: Verify backend and strategy files untouched
         run: |
-          CHANGED="$(git diff --name-only)"
+          CHANGED="$(git status --short | sed -E 's/^.. //')"
           printf '%s\n' "$CHANGED"
           test -n "$CHANGED"
           ! printf '%s\n' "$CHANGED" | grep -E '^(cloud_api/|.*strategy2.*\.py$)'
