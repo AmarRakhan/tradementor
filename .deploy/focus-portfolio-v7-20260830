@@ -1,5 +1,6 @@
 Deploy verified Strategy-2 portfolio-cycle v7.
 Emergency equity-lock hotfix commit: ac99ddac36613cde99ed10d32b818b4ab76622a1
 Net-green protected SHORT release commit: 070ba4187681e6189924adbd140cd12d4e5c2a25
+DCA-below-baseline fix commit: 454a5073c3de0c317dd38429c5e02c070f6a1d21
 Release requires: configured recovery price reached + exact remaining hedge net profitable after conservative round-trip fee/slippage model + equity at/above cycle baseline.
-Final retry with correct production health schema acceptance.
+Below baseline, normal trailing DCA remains active and every LONG add synchronizes SHORT 1:1. Existing missed DCA levels are not backfilled; current locked cycle is re-armed from live mark for the next configured drop.
