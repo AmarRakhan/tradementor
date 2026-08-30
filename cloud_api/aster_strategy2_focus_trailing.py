@@ -1029,11 +1029,11 @@ def run_focus_v2_live_step(
         dca_trigger_pending = True
     dca_triggered = bool(dca_trigger_pending or crossed_now)
 
-    # EMERGENCY v7 equity lock: once actual account equity is below the persisted
-    # cycle baseline, stop the churn that can otherwise repeatedly crystallize
-    # hedge losses. Keep/restore the hedge to 1:1 and freeze DCA/release actions
-    # until account equity is back at or above the cycle baseline. Portfolio TP
-    # still has priority above this block and can close the cycle normally.
+    # v7 equity protection: below the persisted cycle baseline, never reduce protection.
+    # SHORT release is blocked separately by equity_release_ready, but normal trailing
+    # DCA remains active. Every confirmed LONG DCA must still be followed immediately
+    # by a SHORT sync to the total LONG quantity. This block only repairs a missing
+    # hedge; it must never freeze the DCA recovery mechanism.
     equity_lock_active = bool(
         simple_flow and cycle_start_equity > 0 and current_equity > 0 and
         current_equity + 1e-9 < cycle_start_equity
@@ -1073,10 +1073,10 @@ def run_focus_v2_live_step(
                 "hedgeState": HEDGE_ACTIVE,
                 "hedgeTargetQty": confirmed_primary_qty or target_lock_qty,
                 "reHedgeArmed": False, "reHedgePrice": 0.0,
-                "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
-                "cycleStatus": "EMERGENCY_EQUITY_LOCK",
+                "cycleStatus": "EMERGENCY_EQUITY_PROTECTED",
                 "lastAction": "EMERGENCY_EQUITY_LOCK_REHEDGED",
-                "lastReason": "equity onder cycleStartEquity; hedge direct hersteld en verdere DCA/release churn geblokkeerd",
+                "lastReason": "equity onder cycleStartEquity; ontbrekende hedge direct hersteld; DCA-trigger blijft behouden en release blijft geblokkeerd",
+                "equityProtectionActive": True,
             })
             _persist(ref, state, owned)
             _audit(ref, "FOCUS_EMERGENCY_EQUITY_LOCK", cycleId=state.get("cycleId"), symbol=symbol,
@@ -1085,21 +1085,41 @@ def run_focus_v2_live_step(
             if confirmed_primary_qty <= 0 or abs(confirmed_primary_qty - confirmed_hedge_qty) > confirmed_tolerance:
                 return {"status": "reconciling", "action": "EMERGENCY_EQUITY_LOCK_REHEDGE_PENDING", "ordersSent": 1}
             return {"status": "executed", "action": "EMERGENCY_EQUITY_LOCK_REHEDGED", "ordersSent": 1}
+        legacy_lock_state = str(state.get("cycleStatus") or "") in {
+            "EMERGENCY_EQUITY_LOCK", "EMERGENCY_EQUITY_LOCK_WAIT_BUDGET"
+        } or str(state.get("lastAction") or "") == "EMERGENCY_EQUITY_LOCK_HOLD"
+        if legacy_lock_state and not bool(state.get("equityDcaRearmedAfterLock", False)):
+            # One-time migration for cycles that were frozen by the old emergency lock.
+            # Do NOT backfill missed historical DCA orders at the current market price.
+            # Re-arm from the current mark so only the NEXT configured 0.3% drop buys.
+            fresh_next = next_dca_from_anchor(mark, primary_side, dca_ratio)
+            state.update({
+                "trailingHigh": mark if primary_side == "LONG" else _finite(state.get("trailingHigh")),
+                "trailingLow": mark if primary_side == "SHORT" else _finite(state.get("trailingLow")),
+                "dcaAnchorPrice": mark, "nextDcaPrice": fresh_next, "dcaMode": DCA_TRAILING,
+                "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
+                "equityDcaRearmedAfterLock": True, "equityDcaRearmedAtPrice": mark,
+                "hedgeState": HEDGE_ACTIVE, "hedgeTargetQty": target_lock_qty,
+                "reHedgeArmed": False, "reHedgePrice": 0.0,
+                "cycleStatus": "EMERGENCY_EQUITY_PROTECTED",
+                "lastAction": "EMERGENCY_EQUITY_DCA_REARMED",
+                "lastReason": "oude equity-lock opgeheven voor DCA; geen gemiste orders ingehaald; volgende 0,3% daling koopt LONG en synchroniseert SHORT 1:1",
+                "equityProtectionActive": True,
+            })
+            _persist(ref, state, owned)
+            _audit(ref, "FOCUS_EQUITY_DCA_REARMED", cycleId=state.get("cycleId"), symbol=symbol, markPrice=mark, nextDcaPrice=fresh_next)
+            return {"status": "holding", "action": "EMERGENCY_EQUITY_DCA_REARMED", "ordersSent": 0, "nextDcaPrice": fresh_next}
         state.update({
             "hedgeState": HEDGE_ACTIVE,
             "hedgeTargetQty": target_lock_qty,
             "reHedgeArmed": False, "reHedgePrice": 0.0,
-            "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,
-            "cycleStatus": "EMERGENCY_EQUITY_LOCK",
-            "lastAction": "EMERGENCY_EQUITY_LOCK_HOLD",
-            "lastReason": "equity onder cycleStartEquity; 1:1 hedge vasthouden en geen DCA/release uitvoeren",
+            "cycleStatus": "EMERGENCY_EQUITY_PROTECTED",
+            "lastAction": "EMERGENCY_EQUITY_PROTECTED",
+            "lastReason": "equity onder cycleStartEquity; 1:1 hedge vasthouden; normale DCA blijft actief; verliesgevende SHORT-release blijft geblokkeerd",
+            "equityProtectionActive": True,
         })
         _persist(ref, state, owned)
-        return {
-            "status": "holding", "action": "EMERGENCY_EQUITY_LOCK_HOLD", "ordersSent": 0,
-            "currentEquity": current_equity, "cycleStartEquity": cycle_start_equity,
-            "primaryQty": primary_qty, "hedgeQty": hedge_qty,
-        }
+        # Intentionally continue into normal DCA evaluation below.
 
     # v7 post-release re-hedge: once SHORT has actually been confirmed flat, arm one
     # server-side trigger at the last filled buy. It never opens a second SHORT while
