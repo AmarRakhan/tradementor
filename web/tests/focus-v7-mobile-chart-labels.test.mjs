@@ -42,3 +42,12 @@ test("display patch includes real last-fill and armed re-hedge line segments wit
   assert.ok(src.includes('setSegment("lastfill"'));
   assert.ok(src.includes('setSegment("rehedge"'));
 });
+
+
+test("trailing DCA display ratchets on realtime market highs without waiting for 60s account snapshot", () => {
+  assert.ok(src.includes("focusLocalTrailRef"));
+  assert.ok(src.includes("focusTrailingActive"));
+  assert.ok(src.includes("latestMarketHigh"));
+  assert.ok(src.includes("focusDisplayAnchor*(1-focusDcaRatio)"));
+  assert.ok(src.includes("0.30% onder trailing high") || src.includes("focusDcaRatio*100"));
+});
