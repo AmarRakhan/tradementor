@@ -34,3 +34,5 @@ if legacy.count(old) != 1:
 LEGACY_TEST.write_text(legacy.replace(old, new, 1), encoding='utf-8')
 
 print('Focus pending hedge-sync recovery patch applied')
+
+# validation trigger 2026-08-30T06:02Z
