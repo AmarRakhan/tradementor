@@ -33,6 +33,17 @@ jobs:
       - name: Apply deterministic Focus patch
         run: python tools/apply_focus_simple_deterministic_flow_20260830.py
 
+      - name: Normalize generated regression test
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('cloud_api/test_focus_simple_deterministic_flow.py')
+          s = p.read_text(encoding='utf-8')
+          if '\\n' in s:
+              p.write_text(s.replace('\\n', '\n'), encoding='utf-8')
+          PY
+
       - name: Install backend test dependencies
         run: pip install -r cloud_api/requirements.txt pytest
 
@@ -61,4 +72,4 @@ jobs:
           git commit -m 'Simplify Focus Strategy-2 deterministic hedge flow'
           git push origin HEAD:amar-crypto-bot-2026-cloud
 
-# trigger: 2026-08-30 deterministic-flow
+# trigger: 2026-08-30 deterministic-flow-v2
