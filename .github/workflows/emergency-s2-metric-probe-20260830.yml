@@ -1,0 +1,116 @@
+name: Emergency S2 Metric Probe 20260830
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .deploy/emergency-s2-metric-probe-20260830
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Encode sanitized Strategy 2 metrics as task exit codes
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="s2-metric-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))['spec']['template']['spec']
+          print(s['containers'][0]['image']); print(s['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          from datetime import datetime, timezone
+          from google.cloud import firestore
+          import os
+          db=firestore.Client(project='tradementor-production')
+          candidates=[]
+          for snap in db.collection('asterStrategy2').stream():
+              d=snap.to_dict() or {}; st=d.get('focusV2State') if isinstance(d.get('focusV2State'),dict) else {}
+              if str(st.get('symbol') or '').upper() in {'HYPE','HYPEUSDT'}: candidates.append((snap,d,st))
+          candidates.sort(key=lambda x:int(bool(x[1].get('monitor') or x[1].get('enabled'))), reverse=True)
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
+          if not candidates:
+              metrics=[0]*32; metrics[0]=0
+          else:
+              snap,d,st=candidates[0]
+              start=int(datetime(2026,8,30,15,0,tzinfo=timezone.utc).timestamp()*1000)
+              counts={}
+              for a in snap.reference.collection('audit').where('timestampMs','>=',start).stream():
+                  r=a.to_dict() or {}; e=str(r.get('event') or '')
+                  counts[e]=counts.get(e,0)+1
+              cfg={}
+              for source in (d,d.get('settings') if isinstance(d.get('settings'),dict) else {},d.get('config') if isinstance(d.get('config'),dict) else {}):
+                  cfg.update({k:v for k,v in source.items() if k.startswith('focus_') or k=='leverage'})
+              def n(v,scale=1):
+                  try:return max(0,min(248,int(round(float(v)*scale))))
+                  except:return 0
+              cyc=float(st.get('cycleStartEquity') or 0)
+              # Index legend is printed by workflow after execution.
+              metrics=[
+                len(candidates), int(bool(d.get('enabled'))), int(bool(d.get('monitor'))), n(st.get('dcaCount')),
+                n(cyc), n((cyc-int(cyc))*100), n(cfg.get('leverage',0)),
+                n(cfg.get('focus_dca_distance',0),10000), n(cfg.get('focus_dca_notional',cfg.get('focus_dca_base_usd',0)),1),
+                n(cfg.get('focus_v2_hedge_release_recovery_pct',cfg.get('focus_v2_hedge_release_distance_pct',0)),10000),
+                n(cfg.get('focus_v2_take_profit_value',0),1), int(bool(cfg.get('focus_v2_amounts_are_margin'))),
+                counts.get('FOCUS_DCA_FILLED',0), counts.get('FOCUS_DCA_HEDGE_SYNCED',0), counts.get('FOCUS_DCA_HEDGE_SYNC_PENDING',0),
+                counts.get('FOCUS_HEDGE_RELEASED_MECHANICAL',0), counts.get('FOCUS_REHEDGE_ACTIVE',0), counts.get('FOCUS_PORTFOLIO_TARGET_CLOSED',0),
+                counts.get('FOCUS_DCA_TRIGGER_PENDING',0), counts.get('FOCUS_DCA_BLOCKED',0),
+                int(str(st.get('hedgeState','')).upper()=='ACTIVE'), int(bool(st.get('reHedgeArmed'))), int(bool(st.get('portfolioExitExecuting'))),
+                n(st.get('triggerToLongSubmitMs'),.01), n(st.get('longFillToShortSubmitMs'),.01), n(st.get('triggerToFullHedgeMs'),.01),
+                n(st.get('lastDcaFillPrice'),1), n(st.get('nextDcaPrice'),1), n(st.get('hedgeReleasePrice'),1),
+                n(st.get('hedgeTargetQty'),1), len(counts), sum(counts.values())
+              ]
+          value=metrics[idx] if idx<len(metrics) else 0
+          raise SystemExit(min(248,max(0,int(value)))+1)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 32 --parallelism 32 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXEC="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS="$(gcloud run jobs executions tasks list --execution "$EXEC" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          python - "$TASKS" <<'PY'
+          import json,sys
+          rows=json.loads(sys.argv[1]); vals={}
+          for r in rows:
+              idx=r.get('index'); codes=[]
+              def walk(x):
+                  if isinstance(x,dict):
+                      if isinstance(x.get('exitCode'),int): codes.append(x['exitCode'])
+                      for v in x.values(): walk(v)
+                  elif isinstance(x,list):
+                      for v in x: walk(v)
+              walk(r)
+              if isinstance(idx,int) and codes: vals[idx]=codes[0]-1
+          names=['candidates','enabled','monitor','dcaCount','cycleStartDollars','cycleStartCents','leverage','dcaDistanceBps','dcaAmount','releaseBps','portfolioTarget','amountsAreMargin','DCA_FILLED','DCA_SYNCED','DCA_SYNC_PENDING','HEDGE_RELEASED','REHEDGE_ACTIVE','PORTFOLIO_CLOSED','DCA_TRIGGER_PENDING','DCA_BLOCKED','hedgeActive','rehedgeArmed','portfolioExit','triggerToLongSubmit_10ms','longFillToShortSubmit_10ms','triggerToFullHedge_10ms','lastDcaPriceRounded','nextDcaPriceRounded','releasePriceRounded','hedgeTargetQtyRounded','auditEventTypes','auditRows']
+          for i,n in enumerate(names): print(f'METRIC {i:02d} {n}={vals.get(i,"MISSING")}')
+          PY
