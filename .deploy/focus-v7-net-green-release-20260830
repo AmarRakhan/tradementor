@@ -1,1 +1,2 @@
 Require release price + net-profitable hedge close after conservative fee/slippage buffer + equity at/above cycle baseline before reducing SHORT.
+Retry after migrating stale mechanical-release contract test.
