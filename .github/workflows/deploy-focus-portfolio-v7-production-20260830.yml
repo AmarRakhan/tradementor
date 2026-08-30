@@ -1,0 +1,141 @@
+name: Deploy Focus Portfolio V7 Production 20260830
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .deploy/focus-portfolio-v7-20260830
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+
+      - name: Verify exact v7 implementation is branch HEAD
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          grep -q 'FOCUS_HEDGE_RELEASED_MECHANICAL' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'FOCUS_REHEDGE_ACTIVE' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'FOCUS_PORTFOLIO_TARGET_CLOSED' cloud_api/aster_strategy2_focus_trailing.py
+          grep -q 'Alles sluiten bij portfoliogroei' web/components/aster-strategy2-maker.tsx
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install and rerun complete backend test suite
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          cd cloud_api
+          pytest -q
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture production configuration and IAM
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/service-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='true'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='true'
+          assert spec.get('serviceAccountName')
+          print('RUNTIME_SERVICE_ACCOUNT='+spec['serviceAccountName'])
+          print('SERVICE_URL='+service['status']['url'])
+          PY
+
+      - name: Build and push immutable backend image
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$GITHUB_SHA"
+          docker build --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy zero-traffic candidate
+        shell: bash
+        run: |
+          REVISION_SUFFIX="v7-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          TAG="focusv7-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$REVISION_SUFFIX" --update-env-vars "ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true" --no-traffic --tag "$TAG"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-candidate.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          before=json.load(open(sys.argv[1],encoding='utf-8')); after=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
+          bs=before['spec']['template']['spec']; a=after['spec']['template']['spec']
+          assert bs.get('serviceAccountName')==a.get('serviceAccountName')
+          assert bs.get('timeoutSeconds')==a.get('timeoutSeconds')
+          assert bs.get('containerConcurrency')==a.get('containerConcurrency')
+          be={x['name']:x.get('value') for x in bs['containers'][0].get('env',[])}
+          ae={x['name']:x.get('value') for x in a['containers'][0].get('env',[])}
+          expected=dict(be); expected.update({'ASTER_REALTIME_WORKER':'true','ASTER_REALTIME_EXECUTION_ENABLED':'true'})
+          assert ae==expected
+          candidate=next(x for x in after['status']['traffic'] if x.get('tag')==tag)
+          print('CANDIDATE_URL='+candidate['url']); print('CANDIDATE_REVISION='+candidate['revisionName'])
+          PY
+
+      - name: Health-check candidate
+        shell: bash
+        run: |
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready'; assert h['multiUser'] is True
+          PY
+
+      - name: Promote verified candidate to 100 percent
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready'; assert h['multiUser'] is True
+          PY
+
+      - name: Verify IAM unchanged
+        shell: bash
+        run: |
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json,sys
+          assert json.load(open(sys.argv[1])) == json.load(open(sys.argv[2]))
+          PY
