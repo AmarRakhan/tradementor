@@ -12,3 +12,5 @@ Production trigger after verified 1011-test pass for commit 9110e6894dbf9c5da430
 
 Manual hedge-close reconciliation: if Aster confirms the Focus hedge was manually flattened while LONG remains open, reconcile stale ownership, keep the cycle alive, arm re-hedge at the last confirmed DCA, and do not let emergency equity repair override an intentionally armed re-hedge. No DCA distance, release distance, fee model, or portfolio target changes.
 Production trigger after full-suite verification for manual-close commit 8f44736c1d24d88d63564e332b98c263a05ae924.
+
+Emergency protection margin wait fix: protection hedge now prechecks available margin and converts Aster -2019 into EMERGENCY_EQUITY_LOCK_WAIT_MARGIN without exception spam. Verified full backend suite for commit 3272794.
