@@ -1,0 +1,121 @@
+name: Emergency Read S2 Firestore Audit 20260830
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .deploy/emergency-read-s2-firestore-audit-20260830
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read sanitized Strategy 2 state and audit with runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="s2-audit-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))['spec']['template']['spec']
+          print(s['containers'][0]['image'])
+          print(s['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          from datetime import datetime, timezone
+          from google.cloud import firestore
+          import hashlib, json
+
+          db=firestore.Client(project='tradementor-production')
+          candidates=[]
+          for snap in db.collection('asterStrategy2').stream():
+              d=snap.to_dict() or {}
+              st=d.get('focusV2State') if isinstance(d.get('focusV2State'),dict) else {}
+              symbol=str(st.get('symbol') or '').upper()
+              if symbol in {'HYPE','HYPEUSDT'}:
+                  candidates.append((snap,d,st))
+          print('HYPE_CANDIDATES',len(candidates))
+          if not candidates:
+              raise SystemExit(2)
+          # Prefer the live/monitored document; never print uid.
+          candidates.sort(key=lambda x: int(bool(x[1].get('monitor') or x[1].get('enabled'))), reverse=True)
+          snap,d,st=candidates[0]
+          uid_hash=hashlib.sha256(snap.id.encode()).hexdigest()[:10]
+          print('ACCOUNT_HASH',uid_hash)
+          def pick(src, keys):
+              return {k:src.get(k) for k in keys if k in src}
+          print('TOP',json.dumps(pick(d,[
+              'enabled','monitor','phase','liveReady','exclusiveOwnership','updatedAt','lastTickAt'
+          ]),default=str,sort_keys=True))
+          print('STATE',json.dumps(pick(st,[
+              'cycleId','symbol','cycleStartEquity','dcaCount','dcaMode','hedgeState','cycleStatus','weightedEntry',
+              'lastDcaFillPrice','nextDcaPrice','hedgeReleasePrice','hedgeTargetQty','reHedgeArmed','reHedgePrice',
+              'portfolioExitExecuting','dcaTriggerPending','dcaTriggerPrice','dcaTriggerMarkPrice','lastAction','lastReason',
+              'dcaLongOrderSubmittedAt','dcaLongFillConfirmedAt','shortSyncSubmittedAt','shortSyncConfirmedAt',
+              'triggerToLongSubmitMs','longFillToShortSubmitMs','triggerToFullHedgeMs','tpMode','tpValue','autoRestart'
+          ]),default=str,sort_keys=True))
+          # Relevant config keys can be top-level or nested settings/config.
+          cfg={}
+          for source in (d, d.get('settings') if isinstance(d.get('settings'),dict) else {}, d.get('config') if isinstance(d.get('config'),dict) else {}):
+              for k in [
+                  'leverage','focus_dca_distance','focus_dca_base_usd','focus_dca_step_usd','focus_max_budget_usd',
+                  'focus_v2_amounts_are_margin','focus_v2_start_margin_usd','focus_v2_start_hedge_ratio','focus_v2_hedge_ratio',
+                  'focus_v2_hedge_release_recovery_pct','focus_v2_hedge_release_distance_pct','focus_v2_take_profit_mode','focus_v2_take_profit_value',
+                  'focus_dca_enabled','focus_dca_unlimited','focus_max_dca'
+              ]:
+                  if k in source: cfg[k]=source.get(k)
+          print('CONFIG',json.dumps(cfg,default=str,sort_keys=True))
+          # Owned legs sanitized: no order/client IDs.
+          legs=[]
+          for r in d.get('ownedLegs',[]) if isinstance(d.get('ownedLegs'),list) else []:
+              if not isinstance(r,dict): continue
+              if str(r.get('symbol','')).upper() not in {'HYPE','HYPEUSDT'}: continue
+              legs.append(pick(r,['role','side','quantity','weighted_entry','weightedEntry','dca_count','dcaCount','fees','funding','opened_at_ms','last_order_at_ms']))
+          print('LEGS',json.dumps(legs,default=str,sort_keys=True))
+          start_ms=int(datetime(2026,8,30,15,0,tzinfo=timezone.utc).timestamp()*1000)
+          audits=[]
+          for a in snap.reference.collection('audit').where('timestampMs','>=',start_ms).order_by('timestampMs').stream():
+              row=a.to_dict() or {}
+              det=row.get('details') if isinstance(row.get('details'),dict) else {}
+              safe={k:det.get(k) for k in [
+                  'symbol','dcaCount','markPrice','nextDcaPrice','fillPrice','fillQty','longQty','shortQty','requiredShortQty',
+                  'reHedgePrice','releasePrice','hedgeReleasePrice','portfolioEquity','cycleStartEquity','targetEquity',
+                  'dcaNotional','hedgeGapNotional','requiredMargin','availableMargin','orderId','error'
+              ] if k in det}
+              audits.append({'t':row.get('timestampMs'),'event':row.get('event'),'d':safe})
+          print('AUDIT_COUNT',len(audits))
+          for x in audits[-250:]: print('AUDIT',json.dumps(x,default=str,sort_keys=True))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXEC="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          gcloud logging read "resource.type=\"cloud_run_job\" AND labels.\"run.googleapis.com/execution_name\"=\"$EXEC\"" --project "$GCP_PROJECT_ID" --limit=500 --order=asc --format='value(textPayload)' || true
