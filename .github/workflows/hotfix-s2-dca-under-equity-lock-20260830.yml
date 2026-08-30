@@ -1,0 +1,63 @@
+name: Hotfix S2 DCA Under Equity Lock 20260830
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .deploy/hotfix-s2-dca-under-equity-lock-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch Strategy 2 equity protection so DCA stays active
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_strategy2_focus_trailing.py')
+          s=p.read_text(encoding='utf-8')
+          old='''    # EMERGENCY v7 equity lock: once actual account equity is below the persisted\n    # cycle baseline, stop the churn that can otherwise repeatedly crystallize\n    # hedge losses. Keep/restore the hedge to 1:1 and freeze DCA/release actions\n    # until account equity is back at or above the cycle baseline. Portfolio TP\n    # still has priority above this block and can close the cycle normally.\n'''
+          new='''    # v7 equity protection: below the persisted cycle baseline, never reduce protection.\n    # SHORT release is blocked separately by equity_release_ready, but normal trailing\n    # DCA remains active. Every confirmed LONG DCA must still be followed immediately\n    # by a SHORT sync to the total LONG quantity. This block only repairs a missing\n    # hedge; it must never freeze the DCA recovery mechanism.\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+          old2='''                "reHedgeArmed": False, "reHedgePrice": 0.0,\n                "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,\n                "cycleStatus": "EMERGENCY_EQUITY_LOCK",\n                "lastAction": "EMERGENCY_EQUITY_LOCK_REHEDGED",\n                "lastReason": "equity onder cycleStartEquity; hedge direct hersteld en verdere DCA/release churn geblokkeerd",\n'''
+          new2='''                "reHedgeArmed": False, "reHedgePrice": 0.0,\n                "cycleStatus": "EMERGENCY_EQUITY_PROTECTED",\n                "lastAction": "EMERGENCY_EQUITY_LOCK_REHEDGED",\n                "lastReason": "equity onder cycleStartEquity; ontbrekende hedge direct hersteld; DCA-trigger blijft behouden en release blijft geblokkeerd",\n                "equityProtectionActive": True,\n'''
+          assert old2 in s
+          s=s.replace(old2,new2,1)
+          old3='''        state.update({\n            "hedgeState": HEDGE_ACTIVE,\n            "hedgeTargetQty": target_lock_qty,\n            "reHedgeArmed": False, "reHedgePrice": 0.0,\n            "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,\n            "cycleStatus": "EMERGENCY_EQUITY_LOCK",\n            "lastAction": "EMERGENCY_EQUITY_LOCK_HOLD",\n            "lastReason": "equity onder cycleStartEquity; 1:1 hedge vasthouden en geen DCA/release uitvoeren",\n        })\n        _persist(ref, state, owned)\n        return {\n            "status": "holding", "action": "EMERGENCY_EQUITY_LOCK_HOLD", "ordersSent": 0,\n            "currentEquity": current_equity, "cycleStartEquity": cycle_start_equity,\n            "primaryQty": primary_qty, "hedgeQty": hedge_qty,\n        }\n'''
+          new3='''        legacy_lock_state = str(state.get("cycleStatus") or "") in {\n            "EMERGENCY_EQUITY_LOCK", "EMERGENCY_EQUITY_LOCK_WAIT_BUDGET"\n        } or str(state.get("lastAction") or "") == "EMERGENCY_EQUITY_LOCK_HOLD"\n        if legacy_lock_state and not bool(state.get("equityDcaRearmedAfterLock", False)):\n            # One-time migration for cycles that were frozen by the old emergency lock.\n            # Do NOT backfill missed historical DCA orders at the current market price.\n            # Re-arm from the current mark so only the NEXT configured 0.3% drop buys.\n            fresh_next = next_dca_from_anchor(mark, primary_side, dca_ratio)\n            state.update({\n                "trailingHigh": mark if primary_side == "LONG" else _finite(state.get("trailingHigh")),\n                "trailingLow": mark if primary_side == "SHORT" else _finite(state.get("trailingLow")),\n                "dcaAnchorPrice": mark, "nextDcaPrice": fresh_next, "dcaMode": DCA_TRAILING,\n                "dcaTriggerPending": False, "dcaTriggerPrice": 0.0, "dcaTriggerMarkPrice": 0.0, "dcaTriggerAtMs": 0,\n                "equityDcaRearmedAfterLock": True, "equityDcaRearmedAtPrice": mark,\n                "hedgeState": HEDGE_ACTIVE, "hedgeTargetQty": target_lock_qty,\n                "reHedgeArmed": False, "reHedgePrice": 0.0,\n                "cycleStatus": "EMERGENCY_EQUITY_PROTECTED",\n                "lastAction": "EMERGENCY_EQUITY_DCA_REARMED",\n                "lastReason": "oude equity-lock opgeheven voor DCA; geen gemiste orders ingehaald; volgende 0,3% daling koopt LONG en synchroniseert SHORT 1:1",\n                "equityProtectionActive": True,\n            })\n            _persist(ref, state, owned)\n            _audit(ref, "FOCUS_EQUITY_DCA_REARMED", cycleId=state.get("cycleId"), symbol=symbol, markPrice=mark, nextDcaPrice=fresh_next)\n            return {"status": "holding", "action": "EMERGENCY_EQUITY_DCA_REARMED", "ordersSent": 0, "nextDcaPrice": fresh_next}\n        state.update({\n            "hedgeState": HEDGE_ACTIVE,\n            "hedgeTargetQty": target_lock_qty,\n            "reHedgeArmed": False, "reHedgePrice": 0.0,\n            "cycleStatus": "EMERGENCY_EQUITY_PROTECTED",\n            "lastAction": "EMERGENCY_EQUITY_PROTECTED",\n            "lastReason": "equity onder cycleStartEquity; 1:1 hedge vasthouden; normale DCA blijft actief; verliesgevende SHORT-release blijft geblokkeerd",\n            "equityProtectionActive": True,\n        })\n        _persist(ref, state, owned)\n        # Intentionally continue into normal DCA evaluation below.\n'''
+          assert old3 in s
+          s=s.replace(old3,new3,1)
+          p.write_text(s,encoding='utf-8')
+
+          t=Path('cloud_api/test_focus_portfolio_cycle_v7.py')
+          ts=t.read_text(encoding='utf-8')
+          ts += '''\n\ndef test_equity_protection_keeps_dca_active_and_does_not_backfill_missed_orders():\n    src = Path('aster_strategy2_focus_trailing.py').read_text(encoding='utf-8')\n    section = src.split('# v7 equity protection:', 1)[1].split('# v7 post-release re-hedge:', 1)[0]\n    assert 'normal trailing\\n    # DCA remains active' in section\n    assert 'Intentionally continue into normal DCA evaluation below.' in section\n    assert 'equityDcaRearmedAfterLock' in section\n    assert 'Do NOT backfill missed historical DCA orders' in section\n    assert 'next_dca_from_anchor(mark, primary_side, dca_ratio)' in section\n    assert 'dcaTriggerPending": False' in section  # only one-time legacy re-arm, not steady-state hold\n    release = src.split('# v7 protected SHORT release.', 1)[1].split('# Legacy non-simple Focus TP only.', 1)[0]\n    assert 'equity_release_ready' in release\n    assert 'price_release_ready and net_green_ready and equity_release_ready' in release\n'''
+          t.write_text(ts,encoding='utf-8')
+          PY
+      - name: Run focused and full backend tests
+        run: |
+          pip install -r cloud_api/requirements.txt pytest >/dev/null
+          cd cloud_api
+          pytest -q test_focus_portfolio_cycle_v7.py
+          pytest -q
+      - name: Commit hotfix
+        shell: bash
+        run: |
+          git config user.name 'Amar Crypto Bot Agent'
+          git config user.email 'actions@github.com'
+          git add cloud_api/aster_strategy2_focus_trailing.py cloud_api/test_focus_portfolio_cycle_v7.py
+          git commit -m 'Keep Strategy 2 DCA active below cycle baseline'
+          git push origin amar-crypto-bot-2026-cloud
