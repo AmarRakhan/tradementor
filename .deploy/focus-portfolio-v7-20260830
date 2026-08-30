@@ -2,4 +2,4 @@ Deploy verified Strategy-2 portfolio-cycle v7.
 Emergency equity-lock hotfix commit: ac99ddac36613cde99ed10d32b818b4ab76622a1
 Net-green protected SHORT release commit: 070ba4187681e6189924adbd140cd12d4e5c2a25
 Release now requires: configured recovery price reached + exact remaining hedge net profitable after conservative round-trip fee/slippage model + equity at/above cycle baseline.
-Retry with deploy verifier migrated from mechanical release to protected net-green release.
+Retry after fixing zero-traffic candidate URL discovery.
