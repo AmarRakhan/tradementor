@@ -33,19 +33,18 @@ jobs:
         with:
           ref: amar-crypto-bot-2026-cloud
 
-      - name: Verify exact v7 implementation is branch HEAD
+      - name: Verify Multi BB implementation is branch HEAD
         shell: bash
         run: |
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
-          grep -q 'FOCUS_HEDGE_RELEASED_NET_GREEN' cloud_api/aster_strategy2_focus_trailing.py
-          grep -q 'if price_release_ready and net_green_ready and rehedge_funding_ready:' cloud_api/aster_strategy2_focus_trailing.py
-          grep -q 'REHEDGE_WAIT_MARGIN' cloud_api/aster_strategy2_focus_trailing.py
-          ! grep -q 'equity_release_ready' cloud_api/aster_strategy2_focus_trailing.py
-          grep -q 'expected_net_hedge_close_pnl' cloud_api/aster_strategy2_focus_trailing.py
-          grep -q 'FOCUS_REHEDGE_ACTIVE' cloud_api/aster_strategy2_focus_trailing.py
-          grep -q 'FOCUS_PORTFOLIO_TARGET_CLOSED' cloud_api/aster_strategy2_focus_trailing.py
-          grep -q 'Alles sluiten bij portfoliogroei' web/components/aster-strategy2-maker.tsx
+          grep -q 'ENGINE = "multi_bb_v1"' cloud_api/aster_multi_bb.py
+          grep -q 'client.klines(symbol, "1m"' cloud_api/aster_multi_bb.py
+          grep -q 'dca_count >= settings.max_dca' cloud_api/aster_multi_bb.py
+          grep -q 'manualOrExchangeReconciledAtMs' cloud_api/aster_multi_bb.py
+          grep -q 'return run_multi_bb_step' cloud_api/main.py
+          grep -q 'Top-N Aster-volume' web/components/aster-strategy2-maker.tsx
+          ! grep -q 'Focus 2.0 gebruiken' web/components/aster-strategy2-maker.tsx
 
       - uses: actions/setup-python@v5
         with:
