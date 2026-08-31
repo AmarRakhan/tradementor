@@ -42,6 +42,8 @@ class MultiBbConfig:
     dca_margin_usd: float = 2.0
     max_dca: int = 3
     take_profit: float = .015
+    manual_symbol_selection_enabled: bool = False
+    manual_symbols: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "MultiBbConfig":
@@ -49,6 +51,15 @@ class MultiBbConfig:
         minimum_leverage=_i(raw.get("minimumLeverage", raw.get("leverage")), 50)
         entry_margin_usd=_f(raw.get("entryMarginUsd", raw.get("baseMarginUsd")), 5.0)
         entry_notional_usd=_f(raw.get("entryNotionalUsd", raw.get("baseNotional")), entry_margin_usd * max(1, minimum_leverage))
+        manual_enabled=bool(raw.get("manualSymbolSelectionEnabled", False))
+        manual_rows=raw.get("manualSymbols") if isinstance(raw.get("manualSymbols"), list) else []
+        manual_symbols=[]
+        seen=set()
+        for item in manual_rows:
+            if not isinstance(item, dict): continue
+            symbol=str(item.get("symbol", "")).upper().strip(); side=str(item.get("side", "")).upper().strip()
+            if not symbol or side not in {"LONG", "SHORT"} or symbol in seen: continue
+            seen.add(symbol); manual_symbols.append((symbol, side))
         cfg = cls(
             engine=str(raw.get("engine", raw.get("strategyKind", ENGINE))),
             name=str(raw.get("name", "Aster Multi DCA")),
@@ -65,13 +76,15 @@ class MultiBbConfig:
             dca_margin_usd=_f(raw.get("dcaMarginUsd"), 2.0),
             max_dca=_i(raw.get("maxDca", raw.get("longMaxDca")), 3),
             take_profit=_f(raw.get("takeProfit"), .015),
+            manual_symbol_selection_enabled=manual_enabled,
+            manual_symbols=tuple(manual_symbols),
         )
         return cfg.validated()
 
     def validated(self) -> "MultiBbConfig":
         if self.engine != ENGINE: raise ValueError("Alleen de nieuwe Multi BB-strategie is toegestaan")
         if not 1 <= self.universe_top_n <= 200: raise ValueError("Top-N moet tussen 1 en 200 liggen")
-        if not 1 <= self.maximum_positions <= self.universe_top_n: raise ValueError("Max posities moet tussen 1 en Top-N liggen")
+        if not 1 <= self.maximum_positions <= (200 if self.manual_symbol_selection_enabled else self.universe_top_n): raise ValueError("Max posities moet tussen 1 en 200 liggen" if self.manual_symbol_selection_enabled else "Max posities moet tussen 1 en Top-N liggen")
         if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
         if not 1 <= self.minimum_leverage <= 300: raise ValueError("Minimum leverage moet tussen 1x en 300x liggen")
@@ -79,6 +92,9 @@ class MultiBbConfig:
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if not 0 <= self.max_dca <= 50: raise ValueError("Max DCA moet tussen 0 en 50 liggen")
         if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
+        if self.manual_symbol_selection_enabled and not self.manual_symbols:
+            raise ValueError("Selecteer minimaal één munt wanneer Zelf munten kiezen aan staat")
+        if len(self.manual_symbols) > 200: raise ValueError("Maximaal 200 handmatig gekozen munten")
         return self
 
     def public_dict(self) -> dict[str, Any]:
@@ -89,6 +105,8 @@ class MultiBbConfig:
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "takeProfit": self.take_profit,
             "entryMode": "immediate_fill", "marginMode": "cross", "autoRestart": True,
+            "manualSymbolSelectionEnabled": self.manual_symbol_selection_enabled,
+            "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in self.manual_symbols],
         }
 
 
@@ -204,6 +222,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     info = client.public_exchange_info(); info_map = {str(x.get("symbol", "")).upper(): x for x in info.get("symbols", [])}
     prices = {str(x.get("symbol", "")).upper(): _f(x.get("price")) for x in client.ticker_prices()}
     ranked = rank_top_volume(client.ticker_24h(), info, settings.universe_top_n)
+    if settings.manual_symbol_selection_enabled:
+        candidates = [{"symbol": symbol, "forcedSide": side} for symbol, side in settings.manual_symbols]
+    else:
+        candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
 
@@ -275,7 +297,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
 
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
-    for ranked_row in ranked:
+    for ranked_row in candidates:
         if sent >= budget or (long_need <= 0 and short_need <= 0): break
         symbol = ranked_row["symbol"]
         if symbol in active_symbols or symbol not in info_map or prices.get(symbol, 0) <= 0: continue
@@ -285,8 +307,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue
         if maximum < settings.minimum_leverage:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"max {maximum}x < minimum {settings.minimum_leverage}x"}); continue
-        side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
-        if not side: break
+        if settings.manual_symbol_selection_enabled:
+            side = str(ranked_row.get("forcedSide", "")).upper()
+            if side == "LONG" and long_need <= 0: continue
+            if side == "SHORT" and short_need <= 0: continue
+            if side not in {"LONG", "SHORT"}: continue
+        else:
+            side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
+            if not side: break
         try: plan = _plan_new(client, info_map[symbol], prices[symbol], settings.entry_notional_usd, settings.minimum_leverage)
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)}); continue
@@ -320,10 +348,29 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else: short_count += 1; short_need = max(0, settings.short_slots - short_count)
         available -= required; sent += 1
 
+    managed_long = sum(1 for key in state if key.endswith("|LONG") and key in active)
+    managed_short = sum(1 for key in state if key.endswith("|SHORT") and key in active)
+    manual_long = max(0, long_count - managed_long)
+    manual_short = max(0, short_count - managed_short)
+    skip_reasons: dict[str, int] = {}
+    for action in actions:
+        if action.get("kind") not in {"ENTRY_SKIP", "ENTRY_MARGIN_WAIT"}:
+            continue
+        reason = str(action.get("reason") or action.get("kind") or "unknown")
+        if reason.startswith("max ") and "< minimum" in reason:
+            reason = "MAX_LEVERAGE_BELOW_MINIMUM"
+        elif "5018" in reason or "maximum notional" in reason.lower():
+            reason = "MAX_NOTIONAL_LIMIT"
+        elif action.get("kind") == "ENTRY_MARGIN_WAIT":
+            reason = "INSUFFICIENT_AVAILABLE_MARGIN"
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
     report = {"engine": ENGINE, "ordersSent": 0 if dry_run else sent, "simulatedActions": len(actions) if dry_run else 0,
-              "actions": actions[-30:], "rankedTopN": ranked, "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
+              "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
+              "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "activeLong": settings.long_slots - long_need, "activeShort": settings.short_slots - short_need,
-              "updatedAtMs": timestamp_ms}
+              "managedLong": managed_long, "managedShort": managed_short, "manualLong": manual_long, "manualShort": manual_short,
+              "nextEntrySide": _next_entry_side(long_count=long_count, short_count=short_count, long_slots=settings.long_slots, short_slots=settings.short_slots),
+              "entrySkipReasons": skip_reasons, "updatedAtMs": timestamp_ms}
     if not dry_run:
         ref.set({"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
                  "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",

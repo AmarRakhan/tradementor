@@ -249,3 +249,96 @@ def test_new_entries_follow_configured_long_short_ratio_not_long_first():
     entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
     assert [x["side"] for x in entries]==["LONG","SHORT","LONG","LONG","SHORT","LONG"]
     assert r["activeLong"]==4 and r["activeShort"]==2
+
+
+def manual_cfg(symbols, **kw):
+    return cfg(manualSymbolSelectionEnabled=True, manualSymbols=symbols, **kw)
+
+
+def test_manual_selection_disabled_keeps_ranked_topn_flow():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"200"},{"symbol":"BBBUSDT","quoteVolume":"100"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    settings=cfg(manualSymbolSelectionEnabled=False,manualSymbols=[{"symbol":"BBBUSDT","side":"SHORT"}])
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    entry=next(x for x in r["actions"] if x["kind"]=="ENTRY")
+    assert entry["symbol"]=="AAAUSDT" and entry["side"]=="LONG"
+    assert r["candidateMode"]=="top_n"
+
+
+def test_manual_selection_one_long_opens_only_selected_symbol():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"999"},{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    settings=manual_cfg([{"symbol":"BBBUSDT","side":"LONG"}],maximumPositions=2,longSlots=2,shortSlots=0)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=5)
+    entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
+    assert [(x["symbol"],x["side"]) for x in entries]==[("BBBUSDT","LONG")]
+
+
+def test_manual_selection_one_short_opens_short():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"999"},{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    settings=manual_cfg([{"symbol":"BBBUSDT","side":"SHORT"}],maximumPositions=2,longSlots=1,shortSlots=1)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=5)
+    entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
+    assert [(x["symbol"],x["side"]) for x in entries]==[("BBBUSDT","SHORT")]
+
+
+def test_manual_selection_mixed_sides_respects_explicit_direction_and_slot_caps():
+    symbols=[{"symbol":"AAAUSDT","side":"LONG"},{"symbol":"BBBUSDT","side":"SHORT"},{"symbol":"CCCUSDT","side":"LONG"}]
+    c=Client(tickers=[{"symbol":x["symbol"],"quoteVolume":str(100-i)} for i,x in enumerate(symbols)],prices={x["symbol"]:100 for x in symbols},leverage=100)
+    settings=manual_cfg(symbols,maximumPositions=2,longSlots=1,shortSlots=1)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=5)
+    entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
+    assert [(x["symbol"],x["side"]) for x in entries]==[("AAAUSDT","LONG"),("BBBUSDT","SHORT")]
+    assert all(x["symbol"]!="CCCUSDT" for x in entries)
+
+
+def test_manual_selection_never_opens_unselected_ranked_symbol():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"10000"},{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    settings=manual_cfg([{"symbol":"BBBUSDT","side":"LONG"}])
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert not any(x.get("symbol")=="AAAUSDT" and x["kind"]=="ENTRY" for x in r["actions"])
+
+
+def test_removed_manual_symbol_existing_position_still_gets_tp_management():
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"102","leverage":"100"}
+    state={"multiBbPositions":{"AAAUSDT|LONG":{"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}}}
+    c=Client(positions=[pos],tickers=[{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":102,"BBBUSDT":100},leverage=100)
+    settings=manual_cfg([{"symbol":"BBBUSDT","side":"LONG"}],takeProfit=.015)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state=state,settings=settings,uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert any(x["kind"]=="TP" and x["symbol"]=="AAAUSDT" for x in r["actions"])
+
+
+def test_manual_selection_active_symbol_does_not_duplicate_entry():
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"100","leverage":"100"}
+    state={"multiBbPositions":{"AAAUSDT|LONG":{"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}}}
+    c=Client(positions=[pos],tickers=[{"symbol":"AAAUSDT","quoteVolume":"100"}],prices={"AAAUSDT":100},leverage=100)
+    settings=manual_cfg([{"symbol":"AAAUSDT","side":"LONG"}])
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state=state,settings=settings,uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert not any(x["kind"]=="ENTRY" for x in r["actions"])
+
+
+def test_manual_selection_requires_at_least_one_symbol_when_enabled():
+    with pytest.raises(ValueError,match="Selecteer minimaal één munt"):
+        manual_cfg([])
+
+
+def test_manual_selection_public_settings_roundtrip():
+    settings=manual_cfg([{"symbol":"btcusdt","side":"long"},{"symbol":"ethusdt","side":"short"}],maximumPositions=5,longSlots=3,shortSlots=2)
+    public=settings.public_dict()
+    assert public["manualSymbolSelectionEnabled"] is True
+    assert public["manualSymbols"]==[{"symbol":"BTCUSDT","side":"LONG"},{"symbol":"ETHUSDT","side":"SHORT"}]
+    assert public["maximumPositions"]==5
+
+
+def test_manual_selection_keeps_minimum_leverage_guard():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100},leverage=10)
+    settings=manual_cfg([{"symbol":"AAAUSDT","side":"SHORT"}],minimumLeverage=20,maximumPositions=1,longSlots=0,shortSlots=1)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert not any(x["kind"]=="ENTRY" for x in r["actions"])
+    assert any(x["kind"]=="ENTRY_SKIP" and "minimum 20x" in x["reason"] for x in r["actions"])
+
+
+def test_manual_selection_keeps_available_margin_guard():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100},leverage=100)
+    settings=manual_cfg([{"symbol":"AAAUSDT","side":"LONG"}],entryNotionalUsd=1000)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"0.01"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert not any(x["kind"]=="ENTRY" for x in r["actions"])
+    assert any(x["kind"]=="ENTRY_MARGIN_WAIT" and x["side"]=="LONG" for x in r["actions"])
