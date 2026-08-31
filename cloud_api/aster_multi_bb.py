@@ -164,14 +164,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         for key in pmap:
             symbol, side = key.split("|", 1); symbol_sides.setdefault(symbol, set()).add(side)
         conflicts = sorted(symbol for symbol, sides in symbol_sides.items() if len(sides) > 1)
-        if conflicts:
-            reason = "Bestaande Aster-posities hebben tegelijk LONG en SHORT op: " + ", ".join(conflicts)
-            if not dry_run:
-                ref.set({"enabled": False, "monitor": False, "phase": "MIGRATION_BLOCKED", "lastReason": reason,
-                         "multiBbAdoptionPending": False, "updatedAt": datetime.now(timezone.utc)}, merge=True)
-            return {"status": "blocked", "action": "MULTI_BB_MIGRATION_BLOCKED", "reason": reason, "ordersSent": 0}
+        # A pre-existing/manual hedge may legitimately have LONG and SHORT on the
+        # same symbol. It must never be auto-adopted because the Multi DCA engine
+        # promises one managed side per symbol, but it also must not shut down the
+        # whole bot. Keep both legs exchange-truth only, count them toward account
+        # capacity below, and fill the remaining slots with other symbols.
+        conflict_keys = {f"{symbol}|{side}" for symbol in conflicts for side in ("LONG", "SHORT")}
+        if conflicts and not dry_run:
+            ref.set({"phase": "START_PENDING",
+                     "lastReason": "Bestaande LONG/SHORT-hedge blijft handmatig geïsoleerd; Multi DCA start op overige slots",
+                     "multiBbIsolatedSymbols": conflicts, "updatedAt": datetime.now(timezone.utc)}, merge=True)
         for key, row in pmap.items():
-            if key in state: continue
+            if key in state or key in conflict_keys: continue
             qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); mark = _f(row.get("markPrice"), entry)
             if qty <= 0 or entry <= 0: continue
             state[key] = {"cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16], "dcaCount": 0,

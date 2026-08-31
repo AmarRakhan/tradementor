@@ -176,7 +176,7 @@ def test_existing_position_is_adopted_only_after_explicit_start_flag():
     adopted=persisted["multiBbPositions"]["AAAUSDT|LONG"]
     assert adopted["adoptedExisting"] is True and adopted["dcaCount"]==0
 
-def test_existing_long_short_same_symbol_blocks_adoption_and_sends_no_orders():
+def test_existing_long_short_same_symbol_is_isolated_without_stopping_bot():
     positions=[
         {"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"5","entryPrice":"100","markPrice":"100","leverage":"75"},
         {"symbol":"AAAUSDT","positionSide":"SHORT","positionAmt":"4","entryPrice":"101","markPrice":"100","leverage":"75"},
@@ -184,5 +184,10 @@ def test_existing_long_short_same_symbol_blocks_adoption_and_sends_no_orders():
     ref=Ref(); raw={"multiBbAdoptionPending":True,"multiBbPositions":{}}
     r=run_multi_bb_step(client=Client(positions=positions,prices={"AAAUSDT":100},leverage=75),ref=ref,raw_state=raw,
         settings=cfg(),uid="u",account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=False)
-    assert r["status"]=="blocked" and r["ordersSent"]==0
-    assert ref.updates[-1]["enabled"] is False and ref.updates[-1]["phase"]=="MIGRATION_BLOCKED"
+    assert r["status"]=="running"
+    assert any(u.get("multiBbIsolatedSymbols")==["AAAUSDT"] for u in ref.updates)
+    persisted=ref.updates[-1]
+    assert persisted["multiBbAdoptionPending"] is False
+    assert "AAAUSDT|LONG" not in persisted["multiBbPositions"]
+    assert "AAAUSDT|SHORT" not in persisted["multiBbPositions"]
+    assert all(u.get("enabled") is not False for u in ref.updates)
