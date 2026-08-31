@@ -80,7 +80,7 @@ test("Multi BB always exposes a personal live on/off control without bypassing r
     readFile(new URL("../lib/secure-strategy2-live.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/aster/strategy2/start/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(source, /Multi BB live bot/);
+  assert.match(source, /Multi DCA live bot/);
   assert.match(source, /role="switch"/);
   assert.match(source, /async function toggleLive/);
   assert.match(source, /if\(status\.pending\)return/);

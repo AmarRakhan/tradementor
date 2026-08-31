@@ -25,8 +25,10 @@ def test_new_engine_has_no_hedge_or_portfolio_take_profit_logic():
     assert "portfolio take profit" not in lowered
 
 
-def test_new_engine_uses_one_minute_bollinger_and_capped_dca():
-    assert 'client.klines(symbol, "1m"' in ENGINE
+def test_new_engine_immediately_fills_slots_and_keeps_capped_dca():
+    assert 'entryMode": "immediate_fill"' in ENGINE
+    assert 'bollinger_from_klines' not in ENGINE
+    assert 'client.klines(symbol, "1m"' not in ENGINE
     assert 'dca_count >= settings.max_dca' in ENGINE
     assert 'lastBotFillPrice' in ENGINE
 

@@ -33,13 +33,14 @@ jobs:
         with:
           ref: amar-crypto-bot-2026-cloud
 
-      - name: Verify Multi BB implementation is branch HEAD
+      - name: Verify Multi DCA implementation is branch HEAD
         shell: bash
         run: |
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
           grep -q 'ENGINE = "multi_bb_v1"' cloud_api/aster_multi_bb.py
-          grep -q 'client.klines(symbol, "1m"' cloud_api/aster_multi_bb.py
+          grep -q '"entryMode": "immediate_fill"' cloud_api/aster_multi_bb.py
+          ! grep -q 'bollinger_from_klines' cloud_api/aster_multi_bb.py
           grep -q 'dca_count >= settings.max_dca' cloud_api/aster_multi_bb.py
           grep -q 'manualOrExchangeReconciledAtMs' cloud_api/aster_multi_bb.py
           grep -q 'return run_multi_bb_step' cloud_api/main.py

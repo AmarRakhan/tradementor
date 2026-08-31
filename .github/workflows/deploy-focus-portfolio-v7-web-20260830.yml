@@ -33,10 +33,11 @@ jobs:
         with:
           ref: amar-crypto-bot-2026-cloud
 
-      - name: Verify Multi BB wizard contract
+      - name: Verify Multi DCA wizard contract
         run: |
           grep -q 'Top-N Aster-volume' web/components/aster-strategy2-maker.tsx
-          grep -q '1-minuut Bollinger-entry' web/components/aster-strategy2-maker.tsx
+          grep -q 'Direct slots vullen' web/components/aster-strategy2-maker.tsx
+          ! grep -q '1-minuut Bollinger-entry' web/components/aster-strategy2-maker.tsx
           grep -q 'DCA-bedrag en harde limiet' web/components/aster-strategy2-maker.tsx
           grep -q 'Minimum leverage' web/components/aster-strategy2-maker.tsx
           ! grep -q 'Focus 2.0 gebruiken' web/components/aster-strategy2-maker.tsx

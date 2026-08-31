@@ -1210,7 +1210,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "longLegs":long_count,"shortLegs":short_count,"positionCounts":{"uniqueMarketCount":len({str(k).split("|",1)[0] for k in managed}),
                 "positionLegCount":len(managed),"longLegs":long_count,"shortLegs":short_count},"multiBb":report,"multiBbPositions":managed,
             "universe":{"topN":int(settings.get("universeTopN",30)),"ranking":report.get("rankedTopN",[])},
-            "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "Bollinger 1m + Top-N + leveragefilter"},
+            "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "directe slotvulling + Top-N + leveragefilter"},
                 "existingPositionManagement":{"reason":"Exchange truth + TP/DCA beheer"}},"candidateScan":{"checked":len(report.get("rankedTopN",[])),"reasons":[]},
             "orderQueue":{"enabled":False,"maximumOrdersPerScan":MAX_ORDERS_PER_ACCOUNT_SCAN,"lastScanActions":report.get("actions",[])}}}
     owned=proven_owned_rows(raw.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
@@ -4240,7 +4240,7 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     saved=MultiBbConfig.from_mapping({**candidate.public_dict(),"version":version}); now=datetime.now(timezone.utc)
     switching=str(old.get("engine",old.get("strategyKind","")))!=MULTI_BB_ENGINE
     update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"phase":"CONFIGURED",
-        "lastReason":"Nieuwe Multi BB-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
+        "lastReason":"Nieuwe Multi DCA-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
         "pendingReopens":[],"focusLiveState":{},"focusLiveSlots":[],"focusV2State":{},"focusV2History":{},
         "moneyGrabberActivated":False,"moneyGrabberRound":None,"moneyGrabberPairs":[]}
     if switching: update.update({"enabled":False,"monitor":False,"multiBbPositions":{}})
@@ -4257,8 +4257,8 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
         "plannedPositions":settings.maximum_positions,"longSlots":settings.long_slots,"shortSlots":settings.short_slots,
         "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,"entryMarginUsd":settings.entry_margin_usd,
             "dcaDistance":settings.dca_distance,"dcaMarginUsd":settings.dca_margin_usd,"maxDca":settings.max_dca,"takeProfit":settings.take_profit,
-            "bollinger":"1m BB(%d,%.2f)"%(settings.bollinger_period,settings.bollinger_stddev)},
-        "message":"Nieuwe Multi BB-configuratie gevalideerd; er zijn 0 orders verzonden."}
+            "entryMode":"immediate_fill"},
+        "message":"Nieuwe Multi DCA-configuratie gevalideerd; er zijn 0 orders verzonden."}
 
 
 @app.get("/v1/me/aster/strategy2/readiness")

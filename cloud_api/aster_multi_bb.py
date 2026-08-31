@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from datetime import datetime, timezone
-from statistics import fmean, pstdev
 from typing import Any
 import hashlib, math, time
 
@@ -29,7 +28,7 @@ def _i(value: Any, default: int = 0) -> int:
 @dataclass(frozen=True)
 class MultiBbConfig:
     engine: str = ENGINE
-    name: str = "Aster Multi BB DCA"
+    name: str = "Aster Multi DCA"
     version: int = 1
     mode: str = "live"
     universe_top_n: int = 30
@@ -42,15 +41,13 @@ class MultiBbConfig:
     dca_margin_usd: float = 2.0
     max_dca: int = 3
     take_profit: float = .015
-    bollinger_period: int = 20
-    bollinger_stddev: float = 2.0
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "MultiBbConfig":
         raw = raw or {}
         cfg = cls(
             engine=str(raw.get("engine", raw.get("strategyKind", ENGINE))),
-            name=str(raw.get("name", "Aster Multi BB DCA")),
+            name=str(raw.get("name", "Aster Multi DCA")),
             version=max(1, _i(raw.get("version"), 1)),
             mode="paper" if str(raw.get("mode", "live")).lower() == "paper" else "live",
             universe_top_n=_i(raw.get("universeTopN"), 30),
@@ -63,8 +60,6 @@ class MultiBbConfig:
             dca_margin_usd=_f(raw.get("dcaMarginUsd"), 2.0),
             max_dca=_i(raw.get("maxDca", raw.get("longMaxDca")), 3),
             take_profit=_f(raw.get("takeProfit"), .015),
-            bollinger_period=_i(raw.get("bollingerPeriod"), 20),
-            bollinger_stddev=_f(raw.get("bollingerStddev"), 2.0),
         )
         return cfg.validated()
 
@@ -79,8 +74,6 @@ class MultiBbConfig:
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if not 0 <= self.max_dca <= 50: raise ValueError("Max DCA moet tussen 0 en 50 liggen")
         if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
-        if not 10 <= self.bollinger_period <= 100 or not .5 <= self.bollinger_stddev <= 5:
-            raise ValueError("Bollinger-instellingen zijn ongeldig")
         return self
 
     def public_dict(self) -> dict[str, Any]:
@@ -90,31 +83,9 @@ class MultiBbConfig:
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
             "entryMarginUsd": self.entry_margin_usd, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "takeProfit": self.take_profit,
-            "bollingerInterval": "1m", "bollingerPeriod": self.bollinger_period,
-            "bollingerStddev": self.bollinger_stddev, "marginMode": "cross", "autoRestart": True,
+            "entryMode": "immediate_fill", "marginMode": "cross", "autoRestart": True,
         }
 
-
-def bollinger_from_klines(rows: list[list[Any]], price: float, period: int = 20, stddev: float = 2.0,
-                           now_ms: int | None = None) -> dict[str, Any] | None:
-    if len(rows) < period or price <= 0: return None
-    now_ms = now_ms or int(time.time() * 1000)
-    values: list[float] = []
-    newest_close_ms = 0
-    for row in rows:
-        if not isinstance(row, (list, tuple)) or len(row) < 5: continue
-        close = _f(row[4])
-        if close > 0: values.append(close)
-        if len(row) > 6: newest_close_ms = max(newest_close_ms, _i(row[6]))
-        elif row: newest_close_ms = max(newest_close_ms, _i(row[0]) + 60_000)
-    if len(values) < period: return None
-    if newest_close_ms and now_ms - newest_close_ms > 180_000: return None
-    window = values[-period:]
-    middle = fmean(window); deviation = pstdev(window)
-    upper = middle + stddev * deviation; lower = middle - stddev * deviation
-    return {"price": price, "middle": middle, "upper": upper, "lower": lower,
-            "longEligible": price < lower, "shortEligible": price > upper,
-            "fresh": True, "interval": "1m", "period": period, "stddev": stddev}
 
 
 def _brackets(payload: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
@@ -272,7 +243,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     long_count = sum(1 for k in active if k.endswith("|LONG")); short_count = sum(1 for k in active if k.endswith("|SHORT"))
     long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
 
-    # New seats: Top-N volume -> minimum leverage -> 1m lower/upper Bollinger condition.
+    # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
     for ranked_row in ranked:
         if sent >= budget or (long_need <= 0 and short_need <= 0): break
         symbol = ranked_row["symbol"]
@@ -283,17 +254,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue
         if maximum < settings.minimum_leverage:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"max {maximum}x < minimum {settings.minimum_leverage}x"}); continue
-        bb = bollinger_from_klines(client.klines(symbol, "1m", max(settings.bollinger_period + 2, 25)), prices[symbol], settings.bollinger_period, settings.bollinger_stddev, timestamp_ms)
-        if not bb: continue
-        side = "LONG" if long_need > 0 and bb["longEligible"] else "SHORT" if short_need > 0 and bb["shortEligible"] else ""
-        if not side: continue
+        side = "LONG" if long_need > 0 else "SHORT" if short_need > 0 else ""
+        if not side: break
         try: plan = _plan_new(client, info_map[symbol], prices[symbol], settings.entry_margin_usd, settings.minimum_leverage)
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)}); continue
         required = float(plan.notional_per_leg) / plan.leverage
         if available < required * 1.05:
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
-        actions.append({"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "marginUsd": required, "bb": bb})
+        actions.append({"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "marginUsd": required, "entryMode": "immediate_fill"})
         if not dry_run:
             result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
                                       new_position_leverage=plan.leverage, before_submit=before_order)

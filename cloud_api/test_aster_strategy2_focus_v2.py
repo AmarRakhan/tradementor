@@ -12,8 +12,9 @@ def test_new_engine_replaces_focus_configuration_contract():
 
 def test_wizard_contains_only_multi_bb_strategy_controls():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
-    for token in ("Top-N Aster-volume","1-minuut Bollinger-entry","DCA-bedrag en harde limiet","Minimum leverage","Multi BB DCA"):
+    for token in ("Top-N Aster-volume","Direct slots vullen","DCA-bedrag en harde limiet","Minimum leverage","Multi DCA"):
         assert token in ui
+    assert "1-minuut Bollinger-entry" not in ui
     for retired in ("Focus 2.0 gebruiken","Start LONG + SHORT 1:1","Portfolio-doel modus","PORTFOLIO AIRBAG","Money Grabber"):
         assert retired not in ui
 

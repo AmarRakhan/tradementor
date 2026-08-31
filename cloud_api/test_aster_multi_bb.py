@@ -5,7 +5,7 @@ import time
 import pytest
 
 from aster_multi_bb import (
-    ENGINE, MultiBbConfig, bollinger_from_klines, max_contract_leverage,
+    ENGINE, MultiBbConfig, max_contract_leverage,
     rank_top_volume, run_multi_bb_step,
 )
 
@@ -61,7 +61,7 @@ class Client:
 def cfg(**kw):
     base={"engine":ENGINE,"universeTopN":3,"maximumPositions":1,"longSlots":1,"shortSlots":0,
           "minimumLeverage":50,"entryMarginUsd":5,"dcaDistance":.003,"dcaMarginUsd":2,
-          "maxDca":3,"takeProfit":.015,"bollingerPeriod":20,"bollingerStddev":2}
+          "maxDca":3,"takeProfit":.015}
     base.update(kw)
     return MultiBbConfig.from_mapping(base)
 
@@ -79,14 +79,13 @@ def test_top_volume_is_dynamic_and_usdt_only():
     assert [x["symbol"] for x in rows]==["AAAUSDT","BBBUSDT"]
 
 
-def test_bollinger_long_short_and_stale_fail_closed():
-    now=int(time.time()*1000)
-    long=bollinger_from_klines(kline_rows([100]*19+[90],now),90,20,2,now)
-    short=bollinger_from_klines(kline_rows([100]*19+[110],now),110,20,2,now)
-    assert long and long["longEligible"] and not long["shortEligible"]
-    assert short and short["shortEligible"] and not short["longEligible"]
-    old=kline_rows([100]*20,now-600_000)
-    assert bollinger_from_klines(old,100,20,2,now) is None
+def test_entry_is_immediate_without_indicator_wait():
+    class NoKlines(Client):
+        def klines(self,*_a,**_k): raise AssertionError("entry mag geen Bollinger/candledata meer lezen")
+    c=NoKlines(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1000"}],prices={"AAAUSDT":100},leverage=100)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=cfg(),uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    entry=next(x for x in r["actions"] if x["kind"]=="ENTRY")
+    assert entry["side"]=="LONG" and entry["entryMode"]=="immediate_fill"
 
 
 def test_minimum_leverage_filter_and_maximum_leverage_selection():
@@ -95,10 +94,9 @@ def test_minimum_leverage_filter_and_maximum_leverage_selection():
     assert max_contract_leverage(low.leverage_brackets("AAAUSDT"),"AAAUSDT")==25
     assert max_contract_leverage(high.leverage_brackets("AAAUSDT"),"AAAUSDT")==300
     tick=[{"symbol":"AAAUSDT","quoteVolume":"1000"}]
-    closes={"AAAUSDT":[100]*19+[90]}
     r=run_multi_bb_step(client=low,ref=Ref(),raw_state={},settings=cfg(),uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
     assert not [x for x in r["actions"] if x["kind"]=="ENTRY"]
-    high._tickers=tick; high._prices={"AAAUSDT":90}; high._closes=closes; high._info={"symbols":[symbol_row("AAAUSDT")]}
+    high._tickers=tick; high._prices={"AAAUSDT":90}; high._info={"symbols":[symbol_row("AAAUSDT")]}
     r=run_multi_bb_step(client=high,ref=Ref(),raw_state={},settings=cfg(),uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
     entry=next(x for x in r["actions"] if x["kind"]=="ENTRY")
     assert entry["leverage"]==300
