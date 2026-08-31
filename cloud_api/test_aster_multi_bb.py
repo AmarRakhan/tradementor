@@ -151,6 +151,23 @@ def test_candidate_leverage_set_failure_skips_only_that_symbol(monkeypatch):
     assert r["status"]=="running"
 
 
+
+
+def test_definite_max_notional_rejection_skips_symbol_and_continues(monkeypatch):
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"3000"},{"symbol":"BBBUSDT","quoteVolume":"2000"}],
+             prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    def fake_execute(client, plan, **kwargs):
+        if plan.symbol=="AAAUSDT":
+            raise RuntimeError("Aster -5018: maximum notional value limit")
+        return {"result":{"avgPrice":"100","executedQty":str(plan.quantity)},"leverage":plan.leverage}
+    monkeypatch.setattr(aster_multi_bb,"execute_leg_once",fake_execute)
+    ref=Ref()
+    r=run_multi_bb_step(client=c,ref=ref,raw_state={},settings=cfg(universeTopN=2),uid="u",
+        account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=False,order_budget=5)
+    assert any(x["kind"]=="ENTRY_SKIP" and x["symbol"]=="AAAUSDT" and "5018" in x["reason"] for x in r["actions"])
+    assert "BBBUSDT|LONG" in ref.updates[-1]["multiBbPositions"]
+    assert r["status"]=="running"
+
 def test_confirmed_entry_is_persisted_before_later_unknown_failure(monkeypatch):
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"3000"},{"symbol":"BBBUSDT","quoteVolume":"2000"}],
              prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)

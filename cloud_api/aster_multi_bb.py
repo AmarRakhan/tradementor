@@ -7,7 +7,7 @@ from typing import Any
 import hashlib, math, time
 
 from aster_close_guard import CloseEvidence
-from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, plan_pair
+from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import PositionSide
 
 ENGINE = "multi_bb_v1"
@@ -237,8 +237,13 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "DCA_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
         actions.append({"kind": "DCA", "symbol": symbol, "side": side, "number": dca_count + 1, "trigger": trigger})
         if not dry_run:
-            result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                      new_position_leverage=leverage, before_submit=before_order)
+            try:
+                result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                                          new_position_leverage=leverage, before_submit=before_order)
+            except Exception as exc:
+                if not is_definite_contract_rejection(exc): raise
+                actions.append({"kind": "DCA_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
+                continue
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), mark)
             st = dict(st0); st.update({"dcaCount": dca_count + 1, "lastBotFillPrice": fill_price, "updatedAtMs": timestamp_ms}); state[key] = st
             ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
@@ -279,6 +284,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                                           new_position_leverage=plan.leverage, before_submit=before_order)
             except NewPositionLeverageBlocked as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": exc.reason_code})
+                continue
+            except Exception as exc:
+                if not is_definite_contract_rejection(exc): raise
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)})
                 continue
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), prices[symbol]); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))
             key = f"{symbol}|{side}"; state[key] = {"cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16], "dcaCount": 0,
