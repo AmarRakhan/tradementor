@@ -4255,7 +4255,7 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     return {"mode":"paper","ordersSent":0,"engine":MULTI_BB_ENGINE,"sameEngineAsLive":True,"configurationValid":True,"errors":[],
         "plannedPositions":settings.maximum_positions,"longSlots":settings.long_slots,"shortSlots":settings.short_slots,
-        "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,"entryMarginUsd":settings.entry_margin_usd,
+        "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,"entryNotionalUsd":settings.entry_notional_usd,
             "dcaDistance":settings.dca_distance,"dcaMarginUsd":settings.dca_margin_usd,"maxDca":settings.max_dca,"takeProfit":settings.take_profit,
             "entryMode":"immediate_fill"},
         "message":"Nieuwe Multi DCA-configuratie gevalideerd; er zijn 0 orders verzonden."}

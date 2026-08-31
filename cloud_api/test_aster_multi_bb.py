@@ -208,3 +208,22 @@ def test_existing_long_short_same_symbol_is_isolated_without_stopping_bot():
     assert "AAAUSDT|LONG" not in persisted["multiBbPositions"]
     assert "AAAUSDT|SHORT" not in persisted["multiBbPositions"]
     assert all(u.get("enabled") is not False for u in ref.updates)
+
+@pytest.mark.parametrize("leverage,expected_margin",[(20,1.5),(50,.6),(100,.3)])
+def test_fixed_entry_notional_uses_dynamic_margin_across_leverage(leverage,expected_margin):
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1000"}],prices={"AAAUSDT":100},leverage=leverage)
+    settings=cfg(minimumLeverage=20,entryNotionalUsd=30,entryMarginUsd=.2)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",
+        account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    entry=next(x for x in r["actions"] if x["kind"]=="ENTRY")
+    assert entry["leverage"]==leverage
+    assert entry["notionalUsd"]==pytest.approx(30)
+    assert entry["marginUsd"]==pytest.approx(expected_margin)
+
+
+def test_legacy_base_notional_migrates_to_fixed_entry_notional():
+    settings=MultiBbConfig.from_mapping({"engine":ENGINE,"universeTopN":60,"maximumPositions":60,
+        "longSlots":60,"shortSlots":0,"minimumLeverage":20,"entryMarginUsd":.2,"baseNotional":30,
+        "dcaDistance":.003,"dcaMarginUsd":.2,"maxDca":10,"takeProfit":.015})
+    assert settings.entry_notional_usd==pytest.approx(30)
+    assert settings.public_dict()["entryNotionalUsd"]==pytest.approx(30)

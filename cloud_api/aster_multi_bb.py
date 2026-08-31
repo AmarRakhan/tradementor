@@ -37,6 +37,7 @@ class MultiBbConfig:
     short_slots: int = 10
     minimum_leverage: int = 50
     entry_margin_usd: float = 5.0
+    entry_notional_usd: float = 250.0
     dca_distance: float = .003
     dca_margin_usd: float = 2.0
     max_dca: int = 3
@@ -45,6 +46,9 @@ class MultiBbConfig:
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "MultiBbConfig":
         raw = raw or {}
+        minimum_leverage=_i(raw.get("minimumLeverage", raw.get("leverage")), 50)
+        entry_margin_usd=_f(raw.get("entryMarginUsd", raw.get("baseMarginUsd")), 5.0)
+        entry_notional_usd=_f(raw.get("entryNotionalUsd", raw.get("baseNotional")), entry_margin_usd * max(1, minimum_leverage))
         cfg = cls(
             engine=str(raw.get("engine", raw.get("strategyKind", ENGINE))),
             name=str(raw.get("name", "Aster Multi DCA")),
@@ -54,8 +58,9 @@ class MultiBbConfig:
             maximum_positions=_i(raw.get("maximumPositions", raw.get("maximumPairs")), 30),
             long_slots=_i(raw.get("longSlots", raw.get("maximumLongPositions")), 20),
             short_slots=_i(raw.get("shortSlots", raw.get("maximumShortPositions")), 10),
-            minimum_leverage=_i(raw.get("minimumLeverage", raw.get("leverage")), 50),
-            entry_margin_usd=_f(raw.get("entryMarginUsd", raw.get("baseMarginUsd")), 5.0),
+            minimum_leverage=minimum_leverage,
+            entry_margin_usd=entry_margin_usd,
+            entry_notional_usd=entry_notional_usd,
             dca_distance=_f(raw.get("dcaDistance", raw.get("longDcaDistance")), .003),
             dca_margin_usd=_f(raw.get("dcaMarginUsd"), 2.0),
             max_dca=_i(raw.get("maxDca", raw.get("longMaxDca")), 3),
@@ -70,7 +75,7 @@ class MultiBbConfig:
         if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
         if not 1 <= self.minimum_leverage <= 300: raise ValueError("Minimum leverage moet tussen 1x en 300x liggen")
-        if self.entry_margin_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry- en DCA-margin moeten positief zijn")
+        if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-orderwaarde en DCA-margin moeten positief zijn")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if not 0 <= self.max_dca <= 50: raise ValueError("Max DCA moet tussen 0 en 50 liggen")
         if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
@@ -81,7 +86,7 @@ class MultiBbConfig:
             "engine": ENGINE, "strategyKind": ENGINE, "name": self.name, "version": self.version, "mode": self.mode,
             "universeTopN": self.universe_top_n, "maximumPositions": self.maximum_positions,
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
-            "entryMarginUsd": self.entry_margin_usd, "dcaDistance": self.dca_distance,
+            "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "takeProfit": self.take_profit,
             "entryMode": "immediate_fill", "marginMode": "cross", "autoRestart": True,
         }
@@ -113,13 +118,13 @@ def rank_top_volume(tickers: list[dict[str, Any]], exchange_info: dict[str, Any]
     return ranked[:top_n]
 
 
-def _plan_new(client: Any, row: dict[str, Any], price: float, margin: float, minimum_leverage: int) -> PairExecutionPlan:
+def _plan_new(client: Any, row: dict[str, Any], price: float, notional_usd: float, minimum_leverage: int) -> PairExecutionPlan:
     symbol = str(row.get("symbol", "")).upper(); bracket_rows = _brackets(client.leverage_brackets(symbol), symbol)
     candidates = sorted({_i(x.get("initialLeverage")) for x in bracket_rows if _i(x.get("initialLeverage")) >= minimum_leverage}, reverse=True)
     if not candidates: raise ValueError(f"{symbol}: max leverage lager dan minimum {minimum_leverage}x")
     last: Exception | None = None
     for leverage in candidates:
-        try: return plan_pair(row, bracket_rows, price, margin * leverage, accepted_leverage=leverage)
+        try: return plan_pair(row, bracket_rows, price, notional_usd, accepted_leverage=leverage)
         except Exception as exc: last = exc
     raise ValueError(f"{symbol}: geen uitvoerbare order op minimaal {minimum_leverage}x") from last
 
@@ -269,13 +274,13 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"max {maximum}x < minimum {settings.minimum_leverage}x"}); continue
         side = "LONG" if long_need > 0 else "SHORT" if short_need > 0 else ""
         if not side: break
-        try: plan = _plan_new(client, info_map[symbol], prices[symbol], settings.entry_margin_usd, settings.minimum_leverage)
+        try: plan = _plan_new(client, info_map[symbol], prices[symbol], settings.entry_notional_usd, settings.minimum_leverage)
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)}); continue
         required = float(plan.notional_per_leg) / plan.leverage
         if available < required * 1.05:
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
-        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "marginUsd": required, "entryMode": "immediate_fill"}
+        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill"}
         if dry_run:
             actions.append(entry_action)
         else:
