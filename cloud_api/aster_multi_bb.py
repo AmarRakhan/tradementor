@@ -7,7 +7,7 @@ from typing import Any
 import hashlib, math, time
 
 from aster_close_guard import CloseEvidence
-from aster_execution import PairExecutionPlan, execute_leg_once, plan_pair
+from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, plan_pair
 from aster_gateway import PositionSide
 
 ENGINE = "multi_bb_v1"
@@ -264,8 +264,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
         actions.append({"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "marginUsd": required, "entryMode": "immediate_fill"})
         if not dry_run:
-            result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                      new_position_leverage=plan.leverage, before_submit=before_order)
+            try:
+                result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                                          new_position_leverage=plan.leverage, before_submit=before_order)
+            except NewPositionLeverageBlocked as exc:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": exc.reason_code})
+                continue
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), prices[symbol]); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))
             key = f"{symbol}|{side}"; state[key] = {"cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16], "dcaCount": 0,
                 "lastBotFillPrice": fill_price, "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import time
 import pytest
+import aster_multi_bb
+from aster_execution import NewPositionLeverageBlocked
 
 from aster_multi_bb import (
     ENGINE, MultiBbConfig, max_contract_leverage,
@@ -130,6 +132,23 @@ def test_manual_add_reconciles_without_resetting_dca_counter():
     assert persisted["lastKnownEntry"]==95
     assert persisted.get("manualOrExchangeReconciledAtMs")
 
+
+
+def test_candidate_leverage_set_failure_skips_only_that_symbol(monkeypatch):
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"2000"},{"symbol":"BBBUSDT","quoteVolume":"1000"}],
+             prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    original=aster_multi_bb.execute_leg_once
+    def fake_execute(client, plan, **kwargs):
+        if plan.symbol=="AAAUSDT":
+            raise NewPositionLeverageBlocked("SYMBOL_LEVERAGE_SET_FAILED", plan.symbol)
+        return {"result":{"avgPrice":"100","executedQty":str(plan.quantity)},"leverage":plan.leverage}
+    monkeypatch.setattr(aster_multi_bb,"execute_leg_once",fake_execute)
+    ref=Ref()
+    r=run_multi_bb_step(client=c,ref=ref,raw_state={},settings=cfg(universeTopN=2),uid="u",account={"availableBalance":"100"},
+        positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=False,order_budget=5)
+    assert any(x["kind"]=="ENTRY_SKIP" and x["symbol"]=="AAAUSDT" and x["reason"]=="SYMBOL_LEVERAGE_SET_FAILED" for x in r["actions"])
+    assert "BBBUSDT|LONG" in ref.updates[-1]["multiBbPositions"]
+    assert r["status"]=="running"
 
 def test_existing_position_is_adopted_only_after_explicit_start_flag():
     pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"5","entryPrice":"100","markPrice":"100","leverage":"75"}
