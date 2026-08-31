@@ -214,6 +214,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 fresh = _position_map(client.position_risk(symbol))
                 if key in fresh: raise RuntimeError(f"{key}: TP-close niet flat bevestigd")
                 state.pop(key, None); pmap.pop(key, None)
+                ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
+                         "lastReason": "Multi DCA actief; slot na TP vrijgegeven"}, merge=True)
                 ref.collection("audit").add({"event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price, "timestamp": datetime.now(timezone.utc)})
             sent += 1; continue
         dca_count = _i(st0.get("dcaCount")); anchor = _f(st0.get("lastBotFillPrice"), entry)
@@ -235,6 +237,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                                       new_position_leverage=leverage, before_submit=before_order)
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), mark)
             st = dict(st0); st.update({"dcaCount": dca_count + 1, "lastBotFillPrice": fill_price, "updatedAtMs": timestamp_ms}); state[key] = st
+            ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
+                     "lastReason": f"Multi DCA actief; DCA {dca_count + 1} bevestigd op {symbol}"}, merge=True)
             ref.collection("audit").add({"event": "MULTI_BB_DCA", "symbol": symbol, "side": side, "dcaNumber": dca_count + 1, "timestamp": datetime.now(timezone.utc)})
         available -= required; sent += 1
 
@@ -262,8 +266,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         required = float(plan.notional_per_leg) / plan.leverage
         if available < required * 1.05:
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
-        actions.append({"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "marginUsd": required, "entryMode": "immediate_fill"})
-        if not dry_run:
+        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "marginUsd": required, "entryMode": "immediate_fill"}
+        if dry_run:
+            actions.append(entry_action)
+        else:
             try:
                 result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
                                           new_position_leverage=plan.leverage, before_submit=before_order)
@@ -274,7 +280,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             key = f"{symbol}|{side}"; state[key] = {"cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16], "dcaCount": 0,
                 "lastBotFillPrice": fill_price, "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,
                 "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True}
+            ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
+                     "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}, merge=True)
             ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "timestamp": datetime.now(timezone.utc)})
+            actions.append(entry_action)
         active_symbols.add(symbol); long_need -= 1 if side == "LONG" else 0; short_need -= 1 if side == "SHORT" else 0
         available -= required; sent += 1
 
@@ -284,5 +293,6 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "updatedAtMs": timestamp_ms}
     if not dry_run:
         ref.set({"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
-                 "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING"}, merge=True)
+                 "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
+                 "lastReason": "Multi DCA actief; vrije slots worden direct gevuld"}, merge=True)
     return {"status": "simulated" if dry_run else "running", "action": "MULTI_BB", **report}

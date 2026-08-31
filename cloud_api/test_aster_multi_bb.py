@@ -150,6 +150,23 @@ def test_candidate_leverage_set_failure_skips_only_that_symbol(monkeypatch):
     assert "BBBUSDT|LONG" in ref.updates[-1]["multiBbPositions"]
     assert r["status"]=="running"
 
+
+def test_confirmed_entry_is_persisted_before_later_unknown_failure(monkeypatch):
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"3000"},{"symbol":"BBBUSDT","quoteVolume":"2000"}],
+             prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    def fake_execute(client, plan, **kwargs):
+        if plan.symbol=="BBBUSDT":
+            raise RuntimeError("unknown transport failure after first confirmed fill")
+        return {"result":{"avgPrice":"100","executedQty":str(plan.quantity)},"leverage":plan.leverage}
+    monkeypatch.setattr(aster_multi_bb,"execute_leg_once",fake_execute)
+    ref=Ref()
+    with pytest.raises(RuntimeError):
+        run_multi_bb_step(client=c,ref=ref,raw_state={},settings=cfg(universeTopN=2,maximumPositions=2,longSlots=2),uid="u",
+            account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=False,order_budget=5)
+    persisted=[u for u in ref.updates if "multiBbPositions" in u]
+    assert persisted and "AAAUSDT|LONG" in persisted[-1]["multiBbPositions"]
+
+
 def test_existing_position_is_adopted_only_after_explicit_start_flag():
     pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"5","entryPrice":"100","markPrice":"100","leverage":"75"}
     ref=Ref(); raw={"multiBbAdoptionPending":True,"multiBbPositions":{}}
