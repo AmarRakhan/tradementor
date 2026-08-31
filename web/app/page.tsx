@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useAuthSession } from "@/components/auth-provider";
 import { AuthGate } from "@/components/auth-gate";
 import { ConnectionManager } from "@/components/connection-manager";
@@ -441,7 +441,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
         <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
         {(isHyperliquid || destination === "aster") && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail={destination === "aster" ? "Aster futures maintenance margin" : "Perps maintenance margin"} />}
-        {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} available={snapshot.data?.historyAvailable === true} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
+        {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} available={snapshot.data?.historyAvailable === true} positions={view.positions} equity={view.equity} availableToTrade={view.available} openPnl={netOpenPnl} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
         {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
       </section>}
 
@@ -993,7 +993,71 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
   return <article className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>;
 }
 
-function TodayRealizedMetric({ trades, available, onChanged }: { trades: ClosedTradeView[]; available: boolean; onChanged:()=>void }) {
+
+type IndexPoint={t:number;v:number};
+type IndexRow={symbol:string;side:string;returnPct:number;weight:number;contribution:number;pnl:number;dcaCount:number};
+
+function ActiveTradesIndex({positions,equity,availableToTrade,openPnl}:{positions:PositionView[];equity:string;availableToTrade:string;openPnl:number}){
+  const [open,setOpen]=useState(false),[range,setRange]=useState("24u"),[series,setSeries]=useState<IndexPoint[]>([]);
+  const lastSample=useRef(0);
+  const rows=useMemo<IndexRow[]>(()=>{
+    const prepared=positions.filter(p=>p.entry>0&&p.mark>0&&p.size>0).map(p=>{
+      const direction=p.side.toLowerCase()==="short"?-1:1;
+      const returnPct=((p.mark/p.entry)-1)*direction*100;
+      const margin=p.leverage>0?p.size/p.leverage:p.size;
+      return {symbol:p.symbol,side:p.side,returnPct,weight:Math.max(.000001,margin),contribution:0,pnl:p.pnl,dcaCount:p.dcaCount};
+    });
+    const total=prepared.reduce((a,b)=>a+b.weight,0)||1;
+    return prepared.map(r=>({...r,weight:r.weight/total,contribution:r.returnPct*(r.weight/total)}));
+  },[positions]);
+  const weightedReturn=rows.reduce((a,b)=>a+b.contribution,0);
+  const indexValue=100+weightedReturn;
+  useEffect(()=>{
+    if(!rows.length||!Number.isFinite(indexValue))return;
+    const now=Date.now();
+    if(now-lastSample.current<8000)return;
+    lastSample.current=now;
+    setSeries(prev=>[...prev.filter(x=>now-x.t<7*86400000),{t:now,v:indexValue}].slice(-1200));
+  },[indexValue,rows.length]);
+  useEffect(()=>{if(!open)return;const prev=document.body.style.overflow;document.body.style.overflow="hidden";const esc=(e:KeyboardEvent)=>{if(e.key==="Escape")setOpen(false)};window.addEventListener("keydown",esc);return()=>{document.body.style.overflow=prev;window.removeEventListener("keydown",esc)}},[open]);
+  const rangeMs:Record<string,number>={"15m":900000,"1u":3600000,"4u":14400000,"12u":43200000,"24u":86400000,"7d":604800000};
+  const filtered=series.filter(x=>Date.now()-x.t<rangeMs[range]);
+  const chart=filtered.length>1?filtered:[{t:Date.now()-60000,v:100},{t:Date.now(),v:indexValue}];
+  const values=chart.map(x=>x.v),lo=Math.min(...values,99.5),hi=Math.max(...values,100.5),span=Math.max(.1,hi-lo);
+  const points=chart.map((x,i)=>`${(i/Math.max(1,chart.length-1))*100},${44-((x.v-lo)/span)*40}`).join(" ");
+  const totalDca=rows.reduce((a,b)=>a+b.dcaCount,0),winners=rows.filter(x=>x.returnPct>0).length,losers=rows.filter(x=>x.returnPct<0).length;
+  const longs=rows.filter(x=>x.side.toLowerCase()==="long").length,shorts=rows.filter(x=>x.side.toLowerCase()==="short").length;
+  const breadth=rows.length?winners/rows.length*100:0,activeCapital=positions.reduce((a,p)=>a+(p.leverage>0?p.size/p.leverage:0),0);
+  const top=[...rows].sort((a,b)=>b.contribution-a.contribution).slice(0,5),bottom=[...rows].sort((a,b)=>a.contribution-b.contribution).slice(0,5);
+  const change=chart.length>1?indexValue-chart[0].v:weightedReturn;
+  const tone=indexValue>=100?"positive":"negative";
+  return <>
+    <button type="button" className={`active-trades-index ${tone}`} onClick={()=>setOpen(true)} aria-label="Open Actieve Trades Index fullscreen">
+      <span className="ati-head"><b>ACTIEVE TRADES INDEX</b><i>↗</i></span>
+      <strong>{rows.length?indexValue.toFixed(2):"—"}</strong>
+      <em>{rows.length?`${change>=0?"+":""}${change.toFixed(2)}% · live`:`Geen actieve trades`}</em>
+      <svg viewBox="0 0 100 46" preserveAspectRatio="none" aria-hidden="true"><polyline points={points}/></svg>
+      <small>{rows.length} posities · {longs}L/{shorts}S · {totalDca} DCA</small>
+    </button>
+    {open&&<div className="ati-modal" role="dialog" aria-modal="true" aria-label="Actieve Trades Index fullscreen">
+      <section>
+        <header><div><span>ACTIEVE TRADES INDEX</span><h2>{indexValue.toFixed(2)} <small className={tone}>{weightedReturn>=0?"+":""}{weightedReturn.toFixed(2)}%</small></h2><p>Gewogen op werkelijke margin per actieve positie. LONG omhoog en SHORT omlaag tellen positief.</p></div><button type="button" onClick={()=>setOpen(false)}>×</button></header>
+        <div className="ati-chart"><svg viewBox="0 0 100 46" preserveAspectRatio="none"><line x1="0" x2="100" y1="23" y2="23"/><polyline points={points}/></svg><div className="ati-ranges">{Object.keys(rangeMs).map(r=><button key={r} className={range===r?"active":""} onClick={()=>setRange(r)}>{r}</button>)}</div><small>{filtered.length<2?"Geschiedenis wordt vanaf gebruik van deze functie opgebouwd; de actuele index is wel volledig berekend.":`${filtered.length} indexmetingen in deze periode`}</small></div>
+        <div className="ati-kpis">
+          <div><span>PORTFOLIOWAARDE</span><b>{equity}</b></div><div><span>AVAILABLE</span><b>{availableToTrade}</b></div><div><span>ACTIEVE POSITIES</span><b>{rows.length}</b></div>
+          <div><span>LONG / SHORT</span><b>{longs} / {shorts}</b></div><div><span>ACTIVE TRADE CAPITAL</span><b>{formatUsd(activeCapital)}</b></div><div><span>NETTO OPEN PNL</span><b className={openPnl>=0?"positive":"negative"}>{formatSignedUsd(openPnl)}</b></div>
+          <div><span>TOTAAL DCA</span><b>{totalDca}</b></div><div><span>GEM. DCA / POSITIE</span><b>{rows.length?(totalDca/rows.length).toFixed(2):"0.00"}</b></div><div><span>BREADTH</span><b>{breadth.toFixed(1)}%</b></div>
+          <div><span>WINNAARS</span><b className="positive">{winners}</b></div><div><span>VERLIEZERS</span><b className="negative">{losers}</b></div><div><span>GEM. OPEN PNL</span><b>{rows.length?formatSignedUsd(openPnl/rows.length):formatUsd(0)}</b></div>
+        </div>
+        <div className="ati-contributors"><ContributorList title="TOP POSITIEVE BIJDRAGERS" rows={top}/><ContributorList title="TOP NEGATIEVE BIJDRAGERS" rows={bottom}/></div>
+      </section>
+    </div>}
+  </>;
+}
+
+function ContributorList({title,rows}:{title:string;rows:IndexRow[]}){return <article><h3>{title}</h3>{rows.map((r,i)=><div key={`${title}-${r.symbol}-${r.side}`}><span>{i+1}. {r.symbol} <small>{r.side.toUpperCase()}</small></span><b className={r.contribution>=0?"positive":"negative"}>{r.contribution>=0?"+":""}{r.contribution.toFixed(3)}</b><em>{r.returnPct>=0?"+":""}{r.returnPct.toFixed(2)}%</em></div>)}</article>}
+
+function TodayRealizedMetric({ trades, available, onChanged, positions, equity, availableToTrade, openPnl }: { trades: ClosedTradeView[]; available: boolean; onChanged:()=>void; positions:PositionView[]; equity:string; availableToTrade:string; openPnl:number }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     let timer = 0;
@@ -1015,7 +1079,7 @@ function TodayRealizedMetric({ trades, available, onChanged }: { trades: ClosedT
   return <>
     <article className={`metric realized-today ${available && today.total > 0 ? "positive" : available && today.total < 0 ? "negative" : ""}`}><span>GESLOTEN RESULTAAT VANDAAG</span><strong className="realized-amount">{available ? formatSignedUsd(today.total) : "—"}</strong><small>{available ? "Lokale dag 00:00–23:59" : "Aster-geschiedenis tijdelijk niet bevestigd"}</small></article>
     <PortfolioGrowthCard onChanged={onChanged} />
-    <article className="metric realized-trades"><span>TRADES GESLOTEN</span><strong>{available ? today.trades : "—"}</strong><small>{available ? "Vandaag bevestigd door Aster" : "Aster-geschiedenis tijdelijk niet bevestigd"}</small></article>
+    <article className="metric realized-trades"><div className="realized-trades-count"><span>TRADES GESLOTEN</span><strong>{available ? today.trades : "—"}</strong><small>{available ? "Vandaag bevestigd door Aster" : "Aster-geschiedenis tijdelijk niet bevestigd"}</small></div><ActiveTradesIndex positions={positions} equity={equity} availableToTrade={availableToTrade} openPnl={openPnl}/></article>
   </>;
 }
 
