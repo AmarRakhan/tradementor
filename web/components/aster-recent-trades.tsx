@@ -42,7 +42,7 @@ type AsterPairDetail = {
 };
 
 type TradeCenterRow = {
-  id: string; symbol: string; side: string; leverage: number | null; margin: number | null; pnl: number | null;
+  id: string; symbol: string; side: string; leverage: number | null; margin: number | null; pnl: number | null; pnlPct: number | null; entries: number | null;
   status: string; timestamp?: unknown; tone: "profit" | "loss" | "neutral"; source: "position" | "activity" | "action";
   position?: OpenPosition | null; activity?: Activity | null; action?: ScanAction | null;
 };
@@ -87,6 +87,18 @@ function findOpenPosition(positions: OpenPosition[], row: { symbol?: string; sid
   const key = sideKey(row); return positions.find(position => sideKey(position) === key && (finite(position.quantity) || 0) > 0) || null;
 }
 function averageEntry(position: OpenPosition | null) { return finite(position?.averageEntry) ?? finite(position?.entryPrice); }
+function positionPricePnlPct(position: OpenPosition | null) {
+  const entry = averageEntry(position); const mark = finite(position?.markPrice);
+  if (entry === null || entry <= 0 || mark === null || mark <= 0) return null;
+  const raw = (mark - entry) / entry * 100;
+  return String(position?.side || "").toUpperCase() === "SHORT" ? -raw : raw;
+}
+function positionEntryCount(position: OpenPosition | null) {
+  if (!position) return null;
+  const direct = finite(position.dcaCount); const ladder = finite(position.strategy2DcaLadder?.filledDcaCount);
+  const dca = direct ?? ladder; return dca === null ? null : Math.max(1, Math.round(dca) + 1);
+}
+function percent(value: unknown) { const n = finite(value); return n === null ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(2).replace(".", ",")}%`; }
 function openPositionMargin(position: OpenPosition | null) {
   if (!position) return null; const direct = finite(position.initialMarginUsd); if (direct !== null && direct > 0) return direct;
   const notional = finite(position.notionalUsd); const leverage = finite(position.leverage);
@@ -134,20 +146,20 @@ function ClosePositionControl({ position, onClosed }: { position: OpenPosition |
 function rowFromPosition(position: OpenPosition, status = "Live"): TradeCenterRow {
   const pnl = finite(position.unrealizedPnl);
   const roleStatus = position.focusAirbagHedge === true ? "AIRBAG / HEDGE" : position.focusAirbag?.enabled === true ? "HOOFDPOSITIE" : status;
-  return { id: positionId(position), symbol: normalizedSymbol(position.symbol), side: String(position.side || "—").toUpperCase(), leverage: finite(position.leverage), margin: openPositionMargin(position), pnl, status: roleStatus, timestamp: position.openedAt, tone: toneFor(pnl), source: "position", position };
+  return { id: positionId(position), symbol: normalizedSymbol(position.symbol), side: String(position.side || "—").toUpperCase(), leverage: finite(position.leverage), margin: openPositionMargin(position), pnl, pnlPct: positionPricePnlPct(position), entries: positionEntryCount(position), status: roleStatus, timestamp: position.openedAt, tone: toneFor(pnl), source: "position", position };
 }
 function rowFromActivity(trade: Activity, closed: boolean, positions: OpenPosition[], scanActions: ScanAction[]): TradeCenterRow {
   const position = closed ? null : findOpenPosition(positions, trade); const matching = closed ? [...scanActions].reverse().find(action => sideKey(action) === sideKey(trade) && String(action.action || "").toUpperCase() === "CLOSE") || null : null;
   const leverage = activityLeverage(trade, position) ?? finite(matching?.leverage); const margin = activityMargin(trade, position, leverage) ?? finite(matching?.marginUsd); const pnl = finite(closed ? trade.realizedPnlUsd : trade.unrealizedPnlUsd);
-  return { id: String(trade.exchangeTradeId || trade.id || stableActivityId(trade)), symbol: normalizedSymbol(trade.symbol), side: String(trade.side || "—").toUpperCase(), leverage, margin, pnl, status: closed ? (matching && TP_KINDS.has(String(matching.kind || "").toUpperCase()) ? "TP" : "Gesloten") : "Ingestapt", timestamp: closed ? (trade.closedAt || trade.executedAt || trade.timestampMs) : (trade.executedAt || trade.timestampMs), tone: toneFor(pnl), source: "activity", activity: trade, position };
+  return { id: String(trade.exchangeTradeId || trade.id || stableActivityId(trade)), symbol: normalizedSymbol(trade.symbol), side: String(trade.side || "—").toUpperCase(), leverage, margin, pnl, pnlPct: position ? positionPricePnlPct(position) : reliableReturnPct(trade), entries: position ? positionEntryCount(position) : null, status: closed ? (matching && TP_KINDS.has(String(matching.kind || "").toUpperCase()) ? "TP" : "Gesloten") : "Ingestapt", timestamp: closed ? (trade.closedAt || trade.executedAt || trade.timestampMs) : (trade.executedAt || trade.timestampMs), tone: toneFor(pnl), source: "activity", activity: trade, position };
 }
 function rowFromAction(action: ScanAction, positions: OpenPosition[], exits: Activity[]): TradeCenterRow {
   const position = findOpenPosition(positions, action); const label = scanActionLabel(action); const exit = label === "TP" || label === "Gesloten" ? exits.find(row => sideKey(row) === sideKey(action)) : null; const pnl = position ? finite(position.unrealizedPnl) : finite(exit?.realizedPnlUsd);
-  return { id: String(action.clientOrderId || action.orderId || `${normalizedSymbol(action.symbol)}:${exchangeTimestampMs(action.executedAt)}`), symbol: normalizedSymbol(action.symbol), side: String(action.side || "—").toUpperCase(), leverage: finite(action.leverage) ?? finite(position?.leverage), margin: finite(action.marginUsd) ?? openPositionMargin(position), pnl, status: label, timestamp: action.executedAt, tone: toneFor(pnl), source: "action", action, position };
+  return { id: String(action.clientOrderId || action.orderId || `${normalizedSymbol(action.symbol)}:${exchangeTimestampMs(action.executedAt)}`), symbol: normalizedSymbol(action.symbol), side: String(action.side || "—").toUpperCase(), leverage: finite(action.leverage) ?? finite(position?.leverage), margin: finite(action.marginUsd) ?? openPositionMargin(position), pnl, pnlPct: positionPricePnlPct(position), entries: position ? positionEntryCount(position) : (finite(action.dcaNumber) !== null ? Math.max(1, Math.round(Number(action.dcaNumber)) + 1) : null), status: label, timestamp: action.executedAt, tone: toneFor(pnl), source: "action", action, position };
 }
 
 function TradeCenterTable({ rows, onOpenDetail, onClosed }: { rows: TradeCenterRow[]; onOpenDetail: (row: TradeCenterRow) => void; onClosed: () => void }) {
-  return <div className={styles.table} role="table" aria-label="Aster Tradecentrum"><div className={styles.head} role="row"><span>PAIR</span><span>SIDE</span><span>LEV</span><span>MARGIN</span><span>PNL</span><span>STATUS</span></div>{rows.length ? rows.map(row => <div className={styles.row} role="row" key={row.id}><button className={styles.pair} role="cell" type="button" onClick={() => onOpenDetail(row)}><CoinIcon symbol={row.symbol} /><span className={styles.pairCopy}><b>{baseAsset(row.symbol)}</b><small>{dateTime(row.timestamp)}</small></span></button><strong role="cell" className={`${styles.side} ${row.side === "LONG" ? styles.long : row.side === "SHORT" ? styles.short : styles.neutral}`}>{row.side}</strong><span role="cell">{row.leverage === null ? "—" : `${Math.round(row.leverage)}x`}</span><span role="cell">{money(row.margin)}</span><strong role="cell" className={styles[row.tone]}>{money(row.pnl, true)}</strong><span role="cell" className={styles.status}><span className={styles.statusText}>{row.status}</span>{row.source === "position" && row.position ? (row.position.focusAirbagHedge === true ? <span className={styles.managed}>BOT BEHEERT</span> : <ClosePositionControl position={row.position} onClosed={onClosed} />) : null}</span></div>) : <div className={styles.empty}>Geen bevestigde gegevens voor dit filter.</div>}</div>;
+  return <div className={styles.table} role="table" aria-label="Aster Tradecentrum"><div className={styles.head} role="row"><span>PAIR</span><span>SIDE</span><span>LEV</span><span>MARGIN</span><span>PNL</span><span>PNL %</span><span title="Aantal instappen inclusief eerste entry">#</span><span>STATUS</span></div>{rows.length ? rows.map(row => <div className={styles.row} role="row" key={row.id}><button className={styles.pair} role="cell" type="button" onClick={() => onOpenDetail(row)}><CoinIcon symbol={row.symbol} /><span className={styles.pairCopy}><b>{baseAsset(row.symbol)}</b><small>{dateTime(row.timestamp)}</small></span></button><strong role="cell" className={`${styles.side} ${row.side === "LONG" ? styles.long : row.side === "SHORT" ? styles.short : styles.neutral}`}>{row.side}</strong><span role="cell">{row.leverage === null ? "—" : `${Math.round(row.leverage)}x`}</span><span role="cell">{money(row.margin)}</span><strong role="cell" className={styles[row.tone]}>{money(row.pnl, true)}</strong><strong role="cell" className={styles[toneFor(row.pnlPct)]}>{percent(row.pnlPct)}</strong><strong role="cell" className={styles.entries} title="Aantal instappen inclusief eerste entry">{row.entries ?? "—"}</strong><span role="cell" className={styles.status}><span className={styles.statusText}>{row.status}</span>{row.source === "position" && row.position ? (row.position.focusAirbagHedge === true ? <span className={styles.managed}>BOT BEHEERT</span> : <ClosePositionControl position={row.position} onClosed={onClosed} />) : null}</span></div>) : <div className={styles.empty}>Geen bevestigde gegevens voor dit filter.</div>}</div>;
 }
 
 function focusActionLabel(event:unknown){
@@ -205,8 +217,13 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const entries = useMemo(() => sortedActivity(Array.isArray(activity.entries) ? activity.entries : []) as Activity[], [activity.entries]);
   const exits = useMemo(() => sortedActivity(Array.isArray(activity.exits) ? activity.exits : []) as Activity[], [activity.exits]);
   const allPositions = useMemo(() => (Array.isArray(snapshot.data?.positions) ? snapshot.data.positions : []) as OpenPosition[], [snapshot.data?.positions]);
-  const mainPositions = useMemo(() => allPositions.filter(position => position.focusAirbagHedge !== true), [allPositions]);
   const strategy2 = snapshot.data?.strategy2 && typeof snapshot.data.strategy2 === "object" ? snapshot.data.strategy2 as Record<string, unknown> : {};
+  const multiDcaPositions = strategy2.multiBbPositions && typeof strategy2.multiBbPositions === "object" ? strategy2.multiBbPositions as Record<string, Record<string, unknown>> : {};
+  const positionsWithMultiDcaCounts = useMemo(() => allPositions.map(position => {
+    const runtime = multiDcaPositions[sideKey(position)]; const runtimeDca = finite(runtime?.dcaCount);
+    return runtimeDca === null ? position : { ...position, dcaCount: runtimeDca };
+  }), [allPositions, strategy2.multiBbPositions]);
+  const mainPositions = useMemo(() => positionsWithMultiDcaCounts.filter(position => position.focusAirbagHedge !== true), [positionsWithMultiDcaCounts]);
   const focusV2Cockpit = snapshot.data?.focusV2Cockpit && typeof snapshot.data.focusV2Cockpit === "object" ? snapshot.data.focusV2Cockpit as FocusV2Cockpit : null;
   const orderQueue = strategy2.orderQueue && typeof strategy2.orderQueue === "object" ? strategy2.orderQueue as Record<string, unknown> : {};
   const scanActions = useMemo(() => (Array.isArray(orderQueue.lastScanActions) ? orderQueue.lastScanActions : []) as ScanAction[], [orderQueue.lastScanActions]);
@@ -215,14 +232,14 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const dcaActions = useMemo(() => reversedActions.filter(action => DCA_KINDS.has(String(action.kind || "").toUpperCase())), [reversedActions]);
   const profitPositions = useMemo(() => topProfitPositions(mainPositions) as OpenPosition[], [mainPositions]);
   const lossPositions = useMemo(() => [...mainPositions].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => (finite(a.unrealizedPnl) ?? 0) - (finite(b.unrealizedPnl) ?? 0)), [mainPositions]);
-  const livePositions = useMemo(() => [...allPositions].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => {
+  const livePositions = useMemo(() => [...positionsWithMultiDcaCounts].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => {
     const airbagOrder = Number(a.focusAirbagHedge === true) - Number(b.focusAirbagHedge === true);
     return airbagOrder || exchangeTimestampMs(b.openedAt) - exchangeTimestampMs(a.openedAt);
-  }), [allPositions]);
+  }), [positionsWithMultiDcaCounts]);
   const datasets = useMemo<Record<FilterKey, TradeCenterRow[]>>(() => ({
-    live: livePositions.map(position => rowFromPosition(position)), entered: entries.map(trade => rowFromActivity(trade, false, allPositions, scanActions)), closed: exits.map(trade => rowFromActivity(trade, true, allPositions, scanActions)),
-    tp: tpActions.map(action => rowFromAction(action, allPositions, exits)), dca: dcaActions.map(action => rowFromAction(action, allPositions, exits)), profit: profitPositions.map(position => rowFromPosition(position, "Live")), loss: lossPositions.map(position => rowFromPosition(position, "Live")), actions: reversedActions.map(action => rowFromAction(action, allPositions, exits)),
-  }), [livePositions, entries, exits, allPositions, scanActions, tpActions, dcaActions, profitPositions, lossPositions, reversedActions]);
+    live: livePositions.map(position => rowFromPosition(position)), entered: entries.map(trade => rowFromActivity(trade, false, positionsWithMultiDcaCounts, scanActions)), closed: exits.map(trade => rowFromActivity(trade, true, allPositions, scanActions)),
+    tp: tpActions.map(action => rowFromAction(action, positionsWithMultiDcaCounts, exits)), dca: dcaActions.map(action => rowFromAction(action, positionsWithMultiDcaCounts, exits)), profit: profitPositions.map(position => rowFromPosition(position, "Live")), loss: lossPositions.map(position => rowFromPosition(position, "Live")), actions: reversedActions.map(action => rowFromAction(action, positionsWithMultiDcaCounts, exits)),
+  }), [livePositions, entries, exits, allPositions, positionsWithMultiDcaCounts, scanActions, tpActions, dcaActions, profitPositions, lossPositions, reversedActions]);
   const counts: Record<FilterKey, number> = { live: livePositions.length, entered: entries.length, closed: exits.length, tp: tpActions.length, dca: dcaActions.length, profit: profitPositions.length, loss: lossPositions.length, actions: scanActions.length };
   const selectedRows = datasets[active]; const visibleLimit = expanded ? pages * 100 : 6; const visibleRows = selectedRows.slice(0, visibleLimit); const hasMore = visibleRows.length < selectedRows.length;
   const liveState = snapshot.error ? "Offline" : snapshot.loading ? "Reconnecting" : snapshot.updatedAt && Date.now() - snapshot.updatedAt < 90_000 ? "Live" : "Delayed";

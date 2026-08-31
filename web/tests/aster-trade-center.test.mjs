@@ -39,7 +39,7 @@ test("Tradecentrum is compact and mobile-safe", () => {
   assert.match(styles, /\.filters\{[^}]*overflow-x:auto/);
   assert.match(styles, /\.filter\.active/);
   assert.match(styles, /@media\(max-width:700px\)/);
-  assert.match(styles, /grid-template-columns:minmax\(112px,1\.35fr\)/);
+  assert.match(styles, /grid-template-columns:minmax\(90px,1\.2fr\)/);
   assert.match(styles, /\.long,.profit\{color:#58f0ae\}/);
   assert.match(styles, /\.short,.loss\{color:#ff617d\}/);
 });
@@ -51,4 +51,13 @@ test("Live includes Airbag hedge as a clearly managed leg", () => {
   assert.match(component, /HOOFDPOSITIE/);
   assert.match(component, /BOT BEHEERT/);
   assert.match(component, /focusAirbagHedge === true/);
+});
+
+
+test("Tradecentrum adds compact PnL percent and entry-count columns without removing existing columns", () => {
+  for (const label of ["PAIR", "SIDE", "LEV", "MARGIN", "PNL", "PNL %", "#", "STATUS"]) assert.match(component, new RegExp(`<span>${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</span>`));
+  assert.match(component, /positionPricePnlPct/);
+  assert.match(component, /positionEntryCount/);
+  assert.match(component, /Math\.round\(dca\) \+ 1/);
+  assert.match(component, /multiBbPositions/);
 });
