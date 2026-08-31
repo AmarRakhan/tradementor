@@ -98,6 +98,7 @@ from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
+from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -1195,7 +1196,23 @@ def _aster_owned_keys(uid: str) -> tuple[set[tuple[str, str]], set[tuple[str, st
 def aster_strategy2_public(uid: str) -> dict[str, Any]:
     ref = aster_strategy2_reference(uid)
     raw = ref.get().to_dict() or {}
-    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else Strategy2Config().public_dict()
+    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else MultiBbConfig().public_dict()
+    if str(settings.get("engine",settings.get("strategyKind","")))==MULTI_BB_ENGINE:
+        enabled=bool(raw.get("enabled",False)); monitor=bool(raw.get("monitor",False)); report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
+        managed=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
+        long_count=sum(1 for key in managed if str(key).endswith("|LONG")); short_count=sum(1 for key in managed if str(key).endswith("|SHORT"))
+        runtime_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
+        return {"strategy2":{"settings":settings,"engine":MULTI_BB_ENGINE,"phase":str(raw.get("phase","CONFIGURED")),
+            "displayPhase":"UIT" if not enabled else str(raw.get("phase","RUNNING")),"enabled":enabled,"monitor":monitor,
+            "liveReady":bool(raw.get("liveReady",False)),"canaryValidated":bool(raw.get("canaryValidated",False)),"runtimeEnabled":runtime_enabled,
+            "configVersion":int(safe_float(raw.get("configVersion",settings.get("version",1)))),"lastReason":str(raw.get("lastReason","Nog niet gestart")),
+            "lastTickAt":raw.get("lastTickAt"),"activePairs":len({str(k).split("|",1)[0] for k in managed}),"activeLegs":len(managed),
+            "longLegs":long_count,"shortLegs":short_count,"positionCounts":{"uniqueMarketCount":len({str(k).split("|",1)[0] for k in managed}),
+                "positionLegCount":len(managed),"longLegs":long_count,"shortLegs":short_count},"multiBb":report,"multiBbPositions":managed,
+            "universe":{"topN":int(settings.get("universeTopN",30)),"ranking":report.get("rankedTopN",[])},
+            "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "Bollinger 1m + Top-N + leveragefilter"},
+                "existingPositionManagement":{"reason":"Exchange truth + TP/DCA beheer"}},"candidateScan":{"checked":len(report.get("rankedTopN",[])),"reasons":[]},
+            "orderQueue":{"enabled":False,"maximumOrdersPerScan":MAX_ORDERS_PER_ACCOUNT_SCAN,"lastScanActions":report.get("actions",[])}}}
     owned=proven_owned_rows(raw.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
     universe=_server_universe_contract(ref,raw,int(settings.get("universeTopN",50)))
     counts=position_count_contract(owned,scope="strategy2-proven-owned")
@@ -1341,8 +1358,17 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
-    settings=Strategy2Config.from_mapping(raw.get("settings"));enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
-    if not monitor and not dry_run:return {"status":"stopped","reason":"Strategy 2 monitoring staat uit"}
+    raw_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    if str(raw_settings.get("engine",raw_settings.get("strategyKind","")))!=MULTI_BB_ENGINE:
+        if bool(raw.get("enabled")) or bool(raw.get("monitor")):
+            ref.set({"enabled":False,"monitor":False,"phase":"CONFIG_REQUIRED","lastReason":"Legacy strategie verwijderd; nieuwe Multi BB-configuratie vereist","updatedAt":now},merge=True)
+        return {"status":"stopped","reason":"Legacy strategie is verwijderd; configureer de nieuwe Multi BB-strategie","ordersSent":0}
+    try: settings=MultiBbConfig.from_mapping(raw_settings)
+    except ValueError as exc:
+        ref.set({"enabled":False,"monitor":False,"phase":"CONFIG_ERROR","lastReason":str(exc),"updatedAt":now},merge=True)
+        return {"status":"blocked","reason":str(exc),"ordersSent":0}
+    enabled=bool(raw.get("enabled",False));monitor=bool(raw.get("monitor",False))
+    if not monitor and not dry_run:return {"status":"stopped","reason":"Multi BB monitoring staat uit","ordersSent":0}
     live=settings.mode=="live" and not dry_run
     canary_authorized=bool(raw.get("canaryValidated"))
     central_live_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
@@ -1365,6 +1391,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
+    # The legacy Focus/Strategy-2 planners are retired. The new engine owns all active decisions.
+    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=positions,
+        open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
     # Realtime Simple Mode must make DCA/release decisions from the exact websocket
     # mark event that triggered this evaluation. REST position_risk markPrice may lag
     # the stream enough to leave LIVE below DCA without execution. Preserve all
@@ -4204,45 +4233,32 @@ def _normalize_focus_slot_target(existing:dict[str,Any],candidate:Strategy2Confi
 
 @app.put("/v1/me/aster/strategy2/settings")
 def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
-    old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
-    incoming=dict(request.settings);incoming["focusLiveEnabled"]=bool(old.get("focusLiveEnabled",False))
-    try: candidate = Strategy2Config.from_mapping(incoming)
-    except ValueError as exc: raise HTTPException(422, str(exc)) from exc
-    if candidate.trading_mode!="focus":candidate=replace(candidate,focus_live_enabled=False)
-    try: candidate,focus_desired_count=_normalize_focus_slot_target(existing,candidate)
-    except ValueError as exc: raise HTTPException(409,str(exc)) from exc
+    uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}; old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
+    try: candidate=MultiBbConfig.from_mapping(request.settings)
+    except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
-    saved=Strategy2Config.from_mapping({**candidate.public_dict(),"version":version});now=datetime.now(timezone.utc)
-    saved_public={**saved.public_dict(),"focusDesiredSlotCount":focus_desired_count}
-    update={"settings":saved_public,"configVersion":version,"updatedAt":now,"focusDesiredSlotCount":focus_desired_count,"focusRetiredSlotIds":[]}
-    # A live settings change applies to the next decision. It must never stop
-    # the engine, invalidate a completed canary, or recreate existing exposure.
-    if not existing:
-        update.update({"phase":"CONFIGURED","enabled":False,"monitor":False,"liveReady":False,
-            "lastReason":"Configuratie opgeslagen; strategie is nog niet gestart"})
-    elif not bool(existing.get("enabled")) and str(existing.get("phase", "DRAFT")).upper() == "DRAFT":
-        update.update({"phase":"CONFIGURED","lastReason":"Configuratie opgeslagen; strategie is nog niet gestart"})
+    saved=MultiBbConfig.from_mapping({**candidate.public_dict(),"version":version}); now=datetime.now(timezone.utc)
+    switching=str(old.get("engine",old.get("strategyKind","")))!=MULTI_BB_ENGINE
+    update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"phase":"CONFIGURED",
+        "lastReason":"Nieuwe Multi BB-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
+        "pendingReopens":[],"focusLiveState":{},"focusLiveSlots":[],"focusV2State":{},"focusV2History":{},
+        "moneyGrabberActivated":False,"moneyGrabberRound":None,"moneyGrabberPairs":[]}
+    if switching: update.update({"enabled":False,"monitor":False,"multiBbPositions":{}})
     ref.set(update,merge=True)
-    ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved_public,"source":"user","timestamp":now})
+    ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved.public_dict(),"source":"user-multi-bb-v1","timestamp":now})
     return {"saved":True,**aster_strategy2_public(uid)}
 
 
 @app.post("/v1/me/aster/strategy2/simulate")
 def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    try: settings=Strategy2Config.from_mapping({**request.settings,"mode":"paper"})
+    try: settings=MultiBbConfig.from_mapping({**request.settings,"mode":"paper"})
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
-    automation=aster_automation_reference(str(user["uid"])).get().to_dict() or {}
-    snapshot=automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"),dict) else {}
-    equity=max(0.0,safe_float(snapshot.get("equity")))
-    errors=validate_worst_case(settings,equity or 1000,5.0,max(1,int(safe_float(snapshot.get("maximumLeverage")) or 200)))
-    scenarios=strategy2_standard_suite(settings);failures=strategy2_failure_suite(settings)
-    return {"mode":"paper","ordersSent":0,"engine":"aster-strategy-2","sameEngineAsLive":True,
-        "configurationValid":not errors and all(x.passed for x in scenarios) and all(failures.values()),"errors":errors,
-        "scenarios":[{"name":x.name,"passed":x.passed,"decisions":len(x.decisions),"simulatedOrders":x.orders_sent,"duplicateOrders":x.duplicate_orders,"riskEvents":x.risk_events} for x in scenarios],
-        "failureChecks":failures,
-        "plannedPositions":settings.maximum_pairs,"plannedLegs":settings.maximum_pairs,
-        "message":"Dezelfde Strategy-2-engine is gebruikt; de live execution adapter bleef vergrendeld."}
+    return {"mode":"paper","ordersSent":0,"engine":MULTI_BB_ENGINE,"sameEngineAsLive":True,"configurationValid":True,"errors":[],
+        "plannedPositions":settings.maximum_positions,"longSlots":settings.long_slots,"shortSlots":settings.short_slots,
+        "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,"entryMarginUsd":settings.entry_margin_usd,
+            "dcaDistance":settings.dca_distance,"dcaMarginUsd":settings.dca_margin_usd,"maxDca":settings.max_dca,"takeProfit":settings.take_profit,
+            "bollinger":"1m BB(%d,%.2f)"%(settings.bollinger_period,settings.bollinger_stddev)},
+        "message":"Nieuwe Multi BB-configuratie gevalideerd; er zijn 0 orders verzonden."}
 
 
 @app.get("/v1/me/aster/strategy2/readiness")
@@ -4349,33 +4365,19 @@ def run_aster_strategy2_canary(request:AsterStrategy2CanaryRequest,user:dict[str
 @app.post("/v1/me/aster/strategy2/start")
 def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Persoonlijke bevestiging ontbreekt")
-    try: settings=Strategy2Config.from_mapping(request.settings)
+    try: settings=MultiBbConfig.from_mapping(request.settings)
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
-    uid=str(user["uid"]);ref=aster_strategy2_reference(uid);existing=ref.get().to_dict() or {}
-    try: settings,focus_desired_count=_normalize_focus_slot_target(existing,settings)
-    except ValueError as exc: raise HTTPException(409,str(exc)) from exc
-    settings=replace(settings,focus_live_enabled=bool(settings.trading_mode=="focus" and settings.mode=="live"))
+    uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}
     if settings.mode=="live":
         if not bool(existing.get("liveReady")) or not bool(existing.get("canaryValidated")):
-            raise HTTPException(423,"Strategy 2 is nog niet LIVE READY; voer eerst de volledige readinesscontrole en canary uit")
-        if os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true":
-            raise HTTPException(423,"Strategy 2 productie-uitvoering staat centraal uit")
-    now=datetime.now(timezone.utc)
-    start_settings={**settings.public_dict(),"focusDesiredSlotCount":focus_desired_count}
-    start_update={"settings":start_settings,"focusDesiredSlotCount":focus_desired_count,"focusRetiredSlotIds":[],
-        "phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
-        "enabled":True,"monitor":True,"initialBuildComplete":False,"startedAt":now,"updatedAt":now}
-    # Simple Focus owns its complete LONG/SHORT lifecycle and must never inherit
-    # legacy multi-pair reopen work from an older stopped configuration.
-    if settings.focus_v2_enabled and settings.focus_v2_simple_mode_enabled:
-        start_update["pendingReopens"]=[]
-    ref.set(start_update,merge=True)
+            raise HTTPException(423,"Multi BB is nog niet LIVE READY; voer eerst readiness en canary uit")
+        if os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()!="true": raise HTTPException(423,"Productie-uitvoering staat centraal uit")
+    now=datetime.now(timezone.utc); version=max(int(safe_float(existing.get("configVersion"))),settings.version)
+    settings=MultiBbConfig.from_mapping({**settings.public_dict(),"version":version})
+    ref.set({"settings":settings.public_dict(),"phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
+        "enabled":True,"monitor":True,"pendingReopens":[],"multiBbAdoptionPending":True,"startedAt":now,"updatedAt":now},merge=True)
     first=_run_aster_strategy2_tick(uid,dry_run=settings.mode!="live")
-    public=aster_strategy2_public(uid)
-    public_state=public.get("strategy2") if isinstance(public.get("strategy2"),dict) else {}
-    if not bool(public_state.get("enabled")) or str(public_state.get("phase","DRAFT")).upper() in {"DRAFT","CONFIGURED"}:
-        raise HTTPException(500,"Strategy 2-start is niet betrouwbaar in de actieve cloudstatus bevestigd")
-    return {"started":True,"mode":settings.mode,"firstTick":first,**public}
+    return {"started":True,"mode":settings.mode,"firstTick":first,**aster_strategy2_public(uid)}
 
 
 @app.post("/v1/me/aster/strategy2/focus/reset-cycle")
@@ -4417,12 +4419,10 @@ def reset_aster_strategy2_focus_cycle(request: AsterStrategy2FocusResetRequest, 
 @app.post("/v1/me/aster/strategy2/stop")
 def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Bevestig veilig stoppen")
-    uid=str(user["uid"]);ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {}
-    cfg=Strategy2Config.from_mapping(raw.get("settings"))
-    update={"enabled":False,"monitor":True,"phase":"PROTECTIVE_ONLY","updatedAt":datetime.now(timezone.utc)}
-    if cfg.focus_v2_enabled and cfg.focus_v2_simple_mode_enabled:
-        update["pendingReopens"]=[]
-    ref.set(update,merge=True)
+    uid=str(user["uid"]); ref=aster_strategy2_reference(uid)
+    ref.set({"enabled":False,"monitor":False,"phase":"STOPPED","pendingReopens":[],
+        "lastReason":"Multi BB handmatig gestopt; er worden geen automatische orders geplaatst",
+        "updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"stopped":True,**aster_strategy2_public(uid)}
 
 

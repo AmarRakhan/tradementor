@@ -129,7 +129,7 @@ def require_exact_new_position_leverage(client: Any, plan: PairExecutionPlan,
         requested = int(configured_leverage)
     except (TypeError, ValueError) as exc:
         raise NewPositionLeverageBlocked("CONFIGURED_LEVERAGE_OUT_OF_RANGE", plan.symbol) from exc
-    if requested < 1 or requested > 200:
+    if requested < 1 or requested > 300:
         raise NewPositionLeverageBlocked("CONFIGURED_LEVERAGE_OUT_OF_RANGE", plan.symbol)
     try:
         rows = contract_brackets(client, [], plan.symbol)
