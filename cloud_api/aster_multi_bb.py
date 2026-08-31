@@ -38,9 +38,11 @@ class MultiBbConfig:
     minimum_leverage: int = 50
     entry_margin_usd: float = 5.0
     entry_notional_usd: float = 250.0
+    entry_sizing_mode: str = "notional"
     dca_distance: float = .003
     dca_margin_usd: float = 2.0
     max_dca: int = 3
+    unlimited_dca: bool = False
     take_profit: float = .015
     manual_symbol_selection_enabled: bool = False
     manual_symbols: tuple[tuple[str, str], ...] = ()
@@ -52,6 +54,7 @@ class MultiBbConfig:
         entry_margin_usd=_f(raw.get("entryMarginUsd", raw.get("baseMarginUsd")), 5.0)
         entry_notional_usd=_f(raw.get("entryNotionalUsd", raw.get("baseNotional")), entry_margin_usd * max(1, minimum_leverage))
         manual_enabled=bool(raw.get("manualSymbolSelectionEnabled", False))
+        entry_sizing_mode=str(raw.get("entrySizingMode", "margin" if manual_enabled else "notional")).lower().strip()
         manual_rows=raw.get("manualSymbols") if isinstance(raw.get("manualSymbols"), list) else []
         manual_symbols=[]
         seen=set()
@@ -72,9 +75,11 @@ class MultiBbConfig:
             minimum_leverage=minimum_leverage,
             entry_margin_usd=entry_margin_usd,
             entry_notional_usd=entry_notional_usd,
+            entry_sizing_mode=entry_sizing_mode,
             dca_distance=_f(raw.get("dcaDistance", raw.get("longDcaDistance")), .003),
             dca_margin_usd=_f(raw.get("dcaMarginUsd"), 2.0),
             max_dca=_i(raw.get("maxDca", raw.get("longMaxDca")), 3),
+            unlimited_dca=bool(raw.get("unlimitedDca", False)),
             take_profit=_f(raw.get("takeProfit"), .015),
             manual_symbol_selection_enabled=manual_enabled,
             manual_symbols=tuple(manual_symbols),
@@ -88,9 +93,10 @@ class MultiBbConfig:
         if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
         if not 1 <= self.minimum_leverage <= 300: raise ValueError("Minimum leverage moet tussen 1x en 300x liggen")
-        if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-orderwaarde en DCA-margin moeten positief zijn")
+        if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-bedrag en DCA-margin moeten positief zijn")
+        if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
-        if not 0 <= self.max_dca <= 50: raise ValueError("Max DCA moet tussen 0 en 50 liggen")
+        if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
         if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
         if self.manual_symbol_selection_enabled and not self.manual_symbols:
             raise ValueError("Selecteer minimaal één munt wanneer Zelf munten kiezen aan staat")
@@ -102,8 +108,8 @@ class MultiBbConfig:
             "engine": ENGINE, "strategyKind": ENGINE, "name": self.name, "version": self.version, "mode": self.mode,
             "universeTopN": self.universe_top_n, "maximumPositions": self.maximum_positions,
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
-            "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "dcaDistance": self.dca_distance,
-            "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "takeProfit": self.take_profit,
+            "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
+            "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit,
             "entryMode": "immediate_fill", "marginMode": "cross", "autoRestart": True,
             "manualSymbolSelectionEnabled": self.manual_symbol_selection_enabled,
             "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in self.manual_symbols],
@@ -136,13 +142,14 @@ def rank_top_volume(tickers: list[dict[str, Any]], exchange_info: dict[str, Any]
     return ranked[:top_n]
 
 
-def _plan_new(client: Any, row: dict[str, Any], price: float, notional_usd: float, minimum_leverage: int) -> PairExecutionPlan:
+def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str, minimum_leverage: int) -> PairExecutionPlan:
     symbol = str(row.get("symbol", "")).upper(); bracket_rows = _brackets(client.leverage_brackets(symbol), symbol)
     candidates = sorted({_i(x.get("initialLeverage")) for x in bracket_rows if _i(x.get("initialLeverage")) >= minimum_leverage}, reverse=True)
     if not candidates: raise ValueError(f"{symbol}: max leverage lager dan minimum {minimum_leverage}x")
     last: Exception | None = None
     for leverage in candidates:
-        try: return plan_pair(row, bracket_rows, price, notional_usd, accepted_leverage=leverage)
+        configured_notional = entry_margin_usd * leverage if entry_sizing_mode == "margin" else entry_notional_usd
+        try: return plan_pair(row, bracket_rows, price, configured_notional, accepted_leverage=leverage)
         except Exception as exc: last = exc
     raise ValueError(f"{symbol}: geen uitvoerbare order op minimaal {minimum_leverage}x") from last
 
@@ -263,7 +270,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 ref.collection("audit").add({"event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price, "timestamp": datetime.now(timezone.utc)})
             sent += 1; continue
         dca_count = _i(st0.get("dcaCount")); anchor = _f(st0.get("lastBotFillPrice"), entry)
-        if dca_count >= settings.max_dca or anchor <= 0: continue
+        if (not settings.unlimited_dca and dca_count >= settings.max_dca) or anchor <= 0: continue
         trigger = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance)
         due = mark <= trigger if side == "LONG" else mark >= trigger
         if not due: continue
@@ -315,7 +322,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
-        try: plan = _plan_new(client, info_map[symbol], prices[symbol], settings.entry_notional_usd, settings.minimum_leverage)
+        try: plan = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)}); continue
         required = float(plan.notional_per_leg) / plan.leverage

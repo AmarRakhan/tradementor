@@ -9,12 +9,12 @@ type ManualSymbol = { symbol: string; side: ManualSide };
 type Values = {
   name: string; universe: string; positions: string; longSlots: string; shortSlots: string;
   minLeverage: string; entryMargin: string; dcaDistance: string; dcaMargin: string;
-  maxDca: string; tp: string; mode: "paper" | "live";
+  maxDca: string; unlimitedDca: boolean; tp: string; mode: "paper" | "live";
   manualEnabled: boolean; manualSymbols: ManualSymbol[];
 };
 const initial: Values = {
   name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10",
-  minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", tp: "1.5", mode: "live",
+  minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", unlimitedDca: false, tp: "1.5", mode: "live",
   manualEnabled: false, manualSymbols: [],
 };
 const n = (v: string) => Number(v) || 0;
@@ -40,8 +40,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     setV({
       name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(x.maximumPositions ?? 30),
       longSlots: String(x.longSlots ?? 20), shortSlots: String(x.shortSlots ?? 10), minLeverage: String(x.minimumLeverage ?? 50),
-      entryMargin: String(x.entryNotionalUsd ?? x.baseNotional ?? (Number(x.entryMarginUsd ?? 5) * Number(x.minimumLeverage ?? 50))),
-      dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(x.maxDca ?? 3),
+      entryMargin: String(x.entrySizingMode === "margin" ? (x.entryMarginUsd ?? 5) : (x.entryNotionalUsd ?? x.baseNotional ?? (Number(x.entryMarginUsd ?? 5) * Number(x.minimumLeverage ?? 50)))),
+      dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(x.maxDca ?? 3), unlimitedDca: x.unlimitedDca === true,
       tp: String(Number(x.takeProfit ?? .015) * 100), mode: x.mode === "paper" ? "paper" : "live",
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
     });
@@ -50,8 +50,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const settings = useMemo(() => ({
     engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode,
     universeTopN:Math.round(n(v.universe)), maximumPositions:Math.round(n(v.positions)), longSlots:Math.round(n(v.longSlots)), shortSlots:Math.round(n(v.shortSlots)),
-    minimumLeverage: Math.round(n(v.minLeverage)), entryNotionalUsd: n(v.entryMargin), entryMarginUsd: n(v.entryMargin) / Math.max(1, Math.round(n(v.minLeverage))),
-    dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: Math.round(n(v.maxDca)), takeProfit:n(v.tp)/100,
+    minimumLeverage: Math.round(n(v.minLeverage)), entryNotionalUsd: n(v.entryMargin), entryMarginUsd: v.manualEnabled ? n(v.entryMargin) : n(v.entryMargin) / Math.max(1, Math.round(n(v.minLeverage))),
+    entrySizingMode: v.manualEnabled ? "margin" : "notional",
+    dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: Math.round(n(v.maxDca)), unlimitedDca: v.unlimitedDca, takeProfit:n(v.tp)/100,
     entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
     manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualSymbols,
   }), [v]);
@@ -94,13 +95,13 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     { title: "Top-N Aster-volume", help: "Alleen actuele Aster USDT-markten binnen deze Top-N op 24h quote-volume mogen een nieuwe positie openen. De extra handmatige modus hieronder verandert dit alleen wanneer jij hem expliciet aanzet.", body: <><Field label="Top-N volume" value={v.universe} set={x => setV({ ...v, universe: x })} />{manualPicker}</> },
     { title: "Hoeveel posities tegelijk?", help: "LONG + SHORT moet exact gelijk zijn aan het totaal. Dezelfde munt kan niet tegelijk LONG en SHORT zijn.", body: <><Field label="Totaal posities" value={v.positions} set={setTotal} /><Field label="LONG slots" value={v.longSlots} set={setLong} /><Field label="SHORT slots" value={v.shortSlots} set={setShort} /><b>{v.positions} totaal · {v.longSlots} LONG · {v.shortSlots} SHORT</b></> },
     { title: "Minimum leverage", help: "Een munt valt af als Aster minder ondersteunt. Een toegestane munt gebruikt de hoogste leverage die Aster voor de geplande order toestaat.", body: <Field label="Minimum leverage (×)" value={v.minLeverage} set={x => setV({ ...v, minLeverage: x })} /> },
-    { title: "Eerste instap", help: "Dit is de vaste orderwaarde per nieuwe positie. De bot kiest een geldige leverage en berekent de benodigde margin automatisch.", body: <Field label="Entry orderwaarde (USDT)" value={v.entryMargin} set={x => setV({ ...v, entryMargin: x })} /> },
+    { title: "Eerste instap", help: v.manualEnabled ? "Dit is jouw eigen startmargin. De bot kiest eerst de hoogste geldige Aster-leverage voor de gekozen munt en berekent daarna de orderwaarde: margin × leverage." : "Dit is de vaste orderwaarde per nieuwe positie. De bestaande Top-N werking blijft ongewijzigd.", body: <Field label={v.manualEnabled ? "Start margin (USDT)" : "Entry orderwaarde (USDT)"} value={v.entryMargin} set={x => setV({ ...v, entryMargin: x })} /> },
     { title: "Direct slots vullen", help: v.manualEnabled ? "Vrije slots worden direct gevuld uit jouw geselecteerde munten en richtingen. Er is geen indicator- of Bollinger-wachtregel." : "Vrije LONG- en SHORT-slots worden direct gevuld met de hoogst gerangschikte geldige Top-N markten. Er is geen indicator- of Bollinger-wachtregel.", body: <div className="maker-summary"><b>DIRECT FILL</b><span>Na TP komt het slot direct vrij en start de volgende positie als een nieuwe schone cyclus met DCA-teller 0.</span></div> },
     { title: "DCA-afstand", help: "LONG koopt lager bij; SHORT koopt hoger bij. De afstand wordt vanaf de laatste bot-fill gemeten.", body: <Field label="DCA afstand (%)" value={v.dcaDistance} set={x => setV({ ...v, dcaDistance: x })} /> },
-    { title: "DCA-bedrag en harde limiet", help: "Na dit aantal automatische DCA's komt er absoluut geen extra automatische DCA. Handmatig bijkopen verandert deze teller niet.", body: <><Field label="DCA margin (USDT)" value={v.dcaMargin} set={x => setV({ ...v, dcaMargin: x })} /><Field label="Max automatische DCA's" value={v.maxDca} set={x => setV({ ...v, maxDca: x })} /></> },
+    { title: "DCA-bedrag en limiet", help: "Je kunt een maximaal aantal instellen of Onbeperkt DCA aanzetten. Iedere DCA blijft dezelfde afstand-, margin-, leverage- en exchangechecks doorlopen.", body: <><Field label="DCA margin (USDT)" value={v.dcaMargin} set={x => setV({ ...v, dcaMargin: x })} /><label className="manual-symbol-toggle"><span><b>Onbeperkt DCA</b><small>Geen tellerlimiet; normale DCA-afstand en marginchecks blijven verplicht.</small></span><input type="checkbox" checked={v.unlimitedDca} onChange={(e) => setV({ ...v, unlimitedDca: e.target.checked })} /></label>{!v.unlimitedDca && <Field label="Max automatische DCA's" value={v.maxDca} set={x => setV({ ...v, maxDca: x })} />}</> },
     { title: "Take profit", help: "TP wordt telkens berekend vanaf de echte gewogen Aster-entry, ook na een handmatige bijkoop.", body: <Field label="Take Profit (%)" value={v.tp} set={x => setV({ ...v, tp: x })} /> },
     { title: "Cross margin", help: "Deze strategie gebruikt uitsluitend cross margin. Alle posities delen dezelfde accountpot; iedere risicotoename krijgt een available-margin check.", body: <div className="maker-summary"><b>CROSS</b><span>Geen hedge/airbag/portfolio-TP/Focus-state machine.</span><span>Risicobegrenzer: max automatische DCA's per positie.</span></div> },
-    { title: "Controle", help: "Opslaan start niets. Jij start de bot pas zelf nadat alles gecontroleerd is.", body: <div className="maker-summary"><b>{v.name}</b><span>{v.manualEnabled ? `${v.manualSymbols.length} zelf gekozen munten · ${selectedLong} LONG / ${selectedShort} SHORT` : `Top ${v.universe} · ${v.positions} posities · ${v.longSlots} LONG / ${v.shortSlots} SHORT`}</span><span>Min {v.minLeverage}× · entry ${v.entryMargin} orderwaarde</span><span>DCA {v.dcaDistance}% · ${v.dcaMargin} · max {v.maxDca}</span><span>TP {v.tp}% · direct refill · cross</span></div> },
+    { title: "Controle", help: "Opslaan start niets. Jij start de bot pas zelf nadat alles gecontroleerd is.", body: <div className="maker-summary"><b>{v.name}</b><span>{v.manualEnabled ? `${v.manualSymbols.length} zelf gekozen munten · ${selectedLong} LONG / ${selectedShort} SHORT` : `Top ${v.universe} · ${v.positions} posities · ${v.longSlots} LONG / ${v.shortSlots} SHORT`}</span><span>Min {v.minLeverage}× · {v.manualEnabled ? `startmargin $${v.entryMargin} × hoogste geldige leverage` : `entry $${v.entryMargin} orderwaarde`}</span><span>DCA {v.dcaDistance}% · ${v.dcaMargin} · {v.unlimitedDca ? "onbeperkt" : `max ${v.maxDca}`}</span><span>TP {v.tp}% · direct refill · cross</span></div> },
   ];
 
   async function action(kind: "save" | "simulate" | "start" | "stop") {
@@ -132,12 +133,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card">
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Multi DCA</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{enabled ? "AAN" : "UIT"}</span></div>
     <p>Top-volume multipair · directe LONG/SHORT slotvulling · beperkte DCA · TP op echte gewogen Aster-entry · direct schone herstart na TP.</p>
-    <div className="strategy-facts"><span>{v.manualEnabled ? `${v.manualSymbols.length} zelf gekozen` : `Top ${v.universe} volume`}</span><span>{v.longSlots} LONG · {v.shortSlots} SHORT</span><span>min {v.minLeverage}×</span><span>DCA max {v.maxDca}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
+    <div className="strategy-facts"><span>{v.manualEnabled ? `${v.manualSymbols.length} zelf gekozen` : `Top ${v.universe} volume`}</span><span>{v.longSlots} LONG · {v.shortSlots} SHORT</span><span>min {v.minLeverage}×</span><span>{v.unlimitedDca ? "DCA onbeperkt" : `DCA max ${v.maxDca}`}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
     <div className="strategy-message"><b>Exchange truth:</b> handmatige toevoegingen aan een beheerde positie worden meegenomen in quantity en gewogen entry zonder de automatische DCA-teller te resetten.<br /><b>Laatste scan:</b> {String(report.activeLong ?? state.longLegs ?? 0)} LONG · {String(report.activeShort ?? state.shortLegs ?? 0)} SHORT · {Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} volume-kandidaten gecontroleerd.</div>
     <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Multi DCA live bot</b><small>{enabled ? "draait" : "uit · jij start hem handmatig"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
     <button className="expand-settings" onClick={() => { setWizard(true); setStep(0); setMessage(""); }}>Strategy Maker openen</button><button className="expand-settings" disabled={busy} onClick={() => action("simulate")}>Test configuratie</button><button className="expand-settings" disabled={busy} onClick={checkReadiness}>Controleer live-gereedheid</button>
     {Boolean(readiness?.softwareReady) && !Boolean(readiness?.liveReady) && <button className="stop-action" disabled={busy} onClick={runCanary}>Bevestig 1 live testorder · maximaal US$ 20 · direct sluiten</button>}
-    {readiness && <p className="strategy-message">Readiness: {Boolean(readiness.liveReady) ? "LIVE READY" : "nog niet volledig live ready"}</p>}
+    {readiness && <p className="strategy-message">Readiness* {Boolean(readiness.liveReady) ? "LIVE READY" : "nog niet volledig live ready"}</p>}
     {wizard && <div className="maker-overlay"><div className="maker-dialog"><button className="maker-close" onClick={() => setWizard(false)}>Sluiten</button><span className="kicker">STAP {step + 1} VAN {steps.length}</span><h2>{current.title}</h2><p>{current.help}</p><div className="maker-input">{current.body}</div><div className="maker-progress"><i style={{ width: `${(step + 1) / steps.length * 100}%` }} /></div><div className="maker-nav"><button disabled={step === 0} onClick={() => setStep(Math.max(0, step - 1))}>Terug</button>{step < steps.length - 1 ? <button onClick={() => setStep(step + 1)}>Volgende</button> : <><button disabled={busy} onClick={() => action("save")}>Opslaan</button><button disabled={busy} onClick={() => action("simulate")}>Test configuratie</button></>}</div>{message && <p className="strategy-message">{message}</p>}</div></div>}
     {message && !wizard && <p className="strategy-message">{message}</p>}
   </article>;
