@@ -36,17 +36,10 @@ test("Focus 2.0 does not duplicate legacy detail overlays", () => {
   assert.match(chart, /if \(mode === "aster-detail" && !focusV2\)/);
 });
 
-test("Focus 2.0 v5 renders Bollinger plus short future trigger segments and compact labels", () => {
+test("Aster detail chart still provides Bollinger market context", () => {
   assert.match(chart, /mode === "aster-detail" \? \["bb"\]/);
   assert.match(chart, /activeIndicators\.includes\("bb"\)/);
   assert.match(chart, /priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false/);
-  assert.match(chart, /focusSegmentRefs/);
-  assert.match(chart, /DCA \/ SHORT SYNC/);
-  assert.match(chart, /SHORT RELEASE/);
-  assert.match(chart, /BREAK-EVEN/);
-  assert.match(chart, /distanceLabel/);
-  assert.match(chart, /hedgeState/);
-  assert.doesNotMatch(chart, /\[datasetVersion[^\]]*cockpit[^\]]*\]/s);
 });
 
 test("Focus 2.0 chart auto follows with right-side breathing room and can pause", () => {

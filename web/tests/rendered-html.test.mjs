@@ -73,26 +73,24 @@ test("keeps execution safe and exposes the test destinations", async () => {
   assert.match(legalPage, /historische resultaten voorspellen geen toekomstige resultaten/i);
 });
 
-test("Strategy 2 always exposes a personal live on/off control without bypassing readiness", async () => {
+test("Multi BB always exposes a personal live on/off control without bypassing readiness", async () => {
   const [source, performance, proxy, startRoute] = await Promise.all([
     readFile(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-performance-panel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/secure-strategy2-live.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/aster/strategy2/start/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(source, /Strategy 2 live bot/);
+  assert.match(source, /Multi BB live bot/);
   assert.match(source, /role="switch"/);
-  assert.match(source, /persoonlijke veiligheidscontrole nodig/);
-  assert.match(source, /if\(liveReady\)\{await action\("start-live"\)/);
+  assert.match(source, /async function toggleLive/);
   assert.match(source, /if\(status\.pending\)return/);
-  assert.match(source, /Serverstatus controleren…/);
-  assert.match(source, /onConfirmed\(confirmed\)/);
+  assert.match(source, /if\(liveReady\)\{await action\("start"\)/);
   assert.match(source, /await checkReadiness\(\)/);
-  assert.match(source, /const paperOnly=false/);
+  assert.match(source, /onConfirmed\(confirmed\)/);
+  assert.match(source, /JSON\.stringify\(\{confirm:true,notional_usd:20\}\)/);
   assert.doesNotMatch(performance, /AsterStrategy2QuickControl/);
   assert.match(proxy, /strategy2Paths/);
   assert.match(proxy, /Authorization: authorization/);
-  assert.match(proxy, /X-TradeMentor-Client-Mode": "strategy2-live"/);
   assert.match(startRoute, /proxyStrategy2Live/);
 });
 

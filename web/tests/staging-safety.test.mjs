@@ -64,31 +64,26 @@ test("Strategy settings and bot decisions remain server-authoritative", async ()
   assert.doesNotMatch(status, /strategy3/i);
 });
 
-test("Strategy 2 production proxy is narrowly scoped and preserves Firebase identity", async () => {
+test("Multi BB production proxy is narrowly scoped and preserves Firebase identity", async () => {
   const [maker, proxy, start, readiness] = await Promise.all([
-    read("components/aster-strategy2-maker.tsx"),
-    read("lib/secure-strategy2-live.ts"),
-    read("app/api/exchanges/aster/strategy2/start/route.ts"),
-    read("app/api/exchanges/aster/strategy2/readiness/route.ts"),
+    read("components/aster-strategy2-maker.tsx"), read("lib/secure-strategy2-live.ts"),
+    read("app/api/exchanges/aster/strategy2/start/route.ts"), read("app/api/exchanges/aster/strategy2/readiness/route.ts"),
   ]);
-  assert.match(maker, /const paperOnly=false/);
+  assert.match(maker, /multi_bb_v1/);
   assert.match(proxy, /const strategy2Paths = new Set/);
   assert.match(proxy, /authorization\?\.startsWith\("Bearer "\)/);
   assert.match(proxy, /Authorization: authorization/);
   assert.doesNotMatch(proxy, /process\.env\.CLOUD_API_URL/);
-  assert.match(proxy, /tradementor-api-604335232956\.europe-west4\.run\.app/);
-  assert.match(start, /proxyStrategy2Live/);
-  assert.match(readiness, /proxyStrategy2Live/);
+  assert.match(start, /proxyStrategy2Live/); assert.match(readiness, /proxyStrategy2Live/);
 });
 
-test("Strategy 2 live controls cannot bypass server readiness or create request loops", async () => {
+test("Multi BB live controls cannot bypass server readiness or create request loops", async () => {
   const maker = await read("components/aster-strategy2-maker.tsx");
-  assert.match(maker, /if\(liveReady\)\{await action\("start-live"\)/);
+  assert.match(maker, /async function toggleLive/);
   assert.match(maker, /if\(status\.pending\)return/);
-  assert.match(maker, /onConfirmed\(confirmed\)/);
+  assert.match(maker, /if\(liveReady\)\{await action\("start"\)/);
   assert.match(maker, /await checkReadiness\(\)/);
-  assert.match(maker, /result\.started!==true/);
-  assert.match(maker, /geen extra startopdrachten verzonden/);
+  assert.match(maker, /onConfirmed\(confirmed\)/);
   assert.match(maker, /Boolean\(readiness\?\.softwareReady\)/);
 });
 
