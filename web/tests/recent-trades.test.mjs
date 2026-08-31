@@ -53,7 +53,7 @@ test("recent trade freshness window remains above the 60 second exchange refresh
 });
 
 test("Tradecentrum exposes the compact approved columns and real close control", () => {
-  assert.match(component, /<span>PAIR<\/span><span>SIDE<\/span><span>LEV<\/span><span>MARGIN<\/span><span>PNL<\/span><span>STATUS<\/span>/);
+  assert.match(component, /<span>PAIR<\/span><span>SIDE<\/span><span>LEV<\/span><span>MARGIN<\/span><span>PNL<\/span><span>PNL %<\/span><span>#<\/span><span>STATUS<\/span>/);
   assert.match(component, /function money\(value: unknown, signed = false\)/);
   assert.match(component, /<ClosePositionControl position=\{row\.position\}/);
   assert.match(component, /"Toon alles"/);

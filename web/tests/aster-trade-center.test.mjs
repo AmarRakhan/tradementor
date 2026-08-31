@@ -46,7 +46,7 @@ test("Tradecentrum is compact and mobile-safe", () => {
 
 
 test("Live includes Airbag hedge as a clearly managed leg", () => {
-  assert.match(component, /livePositions = useMemo\(\(\) => \[\.\.\.allPositions\]/);
+  assert.match(component, /livePositions = useMemo\(\(\) => \[\.\.\.positionsWithMultiDcaCounts\]/);
   assert.match(component, /AIRBAG \/ HEDGE/);
   assert.match(component, /HOOFDPOSITIE/);
   assert.match(component, /BOT BEHEERT/);
