@@ -28,7 +28,28 @@ export function AsterStrategy2Maker({snapshot,serverConfirmed,onConfirmed,onChan
   {title:"Cross margin",help:"Deze strategie gebruikt uitsluitend cross margin. Alle posities delen dezelfde accountpot; iedere risicotoename krijgt een available-margin check.",body:<div className="maker-summary"><b>CROSS</b><span>Geen hedge/airbag/portfolio-TP/Focus-state machine.</span><span>Risicobegrenzer: max automatische DCA's per positie.</span></div>},
   {title:"Controle",help:"Opslaan start niets. Jij start de bot pas zelf nadat alles gecontroleerd is.",body:<div className="maker-summary"><b>{v.name}</b><span>Top {v.universe} · {v.positions} posities · {v.longSlots} LONG / {v.shortSlots} SHORT</span><span>Min {v.minLeverage}× · entry ${v.entryMargin} margin</span><span>DCA {v.dcaDistance}% · ${v.dcaMargin} · max {v.maxDca}</span><span>TP {v.tp}% · direct refill · cross</span></div>}
  ];
- async function action(kind:"save"|"simulate"|"start"|"stop") {setBusy(true);setMessage("");try{const route=kind==="save"?"settings":kind;const method=kind==="save"?"PUT":"POST";const body=kind==="start"?{confirm:true,settings}:kind==="stop"?{confirm:true}:{settings};const result=await authenticatedRequest(`/api/exchanges/aster/strategy2/${route}`,{method,body:JSON.stringify(body)}) as Record<string,unknown>;const confirmed=result.strategy2&&typeof result.strategy2==="object"?result.strategy2 as Record<string,unknown>:null;if(confirmed){setConfirmedState(confirmed);onConfirmed(confirmed)}if(kind==="start"&&result.started===true)setWizard(false);setMessage(kind==="save"?"Nieuwe Multi DCA-configuratie opgeslagen. De bot is niet gestart.":kind==="simulate"?"Configuratie geldig; 0 orders verzonden.":kind==="stop"?"Bot gestopt; er worden geen automatische orders geplaatst.":"Multi DCA is gestart.");await Promise.resolve(onChanged())}catch(e){setMessage(e instanceof Error?e.message:"Actie mislukt")}finally{setBusy(false)}}
+ async function action(kind:"save"|"simulate"|"start"|"stop") {
+  setBusy(true);setMessage("");
+  try {
+   const route=kind==="save"?"settings":kind;const method=kind==="save"?"PUT":"POST";const body=kind==="start"?{confirm:true,settings}:kind==="stop"?{confirm:true}:{settings};
+   const result=await authenticatedRequest(`/api/exchanges/aster/strategy2/${route}`,{method,body:JSON.stringify(body)}) as Record<string,unknown>;
+   const confirmed=result.strategy2&&typeof result.strategy2==="object"?result.strategy2 as Record<string,unknown>:null;
+   if(confirmed){setConfirmedState(confirmed);onConfirmed(confirmed)}
+   if(kind==="start"&&result.started===true)setWizard(false);
+   if(kind==="save") setMessage("Nieuwe Multi DCA-configuratie opgeslagen. De bot is niet gestart.");
+   else if(kind==="simulate") setMessage("Configuratie geldig; 0 orders verzonden.");
+   else if(kind==="stop") setMessage("Bot gestopt; er worden geen automatische orders geplaatst.");
+   else {
+    const firstTick=result.firstTick&&typeof result.firstTick==="object"?result.firstTick as Record<string,unknown>:null;
+    const tickStatus=String(firstTick?.status||"").toLowerCase();
+    const tickReason=String(firstTick?.reason||confirmed?.lastReason||"").trim();
+    if(result.started!==true||confirmed?.enabled!==true) setMessage(`Start niet door de server bevestigd${tickReason?`: ${tickReason}`:"."}`);
+    else if(["blocked","data-hold","stopped"].includes(tickStatus)) setMessage(`Multi DCA is ingeschakeld, maar de eerste scan wacht${tickReason?`: ${tickReason}`:"."}`);
+    else setMessage("Multi DCA is ingeschakeld en server-side bevestigd.");
+   }
+   await Promise.resolve(onChanged());
+  } catch(e){setMessage(e instanceof Error?e.message:"Actie mislukt")}finally{setBusy(false)}
+ }
  async function checkReadiness(){setBusy(true);setMessage("");try{const r=await authenticatedRequest("/api/exchanges/aster/strategy2/readiness") as Record<string,unknown>;setReadiness(r);setMessage(Boolean(r.liveReady)?"Live-gereedheid bevestigd.":"Readiness gecontroleerd; aanvullende live-bevestiging kan nodig zijn.");await Promise.resolve(onChanged())}catch(e){setMessage(e instanceof Error?e.message:"Readiness mislukt")}finally{setBusy(false)}}
  async function runCanary(){setBusy(true);setMessage("Canary opent één LONG van maximaal US$ 20 totale orderwaarde en sluit direct na bevestigde fill.");try{const r=await authenticatedRequest("/api/exchanges/aster/strategy2/canary",{method:"POST",body:JSON.stringify({confirm:true,notional_usd:20})}) as Record<string,unknown>;setMessage(r.completed?`Canary geslaagd op ${String(r.symbol)}: open en volledige close bevestigd.`:"Canary niet afgerond.");await checkReadiness();await Promise.resolve(onChanged())}catch(e){setMessage(e instanceof Error?e.message:"Canary veilig gestopt");setBusy(false)}}
  const enabled=status.enabled===true;const liveReady=status.liveReady===true||(!status.pending&&readiness?.liveReady===true);const report=(state.multiBb&&typeof state.multiBb==="object"?state.multiBb:{}) as Record<string,unknown>;const current=steps[Math.min(step,steps.length-1)];

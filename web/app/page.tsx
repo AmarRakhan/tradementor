@@ -50,6 +50,17 @@ function asterActionsAreFresh(snapshot: ExchangeSnapshot, cloudReady: boolean) {
   return Boolean(cloudReady && snapshot.serverConfirmed && snapshot.updatedAt && Date.now() - snapshot.updatedAt < 120_000 && !snapshot.error);
 }
 
+function asterEvidenceIsFresh(value: unknown, maximumAgeMs = 120_000) {
+  if (value === null || value === undefined || value === "") return false;
+  let timestamp = 0;
+  if (typeof value === "number" && Number.isFinite(value)) timestamp = value < 10_000_000_000 ? value * 1000 : value;
+  else if (typeof value === "string") timestamp = Date.parse(value);
+  else if (value instanceof Date) timestamp = value.getTime();
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return false;
+  const age = Date.now() - timestamp;
+  return age >= 0 && age < maximumAgeMs;
+}
+
 const destinations: Array<{ id: Destination; label: string; glyph: string }> = [
   { id: "hyperliquid", label: "HYPERLIQUID", glyph: "HL" },
   { id: "aster", label: "ASTER", glyph: "AS" },
@@ -369,9 +380,14 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   const displayedPositions = sortPositions(view.positions, positionFilter);
   const realizedEvents = Array.isArray(snapshot.data?.realizedEvents) ? snapshot.data.realizedEvents as Array<Record<string, unknown>> : [];
   const asterActionsEnabled = destination !== "aster" || asterActionsAreFresh(snapshot, cloudReady);
-  const botStatus = destination === "aster" && snapshot.data?.botStatusDashboard && typeof snapshot.data.botStatusDashboard === "object"
-    ? snapshot.data.botStatusDashboard as Record<string, unknown> : null;
-  const asterExecutionConfirmed = destination !== "aster" || botStatus?.dataFresh === true;
+  const strategy2Snapshot = destination === "aster" && snapshot.data?.strategy2 && typeof snapshot.data.strategy2 === "object"
+    ? snapshot.data.strategy2 as Record<string, unknown> : null;
+  const asterExecutionConfirmed = destination !== "aster" || Boolean(
+    asterActionsEnabled && (
+      asterEvidenceIsFresh(snapshot.data?.snapshotAt) ||
+      (view.tradingEnabled && asterEvidenceIsFresh(strategy2Snapshot?.lastTickAt))
+    )
+  );
   const snapshotStatus = destination !== "aster" ? refreshedAt : snapshot.loading
     ? "Vernieuwen…"
     : snapshot.error && snapshot.data
