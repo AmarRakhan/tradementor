@@ -227,3 +227,25 @@ def test_legacy_base_notional_migrates_to_fixed_entry_notional():
         "dcaDistance":.003,"dcaMarginUsd":.2,"maxDca":10,"takeProfit":.015})
     assert settings.entry_notional_usd==pytest.approx(30)
     assert settings.public_dict()["entryNotionalUsd"]==pytest.approx(30)
+
+
+def test_new_entries_share_ranked_candidates_between_long_and_short():
+    tickers=[{"symbol":f"C{i}USDT","quoteVolume":str(1000-i)} for i in range(4)]
+    prices={f"C{i}USDT":100 for i in range(4)}
+    c=Client(tickers=tickers,prices=prices,leverage=100)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=cfg(universeTopN=4,maximumPositions=4,longSlots=2,shortSlots=2),uid="u",
+        account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=4)
+    entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
+    assert [x["side"] for x in entries]==["LONG","SHORT","LONG","SHORT"]
+    assert r["activeLong"]==2 and r["activeShort"]==2
+
+
+def test_new_entries_follow_configured_long_short_ratio_not_long_first():
+    tickers=[{"symbol":f"R{i}USDT","quoteVolume":str(2000-i)} for i in range(6)]
+    prices={f"R{i}USDT":100 for i in range(6)}
+    c=Client(tickers=tickers,prices=prices,leverage=100)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=cfg(universeTopN=6,maximumPositions=6,longSlots=4,shortSlots=2),uid="u",
+        account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=6)
+    entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
+    assert [x["side"] for x in entries]==["LONG","SHORT","LONG","LONG","SHORT","LONG"]
+    assert r["activeLong"]==4 and r["activeShort"]==2

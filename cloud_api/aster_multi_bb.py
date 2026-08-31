@@ -143,6 +143,19 @@ def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _next_entry_side(*, long_count: int, short_count: int, long_slots: int, short_slots: int) -> str:
+    """Keep new entries proportionally balanced across configured LONG/SHORT seats.
+
+    Comparing fill ratios prevents the old LONG-first behavior from consuming
+    all high-ranked eligible symbols before SHORT gets a chance to open.
+    """
+    long_need=max(0,long_slots-long_count);short_need=max(0,short_slots-short_count)
+    if long_need<=0:return "SHORT" if short_need>0 else ""
+    if short_need<=0:return "LONG"
+    long_fill=long_count/max(1,long_slots);short_fill=short_count/max(1,short_slots)
+    return "LONG" if long_fill<=short_fill else "SHORT"
+
+
 def _close_evidence(client: Any, uid: str, state: dict[str, Any], row: dict[str, Any], side: str, mark: float) -> CloseEvidence:
     symbol = str(row.get("symbol", "")).upper(); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice"))
     start = _i(state.get("cycleStartedAtMs"), int(time.time() * 1000) - 7 * 86400_000)
@@ -272,7 +285,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue
         if maximum < settings.minimum_leverage:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"max {maximum}x < minimum {settings.minimum_leverage}x"}); continue
-        side = "LONG" if long_need > 0 else "SHORT" if short_need > 0 else ""
+        side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
         if not side: break
         try: plan = _plan_new(client, info_map[symbol], prices[symbol], settings.entry_notional_usd, settings.minimum_leverage)
         except Exception as exc:
@@ -302,7 +315,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                      "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}, merge=True)
             ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "timestamp": datetime.now(timezone.utc)})
             actions.append(entry_action)
-        active_symbols.add(symbol); long_need -= 1 if side == "LONG" else 0; short_need -= 1 if side == "SHORT" else 0
+        active_symbols.add(symbol)
+        if side == "LONG": long_count += 1; long_need = max(0, settings.long_slots - long_count)
+        else: short_count += 1; short_need = max(0, settings.short_slots - short_count)
         available -= required; sent += 1
 
     report = {"engine": ENGINE, "ordersSent": 0 if dry_run else sent, "simulatedActions": len(actions) if dry_run else 0,
