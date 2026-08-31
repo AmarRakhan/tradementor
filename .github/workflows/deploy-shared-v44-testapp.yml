@@ -14,7 +14,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: shared-v44-testapp
+  group: tradementor-production-web
   cancel-in-progress: false
 
 env:
