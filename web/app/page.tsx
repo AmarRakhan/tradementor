@@ -950,7 +950,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
   const activeTradeCapital = exchange === "aster" ? reportedTradeCapital : reportedTradeCapital ?? derivedTradeCapital;
   const readOnlyRecognized = exchange === "aster" && data.walletRecognized === true && data.configured !== true;
   const statusText = snapshot.loading && !snapshot.data ? "Gegevens laden" : snapshot.error ? "Controle nodig" : readOnlyRecognized ? "Wallet herkend · alleen-lezen" : connected ? "Exchange verbonden" : "Niet gekoppeld";
-  const metricDetail = snapshot.error || (snapshot.loading ? "Exchange wordt vernieuwd" : readOnlyRecognized ? "Trading en automatische orders staan uit" : connected ? "Actuele exchange-snapshot" : "Nog niet gekoppeld");
+  const metricDetail = snapshot.error || (snapshot.loading ? (snapshot.source === "cache" ? "Laatste bekende waarde · actuele data wordt opgehaald" : "Exchange wordt vernieuwd") : snapshot.source === "cache" ? "Laatste bekende waarde · actuele data wordt opgehaald" : readOnlyRecognized ? "Trading en automatische orders staan uit" : connected ? "Actuele exchange-snapshot" : "Nog niet gekoppeld");
   return {
     connected,
     accountDataAvailable,

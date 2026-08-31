@@ -28,10 +28,15 @@ export function deriveAsterAccountDisplay({ data, serverConfirmed, error, update
   const configured = data?.configured === true;
   const fresh = updatedAt !== null && now - updatedAt < 120_000;
   const reliable = Boolean(data) && configured && serverConfirmed && !error && fresh;
-  const equityNumber = reliable ? number(data?.equity) : null;
-  const availableNumber = reliable ? number(data?.availableBalance) : null;
-  const marginRatio = reliable ? number(data?.marginRatio) : null;
-  const maintenanceMargin = reliable ? number(data?.maintenanceMargin) : null;
+  // Read-only values may come from the UID-scoped local snapshot while the fresh
+  // server check is still in flight. Keep showing that last confirmed snapshot
+  // immediately after reload, but keep `reliable` false so trading actions stay
+  // fail-closed until a new server response has been confirmed.
+  const displayable = Boolean(data) && configured;
+  const equityNumber = displayable ? number(data?.equity) : null;
+  const availableNumber = displayable ? number(data?.availableBalance) : null;
+  const marginRatio = displayable ? number(data?.marginRatio) : null;
+  const maintenanceMargin = displayable ? number(data?.maintenanceMargin) : null;
   const rawRiskPercent = marginRatio !== null
     ? marginRatio * 100
     : equityNumber !== null && equityNumber > 0 && maintenanceMargin !== null
