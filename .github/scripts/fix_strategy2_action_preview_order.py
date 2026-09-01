@@ -15,4 +15,13 @@ new_overlay = 'const plannedOverlayLevels=useMemo(()=>mode==="aster-detail"&&!fo
 if old_overlay not in chart_text:
     raise SystemExit("planned overlay compatibility anchor missing")
 chart.write_text(chart_text.replace(old_overlay, new_overlay, 1))
-print("Strategy 2 preview declaration order and planned label compatibility repaired")
+
+rendered = Path("web/tests/rendered-html.test.mjs")
+rendered_text = rendered.read_text()
+stale = '  assert.match(chart, /title:next\\?.*:`DCA \\${Math\\.round/s);\n'
+updated = '  assert.match(chart, /plannedOverlayLevels/);\n  assert.match(chart, /plannedActionLevels/);\n'
+if stale not in rendered_text:
+    raise SystemExit("stale rendered-html DCA title assertion missing")
+rendered.write_text(rendered_text.replace(stale, updated, 1))
+
+print("Strategy 2 preview declaration order, planned labels, and validation contracts repaired")
