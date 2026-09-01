@@ -11,6 +11,7 @@ on:
       - cloud_api/test_aster_cross_risk.py
       - web/lib/aster-account-display.ts
       - web/tests/aster-cross-liquidation-meter.test.mjs
+      - web/tests/liquidation-risk.test.mjs
 
 permissions:
   contents: write
