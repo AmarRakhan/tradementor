@@ -115,6 +115,11 @@
   touch-action: pan-y !important;
   pointer-events: auto !important;
 }
+.aster-detail-chart .chart-canvas table tr:first-child > td:last-child,
+.aster-detail-chart .chart-canvas table tr:first-child > td:last-child canvas {
+  touch-action: none !important;
+  pointer-events: auto !important;
+}
 .aster-detail-chart .ohlc-readout { opacity:.7 !important; font-size:7px !important; }
 
 .aster-detail-chart .focus-level-overlay { pointer-events:none !important; }
