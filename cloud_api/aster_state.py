@@ -5,6 +5,8 @@ from dataclasses import dataclass, replace
 import math
 from typing import Any
 
+from aster_cross_risk import cross_account_risk
+
 
 def _number(value: Any) -> float:
     try:
@@ -62,6 +64,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
     """Build the dashboard snapshot from Aster's current account-information response."""
     equity, wallet, available, unrealized, maintenance = account_information_values(account)
     active = [row for row in positions if abs(_number(row.get("positionAmt"))) > 0]
+    cross_risk = cross_account_risk(account, positions)
     active_trade_capital = sum(
         _number(row.get("positionInitialMargin", row.get("initialMargin")))
         for row in active
@@ -76,7 +79,9 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
         "activePositions": len(active),
         "activeTradeCapital": active_trade_capital,
         "maintenanceMargin": maintenance,
-        "marginRatio": maintenance / equity if equity > 0 else (1.0 if active else 0.0),
+        **cross_risk,
+        # Backwards-compatible ratio; authoritative new clients consume liquidationRiskPct/source.
+        "marginRatio": cross_risk["liquidationRiskPct"] / 100.0,
         "financialDataContract": {
             "version": 1,
             "sourceOfTruth": "ASTER_API",
@@ -85,6 +90,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
                 "availableBalance": "availableBalance",
                 "unrealizedPnl": "totalUnrealizedProfit",
                 "maintenanceMargin": "totalMaintMargin",
+                "marginBalance": "totalMarginBalance",
                 "positionUnrealizedPnl": "unRealizedProfit",
                 "positionLiquidationPrice": "liquidationPrice",
             },
@@ -93,7 +99,9 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
                 "activeTradeCapital": "sum(positionInitialMargin) for active positions",
             },
             "calculated": {
-                "marginRatio": "totalMaintMargin / totalMarginBalance",
+                "liquidationRiskPct": "Aster account margin ratio when supplied; otherwise totalMaintMargin / totalMarginBalance * 100",
+                "maintenanceMarginPct": "totalMaintMargin / gross cross notional * 100",
+                "marginRatio": "liquidationRiskPct / 100 (legacy alias)",
                 "positionDisplayReturnPct": "Aster returnPct/roePct/roiPct or unRealizedProfit / effective initial margin * 100",
             },
             "positionDisplayReturnIsTakeProfitStatus": False,
@@ -109,6 +117,7 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
             "unrealizedPnl": _number(row.get("unRealizedProfit", row.get("unrealizedProfit"))),
             "initialMarginUsd": _number(row.get("positionInitialMargin", row.get("initialMargin"))),
             "dataSource": "ASTER_API",
+            "marginType": str(row.get("marginType", "isolated" if row.get("isolated") is True else "cross")).lower(),
             "leverage": max(1, int(_number(row.get("leverage")) or 1)),
             **({"returnPct": _number(row.get("returnPct"))} if row.get("returnPct") not in (None, "") else {}),
             **({"roePct": _number(row.get("roePct"))} if row.get("roePct") not in (None, "") else {}),

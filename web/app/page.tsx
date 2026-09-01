@@ -939,8 +939,8 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     }));
     activeCount = asNumber(data.activePositions);
     tradingEnabled = Boolean(data.liveEnabled);
-    riskLabel = "MAINTENANCE";
-    riskNumber = accountDataAvailable ? asNumber(data.marginRatio) * 100 : null;
+    riskLabel = "MAINTENANCE MARGIN";
+    riskNumber = accountDataAvailable ? (asterAccountDisplay?.maintenanceMarginPercent ?? null) : null;
   }
   closedTrades = (Array.isArray(data.closedTrades) ? data.closedTrades : []).map((raw) => asRecord(raw)).map((row) => ({ symbol: String(row.symbol ?? "—"), side: String(row.side ?? "—"), size: asNumber(row.notionalUsd), entry: asNumber(row.entryPrice), exit: asNumber(row.exitPrice), pnl: asNumber(row.realizedPnlUsd), openedAt: String(row.openedAt ?? ""), closedAt: String(row.closedAt ?? ""), strategy: String(row.strategyName ?? row.strategyId ?? ""), dcaCount: asNumber(row.dcaCount) }));
 
@@ -968,7 +968,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
     riskLabel,
     riskTone: riskNumber === null ? "unknown" : riskNumber < 30 ? "safe" : riskNumber < 50 ? "caution" : riskNumber < 70 ? "high" : "critical",
     riskValue: riskNumber === null ? "—" : `${riskNumber.toFixed(2)}%`,
-    riskDetail: riskNumber === null ? "Nog geen betrouwbare waarde" : exchange === "aster" ? "0% is ruim · 100% is liquidatiegrens" : "Rechtstreeks uit account- en positiedata",
+    riskDetail: riskNumber === null ? "Nog geen betrouwbare waarde" : exchange === "aster" ? (asterAccountDisplay?.maintenanceDetail ?? "Gewogen Aster maintenance-rate") : "Rechtstreeks uit account- en positiedata",
     asterAccountDisplay,
     maintenanceMargin: (exchange === "hyperliquid" || exchange === "aster") && accountDataAvailable ? formatUsd(asNumber(data.maintenanceMargin)) : "—",
     accountLeverage: exchange === "hyperliquid" && connected ? `${asNumber(data.unifiedAccountLeverage).toFixed(2)}×` : "—",
@@ -986,7 +986,7 @@ function NavButton({ item, active, onClick }: { item: { id: Destination; label: 
 function LiquidationRiskOrbit({ display }: { display: AsterAccountDisplay | null }) {
   const tone = display?.liquidationTone ?? "unknown";
   const available = display?.liquidationRiskPercent !== null && display?.liquidationRiskPercent !== undefined;
-  return <div className={`risk-orbit liquidation-risk risk-${tone}`} aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong className={available ? "" : "unavailable"}>{display?.liquidationValue ?? "—"}</strong><small>{display?.liquidationDetail ?? "Geen betrouwbare Aster margin ratio"}</small></div></div>;
+  return <div className={`risk-orbit liquidation-risk risk-${tone}`} aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong className={available ? "" : "unavailable"}>{display?.liquidationValue ?? "—"}</strong><small>{display?.liquidationDetail ?? "Geen bevestigde cross-account liquidatieratio"}{display?.positionCountIncluded !== null && display?.positionCountIncluded !== undefined ? ` · ${display.positionCountIncluded} posities` : ""}</small></div></div>;
 }
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
