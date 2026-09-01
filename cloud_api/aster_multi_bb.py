@@ -117,6 +117,41 @@ class MultiBbConfig:
 
 
 
+def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], settings: MultiBbConfig, account_equity: float = 0.0) -> dict[str, Any]:
+    """Expose the exact next Strategy 2 DCA/TP levels used by the execution engine."""
+    side = str(row.get("positionSide", "")).upper()
+    entry = _f(row.get("entryPrice"))
+    mark = _f(row.get("markPrice"), entry)
+    qty = abs(_f(row.get("positionAmt")))
+    if side not in {"LONG", "SHORT"} or entry <= 0 or mark <= 0 or qty <= 0:
+        return {}
+    tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
+    tp_distance_usd = abs(tp_price - mark)
+    tp_distance_pct = tp_distance_usd / mark * 100
+    expected_pnl_at_tp = ((tp_price - entry) if side == "LONG" else (entry - tp_price)) * qty
+    current_pnl = ((mark - entry) if side == "LONG" else (entry - mark)) * qty
+    portfolio_value_at_tp = account_equity + (expected_pnl_at_tp - current_pnl) if account_equity > 0 else None
+    dca_count = _i(state.get("dcaCount"))
+    anchor = _f(state.get("lastBotFillPrice"), entry)
+    dca_allowed = settings.unlimited_dca or dca_count < settings.max_dca
+    next_dca_price = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance) if dca_allowed and anchor > 0 else None
+    next_dca_distance_usd = abs(next_dca_price - mark) if next_dca_price else None
+    next_dca_distance_pct = next_dca_distance_usd / mark * 100 if next_dca_distance_usd is not None else None
+    return {
+        "takeProfitPct": settings.take_profit * 100,
+        "tpPrice": tp_price,
+        "tpDistanceUsd": tp_distance_usd,
+        "tpDistancePct": tp_distance_pct,
+        "expectedPnlAtTp": expected_pnl_at_tp,
+        "portfolioValueAtTp": portfolio_value_at_tp,
+        "nextDcaPrice": next_dca_price,
+        "nextDcaDistanceUsd": next_dca_distance_usd,
+        "nextDcaDistancePct": next_dca_distance_pct,
+        "nextDcaNumber": dca_count + 1 if next_dca_price else None,
+        "unlimitedDca": settings.unlimited_dca,
+    }
+
+
 def _brackets(payload: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
     for row in payload or []:
         if str(row.get("symbol", "")).upper() == symbol.upper(): return list(row.get("brackets") or [])
@@ -244,7 +279,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         st = dict(state[key]); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); leverage = max(1, _i(row.get("leverage"), st.get("leverage", 1)))
         if abs(qty - _f(st.get("lastKnownQty"))) > 1e-12 or abs(entry - _f(st.get("lastKnownEntry"))) > 1e-12:
             st["manualOrExchangeReconciledAtMs"] = timestamp_ms
-        st.update({"lastKnownQty": qty, "lastKnownEntry": entry, "leverage": leverage, "updatedAtMs": timestamp_ms}); state[key] = st
+        st.update({"lastKnownQty": qty, "lastKnownEntry": entry, "leverage": leverage, "updatedAtMs": timestamp_ms})
+        account_equity = _f(account.get("totalMarginBalance", account.get("marginBalance", account.get("equity", account.get("totalWalletBalance")))))
+        st.update(position_action_preview(row=row, state=st, settings=settings, account_equity=account_equity))
+        state[key] = st
 
     # Management priority: full TP, then capped DCA.
     for key, st0 in list(state.items()):
