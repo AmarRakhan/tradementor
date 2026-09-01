@@ -56,3 +56,5 @@ jobs:
           git add web/tests/rendered-html.test.mjs web/tests/trading-chart-aster-detail.test.mjs .deploy/focus-portfolio-v7-web-20260830
           git commit -m 'Align Strategy 2 preview web validation contracts'
           git push origin HEAD:amar-crypto-bot-2026-cloud
+      - name: Record repair completion
+        run: echo "Strategy 2 preview web validation repair completed"
