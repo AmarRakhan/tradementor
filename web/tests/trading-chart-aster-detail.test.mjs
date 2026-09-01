@@ -118,3 +118,22 @@ test("historical Focus 2.0 rows keep opposite-side hedge history", () => {
   assert.match(recent, /historicalFocusV2/);
   assert.match(recent, /s2fv2-/);
 });
+
+
+test("Multi DCA managed positions override stale Focus role and keep DCA TP overlays visible", () => {
+  assert.match(recent, /detailManagedByMultiDca/);
+  assert.match(recent, /managedByMultiDca\?"MULTI_DCA"/);
+  assert.match(recent, /!detailManagedByMultiDca&&String\(detail\.selection\.strategy2Role/);
+  assert.match(chart, /focusV2\?"Focus 2\.0":"Strategy 2 Multi DCA"/);
+  assert.match(chart, /chartOverlayLevels=focusV2\?focusLevels:plannedOverlayLevels/);
+});
+
+test("trade detail shows one-screen live PnL portfolio DCA TP and portfolio-at-TP cockpit", () => {
+  assert.match(recent, /Actuele Strategy 2 tradegegevens/);
+  assert.match(recent, /LIVE P&L/);
+  assert.match(recent, /VOLGENDE DCA/);
+  assert.match(recent, /TAKE PROFIT/);
+  assert.match(recent, /Winst bij TP/);
+  assert.match(recent, /Portfolio bij TP/);
+  assert.match(recent, /detailPnlPct/);
+});
