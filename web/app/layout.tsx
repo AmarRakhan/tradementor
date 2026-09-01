@@ -10,6 +10,7 @@ import "./premium.css";
 import "./premium-next.css";
 import "./suriname-heritage.css";
 import "./aster-tables.css";
+import "./strategy2-reference.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -24,12 +25,12 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Amar Crypto Bot 2026",
+  title: "Crypto Bot 2026",
   description: "Eén veilige trade floor voor Hyperliquid, Aster en je totale portfolio.",
   icons: { icon: "/tradementor-logo.png?v=redgreen-1", shortcut: "/tradementor-logo.png?v=redgreen-1" },
-  applicationName: "Amar Crypto Bot 2026",
+  applicationName: "Crypto Bot 2026",
   other: { "application-version": WEBAPP_VERSION },
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Amar Bot 2026" },
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Crypto Bot 2026" },
   openGraph: {
     title: "TradeMentor Web",
     description: "Persoonlijke multi-exchange portfolio-intelligentie met bewuste handelsactivering.",
@@ -48,7 +49,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <div className="test-environment-banner live-runtime-banner">
-          <span className="runtime-name">AMAR CRYPTO BOT 2026</span>
+          <span className="runtime-name">CRYPTO BOT 2026</span>
           <span className="runtime-status">PLATFORMSTATUS · STRATEGY 2-RUNTIME · DIT IS NIET JOUW ACCOUNTSTATUS</span>
           <AppVersionControl buildNumber={buildNumber} />
         </div>
