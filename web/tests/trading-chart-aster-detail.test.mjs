@@ -23,26 +23,24 @@ test("open detail consumes server Strategy 2 next-action preview values", () => 
   assert.match(recent, /strategy2DcaLadder\?\.levels/);
   assert.match(recent, /multiDcaPositions/);
   assert.match(recent, /detailRuntime\?\.nextDcaPrice/);
-  assert.match(recent, /detailRuntime\?\.nextDcaDistanceUsd/);
   assert.match(recent, /detailRuntime\?\.nextDcaDistancePct/);
   assert.match(recent, /detailRuntime\?\.tpPrice/);
-  assert.match(recent, /detailRuntime\?\.tpDistanceUsd/);
   assert.match(recent, /detailRuntime\?\.tpDistancePct/);
   assert.match(recent, /detailRuntime\?\.expectedPnlAtTp/);
   assert.match(recent, /detailRuntime\?\.portfolioValueAtTp/);
+  assert.doesNotMatch(recent, /nextDcaDistanceUsd|tpDistanceUsd/);
   assert.match(recent, /breakEvenPrice=\{detailBreakEvenPrice\}/);
   assert.match(recent, /dcaLevels=\{detailChartDcaLevels\}/);
   assert.match(recent, /plannedActionLevels=\{detailPlannedLevels\}/);
 });
 
-test("trade detail renders positive direction-aware LONG and SHORT distances", () => {
-  assert.match(recent, /Math\.abs\(usd\)/);
-  assert.match(recent, /Math\.abs\(pctValue\)/);
-  assert.match(recent, /detailMainSide==="LONG"&&kind==="DCA"/);
-  assert.match(recent, /detailMainSide==="SHORT"&&kind==="TP"/);
-  assert.match(recent, /down\?"dalen":"stijgen"/);
-  assert.match(recent, /Afstand tot volgende DCA/);
-  assert.match(recent, /Afstand tot TP/);
+test("trade detail renders percentage-only live distances", () => {
+  assert.match(recent, /const detailNextDcaDistancePct=finite\(detailRuntime\?\.nextDcaDistancePct\)/);
+  assert.match(recent, /const detailTpDistancePct=finite\(detailRuntime\?\.tpDistancePct\)/);
+  assert.match(recent, /const signedDistance=/);
+  assert.match(recent, /AFSTAND TOT DCA/);
+  assert.match(recent, /AFSTAND TOT TP/);
+  assert.doesNotMatch(recent, /Afstand tot DCA[^\n]*\$/);
 });
 
 test("trade detail shows configured TP and portfolio-at-TP without double-counting unrealized PnL", () => {
@@ -119,7 +117,6 @@ test("historical Focus 2.0 rows keep opposite-side hedge history", () => {
   assert.match(recent, /s2fv2-/);
 });
 
-
 test("Multi DCA managed positions override stale Focus role and keep DCA TP overlays visible", () => {
   assert.match(recent, /detailManagedByMultiDca/);
   assert.match(recent, /managedByMultiDca\?"MULTI_DCA"/);
@@ -128,12 +125,16 @@ test("Multi DCA managed positions override stale Focus role and keep DCA TP over
   assert.match(chart, /chartOverlayLevels=focusV2\?focusLevels:plannedOverlayLevels/);
 });
 
-test("trade detail shows one-screen live PnL portfolio DCA TP and portfolio-at-TP cockpit", () => {
+test("trade detail shows the compact reference cockpit above the chart", () => {
   assert.match(recent, /Actuele Strategy 2 tradegegevens/);
-  assert.match(recent, /LIVE P&L/);
-  assert.match(recent, /VOLGENDE DCA/);
-  assert.match(recent, /TAKE PROFIT/);
-  assert.match(recent, /Winst bij TP/);
-  assert.match(recent, /Portfolio bij TP/);
+  assert.match(recent, /HUIDIGE PNL/);
+  assert.match(recent, /MARGIN IN TRADE/);
+  assert.match(recent, /WINST BIJ TP/);
+  assert.match(recent, /PORTFOLIO BIJ TP/);
+  assert.match(recent, /DCA STATUS/);
+  assert.match(recent, /TP INSTELLING/);
+  assert.match(recent, /AFSTAND TOT DCA/);
+  assert.match(recent, /AFSTAND TOT TP/);
+  assert.match(recent, /DCA GEVULD/);
   assert.match(recent, /detailPnlPct/);
 });
