@@ -1,0 +1,44 @@
+name: Agent Strategy 2 Action Preview Validation
+
+on:
+  push:
+    branches:
+      - agent-strategy2-action-preview-20260901
+    paths:
+      - .agent/strategy2-action-preview-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent-strategy2-action-preview-20260901
+          fetch-depth: 0
+      - name: Apply Strategy 2 action preview patch
+        run: python .github/scripts/apply_strategy2_action_preview.py
+      - name: Test backend preview logic
+        working-directory: cloud_api
+        run: python -m pytest -q test_strategy2_action_preview.py test_aster_strategy2_focus_v2.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Build and test web app
+        working-directory: web
+        run: npm test
+      - name: Commit validated implementation on isolated branch
+        run: |
+          git config user.name "OpenAI Strategy 2 Agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add cloud_api/aster_multi_bb.py cloud_api/test_strategy2_action_preview.py web/components/aster-recent-trades.tsx web/components/trading-chart.tsx
+          git diff --cached --check
+          git commit -m "Show next DCA TP distances and portfolio target"
+          git push origin HEAD:agent-strategy2-action-preview-20260901
