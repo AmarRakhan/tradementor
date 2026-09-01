@@ -103,15 +103,18 @@
   height: min(54vh, 620px) !important;
   background: #050909 !important;
   touch-action: pan-y !important;
-  overscroll-behavior: contain !important;
+  overscroll-behavior: auto !important;
 }
 .aster-detail-chart .chart-canvas {
   min-height: 430px !important;
   height: 100% !important;
   touch-action: pan-y !important;
-  pointer-events: none !important;
+  pointer-events: auto !important;
 }
-.aster-detail-chart .chart-canvas canvas { touch-action: pan-y !important; pointer-events:none !important; }
+.aster-detail-chart .chart-canvas canvas {
+  touch-action: pan-y !important;
+  pointer-events: auto !important;
+}
 .aster-detail-chart .ohlc-readout { opacity:.7 !important; font-size:7px !important; }
 
 .aster-detail-chart .focus-level-overlay { pointer-events:none !important; }
