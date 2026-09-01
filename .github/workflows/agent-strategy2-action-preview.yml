@@ -20,6 +20,13 @@ jobs:
           fetch-depth: 0
       - name: Apply Strategy 2 action preview patch
         run: python .github/scripts/apply_strategy2_action_preview.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend test dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
       - name: Test backend preview logic
         working-directory: cloud_api
         run: python -m pytest -q test_strategy2_action_preview.py test_aster_strategy2_focus_v2.py
