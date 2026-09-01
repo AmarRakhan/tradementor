@@ -1,0 +1,42 @@
+name: Apply Multi DCA Reopen Cycle Reset
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/scripts/fix_multi_dca_reopen_cycle_reset.py
+      - .github/workflows/apply-multi-dca-reopen-cycle-reset.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply cycle reset fix
+        run: python .github/scripts/fix_multi_dca_reopen_cycle_reset.py
+      - name: Install backend dependencies
+        working-directory: cloud_api
+        run: pip install -r requirements.txt
+      - name: Run focused and complete backend tests
+        working-directory: cloud_api
+        run: |
+          pytest -q test_aster_multi_bb.py
+          pytest -q
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          git config user.name 'OpenAI Strategy 2 Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb.py cloud_api/test_aster_multi_bb.py
+          git commit -m 'Reset Multi DCA cycle after flat reopen'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
