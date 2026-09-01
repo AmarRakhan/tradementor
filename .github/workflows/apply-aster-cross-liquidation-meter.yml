@@ -1,0 +1,59 @@
+name: Apply Aster Cross Liquidation Meter
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/scripts/apply_aster_cross_liquidation_meter.py
+      - .github/workflows/apply-aster-cross-liquidation-meter.yml
+      - cloud_api/aster_cross_risk.py
+      - cloud_api/test_aster_cross_risk.py
+      - web/lib/aster-account-display.ts
+      - web/tests/aster-cross-liquidation-meter.test.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply account-wide risk meter patch
+        run: python .github/scripts/apply_aster_cross_liquidation_meter.py
+      - name: Install backend test dependencies
+        working-directory: cloud_api
+        run: pip install -r requirements.txt pytest
+      - name: Run cross-risk simulations and complete backend suite
+        working-directory: cloud_api
+        run: |
+          pytest -q test_aster_cross_risk.py test_aster_state.py
+          pytest -q
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run complete web build and regression suite
+        working-directory: web
+        run: npm test
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          git config user.name 'OpenAI Aster Risk Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_state.py web/app/page.tsx web/app/globals.css
+          git diff --cached --quiet && exit 0
+          git commit -m 'Separate Aster maintenance and cross liquidation risk'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
