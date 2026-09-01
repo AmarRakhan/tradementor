@@ -5,23 +5,52 @@ import { readFileSync } from "node:fs";
 const chart = readFileSync(new URL("../components/trading-chart.tsx", import.meta.url), "utf8");
 const recent = readFileSync(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
 
-test("Aster detail chart uses break-even and remaining DCA overlays", () => {
+test("Aster detail chart keeps executed markers and adds planned DCA/TP overlays", () => {
   assert.match(chart, /title:\s*"WINST VANAF"/);
+  assert.match(chart, /plannedActionLevels/);
+  assert.match(chart, /plannedOverlayLevels/);
   assert.match(chart, /VOLGENDE \$\{selection\.side\.toUpperCase\(\)\} DCA/);
-  assert.match(chart, /title:next\?.*:`DCA \$\{Math\.round\(Number\(level\.number\)\)\}`/s);
-  assert.match(chart, /breakEvenPrice/);
+  assert.match(chart, /level\.key==="tp"/);
+  assert.match(chart, /axisLabelVisible:false/);
+  assert.match(chart, /layoutFocusLabelYs/);
   assert.match(chart, /dcaLevels/);
   assert.doesNotMatch(chart, /group\.events\[0\]\?\.kind==="dca"\?"ADD"/);
   assert.doesNotMatch(chart, /entrySeries\.setData/);
 });
 
-test("open detail is refreshed from live Strategy 2 position state", () => {
+test("open detail consumes server Strategy 2 next-action preview values", () => {
   assert.match(recent, /strategy2Tp\?\.breakEvenPrice/);
   assert.match(recent, /strategy2DcaLadder\?\.levels/);
+  assert.match(recent, /multiDcaPositions/);
+  assert.match(recent, /detailRuntime\?\.nextDcaPrice/);
+  assert.match(recent, /detailRuntime\?\.nextDcaDistanceUsd/);
+  assert.match(recent, /detailRuntime\?\.nextDcaDistancePct/);
+  assert.match(recent, /detailRuntime\?\.tpPrice/);
+  assert.match(recent, /detailRuntime\?\.tpDistanceUsd/);
+  assert.match(recent, /detailRuntime\?\.tpDistancePct/);
+  assert.match(recent, /detailRuntime\?\.expectedPnlAtTp/);
+  assert.match(recent, /detailRuntime\?\.portfolioValueAtTp/);
   assert.match(recent, /breakEvenPrice=\{detailBreakEvenPrice\}/);
-  assert.match(recent, /dcaLevels=\{detailDcaLevels\}/);
+  assert.match(recent, /dcaLevels=\{detailChartDcaLevels\}/);
+  assert.match(recent, /plannedActionLevels=\{detailPlannedLevels\}/);
 });
 
+test("trade detail renders positive direction-aware LONG and SHORT distances", () => {
+  assert.match(recent, /Math\.abs\(usd\)/);
+  assert.match(recent, /Math\.abs\(pctValue\)/);
+  assert.match(recent, /detailMainSide==="LONG"&&kind==="DCA"/);
+  assert.match(recent, /detailMainSide==="SHORT"&&kind==="TP"/);
+  assert.match(recent, /down\?"dalen":"stijgen"/);
+  assert.match(recent, /Afstand tot volgende DCA/);
+  assert.match(recent, /Afstand tot TP/);
+});
+
+test("trade detail shows configured TP and portfolio-at-TP without double-counting unrealized PnL", () => {
+  assert.match(recent, /Take Profit ingesteld/);
+  assert.match(recent, /Verwachte winst bij TP/);
+  assert.match(recent, /Portfoliowaarde bij TP/);
+  assert.match(recent, /accountDisplay\.equityNumber\+\(detailExpectedPnlAtTp-detailPnl\)/);
+});
 
 test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", () => {
   assert.match(chart, /useState\(mode === "aster-detail" \? "1m" : "15m"\)/);
@@ -81,6 +110,7 @@ test("trade detail supports guarded mobile double-tap back without desktop doubl
   assert.match(recent, /onClick=\{closeDetail\}/);
   assert.match(recent, /dubbel tikken of × om terug te gaan/);
 });
+
 test("historical Focus 2.0 rows keep opposite-side hedge history", () => {
   assert.match(chart, /const focusV2Main = String\(selection\.strategy2Role/);
   assert.doesNotMatch(chart, /FOCUS_V2_LONG" && !selection\.closedAt/);
