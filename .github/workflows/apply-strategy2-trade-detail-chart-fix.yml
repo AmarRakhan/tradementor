@@ -5,7 +5,6 @@ on:
     branches:
       - amar-crypto-bot-2026-cloud
     paths:
-      - .control-plane/chart-detail-fix.patch
       - .github/workflows/apply-strategy2-trade-detail-chart-fix.yml
 
 permissions:
@@ -19,8 +18,30 @@ jobs:
         with:
           ref: amar-crypto-bot-2026-cloud
           fetch-depth: 0
-      - name: Apply exact workstation patch
-        run: git apply --check .control-plane/chart-detail-fix.patch && git apply .control-plane/chart-detail-fix.patch
+      - name: Apply validated workstation edits
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('web/components/aster-recent-trades.tsx'); s=p.read_text()
+          old='  const detailPnl = finite(liveDetailPosition?.unrealizedPnl) ?? detail?.pnl ?? null;\n  const detailQuantity'
+          new='  const detailPnl = finite(liveDetailPosition?.unrealizedPnl) ?? detail?.pnl ?? null;\n  const detailPnlPct = finite(liveDetailPosition?.returnPct) ?? (detailPnl !== null && detailAverageEntry && detailAverageEntry > 0 && finite(liveDetailPosition?.quantity) ? (detailPnl / (detailAverageEntry * Number(liveDetailPosition?.quantity))) * 100 : null);\n  const detailQuantity'
+          assert old in s; s=s.replace(old,new,1)
+          old='  const detailFocusV2Cockpit=detail&&String(detail.selection.strategy2Role||"").toUpperCase()==="FOCUS_V2_LONG"&&focusV2Cockpit&&normalizedSymbol(String(focusV2Cockpit.symbol||""))===normalizedSymbol(detail.selection.symbol)?focusV2Cockpit:null;'
+          new='  const detailManagedByMultiDca=Boolean(detail&&multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailMainSide}`]);\n  const detailFocusV2Cockpit=detail&&!detailManagedByMultiDca&&String(detail.selection.strategy2Role||"").toUpperCase()==="FOCUS_V2_LONG"&&focusV2Cockpit&&normalizedSymbol(String(focusV2Cockpit.symbol||""))===normalizedSymbol(detail.selection.symbol)?focusV2Cockpit:null;'
+          assert old in s; s=s.replace(old,new,1)
+          old='    setDetail({ selection: { id: position ? positionId(position) : row.id, symbol: row.symbol, exchange: "aster", side, entry: averageEntry(position) ?? undefined, mark: finite(position?.markPrice) ?? undefined, dcaCount: finite(position?.dcaCount) ?? undefined, openedAt: position && exchangeTimestampMs(position.openedAt) ? new Date(exchangeTimestampMs(position.openedAt)).toISOString() : undefined, strategy2Role: position?.strategy2Role||(historicalFocusV2?"FOCUS_V2_LONG":undefined), closedAt:'
+          new='    const managedByMultiDca=Boolean(multiDcaPositions[`${normalizedSymbol(row.symbol)}|${side}`]);\n    setDetail({ selection: { id: position ? positionId(position) : row.id, symbol: row.symbol, exchange: "aster", side, entry: averageEntry(position) ?? undefined, mark: finite(position?.markPrice) ?? undefined, dcaCount: finite(position?.dcaCount) ?? undefined, openedAt: position && exchangeTimestampMs(position.openedAt) ? new Date(exchangeTimestampMs(position.openedAt)).toISOString() : undefined, strategy2Role: managedByMultiDca?"MULTI_DCA":(position?.strategy2Role||(historicalFocusV2?"FOCUS_V2_LONG":undefined)), closedAt:'
+          assert old in s; s=s.replace(old,new,1)
+          needle='<SafeTradingChart selection={detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} breakEvenPrice={detailBreakEvenPrice} dcaLevels={detailChartDcaLevels} plannedActionLevels={detailPlannedLevels} selectedActionId={detail.selectedActionId} airbagEvents={detailAirbagEvents} cockpit={detailFocusV2Cockpit} accountDisplay={accountDisplay} />'
+          panel='<section className={styles.tradeNow} aria-label="Actuele Strategy 2 tradegegevens"><div className={styles.tradeNowTop}><div><span>LIVE P&L</span><strong className={(detailPnl ?? 0) >= 0 ? styles.profit : styles.loss}>{money(detailPnl,true)}{detailPnlPct!==null?` · ${detailPnlPct>=0?"+":""}${detailPnlPct.toFixed(2).replace(".",",")}%`:""}</strong><small>Entry {money(detailAverageEntry)} · live {money(detailCurrentPrice)}</small></div><div><span>PORTFOLIO</span><strong>{accountDisplay.equity}</strong><small>Vrij {accountDisplay.available}</small></div></div><div className={styles.tradeNowActions}><div className={styles.dcaAction}><span>VOLGENDE DCA {Math.round(Number(detailNextDcaNumber||1))}</span><strong>{money(detailNextDcaPrice)}</strong><small>{detailNextDcaPrice?detailDcaDistanceLabel:"Geen volgende DCA beschikbaar"}</small></div><div className={styles.tpAction}><span>TAKE PROFIT {detailTpPct!==null?`${detailTpPct.toFixed(2).replace(".",",")}%`:""}</span><strong>{money(detailTpPrice)}</strong><small>{detailTpPrice?detailTpDistanceLabel:"Geen TP-level beschikbaar"}</small></div></div><div className={styles.tradeNowBottom}><span>Winst bij TP <b>{money(detailExpectedPnlAtTp,true)}</b></span><span>Portfolio bij TP <b>{money(detailPortfolioAtTp)}</b></span></div></section>'
+          assert needle in s; s=s.replace(needle,panel+needle,1); p.write_text(s)
+          p=Path('web/components/trading-chart.tsx'); s=p.read_text(); old='<small>Focus 2.0 live · {timeframe} · server-triggers</small>'; new='<small>{focusV2?"Focus 2.0":"Strategy 2 Multi DCA"} live · {timeframe} · server-triggers</small>'; assert old in s; p.write_text(s.replace(old,new,1))
+          p=Path('web/components/aster-trade-center.module.css'); s=p.read_text(); css='.tradeNow{margin:10px 14px 0;border:1px solid rgba(85,227,255,.22);border-radius:14px;overflow:hidden;background:linear-gradient(145deg,rgba(5,22,35,.98),rgba(4,14,25,.98));font-variant-numeric:tabular-nums}.tradeNowTop{display:grid;grid-template-columns:1.25fr .75fr;gap:1px;background:rgba(112,151,198,.15)}.tradeNowTop>div{display:grid;gap:4px;padding:11px 12px;background:#071522}.tradeNow span{color:#7f91a8;font-size:7px;font-weight:850;letter-spacing:.08em}.tradeNow strong{font-size:13px}.tradeNow small{color:#91a4bb;font-size:7px}.tradeNowActions{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(112,151,198,.15)}.tradeNowActions>div{display:grid;gap:4px;padding:11px 12px;background:#06111e}.tradeNowActions strong{font-size:14px}.dcaAction strong{color:#ffd166}.tpAction strong{color:#c78cff}.tradeNowBottom{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;border-top:1px solid rgba(112,151,198,.12);color:#9db0c8;font-size:8px}.tradeNowBottom b{color:#eef6ff}.tradeNow .profit{color:#58f0ae}.tradeNow .loss{color:#ff617d}@media(max-width:430px){.tradeNow{margin-inline:10px}.tradeNowTop>div,.tradeNowActions>div{padding:9px 10px}.tradeNow strong,.tradeNowActions strong{font-size:11px}.tradeNowBottom{display:grid;grid-template-columns:1fr 1fr;padding:8px 10px}}'
+          assert '.tradeNow{' not in s; p.write_text(s+'\n'+css+'\n')
+          p=Path('web/tests/trading-chart-aster-detail.test.mjs'); s=p.read_text(); tests='''\n\ntest("Multi DCA managed positions override stale Focus role and keep DCA TP overlays visible", () => {\n  assert.match(recent, /detailManagedByMultiDca/);\n  assert.match(recent, /managedByMultiDca\\?"MULTI_DCA"/);\n  assert.match(recent, /!detailManagedByMultiDca&&String\\(detail\\.selection\\.strategy2Role/);\n  assert.match(chart, /focusV2\\?"Focus 2\\.0":"Strategy 2 Multi DCA"/);\n  assert.match(chart, /chartOverlayLevels=focusV2\\?focusLevels:plannedOverlayLevels/);\n});\n\ntest("trade detail shows one-screen live PnL portfolio DCA TP and portfolio-at-TP cockpit", () => {\n  assert.match(recent, /Actuele Strategy 2 tradegegevens/);\n  assert.match(recent, /LIVE P&L/);\n  assert.match(recent, /VOLGENDE DCA/);\n  assert.match(recent, /TAKE PROFIT/);\n  assert.match(recent, /Winst bij TP/);\n  assert.match(recent, /Portfolio bij TP/);\n  assert.match(recent, /detailPnlPct/);\n});\n'''
+          assert 'Multi DCA managed positions override stale Focus role' not in s; p.write_text(s+tests)
+          PY
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -40,5 +61,3 @@ jobs:
           git add web/components/aster-recent-trades.tsx web/components/aster-trade-center.module.css web/components/trading-chart.tsx web/tests/trading-chart-aster-detail.test.mjs
           git commit -m 'Show Strategy 2 DCA TP cockpit on trade chart'
           git push origin HEAD:amar-crypto-bot-2026-cloud
-
-# trigger 2026-09-01 trade detail chart fix
