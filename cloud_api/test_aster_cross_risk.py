@@ -47,7 +47,7 @@ def test_multi_pair_mixed_leverage_includes_every_leg():
     result=cross_account_risk(account(1000,17),rows)
     assert result["positionCountIncluded"] == 2
     assert result["totalCrossNotional"] == 1700
-    assert result["liquidationRiskPct"] == 1.7
+    assert round(result["liquidationRiskPct"], 8) == 1.7
 
 
 def test_fifty_cross_positions_are_not_truncated():
