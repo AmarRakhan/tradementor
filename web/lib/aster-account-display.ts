@@ -4,10 +4,15 @@ export type AsterAccountDisplay = {
   availableNumber: number | null;
   equity: string;
   available: string;
+  maintenanceMarginPercent: number | null;
+  maintenanceValue: string;
+  maintenanceDetail: string;
   liquidationRiskPercent: number | null;
   liquidationValue: string;
   liquidationTone: "safe" | "caution" | "high" | "critical" | "unknown";
   liquidationDetail: string;
+  liquidationRiskSource: "ASTER_ACCOUNT_RATIO" | "SERVER_RECONSTRUCTED" | "UNKNOWN";
+  positionCountIncluded: number | null;
 };
 
 function number(value: unknown): number | null {
@@ -28,35 +33,40 @@ export function deriveAsterAccountDisplay({ data, serverConfirmed, error, update
   const configured = data?.configured === true;
   const fresh = updatedAt !== null && now - updatedAt < 120_000;
   const reliable = Boolean(data) && configured && serverConfirmed && !error && fresh;
-  // Read-only values may come from the UID-scoped local snapshot while the fresh
-  // server check is still in flight. Keep showing that last confirmed snapshot
-  // immediately after reload, but keep `reliable` false so trading actions stay
-  // fail-closed until a new server response has been confirmed.
   const displayable = Boolean(data) && configured;
   const equityNumber = displayable ? number(data?.equity) : null;
   const availableNumber = displayable ? number(data?.availableBalance) : null;
-  const marginRatio = displayable ? number(data?.marginRatio) : null;
-  const maintenanceMargin = displayable ? number(data?.maintenanceMargin) : null;
-  const rawRiskPercent = marginRatio !== null
-    ? marginRatio * 100
-    : equityNumber !== null && equityNumber > 0 && maintenanceMargin !== null
-      ? maintenanceMargin / equityNumber * 100
-      : null;
-  const liquidationRiskPercent = rawRiskPercent === null ? null : Math.max(0, Math.min(100, rawRiskPercent));
+  const maintenanceMarginPercent = displayable ? number(data?.maintenanceMarginPct) : null;
+  const rawLiquidation = displayable ? number(data?.liquidationRiskPct) : null;
+  const liquidationRiskPercent = rawLiquidation === null ? null : Math.max(0, Math.min(100, rawLiquidation));
+  const sourceRaw = displayable ? String(data?.liquidationRiskSource ?? "") : "";
+  const liquidationRiskSource = sourceRaw === "ASTER_ACCOUNT_RATIO" || sourceRaw === "SERVER_RECONSTRUCTED" ? sourceRaw : "UNKNOWN";
+  const included = displayable ? number(data?.positionCountIncluded) : null;
   const liquidationTone = liquidationRiskPercent === null ? "unknown"
     : liquidationRiskPercent < 25 ? "safe"
       : liquidationRiskPercent < 50 ? "caution"
         : liquidationRiskPercent < 75 ? "high" : "critical";
-  const liquidationDetail = liquidationRiskPercent === null ? "Geen betrouwbare Aster margin ratio" : "0% is ruim · 100% is liquidatiegrens";
+  const liquidationDetail = liquidationRiskPercent === null
+    ? "Geen bevestigde cross-account liquidatieratio"
+    : liquidationRiskPercent < 25 ? "Ruim veilig · 100% is liquidatiegrens"
+      : liquidationRiskPercent < 50 ? "Verhoogd · bewaak cross margin"
+        : liquidationRiskPercent < 75 ? "Hoog risico · dicht bij liquidatie"
+          : "Kritiek · 100% is liquidatiegrens";
+  const maintenanceDetail = maintenanceMarginPercent === null ? "Geen bevestigde gewogen MMR" : "Gewogen maintenance-rate over bruto cross exposure";
   return {
     reliable,
     equityNumber,
     availableNumber,
     equity: formatUsd(equityNumber),
     available: formatUsd(availableNumber),
+    maintenanceMarginPercent,
+    maintenanceValue: formatPercent(maintenanceMarginPercent),
+    maintenanceDetail,
     liquidationRiskPercent,
     liquidationValue: formatPercent(liquidationRiskPercent),
     liquidationTone,
     liquidationDetail,
+    liquidationRiskSource,
+    positionCountIncluded: included === null ? null : Math.round(included),
   };
 }
