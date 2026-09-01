@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("Amar Crypto Bot 2026 has a standalone installable manifest", async () => {
+test("Crypto Bot 2026 has a standalone installable manifest", async () => {
   const manifest = JSON.parse(await readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"));
-  assert.equal(manifest.name, "Amar Crypto Bot 2026");
+  assert.equal(manifest.name, "Crypto Bot 2026");
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.scope, "/");
   assert.match(manifest.start_url, /source=pwa/);
