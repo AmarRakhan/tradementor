@@ -1,0 +1,145 @@
+diff --git a/cloud_api/aster_multi_bb.py b/cloud_api/aster_multi_bb.py
+index 08a9a7a..b3c7a38 100644
+--- a/cloud_api/aster_multi_bb.py
++++ b/cloud_api/aster_multi_bb.py
+@@ -1,14 +1,14 @@
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+-from decimal import Decimal
++from decimal import Decimal, ROUND_UP
+ from datetime import datetime, timezone
+ from typing import Any
+ import hashlib, math, time
+ 
+ from aster_close_guard import CloseEvidence
+ from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
+-from aster_gateway import PositionSide
++from aster_gateway import ContractRules, PositionSide
+ from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
+ 
+ ENGINE = "multi_bb_v1"
+@@ -200,10 +200,35 @@ def leverage_tier_preview(*, client: Any, symbol: str, settings: MultiBbConfig)
+     mark = _f((current or {}).get("markPrice"), _f((current or {}).get("entryPrice")))
+     qty = abs(_f((current or {}).get("positionAmt"))); current_notional = qty * mark if qty > 0 and mark > 0 else 0.0
+     current_leverage = max(0, _i((current or {}).get("leverage")))
+-    return tier_preview(payload, symbol, configured_minimum=settings.minimum_leverage,
++    preview = tier_preview(payload, symbol, configured_minimum=settings.minimum_leverage,
+         entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd,
+         entry_sizing_mode=settings.entry_sizing_mode, dca_margin_usd=settings.dca_margin_usd,
+         current_notional=current_notional, current_leverage=current_leverage)
++    if current is None and preview.get("entryPlan"):
++        info = client.public_exchange_info(); row = next((x for x in info.get("symbols", []) if str(x.get("symbol", "")).upper() == symbol), None)
++        prices = {str(x.get("symbol", "")).upper(): _f(x.get("price")) for x in client.ticker_prices()}
++        price = prices.get(symbol, 0.0)
++        if row is not None and price > 0:
++            rules = ContractRules.from_exchange_info(row); step = rules.market_quantity_step
++            minimum_qty = max(rules.market_min_quantity, rules.min_quantity)
++            if step > 0:
++                minimum_qty = (minimum_qty / step).to_integral_value(rounding=ROUND_UP) * step
++                if rules.min_notional > 0:
++                    by_notional = (rules.min_notional / Decimal(str(price)) / step).to_integral_value(rounding=ROUND_UP) * step
++                    minimum_qty = max(minimum_qty, by_notional)
++            minimum_notional = minimum_qty * Decimal(str(price))
++            leverage = max(1, _i(preview["entryPlan"].get("leverage")))
++            minimum_margin = minimum_notional / Decimal(leverage)
++            configured_margin = Decimal(str(settings.entry_margin_usd))
++            suggested_margin = (minimum_margin * Decimal("100")).to_integral_value(rounding=ROUND_UP) / Decimal("100")
++            preview.update({
++                "minimumExecutableNotionalUsd": float(minimum_notional),
++                "minimumEntryMarginUsd": float(minimum_margin),
++                "suggestedEntryMarginUsd": float(suggested_margin),
++                "configuredEntryMarginUsd": float(configured_margin),
++                "entryOrderValid": settings.entry_sizing_mode != "margin" or configured_margin >= minimum_margin,
++            })
++    return preview
+ 
+ 
+ def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+diff --git a/cloud_api/test_aster_multi_bb.py b/cloud_api/test_aster_multi_bb.py
+index d926e42..52ca5ac 100644
+--- a/cloud_api/test_aster_multi_bb.py
++++ b/cloud_api/test_aster_multi_bb.py
+@@ -7,7 +7,7 @@ import aster_multi_bb
+ from aster_execution import NewPositionLeverageBlocked
+ 
+ from aster_multi_bb import (
+-    ENGINE, MultiBbConfig, max_contract_leverage,
++    ENGINE, MultiBbConfig, leverage_tier_preview, max_contract_leverage,
+     rank_top_volume, run_multi_bb_step,
+ )
+ 
+@@ -389,3 +389,20 @@ def test_tier_reduction_waits_for_margin_without_stopping_strategy():
+     assert wait["targetLeverage"]==75
+     assert not any(x["kind"]=="DCA" for x in r["actions"])
+     assert r["status"]=="simulated"
++
++
++def test_manual_entry_preview_exposes_exchange_minimum_margin():
++    c=Client(prices={"ARBUSDT":0.11253}, leverage=20)
++    c._info={"symbols":[{"symbol":"ARBUSDT","quoteAsset":"USDT","status":"TRADING","filters":[
++        {"filterType":"PRICE_FILTER","minPrice":"0.000010","maxPrice":"20000","tickSize":"0.000010"},
++        {"filterType":"LOT_SIZE","minQty":"0.1","maxQty":"1000000","stepSize":"0.1"},
++        {"filterType":"MARKET_LOT_SIZE","minQty":"0.1","maxQty":"20000","stepSize":"0.1"},
++        {"filterType":"MIN_NOTIONAL","notional":"5"},
++    ]}]}
++    settings=manual_cfg([{"symbol":"ARBUSDT","side":"LONG"}], minimumLeverage=20, entryMarginUsd=.2, maximumPositions=1, longSlots=1, shortSlots=0)
++    preview=leverage_tier_preview(client=c, symbol="ARBUSDT", settings=settings)
++    assert preview["entryPlan"]["leverage"]==20
++    assert preview["entryOrderValid"] is False
++    assert preview["minimumExecutableNotionalUsd"]==pytest.approx(5.007585)
++    assert preview["minimumEntryMarginUsd"]==pytest.approx(.25037925)
++    assert preview["suggestedEntryMarginUsd"]==pytest.approx(.26)
+diff --git a/web/components/aster-strategy2-maker.tsx b/web/components/aster-strategy2-maker.tsx
+index 0e6bf2b..061651a 100644
+--- a/web/components/aster-strategy2-maker.tsx
++++ b/web/components/aster-strategy2-maker.tsx
+@@ -6,7 +6,7 @@ import { strategy2ServerStatus } from "@/lib/aster-strategy2-server-status.mjs";
+ 
+ type ManualSide = "LONG" | "SHORT";
+ type ManualSymbol = { symbol: string; side: ManualSide };
+-type TierPreview = { symbol: string; source: string; tiers: Array<{ floor: number; cap: number; maxLeverage: number }>; nextTier?: { floor: number; cap: number; maxLeverage: number } | null; estimatedDcasToNextTier?: number | null; entryPlan?: { leverage: number; projectedNotional: number; forcedBelowConfiguredMinimum: boolean } | null; currentNotional?: number; currentLeverage?: number; };
++type TierPreview = { symbol: string; source: string; tiers: Array<{ floor: number; cap: number; maxLeverage: number }>; nextTier?: { floor: number; cap: number; maxLeverage: number } | null; estimatedDcasToNextTier?: number | null; entryPlan?: { leverage: number; projectedNotional: number; forcedBelowConfiguredMinimum: boolean } | null; currentNotional?: number; currentLeverage?: number; minimumExecutableNotionalUsd?: number; minimumEntryMarginUsd?: number; suggestedEntryMarginUsd?: number; configuredEntryMarginUsd?: number; entryOrderValid?: boolean; };
+ type Values = {
+   name: string; universe: string; positions: string; longSlots: string; shortSlots: string;
+   minLeverage: string; entryMargin: string; dcaDistance: string; dcaMargin: string;
+@@ -97,7 +97,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
+     {v.manualEnabled && <div className="manual-symbol-picker">
+       <div className="manual-symbol-search"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value.toUpperCase())} onFocus={() => { if (!markets.length) void loadMarkets(); }} placeholder="Zoek munt, bijvoorbeeld HYPEUSDT" /><button type="button" disabled={marketBusy || !marketSearch.trim()} onClick={() => { const exact = markets.find((x) => x === marketSearch.trim().toUpperCase()); if (exact) addSymbol(exact); }}>+ toevoegen</button></div>
+       {marketSearch.trim() && <div className="manual-symbol-results">{marketBusy ? <small>Markten laden…</small> : marketMatches.length ? marketMatches.map((symbol) => <button type="button" key={symbol} onClick={() => addSymbol(symbol)}>{symbol}<i>+</i></button>) : <small>Geen beschikbare Aster USDT perpetual gevonden.</small>}</div>}
+-      <div className="manual-symbol-selected">{v.manualSymbols.map((row) => { const preview = tierPreviews[row.symbol]; const entryLev = preview?.entryPlan?.leverage || preview?.currentLeverage || 0; return <div key={row.symbol} style={{display:"grid",gap:6}}><div style={{display:"flex",alignItems:"center",gap:8}}><b>{row.symbol}</b><span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)} aria-label={`${row.symbol} verwijderen`}>×</button></div>{tierBusy && !preview ? <small>Leverage tiers laden…</small> : preview ? <div style={{display:"grid",gap:3,fontSize:12,opacity:.92}}><b>Aster leverage tiers</b>{preview.tiers.slice(0,6).map((t,i) => <span key={`${row.symbol}-${i}`}>{t.cap > 0 ? `$${t.floor.toLocaleString()} – $${t.cap.toLocaleString()}` : `Vanaf $${t.floor.toLocaleString()}`}: max {t.maxLeverage}×</span>)}{preview.nextTier && <strong>Volgende daling: {entryLev}× → {preview.nextTier.maxLeverage}× vanaf ongeveer ${preview.nextTier.floor.toLocaleString()} totaal</strong>}{preview.estimatedDcasToNextTier != null && <span>Geschat aantal DCA's tot volgende tier: {preview.estimatedDcasToNextTier}</span>}{preview.nextTier && entryLev > preview.nextTier.maxLeverage && <span className="inline-warning">Let op: bij verdere DCA verlaagt Strategy 2 automatisch de leverage van de hele positie naar de hoogste leverage die Aster toestaat en gaat daarna verder.</span>}</div> : <small>Geen betrouwbare tierdata beschikbaar; Strategy 2 zal geen willekeurige hoge leverage gebruiken.</small>}</div>; })}</div>
++      <div className="manual-symbol-selected">{v.manualSymbols.map((row) => { const preview = tierPreviews[row.symbol]; const entryLev = preview?.entryPlan?.leverage || preview?.currentLeverage || 0; return <div key={row.symbol} style={{display:"grid",gap:6}}><div style={{display:"flex",alignItems:"center",gap:8}}><b>{row.symbol}</b><span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)} aria-label={`${row.symbol} verwijderen`}>×</button></div>{tierBusy && !preview ? <small>Leverage tiers laden…</small> : preview ? <div style={{display:"grid",gap:3,fontSize:12,opacity:.92}}><b>Aster leverage tiers</b>{preview.tiers.slice(0,6).map((t,i) => <span key={`${row.symbol}-${i}`}>{t.cap > 0 ? `$${t.floor.toLocaleString()} – $${t.cap.toLocaleString()}` : `Vanaf $${t.floor.toLocaleString()}`}: max {t.maxLeverage}×</span>)}{preview.nextTier && <strong>Volgende daling: {entryLev}× → {preview.nextTier.maxLeverage}× vanaf ongeveer ${preview.nextTier.floor.toLocaleString()} totaal</strong>}{preview.estimatedDcasToNextTier != null && <span>Geschat aantal DCA's tot volgende tier: {preview.estimatedDcasToNextTier}</span>}{preview.entryOrderValid === false && <span className="inline-warning"><b>Instap geblokkeerd door Aster minimumorder.</b> Met {entryLev}× en ${Number(preview.configuredEntryMarginUsd ?? n(v.entryMargin)).toFixed(2)} margin is de order te klein. Kies minimaal ${Number(preview.suggestedEntryMarginUsd ?? preview.minimumEntryMarginUsd ?? 0).toFixed(2)} margin (exchange-minimum ${Number(preview.minimumExecutableNotionalUsd ?? 0).toFixed(2)} notional).</span>}{preview.nextTier && entryLev > preview.nextTier.maxLeverage && <span className="inline-warning">Let op: bij verdere DCA verlaagt Strategy 2 automatisch de leverage van de hele positie naar de hoogste leverage die Aster toestaat en gaat daarna verder.</span>}</div> : <small>Geen betrouwbare tierdata beschikbaar; Strategy 2 zal geen willekeurige hoge leverage gebruiken.</small>}</div>; })}</div>
+       <p className="manual-symbol-summary">{v.manualSymbols.length} geselecteerd · {selectedLong} LONG · {selectedShort} SHORT</p>
+       {!v.manualSymbols.length && <p className="inline-warning">Selecteer minimaal één munt. Bestaande posities worden nooit gesloten door deze keuze.</p>}
+     </div>}
+@@ -119,6 +119,14 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
+   async function action(kind: "save" | "simulate" | "start" | "stop") {
+     setBusy(true); setMessage("");
+     try {
++      if (kind === "start" && v.manualEnabled) {
++        const blocked = v.manualSymbols.map((x) => tierPreviews[x.symbol]).filter((x) => x?.entryOrderValid === false);
++        if (blocked.length) {
++          const first = blocked[0];
++          const minimum = Number(first.suggestedEntryMarginUsd ?? first.minimumEntryMarginUsd ?? 0);
++          throw new Error(`${first.symbol}: startmargin $${Number(v.entryMargin).toFixed(2)} is te laag voor Aster. Gebruik minimaal $${minimum.toFixed(2)}.`);
++        }
++      }
+       const route = kind === "save" ? "settings" : kind; const method = kind === "save" ? "PUT" : "POST"; const body = kind === "start" ? { confirm: true, settings } : kind === "stop" ? { confirm: true } : { settings };
+       const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/${route}`, { method, body: JSON.stringify(body) }) as Record<string, unknown>;
+       const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null;
+diff --git a/web/tests/aster-leverage-tiers-wizard.test.mjs b/web/tests/aster-leverage-tiers-wizard.test.mjs
+index a18d030..fd119ad 100644
+--- a/web/tests/aster-leverage-tiers-wizard.test.mjs
++++ b/web/tests/aster-leverage-tiers-wizard.test.mjs
+@@ -18,3 +18,11 @@ test("wizard warns that the whole position changes leverage and bot continues",
+   assert.match(maker, /automatisch de leverage/);
+   assert.doesNotMatch(maker, /HYPE boven \$3000/);
+ });
++
++
++test("wizard blocks a start when selected coin is below Aster minimum order", () => {
++  assert.match(maker, /entryOrderValid === false/);
++  assert.match(maker, /Instap geblokkeerd door Aster minimumorder/);
++  assert.match(maker, /Gebruik minimaal/);
++  assert.match(maker, /suggestedEntryMarginUsd/);
++});
