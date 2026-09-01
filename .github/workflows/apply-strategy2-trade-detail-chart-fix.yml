@@ -1,0 +1,42 @@
+name: Apply Strategy 2 Trade Detail Chart Fix
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .control-plane/chart-detail-fix.patch
+      - .github/workflows/apply-strategy2-trade-detail-chart-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Apply exact workstation patch
+        run: git apply --check .control-plane/chart-detail-fix.patch && git apply .control-plane/chart-detail-fix.patch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run complete web build and tests
+        working-directory: web
+        run: npm test
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          git config user.name 'OpenAI Strategy 2 Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add web/components/aster-recent-trades.tsx web/components/aster-trade-center.module.css web/components/trading-chart.tsx web/tests/trading-chart-aster-detail.test.mjs
+          git commit -m 'Show Strategy 2 DCA TP cockpit on trade chart'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
