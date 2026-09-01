@@ -301,7 +301,8 @@ test("Positions reuses the trusted overview and adds an exchange-aware professio
   assert.doesNotMatch(chart, /entrySeries\.setData/);
   assert.match(chart, /createPriceLine\(\{ price:Number\(breakEvenPrice\)[\s\S]*title:"WINST VANAF"/);
   assert.match(chart, /VOLGENDE \$\{selection\.side\.toUpperCase\(\)\} DCA/);
-  assert.match(chart, /title:next\?.*:`DCA \$\{Math\.round/s);
+  assert.match(chart, /plannedOverlayLevels/);
+  assert.match(chart, /plannedActionLevels/);
   assert.match(chart, /aster-confirmed-fills|aster\/trade-events/);
   assert.match(chart, /layoutVerifiedTradeMarkers/);
   assert.match(chart, /Werkelijke prijs/);
