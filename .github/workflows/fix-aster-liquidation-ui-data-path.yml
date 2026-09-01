@@ -1,0 +1,55 @@
+name: Fix Aster Liquidation UI Data Path
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/scripts/fix_aster_liquidation_ui_data_path.py
+      - .github/workflows/fix-aster-liquidation-ui-data-path.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply full Aster liquidation data/UI fix
+        run: python .github/scripts/fix_aster_liquidation_ui_data_path.py
+      - name: Install backend dependencies
+        working-directory: cloud_api
+        run: pip install -r requirements.txt pytest
+      - name: Run cross-risk simulations and complete backend suite
+        working-directory: cloud_api
+        run: |
+          pytest -q test_aster_cross_risk.py test_aster_state.py
+          pytest -q
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run complete web build and regression suite
+        working-directory: web
+        run: npm test
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          git config user.name 'OpenAI Aster Risk Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/main.py web/app/page.tsx web/app/globals.css web/tests/aster-cross-liquidation-meter.test.mjs web/tests/liquidation-risk.test.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m 'Fix Aster liquidation data path and simplify risk UI'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
