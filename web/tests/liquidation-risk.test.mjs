@@ -56,7 +56,7 @@ test("risk thresholds map to green yellow orange red and unknown", () => {
   assert.equal(liquidationRiskTone(Number.NaN),"unknown");
 });
 
-test("Aster hero renders maintenance plus shared two-decimal liquidation risk in a mobile two-column grid", async()=>{
+test("Aster hero renders distinct server maintenance and account-wide liquidation risk in a mobile two-column grid", async()=>{
   const [page,css,display,chart]=await Promise.all([
     readFile(new URL("../app/page.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/globals.css",import.meta.url),"utf8"),
@@ -65,8 +65,12 @@ test("Aster hero renders maintenance plus shared two-decimal liquidation risk in
   ]);
   assert.match(page,/LIQUIDATIERISICO/);
   assert.match(page,/destination === "aster" && <LiquidationRiskOrbit/);
-  assert.match(display,/marginRatio/);
-  assert.match(display,/maintenanceMargin \/ equityNumber \* 100/);
+  assert.match(page,/MAINTENANCE MARGIN/);
+  assert.match(display,/liquidationRiskPct/);
+  assert.match(display,/maintenanceMarginPct/);
+  assert.match(display,/liquidationRiskSource/);
+  assert.doesNotMatch(display,/maintenanceMargin \/ equityNumber \* 100/);
+  assert.doesNotMatch(display,/data\?\.marginRatio/);
   assert.match(display,/minimumFractionDigits: 2, maximumFractionDigits: 2/);
   assert.match(display,/serverConfirmed/);
   assert.match(display,/120_000/);
