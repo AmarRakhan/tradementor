@@ -98,7 +98,7 @@ from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
-from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step
+from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step, leverage_tier_preview
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -4142,6 +4142,31 @@ def strategy2_focus_markets(user:dict[str,Any]=Depends(authenticated_user))->dic
     return {"readOnly":True,"ordersSent":0,"ranking":rows,"marketCount":len(rows)}
 
 
+@app.get("/v1/me/aster/strategy2/leverage-tiers")
+def strategy2_leverage_tiers(
+    symbol: str = Query(min_length=1, max_length=40),
+    minimumLeverage: int | None = Query(default=None, ge=1, le=300),
+    entryMarginUsd: float | None = Query(default=None, gt=0, le=100000),
+    dcaMarginUsd: float | None = Query(default=None, gt=0, le=100000),
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Read-only account-specific Aster leverage tiers for Strategy 2 wizard."""
+    uid = str(user["uid"]); raw = aster_strategy2_reference(uid).get().to_dict() or {}
+    settings = MultiBbConfig.from_mapping(raw.get("settings"))
+    overrides = settings.public_dict()
+    if minimumLeverage is not None: overrides["minimumLeverage"] = int(minimumLeverage)
+    if entryMarginUsd is not None:
+        overrides["entryMarginUsd"] = float(entryMarginUsd); overrides["entrySizingMode"] = "margin"
+    if dcaMarginUsd is not None: overrides["dcaMarginUsd"] = float(dcaMarginUsd)
+    settings = MultiBbConfig.from_mapping(overrides)
+    secret = load_aster_secret(user)
+    client = AsterV3Client(signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=False)
+    try:
+        result = leverage_tier_preview(client=client, symbol=symbol, settings=settings)
+    except (AsterApiError, AsterValidationError, ValueError) as exc:
+        raise HTTPException(409, f"Aster leverage tiers konden niet betrouwbaar worden gelezen: {exc}") from exc
+    return {"readOnly": True, **result}
+
 @app.get("/v1/me/aster/strategy2/focus/shadow")
 def strategy2_focus_shadow(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     """Evaluate one Focus scan against fresh Aster data without an order-capable execution path."""
@@ -4375,7 +4400,8 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
     now=datetime.now(timezone.utc); version=max(int(safe_float(existing.get("configVersion"))),settings.version)
     settings=MultiBbConfig.from_mapping({**settings.public_dict(),"version":version})
     ref.set({"settings":settings.public_dict(),"phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
-        "enabled":True,"monitor":True,"pendingReopens":[],"multiBbAdoptionPending":True,"startedAt":now,"updatedAt":now},merge=True)
+        "enabled":True,"monitor":True,"pendingReopens":[],"multiBbAdoptionPending":True,"multiBbReport":{},
+        "lastReason":"Strategy 2 start: verse exchange-evaluatie","startedAt":now,"updatedAt":now},merge=True)
     first=_run_aster_strategy2_tick(uid,dry_run=settings.mode!="live")
     return {"started":True,"mode":settings.mode,"firstTick":first,**aster_strategy2_public(uid)}
 
