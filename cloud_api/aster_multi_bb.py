@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, ROUND_UP
 from datetime import datetime, timezone
 from typing import Any
 import hashlib, math, time
 
 from aster_close_guard import CloseEvidence
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
-from aster_gateway import PositionSide
+from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 
 ENGINE = "multi_bb_v1"
@@ -200,10 +200,35 @@ def leverage_tier_preview(*, client: Any, symbol: str, settings: MultiBbConfig) 
     mark = _f((current or {}).get("markPrice"), _f((current or {}).get("entryPrice")))
     qty = abs(_f((current or {}).get("positionAmt"))); current_notional = qty * mark if qty > 0 and mark > 0 else 0.0
     current_leverage = max(0, _i((current or {}).get("leverage")))
-    return tier_preview(payload, symbol, configured_minimum=settings.minimum_leverage,
+    preview = tier_preview(payload, symbol, configured_minimum=settings.minimum_leverage,
         entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd,
         entry_sizing_mode=settings.entry_sizing_mode, dca_margin_usd=settings.dca_margin_usd,
         current_notional=current_notional, current_leverage=current_leverage)
+    if current is None and preview.get("entryPlan"):
+        info = client.public_exchange_info(); row = next((x for x in info.get("symbols", []) if str(x.get("symbol", "")).upper() == symbol), None)
+        prices = {str(x.get("symbol", "")).upper(): _f(x.get("price")) for x in client.ticker_prices()}
+        price = prices.get(symbol, 0.0)
+        if row is not None and price > 0:
+            rules = ContractRules.from_exchange_info(row); step = rules.market_quantity_step
+            minimum_qty = max(rules.market_min_quantity, rules.min_quantity)
+            if step > 0:
+                minimum_qty = (minimum_qty / step).to_integral_value(rounding=ROUND_UP) * step
+                if rules.min_notional > 0:
+                    by_notional = (rules.min_notional / Decimal(str(price)) / step).to_integral_value(rounding=ROUND_UP) * step
+                    minimum_qty = max(minimum_qty, by_notional)
+            minimum_notional = minimum_qty * Decimal(str(price))
+            leverage = max(1, _i(preview["entryPlan"].get("leverage")))
+            minimum_margin = minimum_notional / Decimal(leverage)
+            configured_margin = Decimal(str(settings.entry_margin_usd))
+            suggested_margin = (minimum_margin * Decimal("100")).to_integral_value(rounding=ROUND_UP) / Decimal("100")
+            preview.update({
+                "minimumExecutableNotionalUsd": float(minimum_notional),
+                "minimumEntryMarginUsd": float(minimum_margin),
+                "suggestedEntryMarginUsd": float(suggested_margin),
+                "configuredEntryMarginUsd": float(configured_margin),
+                "entryOrderValid": settings.entry_sizing_mode != "margin" or configured_margin >= minimum_margin,
+            })
+    return preview
 
 
 def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

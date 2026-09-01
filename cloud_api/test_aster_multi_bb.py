@@ -7,7 +7,7 @@ import aster_multi_bb
 from aster_execution import NewPositionLeverageBlocked
 
 from aster_multi_bb import (
-    ENGINE, MultiBbConfig, max_contract_leverage,
+    ENGINE, MultiBbConfig, leverage_tier_preview, max_contract_leverage,
     rank_top_volume, run_multi_bb_step,
 )
 
@@ -389,3 +389,20 @@ def test_tier_reduction_waits_for_margin_without_stopping_strategy():
     assert wait["targetLeverage"]==75
     assert not any(x["kind"]=="DCA" for x in r["actions"])
     assert r["status"]=="simulated"
+
+
+def test_manual_entry_preview_exposes_exchange_minimum_margin():
+    c=Client(prices={"ARBUSDT":0.11253}, leverage=20)
+    c._info={"symbols":[{"symbol":"ARBUSDT","quoteAsset":"USDT","status":"TRADING","filters":[
+        {"filterType":"PRICE_FILTER","minPrice":"0.000010","maxPrice":"20000","tickSize":"0.000010"},
+        {"filterType":"LOT_SIZE","minQty":"0.1","maxQty":"1000000","stepSize":"0.1"},
+        {"filterType":"MARKET_LOT_SIZE","minQty":"0.1","maxQty":"20000","stepSize":"0.1"},
+        {"filterType":"MIN_NOTIONAL","notional":"5"},
+    ]}]}
+    settings=manual_cfg([{"symbol":"ARBUSDT","side":"LONG"}], minimumLeverage=20, entryMarginUsd=.2, maximumPositions=1, longSlots=1, shortSlots=0)
+    preview=leverage_tier_preview(client=c, symbol="ARBUSDT", settings=settings)
+    assert preview["entryPlan"]["leverage"]==20
+    assert preview["entryOrderValid"] is False
+    assert preview["minimumExecutableNotionalUsd"]==pytest.approx(5.007585)
+    assert preview["minimumEntryMarginUsd"]==pytest.approx(.25037925)
+    assert preview["suggestedEntryMarginUsd"]==pytest.approx(.26)

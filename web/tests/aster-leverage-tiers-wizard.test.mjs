@@ -18,3 +18,11 @@ test("wizard warns that the whole position changes leverage and bot continues", 
   assert.match(maker, /automatisch de leverage/);
   assert.doesNotMatch(maker, /HYPE boven \$3000/);
 });
+
+
+test("wizard blocks a start when selected coin is below Aster minimum order", () => {
+  assert.match(maker, /entryOrderValid === false/);
+  assert.match(maker, /Instap geblokkeerd door Aster minimumorder/);
+  assert.match(maker, /Gebruik minimaal/);
+  assert.match(maker, /suggestedEntryMarginUsd/);
+});
