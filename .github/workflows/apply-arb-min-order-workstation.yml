@@ -1,0 +1,55 @@
+name: Apply ARB minimum-order workstation fix
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .github/workflows/apply-arb-min-order-workstation.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-arb-min-order-workstation
+  cancel-in-progress: false
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Apply exact workstation patch
+        run: |
+          git apply --check .github/patches/arb-min-order-20260901.patch
+          git apply .github/patches/arb-min-order-20260901.patch
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Run complete backend suite
+        working-directory: cloud_api
+        run: pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Run complete web build and tests
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+      - name: Commit validated fix
+        run: |
+          git config user.name "OpenAI Strategy 2 Agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add cloud_api/aster_multi_bb.py cloud_api/test_aster_multi_bb.py web/components/aster-strategy2-maker.tsx web/tests/aster-leverage-tiers-wizard.test.mjs
+          test -n "$(git status --porcelain)"
+          git commit -m "Block manual entries below Aster minimum order"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
