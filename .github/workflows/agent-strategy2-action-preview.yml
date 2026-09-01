@@ -19,7 +19,9 @@ jobs:
           ref: agent-strategy2-action-preview-20260901
           fetch-depth: 0
       - name: Apply Strategy 2 action preview patch
-        run: python .github/scripts/apply_strategy2_action_preview.py
+        run: |
+          python .github/scripts/apply_strategy2_action_preview.py
+          python .github/scripts/fix_strategy2_action_preview_patch.py
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
