@@ -22,10 +22,8 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: cloud_api/requirements.txt
-      - name: Apply isolated implementation patch
-        run: python .github/scripts/patch_strategy2_reentry_tiers.py
-      - name: Adjust validation expectations
-        run: python .github/scripts/patch_strategy2_reentry_tiers_followup.py
+      - name: Apply final runtime hardening
+        run: python .github/scripts/harden_strategy2_reentry_runtime.py
       - name: Install backend dependencies
         run: pip install -r cloud_api/requirements.txt pytest
       - name: Run complete backend suite
@@ -41,13 +39,11 @@ jobs:
         run: |
           npm ci
           npm test
-      - name: Commit validated implementation to isolated branch
+      - name: Commit validated runtime hardening to isolated branch
         run: |
           git config user.name "OpenAI Strategy 2 Agent"
           git config user.email "actions@users.noreply.github.com"
-          git add cloud_api web
+          git add cloud_api
           test -n "$(git status --porcelain)"
-          git commit -m "Fix Strategy 2 reentry and dynamic Aster leverage tiers"
+          git commit -m "Harden Strategy 2 coin reentry runtime"
           git push origin HEAD:agent-strategy2-reentry-leverage-tiers-20260901
-
-# validation-trigger: 2026-09-01T06:05Z
