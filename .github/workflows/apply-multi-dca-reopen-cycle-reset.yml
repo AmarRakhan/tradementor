@@ -26,7 +26,7 @@ jobs:
         run: python .github/scripts/fix_multi_dca_reopen_cycle_reset.py
       - name: Install backend dependencies
         working-directory: cloud_api
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
       - name: Run focused and complete backend tests
         working-directory: cloud_api
         run: |
