@@ -140,6 +140,106 @@
 }
 .aster-detail-chart .focus-level-segment .focus-label-leader { display:none !important; }
 
+/* 1:1 compact KPI cockpit above the chart. CSS-module class names are hashed
+   by Next.js, so this targets the stable semantic aria label and structure. */
+[aria-label="Actuele Strategy 2 tradegegevens"] {
+  margin: 8px 10px 6px !important;
+  border: 1px solid rgba(181,146,52,.22) !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  background: #070c0b !important;
+  font-variant-numeric: tabular-nums !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div {
+  border-color: rgba(181,146,52,.13) !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(1) {
+  display: grid !important;
+  grid-template-columns: repeat(4,minmax(0,1fr)) !important;
+  gap: 1px !important;
+  background: rgba(181,146,52,.14) !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(1) > div {
+  min-width: 0 !important;
+  display: grid !important;
+  gap: 4px !important;
+  padding: 8px 9px !important;
+  background: #0a100e !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(1) span,
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) span,
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) span {
+  color: #8c968f !important;
+  font-size: 6.5px !important;
+  font-weight: 850 !important;
+  letter-spacing: .065em !important;
+  line-height: 1.2 !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(1) strong {
+  min-width:0 !important;
+  font-size: 13px !important;
+  line-height: 1.05 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(2) {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap:1px !important;
+  padding:0 !important;
+  background:rgba(181,146,52,.12) !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(2) > span {
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+  gap:8px !important;
+  min-width:0 !important;
+  padding:6px 9px !important;
+  background:#090f0d !important;
+  color:#7f8983 !important;
+  font-size:6.5px !important;
+  letter-spacing:.02em !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(2) b { color:#dfe7e2 !important; font-size:9px !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) {
+  display:grid !important;
+  grid-template-columns:1fr 1fr !important;
+  gap:1px !important;
+  background:rgba(181,146,52,.14) !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) > div {
+  display:grid !important;
+  grid-template-columns:1fr auto !important;
+  grid-template-areas:"label value" "sub value" !important;
+  align-items:center !important;
+  gap:3px 8px !important;
+  padding:7px 9px !important;
+  background:#0a100e !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) span { grid-area:label !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) strong { grid-area:value !important; font-size:10px !important; color:#e9eee9 !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) > div:first-child strong { color:#ffd166 !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) > div:last-child strong { color:#58f0ae !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) small { grid-area:sub !important; color:#748078 !important; font-size:6.5px !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) {
+  display:grid !important;
+  grid-template-columns:1fr 1fr .62fr !important;
+  gap:1px !important;
+  background:rgba(181,146,52,.14) !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div {
+  display:grid !important;
+  gap:3px !important;
+  padding:7px 9px !important;
+  background:#080e0c !important;
+}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) strong { font-size:10px !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div:first-child strong { color:#ffd166 !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div:nth-child(2) strong { color:#58f0ae !important; }
+[aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div:last-child strong { color:#dbe5df !important; }
+
 /* The legacy cockpit is useful diagnostic detail, but the main chart should
    remain the dominant surface in the reference view. */
 @media (max-width: 700px) {
@@ -147,12 +247,19 @@
   .aster-detail-chart .chart-stage,
   .aster-detail-chart .chart-canvas { min-height: 410px !important; }
 }
+@media (max-width: 520px) {
+  [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(1) { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+  [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(1) strong { font-size:12px !important; }
+}
 @media (max-width: 430px) {
   .aster-detail-chart .aster-detail-timeframes { gap:4px !important; padding:6px 7px !important; }
   .aster-detail-chart .aster-detail-timeframes > button,
   .aster-detail-chart .aster-detail-timeframes > details > summary { min-height:28px !important; font-size:7.5px !important; padding-inline:3px !important; }
   .aster-detail-chart .chart-stage,
   .aster-detail-chart .chart-canvas { min-height: 390px !important; height: 52vh !important; }
+  [aria-label="Actuele Strategy 2 tradegegevens"] { margin-inline:8px !important; }
+  [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(3) > div,
+  [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div { padding-inline:7px !important; }
 }
 
 /* Reduce visual noise on the trade-detail page beneath the chart. */
