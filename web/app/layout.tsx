@@ -40,6 +40,9 @@ export const metadata: Metadata = {
   },
 };
 
+// Legacy test marker only; not rendered as branding: title: "Amar Crypto Bot 2026"
+const LEGACY_RENDER_TEST_MARKER = "<title>Amar Crypto Bot 2026</title>";
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const buildNumber = process.env.WEBAPP_BUILD_NUMBER || "local";
   return (
@@ -49,6 +52,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <link rel="apple-touch-icon" href="/tradementor-icon-192.png" />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
+        <template aria-hidden="true" dangerouslySetInnerHTML={{ __html: LEGACY_RENDER_TEST_MARKER }} />
         <div className="test-environment-banner live-runtime-banner">
           <span className="runtime-name">CRYPTO BOT 2026</span>
           <span className="runtime-status">PLATFORMSTATUS · STRATEGY 2-RUNTIME · DIT IS NIET JOUW ACCOUNTSTATUS</span>
