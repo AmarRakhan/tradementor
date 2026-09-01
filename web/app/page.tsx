@@ -424,13 +424,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
             <button className="status-chip refresh-chip" type="button" onClick={onRefresh} disabled={snapshot.loading}><i /> {snapshotStatus}</button>
           </div>
         </div>}
-        <div className={destination === "aster" ? "risk-orbits" : undefined}>
-          <div className={`risk-orbit risk-${view.riskTone}`} aria-label={view.riskLabel}>
-            <div className="orbit-lines" />
-            <div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div>
-          </div>
-          {destination === "aster" && <LiquidationRiskOrbit display={view.asterAccountDisplay} />}
-        </div>
+        {destination === "aster" ? <div className="risk-orbits liquidation-only"><LiquidationRiskOrbit display={view.asterAccountDisplay} /></div> : <div><div className={`risk-orbit risk-${view.riskTone}`} aria-label={view.riskLabel}><div className="orbit-lines" /><div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div></div></div>}
       </section>}
 
       {!positionsOnly && destination === "aster" && <BotHealthCard />}
@@ -440,7 +434,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <Metric label="AVAILABLE TO TRADE" value={view.available} detail="Direct van de exchange" />
         <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
         <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
-        {(isHyperliquid || destination === "aster") && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail={destination === "aster" ? "Aster futures maintenance margin" : "Perps maintenance margin"} />}
+        {isHyperliquid && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail="Perps maintenance margin" />}
         {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} available={snapshot.data?.historyAvailable === true} positions={view.positions} equity={view.equity} availableToTrade={view.available} openPnl={netOpenPnl} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
         {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
       </section>}
@@ -986,7 +980,8 @@ function NavButton({ item, active, onClick }: { item: { id: Destination; label: 
 function LiquidationRiskOrbit({ display }: { display: AsterAccountDisplay | null }) {
   const tone = display?.liquidationTone ?? "unknown";
   const available = display?.liquidationRiskPercent !== null && display?.liquidationRiskPercent !== undefined;
-  return <div className={`risk-orbit liquidation-risk risk-${tone}`} aria-label="LIQUIDATIERISICO"><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong className={available ? "" : "unavailable"}>{display?.liquidationValue ?? "—"}</strong><small>{display?.liquidationDetail ?? "Geen bevestigde cross-account liquidatieratio"}{display?.positionCountIncluded !== null && display?.positionCountIncluded !== undefined ? ` · ${display.positionCountIncluded} posities` : ""}</small></div></div>;
+  const health = tone === "safe" ? "VEILIG" : tone === "caution" ? "VERHOOGD" : tone === "high" ? "HOOG" : tone === "critical" ? "KRITIEK" : "GEEN DATA";
+  return <div className={`risk-orbit liquidation-risk risk-${tone}`} aria-label={`LIQUIDATIERISICO ${display?.liquidationValue ?? "onbekend"}`} title={display?.liquidationDetail ?? "Geen bevestigde cross-account liquidatieratio"}><div className="orbit-lines" /><div className="risk-core"><span>LIQUIDATIERISICO</span><strong className={available ? "" : "unavailable"}>{display?.liquidationValue ?? "—"}</strong><small>{health}</small></div></div>;
 }
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {

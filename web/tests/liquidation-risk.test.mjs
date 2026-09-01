@@ -56,16 +56,15 @@ test("risk thresholds map to green yellow orange red and unknown", () => {
   assert.equal(liquidationRiskTone(Number.NaN),"unknown");
 });
 
-test("Aster hero renders distinct server maintenance and account-wide liquidation risk in a mobile two-column grid", async()=>{
+test("Aster hero renders one compact server account-wide liquidation risk gauge", async()=>{
   const [page,css,display,chart]=await Promise.all([
     readFile(new URL("../app/page.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/globals.css",import.meta.url),"utf8"),
     readFile(new URL("../lib/aster-account-display.ts",import.meta.url),"utf8"),
     readFile(new URL("../components/trading-chart.tsx",import.meta.url),"utf8"),
   ]);
-  assert.match(page,/LIQUIDATIERISICO/);
-  assert.match(page,/destination === "aster" && <LiquidationRiskOrbit/);
-  assert.match(page,/MAINTENANCE MARGIN/);
+  assert.match(page,/function LiquidationRiskOrbit/);
+  assert.match(page,/risk-orbits liquidation-only/);
   assert.match(display,/liquidationRiskPct/);
   assert.match(display,/maintenanceMarginPct/);
   assert.match(display,/liquidationRiskSource/);
@@ -79,7 +78,7 @@ test("Aster hero renders distinct server maintenance and account-wide liquidatio
   assert.match(chart,/accountDisplay\?\.liquidationValue/);
   assert.match(chart,/accountDisplay\?\.equity/);
   assert.match(chart,/accountDisplay\?\.available/);
-  assert.match(page,/risk-orbit risk-\$\{view\.riskTone\}/);
-  assert.match(css,/risk-orbits[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(page,/risk-orbits liquidation-only/);
+  assert.match(css,/Aster liquidation-only cockpit/);
   assert.doesNotMatch(page,/riskNumber\s*=.*liquidation/i);
 });

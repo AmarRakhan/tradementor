@@ -5,26 +5,25 @@ import { readFileSync } from "node:fs";
 const account = readFileSync(new URL("../lib/aster-account-display.ts", import.meta.url), "utf8");
 const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+const backend = readFileSync(new URL("../../cloud_api/main.py", import.meta.url), "utf8");
 
-test("Aster frontend consumes separate server-authoritative maintenance and liquidation values", () => {
-  assert.match(account, /data\?\.maintenanceMarginPct/);
+test("Aster public status exposes the cross-account liquidation fields consumed by the browser", () => {
+  for (const field of ["maintenanceMarginPct","liquidationRiskPct","liquidationRiskSource","marginBalance","totalCrossNotional","longNotional","shortNotional","netExposure","grossExposure","positionCountIncluded"]) assert.ok(backend.includes(`"${field}"`), `${field} missing from public Aster status projection`);
   assert.match(account, /data\?\.liquidationRiskPct/);
   assert.match(account, /liquidationRiskSource/);
-  assert.doesNotMatch(account, /maintenanceMargin\s*\/\s*equity/);
-  assert.doesNotMatch(account, /marginRatio\s*\*\s*100/);
+  assert.doesNotMatch(account, /data\?\.marginRatio/);
 });
 
-test("left orbit is maintenance rate and right orbit is liquidation risk", () => {
-  assert.match(page, /riskLabel = "MAINTENANCE MARGIN"/);
-  assert.match(page, /asterAccountDisplay\?\.maintenanceMarginPercent/);
+test("Aster hero has one liquidation meter and no maintenance meter", () => {
+  assert.match(page, /risk-orbits liquidation-only/);
   assert.match(page, /function LiquidationRiskOrbit/);
-  assert.match(page, /LIQUIDATIERISICO/);
-  assert.match(page, /positionCountIncluded/);
-  assert.doesNotMatch(page, /riskNumber = accountDataAvailable \? asNumber\(data\.marginRatio\) \* 100/);
+  assert.match(page, /liquidation-risk/);
+  assert.match(page, /VEILIG/);
+  assert.doesNotMatch(page, /isHyperliquid \|\| destination === "aster"/);
 });
 
-test("Aster risk orbits are compact on mobile and desktop", () => {
-  assert.match(css, /Aster cross-risk meters: compact/);
-  assert.match(css, /width:152px/);
-  assert.match(css, /width:136px/);
+test("the remaining liquidation gauge is about half the previous mobile size", () => {
+  assert.match(css, /Aster liquidation-only cockpit/);
+  assert.match(css, /width:92px;height:92px/);
+  assert.match(css, /width:72px;height:72px/);
 });
