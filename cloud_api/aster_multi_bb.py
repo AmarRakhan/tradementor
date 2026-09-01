@@ -285,8 +285,6 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
-    for key in reconciled_closed:
-        actions.append({"kind": "REENTRY_STATE_CLEARED", "key": key, "reason": "exchange position is flat"})
 
     # Exchange truth reconciles every already-managed leg; a manual add never resets/increments the automatic DCA counter.
     for key in list(state):
@@ -300,6 +298,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         account_equity = _f(account.get("totalMarginBalance", account.get("marginBalance", account.get("equity", account.get("totalWalletBalance")))))
         st.update(position_action_preview(row=row, state=st, settings=settings, account_equity=account_equity))
         state[key] = st
+
+    for key in reconciled_closed:
+        actions.append({"kind": "REENTRY_STATE_CLEARED", "key": key, "reason": "exchange position is flat"})
 
     # Management priority: full TP, then capped DCA.
     for key, st0 in list(state.items()):
