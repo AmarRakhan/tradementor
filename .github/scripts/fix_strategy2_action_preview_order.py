@@ -17,11 +17,18 @@ if old_overlay not in chart_text:
 chart.write_text(chart_text.replace(old_overlay, new_overlay, 1))
 
 rendered = Path("web/tests/rendered-html.test.mjs")
-rendered_text = rendered.read_text()
-stale = '  assert.match(chart, /title:next\\?.*:`DCA \\${Math\\.round/s);\n'
-updated = '  assert.match(chart, /plannedOverlayLevels/);\n  assert.match(chart, /plannedActionLevels/);\n'
-if stale not in rendered_text:
+lines = rendered.read_text().splitlines()
+out = []
+replaced = False
+for line in lines:
+    if "assert.match(chart, /title:next" in line:
+        out.append('  assert.match(chart, /plannedOverlayLevels/);')
+        out.append('  assert.match(chart, /plannedActionLevels/);')
+        replaced = True
+    else:
+        out.append(line)
+if not replaced:
     raise SystemExit("stale rendered-html DCA title assertion missing")
-rendered.write_text(rendered_text.replace(stale, updated, 1))
+rendered.write_text("\n".join(out) + "\n")
 
 print("Strategy 2 preview declaration order, planned labels, and validation contracts repaired")
