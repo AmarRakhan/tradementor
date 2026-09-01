@@ -34,7 +34,6 @@
   color: #64736d !important;
 }
 
-/* Account figures are already shown in the compact KPI area above the chart. */
 .aster-detail-chart .aster-detail-account-strip { display: none !important; }
 
 .aster-detail-chart .aster-detail-timeframes {
@@ -110,11 +109,11 @@
   min-height: 430px !important;
   height: 100% !important;
   touch-action: pan-y !important;
+  pointer-events: none !important;
 }
-.aster-detail-chart .chart-canvas canvas { touch-action: pan-y !important; }
+.aster-detail-chart .chart-canvas canvas { touch-action: pan-y !important; pointer-events:none !important; }
 .aster-detail-chart .ohlc-readout { opacity:.7 !important; font-size:7px !important; }
 
-/* Right-edge-only planned levels. The horizontal leader is deliberately short. */
 .aster-detail-chart .focus-level-overlay { pointer-events:none !important; }
 .aster-detail-chart .focus-level-segment .focus-price-line {
   left: auto !important;
@@ -140,8 +139,6 @@
 }
 .aster-detail-chart .focus-level-segment .focus-label-leader { display:none !important; }
 
-/* 1:1 compact KPI cockpit above the chart. CSS-module class names are hashed
-   by Next.js, so this targets the stable semantic aria label and structure. */
 [aria-label="Actuele Strategy 2 tradegegevens"] {
   margin: 8px 10px 6px !important;
   border: 1px solid rgba(181,146,52,.22) !important;
@@ -150,9 +147,7 @@
   background: #070c0b !important;
   font-variant-numeric: tabular-nums !important;
 }
-[aria-label="Actuele Strategy 2 tradegegevens"] > div {
-  border-color: rgba(181,146,52,.13) !important;
-}
+[aria-label="Actuele Strategy 2 tradegegevens"] > div { border-color: rgba(181,146,52,.13) !important; }
 [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(1) {
   display: grid !important;
   grid-template-columns: repeat(4,minmax(0,1fr)) !important;
@@ -240,8 +235,6 @@
 [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div:nth-child(2) strong { color:#58f0ae !important; }
 [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div:last-child strong { color:#dbe5df !important; }
 
-/* The legacy cockpit is useful diagnostic detail, but the main chart should
-   remain the dominant surface in the reference view. */
 @media (max-width: 700px) {
   .aster-detail-chart { margin-inline: 0 !important; border-radius: 12px !important; }
   .aster-detail-chart .chart-stage,
@@ -262,7 +255,6 @@
   [aria-label="Actuele Strategy 2 tradegegevens"] > div:nth-child(4) > div { padding-inline:7px !important; }
 }
 
-/* Reduce visual noise on the trade-detail page beneath the chart. */
 @media (max-width: 700px) {
   [aria-label="Aster Tradecentrum"] .trade-marker-details { font-size: 8px; }
 }
