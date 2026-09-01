@@ -40,3 +40,5 @@ jobs:
           git add web/components/aster-recent-trades.tsx web/components/aster-trade-center.module.css web/components/trading-chart.tsx web/tests/trading-chart-aster-detail.test.mjs
           git commit -m 'Show Strategy 2 DCA TP cockpit on trade chart'
           git push origin HEAD:amar-crypto-bot-2026-cloud
+
+# trigger 2026-09-01 trade detail chart fix
