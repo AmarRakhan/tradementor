@@ -12,3 +12,8 @@ test("Strategy 2 chart stays draggable without stealing normal page scroll", () 
   assert.match(chart, /horzTouchDrag:true/);
   assert.match(chart, /axisPressedMouseMove:true/);
 });
+
+test("Strategy 2 right price scale remains touch draggable", () => {
+  assert.match(css, /\.aster-detail-chart \.chart-canvas table tr:first-child > td:last-child,[\s\S]*touch-action:\s*none\s*!important;/i);
+  assert.match(css, /\.aster-detail-chart \.chart-canvas table tr:first-child > td:last-child canvas[\s\S]*pointer-events:\s*auto\s*!important;/i);
+});
