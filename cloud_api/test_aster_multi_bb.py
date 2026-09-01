@@ -328,13 +328,14 @@ def test_manual_selection_public_settings_roundtrip():
     assert public["maximumPositions"]==5
 
 
-def test_manual_selection_keeps_minimum_leverage_guard():
+def test_manual_selection_exchange_max_overrides_configured_minimum_without_stopping():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100},leverage=10)
     settings=manual_cfg([{"symbol":"AAAUSDT","side":"SHORT"}],minimumLeverage=20,maximumPositions=1,longSlots=0,shortSlots=1)
     r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
-    assert not any(x["kind"]=="ENTRY" for x in r["actions"])
-    assert any(x["kind"]=="ENTRY_SKIP" and "minimum 20x" in x["reason"] for x in r["actions"])
-
+    entry=next(x for x in r["actions"] if x["kind"]=="ENTRY")
+    assert entry["leverage"]==10
+    assert entry["forcedBelowConfiguredMinimum"] is True
+    assert r["entryStatus"]=="ENTRY_PLANNED"
 
 def test_manual_selection_keeps_available_margin_guard():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100},leverage=100)

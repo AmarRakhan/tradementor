@@ -9,6 +9,7 @@ import hashlib, math, time
 from aster_close_guard import CloseEvidence
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import PositionSide
+from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 
 ENGINE = "multi_bb_v1"
 
@@ -177,21 +178,32 @@ def rank_top_volume(tickers: list[dict[str, Any]], exchange_info: dict[str, Any]
     return ranked[:top_n]
 
 
-def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str, minimum_leverage: int) -> PairExecutionPlan:
-    symbol = str(row.get("symbol", "")).upper(); bracket_rows = _brackets(client.leverage_brackets(symbol), symbol)
-    candidates = sorted({_i(x.get("initialLeverage")) for x in bracket_rows if _i(x.get("initialLeverage")) >= minimum_leverage}, reverse=True)
-    if not candidates: raise ValueError(f"{symbol}: max leverage lager dan minimum {minimum_leverage}x")
-    last: Exception | None = None
-    for leverage in candidates:
-        configured_notional = entry_margin_usd * leverage if entry_sizing_mode == "margin" else entry_notional_usd
-        try: return plan_pair(row, bracket_rows, price, configured_notional, accepted_leverage=leverage)
-        except Exception as exc: last = exc
-    raise ValueError(f"{symbol}: geen uitvoerbare order op minimaal {minimum_leverage}x") from last
+def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str, minimum_leverage: int) -> tuple[PairExecutionPlan, dict[str, Any]]:
+    symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
+    resolved = resolve_entry(payload, symbol, configured_minimum=minimum_leverage,
+        entry_margin_usd=entry_margin_usd, entry_notional_usd=entry_notional_usd, entry_sizing_mode=entry_sizing_mode)
+    plan = plan_pair(row, rows, price, resolved["orderNotional"], accepted_leverage=int(resolved["leverage"]))
+    return plan, resolved
 
 
-def _plan_add(client: Any, row: dict[str, Any], price: float, margin: float, leverage: int, existing_notional: float) -> PairExecutionPlan:
-    symbol = str(row.get("symbol", "")).upper(); bracket_rows = _brackets(client.leverage_brackets(symbol), symbol)
-    return plan_pair(row, bracket_rows, price, margin * leverage, accepted_leverage=leverage, existing_contract_notional=existing_notional)
+def _plan_add(client: Any, row: dict[str, Any], price: float, margin: float, leverage: int, existing_notional: float, minimum_leverage: int) -> tuple[PairExecutionPlan, dict[str, Any]]:
+    symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
+    resolved = resolve_dca(payload, symbol, current_notional=existing_notional, current_leverage=leverage,
+        dca_margin_usd=margin, configured_minimum=minimum_leverage)
+    plan = plan_pair(row, rows, price, resolved["orderNotional"], accepted_leverage=int(resolved["leverage"]), existing_contract_notional=existing_notional)
+    return plan, resolved
+
+
+def leverage_tier_preview(*, client: Any, symbol: str, settings: MultiBbConfig) -> dict[str, Any]:
+    symbol = str(symbol).upper().strip(); payload = client.leverage_brackets(symbol)
+    positions = _position_map(client.position_risk(symbol)); current = next((row for key, row in positions.items() if key.startswith(symbol + "|")), None)
+    mark = _f((current or {}).get("markPrice"), _f((current or {}).get("entryPrice")))
+    qty = abs(_f((current or {}).get("positionAmt"))); current_notional = qty * mark if qty > 0 and mark > 0 else 0.0
+    current_leverage = max(0, _i((current or {}).get("leverage")))
+    return tier_preview(payload, symbol, configured_minimum=settings.minimum_leverage,
+        entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd,
+        entry_sizing_mode=settings.entry_sizing_mode, dca_margin_usd=settings.dca_margin_usd,
+        current_notional=current_notional, current_leverage=current_leverage)
 
 
 def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -236,6 +248,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                       before_order: Any = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
+    selected_keys = {f"{symbol}|{side}" for symbol, side in settings.manual_symbols} if settings.manual_symbol_selection_enabled else set()
+    reconciled_closed: list[str] = []
     # Explicit user start may adopt already-open exchange positions once. Deployment/config save alone never does this.
     if bool(raw_state.get("multiBbAdoptionPending")):
         symbol_sides: dict[str, set[str]] = {}
@@ -253,6 +267,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                      "lastReason": "Bestaande LONG/SHORT-hedge blijft handmatig geïsoleerd; Multi DCA start op overige slots",
                      "multiBbIsolatedSymbols": conflicts, "updatedAt": datetime.now(timezone.utc)}, merge=True)
         for key, row in pmap.items():
+            if settings.manual_symbol_selection_enabled and key not in selected_keys: continue
             if key in state or key in conflict_keys: continue
             qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); mark = _f(row.get("markPrice"), entry)
             if qty <= 0 or entry <= 0: continue
@@ -270,12 +285,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
+    for key in reconciled_closed:
+        actions.append({"kind": "REENTRY_STATE_CLEARED", "key": key, "reason": "exchange position is flat"})
 
     # Exchange truth reconciles every already-managed leg; a manual add never resets/increments the automatic DCA counter.
     for key in list(state):
         row = pmap.get(key)
         if row is None:
-            state.pop(key, None); continue
+            reconciled_closed.append(key); state.pop(key, None); continue
         st = dict(state[key]); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); leverage = max(1, _i(row.get("leverage"), st.get("leverage", 1)))
         if abs(qty - _f(st.get("lastKnownQty"))) > 1e-12 or abs(entry - _f(st.get("lastKnownEntry"))) > 1e-12:
             st["manualOrExchangeReconciledAtMs"] = timestamp_ms
@@ -314,31 +331,39 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if not due: continue
         row_info = info_map.get(symbol); leverage = max(1, _i(row.get("leverage")))
         if row_info is None: continue
-        try: plan = _plan_add(client, row_info, mark, settings.dca_margin_usd, leverage, qty * mark)
+        try: plan, tier = _plan_add(client, row_info, mark, settings.dca_margin_usd, leverage, qty * mark, settings.minimum_leverage)
         except Exception as exc:
             actions.append({"kind": "DCA_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)}); continue
-        required = float(plan.notional_per_leg) / leverage
+        required = float(tier["additionalMarginRequired"])
         if available < required * 1.05:
-            actions.append({"kind": "DCA_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
-        actions.append({"kind": "DCA", "symbol": symbol, "side": side, "number": dca_count + 1, "trigger": trigger})
+            actions.append({"kind": "DCA_MARGIN_WAIT", "symbol": symbol, "side": side,
+                "reason": "INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION" if tier["tierReduction"] else "INSUFFICIENT_AVAILABLE_MARGIN",
+                "requiredMargin": required, "targetLeverage": tier["leverage"]}); continue
+        actions.append({"kind": "DCA", "symbol": symbol, "side": side, "number": dca_count + 1, "trigger": trigger,
+            "leverage": tier["leverage"], "previousLeverage": tier["previousLeverage"], "tierReduction": tier["tierReduction"],
+            "projectedNotional": tier["projectedNotional"]})
         if not dry_run:
             try:
                 result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                          new_position_leverage=leverage, before_submit=before_order)
+                                          new_position_leverage=int(tier["leverage"]), allow_existing_contract_leverage_change=True, before_submit=before_order)
             except Exception as exc:
                 if not is_definite_contract_rejection(exc): raise
                 actions.append({"kind": "DCA_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
                 continue
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), mark)
-            st = dict(st0); st.update({"dcaCount": dca_count + 1, "lastBotFillPrice": fill_price, "updatedAtMs": timestamp_ms}); state[key] = st
+            st = dict(st0); st.update({"dcaCount": dca_count + 1, "lastBotFillPrice": fill_price, "updatedAtMs": timestamp_ms,
+                "leverage": int(tier["leverage"]), "lastTierReductionAtMs": timestamp_ms if tier["tierReduction"] else st0.get("lastTierReductionAtMs")}); state[key] = st
             ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                     "lastReason": f"Multi DCA actief; DCA {dca_count + 1} bevestigd op {symbol}"}, merge=True)
-            ref.collection("audit").add({"event": "MULTI_BB_DCA", "symbol": symbol, "side": side, "dcaNumber": dca_count + 1, "timestamp": datetime.now(timezone.utc)})
+                     "lastReason": f"Multi DCA actief; DCA {dca_count + 1} bevestigd op {symbol} @ {int(tier['leverage'])}x"}, merge=True)
+            ref.collection("audit").add({"event": "MULTI_BB_DCA", "symbol": symbol, "side": side, "dcaNumber": dca_count + 1,
+                "previousLeverage": tier["previousLeverage"], "leverage": tier["leverage"], "tierReduction": tier["tierReduction"],
+                "projectedNotional": tier["projectedNotional"], "timestamp": datetime.now(timezone.utc)})
         available -= required; sent += 1
 
     active = _position_map(client.position_risk()) if sent and not dry_run else pmap
     active_symbols = {k.split("|", 1)[0] for k in active}
-    long_count = sum(1 for k in active if k.endswith("|LONG")); short_count = sum(1 for k in active if k.endswith("|SHORT"))
+    strategy_active_keys = {key for key in active if key in state or (settings.manual_symbol_selection_enabled and key in selected_keys)}
+    long_count = sum(1 for k in strategy_active_keys if k.endswith("|LONG")); short_count = sum(1 for k in strategy_active_keys if k.endswith("|SHORT"))
     long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
 
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
@@ -350,8 +375,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             bracket_payload = client.leverage_brackets(symbol); maximum = max_contract_leverage(bracket_payload, symbol)
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue
-        if maximum < settings.minimum_leverage:
-            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"max {maximum}x < minimum {settings.minimum_leverage}x"}); continue
+        if maximum <= 0:
+            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue
         if settings.manual_symbol_selection_enabled:
             side = str(ranked_row.get("forcedSide", "")).upper()
             if side == "LONG" and long_need <= 0: continue
@@ -360,13 +385,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
-        try: plan = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
+        try: plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)}); continue
         required = float(plan.notional_per_leg) / plan.leverage
         if available < required * 1.05:
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
-        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill"}
+        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
+            "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
         if dry_run:
             actions.append(entry_action)
         else:
@@ -409,7 +435,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         elif action.get("kind") == "ENTRY_MARGIN_WAIT":
             reason = "INSUFFICIENT_AVAILABLE_MARGIN"
         skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+    entry_rows = [a for a in actions if a.get("kind") == "ENTRY"]
+    entry_wait = [a for a in actions if a.get("kind") in {"ENTRY_SKIP", "ENTRY_MARGIN_WAIT"}]
+    selected_open = bool(settings.manual_symbol_selection_enabled and any(key in active for key in selected_keys))
+    if entry_rows: entry_status = "ENTRY_PLANNED" if dry_run else "ENTRY_SUBMITTED"; entry_reason = "verse Strategy 2 entry verwerkt"
+    elif selected_open: entry_status = "POSITION_ALREADY_OPEN"; entry_reason = "geselecteerde munt heeft al een open Aster-positie"
+    elif long_need <= 0 and short_need <= 0: entry_status = "WAITING_CAPACITY"; entry_reason = "Strategy 2 slots zijn gevuld"
+    elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
+    elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
+    elif entry_wait: entry_status = "ORDER_REJECTED"; entry_reason = str(entry_wait[0].get("reason", "Aster ordercheck afgewezen"))
+    else: entry_status = "READY_FOR_ENTRY"; entry_reason = "verse exchange snapshot; geselecteerde munt is opnieuw entry-kandidaat"
     report = {"engine": ENGINE, "ordersSent": 0 if dry_run else sent, "simulatedActions": len(actions) if dry_run else 0,
+              "entryStatus": entry_status, "entryReason": entry_reason,
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "activeLong": settings.long_slots - long_need, "activeShort": settings.short_slots - short_need,
@@ -419,5 +456,5 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     if not dry_run:
         ref.set({"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
                  "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                 "lastReason": "Multi DCA actief; vrije slots worden direct gevuld"}, merge=True)
+                 "lastReason": f"{entry_status}: {entry_reason}"}, merge=True)
     return {"status": "simulated" if dry_run else "running", "action": "MULTI_BB", **report}

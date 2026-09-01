@@ -6,6 +6,7 @@ import { strategy2ServerStatus } from "@/lib/aster-strategy2-server-status.mjs";
 
 type ManualSide = "LONG" | "SHORT";
 type ManualSymbol = { symbol: string; side: ManualSide };
+type TierPreview = { symbol: string; source: string; tiers: Array<{ floor: number; cap: number; maxLeverage: number }>; nextTier?: { floor: number; cap: number; maxLeverage: number } | null; estimatedDcasToNextTier?: number | null; entryPlan?: { leverage: number; projectedNotional: number; forcedBelowConfiguredMinimum: boolean } | null; currentNotional?: number; currentLeverage?: number; };
 type Values = {
   name: string; universe: string; positions: string; longSlots: string; shortSlots: string;
   minLeverage: string; entryMargin: string; dcaDistance: string; dcaMargin: string;
@@ -30,6 +31,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const [wizard, setWizard] = useState(false), [step, setStep] = useState(0), [v, setV] = useState(initial), [busy, setBusy] = useState(false), [message, setMessage] = useState("");
   const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null), [confirmedState, setConfirmedState] = useState<Record<string, unknown> | null>(null);
   const [markets, setMarkets] = useState<string[]>([]), [marketSearch, setMarketSearch] = useState(""), [marketBusy, setMarketBusy] = useState(false), [marketAttempted, setMarketAttempted] = useState(false);
+  const [tierPreviews, setTierPreviews] = useState<Record<string, TierPreview>>({}), [tierBusy, setTierBusy] = useState(false);
   const snapshotState = (snapshot?.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 : {}) as Record<string, unknown>;
   const status = strategy2ServerStatus(snapshotState, confirmedState, serverConfirmed); const state = status.state as Record<string, unknown>;
 
@@ -72,6 +74,16 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     finally { setMarketBusy(false); }
   }
   useEffect(() => { if (wizard && v.manualEnabled && !marketAttempted) void loadMarkets(); }, [wizard, v.manualEnabled, marketAttempted]);
+  useEffect(() => {
+    if (!wizard || !v.manualEnabled || !v.manualSymbols.length) { setTierPreviews({}); return; }
+    let cancelled = false; setTierBusy(true);
+    void Promise.all(v.manualSymbols.map(async ({ symbol }) => {
+      const q = new URLSearchParams({ symbol, minimumLeverage: String(Math.max(1, Math.round(n(v.minLeverage)))), entryMarginUsd: String(Math.max(.01, n(v.entryMargin))), dcaMarginUsd: String(Math.max(.01, n(v.dcaMargin))) });
+      const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/leverage-tiers?${q.toString()}`) as TierPreview;
+      return [symbol, result] as const;
+    })).then((rows) => { if (!cancelled) setTierPreviews(Object.fromEntries(rows)); }).catch((e) => { if (!cancelled) setMessage(e instanceof Error ? e.message : "Aster leverage tiers konden niet worden geladen."); }).finally(() => { if (!cancelled) setTierBusy(false); });
+    return () => { cancelled = true; };
+  }, [wizard, v.manualEnabled, v.manualSymbols, v.minLeverage, v.entryMargin, v.dcaMargin]);
 
   const selected = new Set(v.manualSymbols.map((x) => x.symbol));
   const marketMatches = markets.filter((symbol) => !selected.has(symbol) && symbol.includes(marketSearch.trim().toUpperCase())).slice(0, 10);
@@ -85,7 +97,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     {v.manualEnabled && <div className="manual-symbol-picker">
       <div className="manual-symbol-search"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value.toUpperCase())} onFocus={() => { if (!markets.length) void loadMarkets(); }} placeholder="Zoek munt, bijvoorbeeld HYPEUSDT" /><button type="button" disabled={marketBusy || !marketSearch.trim()} onClick={() => { const exact = markets.find((x) => x === marketSearch.trim().toUpperCase()); if (exact) addSymbol(exact); }}>+ toevoegen</button></div>
       {marketSearch.trim() && <div className="manual-symbol-results">{marketBusy ? <small>Markten laden…</small> : marketMatches.length ? marketMatches.map((symbol) => <button type="button" key={symbol} onClick={() => addSymbol(symbol)}>{symbol}<i>+</i></button>) : <small>Geen beschikbare Aster USDT perpetual gevonden.</small>}</div>}
-      <div className="manual-symbol-selected">{v.manualSymbols.map((row) => <div key={row.symbol}><b>{row.symbol}</b><span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)} aria-label={`${row.symbol} verwijderen`}>×</button></div>)}</div>
+      <div className="manual-symbol-selected">{v.manualSymbols.map((row) => { const preview = tierPreviews[row.symbol]; const entryLev = preview?.entryPlan?.leverage || preview?.currentLeverage || 0; return <div key={row.symbol} style={{display:"grid",gap:6}}><div style={{display:"flex",alignItems:"center",gap:8}}><b>{row.symbol}</b><span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)} aria-label={`${row.symbol} verwijderen`}>×</button></div>{tierBusy && !preview ? <small>Leverage tiers laden…</small> : preview ? <div style={{display:"grid",gap:3,fontSize:12,opacity:.92}}><b>Aster leverage tiers</b>{preview.tiers.slice(0,6).map((t,i) => <span key={`${row.symbol}-${i}`}>{t.cap > 0 ? `$${t.floor.toLocaleString()} – $${t.cap.toLocaleString()}` : `Vanaf $${t.floor.toLocaleString()}`}: max {t.maxLeverage}×</span>)}{preview.nextTier && <strong>Volgende daling: {entryLev}× → {preview.nextTier.maxLeverage}× vanaf ongeveer ${preview.nextTier.floor.toLocaleString()} totaal</strong>}{preview.estimatedDcasToNextTier != null && <span>Geschat aantal DCA's tot volgende tier: {preview.estimatedDcasToNextTier}</span>}{preview.nextTier && entryLev > preview.nextTier.maxLeverage && <span className="inline-warning">Let op: bij verdere DCA verlaagt Strategy 2 automatisch de leverage van de hele positie naar de hoogste leverage die Aster toestaat en gaat daarna verder.</span>}</div> : <small>Geen betrouwbare tierdata beschikbaar; Strategy 2 zal geen willekeurige hoge leverage gebruiken.</small>}</div>; })}</div>
       <p className="manual-symbol-summary">{v.manualSymbols.length} geselecteerd · {selectedLong} LONG · {selectedShort} SHORT</p>
       {!v.manualSymbols.length && <p className="inline-warning">Selecteer minimaal één munt. Bestaande posities worden nooit gesloten door deze keuze.</p>}
     </div>}
@@ -94,7 +106,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const steps = [
     { title: "Top-N Aster-volume", help: "Alleen actuele Aster USDT-markten binnen deze Top-N op 24h quote-volume mogen een nieuwe positie openen. De extra handmatige modus hieronder verandert dit alleen wanneer jij hem expliciet aanzet.", body: <><Field label="Top-N volume" value={v.universe} set={x => setV({ ...v, universe: x })} />{manualPicker}</> },
     { title: "Hoeveel posities tegelijk?", help: "LONG + SHORT moet exact gelijk zijn aan het totaal. Dezelfde munt kan niet tegelijk LONG en SHORT zijn.", body: <><Field label="Totaal posities" value={v.positions} set={setTotal} /><Field label="LONG slots" value={v.longSlots} set={setLong} /><Field label="SHORT slots" value={v.shortSlots} set={setShort} /><b>{v.positions} totaal · {v.longSlots} LONG · {v.shortSlots} SHORT</b></> },
-    { title: "Minimum leverage", help: "Een munt valt af als Aster minder ondersteunt. Een toegestane munt gebruikt de hoogste leverage die Aster voor de geplande order toestaat.", body: <Field label="Minimum leverage (×)" value={v.minLeverage} set={x => setV({ ...v, minLeverage: x })} /> },
+    { title: "Minimum leverage", help: "Strategy 2 gebruikt de hoogste veilige leverage uit de actuele Aster tiers. Als een hogere positietier later een lagere maximumleverage afdwingt, wint de Aster-limiet: de hele positie wordt automatisch verlaagd en de bot blijft actief.", body: <Field label="Minimum leverage (×)" value={v.minLeverage} set={x => setV({ ...v, minLeverage: x })} /> },
     { title: "Eerste instap", help: v.manualEnabled ? "Dit is jouw eigen startmargin. De bot kiest eerst de hoogste geldige Aster-leverage voor de gekozen munt en berekent daarna de orderwaarde: margin × leverage." : "Dit is de vaste orderwaarde per nieuwe positie. De bestaande Top-N werking blijft ongewijzigd.", body: <Field label={v.manualEnabled ? "Start margin (USDT)" : "Entry orderwaarde (USDT)"} value={v.entryMargin} set={x => setV({ ...v, entryMargin: x })} /> },
     { title: "Direct slots vullen", help: v.manualEnabled ? "Vrije slots worden direct gevuld uit jouw geselecteerde munten en richtingen. Er is geen indicator- of Bollinger-wachtregel." : "Vrije LONG- en SHORT-slots worden direct gevuld met de hoogst gerangschikte geldige Top-N markten. Er is geen indicator- of Bollinger-wachtregel.", body: <div className="maker-summary"><b>DIRECT FILL</b><span>Na TP komt het slot direct vrij en start de volgende positie als een nieuwe schone cyclus met DCA-teller 0.</span></div> },
     { title: "DCA-afstand", help: "LONG koopt lager bij; SHORT koopt hoger bij. De afstand wordt vanaf de laatste bot-fill gemeten.", body: <Field label="DCA afstand (%)" value={v.dcaDistance} set={x => setV({ ...v, dcaDistance: x })} /> },
