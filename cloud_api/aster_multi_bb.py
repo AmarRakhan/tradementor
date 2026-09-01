@@ -231,6 +231,37 @@ def leverage_tier_preview(*, client: Any, symbol: str, settings: MultiBbConfig) 
     return preview
 
 
+def _manual_reopen_boundary(client: Any, symbol: str, side: str, state: dict[str, Any]) -> bool:
+    """Return True only when Aster fills prove the old cycle went flat and reopened."""
+    start = _i(state.get("cycleStartedAtMs"))
+    if start <= 0:
+        return False
+    try:
+        fills = sorted(client.user_trades(symbol, start_time=max(0, start - 1000), limit=1000), key=lambda x: _i(x.get("time", x.get("timestamp", x.get("timestampMs")))))
+    except Exception:
+        return False
+    running = 0.0
+    was_open = False
+    went_flat = False
+    for fill in fills:
+        position_side = str(fill.get("positionSide", side)).upper()
+        if position_side not in {side, "BOTH"}:
+            continue
+        trade_side = str(fill.get("side", "")).upper()
+        qty = abs(_f(fill.get("qty", fill.get("quantity", fill.get("executedQty")))))
+        if qty <= 0 or trade_side not in {"BUY", "SELL"}:
+            continue
+        delta = qty if (side == "LONG" and trade_side == "BUY") or (side == "SHORT" and trade_side == "SELL") else -qty
+        running = max(0.0, running + delta)
+        if running > 1e-12:
+            if went_flat:
+                return True
+            was_open = True
+        elif was_open:
+            went_flat = True
+    return False
+
+
 def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     out = {}
     for row in positions:
@@ -317,9 +348,20 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if row is None:
             reconciled_closed.append(key); state.pop(key, None); continue
         st = dict(state[key]); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); leverage = max(1, _i(row.get("leverage"), st.get("leverage", 1)))
-        if abs(qty - _f(st.get("lastKnownQty"))) > 1e-12 or abs(entry - _f(st.get("lastKnownEntry"))) > 1e-12:
-            st["manualOrExchangeReconciledAtMs"] = timestamp_ms
-        st.update({"lastKnownQty": qty, "lastKnownEntry": entry, "leverage": leverage, "updatedAtMs": timestamp_ms})
+        changed = abs(qty - _f(st.get("lastKnownQty"))) > 1e-12 or abs(entry - _f(st.get("lastKnownEntry"))) > 1e-12
+        boundary_check = settings.manual_symbol_selection_enabled and _i(st.get("dcaCount")) > 0 and (bool(raw_state.get("multiBbAdoptionPending")) or not st.get("cycleBoundaryCheckedAtMs") or changed)
+        if boundary_check and _manual_reopen_boundary(client, str(row.get("symbol", "")).upper(), str(row.get("positionSide", "")).upper(), st):
+            old_cycle = str(st.get("cycleId", ""))
+            st = {"cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16], "dcaCount": 0,
+                "lastBotFillPrice": entry, "lastKnownQty": qty, "lastKnownEntry": entry, "leverage": leverage,
+                "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "cycleBoundaryCheckedAtMs": timestamp_ms, "botManaged": True}
+            actions.append({"kind": "REENTRY_CYCLE_RESET", "key": key, "oldCycleId": old_cycle, "reason": "Aster fills prove prior cycle went flat before this reopen"})
+        else:
+            if changed:
+                st["manualOrExchangeReconciledAtMs"] = timestamp_ms
+            if boundary_check:
+                st["cycleBoundaryCheckedAtMs"] = timestamp_ms
+            st.update({"lastKnownQty": qty, "lastKnownEntry": entry, "leverage": leverage, "updatedAtMs": timestamp_ms})
         account_equity = _f(account.get("totalMarginBalance", account.get("marginBalance", account.get("equity", account.get("totalWalletBalance")))))
         st.update(position_action_preview(row=row, state=st, settings=settings, account_equity=account_equity))
         state[key] = st

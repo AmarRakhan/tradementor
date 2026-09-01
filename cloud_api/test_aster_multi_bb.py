@@ -406,3 +406,27 @@ def test_manual_entry_preview_exposes_exchange_minimum_margin():
     assert preview["minimumExecutableNotionalUsd"]==pytest.approx(5.007585)
     assert preview["minimumEntryMarginUsd"]==pytest.approx(.25037925)
     assert preview["suggestedEntryMarginUsd"]==pytest.approx(.26)
+
+
+
+def test_manual_close_and_reopen_same_coin_resets_old_dca_cycle(monkeypatch):
+    class ReopenClient(Client):
+        def user_trades(self, symbol, start_time=None, limit=1000):
+            return [
+                {"symbol":"ARBUSDT","positionSide":"LONG","side":"BUY","qty":"1.0","time":1000},
+                {"symbol":"ARBUSDT","positionSide":"LONG","side":"BUY","qty":"0.5","time":1100},
+                {"symbol":"ARBUSDT","positionSide":"LONG","side":"SELL","qty":"1.5","time":2000},
+                {"symbol":"ARBUSDT","positionSide":"LONG","side":"BUY","qty":"0.2","time":3000},
+            ]
+    pos={"symbol":"ARBUSDT","positionSide":"LONG","positionAmt":"0.2","entryPrice":"110","markPrice":"110","leverage":"20"}
+    stale={"multiBbAdoptionPending":True,"multiBbPositions":{"ARBUSDT|LONG":{"cycleId":"old-cycle","dcaCount":5,"lastBotFillPrice":90,"lastKnownQty":1.5,"lastKnownEntry":95,"cycleStartedAtMs":1000,"updatedAtMs":1500,"botManaged":True}}}
+    c=ReopenClient(positions=[pos],tickers=[{"symbol":"ARBUSDT","quoteVolume":"100"}],prices={"ARBUSDT":110},leverage=20)
+    settings=manual_cfg([{"symbol":"ARBUSDT","side":"LONG"}],minimumLeverage=20,entryMarginUsd=1,maximumPositions=1,longSlots=1,shortSlots=0)
+    ref=Ref()
+    r=run_multi_bb_step(client=c,ref=ref,raw_state=stale,settings=settings,uid="u",account={"availableBalance":"100","totalMarginBalance":"161"},positions=[pos],open_orders=[],timestamp_ms=4000,dry_run=False)
+    fresh=ref.updates[-1]["multiBbPositions"]["ARBUSDT|LONG"]
+    assert fresh["cycleId"] != "old-cycle"
+    assert fresh["dcaCount"] == 0
+    assert fresh["lastBotFillPrice"] == pytest.approx(110)
+    assert fresh["nextDcaNumber"] == 1
+    assert any(x["kind"]=="REENTRY_CYCLE_RESET" for x in r["actions"])
