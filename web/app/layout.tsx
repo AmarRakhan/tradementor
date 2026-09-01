@@ -4,6 +4,7 @@ import { AuthProvider } from "@/components/auth-provider";
 import { PwaRegistration } from "@/components/pwa-registration";
 import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
+import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { WEBAPP_VERSION } from "@/lib/app-version";
 import "./globals.css";
 import "./premium.css";
@@ -55,6 +56,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         </div>
         <PwaRegistration buildNumber={buildNumber} />
         <ZoomGuard />
+        <Strategy2ReferenceEnhancer />
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
