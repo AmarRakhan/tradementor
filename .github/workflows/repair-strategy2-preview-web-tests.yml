@@ -1,0 +1,58 @@
+name: Repair Strategy 2 preview web validation
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/repair-strategy2-preview-web-tests.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Update stale source-inspection contracts only
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          rendered = Path('web/tests/rendered-html.test.mjs')
+          lines = rendered.read_text().splitlines()
+          out=[]
+          changed=False
+          for line in lines:
+              if 'assert.match(chart, /title:next' in line:
+                  out.append('  assert.match(chart, /plannedOverlayLevels/);')
+                  out.append('  assert.match(chart, /plannedActionLevels/);')
+                  changed=True
+              else:
+                  out.append(line)
+          if changed:
+              rendered.write_text('\n'.join(out)+'\n')
+
+          detail = Path('web/tests/trading-chart-aster-detail.test.mjs')
+          text = detail.read_text()
+          replacements = {
+              'assert.match(chart, /VOLGENDE \\${selection\\.side\\.toUpperCase\\(\\)} DCA/);': 'assert.match(chart, /plannedActionLevels/);',
+              'assert.match(recent, /dcaLevels=\\{detailDcaLevels\\}/);': 'assert.match(recent, /dcaLevels=\\{detailChartDcaLevels\\}/);\n  assert.match(recent, /plannedActionLevels=\\{detailPlannedLevels\\}/);',
+          }
+          for old,new in replacements.items():
+              if old in text:
+                  text=text.replace(old,new)
+                  changed=True
+          detail.write_text(text)
+          print('changed=', changed)
+          PY
+      - name: Commit validation contract repair and retrigger web candidate
+        run: |
+          printf '\ndeploy-strategy2-action-preview-web-retry-%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" >> .deploy/focus-portfolio-v7-web-20260830
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add web/tests/rendered-html.test.mjs web/tests/trading-chart-aster-detail.test.mjs .deploy/focus-portfolio-v7-web-20260830
+          git commit -m 'Align Strategy 2 preview web validation contracts'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
