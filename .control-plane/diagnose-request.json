@@ -1,6 +1,6 @@
 {
-  "scope": "all",
+  "scope": "staging",
   "requestedBy": "chatgpt-control-plane",
-  "purpose": "urgent-runtime-incident-data-not-loading-and-exits-not-executing",
-  "requestedAt": "2026-08-21T08:58:00+02:00"
+  "purpose": "diagnose ARBUSDT Strategy 2 entry not opening after wizard; user settings leverage20 startMargin0.2 dcaMargin0.2 dcaDrop0.3pct tp19pct",
+  "requestedAt": "2026-09-01T08:45:00+02:00"
 }
