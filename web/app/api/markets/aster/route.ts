@@ -5,11 +5,10 @@ const CLOUD_API = "https://tradementor-api-604335232956.europe-west4.run.app";
 const ALLOWED_INTERVALS = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 const BOLLINGER_PERIOD = 20;
 const BOLLINGER_DEVIATIONS = 2;
-const CONCURRENCY = 10;
-const MAX_ENRICH_SYMBOLS = 12;
-const LEVERAGE_TTL_MS = 10 * 60_000;
-const BB_TTL_MS = 45_000;
+const MAX_ENRICH_SYMBOLS = 8;
+const LEVERAGE_TTL_MS = 6 * 60 * 60_000;
 const FETCH_TIMEOUT_MS = 12_000;
+const ASTER_MIN_REQUEST_SPACING_MS = 450;
 
 type Timed<T> = { expiresAt: number; value: T };
 type BbStatus = "above" | "between" | "below";
@@ -17,10 +16,25 @@ type BbResult = { status: BbStatus; upper: number; middle: number; lower: number
 
 const leverageCache = new Map<string, Timed<number>>();
 const bbCache = new Map<string, Timed<BbResult>>();
+let asterQueue: Promise<void> = Promise.resolve();
+let lastAsterRequestAt = 0;
 
 function numberValue(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function bbTtlMs(interval: string) {
+  if (interval === "1m") return 45_000;
+  if (interval === "5m") return 2 * 60_000;
+  if (interval === "15m") return 5 * 60_000;
+  if (interval === "1h") return 10 * 60_000;
+  if (interval === "4h") return 30 * 60_000;
+  return 60 * 60_000;
 }
 
 function bollinger(closes: number[], livePrice: number): BbResult {
@@ -46,8 +60,13 @@ async function jsonFetch(url: string, init?: RequestInit) {
     let payload: unknown;
     try { payload = JSON.parse(body); } catch { payload = null; }
     if (!response.ok) {
-      const detail = payload && typeof payload === "object" && "detail" in payload ? String((payload as { detail?: unknown }).detail) : body;
+      const detail = payload && typeof payload === "object" && "detail" in payload
+        ? String((payload as { detail?: unknown }).detail)
+        : body;
       throw new Error(detail || `HTTP ${response.status}`);
+    }
+    if (payload && typeof payload === "object" && "code" in payload && numberValue((payload as Record<string, unknown>).code) < 0) {
+      throw new Error(JSON.stringify(payload));
     }
     return payload;
   } finally {
@@ -55,18 +74,19 @@ async function jsonFetch(url: string, init?: RequestInit) {
   }
 }
 
-async function mapLimited<T, R>(values: T[], worker: (value: T) => Promise<R>): Promise<R[]> {
-  const result = new Array<R>(values.length);
-  let cursor = 0;
-  const runners = Array.from({ length: Math.min(CONCURRENCY, values.length) }, async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= values.length) return;
-      result[index] = await worker(values[index]);
-    }
-  });
-  await Promise.all(runners);
-  return result;
+async function queuedAsterJson(url: string) {
+  let release!: () => void;
+  const previous = asterQueue;
+  asterQueue = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const waitMs = Math.max(0, lastAsterRequestAt + ASTER_MIN_REQUEST_SPACING_MS - Date.now());
+    if (waitMs) await sleep(waitMs);
+    lastAsterRequestAt = Date.now();
+    return await jsonFetch(url);
+  } finally {
+    release();
+  }
 }
 
 async function maximumLeverage(symbol: string, authorization: string, accountKey: string): Promise<number> {
@@ -86,29 +106,23 @@ async function maximumLeverage(symbol: string, authorization: string, accountKey
   return maximum;
 }
 
-async function bbFor(symbol: string, interval: string, livePrice: number): Promise<BbResult> {
+async function bbFor(symbol: string, interval: string): Promise<BbResult> {
   const key = `${interval}:${symbol}`;
   const cached = bbCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    const { upper, middle, lower } = cached.value;
-    return { status: livePrice > upper ? "above" : livePrice < lower ? "below" : "between", upper, middle, lower };
-  }
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
   const url = new URL(`${ASTER}/fapi/v1/klines`);
   url.searchParams.set("symbol", symbol);
   url.searchParams.set("interval", interval);
   url.searchParams.set("limit", String(BOLLINGER_PERIOD));
-  const payload = await jsonFetch(url.toString());
+  const payload = await queuedAsterJson(url.toString());
   if (!Array.isArray(payload)) throw new Error(`${symbol}: candles hebben een ongeldig formaat`);
   const closes = payload.map((row) => Array.isArray(row) ? numberValue(row[4]) : 0);
+  const livePrice = closes.at(-1) || 0;
+  if (livePrice <= 0) throw new Error(`${symbol}: actuele candle-close ontbreekt`);
   const result = bollinger(closes, livePrice);
-  bbCache.set(key, { expiresAt: Date.now() + BB_TTL_MS, value: result });
+  bbCache.set(key, { expiresAt: Date.now() + bbTtlMs(interval), value: result });
   return result;
-}
-
-function tickerMap(raw: unknown) {
-  const tickers = Array.isArray(raw) ? raw : [];
-  return new Map(tickers.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
-    .map((row) => [String(row.symbol || "").toUpperCase(), row]));
 }
 
 function parseEnrichSymbols(url: URL) {
@@ -120,6 +134,41 @@ function parseEnrichSymbols(url: URL) {
     throw new Error(`Enrichment ondersteunt 1-${MAX_ENRICH_SYMBOLS} geldige USDT-symbolen per batch`);
   }
   return symbols;
+}
+
+function rowsFromFocusMarkets(payload: unknown) {
+  const object = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const source = Array.isArray(object.markets)
+    ? object.markets
+    : Array.isArray(object.symbols)
+      ? object.symbols
+      : Array.isArray(payload)
+        ? payload
+        : [];
+
+  const rows = source.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+    const symbol = String(row.symbol || row.market || "").toUpperCase();
+    if (!symbol.endsWith("USDT")) return [];
+    const lastPrice = numberValue(row.lastPrice ?? row.price ?? row.markPrice);
+    if (lastPrice <= 0) return [];
+    return [{
+      symbol,
+      baseAsset: String(row.baseAsset || symbol.slice(0, -4)),
+      quoteAsset: "USDT",
+      lastPrice,
+      change24hPct: numberValue(row.change24hPct ?? row.priceChangePercent ?? row.change24h ?? row.changePct),
+      quoteVolume24h: Math.max(0, numberValue(row.quoteVolume24h ?? row.quoteVolume ?? row.volume24h ?? row.volume)),
+      maxLeverage: null as number | null,
+      bbStatus: null as BbStatus | null,
+      bbUpper: null as number | null,
+      bbMiddle: null as number | null,
+      bbLower: null as number | null,
+    }];
+  });
+  rows.sort((a, b) => b.quoteVolume24h - a.quoteVolume24h || a.symbol.localeCompare(b.symbol));
+  return rows;
 }
 
 export async function GET(request: Request) {
@@ -137,73 +186,43 @@ export async function GET(request: Request) {
   try {
     if (mode === "enrich") {
       const symbols = parseEnrichSymbols(url);
-      const tickers = tickerMap(await jsonFetch(`${ASTER}/fapi/v1/ticker/24hr`));
       const accountKey = createHash("sha256").update(authorization).digest("hex").slice(0, 20);
-      const rows = await mapLimited(symbols, async (symbol) => {
+      const rows = [] as Array<Record<string, unknown>>;
+      const errors = [] as Array<{ symbol: string; detail: string }>;
+
+      for (const symbol of symbols) {
         try {
-          const ticker = tickers.get(symbol) || {};
-          const lastPrice = numberValue(ticker.lastPrice);
-          if (lastPrice <= 0) throw new Error(`${symbol}: actuele lastPrice ontbreekt`);
           const [maxLeverage, bb] = await Promise.all([
             maximumLeverage(symbol, authorization, accountKey),
-            bbFor(symbol, interval, lastPrice),
+            bbFor(symbol, interval),
           ]);
-          return {
-            ok: true as const,
+          rows.push({
             symbol,
             maxLeverage,
             bbStatus: bb.status,
             bbUpper: bb.upper,
             bbMiddle: bb.middle,
             bbLower: bb.lower,
-          };
+          });
         } catch (reason) {
-          return { ok: false as const, symbol, detail: reason instanceof Error ? reason.message : `${symbol}: enrichment mislukt` };
+          errors.push({ symbol, detail: reason instanceof Error ? reason.message : `${symbol}: enrichment mislukt` });
         }
+      }
+
+      return Response.json({ interval, markets: rows, errors, updatedAt: Date.now() }, {
+        headers: { "Cache-Control": "private, no-store" },
       });
-      const markets = rows.filter((row) => row.ok);
-      const errors = rows.filter((row) => !row.ok);
-      return Response.json({ interval, markets, errors, updatedAt: Date.now() }, { headers: { "Cache-Control": "private, no-store" } });
     }
 
     if (mode !== "base") {
       return Response.json({ detail: "Ongeldige Markets-modus" }, { status: 422 });
     }
 
-    const [exchangeInfoRaw, tickersRaw] = await Promise.all([
-      jsonFetch(`${ASTER}/fapi/v1/exchangeInfo`),
-      jsonFetch(`${ASTER}/fapi/v1/ticker/24hr`),
-    ]);
-    const exchangeInfo = exchangeInfoRaw && typeof exchangeInfoRaw === "object" ? exchangeInfoRaw as Record<string, unknown> : {};
-    const symbols = Array.isArray(exchangeInfo.symbols) ? exchangeInfo.symbols : [];
-    const tickers = tickerMap(tickersRaw);
-    const activeSymbols = symbols.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
-      .filter((row) => String(row.quoteAsset || "").toUpperCase() === "USDT")
-      .filter((row) => String(row.contractType || "").toUpperCase() === "PERPETUAL")
-      .filter((row) => String(row.status || "").toUpperCase() === "TRADING")
-      .map((row) => String(row.symbol || "").toUpperCase())
-      .filter(Boolean);
+    const focusUrl = `${CLOUD_API}/v1/me/aster/strategy2/focus/markets`;
+    const focusPayload = await jsonFetch(focusUrl, { headers: { Authorization: authorization } });
+    const markets = rowsFromFocusMarkets(focusPayload);
+    if (!markets.length) throw new Error("Aster market-universe bevat momenteel geen geldige USDT perpetuals");
 
-    const markets = activeSymbols.map((symbol) => {
-      const ticker = tickers.get(symbol) || {};
-      const lastPrice = numberValue(ticker.lastPrice);
-      if (lastPrice <= 0) return null;
-      return {
-        symbol,
-        baseAsset: symbol.endsWith("USDT") ? symbol.slice(0, -4) : symbol,
-        quoteAsset: "USDT",
-        lastPrice,
-        change24hPct: numberValue(ticker.priceChangePercent),
-        quoteVolume24h: Math.max(0, numberValue(ticker.quoteVolume)),
-        maxLeverage: null,
-        bbStatus: null,
-        bbUpper: null,
-        bbMiddle: null,
-        bbLower: null,
-      };
-    }).filter((row): row is NonNullable<typeof row> => Boolean(row));
-
-    markets.sort((a, b) => b.quoteVolume24h - a.quoteVolume24h || a.symbol.localeCompare(b.symbol));
     return Response.json({
       exchange: "aster",
       contractType: "PERPETUAL",
