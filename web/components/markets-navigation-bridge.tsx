@@ -4,8 +4,18 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { MarketsPage } from "@/components/markets-page";
 
+const VIEW_PARAM = "tmView";
+
 function isMarketsRoute() {
-  return window.location.hash.replace(/^#\/?/, "").split(/[/?]/, 1)[0] === "markets";
+  return new URL(window.location.href).searchParams.get(VIEW_PARAM) === "markets";
+}
+
+function openMarkets() {
+  if (isMarketsRoute()) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set(VIEW_PARAM, "markets");
+  window.history.pushState({ ...window.history.state, markets: true }, "", `${url.pathname}${url.search}${url.hash}`);
+  window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
 }
 
 function marketsButton() {
@@ -20,15 +30,24 @@ function marketsButton() {
   const label = document.createElement("small");
   label.textContent = "MARKETS";
   button.append(glyph, label);
-  button.addEventListener("click", () => {
-    if (isMarketsRoute()) return;
-    window.localStorage.setItem("tradementor.activeDestination", "markets");
-    window.location.hash = "/markets";
-  });
+  button.addEventListener("click", openMarkets);
   return button;
 }
 
+function syncContext(active: boolean) {
+  const label = document.querySelector<HTMLElement>(".mobile-context > span:first-child");
+  if (!label) return;
+  if (active) {
+    if (!label.dataset.marketsPreviousLabel) label.dataset.marketsPreviousLabel = label.textContent || "ASTER";
+    label.textContent = "MARKETS";
+  } else if (label.dataset.marketsPreviousLabel) {
+    label.textContent = label.dataset.marketsPreviousLabel;
+    delete label.dataset.marketsPreviousLabel;
+  }
+}
+
 function syncNavigation(active: boolean) {
+  syncContext(active);
   for (const nav of document.querySelectorAll<HTMLElement>(".rail-nav, .bottom-nav")) {
     let button = nav.querySelector<HTMLButtonElement>('[data-destination="markets"]');
     const aster = nav.querySelector<HTMLElement>('[data-destination="aster"]');
@@ -64,13 +83,22 @@ export function MarketsNavigationBridge() {
       setTarget(document.querySelector<HTMLElement>(".content"));
       syncNavigation(next);
     };
+    const leaveMarketsBeforeExistingNav = (event: MouseEvent) => {
+      const item = (event.target as HTMLElement | null)?.closest<HTMLElement>(".nav-button[data-destination]");
+      if (!item || item.dataset.destination === "markets" || !isMarketsRoute()) return;
+      const url = new URL(window.location.href);
+      url.searchParams.delete(VIEW_PARAM);
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    };
     sync();
+    document.addEventListener("click", leaveMarketsBeforeExistingNav, true);
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
     const observer = new MutationObserver(sync);
     observer.observe(document.body, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
+      document.removeEventListener("click", leaveMarketsBeforeExistingNav, true);
       window.removeEventListener("hashchange", sync);
       window.removeEventListener("popstate", sync);
     };
