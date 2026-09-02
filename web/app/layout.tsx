@@ -5,6 +5,7 @@ import { PwaRegistration } from "@/components/pwa-registration";
 import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
+import { MarketsNavigationBridge } from "@/components/markets-navigation-bridge";
 import { WEBAPP_VERSION } from "@/lib/app-version";
 import "./globals.css";
 import "./premium.css";
@@ -12,6 +13,7 @@ import "./premium-next.css";
 import "./suriname-heritage.css";
 import "./aster-tables.css";
 import "./strategy2-reference.css";
+import "./markets-bridge.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -61,7 +63,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <PwaRegistration buildNumber={buildNumber} />
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>{children}<MarketsNavigationBridge /></AuthProvider>
       </body>
     </html>
   );
