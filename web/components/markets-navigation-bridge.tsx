@@ -39,9 +39,10 @@ function syncContext(active: boolean) {
   if (!label) return;
   if (active) {
     if (!label.dataset.marketsPreviousLabel) label.dataset.marketsPreviousLabel = label.textContent || "ASTER";
-    label.textContent = "MARKETS";
+    if (label.textContent !== "MARKETS") label.textContent = "MARKETS";
   } else if (label.dataset.marketsPreviousLabel) {
-    label.textContent = label.dataset.marketsPreviousLabel;
+    const previous = label.dataset.marketsPreviousLabel;
+    if (label.textContent !== previous) label.textContent = previous;
     delete label.dataset.marketsPreviousLabel;
   }
 }
