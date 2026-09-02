@@ -47,19 +47,30 @@ function syncContext(active: boolean) {
   }
 }
 
+const USER_MAIN_DESTINATIONS = ["markets", "aster", "journey", "wallet"] as const;
+const HIDDEN_MAIN_DESTINATIONS = new Set(["positions", "risk", "hyperliquid", "admin"]);
+
 function syncNavigation(active: boolean) {
   syncContext(active);
   for (const nav of document.querySelectorAll<HTMLElement>(".rail-nav, .bottom-nav")) {
+    for (const item of nav.querySelectorAll<HTMLElement>(".nav-button[data-destination]")) {
+      const destination = item.dataset.destination || "";
+      if (HIDDEN_MAIN_DESTINATIONS.has(destination)) item.remove();
+    }
     let button = nav.querySelector<HTMLButtonElement>('[data-destination="markets"]');
     const aster = nav.querySelector<HTMLElement>('[data-destination="aster"]');
     if (!button && aster) {
       button = marketsButton();
       nav.insertBefore(button, aster);
     }
-    if (nav.classList.contains("bottom-nav")) {
-      const count = nav.querySelectorAll(":scope > .nav-button").length;
-      nav.style.setProperty("--mobile-nav-count", String(count));
+    const byDestination = new Map(
+      Array.from(nav.querySelectorAll<HTMLElement>(".nav-button[data-destination]")).map((item) => [item.dataset.destination || "", item]),
+    );
+    for (const destination of USER_MAIN_DESTINATIONS) {
+      const item = byDestination.get(destination);
+      if (item) nav.appendChild(item);
     }
+    if (nav.classList.contains("bottom-nav")) nav.style.setProperty("--mobile-nav-count", "4");
     if (active) {
       for (const item of nav.querySelectorAll<HTMLElement>(".nav-button")) {
         const selected = item.dataset.destination === "markets";

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_UP
 from datetime import datetime, timezone
 from typing import Any
@@ -47,6 +47,9 @@ class MultiBbConfig:
     take_profit: float = .015
     manual_symbol_selection_enabled: bool = False
     manual_symbols: tuple[tuple[str, str], ...] = ()
+    standard_long: dict[str, Any] = field(default_factory=dict)
+    standard_short: dict[str, Any] = field(default_factory=dict)
+    pair_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "MultiBbConfig":
@@ -64,6 +67,21 @@ class MultiBbConfig:
             symbol=str(item.get("symbol", "")).upper().strip(); side=str(item.get("side", "")).upper().strip()
             if not symbol or side not in {"LONG", "SHORT"} or symbol in seen: continue
             seen.add(symbol); manual_symbols.append((symbol, side))
+        def normalized_profile(value: Any) -> dict[str, Any]:
+            if not isinstance(value, dict):
+                return {}
+            allowed = {"entryMarginUsd", "entryNotionalUsd", "entrySizingMode", "minimumLeverage", "dcaDistance", "dcaMarginUsd", "maxDca", "unlimitedDca", "takeProfit", "autoRestart"}
+            return {str(k): v for k, v in value.items() if str(k) in allowed}
+        standard_long = normalized_profile(raw.get("standardLong"))
+        standard_short = normalized_profile(raw.get("standardShort"))
+        override_rows = raw.get("pairOverrides") if isinstance(raw.get("pairOverrides"), dict) else {}
+        pair_overrides: dict[str, dict[str, Any]] = {}
+        for raw_symbol, raw_override in override_rows.items():
+            symbol = str(raw_symbol).upper().strip()
+            if symbol and symbol.endswith("USDT"):
+                normalized = normalized_profile(raw_override)
+                if normalized:
+                    pair_overrides[symbol] = normalized
         cfg = cls(
             engine=str(raw.get("engine", raw.get("strategyKind", ENGINE))),
             name=str(raw.get("name", "Aster Multi DCA")),
@@ -84,6 +102,9 @@ class MultiBbConfig:
             take_profit=_f(raw.get("takeProfit"), .015),
             manual_symbol_selection_enabled=manual_enabled,
             manual_symbols=tuple(manual_symbols),
+            standard_long=standard_long,
+            standard_short=standard_short,
+            pair_overrides=pair_overrides,
         )
         return cfg.validated()
 
@@ -102,6 +123,12 @@ class MultiBbConfig:
         if self.manual_symbol_selection_enabled and not self.manual_symbols:
             raise ValueError("Selecteer minimaal één munt wanneer Zelf munten kiezen aan staat")
         if len(self.manual_symbols) > 200: raise ValueError("Maximaal 200 handmatig gekozen munten")
+        for label, profile in (("STANDARD LONG", self.standard_long), ("STANDARD SHORT", self.standard_short)):
+            if "minimumLeverage" in profile and not 1 <= _i(profile.get("minimumLeverage")) <= 300: raise ValueError(f"{label}: leverage moet tussen 1x en 300x liggen")
+            if "maxDca" in profile and _i(profile.get("maxDca")) < 0: raise ValueError(f"{label}: Max DCA mag niet negatief zijn")
+            if "dcaDistance" in profile and not .0001 <= _f(profile.get("dcaDistance")) <= .50: raise ValueError(f"{label}: DCA-afstand is ongeldig")
+            if "takeProfit" in profile and not .001 <= _f(profile.get("takeProfit")) <= .20: raise ValueError(f"{label}: Take Profit moet tussen 0,1% en 20% liggen")
+        if len(self.pair_overrides) > 200: raise ValueError("Maximaal 200 pair-overrides")
         return self
 
     def public_dict(self) -> dict[str, Any]:
@@ -114,6 +141,25 @@ class MultiBbConfig:
             "entryMode": "immediate_fill", "marginMode": "cross", "autoRestart": True,
             "manualSymbolSelectionEnabled": self.manual_symbol_selection_enabled,
             "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in self.manual_symbols],
+            "standardLong": dict(self.standard_long),
+            "standardShort": dict(self.standard_short),
+            "pairOverrides": {symbol: dict(value) for symbol, value in self.pair_overrides.items()},
+        }
+
+    def effective_profile(self, symbol: str, side: str) -> dict[str, Any]:
+        profile = dict(self.standard_long if str(side).upper() == "LONG" else self.standard_short)
+        profile.update(self.pair_overrides.get(str(symbol).upper().strip(), {}))
+        return {
+            "minimumLeverage": _i(profile.get("minimumLeverage"), self.minimum_leverage),
+            "entryMarginUsd": _f(profile.get("entryMarginUsd"), self.entry_margin_usd),
+            "entryNotionalUsd": _f(profile.get("entryNotionalUsd"), self.entry_notional_usd),
+            "entrySizingMode": str(profile.get("entrySizingMode", self.entry_sizing_mode)).lower().strip(),
+            "dcaDistance": _f(profile.get("dcaDistance"), self.dca_distance),
+            "dcaMarginUsd": _f(profile.get("dcaMarginUsd"), self.dca_margin_usd),
+            "maxDca": _i(profile.get("maxDca"), self.max_dca),
+            "unlimitedDca": bool(profile.get("unlimitedDca", self.unlimited_dca)),
+            "takeProfit": _f(profile.get("takeProfit"), self.take_profit),
+            "autoRestart": bool(profile.get("autoRestart", True)),
         }
 
 
@@ -126,7 +172,9 @@ def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], setti
     qty = abs(_f(row.get("positionAmt")))
     if side not in {"LONG", "SHORT"} or entry <= 0 or mark <= 0 or qty <= 0:
         return {}
-    tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
+    effective = settings.effective_profile(str(row.get("symbol", "")), side)
+    take_profit = _f(effective.get("takeProfit"), settings.take_profit)
+    tp_price = entry * (1 + take_profit if side == "LONG" else 1 - take_profit)
     tp_distance_usd = abs(tp_price - mark)
     tp_distance_pct = tp_distance_usd / mark * 100
     expected_pnl_at_tp = ((tp_price - entry) if side == "LONG" else (entry - tp_price)) * qty
@@ -134,12 +182,15 @@ def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], setti
     portfolio_value_at_tp = account_equity + (expected_pnl_at_tp - current_pnl) if account_equity > 0 else None
     dca_count = _i(state.get("dcaCount"))
     anchor = _f(state.get("lastBotFillPrice"), entry)
-    dca_allowed = settings.unlimited_dca or dca_count < settings.max_dca
-    next_dca_price = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance) if dca_allowed and anchor > 0 else None
+    effective_max_dca = _i(effective.get("maxDca"), settings.max_dca)
+    effective_unlimited = bool(effective.get("unlimitedDca", settings.unlimited_dca))
+    effective_distance = _f(effective.get("dcaDistance"), settings.dca_distance)
+    dca_allowed = effective_unlimited or dca_count < effective_max_dca
+    next_dca_price = anchor * (1 - effective_distance if side == "LONG" else 1 + effective_distance) if dca_allowed and anchor > 0 else None
     next_dca_distance_usd = abs(next_dca_price - mark) if next_dca_price else None
     next_dca_distance_pct = next_dca_distance_usd / mark * 100 if next_dca_distance_usd is not None else None
     return {
-        "takeProfitPct": settings.take_profit * 100,
+        "takeProfitPct": take_profit * 100,
         "tpPrice": tp_price,
         "tpDistanceUsd": tp_distance_usd,
         "tpDistancePct": tp_distance_pct,
@@ -149,7 +200,9 @@ def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], setti
         "nextDcaDistanceUsd": next_dca_distance_usd,
         "nextDcaDistancePct": next_dca_distance_pct,
         "nextDcaNumber": dca_count + 1 if next_dca_price else None,
-        "unlimitedDca": settings.unlimited_dca,
+        "unlimitedDca": effective_unlimited,
+        "maxDca": effective_max_dca,
+        "customSettings": bool(settings.pair_overrides.get(str(row.get("symbol", "")).upper().strip())),
     }
 
 
@@ -376,7 +429,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if row is None: continue
         symbol, side = key.split("|", 1); mark = _f(row.get("markPrice"), prices.get(symbol, 0)); entry = _f(row.get("entryPrice")); qty = abs(_f(row.get("positionAmt")))
         if mark <= 0 or entry <= 0 or qty <= 0 or (symbol, side) in order_keys: continue
-        tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
+        effective = settings.effective_profile(symbol, side)
+        take_profit = _f(effective.get("takeProfit"), settings.take_profit)
+        tp_price = entry * (1 + take_profit if side == "LONG" else 1 - take_profit)
         tp_due = mark >= tp_price if side == "LONG" else mark <= tp_price
         if tp_due:
             actions.append({"kind": "TP", "symbol": symbol, "side": side, "mark": mark, "entry": entry, "target": tp_price})
@@ -393,13 +448,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 ref.collection("audit").add({"event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price, "timestamp": datetime.now(timezone.utc)})
             sent += 1; continue
         dca_count = _i(st0.get("dcaCount")); anchor = _f(st0.get("lastBotFillPrice"), entry)
-        if (not settings.unlimited_dca and dca_count >= settings.max_dca) or anchor <= 0: continue
-        trigger = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance)
+        effective_max_dca = _i(effective.get("maxDca"), settings.max_dca)
+        effective_unlimited = bool(effective.get("unlimitedDca", settings.unlimited_dca))
+        effective_distance = _f(effective.get("dcaDistance"), settings.dca_distance)
+        if (not effective_unlimited and dca_count >= effective_max_dca) or anchor <= 0: continue
+        trigger = anchor * (1 - effective_distance if side == "LONG" else 1 + effective_distance)
         due = mark <= trigger if side == "LONG" else mark >= trigger
         if not due: continue
         row_info = info_map.get(symbol); leverage = max(1, _i(row.get("leverage")))
         if row_info is None: continue
-        try: plan, tier = _plan_add(client, row_info, mark, settings.dca_margin_usd, leverage, qty * mark, settings.minimum_leverage)
+        try: plan, tier = _plan_add(client, row_info, mark, _f(effective.get("dcaMarginUsd"), settings.dca_margin_usd), leverage, qty * mark, _i(effective.get("minimumLeverage"), settings.minimum_leverage))
         except Exception as exc:
             actions.append({"kind": "DCA_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)}); continue
         required = float(tier["additionalMarginRequired"])
@@ -453,7 +511,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
-        try: plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
+        effective = settings.effective_profile(symbol, side)
+        try: plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=_f(effective.get("entryMarginUsd"), settings.entry_margin_usd), entry_notional_usd=_f(effective.get("entryNotionalUsd"), settings.entry_notional_usd), entry_sizing_mode=str(effective.get("entrySizingMode", settings.entry_sizing_mode)), minimum_leverage=_i(effective.get("minimumLeverage"), settings.minimum_leverage))
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)}); continue
         required = float(plan.notional_per_leg) / plan.leverage
