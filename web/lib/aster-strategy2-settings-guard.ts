@@ -8,6 +8,13 @@ function finiteInteger(value: unknown, fallback: number) {
   return Number.isFinite(number) ? Math.round(number) : fallback;
 }
 
+function requestHeaders(request: Request) {
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  return headers;
+}
+
 export function enforceAsterStrategy2Limits(settings: Record<string, unknown>) {
   const next = { ...settings };
   const hasLong = settings.longSlots !== undefined || settings.maximumLongPositions !== undefined;
@@ -38,10 +45,12 @@ export async function guardedAsterStrategy2Request(request: Request) {
   }
 
   const rawSettings = payload.settings;
-  if (!rawSettings || typeof rawSettings !== "object" || Array.isArray(rawSettings)) {
-    return { request: new Request(request.url, { method: request.method, headers: request.headers, body: JSON.stringify(payload) }) } as const;
+  let guarded: Record<string, unknown> = payload;
+  if (rawSettings && typeof rawSettings === "object" && !Array.isArray(rawSettings)) {
+    guarded = { ...payload, settings: enforceAsterStrategy2Limits(rawSettings as Record<string, unknown>) };
+  } else if (["engine", "strategyKind", "longSlots", "shortSlots", "maximumPositions", "maxDca", "unlimitedDca"].some((key) => payload[key] !== undefined)) {
+    guarded = enforceAsterStrategy2Limits(payload);
   }
 
-  const guarded = { ...payload, settings: enforceAsterStrategy2Limits(rawSettings as Record<string, unknown>) };
-  return { request: new Request(request.url, { method: request.method, headers: request.headers, body: JSON.stringify(guarded) }) } as const;
+  return { request: new Request(request.url, { method: request.method, headers: requestHeaders(request), body: JSON.stringify(guarded) }) } as const;
 }
