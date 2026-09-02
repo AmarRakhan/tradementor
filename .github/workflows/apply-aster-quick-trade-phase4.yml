@@ -1,0 +1,51 @@
+name: Apply Aster Quick Trade Phase 4
+
+on:
+  push:
+    branches: [agent-aster-markets-quick-trade-settings]
+    paths:
+      - tools/apply_aster_quick_trade_settings_phase4.py
+      - .github/workflows/apply-aster-quick-trade-phase4.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[agent-phase4]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent-aster-markets-quick-trade-settings
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply phase 4 patch
+        run: python tools/apply_aster_quick_trade_settings_phase4.py
+      - name: Static Aster cleanup checks
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('web/app/page.tsx').read_text()
+          assert 'AsterPerformancePanel' not in s
+          assert 'destination === "aster" && <TodayRealizedMetric' not in s
+          visible=s[s.index('const destinations:'):s.index('const exchangeCopy:')]
+          assert 'POSITIONS' not in visible and 'RISICO' not in visible and 'HYPERLIQUID' not in visible and 'ADMIN' not in visible
+          assert 'ASTER' in visible and 'JOURNEY' in visible and 'WALLET' in visible
+          assert 'AsterRecentTrades' in s and 'AsterStrategy2Maker' in s
+          PY
+      - name: Run web tests
+        working-directory: web
+        run: |
+          npm ci
+          npm test -- --runInBand
+      - name: Commit generated changes
+        run: |
+          git config user.name "Aster Rebuild Agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add web/app/page.tsx
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "[agent-phase4] Clean Aster page and main navigation"
+          git push origin HEAD:agent-aster-markets-quick-trade-settings
