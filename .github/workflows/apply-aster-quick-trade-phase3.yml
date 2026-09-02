@@ -30,7 +30,7 @@ jobs:
           from pathlib import Path
           maker=Path('web/components/aster-strategy2-maker.tsx').read_text()
           markets=Path('web/components/markets-page.tsx').read_text()
-          assert 'STANDARD LONG' in maker and 'STANDARD SHORT' in maker
+          assert '<ProfilePanel side="LONG"' in maker and '<ProfilePanel side="SHORT"' in maker
           assert 'Pair override' in maker and 'Reset naar standaard' in maker
           assert 'maker-overlay' not in maker and 'STAP ' not in maker
           assert 'SafeTradingChart' in markets and 'mode="aster-detail"' in markets
