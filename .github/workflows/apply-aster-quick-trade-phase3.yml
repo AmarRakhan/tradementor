@@ -1,0 +1,51 @@
+name: Apply Aster Quick Trade Phase 3
+
+on:
+  push:
+    branches: [agent-aster-markets-quick-trade-settings]
+    paths:
+      - tools/apply_aster_quick_trade_settings_phase3.py
+      - .github/workflows/apply-aster-quick-trade-phase3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[agent-phase3]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent-aster-markets-quick-trade-settings
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply phase 3 patch
+        run: python tools/apply_aster_quick_trade_settings_phase3.py
+      - name: Static acceptance checks
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          maker=Path('web/components/aster-strategy2-maker.tsx').read_text()
+          markets=Path('web/components/markets-page.tsx').read_text()
+          assert 'STANDARD LONG' in maker and 'STANDARD SHORT' in maker
+          assert 'Pair override' in maker and 'Reset naar standaard' in maker
+          assert 'maker-overlay' not in maker and 'STAP ' not in maker
+          assert 'SafeTradingChart' in markets and 'mode="aster-detail"' in markets
+          assert 'Open chart' in markets
+          PY
+      - name: Run web tests
+        working-directory: web
+        run: |
+          npm ci
+          npm test -- --runInBand
+      - name: Commit generated changes
+        run: |
+          git config user.name "Aster Rebuild Agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add web/components/aster-strategy2-maker.tsx web/components/markets-page.tsx web/components/markets-page.module.css
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "[agent-phase3] Replace wizard and reuse Trade Center chart"
+          git push origin HEAD:agent-aster-markets-quick-trade-settings
