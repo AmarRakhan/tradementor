@@ -136,39 +136,58 @@ function parseEnrichSymbols(url: URL) {
   return symbols;
 }
 
-function rowsFromFocusMarkets(payload: unknown) {
-  const object = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
-  const source = Array.isArray(object.markets)
-    ? object.markets
-    : Array.isArray(object.symbols)
-      ? object.symbols
-      : Array.isArray(payload)
-        ? payload
-        : [];
+function marketObjects(payload: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 6 || payload == null) return [];
+  if (Array.isArray(payload)) return payload.flatMap((value) => marketObjects(value, depth + 1));
+  if (typeof payload !== "object") return [];
+  const row = payload as Record<string, unknown>;
+  const symbol = String(row.symbol ?? row.market ?? row.pair ?? row.ticker ?? "").toUpperCase();
+  const price = numberValue(row.lastPrice ?? row.last_price ?? row.price ?? row.markPrice ?? row.mark_price ?? row.currentPrice ?? row.current_price);
+  const own = symbol.endsWith("USDT") && price > 0 ? [row] : [];
+  const nested = Object.values(row).flatMap((value) => marketObjects(value, depth + 1));
+  return [...own, ...nested];
+}
 
-  const rows = source.flatMap((value) => {
-    if (!value || typeof value !== "object") return [];
-    const row = value as Record<string, unknown>;
-    const symbol = String(row.symbol || row.market || "").toUpperCase();
-    if (!symbol.endsWith("USDT")) return [];
-    const lastPrice = numberValue(row.lastPrice ?? row.price ?? row.markPrice);
-    if (lastPrice <= 0) return [];
-    return [{
-      symbol,
-      baseAsset: String(row.baseAsset || symbol.slice(0, -4)),
-      quoteAsset: "USDT",
-      lastPrice,
-      change24hPct: numberValue(row.change24hPct ?? row.priceChangePercent ?? row.change24h ?? row.changePct),
-      quoteVolume24h: Math.max(0, numberValue(row.quoteVolume24h ?? row.quoteVolume ?? row.volume24h ?? row.volume)),
-      maxLeverage: null as number | null,
-      bbStatus: null as BbStatus | null,
-      bbUpper: null as number | null,
-      bbMiddle: null as number | null,
-      bbLower: null as number | null,
-    }];
-  });
+function rowsFromFocusMarkets(payload: unknown) {
+  const unique = new Map<string, ReturnType<typeof toMarketRow>>();
+  for (const row of marketObjects(payload)) {
+    const parsed = toMarketRow(row);
+    if (parsed && !unique.has(parsed.symbol)) unique.set(parsed.symbol, parsed);
+  }
+  const rows = Array.from(unique.values()).filter((row): row is NonNullable<typeof row> => Boolean(row));
   rows.sort((a, b) => b.quoteVolume24h - a.quoteVolume24h || a.symbol.localeCompare(b.symbol));
   return rows;
+}
+
+function toMarketRow(row: Record<string, unknown>) {
+  const symbol = String(row.symbol ?? row.market ?? row.pair ?? row.ticker ?? "").toUpperCase();
+  if (!symbol.endsWith("USDT")) return null;
+  const lastPrice = numberValue(row.lastPrice ?? row.last_price ?? row.price ?? row.markPrice ?? row.mark_price ?? row.currentPrice ?? row.current_price);
+  if (lastPrice <= 0) return null;
+
+  let change24hPct = numberValue(
+    row.change24hPct ?? row.change_24h_pct ?? row.priceChangePercent ?? row.price_change_percent ?? row.change24h ?? row.change_pct ?? row.changePct,
+  );
+  if (row.change !== undefined && row.change24hPct === undefined && row.priceChangePercent === undefined) {
+    const fractional = numberValue(row.change);
+    change24hPct = Math.abs(fractional) <= 2 ? fractional * 100 : fractional;
+  }
+
+  return {
+    symbol,
+    baseAsset: String(row.baseAsset ?? row.base_asset ?? symbol.slice(0, -4)),
+    quoteAsset: "USDT",
+    lastPrice,
+    change24hPct,
+    quoteVolume24h: Math.max(0, numberValue(
+      row.quoteVolume24h ?? row.quote_volume_24h ?? row.quoteVolume ?? row.quote_volume ?? row.volume24h ?? row.volume_24h ?? row.volume,
+    )),
+    maxLeverage: null as number | null,
+    bbStatus: null as BbStatus | null,
+    bbUpper: null as number | null,
+    bbMiddle: null as number | null,
+    bbLower: null as number | null,
+  };
 }
 
 export async function GET(request: Request) {
