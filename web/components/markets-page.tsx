@@ -35,7 +35,7 @@ const BB_FILTERS: Array<{ id: BbFilter; label: string }> = [
   { id: "below", label: "Onder lower" },
 ];
 const BB_RANK: Record<BbStatus, number> = { above: 3, between: 2, below: 1 };
-const ENRICH_BATCH_SIZE = 10;
+const ENRICH_BATCH_SIZE = 8;
 
 function compactUsd(value: number) {
   return new Intl.NumberFormat("nl-NL", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 }).format(value);
@@ -52,6 +52,11 @@ function signedPercent(value: number) {
 
 function statusLabel(status: BbStatus) {
   return status === "above" ? "Above Upper" : status === "below" ? "Below Lower" : "Between Bands";
+}
+
+function classifyBb(livePrice: number, upper: number | null, lower: number | null, fallback: BbStatus | null) {
+  if (upper === null || lower === null) return fallback;
+  return livePrice > upper ? "above" as const : livePrice < lower ? "below" as const : "between" as const;
 }
 
 export function MarketsPage() {
@@ -88,7 +93,7 @@ export function MarketsPage() {
               updatedAt: Math.max(current.updatedAt, payload.updatedAt || 0),
               markets: current.markets.map((row) => {
                 const update = updates.get(row.symbol);
-                return update ? { ...row, ...update } : row;
+                return update ? { ...row, ...update, bbStatus: classifyBb(row.lastPrice, update.bbUpper, update.bbLower, update.bbStatus) } : row;
               }),
             };
           });
@@ -104,30 +109,51 @@ export function MarketsPage() {
     }
   }, []);
 
-  const load = useCallback(async (background = false) => {
-    const generation = ++generationRef.current;
+  const load = useCallback(async (background = false, runEnrichment = true) => {
+    const generation = runEnrichment ? ++generationRef.current : generationRef.current;
     background ? setRefreshing(true) : setLoading(true);
     setError("");
     try {
       const payload = await authenticatedRequest(`/api/markets/aster?mode=base&interval=${encodeURIComponent(timeframe)}`) as MarketsPayload;
       if (!payload || !Array.isArray(payload.markets)) throw new Error("Markets-response heeft een ongeldig formaat");
-      if (generationRef.current !== generation) return;
-      setData(payload);
+      if (runEnrichment && generationRef.current !== generation) return;
+
+      setData((current) => {
+        if (!current || current.interval !== payload.interval) return payload;
+        const oldBySymbol = new Map(current.markets.map((row) => [row.symbol, row]));
+        return {
+          ...payload,
+          markets: payload.markets.map((fresh) => {
+            const old = oldBySymbol.get(fresh.symbol);
+            if (!old) return fresh;
+            return {
+              ...fresh,
+              maxLeverage: old.maxLeverage,
+              bbUpper: old.bbUpper,
+              bbMiddle: old.bbMiddle,
+              bbLower: old.bbLower,
+              bbStatus: classifyBb(fresh.lastPrice, old.bbUpper, old.bbLower, old.bbStatus),
+            };
+          }),
+        };
+      });
       setLoading(false);
       setRefreshing(false);
-      void enrich(payload, generation);
+      if (runEnrichment) void enrich(payload, generation);
     } catch (reason) {
-      if (generationRef.current !== generation) return;
+      if (runEnrichment && generationRef.current !== generation) return;
       setError(reason instanceof Error ? reason.message : "Markets kon niet worden geladen");
       setLoading(false);
       setRefreshing(false);
-      setEnriching(false);
+      if (runEnrichment) setEnriching(false);
     }
   }, [enrich, timeframe]);
 
-  useEffect(() => { void load(false); }, [load]);
+  useEffect(() => { void load(false, true); }, [load]);
   useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void load(true); }, 60_000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load(true, false);
+    }, 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
@@ -163,7 +189,7 @@ export function MarketsPage() {
   return <section className={styles.page} aria-labelledby="markets-title">
     <header className={styles.heading}>
       <div><span className={styles.eyebrow}>ASTER · USDT PERPETUALS</span><h1 id="markets-title">Markets</h1><p>Realtime markten, leverage en Bollinger-status op één mobiel overzicht.</p></div>
-      <button type="button" className={styles.refresh} onClick={() => void load(true)} disabled={loading || refreshing}>{refreshing ? "Verversen…" : "↻ Vernieuwen"}</button>
+      <button type="button" className={styles.refresh} onClick={() => void load(true, false)} disabled={loading || refreshing}>{refreshing ? "Verversen…" : "↻ Vernieuwen"}</button>
     </header>
 
     <div className={styles.controlCard}>
@@ -182,15 +208,15 @@ export function MarketsPage() {
     </div>
 
     {loading && !data ? <div className={styles.state}><div className={styles.spinner} /><strong>Aster Markets laden</strong><span>Actieve USDT-perpetuals en realtime tickerdata worden opgehaald.</span></div>
-      : error && !data ? <div className={`${styles.state} ${styles.error}`}><strong>Markets tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={() => void load(false)}>Opnieuw proberen</button></div>
-      : rows.length === 0 && enriching && bbFilter !== "all" ? <div className={styles.state}><div className={styles.spinner} /><strong>Bollinger-data aanvullen</strong><span>De markten zijn al geladen; het gekozen BB-filter wordt nu betrouwbaar berekend.</span></div>
+      : error && !data ? <div className={`${styles.state} ${styles.error}`}><strong>Markets tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={() => void load(false, true)}>Opnieuw proberen</button></div>
+      : rows.length === 0 && enriching && bbFilter !== "all" ? <div className={styles.state}><div className={styles.spinner} /><strong>Bollinger-data veilig aanvullen</strong><span>De marktdata is al zichtbaar; BB-data wordt bewust gedoseerd opgehaald om Aster rate-limits te respecteren.</span></div>
       : rows.length === 0 ? <div className={styles.state}><strong>Geen markten gevonden</strong><span>Pas je zoekterm of Bollinger-filter aan.</span></div>
       : <div className={styles.list} aria-live="polite">{rows.map((row) => <article key={row.symbol} className={styles.row}>
           <div className={styles.identity}><span className={styles.coin}>{row.baseAsset.slice(0, 2)}</span><div><div className={styles.symbolLine}><strong>{row.symbol}</strong><em>{row.maxLeverage !== null ? `${row.maxLeverage}x` : "—"}</em></div><small>Vol {compactUsd(row.quoteVolume24h)}</small></div></div>
           <div className={styles.marketPrice}><strong>${price(row.lastPrice)}</strong><span className={row.change24hPct > 0 ? styles.positive : row.change24hPct < 0 ? styles.negative : ""}>{signedPercent(row.change24hPct)}</span></div>
           {row.bbStatus && row.bbUpper !== null && row.bbMiddle !== null && row.bbLower !== null
             ? <div className={`${styles.bbBadge} ${styles[row.bbStatus]}`} title={`Upper ${price(row.bbUpper)} · Mid ${price(row.bbMiddle)} · Lower ${price(row.bbLower)}`}><i />{statusLabel(row.bbStatus)}</div>
-            : <div className={styles.bbBadge} title="Bollinger-data wordt opgehaald"><i />BB laden</div>}
+            : <div className={styles.bbBadge} title="Bollinger-data wordt veilig gedoseerd opgehaald"><i />BB laden</div>}
         </article>)}</div>}
     {error && data && <div className={styles.staleWarning}>{error}</div>}
   </section>;
