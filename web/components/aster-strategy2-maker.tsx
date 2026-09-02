@@ -4,164 +4,302 @@ import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { strategy2ServerStatus } from "@/lib/aster-strategy2-server-status.mjs";
 
-type ManualSide = "LONG" | "SHORT";
-type ManualSymbol = { symbol: string; side: ManualSide };
-type TierPreview = { symbol: string; source: string; tiers: Array<{ floor: number; cap: number; maxLeverage: number }>; nextTier?: { floor: number; cap: number; maxLeverage: number } | null; estimatedDcasToNextTier?: number | null; entryPlan?: { leverage: number; projectedNotional: number; forcedBelowConfiguredMinimum: boolean } | null; currentNotional?: number; currentLeverage?: number; minimumExecutableNotionalUsd?: number; minimumEntryMarginUsd?: number; suggestedEntryMarginUsd?: number; configuredEntryMarginUsd?: number; entryOrderValid?: boolean; };
-type Values = {
-  name: string; universe: string; positions: string; longSlots: string; shortSlots: string;
-  minLeverage: string; entryMargin: string; dcaDistance: string; dcaMargin: string;
-  maxDca: string; unlimitedDca: boolean; tp: string; mode: "paper" | "live";
-  manualEnabled: boolean; manualSymbols: ManualSymbol[];
+type Side = "LONG" | "SHORT";
+type Profile = {
+  entryMarginUsd: number;
+  minimumLeverage: number;
+  dcaDistance: number;
+  dcaMarginUsd: number;
+  maxDca: number;
+  unlimitedDca: boolean;
+  takeProfit: number;
+  autoRestart: boolean;
 };
-const initial: Values = {
-  name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10",
-  minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", unlimitedDca: false, tp: "1.5", mode: "live",
-  manualEnabled: false, manualSymbols: [],
+type ManualSymbol = { symbol: string; side: Side };
+type Draft = {
+  name: string;
+  mode: "paper" | "live";
+  universeTopN: number;
+  maximumPositions: number;
+  longSlots: number;
+  shortSlots: number;
+  manualSymbolSelectionEnabled: boolean;
+  manualSymbols: ManualSymbol[];
+  standardLong: Profile;
+  standardShort: Profile;
+  pairOverrides: Record<string, Partial<Profile>>;
 };
-const n = (v: string) => Number(v) || 0;
-const parseManualSymbols = (value: unknown): ManualSymbol[] => Array.isArray(value) ? value.flatMap((row) => {
-  if (!row || typeof row !== "object") return [];
-  const item = row as Record<string, unknown>;
-  const symbol = String(item.symbol || "").toUpperCase();
-  const side = String(item.side || "").toUpperCase();
-  return symbol && (side === "LONG" || side === "SHORT") ? [{ symbol, side: side as ManualSide }] : [];
-}) : [];
+
+const DEFAULT_PROFILE: Profile = {
+  entryMarginUsd: 5,
+  minimumLeverage: 50,
+  dcaDistance: 0.003,
+  dcaMarginUsd: 2,
+  maxDca: 3,
+  unlimitedDca: false,
+  takeProfit: 0.015,
+  autoRestart: true,
+};
+const DEFAULT_DRAFT: Draft = {
+  name: "Aster Multi DCA",
+  mode: "live",
+  universeTopN: 30,
+  maximumPositions: 30,
+  longSlots: 20,
+  shortSlots: 10,
+  manualSymbolSelectionEnabled: false,
+  manualSymbols: [],
+  standardLong: { ...DEFAULT_PROFILE },
+  standardShort: { ...DEFAULT_PROFILE },
+  pairOverrides: {},
+};
+
+const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const num = (value: unknown, fallback: number) => { const n = Number(value); return Number.isFinite(n) ? n : fallback; };
+const bool = (value: unknown, fallback: boolean) => typeof value === "boolean" ? value : fallback;
+const percent = (value: number) => Number((value * 100).toFixed(4));
+const fromPercent = (value: string, fallback: number) => { const n = Number(value.replace(",", ".")); return Number.isFinite(n) ? n / 100 : fallback; };
+
+function parseProfile(value: unknown, fallback: Profile): Profile {
+  const row = record(value);
+  return {
+    entryMarginUsd: num(row.entryMarginUsd, fallback.entryMarginUsd),
+    minimumLeverage: num(row.minimumLeverage, fallback.minimumLeverage),
+    dcaDistance: num(row.dcaDistance, fallback.dcaDistance),
+    dcaMarginUsd: num(row.dcaMarginUsd, fallback.dcaMarginUsd),
+    maxDca: Math.max(0, Math.round(num(row.maxDca, fallback.maxDca))),
+    unlimitedDca: bool(row.unlimitedDca, fallback.unlimitedDca),
+    takeProfit: num(row.takeProfit, fallback.takeProfit),
+    autoRestart: bool(row.autoRestart, fallback.autoRestart),
+  };
+}
+
+function parseManualSymbols(value: unknown): ManualSymbol[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const row = record(item); const symbol = String(row.symbol || "").toUpperCase().trim(); const side = String(row.side || "").toUpperCase();
+    return symbol.endsWith("USDT") && (side === "LONG" || side === "SHORT") ? [{ symbol, side: side as Side }] : [];
+  });
+}
+
+function draftFromSettings(value: unknown): Draft {
+  const x = record(value);
+  const base: Profile = {
+    entryMarginUsd: num(x.entryMarginUsd, DEFAULT_PROFILE.entryMarginUsd),
+    minimumLeverage: num(x.minimumLeverage, DEFAULT_PROFILE.minimumLeverage),
+    dcaDistance: num(x.dcaDistance, DEFAULT_PROFILE.dcaDistance),
+    dcaMarginUsd: num(x.dcaMarginUsd, DEFAULT_PROFILE.dcaMarginUsd),
+    maxDca: Math.max(0, Math.round(num(x.maxDca, DEFAULT_PROFILE.maxDca))),
+    unlimitedDca: bool(x.unlimitedDca, DEFAULT_PROFILE.unlimitedDca),
+    takeProfit: num(x.takeProfit, DEFAULT_PROFILE.takeProfit),
+    autoRestart: bool(x.autoRestart, true),
+  };
+  const overrides = record(x.pairOverrides);
+  const normalizedOverrides: Record<string, Partial<Profile>> = {};
+  for (const [symbol, raw] of Object.entries(overrides)) {
+    const row = record(raw); const key = symbol.toUpperCase().trim();
+    if (!key.endsWith("USDT")) continue;
+    const out: Partial<Profile> = {};
+    if (row.entryMarginUsd !== undefined) out.entryMarginUsd = num(row.entryMarginUsd, base.entryMarginUsd);
+    if (row.minimumLeverage !== undefined) out.minimumLeverage = num(row.minimumLeverage, base.minimumLeverage);
+    if (row.dcaDistance !== undefined) out.dcaDistance = num(row.dcaDistance, base.dcaDistance);
+    if (row.dcaMarginUsd !== undefined) out.dcaMarginUsd = num(row.dcaMarginUsd, base.dcaMarginUsd);
+    if (row.maxDca !== undefined) out.maxDca = Math.max(0, Math.round(num(row.maxDca, base.maxDca)));
+    if (row.unlimitedDca !== undefined) out.unlimitedDca = bool(row.unlimitedDca, base.unlimitedDca);
+    if (row.takeProfit !== undefined) out.takeProfit = num(row.takeProfit, base.takeProfit);
+    if (row.autoRestart !== undefined) out.autoRestart = bool(row.autoRestart, base.autoRestart);
+    if (Object.keys(out).length) normalizedOverrides[key] = out;
+  }
+  const total = Math.max(1, Math.round(num(x.maximumPositions, DEFAULT_DRAFT.maximumPositions)));
+  const longSlots = Math.max(0, Math.min(total, Math.round(num(x.longSlots, DEFAULT_DRAFT.longSlots))));
+  return {
+    name: String(x.name || DEFAULT_DRAFT.name),
+    mode: x.mode === "paper" ? "paper" : "live",
+    universeTopN: Math.max(1, Math.round(num(x.universeTopN, DEFAULT_DRAFT.universeTopN))),
+    maximumPositions: total,
+    longSlots,
+    shortSlots: Math.max(0, Math.min(total, Math.round(num(x.shortSlots, total - longSlots)))),
+    manualSymbolSelectionEnabled: x.manualSymbolSelectionEnabled === true,
+    manualSymbols: parseManualSymbols(x.manualSymbols),
+    standardLong: parseProfile(x.standardLong, base),
+    standardShort: parseProfile(x.standardShort, base),
+    pairOverrides: normalizedOverrides,
+  };
+}
+
+function serializeDraft(draft: Draft, previous: Record<string, unknown>) {
+  const total = Math.max(1, Math.round(draft.maximumPositions));
+  const longSlots = Math.max(0, Math.min(total, Math.round(draft.longSlots)));
+  const shortSlots = Math.max(0, total - longSlots);
+  return {
+    ...previous,
+    engine: "multi_bb_v1",
+    strategyKind: "multi_bb_v1",
+    name: draft.name,
+    mode: draft.mode,
+    universeTopN: Math.max(1, Math.round(draft.universeTopN)),
+    maximumPositions: total,
+    longSlots,
+    shortSlots,
+    marginMode: "cross",
+    entryMode: "immediate_fill",
+    autoRestart: true,
+    manualSymbolSelectionEnabled: draft.manualSymbolSelectionEnabled,
+    manualSymbols: draft.manualSymbols,
+    standardLong: draft.standardLong,
+    standardShort: draft.standardShort,
+    pairOverrides: draft.pairOverrides,
+    // Legacy top-level values stay valid for older runtime readers; STANDARD LONG is the safe fallback.
+    entryMarginUsd: draft.standardLong.entryMarginUsd,
+    entrySizingMode: "margin",
+    minimumLeverage: draft.standardLong.minimumLeverage,
+    dcaDistance: draft.standardLong.dcaDistance,
+    dcaMarginUsd: draft.standardLong.dcaMarginUsd,
+    maxDca: draft.standardLong.maxDca,
+    unlimitedDca: draft.standardLong.unlimitedDca,
+    takeProfit: draft.standardLong.takeProfit,
+  };
+}
 
 export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void }) {
-  const [wizard, setWizard] = useState(false), [step, setStep] = useState(0), [v, setV] = useState(initial), [busy, setBusy] = useState(false), [message, setMessage] = useState("");
-  const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null), [confirmedState, setConfirmedState] = useState<Record<string, unknown> | null>(null);
-  const [markets, setMarkets] = useState<string[]>([]), [marketSearch, setMarketSearch] = useState(""), [marketBusy, setMarketBusy] = useState(false), [marketAttempted, setMarketAttempted] = useState(false);
-  const [tierPreviews, setTierPreviews] = useState<Record<string, TierPreview>>({}), [tierBusy, setTierBusy] = useState(false);
-  const snapshotState = (snapshot?.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 : {}) as Record<string, unknown>;
-  const status = strategy2ServerStatus(snapshotState, confirmedState, serverConfirmed); const state = status.state as Record<string, unknown>;
+  const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null);
+  const [confirmedState, setConfirmedState] = useState<Record<string, unknown> | null>(null);
+  const [pairSymbol, setPairSymbol] = useState("BTCUSDT");
+  const snapshotState = record(snapshot?.strategy2);
+  const status = strategy2ServerStatus(snapshotState, confirmedState, serverConfirmed);
+  const state = status.state as Record<string, unknown>;
+  const serverSettings = record(state.settings);
 
   useEffect(() => {
-    if (wizard) return;
-    const x = state.settings as Record<string, unknown> | undefined;
-    if (!x || String(x.engine || x.strategyKind) !== "multi_bb_v1") return;
-    setV({
-      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(x.maximumPositions ?? 30),
-      longSlots: String(x.longSlots ?? 20), shortSlots: String(x.shortSlots ?? 10), minLeverage: String(x.minimumLeverage ?? 50),
-      entryMargin: String(x.entrySizingMode === "margin" ? (x.entryMarginUsd ?? 5) : (x.entryNotionalUsd ?? x.baseNotional ?? (Number(x.entryMarginUsd ?? 5) * Number(x.minimumLeverage ?? 50)))),
-      dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(x.maxDca ?? 3), unlimitedDca: x.unlimitedDca === true,
-      tp: String(Number(x.takeProfit ?? .015) * 100), mode: x.mode === "paper" ? "paper" : "live",
-      manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
-    });
-  }, [state.settings, wizard]);
+    if (dirty || !Object.keys(serverSettings).length) return;
+    setDraft(draftFromSettings(serverSettings));
+  }, [serverSettings, dirty]);
 
-  const settings = useMemo(() => ({
-    engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode,
-    universeTopN:Math.round(n(v.universe)), maximumPositions:Math.round(n(v.positions)), longSlots:Math.round(n(v.longSlots)), shortSlots:Math.round(n(v.shortSlots)),
-    minimumLeverage: Math.round(n(v.minLeverage)), entryNotionalUsd: n(v.entryMargin), entryMarginUsd: v.manualEnabled ? n(v.entryMargin) : n(v.entryMargin) / Math.max(1, Math.round(n(v.minLeverage))),
-    entrySizingMode: v.manualEnabled ? "margin" : "notional",
-    dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: Math.round(n(v.maxDca)), unlimitedDca: v.unlimitedDca, takeProfit:n(v.tp)/100,
-    entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
-    manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualSymbols,
-  }), [v]);
+  const settings = useMemo(() => serializeDraft(draft, serverSettings), [draft, serverSettings]);
+  const enabled = status.enabled === true;
+  const liveReady = status.liveReady === true || (!status.pending && readiness?.liveReady === true);
+  const report = record(state.multiBb);
+  const normalizedPair = pairSymbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const pairOverride = draft.pairOverrides[normalizedPair] || {};
+  const pairStandard = draft.standardLong;
+  const pairEffective = { ...pairStandard, ...pairOverride };
 
-  const setTotal = (x: string) => { const total = Math.max(1, Math.round(Number(x) || 0)); const long = Math.min(total, Math.round(n(v.longSlots))); setV({ ...v, positions: x, longSlots: String(long), shortSlots: String(total - long) }); };
-  const setLong = (x: string) => { const total = Math.max(1, Math.round(n(v.positions))); const long = Math.max(0, Math.min(total, Math.round(Number(x) || 0))); setV({ ...v, longSlots: String(long), shortSlots: String(total - long) }); };
-  const setShort = (x: string) => { const total = Math.max(1, Math.round(n(v.positions))); const sh = Math.max(0, Math.min(total, Math.round(Number(x) || 0))); setV({ ...v, shortSlots: String(sh), longSlots: String(total - sh) }); };
-
-  async function loadMarkets() {
-    if (marketBusy) return;
-    setMarketAttempted(true); setMarketBusy(true);
-    try {
-      const result = await authenticatedRequest("/api/exchanges/aster/strategy2/focus/markets") as Record<string, unknown>;
-      const ranking = Array.isArray(result.ranking) ? result.ranking : [];
-      setMarkets(ranking.flatMap((row) => row && typeof row === "object" ? [String((row as Record<string, unknown>).symbol || "").toUpperCase()] : []).filter(Boolean));
-    } catch (e) { setMessage(e instanceof Error ? e.message : "Aster-markten konden niet worden geladen."); }
-    finally { setMarketBusy(false); }
-  }
-  useEffect(() => { if (wizard && v.manualEnabled && !marketAttempted) void loadMarkets(); }, [wizard, v.manualEnabled, marketAttempted]);
-  useEffect(() => {
-    if (!wizard || !v.manualEnabled || !v.manualSymbols.length) { setTierPreviews({}); return; }
-    let cancelled = false; setTierBusy(true);
-    void Promise.all(v.manualSymbols.map(async ({ symbol }) => {
-      const q = new URLSearchParams({ symbol, minimumLeverage: String(Math.max(1, Math.round(n(v.minLeverage)))), entryMarginUsd: String(Math.max(.01, n(v.entryMargin))), dcaMarginUsd: String(Math.max(.01, n(v.dcaMargin))) });
-      const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/leverage-tiers?${q.toString()}`) as TierPreview;
-      return [symbol, result] as const;
-    })).then((rows) => { if (!cancelled) setTierPreviews(Object.fromEntries(rows)); }).catch((e) => { if (!cancelled) setMessage(e instanceof Error ? e.message : "Aster leverage tiers konden niet worden geladen."); }).finally(() => { if (!cancelled) setTierBusy(false); });
-    return () => { cancelled = true; };
-  }, [wizard, v.manualEnabled, v.manualSymbols, v.minLeverage, v.entryMargin, v.dcaMargin]);
-
-  const selected = new Set(v.manualSymbols.map((x) => x.symbol));
-  const marketMatches = markets.filter((symbol) => !selected.has(symbol) && symbol.includes(marketSearch.trim().toUpperCase())).slice(0, 10);
-  const addSymbol = (symbol: string) => { if (!symbol || selected.has(symbol)) return; setV({ ...v, manualSymbols: [...v.manualSymbols, { symbol, side: "LONG" }] }); setMarketSearch(""); };
-  const setSymbolSide = (symbol: string, side: ManualSide) => setV({ ...v, manualSymbols: v.manualSymbols.map((row) => row.symbol === symbol ? { ...row, side } : row) });
-  const removeSymbol = (symbol: string) => setV({ ...v, manualSymbols: v.manualSymbols.filter((row) => row.symbol !== symbol) });
-  const selectedLong = v.manualSymbols.filter((x) => x.side === "LONG").length, selectedShort = v.manualSymbols.filter((x) => x.side === "SHORT").length;
-
-  const manualPicker = <div className="manual-symbol-mode">
-    <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>Optioneel. UIT = exact huidige Top-N werking.</small></span><input type="checkbox" checked={v.manualEnabled} onChange={(e) => setV({ ...v, manualEnabled: e.target.checked })} /></label>
-    {v.manualEnabled && <div className="manual-symbol-picker">
-      <div className="manual-symbol-search"><input value={marketSearch} onChange={(e) => setMarketSearch(e.target.value.toUpperCase())} onFocus={() => { if (!markets.length) void loadMarkets(); }} placeholder="Zoek munt, bijvoorbeeld HYPEUSDT" /><button type="button" disabled={marketBusy || !marketSearch.trim()} onClick={() => { const exact = markets.find((x) => x === marketSearch.trim().toUpperCase()); if (exact) addSymbol(exact); }}>+ toevoegen</button></div>
-      {marketSearch.trim() && <div className="manual-symbol-results">{marketBusy ? <small>Markten laden…</small> : marketMatches.length ? marketMatches.map((symbol) => <button type="button" key={symbol} onClick={() => addSymbol(symbol)}>{symbol}<i>+</i></button>) : <small>Geen beschikbare Aster USDT perpetual gevonden.</small>}</div>}
-      <div className="manual-symbol-selected">{v.manualSymbols.map((row) => { const preview = tierPreviews[row.symbol]; const entryLev = preview?.entryPlan?.leverage || preview?.currentLeverage || 0; return <div key={row.symbol} style={{display:"grid",gap:6}}><div style={{display:"flex",alignItems:"center",gap:8}}><b>{row.symbol}</b><span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)} aria-label={`${row.symbol} verwijderen`}>×</button></div>{tierBusy && !preview ? <small>Leverage tiers laden…</small> : preview ? <div style={{display:"grid",gap:3,fontSize:12,opacity:.92}}><b>Aster leverage tiers</b>{preview.tiers.slice(0,6).map((t,i) => <span key={`${row.symbol}-${i}`}>{t.cap > 0 ? `$${t.floor.toLocaleString()} – $${t.cap.toLocaleString()}` : `Vanaf $${t.floor.toLocaleString()}`}: max {t.maxLeverage}×</span>)}{preview.nextTier && <strong>Volgende daling: {entryLev}× → {preview.nextTier.maxLeverage}× vanaf ongeveer ${preview.nextTier.floor.toLocaleString()} totaal</strong>}{preview.estimatedDcasToNextTier != null && <span>Geschat aantal DCA's tot volgende tier: {preview.estimatedDcasToNextTier}</span>}{preview.entryOrderValid === false && <span className="inline-warning"><b>Instap geblokkeerd door Aster minimumorder.</b> Met {entryLev}× en ${Number(preview.configuredEntryMarginUsd ?? n(v.entryMargin)).toFixed(2)} margin is de order te klein. Kies minimaal ${Number(preview.suggestedEntryMarginUsd ?? preview.minimumEntryMarginUsd ?? 0).toFixed(2)} margin (exchange-minimum ${Number(preview.minimumExecutableNotionalUsd ?? 0).toFixed(2)} notional).</span>}{preview.nextTier && entryLev > preview.nextTier.maxLeverage && <span className="inline-warning">Let op: bij verdere DCA verlaagt Strategy 2 automatisch de leverage van de hele positie naar de hoogste leverage die Aster toestaat en gaat daarna verder.</span>}</div> : <small>Geen betrouwbare tierdata beschikbaar; Strategy 2 zal geen willekeurige hoge leverage gebruiken.</small>}</div>; })}</div>
-      <p className="manual-symbol-summary">{v.manualSymbols.length} geselecteerd · {selectedLong} LONG · {selectedShort} SHORT</p>
-      {!v.manualSymbols.length && <p className="inline-warning">Selecteer minimaal één munt. Bestaande posities worden nooit gesloten door deze keuze.</p>}
-    </div>}
-  </div>;
-
-  const steps = [
-    { title: "Top-N Aster-volume", help: "Alleen actuele Aster USDT-markten binnen deze Top-N op 24h quote-volume mogen een nieuwe positie openen. De extra handmatige modus hieronder verandert dit alleen wanneer jij hem expliciet aanzet.", body: <><Field label="Top-N volume" value={v.universe} set={x => setV({ ...v, universe: x })} />{manualPicker}</> },
-    { title: "Hoeveel posities tegelijk?", help: "LONG + SHORT moet exact gelijk zijn aan het totaal. Dezelfde munt kan niet tegelijk LONG en SHORT zijn.", body: <><Field label="Totaal posities" value={v.positions} set={setTotal} /><Field label="LONG slots" value={v.longSlots} set={setLong} /><Field label="SHORT slots" value={v.shortSlots} set={setShort} /><b>{v.positions} totaal · {v.longSlots} LONG · {v.shortSlots} SHORT</b></> },
-    { title: "Minimum leverage", help: "Strategy 2 gebruikt de hoogste veilige leverage uit de actuele Aster tiers. Als een hogere positietier later een lagere maximumleverage afdwingt, wint de Aster-limiet: de hele positie wordt automatisch verlaagd en de bot blijft actief.", body: <Field label="Minimum leverage (×)" value={v.minLeverage} set={x => setV({ ...v, minLeverage: x })} /> },
-    { title: "Eerste instap", help: v.manualEnabled ? "Dit is jouw eigen startmargin. De bot kiest eerst de hoogste geldige Aster-leverage voor de gekozen munt en berekent daarna de orderwaarde: margin × leverage." : "Dit is de vaste orderwaarde per nieuwe positie. De bestaande Top-N werking blijft ongewijzigd.", body: <Field label={v.manualEnabled ? "Start margin (USDT)" : "Entry orderwaarde (USDT)"} value={v.entryMargin} set={x => setV({ ...v, entryMargin: x })} /> },
-    { title: "Direct slots vullen", help: v.manualEnabled ? "Vrije slots worden direct gevuld uit jouw geselecteerde munten en richtingen. Er is geen indicator- of Bollinger-wachtregel." : "Vrije LONG- en SHORT-slots worden direct gevuld met de hoogst gerangschikte geldige Top-N markten. Er is geen indicator- of Bollinger-wachtregel.", body: <div className="maker-summary"><b>DIRECT FILL</b><span>Na TP komt het slot direct vrij en start de volgende positie als een nieuwe schone cyclus met DCA-teller 0.</span></div> },
-    { title: "DCA-afstand", help: "LONG koopt lager bij; SHORT koopt hoger bij. De afstand wordt vanaf de laatste bot-fill gemeten.", body: <Field label="DCA afstand (%)" value={v.dcaDistance} set={x => setV({ ...v, dcaDistance: x })} /> },
-    { title: "DCA-bedrag en limiet", help: "Je kunt een maximaal aantal instellen of Onbeperkt DCA aanzetten. Iedere DCA blijft dezelfde afstand-, margin-, leverage- en exchangechecks doorlopen.", body: <><Field label="DCA margin (USDT)" value={v.dcaMargin} set={x => setV({ ...v, dcaMargin: x })} /><label className="manual-symbol-toggle"><span><b>Onbeperkt DCA</b><small>Geen tellerlimiet; normale DCA-afstand en marginchecks blijven verplicht.</small></span><input type="checkbox" checked={v.unlimitedDca} onChange={(e) => setV({ ...v, unlimitedDca: e.target.checked })} /></label>{!v.unlimitedDca && <Field label="Max automatische DCA's" value={v.maxDca} set={x => setV({ ...v, maxDca: x })} />}</> },
-    { title: "Take profit", help: "TP wordt telkens berekend vanaf de echte gewogen Aster-entry, ook na een handmatige bijkoop.", body: <Field label="Take Profit (%)" value={v.tp} set={x => setV({ ...v, tp: x })} /> },
-    { title: "Cross margin", help: "Deze strategie gebruikt uitsluitend cross margin. Alle posities delen dezelfde accountpot; iedere risicotoename krijgt een available-margin check.", body: <div className="maker-summary"><b>CROSS</b><span>Geen hedge/airbag/portfolio-TP/Focus-state machine.</span><span>Risicobegrenzer: max automatische DCA's per positie.</span></div> },
-    { title: "Controle", help: "Opslaan start niets. Jij start de bot pas zelf nadat alles gecontroleerd is.", body: <div className="maker-summary"><b>{v.name}</b><span>{v.manualEnabled ? `${v.manualSymbols.length} zelf gekozen munten · ${selectedLong} LONG / ${selectedShort} SHORT` : `Top ${v.universe} · ${v.positions} posities · ${v.longSlots} LONG / ${v.shortSlots} SHORT`}</span><span>Min {v.minLeverage}× · {v.manualEnabled ? `startmargin $${v.entryMargin} × hoogste geldige leverage` : `entry $${v.entryMargin} orderwaarde`}</span><span>DCA {v.dcaDistance}% · ${v.dcaMargin} · {v.unlimitedDca ? "onbeperkt" : `max ${v.maxDca}`}</span><span>TP {v.tp}% · direct refill · cross</span></div> },
-  ];
+  const change = (next: Draft) => { setDraft(next); setDirty(true); setMessage(""); };
+  const setTotal = (value: number) => {
+    const total = Math.max(1, Math.round(value || 1)); const longSlots = Math.min(total, draft.longSlots);
+    change({ ...draft, maximumPositions: total, longSlots, shortSlots: total - longSlots });
+  };
+  const setLongSlots = (value: number) => {
+    const longSlots = Math.max(0, Math.min(draft.maximumPositions, Math.round(value || 0)));
+    change({ ...draft, longSlots, shortSlots: draft.maximumPositions - longSlots });
+  };
 
   async function action(kind: "save" | "simulate" | "start" | "stop") {
+    if (busy) return;
     setBusy(true); setMessage("");
     try {
-      if (kind === "start" && v.manualEnabled) {
-        const blocked = v.manualSymbols.map((x) => tierPreviews[x.symbol]).filter((x) => x?.entryOrderValid === false);
-        if (blocked.length) {
-          const first = blocked[0];
-          const minimum = Number(first.suggestedEntryMarginUsd ?? first.minimumEntryMarginUsd ?? 0);
-          throw new Error(`${first.symbol}: startmargin $${Number(v.entryMargin).toFixed(2)} is te laag voor Aster. Gebruik minimaal $${minimum.toFixed(2)}.`);
-        }
-      }
-      const route = kind === "save" ? "settings" : kind; const method = kind === "save" ? "PUT" : "POST"; const body = kind === "start" ? { confirm: true, settings } : kind === "stop" ? { confirm: true } : { settings };
+      const route = kind === "save" ? "settings" : kind;
+      const method = kind === "save" ? "PUT" : "POST";
+      const body = kind === "start" ? { confirm: true, settings } : kind === "stop" ? { confirm: true } : { settings };
       const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/${route}`, { method, body: JSON.stringify(body) }) as Record<string, unknown>;
       const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null;
       if (confirmed) { setConfirmedState(confirmed); onConfirmed(confirmed); }
-      if (kind === "start" && result.started === true) setWizard(false);
-      if (kind === "save") setMessage("Nieuwe Multi DCA-configuratie opgeslagen. De bot is niet gestart.");
-      else if (kind === "simulate") setMessage("Configuratie geldig; 0 orders verzonden.");
-      else if (kind === "stop") setMessage("Bot gestopt; er worden geen automatische orders geplaatst.");
-      else {
-        const firstTick = result.firstTick && typeof result.firstTick === "object" ? result.firstTick as Record<string, unknown> : null;
-        const tickStatus = String(firstTick?.status || "").toLowerCase(); const tickReason = String(firstTick?.reason || confirmed?.lastReason || "").trim();
-        if (result.started !== true || confirmed?.enabled !== true) setMessage(`Start niet door de server bevestigd${tickReason ? `: ${tickReason}` : "."}`);
-        else if (["blocked", "data-hold", "stopped"].includes(tickStatus)) setMessage(`Multi DCA is ingeschakeld, maar de eerste scan wacht${tickReason ? `: ${tickReason}` : "."}`);
-        else setMessage("Multi DCA is ingeschakeld en server-side bevestigd.");
-      }
+      if (kind === "save") { setDirty(false); setMessage("Aster Bot-instellingen server-side opgeslagen. Actieve posities zijn niet gereset of gesloten."); }
+      else if (kind === "simulate") setMessage("Configuratie gevalideerd; 0 orders verzonden.");
+      else if (kind === "stop") setMessage("Aster Bot gestopt; bestaande posities zijn niet automatisch gesloten.");
+      else setMessage(result.started === true ? "Aster Bot is server-side ingeschakeld." : `Start niet bevestigd${result.reason ? `: ${String(result.reason)}` : "."}`);
       await Promise.resolve(onChanged());
-    } catch (e) { setMessage(e instanceof Error ? e.message : "Actie mislukt"); } finally { setBusy(false); }
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Actie mislukt");
+    } finally { setBusy(false); }
   }
-  async function checkReadiness() { setBusy(true); setMessage(""); try { const r = await authenticatedRequest("/api/exchanges/aster/strategy2/readiness") as Record<string, unknown>; setReadiness(r); setMessage(Boolean(r.liveReady) ? "Live-gereedheid bevestigd." : "Readiness gecontroleerd; aanvullende live-bevestiging kan nodig zijn."); await Promise.resolve(onChanged()); } catch (e) { setMessage(e instanceof Error ? e.message : "Readiness mislukt"); } finally { setBusy(false); } }
-  async function runCanary() { setBusy(true); setMessage("Canary opent één LONG van maximaal US$ 20 totale orderwaarde en sluit direct na bevestigde fill."); try { const r = await authenticatedRequest("/api/exchanges/aster/strategy2/canary", { method: "POST", body: JSON.stringify({confirm:true,notional_usd:20}) }) as Record<string, unknown>; setMessage(r.completed ? `Canary geslaagd op ${String(r.symbol)}: open en volledige close bevestigd.` : "Canary niet afgerond."); await checkReadiness(); await Promise.resolve(onChanged()); } catch (e) { setMessage(e instanceof Error ? e.message : "Canary veilig gestopt"); setBusy(false); } }
-  const enabled = status.enabled === true; const liveReady = status.liveReady === true || (!status.pending && readiness?.liveReady === true); const report = (state.multiBb && typeof state.multiBb === "object" ? state.multiBb : {}) as Record<string, unknown>; const current = steps[Math.min(step, steps.length - 1)];
-  async function toggleLive(){if(status.pending)return;if(enabled){await action("stop");return}if(liveReady){await action("start");return}await checkReadiness()}
 
-  return <article id="strategy-2-maker" className="strategy-card strategy-two-card">
-    <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Multi DCA</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{enabled ? "AAN" : "UIT"}</span></div>
-    <p>Top-volume multipair · directe LONG/SHORT slotvulling · beperkte DCA · TP op echte gewogen Aster-entry · direct schone herstart na TP.</p>
-    <div className="strategy-facts"><span>{v.manualEnabled ? `${v.manualSymbols.length} zelf gekozen` : `Top ${v.universe} volume`}</span><span>{v.longSlots} LONG · {v.shortSlots} SHORT</span><span>min {v.minLeverage}×</span><span>{v.unlimitedDca ? "DCA onbeperkt" : `DCA max ${v.maxDca}`}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
-    <div className="strategy-message"><b>Exchange truth:</b> handmatige toevoegingen aan een beheerde positie worden meegenomen in quantity en gewogen entry zonder de automatische DCA-teller te resetten.<br /><b>Laatste scan:</b> {String(report.activeLong ?? state.longLegs ?? 0)} LONG · {String(report.activeShort ?? state.shortLegs ?? 0)} SHORT · {Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} volume-kandidaten gecontroleerd.</div>
-    <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Multi DCA live bot</b><small>{enabled ? "draait" : "uit · jij start hem handmatig"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
-    <button className="expand-settings" onClick={() => { setWizard(true); setStep(0); setMessage(""); }}>Strategy Maker openen</button><button className="expand-settings" disabled={busy} onClick={() => action("simulate")}>Test configuratie</button><button className="expand-settings" disabled={busy} onClick={checkReadiness}>Controleer live-gereedheid</button>
-    {Boolean(readiness?.softwareReady) && !Boolean(readiness?.liveReady) && <button className="stop-action" disabled={busy} onClick={runCanary}>Bevestig 1 live testorder · maximaal US$ 20 · direct sluiten</button>}
-    {readiness && <p className="strategy-message">Readiness* {Boolean(readiness.liveReady) ? "LIVE READY" : "nog niet volledig live ready"}</p>}
-    {wizard && <div className="maker-overlay"><div className="maker-dialog"><button className="maker-close" onClick={() => setWizard(false)}>Sluiten</button><span className="kicker">STAP {step + 1} VAN {steps.length}</span><h2>{current.title}</h2><p>{current.help}</p><div className="maker-input">{current.body}</div><div className="maker-progress"><i style={{ width: `${(step + 1) / steps.length * 100}%` }} /></div><div className="maker-nav"><button disabled={step === 0} onClick={() => setStep(Math.max(0, step - 1))}>Terug</button>{step < steps.length - 1 ? <button onClick={() => setStep(step + 1)}>Volgende</button> : <><button disabled={busy} onClick={() => action("save")}>Opslaan</button><button disabled={busy} onClick={() => action("simulate")}>Test configuratie</button></>}</div>{message && <p className="strategy-message">{message}</p>}</div></div>}
-    {message && !wizard && <p className="strategy-message">{message}</p>}
+  async function checkReadiness() {
+    if (busy) return;
+    setBusy(true); setMessage("");
+    try {
+      const result = await authenticatedRequest("/api/exchanges/aster/strategy2/readiness") as Record<string, unknown>;
+      setReadiness(result);
+      setMessage(result.liveReady === true ? "LIVE READY bevestigd." : "Readiness gecontroleerd; live-uitvoering is nog niet volledig vrijgegeven.");
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Readiness mislukt"); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleLive() {
+    if (status.pending || busy) return;
+    if (enabled) return action("stop");
+    if (liveReady) return action("start");
+    return checkReadiness();
+  }
+
+  function setPairOverride(next: Partial<Profile>) {
+    if (!normalizedPair.endsWith("USDT")) return;
+    change({ ...draft, pairOverrides: { ...draft.pairOverrides, [normalizedPair]: { ...pairOverride, ...next } } });
+  }
+  function resetPairOverride() {
+    const next = { ...draft.pairOverrides }; delete next[normalizedPair];
+    change({ ...draft, pairOverrides: next });
+  }
+
+  return <article id="strategy-2-maker" className="strategy-card strategy-two-card aster-bot-direct-settings">
+    <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Instellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{enabled ? "AAN" : "UIT"}</span></div>
+    <p>Één direct instellingenpaneel. Hiërarchie: globale defaults → STANDARD LONG/SHORT → pair override. Er is geen wizard en opslaan start geen trade.</p>
+    <div className="strategy-facts"><span>Top {draft.universeTopN}</span><span>{draft.longSlots} LONG · {draft.shortSlots} SHORT</span><span>STANDARD LONG {draft.standardLong.minimumLeverage}×</span><span>STANDARD SHORT {draft.standardShort.minimumLeverage}×</span><span>{Object.keys(draft.pairOverrides).length} CUSTOM</span><span>CROSS</span></div>
+    <div className="strategy-message"><b>Actieve trades beschermd:</b> instellingen worden opgeslagen zonder cycle reset, zonder fillverlies en zonder automatische close. Pair maxDca kan bijvoorbeeld van 3 naar 5 worden verhoogd terwijl dcaCount 3 behouden blijft.<br/><b>Laatste scan:</b> {String(report.activeLong ?? state.longLegs ?? 0)} LONG · {String(report.activeShort ?? state.shortLegs ?? 0)} SHORT.</div>
+
+    <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster Bot live</b><small>{enabled ? "server-side actief" : "uit · handmatig inschakelen"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={() => void toggleLive()}><i />{enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
+
+    <details className="strategy-settings-group" open><summary>Globale defaults & capaciteit</summary><div className="maker-input direct-settings-grid">
+      <Field label="Naam" value={draft.name} onChange={(value) => change({ ...draft, name: value })}/>
+      <NumberField label="Top-N volume" value={draft.universeTopN} min={1} max={200} onChange={(value) => change({ ...draft, universeTopN: Math.round(value) })}/>
+      <NumberField label="Totaal posities" value={draft.maximumPositions} min={1} max={200} onChange={setTotal}/>
+      <NumberField label="LONG slots" value={draft.longSlots} min={0} max={draft.maximumPositions} onChange={setLongSlots}/>
+      <label>SHORT slots<input value={draft.shortSlots} readOnly aria-readonly="true"/></label>
+      <label>Modus<select value={draft.mode} onChange={(event) => change({ ...draft, mode: event.target.value === "paper" ? "paper" : "live" })}><option value="live">Live</option><option value="paper">Paper</option></select></label>
+      <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>UIT = automatische Top-N scanner. AAN = alleen onderstaande pairs.</small></span><input type="checkbox" checked={draft.manualSymbolSelectionEnabled} onChange={(event) => change({ ...draft, manualSymbolSelectionEnabled: event.target.checked })}/></label>
+      {draft.manualSymbolSelectionEnabled && <Field label="Handmatige pairs" value={draft.manualSymbols.map((item) => `${item.symbol}:${item.side}`).join(", ")} onChange={(value) => change({ ...draft, manualSymbols: value.split(",").flatMap((part) => { const [rawSymbol, rawSide] = part.trim().toUpperCase().split(":"); const side = rawSide === "SHORT" ? "SHORT" : "LONG"; const symbol = rawSymbol?.trim(); return symbol?.endsWith("USDT") ? [{ symbol, side } as ManualSymbol] : []; }) })}/>}
+    </div></details>
+
+    <div className="direct-profile-grid">
+      <ProfilePanel side="LONG" profile={draft.standardLong} onChange={(profile) => change({ ...draft, standardLong: profile })}/>
+      <ProfilePanel side="SHORT" profile={draft.standardShort} onChange={(profile) => change({ ...draft, standardShort: profile })}/>
+    </div>
+
+    <details className="strategy-settings-group" open><summary>Pair override <span className="interface-safe-badge">CUSTOM</span></summary><div className="maker-input direct-settings-grid">
+      <Field label="Pair" value={pairSymbol} onChange={setPairSymbol}/>
+      <div className="maker-summary"><b>{normalizedPair || "Pair"} {draft.pairOverrides[normalizedPair] ? "· CUSTOM" : "· STANDARD"}</b><span>Niet ingevulde velden erven van STANDARD LONG/SHORT. Deze override blijft server-side bestaan tot Reset naar standaard.</span></div>
+      <NumberField label="Max DCA" value={Number(pairEffective.maxDca)} min={0} max={999} onChange={(value) => setPairOverride({ maxDca: Math.round(value), unlimitedDca: false })}/>
+      <NumberField label="DCA bedrag (USDT margin)" value={Number(pairEffective.dcaMarginUsd)} min={0.01} step={0.01} onChange={(value) => setPairOverride({ dcaMarginUsd: value })}/>
+      <NumberField label="DCA afstand (%)" value={percent(Number(pairEffective.dcaDistance))} min={0.01} step={0.01} onChange={(value) => setPairOverride({ dcaDistance: value / 100 })}/>
+      <NumberField label="Take Profit (%)" value={percent(Number(pairEffective.takeProfit))} min={0.1} step={0.1} onChange={(value) => setPairOverride({ takeProfit: value / 100 })}/>
+      <button type="button" className="expand-settings" onClick={resetPairOverride} disabled={!draft.pairOverrides[normalizedPair]}>Reset naar standaard</button>
+    </div></details>
+
+    <div className="maker-nav direct-save-bar"><button type="button" disabled={!dirty || busy} onClick={() => void action("save")}>{busy ? "Bezig…" : dirty ? "Wijzigingen opslaan" : "Opgeslagen"}</button><button type="button" disabled={busy} onClick={() => void action("simulate")}>Test configuratie</button><button type="button" disabled={busy} onClick={() => void checkReadiness()}>Controleer live-gereedheid</button></div>
+    {dirty && <p className="strategy-message">Niet-opgeslagen wijzigingen. Quick trades blijven de laatst server-side opgeslagen profielen gebruiken tot je Opslaan kiest.</p>}
+    {readiness && <p className="strategy-message">Readiness: {readiness.liveReady === true ? "LIVE READY" : "nog niet volledig live ready"}</p>}
+    {message && <p className="strategy-message">{message}</p>}
   </article>;
 }
 
-function Field({ label, value, set }: { label: string; value: string; set: (x: string) => void }) { return <label>{label}<input value={value} onChange={e => set(e.target.value.replace(",", "."))} /></label>; }
+function ProfilePanel({ side, profile, onChange }: { side: Side; profile: Profile; onChange: (profile: Profile) => void }) {
+  return <details className={`strategy-settings-group profile-${side.toLowerCase()}`} open><summary>STANDARD {side}</summary><div className="maker-input direct-settings-grid">
+    <NumberField label="Start margin (USDT)" value={profile.entryMarginUsd} min={0.01} step={0.01} onChange={(value) => onChange({ ...profile, entryMarginUsd: value })}/>
+    <NumberField label="Minimum leverage (×)" value={profile.minimumLeverage} min={1} max={300} onChange={(value) => onChange({ ...profile, minimumLeverage: Math.round(value) })}/>
+    <NumberField label="DCA afstand (%)" value={percent(profile.dcaDistance)} min={0.01} step={0.01} onChange={(value) => onChange({ ...profile, dcaDistance: value / 100 })}/>
+    <NumberField label="DCA margin (USDT)" value={profile.dcaMarginUsd} min={0.01} step={0.01} onChange={(value) => onChange({ ...profile, dcaMarginUsd: value })}/>
+    {!profile.unlimitedDca && <NumberField label="Max DCA" value={profile.maxDca} min={0} max={999} onChange={(value) => onChange({ ...profile, maxDca: Math.round(value) })}/>} 
+    <label className="manual-symbol-toggle"><span><b>Onbeperkt DCA</b><small>Exchange-, leverage-, margin- en duplicatechecks blijven verplicht.</small></span><input type="checkbox" checked={profile.unlimitedDca} onChange={(event) => onChange({ ...profile, unlimitedDca: event.target.checked })}/></label>
+    <NumberField label="Take Profit (%)" value={percent(profile.takeProfit)} min={0.1} max={20} step={0.1} onChange={(value) => onChange({ ...profile, takeProfit: value / 100 })}/>
+    <label className="manual-symbol-toggle"><span><b>Auto-herstart na TP</b><small>Nieuwe cycle gebruikt dan de op dat moment geldende opgeslagen defaults.</small></span><input type="checkbox" checked={profile.autoRestart} onChange={(event) => onChange({ ...profile, autoRestart: event.target.checked })}/></label>
+  </div></details>;
+}
+
+function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <label>{label}<input value={value} onChange={(event) => onChange(event.target.value)}/></label>; }
+function NumberField({ label, value, onChange, min, max, step = 1 }: { label: string; value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number }) {
+  return <label>{label}<input type="number" value={Number.isFinite(value) ? value : 0} min={min} max={max} step={step} onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n)) onChange(n); }}/></label>;
+}
