@@ -63,7 +63,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <PwaRegistration buildNumber={buildNumber} />
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
-        <AuthProvider>{children}<MarketsNavigationBridge /></AuthProvider>
+        <AuthProvider>{children}</AuthProvider>
+        <MarketsNavigationBridge />
       </body>
     </html>
   );
