@@ -98,7 +98,7 @@ from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
-from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step, leverage_tier_preview
+from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step, leverage_tier_preview, quick_trade_once
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -331,6 +331,13 @@ class AsterDryRunRequest(BaseModel):
 
 class AsterStrategySettingsRequest(BaseModel):
     settings: dict[str, Any]
+
+
+class AsterQuickTradeRequest(BaseModel):
+    symbol: str = Field(min_length=3, max_length=40)
+    side: str = Field(pattern="^(LONG|SHORT)$")
+    idempotency_key: str = Field(min_length=12, max_length=160)
+    confirm: bool
 
 
 class AsterStrategyStartRequest(BaseModel):
@@ -4396,6 +4403,78 @@ def run_aster_strategy2_canary(request:AsterStrategy2CanaryRequest,user:dict[str
     strategy_ref.set({"canaryValidated":True,"liveReady":True,"phase":"LIVE_READY","updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"completed":True,"replayed":False,"symbol":symbol,"notionalUsd":request.notional_usd,"orders":orders_out,
         "message":"Open, werkelijke fill en volledige close zijn door Aster bevestigd."}
+
+
+@app.post("/v1/me/aster/strategy2/quick-trade")
+def markets_quick_trade(request: AsterQuickTradeRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    if not request.confirm:
+        raise HTTPException(422, "Persoonlijke bevestiging ontbreekt")
+    uid = str(user["uid"]); ref = aster_strategy2_reference(uid); raw = ref.get().to_dict() or {}
+    try:
+        settings = MultiBbConfig.from_mapping(raw.get("settings"))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not bool(raw.get("enabled")):
+        raise HTTPException(409, "Aster Bot staat uit. Schakel Strategy 2 eerst in voordat je een Markets quick trade opent.")
+    if settings.mode == "live":
+        if not bool(raw.get("liveReady")):
+            raise HTTPException(423, "Strategy 2 is nog niet LIVE READY")
+        if os.getenv("ASTER_STRATEGY2_LIVE_ENABLED", "false").lower() != "true":
+            raise HTTPException(423, "Productie-uitvoering staat centraal uit")
+    symbol = request.symbol.upper().strip(); side = request.side.upper().strip()
+    guard_id = hashlib.sha256((uid + request.idempotency_key).encode()).hexdigest()
+    guard = ref.collection("quickTradeRequests").document(guard_id)
+    now = datetime.now(timezone.utc)
+    try:
+        guard.create({"status": "OPENING", "symbol": symbol, "side": side, "idempotencyKey": request.idempotency_key, "createdAt": now, "updatedAt": now})
+    except google_exceptions.AlreadyExists:
+        previous = guard.get().to_dict() or {}
+        if previous.get("status") == "ACTIVE" and isinstance(previous.get("result"), dict):
+            return {"duplicate": True, **previous["result"]}
+        if previous.get("status") == "FAILED":
+            raise HTTPException(409, str(previous.get("failureReason") or "Deze quick trade is eerder afgewezen"))
+        raise HTTPException(409, f"{symbol} {side} wordt al geopend; wacht op exchange-bevestiging")
+    try:
+        secret = load_aster_secret(user)
+        client = AsterV3Client(signer_address=secret.signer_address, sign_message=local_eip712_signer(secret),
+                               live_authorized=settings.mode == "live", before_order_submit=_block_order_during_close_all(uid))
+        hedge = client.position_mode(); account = client.account_information(); positions = client.position_risk(); orders = client.open_orders()
+        if not hedge:
+            raise ValueError("Aster Hedge Mode staat uit")
+        state = dict(raw.get("multiBbPositions") or {})
+        active_total = len(state); active_side = sum(1 for key in state if key.endswith("|" + side))
+        side_limit = settings.long_slots if side == "LONG" else settings.short_slots
+        needs_side_growth = active_side >= side_limit
+        needs_total_growth = active_total >= settings.maximum_positions or needs_side_growth
+        if needs_total_growth and settings.maximum_positions >= 200:
+            raise ValueError("Maximum van 200 Strategy 2-posities is bereikt")
+        result = quick_trade_once(client=client, ref=ref, raw_state=raw, settings=settings, uid=uid,
+            account=account, positions=positions, open_orders=orders, symbol=symbol, side=side,
+            idempotency_key=request.idempotency_key, timestamp_ms=int(time.time() * 1000), dry_run=settings.mode != "live")
+        # Capacity is grown only after the explicit user entry reached the Strategy-2 execution path.
+        # Automatic scanner calls never enter this route and therefore can never auto-grow seats.
+        if needs_total_growth:
+            updated = settings.public_dict(); updated["maximumPositions"] = settings.maximum_positions + 1
+            if side == "LONG": updated["longSlots"] = settings.long_slots + 1
+            else: updated["shortSlots"] = settings.short_slots + 1
+            saved = MultiBbConfig.from_mapping(updated)
+            ref.set({"settings": saved.public_dict(), "configVersion": max(int(safe_float(raw.get("configVersion"))), saved.version) + 1,
+                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
+            ref.collection("audit").add({"event": "MARKETS_MANUAL_SEAT_GROWTH", "symbol": symbol, "side": side,
+                "oldTotal": settings.maximum_positions, "newTotal": saved.maximum_positions,
+                "oldLong": settings.long_slots, "newLong": saved.long_slots,
+                "oldShort": settings.short_slots, "newShort": saved.short_slots, "timestamp": datetime.now(timezone.utc)})
+            result["seatGrowth"] = {"total": [settings.maximum_positions, saved.maximum_positions],
+                                    "long": [settings.long_slots, saved.long_slots], "short": [settings.short_slots, saved.short_slots]}
+        guard.set({"status": "ACTIVE", "result": result, "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        guard.set({"status": "FAILED", "failureReason": str(exc), "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        ref.collection("audit").add({"event": "MARKETS_QUICK_TRADE_FAILED", "symbol": symbol, "side": side,
+            "idempotencyKey": request.idempotency_key, "reason": str(exc), "timestamp": datetime.now(timezone.utc)})
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.post("/v1/me/aster/strategy2/start")

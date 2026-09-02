@@ -351,6 +351,73 @@ def _close_evidence(client: Any, uid: str, state: dict[str, Any], row: dict[str,
                          ownership_reliable=True, fills_reliable=True, prices_reliable=True, costs_reliable=True)
 
 
+
+def quick_trade_once(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: MultiBbConfig, uid: str,
+                     account: dict[str, Any], positions: list[dict[str, Any]], open_orders: list[dict[str, Any]],
+                     symbol: str, side: str, idempotency_key: str, timestamp_ms: int, dry_run: bool = False) -> dict[str, Any]:
+    """Open exactly one user-requested Strategy-2 cycle without invoking the automatic scanner.
+
+    Uses the same exchange metadata, tier resolver, order planner, executor and persisted
+    multiBbPositions state as the automatic engine. The stable idempotency key is part of
+    both the exchange client id and cycle id, so browser retries cannot create a second cycle.
+    """
+    symbol = str(symbol).upper().strip(); side = str(side).upper().strip()
+    if not symbol.endswith("USDT") or side not in {"LONG", "SHORT"}:
+        raise ValueError("Ongeldige Aster USDT perpetual of richting")
+    pmap = _position_map(positions)
+    same_symbol = [key for key in pmap if key.startswith(symbol + "|")]
+    if same_symbol:
+        existing_side = same_symbol[0].split("|", 1)[1]
+        raise ValueError(f"{symbol} heeft al een actieve {existing_side}-positie")
+    for order in open_orders:
+        if str(order.get("symbol", "")).upper() == symbol and str(order.get("positionSide", "")).upper() == side:
+            raise ValueError(f"{symbol} {side} heeft al een pending exchange-order")
+    info = client.public_exchange_info()
+    row = next((x for x in info.get("symbols", []) if str(x.get("symbol", "")).upper() == symbol
+                and str(x.get("quoteAsset", "USDT")).upper() == "USDT"
+                and str(x.get("status", "TRADING")).upper() == "TRADING"), None)
+    if row is None:
+        raise ValueError(f"{symbol} is niet actief/verhandelbaar op Aster")
+    prices = {str(x.get("symbol", "")).upper(): _f(x.get("price")) for x in client.ticker_prices()}
+    mark = prices.get(symbol, 0.0)
+    if mark <= 0:
+        raise ValueError(f"Geen actuele Aster-prijs beschikbaar voor {symbol}")
+    effective = settings.effective_profile(symbol, side)
+    plan, tier = _plan_new(client, row, mark,
+        entry_margin_usd=_f(effective.get("entryMarginUsd"), settings.entry_margin_usd),
+        entry_notional_usd=_f(effective.get("entryNotionalUsd"), settings.entry_notional_usd),
+        entry_sizing_mode=str(effective.get("entrySizingMode", settings.entry_sizing_mode)),
+        minimum_leverage=max(1, _i(effective.get("minimumLeverage"), settings.minimum_leverage)))
+    required = float(plan.notional_per_leg) / max(1, plan.leverage)
+    available = _f(account.get("availableBalance", account.get("availableMargin")))
+    if available < required * 1.05:
+        raise ValueError(f"Onvoldoende beschikbare margin voor {symbol} {side}; minimaal ongeveer ${required * 1.05:.2f} nodig")
+    cycle_id = hashlib.sha256((uid + symbol + side + idempotency_key).encode()).hexdigest()[:16]
+    planned = {"status": "PLANNED", "symbol": symbol, "side": side, "cycleId": cycle_id,
+               "leverage": plan.leverage, "marginUsd": required, "notionalUsd": float(plan.notional_per_leg),
+               "exchangeMaxLeverage": tier.get("exchangeMaxLeverage"), "effectiveSettings": effective}
+    if dry_run:
+        return planned
+    stable = hashlib.sha256((uid + symbol + side + idempotency_key).encode()).hexdigest()[:12]
+    result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-quick-{stable}",
+                              confirm=True, new_position_leverage=plan.leverage)
+    fill = result.get("result") or {}
+    fill_price = _f(fill.get("avgPrice"), mark); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))
+    if fill_qty <= 0:
+        raise RuntimeError(f"{symbol} {side}: Aster bevestigde geen geldige fill")
+    state = dict(raw_state.get("multiBbPositions") or {})
+    key = f"{symbol}|{side}"
+    state[key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": fill_price,
+                  "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,
+                  "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True,
+                  "manualQuickTrade": True, "quickTradeIdempotencyKey": idempotency_key}
+    ref.set({"multiBbPositions": state, "phase": "RUNNING", "lastTickAt": datetime.now(timezone.utc),
+             "lastReason": f"Markets quick trade: {symbol} {side} actief"}, merge=True)
+    ref.collection("audit").add({"event": "MARKETS_QUICK_TRADE", "symbol": symbol, "side": side,
+        "cycleId": cycle_id, "idempotencyKey": idempotency_key, "leverage": plan.leverage,
+        "marginUsd": required, "notionalUsd": float(plan.notional_per_leg), "timestamp": datetime.now(timezone.utc)})
+    return {**planned, "status": "ACTIVE", "fillPrice": fill_price, "fillQty": fill_qty}
+
 def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: MultiBbConfig, uid: str,
                       account: dict[str, Any], positions: list[dict[str, Any]], open_orders: list[dict[str, Any]],
                       timestamp_ms: int, dry_run: bool = False, order_budget: int | None = None,

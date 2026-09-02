@@ -9,6 +9,8 @@ type BbStatus = "above" | "between" | "below";
 type BbFilter = "all" | BbStatus;
 type SortKey = "volume" | "change" | "leverage" | "bb";
 type SortDirection = "asc" | "desc";
+type QuickSide = "LONG" | "SHORT";
+type QuickTrade = { row: MarketRow; side: QuickSide; effective: Record<string, unknown>; idempotencyKey: string };
 
 type MarketRow = {
   symbol: string;
@@ -70,6 +72,9 @@ export function MarketsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [error, setError] = useState("");
+  const [quickTrade, setQuickTrade] = useState<QuickTrade | null>(null);
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [quickMessage, setQuickMessage] = useState("");
   const generationRef = useRef(0);
 
   const enrich = useCallback(async (base: MarketsPayload, generation: number) => {
@@ -186,6 +191,38 @@ export function MarketsPage() {
   const arrow = (key: SortKey) => sortKey === key ? (sortDirection === "desc" ? "↓" : "↑") : "↕";
   const updated = data?.updatedAt ? new Date(data.updatedAt).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
 
+  async function prepareQuickTrade(row: MarketRow, side: QuickSide) {
+    setQuickBusy(true); setQuickMessage("");
+    try {
+      const account = await authenticatedRequest("/api/exchanges/aster") as Record<string, unknown>;
+      const strategy2 = account.strategy2 && typeof account.strategy2 === "object" ? account.strategy2 as Record<string, unknown> : {};
+      const settings = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
+      const direction = (side === "LONG" ? settings.standardLong : settings.standardShort);
+      const profile = direction && typeof direction === "object" ? { ...(direction as Record<string, unknown>) } : {};
+      const overrides = settings.pairOverrides && typeof settings.pairOverrides === "object" ? settings.pairOverrides as Record<string, unknown> : {};
+      const pair = overrides[row.symbol] && typeof overrides[row.symbol] === "object" ? overrides[row.symbol] as Record<string, unknown> : {};
+      const effective = { ...settings, ...profile, ...pair };
+      setQuickTrade({ row, side, effective, idempotencyKey: `${row.symbol}-${side}-${crypto.randomUUID()}` });
+    } catch (reason) {
+      setQuickMessage(reason instanceof Error ? reason.message : "Strategy 2-instellingen konden niet worden geladen.");
+    } finally { setQuickBusy(false); }
+  }
+
+  async function confirmQuickTrade() {
+    if (!quickTrade || quickBusy) return;
+    setQuickBusy(true); setQuickMessage("");
+    try {
+      const result = await authenticatedRequest("/api/exchanges/aster/strategy2/quick-trade", { method: "POST", body: JSON.stringify({
+        symbol: quickTrade.row.symbol, side: quickTrade.side, idempotency_key: quickTrade.idempotencyKey, confirm: true,
+      }) }) as Record<string, unknown>;
+      const cycle = String(result.cycleId || "");
+      setQuickMessage(`${quickTrade.row.symbol} ${quickTrade.side} is ${String(result.status || "ACTIVE").toLowerCase()}${cycle ? ` · cycle ${cycle}` : ""}.`);
+      setQuickTrade(null);
+    } catch (reason) {
+      setQuickMessage(reason instanceof Error ? reason.message : "Positie kon niet worden geopend.");
+    } finally { setQuickBusy(false); }
+  }
+
   return <section className={styles.page} aria-labelledby="markets-title">
     <header className={styles.heading}>
       <div><span className={styles.eyebrow}>ASTER · USDT PERPETUALS</span><h1 id="markets-title">Markets</h1><p>Realtime markten, leverage en Bollinger-status op één mobiel overzicht.</p></div>
@@ -217,7 +254,15 @@ export function MarketsPage() {
           {row.bbStatus && row.bbUpper !== null && row.bbMiddle !== null && row.bbLower !== null
             ? <div className={`${styles.bbBadge} ${styles[row.bbStatus]}`} title={`Upper ${price(row.bbUpper)} · Mid ${price(row.bbMiddle)} · Lower ${price(row.bbLower)}`}><i />{statusLabel(row.bbStatus)}</div>
             : <div className={styles.bbBadge} title="Bollinger-data wordt veilig gedoseerd opgehaald"><i />BB laden</div>}
+          <div className={styles.quickActions}><button type="button" className={styles.buyLong} disabled={quickBusy} onClick={() => void prepareQuickTrade(row, "LONG")}>Buy Long</button><button type="button" className={styles.buyShort} disabled={quickBusy} onClick={() => void prepareQuickTrade(row, "SHORT")}>Buy Short</button></div>
         </article>)}</div>}
     {error && data && <div className={styles.staleWarning}>{error}</div>}
+    {quickMessage && <div className={styles.quickMessage}>{quickMessage}</div>}
+    {quickTrade && <div className={styles.quickOverlay} role="presentation" onClick={() => !quickBusy && setQuickTrade(null)}><div className={styles.quickSheet} role="dialog" aria-modal="true" aria-label={`Open ${quickTrade.row.symbol} ${quickTrade.side}?`} onClick={(event) => event.stopPropagation()}>
+      <span className={styles.eyebrow}>STRATEGY 2 QUICK TRADE</span><h2>Open {quickTrade.row.symbol} {quickTrade.side}?</h2>
+      <div className={styles.quickSummary}><span>Profiel <b>STANDARD {quickTrade.side}</b></span><span>Margin <b>${Number(quickTrade.effective.entryMarginUsd ?? 0).toFixed(2)}</b></span><span>Leverage <b>{Number(quickTrade.effective.minimumLeverage ?? 0)}x</b></span><span>Max DCA <b>{String(quickTrade.effective.unlimitedDca === true ? "Onbeperkt" : quickTrade.effective.maxDca ?? "—")}</b></span><span>DCA bedrag <b>${Number(quickTrade.effective.dcaMarginUsd ?? 0).toFixed(2)}</b></span><span>TP <b>{(Number(quickTrade.effective.takeProfit ?? 0) * 100).toFixed(2)}%</b></span></div>
+      <p>De server controleert vóór de order opnieuw actuele Aster-leverage, minimumorder, precision, beschikbare margin, bestaande positie en pending orders.</p>
+      <div className={styles.quickConfirm}><button type="button" onClick={() => setQuickTrade(null)} disabled={quickBusy}>Annuleren</button><button type="button" className={quickTrade.side === "LONG" ? styles.buyLong : styles.buyShort} onClick={() => void confirmQuickTrade()} disabled={quickBusy}>{quickBusy ? "Openen…" : `Open ${quickTrade.side}`}</button></div>
+    </div></div>}
   </section>;
 }
