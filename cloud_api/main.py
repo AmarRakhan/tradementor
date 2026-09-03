@@ -4277,6 +4277,10 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     switching=str(old.get("engine",old.get("strategyKind","")))!=MULTI_BB_ENGINE
     update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"phase":"CONFIGURED",
         "lastReason":"Nieuwe Multi DCA-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
+        # A scan report is only valid for the settings version that produced it.
+        # Clear it atomically with the settings update so the UI can never show
+        # an old order minimum or old position capacity as a current blocker.
+        "multiBbReport":{},
         "pendingReopens":[],"focusLiveState":{},"focusLiveSlots":[],"focusV2State":{},"focusV2History":{},
         "moneyGrabberActivated":False,"moneyGrabberRound":None,"moneyGrabberPairs":[]}
     if switching: update.update({"enabled":False,"monitor":False,"multiBbPositions":{}})

@@ -90,6 +90,14 @@ def test_entry_is_immediate_without_indicator_wait():
     assert entry["side"]=="LONG" and entry["entryMode"]=="immediate_fill"
 
 
+def test_scan_report_is_bound_to_the_settings_version():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1000"}],prices={"AAAUSDT":100},leverage=100)
+    settings=cfg(version=7)
+    result=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",
+        account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert result["configVersion"]==7
+
+
 def test_minimum_leverage_filter_and_maximum_leverage_selection():
     low=Client(leverage=25)
     high=Client(leverage=300)
