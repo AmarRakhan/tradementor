@@ -29,6 +29,7 @@ const initial: Values = {
   minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", tp: "1.5", mode: "live",
   manualEnabled: false, manualSymbols: [],
 };
+const MAX_DCA = 500;
 const n = (value: string) => Number(value) || 0;
 const clampInt = (value: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(value || 0)));
 const parseManualSymbols = (value: unknown): ManualSymbol[] => Array.isArray(value) ? value.flatMap((row) => {
@@ -66,7 +67,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(50, longSlots + shortSlots)),
       longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50),
       entryMargin: String(x.entrySizingMode === "margin" ? (x.entryMarginUsd ?? 5) : (x.entryNotionalUsd ?? x.baseNotional ?? 5)),
-      dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(Math.min(3, Math.max(0, Number(x.maxDca ?? 3)))),
+      dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(clampInt(Number(x.maxDca ?? 3), 0, MAX_DCA)),
       tp: String(Number(x.takeProfit ?? .015) * 100), mode: x.mode === "paper" ? "paper" : "live",
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
     });
@@ -83,7 +84,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       entryMarginUsd: n(v.entryMargin),
       entryNotionalUsd: n(v.entryMargin) * Math.max(1, Math.round(n(v.minLeverage))),
       entrySizingMode: "margin",
-      dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: clampInt(n(v.maxDca), 0, 3), unlimitedDca: false,
+      dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: clampInt(n(v.maxDca), 0, MAX_DCA), unlimitedDca: false,
       takeProfit: n(v.tp) / 100, entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualSymbols,
     };
@@ -135,7 +136,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     setBusy(true); setMessage("");
     try {
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > 25 || settings.shortSlots > 25 || settings.maximumPositions > 50) throw new Error("Positielimieten zijn ongeldig: maximaal 25 LONG + 25 SHORT (50 totaal).");
-      if (settings.maxDca > 3) throw new Error("Globale DCA-limiet mag maximaal 3 zijn.");
+      if (settings.maxDca > MAX_DCA) throw new Error(`Globale DCA-limiet mag maximaal ${MAX_DCA} zijn.`);
       if (settings.entryMarginUsd * settings.minimumLeverage < 5) throw new Error(`Startmargin te laag: ${settings.entryMarginUsd} USDT × ${settings.minimumLeverage} is minder dan de Aster-minimumorder van circa 5 USDT. Verhoog de startmargin naar minimaal ${(5 / settings.minimumLeverage).toFixed(2)} USDT; per markt kan iets meer nodig zijn.`);
       if (v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
       if (kind === "start" && v.manualEnabled) {
@@ -196,7 +197,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       <Field label="Start margin (USDT)" value={v.entryMargin} set={(value) => change({ ...v, entryMargin: value })} />
       <Field label="DCA afstand (%)" value={v.dcaDistance} set={(value) => change({ ...v, dcaDistance: value })} />
       <Field label="DCA margin (USDT)" value={v.dcaMargin} set={(value) => change({ ...v, dcaMargin: value })} />
-      <Field label="Globale DCA-limiet (0–3)" value={v.maxDca} set={(value) => change({ ...v, maxDca: String(clampInt(Number(value), 0, 3)) })} />
+      <Field label={`Globale DCA-limiet (0–${MAX_DCA})`} value={v.maxDca} set={(value) => change({ ...v, maxDca: value })} />
       <Field label="Take Profit (%)" value={v.tp} set={(value) => change({ ...v, tp: value })} />
 
       <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>UIT = automatische Top-N. AAN = uitsluitend jouw geselecteerde Aster USDT perpetuals.</small></span><input type="checkbox" checked={v.manualEnabled} onChange={(event) => change({ ...v, manualEnabled: event.target.checked })} /></label>
