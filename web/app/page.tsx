@@ -22,7 +22,6 @@ import { isCompletePortfolioSnapshot, sanitizePortfolioEquityRows, type Portfoli
 import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
-import { AsterBotStatus } from "@/components/aster-bot-status";
 import { BotHealthCard } from "@/components/bot-health-card";
 import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
@@ -412,8 +411,8 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   };
   return (
     <>
-      {!positionsOnly && <section className="hero-panel">
-        {destination === "aster" ? <AsterBotStatus snapshot={snapshot.data} /> : <div className="hero-copy">
+      {!positionsOnly && <section className={`hero-panel ${destination === "aster" ? "aster-liquidation-hero" : ""}`}>
+        {destination !== "aster" && <div className="hero-copy">
           <span className="kicker">{copy.eyebrow}</span>
           <h1>{copy.title}</h1>
           <p>{copy.note}</p>
