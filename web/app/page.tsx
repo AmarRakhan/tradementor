@@ -23,6 +23,7 @@ import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
 import { BotHealthCard } from "@/components/bot-health-card";
+import { PullToRefresh } from "@/components/pull-to-refresh";
 import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
 
@@ -242,7 +243,7 @@ function TradeMentorHome() {
   const initials = (user?.displayName || user?.email || "TM").split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
 
   if (interfaceMode === "premium") {
-    return <PremiumExperience
+    return <><PullToRefresh onRefresh={refreshAll} /><PremiumExperience
       cloudReady={cloudReady}
       initials={initials || "TM"}
       snapshots={snapshots}
@@ -255,11 +256,12 @@ function TradeMentorHome() {
       preferenceMessage={interfacePreferenceMessage}
       appSkin={appSkin}
       onAppSkinChange={changeAppSkin}
-    />;
+    /></>;
   }
 
   return (
     <main className={`app-shell ${active === "journey" ? "journey-active" : ""}`}>
+      <PullToRefresh onRefresh={refreshAll} />
       <aside className="rail" aria-label="Hoofdnavigatie">
         <Brand compact />
         <nav className="rail-nav">

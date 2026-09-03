@@ -39,7 +39,9 @@ test("Tradecentrum is compact and mobile-safe", () => {
   assert.match(styles, /\.filters\{[^}]*overflow-x:auto/);
   assert.match(styles, /\.filter\.active/);
   assert.match(styles, /@media\(max-width:700px\)/);
-  assert.match(styles, /grid-template-columns:minmax\(90px,1\.2fr\)/);
+  assert.match(styles, /grid-template-columns:minmax\(64px,1fr\).*57px/);
+  assert.match(styles, /\.statusText\{display:none\}/);
+  assert.match(styles, /\.close\{width:100%;min-width:0/);
   assert.match(styles, /\.long,.profit\{color:#58f0ae\}/);
   assert.match(styles, /\.short,.loss\{color:#ff617d\}/);
 });
