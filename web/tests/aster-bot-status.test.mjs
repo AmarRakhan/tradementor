@@ -4,9 +4,13 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("Aster hero uses only the server bot-status component and preserves the maintenance orbit", async () => {
+test("Aster hero removes the Strategy 2 recovery bar and preserves liquidation risk", async () => {
   const page = await read("app/page.tsx");
-  assert.match(page, /destination === "aster" \? <AsterBotStatus snapshot=\{snapshot\.data\} \/>/);
+  assert.doesNotMatch(page, /<AsterBotStatus/);
+  assert.doesNotMatch(page, /import \{ AsterBotStatus \}/);
+  assert.match(page, /aster-liquidation-hero/);
+  assert.match(page, /destination !== "aster" && <div className="hero-copy">/);
+  assert.match(page, /<LiquidationRiskOrbit display=\{view\.asterAccountDisplay\} \/>/);
   assert.match(page, /<div className=\{`risk-orbit risk-\$\{view\.riskTone\}`\}/);
   assert.match(page, /<strong>\{view\.riskValue\}<\/strong>/);
   const component = await read("components/aster-bot-status.tsx");

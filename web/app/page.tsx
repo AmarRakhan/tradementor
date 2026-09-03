@@ -22,7 +22,6 @@ import { isCompletePortfolioSnapshot, sanitizePortfolioEquityRows, type Portfoli
 import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
-import { AsterBotStatus } from "@/components/aster-bot-status";
 import { BotHealthCard } from "@/components/bot-health-card";
 import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
@@ -412,8 +411,8 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   };
   return (
     <>
-      {!positionsOnly && <section className="hero-panel">
-        {destination === "aster" ? <AsterBotStatus snapshot={snapshot.data} /> : <div className="hero-copy">
+      {!positionsOnly && <section className={`hero-panel ${destination === "aster" ? "aster-liquidation-hero" : ""}`}>
+        {destination !== "aster" && <div className="hero-copy">
           <span className="kicker">{copy.eyebrow}</span>
           <h1>{copy.title}</h1>
           <p>{copy.note}</p>
@@ -465,10 +464,6 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         {!positionsOnly && <aside className="side-stack">
           {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Maker snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></fieldset>}
           {destination !== "aster" && <ExchangeLiveControl exchange={destination} cloudReady={cloudReady} snapshot={snapshot.data} onChanged={onRefresh} />}
-          <article className={`safety-card ${view.tradingEnabled && asterExecutionConfirmed ? "live" : ""}`}>
-            <div className="shield-mark">TM</div>
-            <div><span className="kicker">ORDER COORDINATOR</span><h3>{!asterExecutionConfirmed ? "Aster-uitvoering niet bevestigd" : view.tradingEnabled ? "Persoonlijke livepoort actief" : "Nieuwe exposure geblokkeerd"}</h3><p>{!asterExecutionConfirmed ? "Nieuwe instappen zijn geblokkeerd. Positiebeheer staat ingeschakeld, maar actuele uitvoering kon door Aster niet worden bevestigd." : view.tradingEnabled ? "De actieve strategie beslist pas na iedere server-side risicocontrole." : "Nieuwe instappen blijven uit; positiebeheer wordt alleen als beschikbaar getoond met actuele serverbevestiging."}</p></div>
-          </article>
         </aside>}
       </section>
     </>

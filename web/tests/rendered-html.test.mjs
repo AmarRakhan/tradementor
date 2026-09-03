@@ -44,7 +44,7 @@ test("keeps execution safe and exposes the test destinations", async () => {
   assert.match(page, /DCA Pulse/);
   assert.match(page, /Live handel uit/);
   assert.match(page, /Privacy, voorwaarden en risicowaarschuwing/);
-  assert.match(page, /Nieuwe exposure geblokkeerd/);
+  assert.doesNotMatch(page, /ORDER COORDINATOR|Nieuwe exposure geblokkeerd/);
   assert.match(page, /Bekijk Premium/);
   assert.match(page, /Bruto PnL \/ positie/);
   assert.match(page, /TP komt alleen uit serverbewijs/);
