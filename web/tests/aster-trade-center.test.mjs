@@ -63,3 +63,8 @@ test("Tradecentrum adds compact PnL percent and entry-count columns without remo
   assert.match(component, /dcaCountReliable/);
   assert.match(component, /dcaCountReliable !== true && position\.strategy2DcaLadder\?\.available !== true/);
 });
+
+test("Live opens by default with highest dollar profit first", () => {
+  assert.match(component, /useState<FilterKey>\("live"\)/);
+  assert.match(component, /finite\(b\.unrealizedPnl\).*finite\(a\.unrealizedPnl\)/);
+});
