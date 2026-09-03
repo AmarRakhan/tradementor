@@ -5,9 +5,9 @@ import { readFile } from "node:fs/promises";
 const component = await readFile(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../components/aster-trade-center.module.css", import.meta.url), "utf8");
 
-test("Aster Tradecentrum replaces the four standalone trade cards with eight interactive filters", () => {
+test("Aster Tradecentrum replaces the four standalone trade cards with nine interactive filters", () => {
   assert.match(component, />Tradecentrum</);
-  for (const label of ["Live", "Ingestapt", "Gesloten", "TP", "DCA", "Hoogste winst", "Hoogste verlies", "Botacties"]) assert.match(component, new RegExp(`label: "${label}"`));
+  for (const label of ["Live", "Meeste DCA", "Ingestapt", "Gesloten", "TP", "DCA", "Hoogste winst", "Hoogste verlies", "Botacties"]) assert.match(component, new RegExp(`label: "${label}"`));
   assert.match(component, /useState<FilterKey>\("live"\)/);
   assert.match(component, /aria-pressed=\{active === filter\.key\}/);
   assert.match(component, /onClick=\{\(\) => selectFilter\(filter\.key\)\}/);
@@ -55,7 +55,7 @@ test("Live includes Airbag hedge as a clearly managed leg", () => {
 
 
 test("Tradecentrum adds compact PnL percent and entry-count columns without removing existing columns", () => {
-  for (const label of ["PAIR", "SIDE", "LEV", "MARGIN", "PNL", "PNL %", "#", "STATUS"]) assert.match(component, new RegExp(`<span>${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</span>`));
+  for (const label of ["PAIR", "SIDE", "LEV", "MARGIN", "PNL", "PNL %", "STATUS"]) assert.match(component, new RegExp(`<span>${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}</span>`));
   assert.match(component, /positionPricePnlPct/);
   assert.match(component, /positionEntryCount/);
   assert.match(component, /Math\.round\(dca\) \+ 1/);
@@ -67,4 +67,19 @@ test("Tradecentrum adds compact PnL percent and entry-count columns without remo
 test("Live opens by default with highest dollar profit first", () => {
   assert.match(component, /useState<FilterKey>\("live"\)/);
   assert.match(component, /finite\(b\.unrealizedPnl\).*finite\(a\.unrealizedPnl\)/);
+});
+
+test("Live opens by default with highest dollar profit first", () => {
+  assert.match(component, /useState<FilterKey>\("live"\)/);
+  assert.match(component, /finite\(b\.unrealizedPnl\).*finite\(a\.unrealizedPnl\)/);
+});
+
+test("Meeste DCA is the second tab and sorts live trades by confirmed DCA count", () => {
+  assert.match(component, /key: "live", label: "Live" \}, \{ key: "mostDca", label: "Meeste DCA" \}, \{ key: "entered", label: "Ingestapt"/);
+  assert.match(component, /const mostDcaPositions = useMemo/);
+  assert.match(component, /positionEntryCount\(a\)/);
+  assert.match(component, /positionEntryCount\(b\)/);
+  assert.match(component, /showDcaCount=\{active === "mostDca"\}/);
+  assert.match(component, /showDcaCount \? "DCA" : "#"/);
+  assert.match(component, /Math\.max\(0, row\.entries - 1\)/);
 });
