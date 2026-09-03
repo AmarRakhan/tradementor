@@ -10,17 +10,19 @@ def test_new_engine_replaces_focus_configuration_contract():
     assert cfg.long_slots==20 and cfg.short_slots==10 and cfg.take_profit==.015
 
 
-def test_wizard_contains_only_multi_bb_strategy_controls():
+def test_direct_panel_contains_only_multi_bb_strategy_controls():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
-    for token in ("Top-N Aster-volume","Direct slots vullen","DCA-bedrag en limiet","Minimum leverage","Multi DCA"):
+    for token in ("Botinstellingen","Top-N volume","LONG slots","SHORT slots","Minimum leverage","DCA margin","Globale DCA-limiet"):
         assert token in ui
+    assert "Geen wizard" in ui
     assert "1-minuut Bollinger-entry" not in ui
     for retired in ("Focus 2.0 gebruiken","Start LONG + SHORT 1:1","Portfolio-doel modus","PORTFOLIO AIRBAG","Money Grabber"):
         assert retired not in ui
 
 
-def test_new_wizard_is_cross_and_manual_add_exchange_truth_aware():
+def test_direct_panel_is_cross_and_manual_selection_is_exchange_truth_aware():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
     assert "CROSS" in ui
-    assert "handmatige toevoegingen" in ui
-    assert "gewogen entry" in ui
+    assert "Zelf munten kiezen" in ui
+    assert "leverage-tiers" in ui
+    assert "entryOrderValid" in ui
