@@ -29,7 +29,7 @@ test("Tradecentrum keeps detail, close, show-all and pagination interactions fun
   assert.match(component, /<SafeTradingChart/);
   assert.match(component, /"Toon alles"/);
   assert.match(component, /Laad nog 100/);
-  assert.match(component, /setPages\(value => value \+ 1\)/);
+  assert.match(component, /setPages\(\(?value\)? => value \+ 1\)/);
   assert.match(component, /onOpenDetail\(row\)/);
   assert.match(component, /Geen bevestigde gegevens voor dit filter/);
   assert.match(component, /Tradegegevens tijdelijk niet beschikbaar/);
@@ -48,7 +48,7 @@ test("Tradecentrum is compact and mobile-safe", () => {
 
 
 test("Live includes Airbag hedge as a clearly managed leg", () => {
-  assert.match(component, /livePositions = useMemo\(\(\) => \[\.\.\.positionsWithMultiDcaCounts\]/);
+  assert.match(component, /livePositions = useMemo\(\s*\(\) =>\s*\[\.\.\.positionsWithMultiDcaCounts\]/);
   assert.match(component, /AIRBAG \/ HEDGE/);
   assert.match(component, /HOOFDPOSITIE/);
   assert.match(component, /BOT BEHEERT/);
@@ -77,7 +77,7 @@ test("Live opens by default with highest dollar profit first", () => {
 });
 
 test("Meeste DCA is the second tab and sorts live trades by confirmed DCA count", () => {
-  assert.match(component, /key: "live", label: "Live" \}, \{ key: "mostDca", label: "Meeste DCA" \}, \{ key: "entered", label: "Ingestapt"/);
+  assert.match(component, /key: "live", label: "Live" \},\s*\{ key: "mostDca", label: "Meeste DCA" \},\s*\{ key: "entered", label: "Ingestapt"/);
   assert.match(component, /const mostDcaPositions = useMemo/);
   assert.match(component, /positionEntryCount\(a\)/);
   assert.match(component, /positionEntryCount\(b\)/);
