@@ -276,7 +276,7 @@ def test_disabling_manual_selection_keeps_existing_managed_legs_and_subtracts_th
     tickers=[{"symbol":f"NEW{i}USDT","quoteVolume":str(100-i)} for i in range(18)]
     prices={**{row["symbol"]:100 for row in tickers},"OLD1USDT":100,"OLD2USDT":100}
     c=Client(positions=positions,tickers=tickers,prices=prices,leverage=20)
-    settings=cfg(manualSymbolSelectionEnabled=False,manualSymbols=[],universeTopN=20,maximumPositions=20,longSlots=10,shortSlots=10,entrySizingMode="margin",entryMarginUsd=.2)
+    settings=cfg(manualSymbolSelectionEnabled=False,manualSymbols=[],universeTopN=20,maximumPositions=20,longSlots=10,shortSlots=10,entrySizingMode="margin",entryMarginUsd=.3)
     r=run_multi_bb_step(client=c,ref=Ref(),raw_state=state,settings=settings,uid="u",account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=20)
     assert r["managedLong"]==2 and r["managedShort"]==0
     assert r["activeLong"]==10 and r["activeShort"]==10
