@@ -11,11 +11,11 @@ test("manual and automatic selection keep one consistent margin sizing meaning",
   assert.doesNotMatch(maker, /entrySizingMode:\s*v\.manualEnabled/);
 });
 
-test("direct settings enforce a global DCA ceiling of three and disable unlimited DCA", () => {
-  assert.match(maker, /Globale DCA-limiet \(0–3\)/);
-  assert.match(maker, /maxDca:\s*clampInt\(n\(v\.maxDca\), 0, 3\)/);
+test("direct settings accept DCA limits such as 10 and cap extreme values at 500", () => {
+  assert.match(maker, /Globale DCA-limiet \(0–\$\{MAX_DCA\}\)/);
+  assert.match(maker, /maxDca:\s*clampInt\(n\(v\.maxDca\), 0, MAX_DCA\)/);
   assert.match(maker, /unlimitedDca:\s*false/);
-  assert.match(maker, /Globale DCA-limiet mag maximaal 3 zijn/);
+  assert.match(maker, /Globale DCA-limiet mag maximaal \$\{MAX_DCA\} zijn/);
   assert.doesNotMatch(maker, /Onbeperkt DCA/);
 });
 
