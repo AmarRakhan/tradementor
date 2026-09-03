@@ -35,9 +35,9 @@ test("open detail consumes server Strategy 2 next-action preview values", () => 
 });
 
 test("trade detail renders percentage-only live distances", () => {
-  assert.match(recent, /const detailNextDcaDistancePct=finite\(detailRuntime\?\.nextDcaDistancePct\)/);
-  assert.match(recent, /const detailTpDistancePct=finite\(detailRuntime\?\.tpDistancePct\)/);
-  assert.match(recent, /const signedDistance=/);
+  assert.match(recent, /const detailNextDcaDistancePct\s*=\s*finite\(detailRuntime\?\.nextDcaDistancePct\)/);
+  assert.match(recent, /const detailTpDistancePct\s*=\s*finite\(detailRuntime\?\.tpDistancePct\)/);
+  assert.match(recent, /const signedDistance\s*=/);
   assert.match(recent, /AFSTAND TOT DCA/);
   assert.match(recent, /AFSTAND TOT TP/);
   assert.doesNotMatch(recent, /Afstand tot DCA[^\n]*\$/);
@@ -47,7 +47,7 @@ test("trade detail shows configured TP and portfolio-at-TP without double-counti
   assert.match(recent, /Take Profit ingesteld/);
   assert.match(recent, /Verwachte winst bij TP/);
   assert.match(recent, /Portfoliowaarde bij TP/);
-  assert.match(recent, /accountDisplay\.equityNumber\+\(detailExpectedPnlAtTp-detailPnl\)/);
+  assert.match(recent, /accountDisplay\.equityNumber\s*\+\s*\(detailExpectedPnlAtTp\s*-\s*detailPnl\)/);
 });
 
 test("Aster Focus 2.0 detail shows the confirmed protective hedge separately", () => {
@@ -102,8 +102,8 @@ test("trade detail supports guarded mobile double-tap back without desktop doubl
   assert.match(recent, /handleDetailTouchStart/);
   assert.match(recent, /handleDetailTouchMove/);
   assert.match(recent, /handleDetailTouchEnd/);
-  assert.match(recent, /Math\.hypot\(touch\.clientX-detailTouchRef\.current\.x/);
-  assert.match(recent, /now-previous\.at<=360/);
+  assert.match(recent, /Math\.hypot\(touch\.clientX\s*-\s*detailTouchRef\.current\.x/);
+  assert.match(recent, /now\s*-\s*previous\.at\s*<=\s*360/);
   assert.match(recent, /detailTargetIsInteractive/);
   assert.match(recent, /onClick=\{closeDetail\}/);
   assert.match(recent, /dubbel tikken of × om terug te gaan/);
@@ -119,8 +119,8 @@ test("historical Focus 2.0 rows keep opposite-side hedge history", () => {
 
 test("Multi DCA managed positions override stale Focus role and keep DCA TP overlays visible", () => {
   assert.match(recent, /detailManagedByMultiDca/);
-  assert.match(recent, /managedByMultiDca\?"MULTI_DCA"/);
-  assert.match(recent, /!detailManagedByMultiDca&&String\(detail\.selection\.strategy2Role/);
+  assert.match(recent, /managedByMultiDca\s*\?\s*"MULTI_DCA"/);
+  assert.match(recent, /!detailManagedByMultiDca\s*&&\s*String\(detail\.selection\.strategy2Role/);
   assert.match(chart, /focusV2\?"Focus 2\.0":"Strategy 2 Multi DCA"/);
   assert.match(chart, /chartOverlayLevels=focusV2\?focusLevels:plannedOverlayLevels/);
 });

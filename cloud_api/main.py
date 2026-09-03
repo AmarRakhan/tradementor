@@ -114,6 +114,7 @@ from aster_execution import configure_maximum_usable_leverage
 from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rejection
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
+from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_state import (
     account_values as aster_account_values, reconcile_aster_state,
     account_information_values as aster_account_information_values,
@@ -371,6 +372,11 @@ class AsterManualCloseRequest(BaseModel):
     confirm: bool
     side: str = Field(pattern="^(LONG|SHORT)$")
     expected_quantity: float = Field(gt=0)
+    idempotency_key: str = Field(min_length=16, max_length=120)
+
+
+class AsterProfitableCloseRequest(BaseModel):
+    confirm: bool
     idempotency_key: str = Field(min_length=16, max_length=120)
 
 
@@ -4693,6 +4699,122 @@ def close_all_aster_strategy(
         action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE","submitted":len(submitted),
             "reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,f"Alles sluiten is fail-closed gestopt; account blijft gepauzeerd: {str(exc)[:300]}") from exc
+
+
+@app.get("/v1/me/aster/positions/profitable-close-preview")
+def preview_profitable_aster_positions(
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Return a fresh, UID-scoped Aster preview; this endpoint never trades."""
+    client = _portfolio_growth_client(user, live=False)
+    try:
+        preview = profit_preview(client.position_risk())
+    except Exception as exc:
+        raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
+    return {**preview, "generatedAt": datetime.now(timezone.utc).isoformat(), "reliable": True}
+
+
+@app.post("/v1/me/aster/positions/close-profitable")
+def close_profitable_aster_positions(
+    request: AsterProfitableCloseRequest,
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Close only still-profitable Aster legs after explicit user confirmation."""
+    if not request.confirm:
+        raise HTTPException(422, "Bevestiging voor winstposities sluiten ontbreekt")
+    if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
+        raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
+
+    uid = str(user["uid"])
+    action_hash = hashlib.sha256(f"{uid}:{request.idempotency_key}".encode()).hexdigest()
+    action_ref = user_reference(user).collection("asterBulkProfitCloseIntents").document(action_hash)
+    try:
+        action_ref.create({
+            "uid": uid, "status": "prepared", "minimumProfitUsd": MINIMUM_PROFIT_USD,
+            "createdAt": datetime.now(timezone.utc),
+        })
+    except google_exceptions.AlreadyExists:
+        existing = action_ref.get().to_dict() or {}
+        if existing.get("status") == "completed":
+            return {**(existing.get("result") or {}), "duplicate": True}
+        raise HTTPException(409, "Deze winstsluiting wordt al verwerkt; er worden geen dubbele orders geplaatst")
+
+    strategy_ref = aster_strategy2_reference(uid)
+    queue_token = _acquire_strategy2_queue_lease(strategy_ref)
+    if not queue_token:
+        action_ref.set({"status": "blocked", "reason": "strategy2_order_busy", "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        raise HTTPException(409, "Strategy 2 verwerkt nog een order; probeer het zo opnieuw")
+
+    closed: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    try:
+        client = _portfolio_growth_client(user, live=True)
+        initial = profitable_positions(client.position_risk())
+        for index, candidate in enumerate(initial, 1):
+            symbol = candidate["symbol"]
+            side = candidate["side"]
+            # Re-read exchange truth immediately before every order. A position
+            # that crossed below the positive threshold is skipped, never closed.
+            live_rows = client.position_risk()
+            current = next((row for row in live_rows
+                if str(row.get("symbol", "")).upper() == symbol
+                and str(row.get("positionSide", "")).upper() == side
+                and abs(safe_float(row.get("positionAmt"))) > 0), None)
+            if current is None:
+                skipped.append({**candidate, "reason": "positie bestaat niet meer"})
+                continue
+            current_profit = position_profit(current)
+            live_quantity = abs(safe_float(current.get("positionAmt")))
+            mark = safe_float(current.get("markPrice"))
+            if current_profit is None or current_profit < MINIMUM_PROFIT_USD or live_quantity <= 0 or mark <= 0:
+                skipped.append({**candidate, "currentProfitUsd": current_profit, "reason": "niet langer minimaal $0,50 groen"})
+                continue
+            try:
+                plan = PairExecutionPlan(
+                    symbol, Decimal(str(live_quantity)), Decimal(str(live_quantity * mark)),
+                    max(1, int(safe_float(current.get("leverage")) or 1)),
+                )
+                result = execute_aster_leg(
+                    client, plan, side=PositionSide(side), action="CLOSE",
+                    id_prefix=f"tm-profit-{action_hash[:12]}-{index}", confirm=True,
+                    manual_loss_confirmation=True,
+                )
+                tolerance = max(1e-12, live_quantity * 1e-9)
+                remaining = next((row for row in client.position_risk()
+                    if str(row.get("symbol", "")).upper() == symbol
+                    and str(row.get("positionSide", "")).upper() == side
+                    and abs(safe_float(row.get("positionAmt"))) > tolerance), None)
+                if remaining is not None:
+                    raise RuntimeError("Aster heeft de volledige sluiting nog niet bevestigd")
+                closed.append({
+                    "symbol": symbol, "side": side, "closedSize": live_quantity,
+                    "profitAtSubmitUsd": current_profit, "order": result,
+                })
+            except Exception as exc:
+                failed.append({"symbol": symbol, "side": side, "reason": str(exc)[:240]})
+
+        result = {
+            "closedCount": len(closed), "skippedCount": len(skipped), "failedCount": len(failed),
+            "profitAtSubmitUsd": round(sum(item["profitAtSubmitUsd"] for item in closed), 8),
+            "closed": closed, "skipped": skipped, "failed": failed,
+            "minimumProfitUsd": MINIMUM_PROFIT_USD,
+            "message": f"{len(closed)} winstpositie(s) gesloten · {len(skipped)} overgeslagen · {len(failed)} mislukt",
+        }
+        action_ref.set({"status": "completed", "result": result, "completedAt": datetime.now(timezone.utc)}, merge=True)
+        strategy_ref.collection("audit").document().set({
+            "event": "BULK_PROFIT_CLOSE_COMPLETED", "uid": uid, "actionId": action_hash,
+            "closedCount": len(closed), "skippedCount": len(skipped), "failedCount": len(failed),
+            "profitAtSubmitUsd": result["profitAtSubmitUsd"], "timestamp": datetime.now(timezone.utc),
+        })
+        return {**result, "duplicate": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        action_ref.set({"status": "failed_closed", "reason": str(exc)[:500], "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        raise HTTPException(502, "Winstsluiting is veilig gestopt; onbekende posities worden niet opnieuw besteld") from exc
+    finally:
+        _release_strategy2_queue_lease(strategy_ref, queue_token)
 
 
 @app.post("/v1/me/aster/positions/{symbol}/close")

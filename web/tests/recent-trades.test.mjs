@@ -53,7 +53,7 @@ test("recent trade freshness window remains above the 60 second exchange refresh
 });
 
 test("Tradecentrum exposes the compact approved columns and real close control", () => {
-  assert.match(component, /<span>PAIR<\/span><span>SIDE<\/span><span>LEV<\/span><span>MARGIN<\/span><span>PNL<\/span><span>PNL %<\/span>/);
+  assert.match(component, /<span>PAIR<\/span>\s*<span>SIDE<\/span>\s*<span>LEV<\/span>\s*<span>MARGIN<\/span>\s*<span>PNL<\/span>\s*<span>PNL %<\/span>/);
   assert.match(component, /showDcaCount \? "DCA" : "#"/);
   assert.match(component, /function money\(value: unknown, signed = false\)/);
   assert.match(component, /<ClosePositionControl position=\{row\.position\}/);
@@ -87,7 +87,7 @@ test("manual Aster close is confirmed, idempotent and refreshes exchange truth",
   assert.match(component, /expected_quantity/);
   assert.match(component, /idempotency_key/);
   assert.match(component, /await onClosed\(\)/);
-  assert.match(component, />Annuleren<\/button>/);
+  assert.match(component, />\s*Annuleren\s*<\/button>/);
 });
 
 test("scan actions and closed rows use real status labels in the shared Tradecentrum table", () => {
@@ -101,7 +101,7 @@ test("scan actions and closed rows use real status labels in the shared Tradecen
 
 test("Aster close confirmation is portalled to document.body so table containment cannot distort it", () => {
   assert.match(component, /import \{ createPortal \} from "react-dom"/);
-  assert.match(component, /typeof document !== "undefined" && createPortal\(/);
+  assert.match(component, /typeof document !== "undefined" &&\s*createPortal\(/);
   assert.match(component, /document\.body/);
-  assert.match(component, /role="dialog" aria-modal="true"/);
+  assert.match(component, /role="dialog"\s+aria-modal="true"/);
 });
