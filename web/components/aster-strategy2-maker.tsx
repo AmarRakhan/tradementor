@@ -174,7 +174,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const reportVersion = Number(rawReport.configVersion ?? 0);
   // Reports from an older configuration must not be presented as current
   // execution evidence (for example an old 0.2 USD minimum-order rejection).
-  const report = reportVersion > 0 && settingsVersion > 0 && reportVersion !== settingsVersion ? {} : rawReport;
+  const report = settingsVersion > 0 && reportVersion !== settingsVersion ? {} : rawReport;
   const activeLong = Number(report.activeLong ?? state.longLegs ?? 0);
   const activeShort = Number(report.activeShort ?? state.shortLegs ?? 0);
   const remainingLong = Number(report.remainingLong ?? Math.max(0, n(v.longSlots) - activeLong));
