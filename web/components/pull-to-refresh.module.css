@@ -1,0 +1,8 @@
+.indicator{--pull-distance:0px;position:fixed;z-index:1200;top:calc(env(safe-area-inset-top,0px) + 51px);left:50%;width:32px;height:32px;display:grid;place-items:center;border:1px solid rgba(88,240,174,.5);border-radius:50%;color:#58f0ae;background:rgba(5,18,13,.96);box-shadow:0 5px 20px rgba(0,0,0,.42),0 0 16px rgba(88,240,174,.16);opacity:0;pointer-events:none;transform:translate(-50%,calc(-42px + min(var(--pull-distance),72px))) scale(.8);transition:opacity .12s ease,transform .12s ease}
+.indicator span{font-size:20px;line-height:1;transform:rotate(calc(min(var(--pull-distance),72px) * 4deg))}
+.visible{opacity:1;transform:translate(-50%,calc(-34px + min(var(--pull-distance),72px))) scale(1)}
+.refreshing{opacity:1;transform:translate(-50%,10px) scale(1)}
+.refreshing span{animation:spin .75s linear infinite}
+@keyframes spin{to{transform:rotate(1turn)}}
+@media(min-width:701px){.indicator{display:none}}
+@media(prefers-reduced-motion:reduce){.indicator{transition:none}.refreshing span{animation-duration:1.4s}}
