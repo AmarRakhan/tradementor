@@ -79,9 +79,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode,
       universeTopN: Math.max(1, Math.round(n(v.universe))), maximumPositions: Math.min(50, longSlots + shortSlots), longSlots, shortSlots,
-      minimumLeverage: Math.max(1, Math.round(n(v.minLeverage))), entryNotionalUsd: n(v.entryMargin),
-      entryMarginUsd: v.manualEnabled ? n(v.entryMargin) : n(v.entryMargin) / Math.max(1, Math.round(n(v.minLeverage))),
-      entrySizingMode: v.manualEnabled ? "margin" : "notional",
+      minimumLeverage: Math.max(1, Math.round(n(v.minLeverage))),
+      entryMarginUsd: n(v.entryMargin),
+      entryNotionalUsd: n(v.entryMargin) * Math.max(1, Math.round(n(v.minLeverage))),
+      entrySizingMode: "margin",
       dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: clampInt(n(v.maxDca), 0, 3), unlimitedDca: false,
       takeProfit: n(v.tp) / 100, entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualSymbols,
@@ -168,26 +169,30 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const enabled = status.enabled === true;
   const liveReady = status.liveReady === true || (!status.pending && readiness?.liveReady === true);
   const report = (state.multiBb && typeof state.multiBb === "object" ? state.multiBb : {}) as Record<string, unknown>;
+  const activeLong = Number(report.activeLong ?? state.longLegs ?? 0);
+  const activeShort = Number(report.activeShort ?? state.shortLegs ?? 0);
+  const remainingLong = Number(report.remainingLong ?? Math.max(0, n(v.longSlots) - activeLong));
+  const remainingShort = Number(report.remainingShort ?? Math.max(0, n(v.shortSlots) - activeShort));
   async function toggleLive() { if (status.pending) return; if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(); }
 
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card">
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
-    <p>Alle actieve instellingen staan direct hieronder. Geen wizard; de door de server bevestigde configuratie is leidend.</p>
+    <p className="strategy-intro">Alle actieve instellingen staan direct hieronder. Geen wizard; de door de server bevestigde configuratie is leidend.</p>
     <div className="strategy-facts"><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span><span>DCA globaal max {v.maxDca}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
-    <div className="strategy-message"><b>Laatste scan:</b> {String(report.activeLong ?? state.longLegs ?? 0)} LONG · {String(report.activeShort ?? state.shortLegs ?? 0)} SHORT · {Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} kandidaten. {dirty && <><br /><b>Niet opgeslagen wijzigingen.</b></>}</div>
+    <div className="strategy-message compact-scan"><b>Actief:</b> {activeLong}L · {activeShort}S <b>Vrij:</b> {remainingLong}L · {remainingShort}S <small>{Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} kandidaten</small>{dirty && <b>Niet opgeslagen</b>}</div>
 
     <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{status.pending ? "server verwerkt wijziging…" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending || dirty} onClick={toggleLive}><i />{enabled ? "Uitschakelen" : liveReady ? "Inschakelen" : "Controleer start"}</button></div>
 
-    <div className="maker-input" style={{ display: "grid", gap: 14, marginTop: 16 }}>
+    <div className="maker-input compact-settings-grid">
       <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
       <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10 }}>
+      <div className="position-settings-grid">
         <Field label="Totaal posities (max 50)" value={v.positions} set={setTotal} />
         <Field label="LONG slots (max 25)" value={v.longSlots} set={setLong} />
         <Field label="SHORT slots (max 25)" value={v.shortSlots} set={setShort} />
       </div>
       <Field label="Minimum leverage (×)" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
-      <Field label={v.manualEnabled ? "Start margin (USDT)" : "Entry orderwaarde (USDT)"} value={v.entryMargin} set={(value) => change({ ...v, entryMargin: value })} />
+      <Field label="Start margin (USDT)" value={v.entryMargin} set={(value) => change({ ...v, entryMargin: value })} />
       <Field label="DCA afstand (%)" value={v.dcaDistance} set={(value) => change({ ...v, dcaDistance: value })} />
       <Field label="DCA margin (USDT)" value={v.dcaMargin} set={(value) => change({ ...v, dcaMargin: value })} />
       <Field label="Globale DCA-limiet (0–3)" value={v.maxDca} set={(value) => change({ ...v, maxDca: String(clampInt(Number(value), 0, 3)) })} />
