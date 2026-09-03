@@ -66,7 +66,15 @@ function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
     const item = nav.querySelector<HTMLElement>(`:scope > .nav-button[data-destination="${destination}"]`);
     return item ? [item] : [];
   });
-  for (const item of visible) nav.appendChild(item);
+  // This function runs from a childList MutationObserver. Moving nodes that are
+  // already in the right order would trigger the observer again forever and
+  // block the browser main thread (most visibly in Android WebView/PWA).
+  const visibleChildren = Array.from(nav.children).filter((child): child is HTMLElement =>
+    child instanceof HTMLElement && !child.hidden && child.classList.contains("nav-button"),
+  );
+  if (visible.some((item, index) => visibleChildren[index] !== item)) {
+    for (const item of visible) nav.appendChild(item);
+  }
   nav.style.setProperty("--mobile-nav-count", String(visible.length));
 
   if (active) {
