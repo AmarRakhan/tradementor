@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { applyAsterRealtimeMark, parseSseChunk } from "../lib/aster-realtime.mjs";
+import { readFile } from "node:fs/promises";
 
 test("live mark updates only matching position and recalculates PnL", () => {
   const source={positions:[{symbol:"SOLUSDT",side:"LONG",quantity:2,entryPrice:100,markPrice:100,unrealizedPnl:0},{symbol:"BTCUSDT",side:"SHORT",quantity:1,entryPrice:50,markPrice:50,unrealizedPnl:0}]};
@@ -10,3 +11,4 @@ test("live mark updates only matching position and recalculates PnL", () => {
 });
 test("short PnL uses inverse price direction",()=>{const out=applyAsterRealtimeMark({positions:[{symbol:"X",side:"SHORT",quantity:2,entryPrice:10}]},{symbol:"X",markPrice:8});assert.equal(out.positions[0].unrealizedPnl,4)});
 test("SSE parser preserves split frames",()=>{const a=parseSseChunk('', 'event: mark\ndata: {"symbol":"SOL');const b=parseSseChunk(a.rest,'USDT","markPrice":101}\n\n');assert.equal(b.events[0].symbol,'SOLUSDT');assert.equal(b.events[0].markPrice,101)});
+test("realtime marks are batched before rendering the full dashboard",async()=>{const source=await readFile(new URL("../lib/use-exchange-data.ts",import.meta.url),"utf8");assert.match(source,/realtimeBatch\.current\.set/);assert.match(source,/window\.setTimeout/);assert.match(source,/, 250\)/);assert.match(source,/events\.reduce/)});
