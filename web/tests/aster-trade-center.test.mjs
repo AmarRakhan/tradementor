@@ -60,4 +60,6 @@ test("Tradecentrum adds compact PnL percent and entry-count columns without remo
   assert.match(component, /positionEntryCount/);
   assert.match(component, /Math\.round\(dca\) \+ 1/);
   assert.match(component, /multiBbPositions/);
+  assert.match(component, /dcaCountReliable/);
+  assert.match(component, /dcaCountReliable !== true && position\.strategy2DcaLadder\?\.available !== true/);
 });
