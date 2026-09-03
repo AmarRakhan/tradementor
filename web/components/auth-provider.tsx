@@ -108,10 +108,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (previewUser) { setUser(previewUser); setReady(true); bootstrap(previewUser).catch((reason) => setError(authMessage(reason))); return; }
     let unsubscribe = () => {};
     let active = true;
+    let authStateReceived = false;
+    const authStateTimeout = window.setTimeout(() => {
+      if (!active || authStateReceived) return;
+      const current = firebaseAuth.currentUser;
+      console.warn("[TradeMentor auth] initial auth state timed out; continuing with the current Firebase session");
+      setUser(current);
+      setReady(true);
+      setError(current ? "De sessiecontrole duurde te lang. De laatst bekende sessie wordt hersteld." : "De sessiecontrole duurde te lang. Log opnieuw in om verder te gaan.");
+      if (current) bootstrap(current).catch((reason) => setError(authMessage(reason)));
+    }, 8_000);
     firebaseAuthReady
       .then(() => {
         if (!active) return;
         unsubscribe = onAuthStateChanged(firebaseAuth, (current) => {
+          authStateReceived = true;
+          window.clearTimeout(authStateTimeout);
           setUser(current);
           setReady(true);
           setError("");
@@ -126,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
     return () => {
       active = false;
+      window.clearTimeout(authStateTimeout);
       unsubscribe();
     };
   }, [bootstrap, previewUser]);
