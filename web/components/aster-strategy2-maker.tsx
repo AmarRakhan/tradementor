@@ -160,9 +160,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     } catch (error) { setMessage(error instanceof Error ? error.message : "Actie mislukt"); }
     finally { setBusy(false); }
   }
-  async function checkReadiness() {
+  async function checkReadiness(startWhenReady = false) {
     setBusy(true); setMessage("");
-    try { const result = await authenticatedRequest("/api/exchanges/aster/strategy2/readiness") as Record<string, unknown>; setReadiness(result); setMessage(Boolean(result.liveReady) ? "Live-gereedheid server-side bevestigd." : "Readiness gecontroleerd; live-start is nog niet vrijgegeven."); }
+    try { const result = await authenticatedRequest("/api/exchanges/aster/strategy2/readiness") as Record<string, unknown>; setReadiness(result); if (startWhenReady && Boolean(result.liveReady)) { setBusy(false); await action("start"); return; } setMessage(Boolean(result.liveReady) ? "Live-gereedheid server-side bevestigd." : "Readiness gecontroleerd; live-start is nog niet vrijgegeven."); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Readiness mislukt"); }
     finally { setBusy(false); }
   }
@@ -174,15 +174,16 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const activeShort = Number(report.activeShort ?? state.shortLegs ?? 0);
   const remainingLong = Number(report.remainingLong ?? Math.max(0, n(v.longSlots) - activeLong));
   const remainingShort = Number(report.remainingShort ?? Math.max(0, n(v.shortSlots) - activeShort));
-  async function toggleLive() { if (status.pending) return; if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(); }
+  const entryReason = String(report.entryReason ?? state.lastReason ?? "").trim();
+  async function toggleLive() { if (status.pending) return; if (busy) return; if (dirty) { setMessage("Sla eerst de gewijzigde instellingen op; daarna kun je de bot direct aan- of uitzetten."); return; } if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(true); }
 
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card">
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
     <p className="strategy-intro">Alle actieve instellingen staan direct hieronder. Geen wizard; de door de server bevestigde configuratie is leidend.</p>
     <div className="strategy-facts"><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span><span>DCA globaal max {v.maxDca}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
-    <div className="strategy-message compact-scan"><b>Actief:</b> {activeLong}L · {activeShort}S <b>Vrij:</b> {remainingLong}L · {remainingShort}S <small>{Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} kandidaten</small>{dirty && <b>Niet opgeslagen</b>}</div>
+    <div className="strategy-message compact-scan"><b>Actief:</b> {activeLong}L · {activeShort}S <b>Vrij:</b> {remainingLong}L · {remainingShort}S <small>{Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} kandidaten</small>{dirty && <b>Niet opgeslagen</b>}{entryReason && remainingLong + remainingShort > 0 && <span className="entry-hold-reason"><b>Waarom niet gevuld:</b> {entryReason}</span>}</div>
 
-    <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{status.pending ? "server verwerkt wijziging…" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending || dirty} onClick={toggleLive}><i />{enabled ? "Uitschakelen" : liveReady ? "Inschakelen" : "Controleer start"}</button></div>
+    <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : status.pending ? "server verwerkt wijziging…" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
 
     <div className="maker-input compact-settings-grid">
       <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
