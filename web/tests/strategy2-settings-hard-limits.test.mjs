@@ -11,7 +11,7 @@ test("server-side guard caps Strategy 2 exposure controls independently of the b
   assert.match(guard, /MAX_TOTAL_POSITIONS = 50/);
   assert.match(guard, /MAX_LONG_SLOTS = 25/);
   assert.match(guard, /MAX_SHORT_SLOTS = 25/);
-  assert.match(guard, /MAX_DCA = 3/);
+  assert.match(guard, /MAX_DCA = 500/);
   assert.match(guard, /next\.unlimitedDca = false/);
   assert.match(guard, /next\.maximumPositions = Math\.max\(1, Math\.min\(MAX_TOTAL_POSITIONS/);
 });
