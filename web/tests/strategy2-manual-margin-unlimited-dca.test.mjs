@@ -4,10 +4,11 @@ import fs from "node:fs";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
 
-test("manual selection still uses margin sizing while automatic mode keeps notional sizing", () => {
+test("manual and automatic selection keep one consistent margin sizing meaning", () => {
   assert.match(maker, /Start margin \(USDT\)/);
-  assert.match(maker, /entrySizingMode:\s*v\.manualEnabled \? "margin" : "notional"/);
-  assert.match(maker, /entryMarginUsd:\s*v\.manualEnabled/);
+  assert.match(maker, /entrySizingMode:\s*"margin"/);
+  assert.match(maker, /entryMarginUsd:\s*n\(v\.entryMargin\)/);
+  assert.doesNotMatch(maker, /entrySizingMode:\s*v\.manualEnabled/);
 });
 
 test("direct settings enforce a global DCA ceiling of three and disable unlimited DCA", () => {
