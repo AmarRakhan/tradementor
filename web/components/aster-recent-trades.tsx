@@ -235,8 +235,8 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const profitPositions = useMemo(() => topProfitPositions(mainPositions) as OpenPosition[], [mainPositions]);
   const lossPositions = useMemo(() => [...mainPositions].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => (finite(a.unrealizedPnl) ?? 0) - (finite(b.unrealizedPnl) ?? 0)), [mainPositions]);
   const livePositions = useMemo(() => [...positionsWithMultiDcaCounts].filter(position => finite(position.quantity) && Number(position.quantity) > 0).sort((a, b) => {
-    const airbagOrder = Number(a.focusAirbagHedge === true) - Number(b.focusAirbagHedge === true);
-    return airbagOrder || exchangeTimestampMs(b.openedAt) - exchangeTimestampMs(a.openedAt);
+    const profitOrder = (finite(b.unrealizedPnl) ?? Number.NEGATIVE_INFINITY) - (finite(a.unrealizedPnl) ?? Number.NEGATIVE_INFINITY);
+    return profitOrder || exchangeTimestampMs(b.openedAt) - exchangeTimestampMs(a.openedAt);
   }), [positionsWithMultiDcaCounts]);
   const datasets = useMemo<Record<FilterKey, TradeCenterRow[]>>(() => ({
     live: livePositions.map(position => rowFromPosition(position)), entered: entries.map(trade => rowFromActivity(trade, false, positionsWithMultiDcaCounts, scanActions)), closed: exits.map(trade => rowFromActivity(trade, true, allPositions, scanActions)),
