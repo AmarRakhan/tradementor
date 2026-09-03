@@ -66,6 +66,8 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
   const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAsterSnapshot(uid) } }));
   const mounted = useRef(true);
   const refreshAllInFlight = useRef<Promise<PromiseSettledResult<void>[]> | null>(null);
+  const realtimeBatch = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const realtimeBatchTimer = useRef<number | null>(null);
   const asterRequestGate = useRef({ uid, gate: createLatestAsterRequestGate() });
 
   const currentAsterRequestGate = useCallback(() => {
@@ -172,14 +174,22 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
             buffer = parsed.rest;
             for (const event of parsed.events) {
               if (!event || typeof event !== "object" || !("symbol" in event) || !("markPrice" in event)) continue;
+              realtimeBatch.current.set(String(event.symbol).toUpperCase(), event as Record<string, unknown>);
+            }
+            if (realtimeBatch.current.size && realtimeBatchTimer.current === null) {
+              realtimeBatchTimer.current = window.setTimeout(() => {
+                realtimeBatchTimer.current = null;
+                const events = Array.from(realtimeBatch.current.values());
+                realtimeBatch.current.clear();
               setState((current) => {
                 if (current.uid !== uid) return current;
                 const previous = current.snapshots.aster;
                 if (!previous.data) return current;
-                const data = applyAsterRealtimeMark(previous.data, event) as Record<string, unknown>;
+                const data = events.reduce((value, event) => applyAsterRealtimeMark(value, event), previous.data) as Record<string, unknown>;
                 if (data === previous.data) return current;
                 return { ...current, snapshots: { ...current.snapshots, aster: { ...previous, data, updatedAt: Date.now() } } };
               });
+              }, 250);
             }
           }
         } catch (error) {
@@ -191,7 +201,7 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
       }
     };
     void run();
-    return () => { stopped = true; controller.abort(); };
+    return () => { stopped = true; controller.abort(); if (realtimeBatchTimer.current !== null) window.clearTimeout(realtimeBatchTimer.current); realtimeBatchTimer.current = null; realtimeBatch.current.clear(); };
   }, [cloudReady, uid]);
 
   useEffect(() => {
