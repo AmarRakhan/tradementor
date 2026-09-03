@@ -190,6 +190,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const scannedCandidateCount = Number(report.scannedCandidateCount ?? 0);
   const minimumOrderRejectedCount = Number(report.minimumOrderRejectedCount ?? 0);
   const nextRequiredEntryMarginUsd = Number(report.nextRequiredEntryMarginUsd ?? 0);
+  const accountPositionCount = Number(report.accountPositionCount ?? 0);
+  const untrackedAccountPositionCount = Number(report.untrackedAccountPositionCount ?? 0);
   const scanSummary = scannedCandidateCount > 0
     ? `${candidateCount} kandidaten · ${scannedCandidateCount} onderzocht${minimumOrderRejectedCount > 0 ? ` · ${minimumOrderRejectedCount} onder minimumorder` : ""}`
     : `${candidateCount} kandidaten`;
@@ -199,7 +201,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
     <p className="strategy-intro">Alle actieve instellingen staan direct hieronder. Geen wizard; de door de server bevestigde configuratie is leidend.</p>
     <div className="strategy-facts"><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span><span>DCA globaal max {v.maxDca}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
-    <div className="strategy-message compact-scan"><b>Botposities:</b> {activeLong}L · {activeShort}S <b>Vrije botslots:</b> {remainingLong}L · {remainingShort}S <small>{scanSummary} · dashboard telt alle Aster-posities</small>{dirty && <b>Niet opgeslagen</b>}{entryReason && remainingLong + remainingShort > 0 && <span className="entry-hold-reason"><b>Actuele reden:</b> {entryReason}{nextRequiredEntryMarginUsd > settings.entryMarginUsd ? ` · Benodigd voor volgende kandidaat: circa ${nextRequiredEntryMarginUsd.toFixed(2)} USDT.` : ""}</span>}</div>
+    <div className="strategy-message compact-scan"><b>Botposities:</b> {activeLong}L · {activeShort}S <b>Vrije botslots:</b> {remainingLong}L · {remainingShort}S <small>{scanSummary} · dashboard telt alle Aster-posities</small>{accountPositionCount > 0 && <small>{accountPositionCount} exchangeposities{untrackedAccountPositionCount > 0 ? ` · ${untrackedAccountPositionCount} niet gekoppeld aan Strategy 2` : ""}</small>}{dirty && <b>Niet opgeslagen</b>}{entryReason && remainingLong + remainingShort > 0 && <span className="entry-hold-reason"><b>Actuele reden:</b> {entryReason}{nextRequiredEntryMarginUsd > settings.entryMarginUsd ? ` · Benodigd voor volgende kandidaat: circa ${nextRequiredEntryMarginUsd.toFixed(2)} USDT.` : ""}</span>}</div>
 
     <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : status.pending ? "server verwerkt wijziging…" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
 

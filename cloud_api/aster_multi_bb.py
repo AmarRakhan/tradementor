@@ -448,6 +448,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
 
     active = _position_map(client.position_risk()) if sent and not dry_run else pmap
     active_symbols = {k.split("|", 1)[0] for k in active}
+    account_position_count = len(active)
+    account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
     strategy_active_keys = {key for key in active if key in state or (settings.manual_symbol_selection_enabled and key in selected_keys)}
     long_count = sum(1 for k in strategy_active_keys if k.endswith("|LONG")); short_count = sum(1 for k in strategy_active_keys if k.endswith("|SHORT"))
     long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
@@ -457,7 +459,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     executable_candidates = 0
     minimum_margin_rejections: list[float] = []
     for ranked_row in candidates:
-        if sent >= budget or (long_need <= 0 and short_need <= 0): break
+        if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
         symbol = ranked_row["symbol"]
         if symbol in active_symbols or symbol not in info_map or prices.get(symbol, 0) <= 0: continue
@@ -512,6 +514,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "timestamp": datetime.now(timezone.utc)})
             actions.append(entry_action)
         active_symbols.add(symbol)
+        account_position_count += 1
+        account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
         if side == "LONG": long_count += 1; long_need = max(0, settings.long_slots - long_count)
         else: short_count += 1; short_need = max(0, settings.short_slots - short_count)
         available -= required; sent += 1
@@ -545,6 +549,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     elif entry_rows: entry_status = "ENTRY_PLANNED" if dry_run else "ENTRY_SUBMITTED"; entry_reason = "verse Strategy 2 entry verwerkt"
     elif selected_open: entry_status = "POSITION_ALREADY_OPEN"; entry_reason = "geselecteerde munt heeft al een open Aster-positie"
     elif long_need <= 0 and short_need <= 0: entry_status = "WAITING_CAPACITY"; entry_reason = "Strategy 2 slots zijn gevuld"
+    elif account_remaining_capacity <= 0:
+        entry_status = "WAITING_ACCOUNT_CAP"
+        entry_reason = f"account heeft {account_position_count} actieve Aster-posities; ingestelde limiet is {settings.maximum_positions}"
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
     elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
     elif entry_wait: entry_status = "ORDER_REJECTED"; entry_reason = str(entry_wait[0].get("reason", "Aster ordercheck afgewezen"))
@@ -556,6 +563,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "activeLong": settings.long_slots - long_need, "activeShort": settings.short_slots - short_need,
               "remainingLong": long_need, "remainingShort": short_need,
+              "accountPositionCount": account_position_count, "accountRemainingCapacity": account_remaining_capacity,
+              "untrackedAccountPositionCount": max(0, account_position_count - len(strategy_active_keys)),
               "managedLong": managed_long, "managedShort": managed_short, "manualLong": manual_long, "manualShort": manual_short,
               "nextEntrySide": _next_entry_side(long_count=long_count, short_count=short_count, long_slots=settings.long_slots, short_slots=settings.short_slots),
               "candidateCount": len(candidates), "scannedCandidateCount": scanned_candidates,

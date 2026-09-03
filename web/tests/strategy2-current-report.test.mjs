@@ -13,6 +13,8 @@ test("strategy maker keeps legacy live counts but hides a stale minimum-order re
   assert.match(maker, /scannedCandidateCount/);
   assert.match(maker, /minimumOrderRejectedCount/);
   assert.match(maker, /nextRequiredEntryMarginUsd/);
+  assert.match(maker, /untrackedAccountPositionCount/);
+  assert.match(maker, /niet gekoppeld aan Strategy 2/);
 });
 
 test("strategy and account position scopes are explicit", () => {
