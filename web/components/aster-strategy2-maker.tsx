@@ -169,7 +169,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
 
   const enabled = status.enabled === true;
   const liveReady = status.liveReady === true || (!status.pending && readiness?.liveReady === true);
-  const report = (state.multiBb && typeof state.multiBb === "object" ? state.multiBb : {}) as Record<string, unknown>;
+  const rawReport = (state.multiBb && typeof state.multiBb === "object" ? state.multiBb : {}) as Record<string, unknown>;
+  const settingsVersion = Number((state.settings as Record<string, unknown> | undefined)?.version ?? state.configVersion ?? 0);
+  const reportVersion = Number(rawReport.configVersion ?? 0);
+  // Reports from an older configuration must not be presented as current
+  // execution evidence (for example an old 0.2 USD minimum-order rejection).
+  const report = reportVersion > 0 && settingsVersion > 0 && reportVersion !== settingsVersion ? {} : rawReport;
   const activeLong = Number(report.activeLong ?? state.longLegs ?? 0);
   const activeShort = Number(report.activeShort ?? state.shortLegs ?? 0);
   const remainingLong = Number(report.remainingLong ?? Math.max(0, n(v.longSlots) - activeLong));
@@ -181,7 +186,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
     <p className="strategy-intro">Alle actieve instellingen staan direct hieronder. Geen wizard; de door de server bevestigde configuratie is leidend.</p>
     <div className="strategy-facts"><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span><span>DCA globaal max {v.maxDca}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
-    <div className="strategy-message compact-scan"><b>Actief:</b> {activeLong}L · {activeShort}S <b>Vrij:</b> {remainingLong}L · {remainingShort}S <small>{Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} kandidaten</small>{dirty && <b>Niet opgeslagen</b>}{entryReason && remainingLong + remainingShort > 0 && <span className="entry-hold-reason"><b>Waarom niet gevuld:</b> {entryReason}</span>}</div>
+    <div className="strategy-message compact-scan"><b>Botposities:</b> {activeLong}L · {activeShort}S <b>Vrije botslots:</b> {remainingLong}L · {remainingShort}S <small>{Array.isArray(report.rankedTopN) ? report.rankedTopN.length : 0} kandidaten · dashboard telt alle Aster-posities</small>{dirty && <b>Niet opgeslagen</b>}{entryReason && remainingLong + remainingShort > 0 && <span className="entry-hold-reason"><b>Actuele reden:</b> {entryReason}</span>}</div>
 
     <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : status.pending ? "server verwerkt wijziging…" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
 
