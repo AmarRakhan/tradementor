@@ -80,11 +80,11 @@ test("Multi BB production proxy is narrowly scoped and preserves Firebase identi
 test("Multi BB live controls cannot bypass server readiness or create request loops", async () => {
   const maker = await read("components/aster-strategy2-maker.tsx");
   assert.match(maker, /async function toggleLive/);
-  assert.match(maker, /if\(status\.pending\)return/);
-  assert.match(maker, /if\(liveReady\)\{await action\("start"\)/);
-  assert.match(maker, /await checkReadiness\(\)/);
+  assert.match(maker, /if \(status\.pending\) return/);
+  assert.match(maker, /if \(liveReady\) return action\("start"\)/);
+  assert.match(maker, /return checkReadiness\(\)/);
   assert.match(maker, /onConfirmed\(confirmed\)/);
-  assert.match(maker, /Boolean\(readiness\?\.softwareReady\)/);
+  assert.match(maker, /readiness\?\.liveReady === true/);
 });
 
 test("Strategy 3 browser runtime is absent", async () => {

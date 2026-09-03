@@ -7,7 +7,6 @@ import { ConnectionManager } from "@/components/connection-manager";
 import { ExchangeLiveControl } from "@/components/exchange-live-control";
 import { HyperliquidStrategyControl } from "@/components/hyperliquid-strategy-control";
 import { AsterStrategy2Maker } from "@/components/aster-strategy2-maker";
-import { AsterPerformancePanel } from "@/components/aster-performance-panel";
 import { AsterRecentTrades } from "@/components/aster-recent-trades";
 import { PortfolioGrowthCard } from "@/components/portfolio-growth-card";
 import { PositionCloseControl } from "@/components/position-close-control";
@@ -445,8 +444,6 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <DirectionBalanceCell label="SHORT" count={view.accountDataAvailable ? shortPositions.length : null} value={view.accountDataAvailable ? shortPnl : null} />
       </section>}
       {!positionsOnly && destination === "aster" && <AsterRecentTrades snapshot={snapshot} onRetry={onRefresh} />}
-      {!positionsOnly && destination === "aster" && <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}><AsterPerformancePanel snapshot={snapshot.data} onChanged={onRefresh} /></fieldset>}
-
       <section className="dashboard-grid">
         {positionsOnly && <article className="primary-card position-card">
           <div className="card-heading">

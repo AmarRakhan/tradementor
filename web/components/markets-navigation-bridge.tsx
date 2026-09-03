@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { MarketsPage } from "@/components/markets-page";
 
 const VIEW_PARAM = "tmView";
+const MOBILE_DESTINATIONS = ["markets", "aster", "journey", "wallet"] as const;
 
 function isMarketsRoute() {
   return new URL(window.location.href).searchParams.get(VIEW_PARAM) === "markets";
@@ -39,29 +40,59 @@ function syncContext(active: boolean) {
   if (!label) return;
   if (active) {
     if (!label.dataset.marketsPreviousLabel) label.dataset.marketsPreviousLabel = label.textContent || "ASTER";
-    if (label.textContent !== "MARKETS") label.textContent = "MARKETS";
+    label.textContent = "MARKETS";
   } else if (label.dataset.marketsPreviousLabel) {
-    const previous = label.dataset.marketsPreviousLabel;
-    if (label.textContent !== previous) label.textContent = previous;
+    label.textContent = label.dataset.marketsPreviousLabel;
     delete label.dataset.marketsPreviousLabel;
+  }
+}
+
+function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
+  let market = nav.querySelector<HTMLButtonElement>('[data-destination="markets"]');
+  const aster = nav.querySelector<HTMLElement>('[data-destination="aster"]');
+  if (!market && aster) {
+    market = marketsButton();
+    nav.insertBefore(market, aster);
+  }
+
+  for (const item of Array.from(nav.querySelectorAll<HTMLElement>(":scope > .nav-button[data-destination]"))) {
+    const destination = item.dataset.destination || "";
+    item.hidden = !MOBILE_DESTINATIONS.includes(destination as (typeof MOBILE_DESTINATIONS)[number]);
+    item.setAttribute("aria-hidden", String(item.hidden));
+    if (item.hidden) item.tabIndex = -1;
+  }
+
+  const visible = MOBILE_DESTINATIONS.flatMap((destination) => {
+    const item = nav.querySelector<HTMLElement>(`:scope > .nav-button[data-destination="${destination}"]`);
+    return item ? [item] : [];
+  });
+  for (const item of visible) nav.appendChild(item);
+  nav.style.setProperty("--mobile-nav-count", String(visible.length));
+
+  if (active) {
+    for (const item of visible) {
+      const selected = item.dataset.destination === "markets";
+      item.classList.toggle("active", selected);
+      item.setAttribute("aria-pressed", String(selected));
+    }
+  } else if (market) {
+    market.classList.remove("active");
+    market.setAttribute("aria-pressed", "false");
   }
 }
 
 function syncNavigation(active: boolean) {
   syncContext(active);
-  for (const nav of document.querySelectorAll<HTMLElement>(".rail-nav, .bottom-nav")) {
-    let button = nav.querySelector<HTMLButtonElement>('[data-destination="markets"]');
-    const aster = nav.querySelector<HTMLElement>('[data-destination="aster"]');
+
+  for (const rail of document.querySelectorAll<HTMLElement>(".rail-nav")) {
+    let button = rail.querySelector<HTMLButtonElement>('[data-destination="markets"]');
+    const aster = rail.querySelector<HTMLElement>('[data-destination="aster"]');
     if (!button && aster) {
       button = marketsButton();
-      nav.insertBefore(button, aster);
-    }
-    if (nav.classList.contains("bottom-nav")) {
-      const count = nav.querySelectorAll(":scope > .nav-button").length;
-      nav.style.setProperty("--mobile-nav-count", String(count));
+      rail.insertBefore(button, aster);
     }
     if (active) {
-      for (const item of nav.querySelectorAll<HTMLElement>(".nav-button")) {
+      for (const item of rail.querySelectorAll<HTMLElement>(".nav-button")) {
         const selected = item.dataset.destination === "markets";
         item.classList.toggle("active", selected);
         item.setAttribute("aria-pressed", String(selected));
@@ -71,6 +102,8 @@ function syncNavigation(active: boolean) {
       button.setAttribute("aria-pressed", "false");
     }
   }
+
+  document.querySelectorAll<HTMLElement>(".bottom-nav").forEach((nav) => normaliseBottomNavigation(nav, active));
 }
 
 export function MarketsNavigationBridge() {
