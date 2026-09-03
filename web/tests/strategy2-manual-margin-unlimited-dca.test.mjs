@@ -25,3 +25,8 @@ test("manual entries still use server-authoritative minimum-order previews befor
   assert.match(maker, /startmargin voldoet niet aan de actuele Aster minimumorder/);
   assert.match(maker, /suggestedEntryMarginUsd/);
 });
+
+test("automatic entries cannot silently submit below the common Aster minimum order", () => {
+  assert.match(maker, /settings\.entryMarginUsd \* settings\.minimumLeverage < 5/);
+  assert.match(maker, /Startmargin te laag/);
+});
