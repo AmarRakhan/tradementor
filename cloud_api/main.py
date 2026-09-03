@@ -4811,7 +4811,10 @@ def close_profitable_aster_positions(
     except HTTPException:
         raise
     except Exception as exc:
-        action_ref.set({"status": "failed_closed", "reason": str(exc)[:500], "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        action_ref.set({
+            "status": "PARTIAL_FAIL_CLOSED" if closed else "FAILED_BEFORE_CLOSE",
+            "reason": str(exc)[:500], "updatedAt": datetime.now(timezone.utc),
+        }, merge=True)
         raise HTTPException(502, "Winstsluiting is veilig gestopt; onbekende posities worden niet opnieuw besteld") from exc
     finally:
         _release_strategy2_queue_lease(strategy_ref, queue_token)
