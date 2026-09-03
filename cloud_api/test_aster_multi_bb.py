@@ -266,6 +266,20 @@ def test_partial_fill_reports_minimum_order_blocker_and_required_margin():
     assert "nog 1 botslots vrij" in r["entryReason"]
 
 
+def test_account_position_cap_blocks_extra_entries_when_bot_state_is_missing():
+    positions=[{"symbol":f"OLD{i}USDT","positionSide":"LONG" if i % 2 == 0 else "SHORT","positionAmt":"1","entryPrice":"100","markPrice":"100","leverage":"20"} for i in range(20)]
+    tickers=[{"symbol":f"NEW{i}USDT","quoteVolume":str(100-i)} for i in range(20)]
+    prices={**{row["symbol"]:100 for row in positions},**{row["symbol"]:100 for row in tickers}}
+    c=Client(positions=positions,tickers=tickers,prices=prices,leverage=20)
+    settings=cfg(universeTopN=20,maximumPositions=20,longSlots=10,shortSlots=10,entrySizingMode="margin",entryMarginUsd=.3)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=20)
+    assert not any(x["kind"]=="ENTRY" for x in r["actions"])
+    assert r["entryStatus"]=="WAITING_ACCOUNT_CAP"
+    assert r["accountPositionCount"]==20
+    assert r["accountRemainingCapacity"]==0
+    assert r["untrackedAccountPositionCount"]==20
+
+
 def test_new_entries_follow_configured_long_short_ratio_not_long_first():
     tickers=[{"symbol":f"R{i}USDT","quoteVolume":str(2000-i)} for i in range(6)]
     prices={f"R{i}USDT":100 for i in range(6)}
