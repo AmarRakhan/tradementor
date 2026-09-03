@@ -52,6 +52,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const [marketAttempted, setMarketAttempted] = useState(false);
   const [tierPreviews, setTierPreviews] = useState<Record<string, TierPreview>>({});
   const [tierBusy, setTierBusy] = useState(false);
+  const [totalDraft, setTotalDraft] = useState<string | null>(null);
   const snapshotState = (snapshot?.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 : {}) as Record<string, unknown>;
   const status = strategy2ServerStatus(snapshotState, confirmedState, serverConfirmed);
   const state = status.state as Record<string, unknown>;
@@ -70,6 +71,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       tp: String(Number(x.takeProfit ?? .015) * 100), mode: x.mode === "paper" ? "paper" : "live",
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
     });
+    setTotalDraft(null);
   }, [state.settings, dirty]);
 
   const change = (next: Values) => { setV(next); setDirty(true); setMessage(""); };
@@ -91,14 +93,19 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
 
   const setTotal = (raw: string) => {
     const total = clampInt(Number(raw), 1, 50);
-    let long = clampInt(n(v.longSlots), 0, 25);
-    let short = clampInt(n(v.shortSlots), 0, 25);
-    if (long + short > total) short = Math.max(0, total - long);
-    if (long + short < total) {
-      long = Math.min(25, long + (total - long - short));
-      short = Math.min(25, total - long);
-    }
+    const oldLong = clampInt(n(v.longSlots), 0, 25);
+    const oldShort = clampInt(n(v.shortSlots), 0, 25);
+    const oldTotal = Math.max(1, oldLong + oldShort);
+    let long = Math.min(25, Math.round(total * oldLong / oldTotal));
+    let short = Math.min(25, total - long);
+    if (long + short < total) long = Math.min(25, total - short);
     change({ ...v, positions: String(long + short), longSlots: String(long), shortSlots: String(short) });
+  };
+  const commitTotal = () => {
+    const raw = String(totalDraft ?? v.positions).trim();
+    setTotalDraft(null);
+    if (!raw) return;
+    setTotal(raw);
   };
   const setLong = (raw: string) => { const long = clampInt(Number(raw), 0, 25); const short = clampInt(n(v.shortSlots), 0, 25); change({ ...v, positions: String(long + short), longSlots: String(long), shortSlots: String(short) }); };
   const setShort = (raw: string) => { const short = clampInt(Number(raw), 0, 25); const long = clampInt(n(v.longSlots), 0, 25); change({ ...v, positions: String(long + short), longSlots: String(long), shortSlots: String(short) }); };
@@ -209,7 +216,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
       <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
       <div className="position-settings-grid">
-        <Field label="Totaal posities (max 50)" value={v.positions} set={setTotal} />
+        <Field label="Totaal posities (max 50)" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} />
         <Field label="LONG slots (max 25)" value={v.longSlots} set={setLong} />
         <Field label="SHORT slots (max 25)" value={v.shortSlots} set={setShort} />
       </div>
@@ -235,6 +242,6 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   </article>;
 }
 
-function Field({ label, value, set, text = false }: { label: string; value: string; set: (value: string) => void; text?: boolean }) {
-  return <label>{label}<input inputMode={text ? undefined : "decimal"} value={value} onChange={(event) => set(text ? event.target.value : event.target.value.replace(",", "."))} /></label>;
+function Field({ label, value, set, text = false, onBlur }: { label: string; value: string; set: (value: string) => void; text?: boolean; onBlur?: () => void }) {
+  return <label>{label}<input inputMode={text ? undefined : "decimal"} value={value} onChange={(event) => set(text ? event.target.value : event.target.value.replace(",", "."))} onBlur={onBlur} /></label>;
 }

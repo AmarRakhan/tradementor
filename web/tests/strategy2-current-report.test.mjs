@@ -21,3 +21,9 @@ test("strategy and account position scopes are explicit", () => {
   assert.match(maker, /Botposities:/);
   assert.match(maker, /dashboard telt alle Aster-posities/);
 });
+
+test("total position input waits until blur and preserves the long-short ratio", () => {
+  assert.match(maker, /totalDraft \?\? v\.positions/);
+  assert.match(maker, /onBlur=\{commitTotal\}/);
+  assert.match(maker, /Math\.round\(total \* oldLong \/ oldTotal\)/);
+});
