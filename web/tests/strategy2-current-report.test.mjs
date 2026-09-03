@@ -4,9 +4,15 @@ import fs from "node:fs";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
 
-test("strategy maker ignores a scan report from an older settings version", () => {
+test("strategy maker keeps legacy live counts but hides a stale minimum-order reason", () => {
   assert.match(maker, /rawReport\.configVersion/);
-  assert.match(maker, /settingsVersion > 0 && reportVersion !== settingsVersion \? \{\} : rawReport/);
+  assert.match(maker, /const report = rawReport/);
+  assert.match(maker, /reportedNotional/);
+  assert.match(maker, /settings\.entryNotionalUsd/);
+  assert.match(maker, /reasonMatchesSettings \? rawEntryReason : ""/);
+  assert.match(maker, /scannedCandidateCount/);
+  assert.match(maker, /minimumOrderRejectedCount/);
+  assert.match(maker, /nextRequiredEntryMarginUsd/);
 });
 
 test("strategy and account position scopes are explicit", () => {

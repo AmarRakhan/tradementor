@@ -246,6 +246,24 @@ def test_new_entries_share_ranked_candidates_between_long_and_short():
     entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
     assert [x["side"] for x in entries]==["LONG","SHORT","LONG","SHORT"]
     assert r["activeLong"]==2 and r["activeShort"]==2
+    assert r["candidateCount"]==4 and r["scannedCandidateCount"]==4
+    assert r["executableCandidateCount"]==4
+
+
+def test_partial_fill_reports_minimum_order_blocker_and_required_margin():
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"200"},{"symbol":"BBBUSDT","quoteVolume":"100"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=20)
+    c._info={"symbols":[
+        {"symbol":"AAAUSDT","quoteAsset":"USDT","status":"TRADING","filters":[{"filterType":"LOT_SIZE","minQty":"0.01","stepSize":"0.01"},{"filterType":"MARKET_LOT_SIZE","minQty":"0.01","stepSize":"0.01"},{"filterType":"MIN_NOTIONAL","notional":"5"}]},
+        {"symbol":"BBBUSDT","quoteAsset":"USDT","status":"TRADING","filters":[{"filterType":"LOT_SIZE","minQty":"0.1","stepSize":"0.1"},{"filterType":"MARKET_LOT_SIZE","minQty":"0.1","stepSize":"0.1"},{"filterType":"MIN_NOTIONAL","notional":"10"}]},
+    ]}
+    settings=cfg(universeTopN=2,maximumPositions=2,longSlots=1,shortSlots=1,minimumLeverage=20,entrySizingMode="margin",entryMarginUsd=.3)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=2)
+    assert len([x for x in r["actions"] if x["kind"]=="ENTRY"])==1
+    assert r["entryStatus"]=="PARTIAL_FILL_PLANNED"
+    assert r["remainingLong"]+r["remainingShort"]==1
+    assert r["minimumOrderRejectedCount"]==1
+    assert r["nextRequiredEntryMarginUsd"]==pytest.approx(.5)
+    assert "nog 1 botslots vrij" in r["entryReason"]
 
 
 def test_new_entries_follow_configured_long_short_ratio_not_long_first():
