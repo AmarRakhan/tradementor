@@ -31,5 +31,5 @@ test("wizard is removed and all bot settings are directly visible", () => {
   assert.match(maker, /Alle actieve instellingen staan direct hieronder/);
   assert.match(maker, /LONG slots \(max 25\)/);
   assert.match(maker, /SHORT slots \(max 25\)/);
-  assert.match(maker, /Globale DCA-limiet \(0–3\)/);
+  assert.match(maker, /Globale DCA-limiet \(0–\$\{MAX_DCA\}\)/);
 });
