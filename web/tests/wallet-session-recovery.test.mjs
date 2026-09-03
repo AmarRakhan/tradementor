@@ -22,8 +22,13 @@ test("Firebase login persistence is installed before auth listeners and sign-in"
   const provider = await readFile(new URL("../components/auth-provider.tsx", import.meta.url), "utf8");
   assert.match(firebase, /browserLocalPersistence/);
   assert.match(firebase, /setPersistence\(firebaseAuth, browserLocalPersistence\)/);
+  assert.match(firebase, /window\.setTimeout\(\(\) => finish\("timeout"\), 4_000\)/);
+  assert.match(firebase, /continuing with Firebase fallback/);
   assert.match(provider, /firebaseAuthReady/);
   assert.match(provider, /await firebaseAuthReady/);
+  assert.match(provider, /initial auth state timed out/);
+  assert.match(provider, /setReady\(true\)/);
+  assert.match(provider, /8_000/);
 });
 
 test("cached read-only UI can render while cloud verification finishes", async () => {

@@ -18,4 +18,20 @@ export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseC
 export const firebaseAuth = getAuth(firebaseApp);
 export const firebaseAuthReady = typeof window === "undefined"
   ? Promise.resolve(firebaseAuth)
-  : setPersistence(firebaseAuth, browserLocalPersistence).then(() => firebaseAuth);
+  : new Promise<typeof firebaseAuth>((resolve) => {
+      let settled = false;
+      const finish = (source: "persistence" | "timeout") => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        if (source === "timeout") console.warn("[TradeMentor auth] persistence setup timed out; continuing with Firebase fallback");
+        resolve(firebaseAuth);
+      };
+      const timeout = window.setTimeout(() => finish("timeout"), 4_000);
+      setPersistence(firebaseAuth, browserLocalPersistence)
+        .then(() => finish("persistence"))
+        .catch((reason) => {
+          console.warn("[TradeMentor auth] local persistence unavailable; continuing with Firebase fallback", { reason: String(reason) });
+          finish("persistence");
+        });
+    });
