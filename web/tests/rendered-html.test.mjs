@@ -58,7 +58,8 @@ test("keeps execution safe and exposes the test destinations", async () => {
   assert.match(page, /derivedTradeCapital.*position\.size.*position\.leverage/);
   assert.match(page, /activeTradeCapital:\s*accountDataAvailable\s*&&\s*activeTradeCapital !== null/);
   assert.match(page, /exchange === "aster" \? reportedTradeCapital/);
-  assert.ok(page.indexOf('className="direction-balance"') < page.indexOf('<AsterPerformancePanel'), "LONG/netto/SHORT must appear before Aster Performance");
+  assert.match(page, /className="direction-balance"/);
+  assert.doesNotMatch(page, /AsterPerformancePanel|Kalender gesloten resultaat|Geselecteerde dag/);
   assert.match(page, /tradementor\.activeDestination/);
   assert.match(page, /Abonnementstatus komt straks alleen van de beveiligde server/);
   assert.match(layout, /title:\s*"Amar Crypto Bot 2026"/);
@@ -74,21 +75,21 @@ test("keeps execution safe and exposes the test destinations", async () => {
 });
 
 test("Multi BB always exposes a personal live on/off control without bypassing readiness", async () => {
-  const [source, performance, proxy, startRoute] = await Promise.all([
+  const [source, page, proxy, startRoute] = await Promise.all([
     readFile(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../components/aster-performance-panel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/secure-strategy2-live.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/aster/strategy2/start/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(source, /Multi DCA live bot/);
+  assert.match(source, /Aster live bot/);
   assert.match(source, /role="switch"/);
   assert.match(source, /async function toggleLive/);
-  assert.match(source, /if\(status\.pending\)return/);
-  assert.match(source, /if\(liveReady\)\{await action\("start"\)/);
-  assert.match(source, /await checkReadiness\(\)/);
+  assert.match(source, /if \(status\.pending\) return/);
+  assert.match(source, /if \(liveReady\) return action\("start"\)/);
+  assert.match(source, /return checkReadiness\(\)/);
   assert.match(source, /onConfirmed\(confirmed\)/);
-  assert.match(source, /JSON\.stringify\(\{confirm:true,notional_usd:20\}\)/);
-  assert.doesNotMatch(performance, /AsterStrategy2QuickControl/);
+  assert.match(source, /JSON\.stringify\(body\)/);
+  assert.doesNotMatch(page, /AsterPerformancePanel|AsterStrategy2QuickControl/);
   assert.match(proxy, /strategy2Paths/);
   assert.match(proxy, /Authorization: authorization/);
   assert.match(startRoute, /proxyStrategy2Live/);
@@ -185,20 +186,14 @@ test("compact list is default, persistent and reuses the existing close flow", a
   assert.match(styles, /\.position-filter-layer/);
 });
 
-test("Aster strategy explanation compares configuration with observable behavior", async () => {
-  const [panel, behavior] = await Promise.all([
-    readFile(new URL("../components/aster-performance-panel.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../components/aster-strategy2-behavior.tsx", import.meta.url), "utf8"),
+test("Aster shows one direct settings panel without the retired explanation block", async () => {
+  const [page, maker] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(panel, /AsterStrategy2Behavior/);
-  assert.match(behavior, /Wat is ingesteld en doet de bot wat hij hoort te doen/);
-  assert.match(behavior, /Zo hoort het/);
-  assert.match(behavior, /Werkelijk gezien/);
-  assert.match(behavior, /state:"unknown"/);
-  assert.match(behavior, /Gebalanceerde start/);
-  assert.match(behavior, /DCA-grenzen/);
-  assert.match(behavior, /Take Profit en herstart/);
-  assert.match(behavior, /Portfolio Protection/);
+  assert.match(page, /<AsterStrategy2Maker/);
+  assert.doesNotMatch(page, /AsterPerformancePanel|AsterStrategy2Behavior/);
+  assert.match(maker, /Alle actieve instellingen staan direct hieronder\. Geen wizard/);
 });
 
 test("every trade can create a durable authenticated support report", async () => {
@@ -361,20 +356,15 @@ test("mobile navigation keeps Wallet visible after Positions and Risk were added
   assert.match(styles, /grid-template-columns:\s*repeat\(var\(--mobile-nav-count, 5\), minmax\(0, 1fr\)\)/);
 });
 
-test("Strategy 2 has one settings editor and its read-only summary opens the same maker", async () => {
-  const [behavior, performance, styles] = await Promise.all([
-    readFile(new URL("../components/aster-strategy2-behavior.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../components/aster-performance-panel.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/premium-next.css", import.meta.url), "utf8"),
+test("Strategy 2 has exactly one direct settings editor per interface", async () => {
+  const [page, maker] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(behavior, /Open Strategy Maker/);
-  assert.match(behavior, /tradementor:open-strategy2-maker/);
-  assert.doesNotMatch(behavior, /strategy2\/settings/);
-  assert.doesNotMatch(behavior, /authenticatedRequest/);
-  assert.match(behavior, /Basisorder per positie/);
-  assert.match(behavior, /Portfolio Protection/);
-  assert.match(performance, /AsterStrategy2Behavior snapshot=\{snapshot\}/);
-  assert.match(styles, /\.strategy-inline-editor/);
+  assert.equal((page.match(/<AsterStrategy2Maker/g) || []).length, 2, "legacy and premium views each render the same direct editor once");
+  assert.doesNotMatch(page, /AsterPerformancePanel|AsterStrategy2Behavior/);
+  assert.match(maker, /Instellingen opslaan/);
+  assert.match(maker, /Veilig simuleren/);
 });
 
 test("positions expose confirmed DCA count and latest purchase sorting", async () => {
@@ -385,13 +375,10 @@ test("positions expose confirmed DCA count and latest purchase sorting", async (
   assert.match(page, /dcaCount: asNumber\(row\.dcaCount\)/);
 });
 
-test("Aster calendar shows daily portfolio change without inventing missing history", async () => {
-  const panel = await readFile(new URL("../components/aster-performance-panel.tsx", import.meta.url), "utf8");
-  assert.match(panel, /Portfoliowaarde die dag/);
-  assert.match(panel, /tradementor\.test\.portfolioEquity\.v1/);
-  assert.match(panel, /values\.length > 1/);
-  assert.match(panel, /Portefeuille .*—/);
-  assert.match(panel, /change >= 0 \? "profit" : "loss"/);
+test("retired Aster performance calendar cannot return to the dashboard", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(page, /AsterPerformancePanel|Kalender gesloten resultaat|Geselecteerde dag|Portfoliowaarde die dag/);
+  assert.match(page, /GESLOTEN RESULTAAT VANDAAG/);
 });
 
 test("Aster summary places Portfolio Groei between realized profit and closed trade count", async () => {
