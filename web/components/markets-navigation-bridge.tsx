@@ -40,7 +40,7 @@ function syncContext(active: boolean) {
   if (!label) return;
   if (active) {
     if (!label.dataset.marketsPreviousLabel) label.dataset.marketsPreviousLabel = label.textContent || "ASTER";
-    label.textContent = "MARKETS";
+    if (label.textContent !== "MARKETS") label.textContent = "MARKETS";
   } else if (label.dataset.marketsPreviousLabel) {
     label.textContent = label.dataset.marketsPreviousLabel;
     delete label.dataset.marketsPreviousLabel;
@@ -57,9 +57,10 @@ function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
 
   for (const item of Array.from(nav.querySelectorAll<HTMLElement>(":scope > .nav-button[data-destination]"))) {
     const destination = item.dataset.destination || "";
-    item.hidden = !MOBILE_DESTINATIONS.includes(destination as (typeof MOBILE_DESTINATIONS)[number]);
-    item.setAttribute("aria-hidden", String(item.hidden));
-    if (item.hidden) item.tabIndex = -1;
+    const hidden = !MOBILE_DESTINATIONS.includes(destination as (typeof MOBILE_DESTINATIONS)[number]);
+    if (item.hidden !== hidden) item.hidden = hidden;
+    if (item.getAttribute("aria-hidden") !== String(hidden)) item.setAttribute("aria-hidden", String(hidden));
+    if (hidden && item.tabIndex !== -1) item.tabIndex = -1;
   }
 
   const visible = MOBILE_DESTINATIONS.flatMap((destination) => {
@@ -75,13 +76,13 @@ function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
   if (visible.some((item, index) => visibleChildren[index] !== item)) {
     for (const item of visible) nav.appendChild(item);
   }
-  nav.style.setProperty("--mobile-nav-count", String(visible.length));
+  if (nav.style.getPropertyValue("--mobile-nav-count") !== String(visible.length)) nav.style.setProperty("--mobile-nav-count", String(visible.length));
 
   if (active) {
     for (const item of visible) {
       const selected = item.dataset.destination === "markets";
       item.classList.toggle("active", selected);
-      item.setAttribute("aria-pressed", String(selected));
+      if (item.getAttribute("aria-pressed") !== String(selected)) item.setAttribute("aria-pressed", String(selected));
     }
   } else if (market) {
     market.classList.remove("active");
@@ -136,10 +137,15 @@ export function MarketsNavigationBridge() {
     document.addEventListener("click", leaveMarketsBeforeExistingNav, true);
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
-    const observer = new MutationObserver(sync);
+    let frame = 0;
+    const observer = new MutationObserver(() => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => { frame = 0; sync(); });
+    });
     observer.observe(document.body, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
       document.removeEventListener("click", leaveMarketsBeforeExistingNav, true);
       window.removeEventListener("hashchange", sync);
       window.removeEventListener("popstate", sync);
