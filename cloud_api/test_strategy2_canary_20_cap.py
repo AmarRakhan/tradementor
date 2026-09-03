@@ -12,7 +12,8 @@ def test_strategy2_canary_has_its_own_twenty_dollar_cap():
     assert "def run_aster_strategy3_canary" not in source
 
 
-def test_mobile_confirmation_sends_exactly_twenty_dollars():
+def test_direct_settings_do_not_expose_the_retired_mobile_canary_order_button():
     maker = (ROOT.parent / "web" / "components" / "aster-strategy2-maker.tsx").read_text(encoding="utf-8")
-    assert "JSON.stringify({confirm:true,notional_usd:20})" in maker
-    assert "maximaal US$ 20 · direct sluiten" in maker
+    assert "/strategy2/canary" not in maker
+    assert "notional_usd:20" not in maker
+    assert "maximaal US$ 20 · direct sluiten" not in maker

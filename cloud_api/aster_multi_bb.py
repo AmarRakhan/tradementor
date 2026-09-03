@@ -518,6 +518,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "activeLong": settings.long_slots - long_need, "activeShort": settings.short_slots - short_need,
+              "remainingLong": long_need, "remainingShort": short_need,
               "managedLong": managed_long, "managedShort": managed_short, "manualLong": manual_long, "manualShort": manual_short,
               "nextEntrySide": _next_entry_side(long_count=long_count, short_count=short_count, long_slots=settings.long_slots, short_slots=settings.short_slots),
               "entrySkipReasons": skip_reasons, "updatedAtMs": timestamp_ms}

@@ -11,6 +11,10 @@ test("direct settings cap the Aster bot at 25 LONG plus 25 SHORT and 50 total", 
   assert.match(maker, /maximumPositions:\s*Math\.min\(50, longSlots \+ shortSlots\)/);
   assert.match(maker, /longSlots = clampInt\(n\(v\.longSlots\), 0, 25\)/);
   assert.match(maker, /shortSlots = clampInt\(n\(v\.shortSlots\), 0, 25\)/);
+  assert.match(maker, /entrySizingMode: "margin"/);
+  assert.match(maker, /Start margin \(USDT\)/);
+  assert.match(maker, /report\.remainingLong/);
+  assert.match(maker, /report\.remainingShort/);
 });
 
 test("DCA remains percentage-gated with a hard global max of three and clean restart", () => {
@@ -22,7 +26,7 @@ test("DCA remains percentage-gated with a hard global max of three and clean res
 });
 
 test("maker remains direct and contains no Bollinger or indicator entry gate", () => {
-  assert.match(maker, /Alle actieve instellingen staan direct hieronder\. Geen wizard/);
+  assert.match(maker, /Alle actieve instellingen staan direct hieronder/);
   assert.match(maker, /Veilig simuleren/);
   assert.doesNotMatch(maker, /bollinger/i);
   assert.doesNotMatch(maker, /indicator.*gate/i);
