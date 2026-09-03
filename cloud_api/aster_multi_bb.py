@@ -231,6 +231,24 @@ def leverage_tier_preview(*, client: Any, symbol: str, settings: MultiBbConfig) 
     return preview
 
 
+def _minimum_entry_margin(row: dict[str, Any], price: float, leverage: int) -> float | None:
+    """Return the exchange-rule minimum margin for a market order."""
+    try:
+        rules = ContractRules.from_exchange_info(row)
+        step = rules.market_quantity_step
+        minimum_qty = max(rules.market_min_quantity, rules.min_quantity)
+        if step > 0:
+            minimum_qty = (minimum_qty / step).to_integral_value(rounding=ROUND_UP) * step
+            if rules.min_notional > 0:
+                by_notional = (rules.min_notional / Decimal(str(price)) / step).to_integral_value(rounding=ROUND_UP) * step
+                minimum_qty = max(minimum_qty, by_notional)
+        if minimum_qty <= 0 or price <= 0 or leverage <= 0:
+            return None
+        return float(minimum_qty * Decimal(str(price)) / Decimal(leverage))
+    except Exception:
+        return None
+
+
 def _manual_reopen_boundary(client: Any, symbol: str, side: str, state: dict[str, Any]) -> bool:
     """Return True only when Aster fills prove the old cycle went flat and reopened."""
     start = _i(state.get("cycleStartedAtMs"))
@@ -435,8 +453,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
 
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
+    scanned_candidates = 0
+    executable_candidates = 0
+    minimum_margin_rejections: list[float] = []
     for ranked_row in candidates:
         if sent >= budget or (long_need <= 0 and short_need <= 0): break
+        scanned_candidates += 1
         symbol = ranked_row["symbol"]
         if symbol in active_symbols or symbol not in info_map or prices.get(symbol, 0) <= 0: continue
         try:
@@ -455,7 +477,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if not side: break
         try: plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
         except Exception as exc:
-            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)}); continue
+            reason = str(exc)
+            required_margin = _minimum_entry_margin(info_map[symbol], prices[symbol], maximum)
+            action = {"kind": "ENTRY_SKIP", "symbol": symbol, "reason": reason}
+            if "minimale exchangeorder" in reason and required_margin is not None:
+                action["minimumEntryMarginUsd"] = required_margin
+                minimum_margin_rejections.append(required_margin)
+            actions.append(action); continue
+        executable_candidates += 1
         required = float(plan.notional_per_leg) / plan.leverage
         if available < required * 1.05:
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
@@ -506,7 +535,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     entry_rows = [a for a in actions if a.get("kind") == "ENTRY"]
     entry_wait = [a for a in actions if a.get("kind") in {"ENTRY_SKIP", "ENTRY_MARGIN_WAIT"}]
     selected_open = bool(settings.manual_symbol_selection_enabled and any(key in active for key in selected_keys))
-    if entry_rows: entry_status = "ENTRY_PLANNED" if dry_run else "ENTRY_SUBMITTED"; entry_reason = "verse Strategy 2 entry verwerkt"
+    remaining_slots = long_need + short_need
+    next_required_margin = min(minimum_margin_rejections, default=None)
+    if entry_rows and remaining_slots > 0:
+        entry_status = "PARTIAL_FILL_PLANNED" if dry_run else "PARTIAL_FILL_SUBMITTED"
+        entry_reason = f"{len(entry_rows)} nieuwe positie(s) verwerkt; nog {remaining_slots} botslots vrij"
+        if next_required_margin is not None:
+            entry_reason += f"; volgende minimumorder vraagt circa {next_required_margin:.2f} USDT startmargin"
+    elif entry_rows: entry_status = "ENTRY_PLANNED" if dry_run else "ENTRY_SUBMITTED"; entry_reason = "verse Strategy 2 entry verwerkt"
     elif selected_open: entry_status = "POSITION_ALREADY_OPEN"; entry_reason = "geselecteerde munt heeft al een open Aster-positie"
     elif long_need <= 0 and short_need <= 0: entry_status = "WAITING_CAPACITY"; entry_reason = "Strategy 2 slots zijn gevuld"
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
@@ -522,6 +558,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "remainingLong": long_need, "remainingShort": short_need,
               "managedLong": managed_long, "managedShort": managed_short, "manualLong": manual_long, "manualShort": manual_short,
               "nextEntrySide": _next_entry_side(long_count=long_count, short_count=short_count, long_slots=settings.long_slots, short_slots=settings.short_slots),
+              "candidateCount": len(candidates), "scannedCandidateCount": scanned_candidates,
+              "executableCandidateCount": executable_candidates,
+              "minimumOrderRejectedCount": len(minimum_margin_rejections),
+              "nextRequiredEntryMarginUsd": next_required_margin,
               "entrySkipReasons": skip_reasons, "updatedAtMs": timestamp_ms}
     if not dry_run:
         ref.set({"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
