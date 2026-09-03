@@ -264,6 +264,28 @@ def test_manual_selection_disabled_keeps_ranked_topn_flow():
     assert r["candidateMode"]=="top_n"
 
 
+def test_disabling_manual_selection_keeps_existing_managed_legs_and_subtracts_them_from_side_capacity():
+    positions=[
+        {"symbol":"OLD1USDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"100","leverage":"20"},
+        {"symbol":"OLD2USDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"100","leverage":"20"},
+    ]
+    state={"multiBbPositions":{
+        "OLD1USDT|LONG":{"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True},
+        "OLD2USDT|LONG":{"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True},
+    }}
+    tickers=[{"symbol":f"NEW{i}USDT","quoteVolume":str(100-i)} for i in range(18)]
+    prices={**{row["symbol"]:100 for row in tickers},"OLD1USDT":100,"OLD2USDT":100}
+    c=Client(positions=positions,tickers=tickers,prices=prices,leverage=20)
+    settings=cfg(manualSymbolSelectionEnabled=False,manualSymbols=[],universeTopN=20,maximumPositions=20,longSlots=10,shortSlots=10,entrySizingMode="margin",entryMarginUsd=.2)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state=state,settings=settings,uid="u",account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=20)
+    assert r["managedLong"]==2 and r["managedShort"]==0
+    assert r["activeLong"]==10 and r["activeShort"]==10
+    assert r["remainingLong"]==0 and r["remainingShort"]==0
+    entries=[row for row in r["actions"] if row["kind"]=="ENTRY"]
+    assert sum(row["side"]=="LONG" for row in entries)==8
+    assert sum(row["side"]=="SHORT" for row in entries)==10
+
+
 def test_manual_selection_one_long_opens_only_selected_symbol():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"999"},{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
     settings=manual_cfg([{"symbol":"BBBUSDT","side":"LONG"}],maximumPositions=2,longSlots=2,shortSlots=0)
