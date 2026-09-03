@@ -22,6 +22,7 @@ type OpenPosition = {
   id?: string; positionId?: string; symbol?: string; side?: string; quantity?: number; notionalUsd?: number | null;
   markPrice?: number | null; unrealizedPnl?: number | null; returnPct?: number | null; roePct?: number | null;
   roiPct?: number | null; leverage?: number | null; initialMarginUsd?: number | null; dcaCount?: number | null;
+  dcaCountReliable?: boolean;
   openedAt?: unknown; entryPrice?: number | null; averageEntry?: number | null;
   strategy2Tp?: { breakEvenPrice?: number | null; ownershipProven?: boolean; status?: string } | null;
   strategy2DcaLadder?: { available?: boolean; mode?: string; filledDcaCount?: number; maxDca?: number; levels?: DcaChartLevel[] } | null;
@@ -95,6 +96,7 @@ function positionPricePnlPct(position: OpenPosition | null) {
 }
 function positionEntryCount(position: OpenPosition | null) {
   if (!position) return null;
+  if (position.dcaCountReliable !== true && position.strategy2DcaLadder?.available !== true) return null;
   const direct = finite(position.dcaCount); const ladder = finite(position.strategy2DcaLadder?.filledDcaCount);
   const dca = direct ?? ladder; return dca === null ? null : Math.max(1, Math.round(dca) + 1);
 }
@@ -221,7 +223,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const multiDcaPositions = strategy2.multiBbPositions && typeof strategy2.multiBbPositions === "object" ? strategy2.multiBbPositions as Record<string, Record<string, unknown>> : {};
   const positionsWithMultiDcaCounts = useMemo(() => allPositions.map(position => {
     const runtime = multiDcaPositions[sideKey(position)]; const runtimeDca = finite(runtime?.dcaCount);
-    return runtimeDca === null ? position : { ...position, dcaCount: runtimeDca };
+    return runtimeDca === null ? position : { ...position, dcaCount: runtimeDca, dcaCountReliable: true };
   }), [allPositions, strategy2.multiBbPositions]);
   const mainPositions = useMemo(() => positionsWithMultiDcaCounts.filter(position => position.focusAirbagHedge !== true), [positionsWithMultiDcaCounts]);
   const focusV2Cockpit = snapshot.data?.focusV2Cockpit && typeof snapshot.data.focusV2Cockpit === "object" ? snapshot.data.focusV2Cockpit as FocusV2Cockpit : null;
