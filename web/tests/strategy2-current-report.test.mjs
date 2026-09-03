@@ -6,7 +6,7 @@ const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx",
 
 test("strategy maker ignores a scan report from an older settings version", () => {
   assert.match(maker, /rawReport\.configVersion/);
-  assert.match(maker, /reportVersion !== settingsVersion \? \{\} : rawReport/);
+  assert.match(maker, /settingsVersion > 0 && reportVersion !== settingsVersion \? \{\} : rawReport/);
 });
 
 test("strategy and account position scopes are explicit", () => {
