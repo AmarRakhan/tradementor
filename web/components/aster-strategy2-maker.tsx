@@ -136,6 +136,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     try {
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > 25 || settings.shortSlots > 25 || settings.maximumPositions > 50) throw new Error("Positielimieten zijn ongeldig: maximaal 25 LONG + 25 SHORT (50 totaal).");
       if (settings.maxDca > 3) throw new Error("Globale DCA-limiet mag maximaal 3 zijn.");
+      if (settings.entryMarginUsd * settings.minimumLeverage < 5) throw new Error(`Startmargin te laag: ${settings.entryMarginUsd} USDT × ${settings.minimumLeverage} is minder dan de Aster-minimumorder van circa 5 USDT. Verhoog de startmargin naar minimaal ${(5 / settings.minimumLeverage).toFixed(2)} USDT; per markt kan iets meer nodig zijn.`);
       if (v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
       if (kind === "start" && v.manualEnabled) {
         const blocked = v.manualSymbols.map((row) => tierPreviews[row.symbol]).filter((row) => row?.entryOrderValid === false);
