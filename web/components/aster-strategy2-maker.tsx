@@ -20,13 +20,13 @@ type TierPreview = {
 type Values = {
   name: string; universe: string; positions: string; longSlots: string; shortSlots: string;
   minLeverage: string; entryMargin: string; dcaDistance: string; dcaMargin: string;
-  maxDca: string; tp: string; mode: "paper" | "live";
+  maxDca: string; tp: string; tpEnabled: boolean; mode: "paper" | "live";
   manualEnabled: boolean; manualSymbols: ManualSymbol[];
 };
 
 const initial: Values = {
   name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10",
-  minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", tp: "1.5", mode: "live",
+  minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", tp: "1.5", tpEnabled: true, mode: "live",
   manualEnabled: false, manualSymbols: [],
 };
 const MAX_DCA = 500;
@@ -69,7 +69,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50),
       entryMargin: String(x.entrySizingMode === "margin" ? (x.entryMarginUsd ?? 5) : (x.entryNotionalUsd ?? x.baseNotional ?? 5)),
       dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(clampInt(Number(x.maxDca ?? 3), 0, MAX_DCA)),
-      tp: String(Number(x.takeProfit ?? .015) * 100), mode: x.mode === "paper" ? "paper" : "live",
+      tp: String(Number(x.takeProfit ?? .015) * 100), tpEnabled: x.takeProfitEnabled !== false, mode: x.mode === "paper" ? "paper" : "live",
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
     });
     setTotalDraft(null);
@@ -87,7 +87,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       entryNotionalUsd: n(v.entryMargin) * Math.max(1, Math.round(n(v.minLeverage))),
       entrySizingMode: "margin",
       dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: clampInt(n(v.maxDca), 0, MAX_DCA), unlimitedDca: false,
-      takeProfit: n(v.tp) / 100, entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
+      takeProfit: n(v.tp) / 100, takeProfitEnabled: v.tpEnabled, entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualSymbols,
     };
   }, [v]);
@@ -144,6 +144,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     try {
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > 25 || settings.shortSlots > 25 || settings.maximumPositions > 50) throw new Error("Positielimieten zijn ongeldig: maximaal 25 LONG + 25 SHORT (50 totaal).");
       if (settings.maxDca > MAX_DCA) throw new Error(`Globale DCA-limiet mag maximaal ${MAX_DCA} zijn.`);
+      if (settings.takeProfitEnabled && (!Number.isFinite(Number(v.tp.replace(",", "."))) || Number(v.tp.replace(",", ".")) <= 0)) throw new Error("Take Profit moet een positief numeriek percentage zijn.");
       if (settings.entryMarginUsd * settings.minimumLeverage < 5) throw new Error(`Startmargin te laag: ${settings.entryMarginUsd} USDT × ${settings.minimumLeverage} is minder dan de Aster-minimumorder van circa 5 USDT. Verhoog de startmargin naar minimaal ${(5 / settings.minimumLeverage).toFixed(2)} USDT; per markt kan iets meer nodig zijn.`);
       if (v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
       if (kind === "start" && v.manualEnabled) {
@@ -208,7 +209,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card">
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
     <p className="strategy-intro">Alle actieve instellingen staan direct hieronder. Geen wizard; de door de server bevestigde configuratie is leidend.</p>
-    <div className="strategy-facts"><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span><span>DCA globaal max {v.maxDca}</span><span>TP {v.tp}%</span><span>CROSS</span></div>
+    <div className="strategy-facts"><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span><span>DCA globaal max {v.maxDca}</span><span>TP {v.tpEnabled ? `${v.tp}%` : "UIT"}</span><span>CROSS</span></div>
     <div className="strategy-message compact-scan"><b>Botposities:</b> {activeLong}L · {activeShort}S <b>Vrije botslots:</b> {remainingLong}L · {remainingShort}S <small>{scanSummary} · dashboard telt alle Aster-posities</small>{accountPositionCount > 0 && <small>{accountPositionCount} exchangeposities{untrackedAccountPositionCount > 0 ? ` · ${untrackedAccountPositionCount} niet gekoppeld aan Strategy 2` : ""}</small>}{dirty && <b>Niet opgeslagen</b>}{entryReason && remainingLong + remainingShort > 0 && <span className="entry-hold-reason"><b>Actuele reden:</b> {entryReason}{nextRequiredEntryMarginUsd > settings.entryMarginUsd ? ` · Benodigd voor volgende kandidaat: circa ${nextRequiredEntryMarginUsd.toFixed(2)} USDT.` : ""}</span>}</div>
 
     <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : status.pending ? "server verwerkt wijziging…" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
@@ -226,7 +227,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       <Field label="DCA afstand (%)" value={v.dcaDistance} set={(value) => change({ ...v, dcaDistance: value })} />
       <Field label="DCA margin (USDT)" value={v.dcaMargin} set={(value) => change({ ...v, dcaMargin: value })} />
       <Field label={`Globale DCA-limiet (0–${MAX_DCA})`} value={v.maxDca} set={(value) => change({ ...v, maxDca: value })} />
-      <Field label="Take Profit (%)" value={v.tp} set={(value) => change({ ...v, tp: value })} />
+      <div className={`tp-setting ${v.tpEnabled ? "enabled" : "disabled"}`}>
+        <label className="tp-toggle-row"><span><b>Take Profit</b><small>{v.tpEnabled ? "Automatisch sluiten is actief" : "Automatisch sluiten is volledig uit"}</small></span><button type="button" role="switch" aria-checked={v.tpEnabled} className="tp-toggle" onClick={() => change({ ...v, tpEnabled: !v.tpEnabled })}><i />{v.tpEnabled ? "AAN" : "UIT"}</button></label>
+        <Field label="Take Profit (%)" value={v.tp} set={(value) => change({ ...v, tp: value })} disabled={!v.tpEnabled} />
+      </div>
 
       <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>UIT = automatische Top-N. AAN = uitsluitend jouw geselecteerde Aster USDT perpetuals.</small></span><input type="checkbox" checked={v.manualEnabled} onChange={(event) => change({ ...v, manualEnabled: event.target.checked })} /></label>
       {v.manualEnabled && <div className="manual-symbol-picker">
@@ -243,6 +247,6 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   </article>;
 }
 
-function Field({ label, value, set, text = false, onBlur }: { label: string; value: string; set: (value: string) => void; text?: boolean; onBlur?: () => void }) {
-  return <label>{label}<input inputMode={text ? undefined : "decimal"} value={value} onChange={(event) => set(text ? event.target.value : event.target.value.replace(",", "."))} onBlur={onBlur} /></label>;
+function Field({ label, value, set, text = false, onBlur, disabled = false }: { label: string; value: string; set: (value: string) => void; text?: boolean; onBlur?: () => void; disabled?: boolean }) {
+  return <label>{label}<input disabled={disabled} inputMode={text ? undefined : "decimal"} value={value} onChange={(event) => set(text ? event.target.value : event.target.value.replace(",", "."))} onBlur={onBlur} /></label>;
 }

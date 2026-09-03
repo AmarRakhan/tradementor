@@ -45,6 +45,7 @@ class MultiBbConfig:
     max_dca: int = 3
     unlimited_dca: bool = False
     take_profit: float = .015
+    take_profit_enabled: bool = True
     manual_symbol_selection_enabled: bool = False
     manual_symbols: tuple[tuple[str, str], ...] = ()
 
@@ -82,6 +83,7 @@ class MultiBbConfig:
             max_dca=_i(raw.get("maxDca", raw.get("longMaxDca")), 3),
             unlimited_dca=bool(raw.get("unlimitedDca", False)),
             take_profit=_f(raw.get("takeProfit"), .015),
+            take_profit_enabled=bool(raw.get("takeProfitEnabled", True)),
             manual_symbol_selection_enabled=manual_enabled,
             manual_symbols=tuple(manual_symbols),
         )
@@ -98,7 +100,7 @@ class MultiBbConfig:
         if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
-        if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
+        if not math.isfinite(self.take_profit) or self.take_profit <= 0: raise ValueError("Take Profit moet een positief eindig percentage zijn")
         if self.manual_symbol_selection_enabled and not self.manual_symbols:
             raise ValueError("Selecteer minimaal één munt wanneer Zelf munten kiezen aan staat")
         if len(self.manual_symbols) > 200: raise ValueError("Maximaal 200 handmatig gekozen munten")
@@ -110,7 +112,7 @@ class MultiBbConfig:
             "universeTopN": self.universe_top_n, "maximumPositions": self.maximum_positions,
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
-            "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit,
+            "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit, "takeProfitEnabled": self.take_profit_enabled,
             "entryMode": "immediate_fill", "marginMode": "cross", "autoRestart": True,
             "manualSymbolSelectionEnabled": self.manual_symbol_selection_enabled,
             "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in self.manual_symbols],
@@ -126,12 +128,12 @@ def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], setti
     qty = abs(_f(row.get("positionAmt")))
     if side not in {"LONG", "SHORT"} or entry <= 0 or mark <= 0 or qty <= 0:
         return {}
-    tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
-    tp_distance_usd = abs(tp_price - mark)
-    tp_distance_pct = tp_distance_usd / mark * 100
-    expected_pnl_at_tp = ((tp_price - entry) if side == "LONG" else (entry - tp_price)) * qty
+    tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit) if settings.take_profit_enabled else None
+    tp_distance_usd = abs(tp_price - mark) if tp_price is not None else None
+    tp_distance_pct = tp_distance_usd / mark * 100 if tp_distance_usd is not None else None
+    expected_pnl_at_tp = (((tp_price - entry) if side == "LONG" else (entry - tp_price)) * qty) if tp_price is not None else None
     current_pnl = ((mark - entry) if side == "LONG" else (entry - mark)) * qty
-    portfolio_value_at_tp = account_equity + (expected_pnl_at_tp - current_pnl) if account_equity > 0 else None
+    portfolio_value_at_tp = account_equity + (expected_pnl_at_tp - current_pnl) if account_equity > 0 and expected_pnl_at_tp is not None else None
     dca_count = _i(state.get("dcaCount"))
     anchor = _f(state.get("lastBotFillPrice"), entry)
     dca_allowed = settings.unlimited_dca or dca_count < settings.max_dca
@@ -139,7 +141,8 @@ def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], setti
     next_dca_distance_usd = abs(next_dca_price - mark) if next_dca_price else None
     next_dca_distance_pct = next_dca_distance_usd / mark * 100 if next_dca_distance_usd is not None else None
     return {
-        "takeProfitPct": settings.take_profit * 100,
+        "takeProfitEnabled": settings.take_profit_enabled,
+        "takeProfitPct": settings.take_profit * 100 if settings.take_profit_enabled else None,
         "tpPrice": tp_price,
         "tpDistanceUsd": tp_distance_usd,
         "tpDistancePct": tp_distance_pct,
@@ -395,7 +398,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         symbol, side = key.split("|", 1); mark = _f(row.get("markPrice"), prices.get(symbol, 0)); entry = _f(row.get("entryPrice")); qty = abs(_f(row.get("positionAmt")))
         if mark <= 0 or entry <= 0 or qty <= 0 or (symbol, side) in order_keys: continue
         tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
-        tp_due = mark >= tp_price if side == "LONG" else mark <= tp_price
+        tp_due = settings.take_profit_enabled and (mark >= tp_price if side == "LONG" else mark <= tp_price)
         if tp_due:
             actions.append({"kind": "TP", "symbol": symbol, "side": side, "mark": mark, "entry": entry, "target": tp_price})
             if not dry_run:

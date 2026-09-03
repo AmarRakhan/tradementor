@@ -266,3 +266,71 @@
 @media (max-width: 700px) {
   [aria-label="Aster Tradecentrum"] .trade-marker-details { font-size: 8px; }
 }
+
+
+/* Botinstellingen definitive dark-green/gold reference 2026-09-03 */
+#strategy-2-maker.strategy-two-card {
+  --s2-gold: #d6b55a;
+  --s2-green: #18c98b;
+  --s2-deep: #07110e;
+  --s2-panel: rgba(8, 25, 20, .92);
+  background: radial-gradient(circle at 82% 6%, rgba(20, 183, 122, .12), transparent 34%), linear-gradient(180deg, #07110e 0%, #040908 100%);
+  border: 1px solid rgba(214,181,90,.55);
+  border-radius: 18px;
+  padding: 14px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.34), inset 0 0 0 1px rgba(20,183,122,.04);
+  overflow: hidden;
+}
+#strategy-2-maker .strategy-title-row { margin-bottom: 6px; align-items: center; }
+#strategy-2-maker .strategy-title-row h2 { margin: 1px 0 0; font-size: clamp(19px, 4.8vw, 24px); line-height: 1.05; }
+#strategy-2-maker .strategy-title-row .kicker { color: var(--s2-gold); font-size: 10px; letter-spacing: .16em; }
+#strategy-2-maker .strategy-state { border-color: rgba(214,181,90,.5); background: rgba(214,181,90,.08); min-width: 52px; text-align:center; }
+#strategy-2-maker .strategy-state.on { color: #65e6b2; border-color: rgba(24,201,139,.58); background: rgba(24,201,139,.10); }
+#strategy-2-maker .strategy-intro { margin: 0 0 8px; font-size: 11px; line-height: 1.35; opacity: .76; }
+#strategy-2-maker .strategy-facts { display:grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap:5px; margin:0 0 8px; }
+#strategy-2-maker .strategy-facts span { min-width:0; padding:5px 6px; border:1px solid rgba(214,181,90,.22); border-radius:9px; background:rgba(255,255,255,.025); font-size:10px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#strategy-2-maker .compact-scan { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; padding:7px; margin:0 0 8px; border:1px solid rgba(24,201,139,.18); border-radius:12px; background:rgba(4,18,14,.8); font-size:10px; line-height:1.25; }
+#strategy-2-maker .compact-scan small, #strategy-2-maker .compact-scan .entry-hold-reason { grid-column:1/-1; }
+#strategy-2-maker .strategy-power-control { padding:7px 9px; min-height:46px; margin-bottom:8px; border:1px solid rgba(214,181,90,.26); border-radius:12px; background:var(--s2-panel); }
+#strategy-2-maker .strategy-power-control span b { font-size:12px; }
+#strategy-2-maker .strategy-power-control span small { font-size:9px; }
+#strategy-2-maker .strategy-power-control button { min-height:34px; padding:0 11px; border-radius:10px; }
+#strategy-2-maker .compact-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+#strategy-2-maker .compact-settings-grid > label, #strategy-2-maker .position-settings-grid label, #strategy-2-maker .tp-setting > label { margin:0; gap:3px; font-size:10px; }
+#strategy-2-maker .position-settings-grid { grid-column:1/-1; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+#strategy-2-maker .compact-settings-grid input { min-width:0; height:36px; padding:0 9px; border-radius:9px; border-color:rgba(214,181,90,.26); background:rgba(0,0,0,.22); font-size:13px; }
+#strategy-2-maker .compact-settings-grid input:focus { border-color:rgba(24,201,139,.7); box-shadow:0 0 0 2px rgba(24,201,139,.10); }
+#strategy-2-maker .compact-settings-grid input:disabled { opacity:.5; cursor:not-allowed; }
+#strategy-2-maker .tp-setting { display:grid; grid-template-columns:minmax(0,1fr); gap:5px; padding:7px; border:1px solid rgba(214,181,90,.28); border-radius:11px; background:rgba(214,181,90,.035); }
+#strategy-2-maker .tp-toggle-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+#strategy-2-maker .tp-toggle-row span { display:grid; gap:1px; }
+#strategy-2-maker .tp-toggle-row b { font-size:11px; }
+#strategy-2-maker .tp-toggle-row small { font-size:9px; opacity:.7; }
+#strategy-2-maker .tp-toggle { display:inline-flex; align-items:center; gap:6px; min-height:30px; padding:0 8px; border:1px solid rgba(214,181,90,.34); border-radius:999px; background:rgba(255,255,255,.03); font-size:9px; font-weight:800; }
+#strategy-2-maker .tp-toggle i { width:16px; height:16px; border-radius:50%; background:#58615e; box-shadow:0 0 0 3px rgba(255,255,255,.035); }
+#strategy-2-maker .tp-setting.enabled .tp-toggle { color:#7bf0bd; border-color:rgba(24,201,139,.5); background:rgba(24,201,139,.08); }
+#strategy-2-maker .tp-setting.enabled .tp-toggle i { background:var(--s2-green); }
+#strategy-2-maker .manual-symbol-toggle { grid-column:1/-1; min-height:44px; margin:0; padding:7px 9px; border-radius:11px; border-color:rgba(214,181,90,.22); }
+#strategy-2-maker .manual-symbol-toggle b { font-size:11px; }
+#strategy-2-maker .manual-symbol-toggle small { font-size:9px; line-height:1.2; }
+#strategy-2-maker .manual-symbol-picker { grid-column:1/-1; margin:0; }
+#strategy-2-maker .maker-nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; margin-top:9px !important; padding-bottom:max(4px,env(safe-area-inset-bottom)); }
+#strategy-2-maker .maker-nav button { min-width:0; min-height:39px; padding:7px 8px; border-radius:10px; font-size:10px; white-space:normal; line-height:1.15; }
+#strategy-2-maker .maker-nav button:first-child { border-color:rgba(24,201,139,.5); background:linear-gradient(180deg,rgba(24,201,139,.19),rgba(24,201,139,.08)); }
+@media (max-width: 430px) {
+  #strategy-2-maker.strategy-two-card { padding:10px; border-radius:15px; }
+  #strategy-2-maker .strategy-intro { display:none; }
+  #strategy-2-maker .strategy-facts { gap:4px; margin-bottom:6px; }
+  #strategy-2-maker .strategy-facts span { padding:4px 3px; font-size:8.5px; }
+  #strategy-2-maker .compact-scan { gap:3px; padding:5px; margin-bottom:6px; font-size:9px; }
+  #strategy-2-maker .strategy-power-control { margin-bottom:6px; }
+  #strategy-2-maker .compact-settings-grid, #strategy-2-maker .position-settings-grid { gap:5px; }
+  #strategy-2-maker .compact-settings-grid input { height:34px; font-size:12px; }
+  #strategy-2-maker .maker-nav { gap:5px; }
+  #strategy-2-maker .maker-nav button { min-height:38px; font-size:9px; }
+}
+@media (max-width: 350px) {
+  #strategy-2-maker .position-settings-grid { grid-template-columns:1fr; }
+  #strategy-2-maker .compact-settings-grid { grid-template-columns:1fr 1fr; }
+  #strategy-2-maker .maker-nav { grid-template-columns:1fr; }
+}
