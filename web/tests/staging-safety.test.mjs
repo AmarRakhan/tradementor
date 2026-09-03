@@ -82,7 +82,8 @@ test("Multi BB live controls cannot bypass server readiness or create request lo
   assert.match(maker, /async function toggleLive/);
   assert.match(maker, /if \(status\.pending\) return/);
   assert.match(maker, /if \(liveReady\) return action\("start"\)/);
-  assert.match(maker, /return checkReadiness\(\)/);
+  assert.match(maker, /return checkReadiness\(true\)/);
+  assert.match(maker, /startWhenReady && Boolean\(result\.liveReady\)/);
   assert.match(maker, /onConfirmed\(confirmed\)/);
   assert.match(maker, /readiness\?\.liveReady === true/);
 });

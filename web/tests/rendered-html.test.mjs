@@ -86,7 +86,8 @@ test("Multi BB always exposes a personal live on/off control without bypassing r
   assert.match(source, /async function toggleLive/);
   assert.match(source, /if \(status\.pending\) return/);
   assert.match(source, /if \(liveReady\) return action\("start"\)/);
-  assert.match(source, /return checkReadiness\(\)/);
+  assert.match(source, /return checkReadiness\(true\)/);
+  assert.match(source, /startWhenReady && Boolean\(result\.liveReady\)/);
   assert.match(source, /onConfirmed\(confirmed\)/);
   assert.match(source, /JSON\.stringify\(body\)/);
   assert.doesNotMatch(page, /AsterPerformancePanel|AsterStrategy2QuickControl/);
