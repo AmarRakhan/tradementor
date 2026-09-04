@@ -21,12 +21,14 @@ type Values = {
   name: string; universe: string; positions: string; longSlots: string; shortSlots: string;
   minLeverage: string; entryMargin: string; dcaDistance: string; dcaMargin: string;
   maxDca: string; tp: string; tpEnabled: boolean; mode: "paper" | "live";
+  asymmetricHedgeEnabled: boolean; shortStartMultiplier: string;
   manualEnabled: boolean; manualSymbols: ManualSymbol[];
 };
 
 const initial: Values = {
   name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10",
   minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", tp: "1.5", tpEnabled: true, mode: "live",
+  asymmetricHedgeEnabled: false, shortStartMultiplier: "5",
   manualEnabled: false, manualSymbols: [],
 };
 const MAX_DCA = 500;
@@ -70,6 +72,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       entryMargin: String(x.entrySizingMode === "margin" ? (x.entryMarginUsd ?? 5) : (x.entryNotionalUsd ?? x.baseNotional ?? 5)),
       dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(clampInt(Number(x.maxDca ?? 3), 0, MAX_DCA)),
       tp: String(Number(x.takeProfit ?? .015) * 100), tpEnabled: x.takeProfitEnabled !== false, mode: x.mode === "paper" ? "paper" : "live",
+      asymmetricHedgeEnabled: x.asymmetricHedgeModeEnabled === true, shortStartMultiplier: String(x.shortStartMultiplier ?? 5),
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
     });
     setTotalDraft(null);
@@ -88,6 +91,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       entrySizingMode: "margin",
       dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: clampInt(n(v.maxDca), 0, MAX_DCA), unlimitedDca: false,
       takeProfit: n(v.tp) / 100, takeProfitEnabled: v.tpEnabled, entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
+      asymmetricHedgeModeEnabled: v.asymmetricHedgeEnabled, shortStartMultiplier: n(v.shortStartMultiplier),
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualSymbols,
     };
   }, [v]);
@@ -145,6 +149,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > 25 || settings.shortSlots > 25 || settings.maximumPositions > 50) throw new Error("Positielimieten zijn ongeldig: maximaal 25 LONG + 25 SHORT (50 totaal).");
       if (settings.maxDca > MAX_DCA) throw new Error(`Globale DCA-limiet mag maximaal ${MAX_DCA} zijn.`);
       if (settings.takeProfitEnabled && (!Number.isFinite(Number(v.tp.replace(",", "."))) || Number(v.tp.replace(",", ".")) <= 0)) throw new Error("Take Profit moet een positief numeriek percentage zijn.");
+      if (settings.asymmetricHedgeModeEnabled && (settings.shortStartMultiplier < 1 || settings.shortStartMultiplier > 10)) throw new Error("Short start-multiplier moet tussen 1× en 10× liggen.");
+      if (settings.asymmetricHedgeModeEnabled && settings.shortSlots < settings.longSlots) throw new Error("Voor asymmetrische short-hedge moeten minstens evenveel SHORT slots als LONG slots beschikbaar zijn, zodat iedere nieuwe LONG exact één gekoppelde SHORT krijgt.");
       if (settings.entryMarginUsd * settings.minimumLeverage < 5) throw new Error(`Startmargin te laag: ${settings.entryMarginUsd} USDT × ${settings.minimumLeverage} is minder dan de Aster-minimumorder van circa 5 USDT. Verhoog de startmargin naar minimaal ${(5 / settings.minimumLeverage).toFixed(2)} USDT; per markt kan iets meer nodig zijn.`);
       if (v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
       if (kind === "start" && v.manualEnabled) {
@@ -231,6 +237,19 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         <label className="tp-toggle-row"><span><b>Take Profit</b><small>{v.tpEnabled ? "Automatisch sluiten is actief" : "Automatisch sluiten is volledig uit"}</small></span><button type="button" role="switch" aria-checked={v.tpEnabled} className="tp-toggle" onClick={() => change({ ...v, tpEnabled: !v.tpEnabled })}><i />{v.tpEnabled ? "AAN" : "UIT"}</button></label>
         <Field label="Take Profit (%)" value={v.tp} set={(value) => change({ ...v, tp: value })} disabled={!v.tpEnabled} />
       </div>
+
+      <section className={`asym-hedge-card ${v.asymmetricHedgeEnabled ? "enabled" : "disabled"}`}>
+        <label className="asym-hedge-toggle"><span><b><i>NIEUW</i> Asymmetrische short-hedge modus</b><small>Nieuwe scanner-LONG opent één gekoppelde grotere SHORT. Modus UIT laat het bestaande botgedrag exact intact.</small></span><button type="button" role="switch" aria-checked={v.asymmetricHedgeEnabled} onClick={() => change({ ...v, asymmetricHedgeEnabled: !v.asymmetricHedgeEnabled })}><i /></button></label>
+        <div className="asym-hedge-grid">
+          <Field label="Short start-multiplier (1×–10×)" value={v.shortStartMultiplier} set={(value) => change({ ...v, shortStartMultiplier: value })} disabled={!v.asymmetricHedgeEnabled} />
+          <div className="asym-rule"><b>Short DCA actief</b><small>SHORT blijft zelfstandig zijn eigen DCA-regels volgen.</small><em>AAN</em></div>
+          <div className="asym-rule"><b>Geen cross-rebalancing</b><small>LONG-DCA vergroot SHORT niet; SHORT-DCA vergroot LONG niet.</small><em>VAST</em></div>
+          <div className="asym-rule"><b>LONG take profit blokkeren</b><small>Zolang de gekoppelde SHORT open of nog in herstel is, kan LONG niet via TP sluiten.</small><em>AAN</em></div>
+          <div className="asym-rule"><b>SHORT sluiten bij LONG max DCA</b><small>Stop verdere SHORT-DCA en sluit de volledige gekoppelde SHORT reduce-only.</small><em>AAN</em></div>
+          <div className="asym-rule"><b>Nieuwe cyclus = nieuwe SHORT</b><small>Na een latere scanner-herinstap wordt opnieuw exact één initiële SHORT geopend.</small><em>AAN</em></div>
+        </div>
+        <p className="asym-hedge-info"><b>Werking:</b> bij een nieuwe scanner-entry opent de bot de normale LONG en gelijktijdig een grotere SHORT volgens de ingestelde multiplier. LONG en SHORT volgen daarna zelfstandig hun eigen DCA-regels. DCA’s worden niet tussen beide zijden gerebalanced. Zolang de SHORT openstaat, blijft take profit voor LONG geblokkeerd. Zodra LONG zijn maximale DCA-aantal bereikt, wordt de volledige SHORT gesloten. Daarna mag LONG weer zijn normale take-profitlogica volgen.</p>
+      </section>
 
       <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>UIT = automatische Top-N. AAN = uitsluitend jouw geselecteerde Aster USDT perpetuals.</small></span><input type="checkbox" checked={v.manualEnabled} onChange={(event) => change({ ...v, manualEnabled: event.target.checked })} /></label>
       {v.manualEnabled && <div className="manual-symbol-picker">

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 import hashlib, math, time
 
-from aster_close_guard import CloseEvidence
+from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
@@ -46,6 +46,8 @@ class MultiBbConfig:
     unlimited_dca: bool = False
     take_profit: float = .015
     take_profit_enabled: bool = True
+    asymmetric_hedge_enabled: bool = False
+    short_start_multiplier: float = 5.0
     manual_symbol_selection_enabled: bool = False
     manual_symbols: tuple[tuple[str, str], ...] = ()
 
@@ -84,6 +86,8 @@ class MultiBbConfig:
             unlimited_dca=bool(raw.get("unlimitedDca", False)),
             take_profit=_f(raw.get("takeProfit"), .015),
             take_profit_enabled=bool(raw.get("takeProfitEnabled", True)),
+            asymmetric_hedge_enabled=bool(raw.get("asymmetricHedgeModeEnabled", False)),
+            short_start_multiplier=_f(raw.get("shortStartMultiplier"), 5.0),
             manual_symbol_selection_enabled=manual_enabled,
             manual_symbols=tuple(manual_symbols),
         )
@@ -101,6 +105,8 @@ class MultiBbConfig:
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
         if not math.isfinite(self.take_profit) or self.take_profit <= 0: raise ValueError("Take Profit moet een positief eindig percentage zijn")
+        if not math.isfinite(self.short_start_multiplier) or not 1 <= self.short_start_multiplier <= 10: raise ValueError("Short start-multiplier moet tussen 1x en 10x liggen")
+        if self.asymmetric_hedge_enabled and self.short_slots < self.long_slots: raise ValueError("Asymmetrische hedge vereist minstens evenveel SHORT als LONG slots")
         if self.manual_symbol_selection_enabled and not self.manual_symbols:
             raise ValueError("Selecteer minimaal één munt wanneer Zelf munten kiezen aan staat")
         if len(self.manual_symbols) > 200: raise ValueError("Maximaal 200 handmatig gekozen munten")
@@ -113,6 +119,7 @@ class MultiBbConfig:
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit, "takeProfitEnabled": self.take_profit_enabled,
+            "asymmetricHedgeModeEnabled": self.asymmetric_hedge_enabled, "shortStartMultiplier": self.short_start_multiplier,
             "entryMode": "immediate_fill", "marginMode": "cross", "autoRestart": True,
             "manualSymbolSelectionEnabled": self.manual_symbol_selection_enabled,
             "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in self.manual_symbols],
@@ -187,6 +194,43 @@ def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_us
         entry_margin_usd=entry_margin_usd, entry_notional_usd=entry_notional_usd, entry_sizing_mode=entry_sizing_mode)
     plan = plan_pair(row, rows, price, resolved["orderNotional"], accepted_leverage=int(resolved["leverage"]))
     return plan, resolved
+
+
+def _plan_asymmetric_entries(client: Any, row: dict[str, Any], price: float, settings: MultiBbConfig) -> tuple[PairExecutionPlan, PairExecutionPlan, dict[str, Any], dict[str, Any]]:
+    symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
+    long_resolved = resolve_entry(payload, symbol, configured_minimum=settings.minimum_leverage,
+        entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode)
+    short_resolved = resolve_entry(payload, symbol, configured_minimum=settings.minimum_leverage,
+        entry_margin_usd=settings.entry_margin_usd * settings.short_start_multiplier,
+        entry_notional_usd=settings.entry_notional_usd * settings.short_start_multiplier, entry_sizing_mode=settings.entry_sizing_mode)
+    ceiling = min(int(long_resolved["leverage"]), int(short_resolved["leverage"]))
+    candidates = sorted({ceiling, *(_i(x.get("initialLeverage")) for x in rows if 0 < _i(x.get("initialLeverage")) <= ceiling)}, reverse=True)
+    last_error: Exception | None = None
+    for leverage in candidates:
+        try:
+            long_plan = plan_pair(row, rows, price, long_resolved["orderNotional"], accepted_leverage=leverage)
+            short_plan = plan_pair(row, rows, price, short_resolved["orderNotional"], accepted_leverage=leverage, existing_contract_notional=long_plan.notional_per_leg)
+            return long_plan, short_plan, long_resolved, short_resolved
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"{symbol}: geen gezamenlijke leverage/capaciteit voor asymmetrische LONG+SHORT") from last_error
+
+
+def _asymmetric_flags(settings: MultiBbConfig, *, side: str, state_row: dict[str, Any], state: dict[str, Any], pmap: dict[str, Any]) -> dict[str, bool]:
+    active = settings.asymmetric_hedge_enabled and bool(state_row.get("asymmetricHedge"))
+    paired_short = str(state_row.get("pairedShortKey") or "")
+    paired_long = str(state_row.get("pairedLongKey") or "")
+    short_open = bool(paired_short and paired_short in pmap)
+    pending_short = bool(state_row.get("pairedShortPending"))
+    long_state = state.get(paired_long) if paired_long else None
+    long_maxed = bool(active and side == "SHORT" and isinstance(long_state, dict) and not settings.unlimited_dca and _i(long_state.get("dcaCount")) >= settings.max_dca)
+    return {
+        "active": active,
+        "blockLongTp": bool(active and side == "LONG" and (short_open or pending_short)),
+        "disableShortTp": bool(active and side == "SHORT"),
+        "closeShort": long_maxed,
+        "allowShortDca": bool(not long_maxed),
+    }
 
 
 def _plan_add(client: Any, row: dict[str, Any], price: float, margin: float, leverage: int, existing_notional: float, minimum_leverage: int) -> tuple[PairExecutionPlan, dict[str, Any]]:
@@ -390,15 +434,66 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     for key in reconciled_closed:
         actions.append({"kind": "REENTRY_STATE_CLEARED", "key": key, "reason": "exchange position is flat"})
 
-    # Management priority: full TP, then capped DCA.
+    # Recover an initial paired SHORT idempotently before either side is allowed to manage DCA/TP.
+    if settings.asymmetric_hedge_enabled:
+        for key, st0 in list(state.items()):
+            if sent >= budget: break
+            if not key.endswith("|LONG") or not st0.get("asymmetricHedge") or not st0.get("pairedShortPending"): continue
+            long_row = pmap.get(key); symbol = key.split("|", 1)[0]; short_key = f"{symbol}|SHORT"
+            if short_key in pmap:
+                sr = pmap[short_key]; state[short_key] = {"cycleId": st0.get("cycleId"), "dcaCount": 0, "lastBotFillPrice": _f(sr.get("entryPrice")), "lastKnownQty": abs(_f(sr.get("positionAmt"))), "lastKnownEntry": _f(sr.get("entryPrice")), "leverage": max(1, _i(sr.get("leverage"))), "cycleStartedAtMs": st0.get("cycleStartedAtMs", timestamp_ms), "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
+                linked = dict(st0); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "updatedAtMs": timestamp_ms}); state[key] = linked
+                actions.append({"kind": "ASYM_SHORT_RECOVERED_FROM_EXCHANGE", "symbol": symbol}); continue
+            if long_row is None or symbol not in info_map or prices.get(symbol, 0) <= 0 or len(pmap) >= settings.maximum_positions: continue
+            try:
+                _, short_plan, _, _ = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)
+                current_lev = max(1, _i(long_row.get("leverage"), short_plan.leverage))
+                payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
+                short_plan = plan_pair(info_map[symbol], rows, prices[symbol], float(short_plan.notional_per_leg), accepted_leverage=current_lev, existing_contract_notional=abs(_f(long_row.get("positionAmt"))) * prices[symbol])
+                required_short = float(short_plan.notional_per_leg) / short_plan.leverage
+                if available < required_short * 1.05:
+                    actions.append({"kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol, "reason": "INSUFFICIENT_AVAILABLE_MARGIN"}); continue
+                actions.append({"kind": "ASYM_SHORT_RECOVERY", "symbol": symbol, "multiplier": settings.short_start_multiplier})
+                if not dry_run:
+                    recovered = execute_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{st0.get('cycleId')}", confirm=True, new_position_leverage=current_lev, before_submit=before_order)
+                    sf = recovered.get("result") or {}; sp = _f(sf.get("avgPrice"), prices[symbol]); sq = _f(sf.get("executedQty"), float(short_plan.quantity))
+                    state[short_key] = {"cycleId": st0.get("cycleId"), "dcaCount": 0, "lastBotFillPrice": sp, "lastKnownQty": sq, "lastKnownEntry": sp, "leverage": current_lev, "cycleStartedAtMs": st0.get("cycleStartedAtMs", timestamp_ms), "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
+                    linked = dict(state[key]); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "pairedShortOrderConfirmedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms}); state[key] = linked
+                    ref.set({"multiBbPositions": state, "lastReason": f"Asymmetrische hedge recovery bevestigd op {symbol}"}, merge=True)
+                available -= required_short; sent += 1
+            except Exception as exc:
+                actions.append({"kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol, "reason": str(exc)})
+
+    # Management priority: max-LONG-DCA hedge release, then TP, then independent capped DCA.
     for key, st0 in list(state.items()):
         if sent >= budget: break
         row = pmap.get(key)
         if row is None: continue
         symbol, side = key.split("|", 1); mark = _f(row.get("markPrice"), prices.get(symbol, 0)); entry = _f(row.get("entryPrice")); qty = abs(_f(row.get("positionAmt")))
         if mark <= 0 or entry <= 0 or qty <= 0 or (symbol, side) in order_keys: continue
+        asym = _asymmetric_flags(settings, side=side, state_row=st0, state=state, pmap=pmap)
+        if asym["closeShort"]:
+            actions.append({"kind": "ASYM_SHORT_CLOSE", "symbol": symbol, "side": side, "reason": "LONG_MAX_DCA_REACHED", "qty": qty})
+            if not dry_run:
+                plan = PairExecutionPlan(symbol, Decimal(str(qty)), Decimal(str(qty * mark)), max(1, _i(row.get("leverage"))))
+                evidence = _close_evidence(client, uid, st0, row, side, mark)
+                try:
+                    execute_leg_once(client, plan, side=PositionSide.SHORT, action="CLOSE", id_prefix=f"mbb-asym-close-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                                     close_evidence=evidence, before_submit=before_order)
+                except AsterCloseBlocked as exc:
+                    actions.append({"kind": "ASYM_SHORT_CLOSE_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
+                    continue
+                fresh = _position_map(client.position_risk(symbol))
+                if key in fresh: raise RuntimeError(f"{key}: asymmetrische SHORT-close niet flat bevestigd")
+                state.pop(key, None); pmap.pop(key, None)
+                paired_long_key = str(st0.get("pairedLongKey") or "")
+                if paired_long_key in state:
+                    linked = dict(state[paired_long_key]); linked.update({"pairedShortPending": False, "pairedShortClosedAtMs": timestamp_ms, "longTpBlocked": False, "updatedAtMs": timestamp_ms}); state[paired_long_key] = linked
+                ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING", "lastReason": f"Asymmetrische hedge: SHORT {symbol} volledig gesloten bij LONG max DCA"}, merge=True)
+                ref.collection("audit").add({"event": "MULTI_BB_ASYM_SHORT_CLOSE", "symbol": symbol, "reason": "LONG_MAX_DCA_REACHED", "timestamp": datetime.now(timezone.utc)})
+            sent += 1; continue
         tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
-        tp_due = settings.take_profit_enabled and (mark >= tp_price if side == "LONG" else mark <= tp_price)
+        tp_due = settings.take_profit_enabled and not asym["blockLongTp"] and not asym["disableShortTp"] and (mark >= tp_price if side == "LONG" else mark <= tp_price)
         if tp_due:
             actions.append({"kind": "TP", "symbol": symbol, "side": side, "mark": mark, "entry": entry, "target": tp_price})
             if not dry_run:
@@ -413,6 +508,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                          "lastReason": "Multi DCA actief; slot na TP vrijgegeven"}, merge=True)
                 ref.collection("audit").add({"event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price, "timestamp": datetime.now(timezone.utc)})
             sent += 1; continue
+        if asym["active"] and side == "LONG" and st0.get("pairedShortPending"):
+            actions.append({"kind": "ASYM_HEDGE_PENDING", "symbol": symbol, "side": side, "reason": "INITIAL_SHORT_NOT_CONFIRMED"}); continue
+        if asym["active"] and side == "SHORT" and not asym["allowShortDca"]: continue
         dca_count = _i(st0.get("dcaCount")); anchor = _f(st0.get("lastBotFillPrice"), entry)
         if (not settings.unlimited_dca and dca_count >= settings.max_dca) or anchor <= 0: continue
         trigger = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance)
@@ -478,9 +576,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if side == "SHORT" and short_need <= 0: continue
             if side not in {"LONG", "SHORT"}: continue
         else:
-            side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
+            if settings.asymmetric_hedge_enabled and long_need > 0:
+                if short_need <= 0: break
+                side = "LONG"
+            else:
+                side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
-        try: plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
+        paired = bool(settings.asymmetric_hedge_enabled and side == "LONG")
+        if paired and (short_need <= 0 or account_remaining_capacity < 2 or budget - sent < 2):
+            actions.append({"kind": "ASYM_PAIR_WAIT", "symbol": symbol, "reason": "SHORT_SLOT_OR_ACCOUNT_CAPACITY_REQUIRED"}); continue
+        try:
+            if paired:
+                plan, short_plan, tier, short_tier = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)
+            else:
+                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
+                short_plan = None; short_tier = None
         except Exception as exc:
             reason = str(exc)
             required_margin = _minimum_entry_margin(info_map[symbol], prices[symbol], maximum)
@@ -491,12 +601,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append(action); continue
         executable_candidates += 1
         required = float(plan.notional_per_leg) / plan.leverage
-        if available < required * 1.05:
-            actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side}); continue
+        short_required = float(short_plan.notional_per_leg) / short_plan.leverage if short_plan is not None else 0.0
+        total_required = required + short_required
+        if available < total_required * 1.05:
+            actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
         entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
+        short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
         if dry_run:
             actions.append(entry_action)
+            if short_action is not None: actions.append(short_action)
         else:
             try:
                 result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
@@ -509,19 +623,39 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)})
                 continue
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), prices[symbol]); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))
-            key = f"{symbol}|{side}"; state[key] = {"cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16], "dcaCount": 0,
-                "lastBotFillPrice": fill_price, "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,
-                "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True}
-            ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                     "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}, merge=True)
-            ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "timestamp": datetime.now(timezone.utc)})
+            key = f"{symbol}|{side}"; cycle_id = hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16]
+            state[key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": fill_price, "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,
+                "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True,
+                "asymmetricHedge": paired, "pairedShortKey": f"{symbol}|SHORT" if paired else "", "pairedShortPending": paired, "pairedShortOpened": False, "longTpBlocked": paired}
+            ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING", "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}, merge=True)
+            ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "cycleId": cycle_id, "timestamp": datetime.now(timezone.utc)})
             actions.append(entry_action)
+            if paired and short_plan is not None and short_action is not None:
+                try:
+                    short_result = execute_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{cycle_id}", confirm=True, new_position_leverage=short_plan.leverage, before_submit=before_order)
+                except Exception as exc:
+                    pending = dict(state[key]); pending.update({"pairedShortPending": True, "pairedShortLastError": str(exc), "updatedAtMs": timestamp_ms}); state[key] = pending
+                    ref.set({"multiBbPositions": state, "phase": "RUNNING", "lastReason": f"Asymmetrische hedge: LONG {symbol} open; initiële SHORT wacht op veilige recovery"}, merge=True)
+                    actions.append({"kind": "ASYM_SHORT_ENTRY_PENDING", "symbol": symbol, "reason": str(exc)})
+                    if not is_definite_contract_rejection(exc): raise
+                else:
+                    sf = short_result.get("result") or {}; short_price = _f(sf.get("avgPrice"), prices[symbol]); short_qty = _f(sf.get("executedQty"), float(short_plan.quantity)); short_key = f"{symbol}|SHORT"
+                    state[short_key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": short_price, "lastKnownQty": short_qty, "lastKnownEntry": short_price, "leverage": short_plan.leverage,
+                        "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
+                    linked = dict(state[key]); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "pairedShortOrderConfirmedAtMs": timestamp_ms}); state[key] = linked
+                    ref.set({"multiBbPositions": state, "lastReason": f"Asymmetrische hedge actief op {symbol}: LONG + {settings.short_start_multiplier:g}x SHORT bevestigd"}, merge=True)
+                    ref.collection("audit").add({"event": "MULTI_BB_ASYM_SHORT_ENTRY", "symbol": symbol, "cycleId": cycle_id, "multiplier": settings.short_start_multiplier, "leverage": short_plan.leverage, "timestamp": datetime.now(timezone.utc)})
+                    actions.append(short_action)
         active_symbols.add(symbol)
-        account_position_count += 1
+        consumed = 2 if paired and (dry_run or f"{symbol}|SHORT" in state) else 1
+        account_position_count += consumed
         account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
-        if side == "LONG": long_count += 1; long_need = max(0, settings.long_slots - long_count)
-        else: short_count += 1; short_need = max(0, settings.short_slots - short_count)
-        available -= required; sent += 1
+        if side == "LONG":
+            long_count += 1; long_need = max(0, settings.long_slots - long_count)
+            if consumed == 2: short_count += 1; short_need = max(0, settings.short_slots - short_count)
+        else:
+            short_count += 1; short_need = max(0, settings.short_slots - short_count)
+        available -= total_required if consumed == 2 else required; sent += consumed
 
     managed_long = sum(1 for key in state if key.endswith("|LONG") and key in active)
     managed_short = sum(1 for key in state if key.endswith("|SHORT") and key in active)
@@ -564,6 +698,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "entryStatus": entry_status, "entryReason": entry_reason,
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
+              "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
+              "asymmetricHedgeActivePairs": sum(1 for key, row in state.items() if key.endswith("|LONG") and row.get("asymmetricHedge") and (row.get("pairedShortPending") or str(row.get("pairedShortKey") or "") in active)),
               "activeLong": settings.long_slots - long_need, "activeShort": settings.short_slots - short_need,
               "remainingLong": long_need, "remainingShort": short_need,
               "accountPositionCount": account_position_count, "accountRemainingCapacity": account_remaining_capacity,
