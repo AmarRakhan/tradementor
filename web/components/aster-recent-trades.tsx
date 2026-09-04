@@ -890,7 +890,8 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const visibleLimit = expanded ? pages * 100 : 6;
   const visibleRows = selectedRows.slice(0, visibleLimit);
   const hasMore = visibleRows.length < selectedRows.length;
-  const liveState = snapshot.error ? "Offline" : snapshot.loading ? "Reconnecting" : snapshot.updatedAt && Date.now() - snapshot.updatedAt < 90_000 ? "Live" : "Delayed";
+  const hasTrustedTradeSnapshot = Boolean(snapshot.data) && snapshot.serverConfirmed;
+  const liveState = snapshot.error && !hasTrustedTradeSnapshot ? "Offline" : snapshot.loading ? "Reconnecting" : snapshot.error ? "Delayed" : snapshot.updatedAt && Date.now() - snapshot.updatedAt < 90_000 ? "Live" : "Delayed";
   const profitSnapshotReliable = snapshot.serverConfirmed === true && !snapshot.error && !snapshot.loading && liveState === "Live";
   const profitCandidates = useMemo(
     () =>

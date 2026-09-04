@@ -880,7 +880,8 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
   let activeCount = 0;
   let positions: PositionView[] = [];
   let closedTrades: ClosedTradeView[] = [];
-  let connected = Boolean(snapshot.data) && !snapshot.error;
+  const hasTrustedSnapshot = Boolean(snapshot.data) && (snapshot.serverConfirmed || !snapshot.error);
+  let connected = hasTrustedSnapshot;
   let accountDataAvailable = connected;
   let tradingEnabled = false;
   let riskLabel = "MARGIN RATIO";
@@ -937,8 +938,8 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
   const derivedTradeCapital = positions.reduce((total, position) => total + (position.leverage > 0 ? Math.abs(position.size) / position.leverage : 0), 0);
   const activeTradeCapital = exchange === "aster" ? reportedTradeCapital : reportedTradeCapital ?? derivedTradeCapital;
   const readOnlyRecognized = exchange === "aster" && data.walletRecognized === true && data.configured !== true;
-  const statusText = snapshot.loading && !snapshot.data ? "Gegevens laden" : snapshot.error ? "Controle nodig" : readOnlyRecognized ? "Wallet herkend · alleen-lezen" : connected ? "Exchange verbonden" : "Niet gekoppeld";
-  const metricDetail = snapshot.error || (snapshot.loading ? (snapshot.source === "cache" ? "Laatste bekende waarde · actuele data wordt opgehaald" : "Exchange wordt vernieuwd") : snapshot.source === "cache" ? "Laatste bekende waarde · actuele data wordt opgehaald" : readOnlyRecognized ? "Trading en automatische orders staan uit" : connected ? "Actuele exchange-snapshot" : "Nog niet gekoppeld");
+  const statusText = snapshot.loading && !snapshot.data ? "Gegevens laden" : snapshot.error && hasTrustedSnapshot ? "Laatste bevestigde gegevens" : snapshot.error ? "Controle nodig" : readOnlyRecognized ? "Wallet herkend · alleen-lezen" : connected ? "Exchange verbonden" : "Niet gekoppeld";
+  const metricDetail = snapshot.error && hasTrustedSnapshot ? "Laatste bevestigde exchange-snapshot · nieuwe controle loopt" : snapshot.error || (snapshot.loading ? (snapshot.source === "cache" ? "Laatste bekende waarde · actuele data wordt opgehaald" : "Exchange wordt vernieuwd") : snapshot.source === "cache" ? "Laatste bekende waarde · actuele data wordt opgehaald" : readOnlyRecognized ? "Trading en automatische orders staan uit" : connected ? "Actuele exchange-snapshot" : "Nog niet gekoppeld");
   return {
     connected,
     accountDataAvailable,
