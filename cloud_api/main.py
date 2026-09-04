@@ -3606,7 +3606,28 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         stamp=value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
         age=evidence_now-stamp
         return timedelta(0)<=age<=timedelta(minutes=5)
-    strategy2_settings=Strategy2Config.from_mapping(strategy2_state.get("settings"))
+    strategy2_settings_raw=strategy2_state.get("settings") if isinstance(strategy2_state.get("settings"),dict) else {}
+    if str(strategy2_settings_raw.get("engine",strategy2_settings_raw.get("strategyKind","")))==MULTI_BB_ENGINE:
+        multi_status_settings=MultiBbConfig.from_mapping(strategy2_settings_raw)
+        # Dashboard compatibility only: Multi BB is the live engine. The old
+        # Strategy2Config shape is still consumed by legacy presentation helpers,
+        # so project the current settings without re-validating Multi BB TP limits.
+        dashboard_max_pairs=min(100,max(1,multi_status_settings.maximum_positions))
+        strategy2_settings=Strategy2Config.from_mapping({
+            "mode":multi_status_settings.mode,
+            "baseNotional":multi_status_settings.entry_notional_usd,
+            "takeProfit":min(.20,max(.001,multi_status_settings.take_profit)),
+            "autoRestart":True,"dcaEnabled":True,
+            "longDcaDistance":multi_status_settings.dca_distance,
+            "shortDcaDistance":multi_status_settings.dca_distance,
+            "longMaxDca":min(50,max(0,multi_status_settings.max_dca)),
+            "shortMaxDca":min(50,max(0,multi_status_settings.max_dca)),
+            "maximumPairs":dashboard_max_pairs,
+            "universeTopN":max(1,multi_status_settings.universe_top_n),
+            "leverage":min(200,max(1,multi_status_settings.minimum_leverage)),
+        })
+    else:
+        strategy2_settings=Strategy2Config.from_mapping(strategy2_settings_raw)
     strategy2_focus_slots=[dict(x) for x in strategy2_state.get("focusLiveSlots",[]) if isinstance(x,dict)] if isinstance(strategy2_state.get("focusLiveSlots"),list) else []
     strategy2_airbag_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):dict(x.get("airbag")) for x in strategy2_focus_slots if isinstance(x.get("airbag"),dict)}
     strategy2_focus_slot_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):x for x in strategy2_focus_slots if str(x.get("pair","")).strip()}
@@ -5964,14 +5985,19 @@ def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
     for item in controls[:100]:
         raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()
         settings_raw=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
-        cfg=Strategy2Config.from_mapping(settings_raw)
+        is_multi_bb=str(settings_raw.get("engine",settings_raw.get("strategyKind","")))==MULTI_BB_ENGINE
+        cfg=None if is_multi_bb else Strategy2Config.from_mapping(settings_raw)
+        if is_multi_bb:
+            # Validate the active engine with its own contract. A Multi BB TP may
+            # legally exceed the retired Strategy2Config 20% ceiling.
+            MultiBbConfig.from_mapping(settings_raw)
         owned_rows=raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []
         queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {};intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
         # A stopped + exchange-flat account has nothing to protect in realtime.
         # Do not let stale legacy pendingReopens keep hammering the config doc.
         if not bool(raw.get("enabled",False)) and not owned_rows and not intent:
             continue
-        if cfg.focus_v2_enabled and cfg.focus_v2_simple_mode_enabled:
+        if cfg is not None and cfg.focus_v2_enabled and cfg.focus_v2_simple_mode_enabled:
             simple_uids.add(uid)
         for row in owned_rows:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
