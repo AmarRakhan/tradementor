@@ -25,15 +25,25 @@ const history = { historyAvailable: true, closedTrades: [], realizedEvents: [] }
 test("Aster cache is strictly isolated by Firebase UID and exchange", () => {
   const storage = new Storage();
   const data = mergeCompleteAsterSnapshot(account("user-a"), history);
-  assert.equal(saveAsterSnapshot(storage, "user-a", data, 1234), true);
+  const now = Date.now();
+  assert.equal(saveAsterSnapshot(storage, "user-a", data, now), true);
   assert.equal(loadAsterSnapshot(storage, "user-b"), null);
   assert.equal(loadAsterSnapshot(storage, "user-a")?.data.uid, "user-a");
   assert.notEqual(asterSnapshotCacheKey("user-a"), asterSnapshotCacheKey("user-b"));
 });
 
+
+
+test("stale Aster cache is rejected after the initial safety window", () => {
+  const storage = new Storage();
+  const data = mergeCompleteAsterSnapshot(account("user-a"), history);
+  saveAsterSnapshot(storage, "user-a", data, Date.now() - 120_001);
+  assert.equal(loadAsterSnapshot(storage, "user-a"), null);
+});
+
 test("logout clearing makes the account snapshot unavailable", () => {
   const storage = new Storage();
-  saveAsterSnapshot(storage, "user-a", mergeCompleteAsterSnapshot(account("user-a"), history), 1234);
+  saveAsterSnapshot(storage, "user-a", mergeCompleteAsterSnapshot(account("user-a"), history), Date.now());
   clearAsterSnapshot(storage, "user-a");
   assert.equal(loadAsterSnapshot(storage, "user-a"), null);
 });
@@ -41,9 +51,10 @@ test("logout clearing makes the account snapshot unavailable", () => {
 test("partial or invalid snapshots never replace the last valid value", () => {
   const storage = new Storage();
   const valid = mergeCompleteAsterSnapshot(account("user-a"), history);
-  saveAsterSnapshot(storage, "user-a", valid, 1234);
+  const now = Date.now();
+  saveAsterSnapshot(storage, "user-a", valid, now);
   assert.throws(() => mergeCompleteAsterSnapshot(account("user-a"), { historyAvailable: true }));
-  assert.equal(loadAsterSnapshot(storage, "user-a")?.updatedAt, 1234);
+  assert.equal(loadAsterSnapshot(storage, "user-a")?.updatedAt, now);
 });
 
 
