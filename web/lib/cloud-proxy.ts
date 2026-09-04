@@ -9,14 +9,29 @@ export async function proxyCloud(request: Request, pathname: string, method: "GE
     const body = bodyOverride ?? (method === "GET" ? undefined : await request.text());
     const upstream = await fetch(`${CLOUD_API}${pathname}`, {
       method,
-      headers: { Authorization: authorization, ...(body ? { "Content-Type": "application/json" } : {}), ...(request.headers.get("x-tradementor-admin-device") ? {"X-TradeMentor-Admin-Device":request.headers.get("x-tradementor-admin-device")!} : {}) },
+      cache: "no-store",
+      headers: {
+        Authorization: authorization,
+        "Cache-Control": "no-cache, no-store, max-age=0",
+        Pragma: "no-cache",
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(request.headers.get("x-tradementor-admin-device") ? {"X-TradeMentor-Admin-Device":request.headers.get("x-tradementor-admin-device")!} : {}),
+      },
       body: body || undefined,
     });
     return new Response(await upstream.text(), {
       status: upstream.status,
-      headers: { "Content-Type": upstream.headers.get("content-type") ?? "application/json" },
+      headers: {
+        "Content-Type": upstream.headers.get("content-type") ?? "application/json",
+        "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
     });
   } catch {
-    return Response.json({ detail: "TradeMentor Cloud is tijdelijk niet bereikbaar" }, { status: 503 });
+    return Response.json(
+      { detail: "TradeMentor Cloud is tijdelijk niet bereikbaar" },
+      { status: 503, headers: { "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate" } },
+    );
   }
 }
