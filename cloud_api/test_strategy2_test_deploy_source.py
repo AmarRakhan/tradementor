@@ -228,3 +228,13 @@ def test_strategy2_candidate_logic_has_no_account_symbol_or_amount_exception():
         assert forbidden not in tick
     assert 'settings.base_notional' in tick
     assert 'maximum_pairs' in tick
+
+
+def test_multi_bb_readiness_uses_current_managed_position_ownership():
+    source = MAIN.read_text(encoding="utf-8")
+    readiness = source[source.index('def aster_strategy2_readiness('):source.index('@app.post("/v1/me/aster/strategy2/canary")')]
+    assert 'settings_raw=raw.get("settings")' in readiness
+    assert '==MULTI_BB_ENGINE' in readiness
+    assert 'managed=raw.get("multiBbPositions")' in readiness
+    assert 'OwnedLeg(strategy_id="aster-strategy-2",engine_type="strategy2"' in readiness
+    assert 'strategy2_keys.add(managed_key)' in readiness

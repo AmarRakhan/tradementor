@@ -4349,6 +4349,23 @@ def aster_strategy2_readiness(user: dict[str, Any] = Depends(authenticated_user)
         try: owned.append(OwnedLeg(**row))
         except (TypeError,ValueError): pass
     strategy2_keys={(x.symbol,x.side) for x in owned}
+    settings_raw=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    if str(settings_raw.get("engine",settings_raw.get("strategyKind","")))==MULTI_BB_ENGINE:
+        managed=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
+        config_version=max(1,int(safe_float(raw.get("configVersion",settings_raw.get("version",1)))))
+        for key,row in managed.items():
+            symbol,sep,side=str(key).upper().partition("|")
+            if not (sep and symbol and side in {"LONG","SHORT"} and isinstance(row,dict) and bool(row.get("botManaged",True))):
+                continue
+            managed_key=(symbol,side)
+            if managed_key in strategy2_keys:
+                continue
+            owned.append(OwnedLeg(strategy_id="aster-strategy-2",engine_type="strategy2",symbol=symbol,side=side,
+                cycle_id=str(row.get("cycleId",f"multi-bb-{symbol}-{side}")),config_version=config_version,
+                quantity=abs(safe_float(row.get("lastKnownQty"))),weighted_entry=safe_float(row.get("lastKnownEntry")),
+                dca_count=max(0,int(safe_float(row.get("dcaCount")))),role="MULTI_BB",
+                created_at_ms=max(0,int(safe_float(row.get("cycleStartedAtMs")))),last_order_at_ms=max(0,int(safe_float(row.get("updatedAtMs"))))))
+            strategy2_keys.add(managed_key)
     strategy2_positions=[x for x in positions if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in strategy2_keys]
     strategy2_orders=[x for x in orders if (str(x.get("symbol","")).upper(),str(x.get("positionSide","")).upper()) in strategy2_keys]
     recovery=reconcile_owned_legs(persisted=owned,positions=strategy2_positions,open_orders=strategy2_orders,fills=fills,exchange_reliable=True)

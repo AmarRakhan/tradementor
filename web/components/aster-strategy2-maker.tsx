@@ -261,7 +261,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     </div>
 
     <div className="maker-nav" style={{ marginTop: 16 }}><button disabled={busy || !dirty} onClick={() => action("save")}>Instellingen opslaan</button><button disabled={busy} onClick={() => action("simulate")}>Veilig simuleren</button><button disabled={busy} onClick={checkReadiness}>Readiness controleren</button></div>
-    {readiness && <p className="strategy-message">Readiness: {Boolean(readiness.liveReady) ? "LIVE READY" : "nog niet live ready"}</p>}
+    {readiness && <p className="strategy-message">Readiness: {Boolean(state.liveReady) || Boolean(readiness.liveReady) ? "LIVE READY" : "nog niet live ready"}</p>}
     {message && <p className="strategy-message">{message}</p>}
   </article>;
 }

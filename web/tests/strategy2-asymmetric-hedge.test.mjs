@@ -23,3 +23,7 @@ test("copy states independent DCA behavior and max-DCA release", () => {
   assert.match(maker, /DCA’s worden niet tussen beide zijden gerebalanced/);
   assert.match(maker, /Zodra LONG zijn maximale DCA-aantal bereikt, wordt de volledige SHORT gesloten/);
 });
+
+test("readiness UI keeps durable live authorization visible after a transient report", () => {
+  assert.match(maker, /Boolean\(state\.liveReady\) \|\| Boolean\(readiness\.liveReady\)/);
+});
