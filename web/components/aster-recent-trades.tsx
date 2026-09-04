@@ -85,6 +85,7 @@ type OpenPosition = {
   } | null;
   focusAirbagHedge?: boolean;
   strategy2Role?: string;
+  asymmetricPairStatus?: "covered" | "covering" | null;
 };
 
 type ScanAction = {
@@ -218,6 +219,36 @@ function dateTime(value: unknown) {
 }
 function sideKey(row: { symbol?: string; side?: string }) {
   return `${normalizedSymbol(row.symbol)}|${String(row.side || "").toUpperCase()}`;
+}
+
+function asymmetricPairStatus(position: OpenPosition, managed: Record<string, Record<string, unknown>>, activePositions: OpenPosition[]): "covered" | "covering" | null {
+  const key = sideKey(position);
+  const runtime = managed[key];
+  if (!runtime || runtime.asymmetricHedge !== true || runtime.botManaged !== true) return null;
+  const side = String(position.side || "").toUpperCase();
+  const cycleId = String(runtime.cycleId || "").trim();
+  if (!cycleId) return null;
+  const activeKeys = new Set(activePositions.filter((row) => (finite(row.quantity) ?? 0) > 0).map(sideKey));
+  if (!activeKeys.has(key)) return null;
+
+  if (side === "LONG") {
+    const pairedShortKey = String(runtime.pairedShortKey || "").trim();
+    const shortRuntime = managed[pairedShortKey];
+    if (!pairedShortKey || runtime.pairedShortPending === true || runtime.pairedShortOpened !== true || !activeKeys.has(pairedShortKey)) return null;
+    if (!shortRuntime || shortRuntime.asymmetricHedge !== true || shortRuntime.botManaged !== true) return null;
+    if (String(shortRuntime.pairedLongKey || "") !== key || String(shortRuntime.cycleId || "").trim() !== cycleId) return null;
+    return "covered";
+  }
+
+  if (side === "SHORT") {
+    const pairedLongKey = String(runtime.pairedLongKey || "").trim();
+    const longRuntime = managed[pairedLongKey];
+    if (!pairedLongKey || !activeKeys.has(pairedLongKey) || !longRuntime) return null;
+    if (longRuntime.asymmetricHedge !== true || longRuntime.botManaged !== true || longRuntime.pairedShortPending === true || longRuntime.pairedShortOpened !== true) return null;
+    if (String(longRuntime.pairedShortKey || "") !== key || String(longRuntime.cycleId || "").trim() !== cycleId) return null;
+    return "covering";
+  }
+  return null;
 }
 function findOpenPosition(positions: OpenPosition[], row: { symbol?: string; side?: string }) {
   const key = sideKey(row);
@@ -461,6 +492,11 @@ function TradeCenterTable({ rows, onOpenDetail, onClosed, showDcaCount = false }
                 <b>{baseAsset(row.symbol)}</b>
                 <small>{dateTime(row.timestamp)}</small>
               </span>
+              {row.position?.asymmetricPairStatus === "covered" ? (
+                <span className={`${styles.pairLinkStatus} ${styles.covered}`}><i />Covered</span>
+              ) : row.position?.asymmetricPairStatus === "covering" ? (
+                <span className={`${styles.pairLinkStatus} ${styles.covering}`}><i />Covering</span>
+              ) : null}
             </button>
             <strong role="cell" className={`${styles.side} ${row.side === "LONG" ? styles.long : row.side === "SHORT" ? styles.short : styles.neutral}`}>
               {row.side}
@@ -827,7 +863,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       allPositions.map((position) => {
         const runtime = multiDcaPositions[sideKey(position)];
         const runtimeDca = finite(runtime?.dcaCount);
-        return runtimeDca === null ? position : { ...position, dcaCount: runtimeDca, dcaCountReliable: true };
+        const asymmetricStatus = asymmetricPairStatus(position, multiDcaPositions, allPositions);
+        return {
+          ...position,
+          ...(runtimeDca === null ? {} : { dcaCount: runtimeDca, dcaCountReliable: true }),
+          asymmetricPairStatus: asymmetricStatus,
+        };
       }),
     [allPositions, strategy2.multiBbPositions],
   );
