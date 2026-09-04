@@ -29,16 +29,19 @@ test("status is rendered only inside the pair cell between symbol and side", () 
 });
 
 test("Covered is LONG green, Covering is blue, and labels stay compact without pills", () => {
-  assert.match(styles, /\.pairLinkStatus\{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;font-size:8px;font-weight:850;white-space:nowrap\}/);
-  assert.match(styles, /\.pairLinkStatus i\{width:5px;height:5px;border-radius:50%;background:currentColor/);
+  assert.match(styles, /\.pairLinkStatus\{display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:0 0 auto;margin-left:6px;font-size:9px;font-weight:850;line-height:1;white-space:nowrap\}/);
+  assert.match(styles, /\.pairLinkStatus i\{width:6px;height:6px;border-radius:50%;background:currentColor/);
   assert.match(styles, /\.covered\{color:#58f0ae\}/);
   assert.match(styles, /\.covering\{color:#48a7ff\}/);
   assert.doesNotMatch(styles, /\.pairLinkStatus\{[^}]*background:/);
   assert.doesNotMatch(styles, /\.pairLinkStatus\{[^}]*border:/);
 });
 
-test("mobile layout and Close button contract remain untouched", () => {
+test("mobile layout keeps Close visible while adding breathing room around status and entries", () => {
   assert.match(styles, /grid-template-columns:minmax\(64px,1fr\) 38px 30px 45px 45px 40px 19px 57px/);
-  assert.match(styles, /\.close\{width:100%;min-width:0/);
-  assert.match(styles, /\.pairLinkStatus\{gap:2px;font-size:6px\}/);
+  assert.match(styles, /padding:7px 14px 7px 6px/);
+  assert.match(styles, /\.pairLinkStatus\{gap:3px;margin-left:2px;font-size:7px\}/);
+  assert.match(styles, /\.pairLinkStatus i\{width:5px;height:5px\}/);
+  assert.match(styles, /\.entries\{padding-right:3px\}\.close\{width:100%;min-width:0/);
+  assert.match(styles, /@media\(max-width:420px\)\{\.row\{[^}]*padding:7px 12px 7px 5px/);
 });
