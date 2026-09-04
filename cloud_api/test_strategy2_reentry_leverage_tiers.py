@@ -27,11 +27,10 @@ def test_maximum_is_based_on_total_notional():
     assert maximum_for_notional(HYPE,"HYPEUSDT",10001) == 50
 
 
-def test_margin_entry_finds_self_consistent_lower_tier_instead_of_stopping():
-    result=resolve_entry(HYPE,"HYPEUSDT",configured_minimum=300,entry_margin_usd=20,entry_notional_usd=1,entry_sizing_mode="margin")
-    assert result["leverage"] == 75
-    assert result["orderNotional"] == 1500
-    assert result["forcedBelowConfiguredMinimum"] is True
+def test_margin_entry_never_falls_below_configured_minimum():
+    import pytest
+    with pytest.raises(Exception, match="minimum 300x"):
+        resolve_entry(HYPE,"HYPEUSDT",configured_minimum=300,entry_margin_usd=20,entry_notional_usd=1,entry_sizing_mode="margin")
 
 
 def test_entry_stays_at_highest_tier_when_size_allows_it():

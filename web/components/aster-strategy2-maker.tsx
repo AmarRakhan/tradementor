@@ -21,14 +21,14 @@ type Values = {
   name: string; universe: string; positions: string; longSlots: string; shortSlots: string;
   minLeverage: string; entryMargin: string; dcaDistance: string; dcaMargin: string;
   maxDca: string; tp: string; tpEnabled: boolean; mode: "paper" | "live";
-  asymmetricHedgeEnabled: boolean; shortStartMultiplier: string;
+  asymmetricHedgeEnabled: boolean; shortStartMultiplier: string; pairSlots: string;
   manualEnabled: boolean; manualSymbols: ManualSymbol[];
 };
 
 const initial: Values = {
   name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10",
   minLeverage: "50", entryMargin: "5", dcaDistance: "0.30", dcaMargin: "2", maxDca: "3", tp: "1.5", tpEnabled: true, mode: "live",
-  asymmetricHedgeEnabled: false, shortStartMultiplier: "5",
+  asymmetricHedgeEnabled: false, shortStartMultiplier: "5", pairSlots: "10",
   manualEnabled: false, manualSymbols: [],
 };
 const MAX_DCA = 500;
@@ -72,7 +72,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       entryMargin: String(x.entrySizingMode === "margin" ? (x.entryMarginUsd ?? 5) : (x.entryNotionalUsd ?? x.baseNotional ?? 5)),
       dcaDistance: String(Number(x.dcaDistance ?? .003) * 100), dcaMargin: String(x.dcaMarginUsd ?? 2), maxDca: String(clampInt(Number(x.maxDca ?? 3), 0, MAX_DCA)),
       tp: String(Number(x.takeProfit ?? .015) * 100), tpEnabled: x.takeProfitEnabled !== false, mode: x.mode === "paper" ? "paper" : "live",
-      asymmetricHedgeEnabled: x.asymmetricHedgeModeEnabled === true, shortStartMultiplier: String(x.shortStartMultiplier ?? 5),
+      asymmetricHedgeEnabled: x.asymmetricHedgeModeEnabled === true, shortStartMultiplier: String(x.shortStartMultiplier ?? 5), pairSlots: String(Math.max(1, Math.min(25, Number(x.longSlots ?? 10)))),
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
     });
     setTotalDraft(null);
@@ -80,8 +80,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
 
   const change = (next: Values) => { setV(next); setDirty(true); setMessage(""); };
   const settings = useMemo(() => {
-    const longSlots = clampInt(n(v.longSlots), 0, 25);
-    const shortSlots = clampInt(n(v.shortSlots), 0, 25);
+    const pairSlots = clampInt(n(v.pairSlots), 1, 25);
+    const longSlots = v.asymmetricHedgeEnabled ? pairSlots : clampInt(n(v.longSlots), 0, 25);
+    const shortSlots = v.asymmetricHedgeEnabled ? pairSlots : clampInt(n(v.shortSlots), 0, 25);
     return {
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode,
       universeTopN: Math.max(1, Math.round(n(v.universe))), maximumPositions: Math.min(50, longSlots + shortSlots), longSlots, shortSlots,
@@ -92,7 +93,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       dcaDistance: n(v.dcaDistance) / 100, dcaMarginUsd: n(v.dcaMargin), maxDca: clampInt(n(v.maxDca), 0, MAX_DCA), unlimitedDca: false,
       takeProfit: n(v.tp) / 100, takeProfitEnabled: v.tpEnabled, entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       asymmetricHedgeModeEnabled: v.asymmetricHedgeEnabled, shortStartMultiplier: n(v.shortStartMultiplier),
-      manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualSymbols,
+      manualSymbolSelectionEnabled: v.asymmetricHedgeEnabled ? false : v.manualEnabled, manualSymbols: v.asymmetricHedgeEnabled ? [] : v.manualSymbols,
     };
   }, [v]);
 
@@ -125,7 +126,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     } catch (error) { setMessage(error instanceof Error ? error.message : "Aster-markten konden niet worden geladen."); }
     finally { setMarketBusy(false); }
   }
-  useEffect(() => { if (v.manualEnabled && !marketAttempted) void loadMarkets(); }, [v.manualEnabled, marketAttempted]);
+  useEffect(() => { if (!v.asymmetricHedgeEnabled && v.manualEnabled && !marketAttempted) void loadMarkets(); }, [v.asymmetricHedgeEnabled, v.manualEnabled, marketAttempted]);
   useEffect(() => {
     if (!v.manualEnabled || !v.manualSymbols.length) { setTierPreviews({}); return; }
     let cancelled = false; setTierBusy(true);
@@ -150,10 +151,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (settings.maxDca > MAX_DCA) throw new Error(`Globale DCA-limiet mag maximaal ${MAX_DCA} zijn.`);
       if (settings.takeProfitEnabled && (!Number.isFinite(Number(v.tp.replace(",", "."))) || Number(v.tp.replace(",", ".")) <= 0)) throw new Error("Take Profit moet een positief numeriek percentage zijn.");
       if (settings.asymmetricHedgeModeEnabled && (settings.shortStartMultiplier < 1 || settings.shortStartMultiplier > 10)) throw new Error("Short start-multiplier moet tussen 1× en 10× liggen.");
-      if (settings.asymmetricHedgeModeEnabled && settings.shortSlots < settings.longSlots) throw new Error("Voor asymmetrische short-hedge moeten minstens evenveel SHORT slots als LONG slots beschikbaar zijn, zodat iedere nieuwe LONG exact één gekoppelde SHORT krijgt.");
+      if (settings.asymmetricHedgeModeEnabled && (n(v.pairSlots) < 1 || n(v.pairSlots) > 25)) throw new Error("Gekoppelde paren moet tussen 1 en 25 liggen.");
       if (settings.entryMarginUsd * settings.minimumLeverage < 5) throw new Error(`Startmargin te laag: ${settings.entryMarginUsd} USDT × ${settings.minimumLeverage} is minder dan de Aster-minimumorder van circa 5 USDT. Verhoog de startmargin naar minimaal ${(5 / settings.minimumLeverage).toFixed(2)} USDT; per markt kan iets meer nodig zijn.`);
-      if (v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
-      if (kind === "start" && v.manualEnabled) {
+      if (!v.asymmetricHedgeEnabled && v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
+      if (kind === "start" && !v.asymmetricHedgeEnabled && v.manualEnabled) {
         const blocked = v.manualSymbols.map((row) => tierPreviews[row.symbol]).filter((row) => row?.entryOrderValid === false);
         if (blocked.length) throw new Error(`${blocked[0].symbol}: startmargin voldoet niet aan de actuele Aster minimumorder.`);
       }
@@ -215,7 +216,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card">
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
     <p className="strategy-intro">Alle actieve instellingen staan direct hieronder. Geen wizard; de door de server bevestigde configuratie is leidend.</p>
-    <div className="strategy-facts"><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span><span>DCA globaal max {v.maxDca}</span><span>TP {v.tpEnabled ? `${v.tp}%` : "UIT"}</span><span>CROSS</span></div>
+    <div className="strategy-facts">{v.asymmetricHedgeEnabled ? <><span>{v.pairSlots} gekoppelde paren</span><span>{Number(v.pairSlots) * 2} Aster-posities max</span></> : <><span>{v.longSlots} LONG / 25</span><span>{v.shortSlots} SHORT / 25</span><span>{Number(v.longSlots) + Number(v.shortSlots)} / 50 totaal</span></>}<span>DCA globaal max {v.maxDca}</span><span>TP {v.tpEnabled ? `${v.tp}%` : "UIT"}</span><span>CROSS</span></div>
     <div className="strategy-message compact-scan"><b>Botposities:</b> {activeLong}L · {activeShort}S <b>Vrije botslots:</b> {remainingLong}L · {remainingShort}S <small>{scanSummary} · dashboard telt alle Aster-posities</small>{accountPositionCount > 0 && <small>{accountPositionCount} exchangeposities{untrackedAccountPositionCount > 0 ? ` · ${untrackedAccountPositionCount} niet gekoppeld aan Strategy 2` : ""}</small>}{dirty && <b>Niet opgeslagen</b>}{entryReason && remainingLong + remainingShort > 0 && <span className="entry-hold-reason"><b>Actuele reden:</b> {entryReason}{nextRequiredEntryMarginUsd > settings.entryMarginUsd ? ` · Benodigd voor volgende kandidaat: circa ${nextRequiredEntryMarginUsd.toFixed(2)} USDT.` : ""}</span>}</div>
 
     <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : status.pending ? "server verwerkt wijziging…" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
@@ -223,11 +224,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     <div className="maker-input compact-settings-grid">
       <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
       <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
-      <div className="position-settings-grid">
+      {!v.asymmetricHedgeEnabled && <div className="position-settings-grid">
         <Field label="Totaal posities (max 50)" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} />
         <Field label="LONG slots (max 25)" value={v.longSlots} set={setLong} />
         <Field label="SHORT slots (max 25)" value={v.shortSlots} set={setShort} />
-      </div>
+      </div>}
       <Field label="Minimum leverage (×)" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
       <Field label="Start margin (USDT)" value={v.entryMargin} set={(value) => change({ ...v, entryMargin: value })} />
       <Field label="DCA afstand (%)" value={v.dcaDistance} set={(value) => change({ ...v, dcaDistance: value })} />
@@ -239,8 +240,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       </div>
 
       <section className={`asym-hedge-card ${v.asymmetricHedgeEnabled ? "enabled" : "disabled"}`}>
-        <label className="asym-hedge-toggle"><span><b><i>NIEUW</i> Asymmetrische short-hedge modus</b><small>Nieuwe scanner-LONG opent één gekoppelde grotere SHORT. Modus UIT laat het bestaande botgedrag exact intact.</small></span><button type="button" role="switch" aria-checked={v.asymmetricHedgeEnabled} onClick={() => change({ ...v, asymmetricHedgeEnabled: !v.asymmetricHedgeEnabled })}><i /></button></label>
+        <label className="asym-hedge-toggle"><span><b><i>NIEUW</i> Asymmetrische short-hedge modus</b><small>Nieuwe scanner-LONG opent één gekoppelde grotere SHORT. Modus UIT laat het bestaande botgedrag exact intact.</small></span><button type="button" role="switch" aria-checked={v.asymmetricHedgeEnabled} onClick={() => { const next = !v.asymmetricHedgeEnabled; const pairs = Math.max(1, Math.min(25, Math.floor((n(v.longSlots) + n(v.shortSlots)) / 2) || 1)); change({ ...v, asymmetricHedgeEnabled: next, pairSlots: next ? String(pairs) : v.pairSlots }); }}><i /></button></label>
         <div className="asym-hedge-grid">
+          <Field label="Gekoppelde paren (max 25)" value={v.pairSlots} set={(value) => change({ ...v, pairSlots: value })} disabled={!v.asymmetricHedgeEnabled} />
           <Field label="Short start-multiplier (1×–10×)" value={v.shortStartMultiplier} set={(value) => change({ ...v, shortStartMultiplier: value })} disabled={!v.asymmetricHedgeEnabled} />
           <div className="asym-rule"><b>Short DCA actief</b><small>SHORT blijft zelfstandig zijn eigen DCA-regels volgen.</small><em>AAN</em></div>
           <div className="asym-rule"><b>Geen cross-rebalancing</b><small>LONG-DCA vergroot SHORT niet; SHORT-DCA vergroot LONG niet.</small><em>VAST</em></div>
@@ -251,8 +253,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         <p className="asym-hedge-info"><b>Werking:</b> bij een nieuwe scanner-entry opent de bot de normale LONG en gelijktijdig een grotere SHORT volgens de ingestelde multiplier. LONG en SHORT volgen daarna zelfstandig hun eigen DCA-regels. DCA’s worden niet tussen beide zijden gerebalanced. Zolang de SHORT openstaat, blijft take profit voor LONG geblokkeerd. Zodra LONG zijn maximale DCA-aantal bereikt, wordt de volledige SHORT gesloten. Daarna mag LONG weer zijn normale take-profitlogica volgen.</p>
       </section>
 
-      <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>UIT = automatische Top-N. AAN = uitsluitend jouw geselecteerde Aster USDT perpetuals.</small></span><input type="checkbox" checked={v.manualEnabled} onChange={(event) => change({ ...v, manualEnabled: event.target.checked })} /></label>
-      {v.manualEnabled && <div className="manual-symbol-picker">
+      {!v.asymmetricHedgeEnabled && <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>UIT = automatische Top-N. AAN = uitsluitend jouw geselecteerde Aster USDT perpetuals.</small></span><input type="checkbox" checked={v.manualEnabled} onChange={(event) => change({ ...v, manualEnabled: event.target.checked })} /></label>}
+      {!v.asymmetricHedgeEnabled && v.manualEnabled && <div className="manual-symbol-picker">
         <div className="manual-symbol-search"><input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value.toUpperCase())} onFocus={() => { if (!markets.length) void loadMarkets(); }} placeholder="Zoek BTC, HYPE, BTCUSDT…" /><button type="button" disabled={marketBusy || !marketSearch.trim()} onClick={() => { const exact = markets.find((symbol) => symbol === marketSearch.trim().toUpperCase()); if (exact) addSymbol(exact); }}>+ toevoegen</button></div>
         {marketSearch.trim() && <div className="manual-symbol-results">{marketBusy ? <small>Markten laden…</small> : marketMatches.length ? marketMatches.map((symbol) => <button type="button" key={symbol} onClick={() => addSymbol(symbol)}>{symbol}<i>+</i></button>) : <small>Geen actieve Aster USDT perpetual gevonden.</small>}</div>}
         <div className="manual-symbol-selected">{v.manualSymbols.map((row) => { const preview = tierPreviews[row.symbol]; const leverage = preview?.entryPlan?.leverage || preview?.currentLeverage; return <div key={row.symbol} style={{ display: "grid", gap: 6 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><b>{row.symbol}</b>{leverage ? <small>max/gekozen {leverage}×</small> : tierBusy ? <small>leverage laden…</small> : null}<span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)} aria-label={`${row.symbol} verwijderen`}>×</button></div>{preview?.entryOrderValid === false && <small className="inline-warning">Startmargin te laag voor de actuele Aster minimumorder. Advies minimaal ${Number(preview.suggestedEntryMarginUsd ?? preview.minimumEntryMarginUsd ?? 0).toFixed(2)}.</small>}</div>; })}</div>

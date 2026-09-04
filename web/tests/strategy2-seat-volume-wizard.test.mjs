@@ -9,8 +9,8 @@ test("direct settings cap the Aster bot at 25 LONG plus 25 SHORT and 50 total", 
   assert.match(maker, /LONG slots \(max 25\)/);
   assert.match(maker, /SHORT slots \(max 25\)/);
   assert.match(maker, /maximumPositions:\s*Math\.min\(50, longSlots \+ shortSlots\)/);
-  assert.match(maker, /longSlots = clampInt\(n\(v\.longSlots\), 0, 25\)/);
-  assert.match(maker, /shortSlots = clampInt\(n\(v\.shortSlots\), 0, 25\)/);
+  assert.match(maker, /longSlots = v\.asymmetricHedgeEnabled \? pairSlots : clampInt\(n\(v\.longSlots\), 0, 25\)/);
+  assert.match(maker, /shortSlots = v\.asymmetricHedgeEnabled \? pairSlots : clampInt\(n\(v\.shortSlots\), 0, 25\)/);
   assert.match(maker, /entrySizingMode: "margin"/);
   assert.match(maker, /Start margin \(USDT\)/);
   assert.match(maker, /report\.remainingLong/);

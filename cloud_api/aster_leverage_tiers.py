@@ -79,32 +79,37 @@ def resolve_entry(payload: list[dict[str, Any]], symbol: str, *, configured_mini
     """Choose the highest self-consistent Aster leverage for a brand-new leg.
 
     In margin sizing, notional depends on leverage, so every Aster tier maximum
-    is tested against the notional it would create.  If Aster's safe maximum is
-    below the configured minimum, the exchange maximum wins instead of stopping
-    Strategy 2; this is surfaced as ``forcedBelowConfiguredMinimum``.
+    is tested against the notional it would create. ``configured_minimum`` is a
+    hard entry filter: a brand-new position is never opened below it.
     """
     mode = str(entry_sizing_mode).lower().strip()
     if mode not in {"margin", "notional"}:
         raise ValueError("entry sizing mode is ongeldig")
     levels = _levels(payload, symbol)
+    minimum = max(1, int(configured_minimum))
     if mode == "notional":
         planned = _d(entry_notional_usd)
         allowed = maximum_for_notional(payload, symbol, planned)
         chosen = min(max(levels), allowed)
+        if chosen < minimum:
+            raise AsterValidationError(f"{str(symbol).upper()}: max {chosen}x < minimum {minimum}x")
         return {"leverage": chosen, "orderNotional": float(planned), "projectedNotional": float(planned),
-                "exchangeMaxLeverage": allowed, "configuredMinimum": int(configured_minimum),
-                "forcedBelowConfiguredMinimum": chosen < int(configured_minimum)}
+                "exchangeMaxLeverage": allowed, "configuredMinimum": minimum,
+                "forcedBelowConfiguredMinimum": False}
     margin = _d(entry_margin_usd)
     if margin <= 0:
         raise ValueError("entry margin moet positief zijn")
     for chosen in levels:
+        if chosen < minimum:
+            continue
         planned = margin * chosen
         allowed = maximum_for_notional(payload, symbol, planned)
         if chosen <= allowed:
             return {"leverage": chosen, "orderNotional": float(planned), "projectedNotional": float(planned),
-                    "exchangeMaxLeverage": allowed, "configuredMinimum": int(configured_minimum),
-                    "forcedBelowConfiguredMinimum": chosen < int(configured_minimum)}
-    raise AsterValidationError(f"{str(symbol).upper()}: geen zelf-consistente Aster leverage tier voor entry")
+                    "exchangeMaxLeverage": allowed, "configuredMinimum": minimum,
+                    "forcedBelowConfiguredMinimum": False}
+    maximum = max(levels)
+    raise AsterValidationError(f"{str(symbol).upper()}: max {maximum}x < minimum {minimum}x of geen zelf-consistente tier")
 
 
 def resolve_dca(payload: list[dict[str, Any]], symbol: str, *, current_notional: float,

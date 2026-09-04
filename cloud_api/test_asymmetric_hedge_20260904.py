@@ -23,8 +23,9 @@ def test_multiplier_round_trip_and_limits():
     with pytest.raises(ValueError): cfg(shortStartMultiplier=11)
 
 
-def test_every_long_requires_a_short_slot_when_mode_on():
-    with pytest.raises(ValueError): cfg(longSlots=6, shortSlots=4)
+def test_asymmetric_mode_requires_exact_equal_pair_capacity():
+    with pytest.raises(ValueError): cfg(maximumPositions=10,longSlots=6, shortSlots=4)
+    with pytest.raises(ValueError): cfg(maximumPositions=9,longSlots=5, shortSlots=4)
 
 
 def test_independent_dca_and_tp_lock_flags():
@@ -69,3 +70,23 @@ def test_10000_randomized_state_invariants():
         assert sf["allowShortDca"] == (long_dca < 20)
         # The two counters are intentionally independent: no equality/rebalance invariant exists.
         assert long_dca == long["dcaCount"] and short_dca == short["dcaCount"]
+
+
+def test_asymmetric_entry_allocator_only_plans_same_symbol_pairs():
+    from test_aster_multi_bb import Client, Ref
+    import time
+    from aster_multi_bb import run_multi_bb_step
+    c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1000"},{"symbol":"BBBUSDT","quoteVolume":"900"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
+    settings=cfg(maximumPositions=4,longSlots=2,shortSlots=2,universeTopN=2)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"1000"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    entries=[x for x in r["actions"] if x["kind"] in {"ENTRY","ASYM_SHORT_ENTRY"}]
+    assert len(entries)==4
+    by_symbol={}
+    for x in entries: by_symbol.setdefault(x["symbol"],set()).add(x["side"])
+    assert by_symbol=={"AAAUSDT":{"LONG","SHORT"},"BBBUSDT":{"LONG","SHORT"}}
+    assert not any(x["kind"]=="ENTRY" and x["side"]=="SHORT" for x in r["actions"])
+    for symbol in by_symbol:
+        long=next(x for x in entries if x["symbol"]==symbol and x["side"]=="LONG")
+        short=next(x for x in entries if x["symbol"]==symbol and x["side"]=="SHORT")
+        assert short["leverage"]==long["leverage"]
+        assert short["marginUsd"]==pytest.approx(long["marginUsd"]*5)

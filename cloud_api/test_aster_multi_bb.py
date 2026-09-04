@@ -315,7 +315,7 @@ def test_disabling_manual_selection_keeps_existing_managed_legs_and_subtracts_th
     }}
     tickers=[{"symbol":f"NEW{i}USDT","quoteVolume":str(100-i)} for i in range(18)]
     prices={**{row["symbol"]:100 for row in tickers},"OLD1USDT":100,"OLD2USDT":100}
-    c=Client(positions=positions,tickers=tickers,prices=prices,leverage=20)
+    c=Client(positions=positions,tickers=tickers,prices=prices,leverage=100)
     settings=cfg(manualSymbolSelectionEnabled=False,manualSymbols=[],universeTopN=20,maximumPositions=20,longSlots=10,shortSlots=10,entrySizingMode="margin",entryMarginUsd=.3)
     r=run_multi_bb_step(client=c,ref=Ref(),raw_state=state,settings=settings,uid="u",account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=20)
     assert r["managedLong"]==2 and r["managedShort"]==0
@@ -390,14 +390,12 @@ def test_manual_selection_public_settings_roundtrip():
     assert public["maximumPositions"]==5
 
 
-def test_manual_selection_exchange_max_overrides_configured_minimum_without_stopping():
+def test_manual_selection_hard_rejects_exchange_max_below_configured_minimum():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100},leverage=10)
     settings=manual_cfg([{"symbol":"AAAUSDT","side":"SHORT"}],minimumLeverage=20,maximumPositions=1,longSlots=0,shortSlots=1)
     r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
-    entry=next(x for x in r["actions"] if x["kind"]=="ENTRY")
-    assert entry["leverage"]==10
-    assert entry["forcedBelowConfiguredMinimum"] is True
-    assert r["entryStatus"]=="ENTRY_PLANNED"
+    assert not any(x["kind"]=="ENTRY" for x in r["actions"])
+    assert any("MAX_LEVERAGE_BELOW_MINIMUM" in str(x.get("reason")) for x in r["actions"])
 
 def test_manual_selection_keeps_available_margin_guard():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100},leverage=100)

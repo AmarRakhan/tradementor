@@ -27,3 +27,12 @@ test("copy states independent DCA behavior and max-DCA release", () => {
 test("readiness UI keeps durable live authorization visible after a transient report", () => {
   assert.match(maker, /Boolean\(state\.liveReady\) \|\| Boolean\(readiness\.liveReady\)/);
 });
+
+
+test("asymmetric mode replaces independent seat allocator in the UI", () => {
+  assert.match(maker, /Gekoppelde paren \(max 25\)/);
+  assert.match(maker, /v\.asymmetricHedgeEnabled \? pairSlots/);
+  assert.match(maker, /manualSymbolSelectionEnabled: v\.asymmetricHedgeEnabled \? false/);
+  assert.match(maker, /!v\.asymmetricHedgeEnabled && <div className="position-settings-grid">/);
+  assert.match(maker, /!v\.asymmetricHedgeEnabled && <label className="manual-symbol-toggle">/);
+});

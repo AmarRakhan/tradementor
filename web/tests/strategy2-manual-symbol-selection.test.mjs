@@ -9,7 +9,7 @@ test("manual symbol selection remains opt-in inside the direct settings panel", 
   assert.match(maker, /manualEnabled:\s*false/);
   assert.match(maker, /Zelf munten kiezen/);
   assert.match(maker, /UIT = automatische Top-N/);
-  assert.match(maker, /manualSymbolSelectionEnabled:\s*v\.manualEnabled/);
+  assert.match(maker, /manualSymbolSelectionEnabled:\s*v\.asymmetricHedgeEnabled \? false : v\.manualEnabled/);
   assert.match(maker, /Geen wizard/);
 });
 

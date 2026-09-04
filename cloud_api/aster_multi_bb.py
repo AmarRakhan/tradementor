@@ -57,8 +57,9 @@ class MultiBbConfig:
         minimum_leverage=_i(raw.get("minimumLeverage", raw.get("leverage")), 50)
         entry_margin_usd=_f(raw.get("entryMarginUsd", raw.get("baseMarginUsd")), 5.0)
         entry_notional_usd=_f(raw.get("entryNotionalUsd", raw.get("baseNotional")), entry_margin_usd * max(1, minimum_leverage))
-        manual_enabled=bool(raw.get("manualSymbolSelectionEnabled", False))
-        entry_sizing_mode=str(raw.get("entrySizingMode", "margin" if manual_enabled else "notional")).lower().strip()
+        asymmetric_enabled=bool(raw.get("asymmetricHedgeModeEnabled", False))
+        manual_enabled=bool(raw.get("manualSymbolSelectionEnabled", False)) and not asymmetric_enabled
+        entry_sizing_mode=str(raw.get("entrySizingMode", "margin" if manual_enabled or asymmetric_enabled else "notional")).lower().strip()
         manual_rows=raw.get("manualSymbols") if isinstance(raw.get("manualSymbols"), list) else []
         manual_symbols=[]
         seen=set()
@@ -86,7 +87,7 @@ class MultiBbConfig:
             unlimited_dca=bool(raw.get("unlimitedDca", False)),
             take_profit=_f(raw.get("takeProfit"), .015),
             take_profit_enabled=bool(raw.get("takeProfitEnabled", True)),
-            asymmetric_hedge_enabled=bool(raw.get("asymmetricHedgeModeEnabled", False)),
+            asymmetric_hedge_enabled=asymmetric_enabled,
             short_start_multiplier=_f(raw.get("shortStartMultiplier"), 5.0),
             manual_symbol_selection_enabled=manual_enabled,
             manual_symbols=tuple(manual_symbols),
@@ -96,7 +97,8 @@ class MultiBbConfig:
     def validated(self) -> "MultiBbConfig":
         if self.engine != ENGINE: raise ValueError("Alleen de nieuwe Multi BB-strategie is toegestaan")
         if not 1 <= self.universe_top_n <= 200: raise ValueError("Top-N moet tussen 1 en 200 liggen")
-        if not 1 <= self.maximum_positions <= (200 if self.manual_symbol_selection_enabled else self.universe_top_n): raise ValueError("Max posities moet tussen 1 en 200 liggen" if self.manual_symbol_selection_enabled else "Max posities moet tussen 1 en Top-N liggen")
+        maximum_capacity = 200 if self.manual_symbol_selection_enabled else (self.universe_top_n * 2 if self.asymmetric_hedge_enabled else self.universe_top_n)
+        if not 1 <= self.maximum_positions <= maximum_capacity: raise ValueError("Max posities overschrijdt de beschikbare marktcapaciteit")
         if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
         if not 1 <= self.minimum_leverage <= 300: raise ValueError("Minimum leverage moet tussen 1x en 300x liggen")
@@ -106,7 +108,8 @@ class MultiBbConfig:
         if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
         if not math.isfinite(self.take_profit) or self.take_profit <= 0: raise ValueError("Take Profit moet een positief eindig percentage zijn")
         if not math.isfinite(self.short_start_multiplier) or not 1 <= self.short_start_multiplier <= 10: raise ValueError("Short start-multiplier moet tussen 1x en 10x liggen")
-        if self.asymmetric_hedge_enabled and self.short_slots < self.long_slots: raise ValueError("Asymmetrische hedge vereist minstens evenveel SHORT als LONG slots")
+        if self.asymmetric_hedge_enabled and (self.long_slots != self.short_slots or self.maximum_positions != self.long_slots * 2):
+            raise ValueError("Asymmetrische modus gebruikt uitsluitend gelijke gekoppelde LONG+SHORT-paren")
         if self.manual_symbol_selection_enabled and not self.manual_symbols:
             raise ValueError("Selecteer minimaal één munt wanneer Zelf munten kiezen aan staat")
         if len(self.manual_symbols) > 200: raise ValueError("Maximaal 200 handmatig gekozen munten")
@@ -197,23 +200,35 @@ def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_us
 
 
 def _plan_asymmetric_entries(client: Any, row: dict[str, Any], price: float, settings: MultiBbConfig) -> tuple[PairExecutionPlan, PairExecutionPlan, dict[str, Any], dict[str, Any]]:
+    """Plan one same-symbol LONG+SHORT pair at one common leverage.
+
+    In margin sizing the SHORT uses exactly ``short_start_multiplier`` times the
+    LONG start margin. Brand-new pairs never fall below the configured minimum.
+    """
     symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
-    long_resolved = resolve_entry(payload, symbol, configured_minimum=settings.minimum_leverage,
-        entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode)
-    short_resolved = resolve_entry(payload, symbol, configured_minimum=settings.minimum_leverage,
-        entry_margin_usd=settings.entry_margin_usd * settings.short_start_multiplier,
-        entry_notional_usd=settings.entry_notional_usd * settings.short_start_multiplier, entry_sizing_mode=settings.entry_sizing_mode)
-    ceiling = min(int(long_resolved["leverage"]), int(short_resolved["leverage"]))
-    candidates = sorted({ceiling, *(_i(x.get("initialLeverage")) for x in rows if 0 < _i(x.get("initialLeverage")) <= ceiling)}, reverse=True)
+    levels = sorted({_i(x.get("initialLeverage")) for x in rows if _i(x.get("initialLeverage")) >= settings.minimum_leverage}, reverse=True)
+    if not levels:
+        maximum=max((_i(x.get("initialLeverage")) for x in rows),default=0)
+        raise ValueError(f"{symbol}: max {maximum}x < minimum {settings.minimum_leverage}x")
     last_error: Exception | None = None
-    for leverage in candidates:
+    for leverage in levels:
+        if settings.entry_sizing_mode == "margin":
+            long_notional=settings.entry_margin_usd * leverage
+            short_notional=settings.entry_margin_usd * settings.short_start_multiplier * leverage
+        else:
+            long_notional=settings.entry_notional_usd
+            short_notional=settings.entry_notional_usd * settings.short_start_multiplier
         try:
-            long_plan = plan_pair(row, rows, price, long_resolved["orderNotional"], accepted_leverage=leverage)
-            short_plan = plan_pair(row, rows, price, short_resolved["orderNotional"], accepted_leverage=leverage, existing_contract_notional=long_plan.notional_per_leg)
+            long_plan = plan_pair(row, rows, price, long_notional, accepted_leverage=leverage)
+            short_plan = plan_pair(row, rows, price, short_notional, accepted_leverage=leverage, existing_contract_notional=long_plan.notional_per_leg)
+            long_resolved={"leverage":leverage,"orderNotional":float(long_plan.notional_per_leg),"projectedNotional":float(long_plan.notional_per_leg),
+                "exchangeMaxLeverage":leverage,"configuredMinimum":settings.minimum_leverage,"forcedBelowConfiguredMinimum":False}
+            short_resolved={"leverage":leverage,"orderNotional":float(short_plan.notional_per_leg),"projectedNotional":float(long_plan.notional_per_leg+short_plan.notional_per_leg),
+                "exchangeMaxLeverage":leverage,"configuredMinimum":settings.minimum_leverage,"forcedBelowConfiguredMinimum":False}
             return long_plan, short_plan, long_resolved, short_resolved
         except Exception as exc:
             last_error = exc
-    raise ValueError(f"{symbol}: geen gezamenlijke leverage/capaciteit voor asymmetrische LONG+SHORT") from last_error
+    raise ValueError(f"{symbol}: geen gezamenlijke leverage/capaciteit voor asymmetrische LONG+SHORT boven minimum {settings.minimum_leverage}x") from last_error
 
 
 def _asymmetric_flags(settings: MultiBbConfig, *, side: str, state_row: dict[str, Any], state: dict[str, Any], pmap: dict[str, Any]) -> dict[str, bool]:
@@ -570,19 +585,23 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue
         if maximum <= 0:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue
-        if settings.manual_symbol_selection_enabled:
+        if maximum < settings.minimum_leverage:
+            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"MAX_LEVERAGE_BELOW_MINIMUM: {maximum}x < {settings.minimum_leverage}x"}); continue
+        if settings.asymmetric_hedge_enabled:
+            # Exclusive paired mode: the old independent LONG/SHORT allocator is disabled.
+            # Every new scanner candidate is exactly one same-symbol LONG+SHORT pair.
+            if long_need <= 0 or short_need <= 0:
+                break
+            side = "LONG"
+        elif settings.manual_symbol_selection_enabled:
             side = str(ranked_row.get("forcedSide", "")).upper()
             if side == "LONG" and long_need <= 0: continue
             if side == "SHORT" and short_need <= 0: continue
             if side not in {"LONG", "SHORT"}: continue
         else:
-            if settings.asymmetric_hedge_enabled and long_need > 0:
-                if short_need <= 0: break
-                side = "LONG"
-            else:
-                side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
+            side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
-        paired = bool(settings.asymmetric_hedge_enabled and side == "LONG")
+        paired = bool(settings.asymmetric_hedge_enabled)
         if paired and (short_need <= 0 or account_remaining_capacity < 2 or budget - sent < 2):
             actions.append({"kind": "ASYM_PAIR_WAIT", "symbol": symbol, "reason": "SHORT_SLOT_OR_ACCOUNT_CAPACITY_REQUIRED"}); continue
         try:
