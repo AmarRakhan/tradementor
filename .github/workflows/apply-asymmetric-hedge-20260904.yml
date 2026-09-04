@@ -1,0 +1,71 @@
+name: Apply asymmetric hedge mode 2026-09-04
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/asymmetric-hedge-20260904.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: asymmetric-hedge-20260904
+  cancel-in-progress: false
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply implementation
+        run: python tools/apply_asymmetric_hedge_20260904.py
+
+      - name: Install backend test dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+
+      - name: Run asymmetric hedge and legacy regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_asymmetric_hedge_20260904.py test_aster_multi_bb.py test_strategy2_tp_toggle_20260903.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run focused web contract tests
+        working-directory: web
+        run: node --experimental-strip-types --test tests/strategy2-asymmetric-hedge.test.mjs tests/strategy2-botsettings-reference-tp-toggle.test.mjs
+
+      - name: Build web app
+        working-directory: web
+        run: npm run build
+
+      - name: Commit implementation
+        run: |
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb.py cloud_api/test_asymmetric_hedge_20260904.py web/components/aster-strategy2-maker.tsx web/app/strategy2-reference.css web/tests/strategy2-asymmetric-hedge.test.mjs
+          if git diff --cached --quiet; then
+            echo 'No implementation changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Add optional asymmetric long short hedge mode'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
