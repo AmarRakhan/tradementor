@@ -1,5 +1,6 @@
-export const ASTER_SNAPSHOT_SCHEMA = 1;
-const KEY_PREFIX = "tradementor.asterSnapshot.v1";
+export const ASTER_SNAPSHOT_SCHEMA = 2;
+const KEY_PREFIX = "tradementor.asterSnapshot.v2";
+const MAX_INITIAL_CACHE_AGE_MS = 120_000;
 
 const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -16,7 +17,6 @@ export function isValidAsterSnapshotData(value) {
     && Array.isArray(value.closedTrades)
     && Array.isArray(value.realizedEvents);
 }
-
 
 const PRESERVED_ACCOUNT_FIELDS = [
   "equity", "walletBalance", "availableBalance", "activeTradeCapital",
@@ -43,7 +43,6 @@ export function mergeCompleteAsterSnapshot(account, history) {
   return merged;
 }
 
-
 export function mergeAsterSnapshotWithHistoryFallback(account, history, previous) {
   if (!isRecord(account)) throw new Error("Onvolledige Aster-accountstatus ontvangen.");
   if (isRecord(history)) return mergeCompleteAsterSnapshot(account, history);
@@ -66,6 +65,8 @@ export function loadAsterSnapshot(storage, uid) {
       || saved?.uid !== uid
       || saved?.exchange !== "aster"
       || !Number.isFinite(saved?.updatedAt)
+      || Date.now() - saved.updatedAt > MAX_INITIAL_CACHE_AGE_MS
+      || saved.updatedAt > Date.now() + 30_000
       || !isValidAsterSnapshotData(saved?.data)) return null;
     return { data: saved.data, updatedAt: saved.updatedAt };
   } catch {
