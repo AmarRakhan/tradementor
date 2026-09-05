@@ -1,0 +1,95 @@
+name: Fix planned DCA chart line v3
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/workflows/fix-planned-dca-line-v3-20260905.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Apply idempotent UI-only patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          from pathlib import Path
+
+          chart = Path('web/components/trading-chart.tsx')
+          s = chart.read_text()
+          dca_new = '      plannedActionLevels.filter(level=>level.key==="dca"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));'
+          tp = '      plannedActionLevels.filter(level=>level.key==="tp"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#b978ff",lineWidth:2,lineStyle:0,axisLabelVisible:false,title:""}));'
+          if dca_new not in s:
+              assert s.count(tp) == 1, s.count(tp)
+              s = s.replace(tp, dca_new + '\n' + tp, 1)
+              chart.write_text(s)
+
+          css = Path('web/app/globals.css')
+          s = css.read_text()
+          old = '.aster-detail-chart .focus-price-line{position:absolute;left:52%;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}'
+          new = '.aster-detail-chart .focus-price-line{position:absolute;left:0;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}'
+          if old in s:
+              s = s.replace(old, new, 1)
+          mobile_old = '.aster-detail-chart .focus-price-line{left:42%}'
+          if mobile_old in s:
+              s = s.replace(mobile_old, '.aster-detail-chart .focus-price-line{left:0}', 1)
+          css.write_text(s)
+
+          test = Path('web/tests/trading-chart-aster-detail.test.mjs')
+          t = test.read_text()
+          wanted = '  assert.match(chart, /level\\.key==="dca"/);\n  assert.match(chart, /lineWidth:3/);\n'
+          anchor = '  assert.match(chart, /level\\.key==="tp"/);\n'
+          if wanted not in t:
+              assert t.count(anchor) == 1, t.count(anchor)
+              t = t.replace(anchor, wanted + anchor, 1)
+              test.write_text(t)
+          PY
+
+      - name: Prove live trading code untouched
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- cloud_api/aster_multi_bb.py cloud_api/aster_strategy2.py cloud_api/aster_execution.py cloud_api/aster_strategy2_runtime.py
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run full web suite
+        working-directory: web
+        run: npm test
+
+      - name: Commit and safely rebase onto latest branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/trading-chart.tsx web/app/globals.css web/tests/trading-chart-aster-detail.test.mjs
+          if git diff --cached --quiet; then
+            echo 'Patch already present on latest branch.'
+            exit 0
+          fi
+          git commit -m 'Fix planned DCA line visibility'
+          git fetch origin amar-crypto-bot-2026-cloud
+          git rebase origin/amar-crypto-bot-2026-cloud
+          git push origin HEAD:amar-crypto-bot-2026-cloud
