@@ -8,15 +8,26 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  id-token: write
 
 concurrency:
   group: dca-recovery-manual-adoption-20260905
   cancel-in-progress: false
 
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
 jobs:
-  apply-test-commit:
+  verify-deploy:
     runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,34 +38,71 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Apply DCA recovery implementation
-        run: python tools/apply_dca_recovery_manual_adoption_20260905.py
-
       - name: Install backend test dependencies
         run: python -m pip install -q -r cloud_api/requirements.txt pytest
 
       - name: Compile backend
         run: python -m compileall -q cloud_api
 
-      - name: Run DCA, asymmetric hedge and TP regressions
+      - name: Run DCA asymmetric hedge and TP regressions
         working-directory: cloud_api
         run: python -m pytest -q test_aster_multi_bb.py test_asymmetric_hedge_20260904.py test_strategy2_tp_toggle_20260903.py
 
-      - name: Run deterministic stress loop
+      - name: Run repeated DCA recovery stress regression
         working-directory: cloud_api
         run: |
           for i in $(seq 1 25); do
             python -m pytest -q test_aster_multi_bb.py -k 'manual or dca or asymmetric' >/dev/null
           done
 
-      - name: Commit verified implementation
+      - name: Verify required source markers
         run: |
-          git config user.name 'TradeMentor Agent'
-          git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/aster_multi_bb.py cloud_api/test_aster_multi_bb.py
-          if git diff --cached --quiet; then
-            echo 'No implementation changes to commit.'
-            exit 0
-          fi
-          git commit -m 'Repair DCA recovery and adopt manual position adds'
-          git push origin HEAD:amar-crypto-bot-2026-cloud
+          grep -q 'MANUAL_DCA_DETECTED' cloud_api/aster_multi_bb.py
+          grep -q 'DCA_STATE_RECOVERED' cloud_api/aster_multi_bb.py
+          grep -q 'DCA_REARMED_AFTER_MANUAL' cloud_api/aster_multi_bb.py
+          grep -q 'lastManualFillPrice' cloud_api/aster_multi_bb.py
+          grep -q 'lastDcaFillPrice' cloud_api/aster_multi_bb.py
+
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build candidate and promote after health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          python - "$RUNNER_TEMP/before.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1]))
+          env={x['name']:x.get('value') for x in service['spec']['template']['spec']['containers'][0].get('env',[])}
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='true'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='true'
+          PY
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:dca-recovery-$GITHUB_RUN_ID"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          REV="dca-recovery-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$REV" --no-traffic --tag "$TAG"
+          CANDIDATE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json | python -c 'import json,sys; d=json.load(sys.stdin); tag=sys.argv[1]; print(next(x["url"] for x in d["status"]["traffic"] if x.get("tag")==tag))' "$TAG")"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready' and h['multiUser'] is True
+          PY
+          CANDIDATE_REVISION="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json | python -c 'import json,sys; d=json.load(sys.stdin); tag=sys.argv[1]; print(next(x["revisionName"] for x in d["status"]["traffic"] if x.get("tag")==tag))' "$TAG")"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          FINAL_HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$FINAL_HEALTH" "$CANDIDATE_REVISION" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready' and h['multiUser'] is True
+          print('PROMOTED_REVISION='+sys.argv[2])
+          print('FINAL_HEALTH='+json.dumps(h,sort_keys=True))
+          PY
