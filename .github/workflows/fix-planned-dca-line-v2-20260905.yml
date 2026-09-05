@@ -1,0 +1,82 @@
+name: Fix planned DCA chart line v2
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/workflows/fix-planned-dca-line-v2-20260905.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Patch chart
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          p = Path('web/components/trading-chart.tsx')
+          s = p.read_text()
+          old = '      plannedActionLevels.filter(level=>level.key==="tp"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#b978ff",lineWidth:2,lineStyle:0,axisLabelVisible:false,title:""}));'
+          new = '      plannedActionLevels.filter(level=>level.key==="dca"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));\n' + old
+          assert s.count(old) == 1, s.count(old)
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('web/app/globals.css')
+          s = p.read_text()
+          old = '.aster-detail-chart .focus-price-line{position:absolute;left:52%;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}'
+          new = '.aster-detail-chart .focus-price-line{position:absolute;left:0;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}'
+          assert s.count(old) == 1, s.count(old)
+          s = s.replace(old, new, 1)
+          old2 = '.aster-detail-chart .focus-price-line{left:42%}'
+          new2 = '.aster-detail-chart .focus-price-line{left:0}'
+          assert s.count(old2) == 1, s.count(old2)
+          p.write_text(s.replace(old2, new2, 1))
+
+          p = Path('web/tests/trading-chart-aster-detail.test.mjs')
+          s = p.read_text()
+          anchor = '  assert.match(chart, /level\\.key==="tp"/);\n'
+          assert s.count(anchor) == 1, s.count(anchor)
+          s = s.replace(anchor, '  assert.match(chart, /level\\.key==="dca"/);\n  assert.match(chart, /lineWidth:3/);\n' + anchor, 1)
+          p.write_text(s)
+          PY
+
+      - name: Verify UI-only scope
+        shell: bash
+        run: |
+          git diff --exit-code -- cloud_api/aster_multi_bb.py cloud_api/aster_strategy2.py cloud_api/aster_execution.py cloud_api/aster_strategy2_runtime.py
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Test
+        working-directory: web
+        run: npm test
+
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name github-actions-bot
+          git config user.email github-actions-bot@users.noreply.github.com
+          git add web/components/trading-chart.tsx web/app/globals.css web/tests/trading-chart-aster-detail.test.mjs
+          git commit -m "Fix planned DCA line visibility"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
