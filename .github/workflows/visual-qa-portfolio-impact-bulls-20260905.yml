@@ -68,7 +68,9 @@ jobs:
           test -s artifacts/portfolio-impact/webkit-390.png
           test -s artifacts/portfolio-impact/reduced-motion-390.png
           test -s public/portfolio-impact-bulls.webp
-          grep -q 'aspect-ratio:2.30/1' components/portfolio-impact-battle.module.css
+          grep -q 'aspect-ratio:2.14/1' components/portfolio-impact-battle.module.css
+          grep -q 'SHORTS VEROORZAKEN MEESTE VERLIES' lib/portfolio-impact-battle.mjs
+          grep -q 'AANDEEL IN OPEN VERLIES' lib/portfolio-impact-battle.mjs
           grep -q 'destination === "aster" ? <PortfolioImpactBattle' app/page.tsx
       - uses: actions/upload-artifact@v4
         with:
