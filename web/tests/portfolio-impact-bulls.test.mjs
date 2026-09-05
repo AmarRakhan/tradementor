@@ -4,67 +4,58 @@ import { deriveBattleMetrics, positionExposure } from "../lib/portfolio-impact-b
 
 const derive = (longPnl, shortPnl, extra = {}) => deriveBattleMetrics({ longPnl, shortPnl, equity: 10_000, longExposure: 5_000, shortExposure: 5_000, ...extra });
 
-test("scenario A: profitable long dominates losing short without claiming market direction", () => {
-  const result = derive(100, -50);
-  assert.equal(result.netPnl, 50);
-  assert.equal(result.state, "LONG_DOMINANT");
-  assert.equal(result.status, "LONGS DRAGEN BIJ · SHORTS TREKKEN PORTFOLIO OMLAAG");
-  assert.ok(result.motionBias > 0);
-  assert.doesNotMatch(result.status, /MARKT|DRUKKEN OMHOOG/i);
-});
-
-test("scenario B: profitable short dominates losing long without claiming market direction", () => {
-  const result = derive(-30, 120);
-  assert.equal(result.netPnl, 90);
-  assert.equal(result.state, "SHORT_DOMINANT");
-  assert.equal(result.status, "SHORTS DRAGEN BIJ · LONGS TREKKEN PORTFOLIO OMLAAG");
-  assert.ok(result.motionBias < 0);
-  assert.doesNotMatch(result.status, /MARKT|DRUKKEN OMHOOG/i);
-});
-
-test("scenario C: two losing sides report share of open loss, never a fake winner or market direction", () => {
+test("absolute P&L stays descriptive while neutral live deltas keep the battle balanced", () => {
   const result = derive(-20, -150);
+  assert.equal(result.netPnl, -170);
   assert.equal(result.state, "BOTH_NEGATIVE");
-  assert.equal(result.status, "SHORTS VEROORZAKEN MEESTE VERLIES");
-  assert.equal(result.barLabel, "AANDEEL IN OPEN VERLIES");
-  assert.ok(result.shortShare > result.longShare);
-  assert.doesNotMatch(result.status, /MARKT|WINNEN|DRUKKEN/i);
-});
-
-test("scenario D: both profitable sides are represented as portfolio contributors", () => {
-  const result = derive(40, 35);
-  assert.equal(result.netPnl, 75);
-  assert.equal(result.state, "BOTH_POSITIVE");
-  assert.match(result.status, /BEIDE KANTEN DRAGEN BIJ|LONGS DRAGEN MEEST BIJ|SHORTS DRAGEN MEEST BIJ/);
-  assert.equal(result.barLabel, "POSITIEVE PORTFOLIO-IMPACT");
-});
-
-test("scenario E: zero state remains balanced", () => {
-  const result = derive(0, 0);
-  assert.equal(result.state, "BALANCED");
-  assert.equal(result.status, "PORTFOLIO-IMPACT IN EVENWICHT");
+  assert.equal(result.status, "IN EVENWICHT");
+  assert.equal(result.barLabel, "LIVE DRUK");
   assert.equal(result.longShare, 50);
   assert.equal(result.shortShare, 50);
-  assert.equal(result.motionBias, 0);
 });
 
-test("scenario F: exposure and position count do not decide the battle outcome", () => {
-  const result = deriveBattleMetrics({ longPnl: 2, shortPnl: 40, longExposure: 100_000, shortExposure: 1_000, equity: 20_000 });
-  assert.equal(result.state, "BOTH_POSITIVE");
+test("rising long P&L and falling short P&L mean longs are pressing harder", () => {
+  const result = derive(-40, -120, { longDelta: 8, shortDelta: -7 });
+  assert.equal(result.status, "LONGS DRUKKEN HARDER");
+  assert.ok(result.motionBias > 0);
+  assert.ok(result.longShare > result.shortShare);
+});
+
+test("rising short P&L and falling long P&L mean shorts are pressing harder", () => {
+  const result = derive(-40, -120, { longDelta: -6, shortDelta: 9 });
+  assert.equal(result.status, "SHORTS DRUKKEN HARDER");
+  assert.ok(result.motionBias < 0);
+  assert.ok(result.shortShare > result.longShare);
+});
+
+test("tiny quote noise does not create a fake dominant side", () => {
+  const result = derive(-40, -120, { longDelta: 0.01, shortDelta: -0.01 });
+  assert.equal(result.status, "IN EVENWICHT");
+  assert.ok(Math.abs(result.longShare - 50) <= 1);
+});
+
+test("current loss size does not decide who is pressing now", () => {
+  const result = derive(-10, -900, { longDelta: 12, shortDelta: -4 });
+  assert.equal(result.status, "LONGS DRUKKEN HARDER");
+  assert.ok(result.longShare > 50);
+});
+
+test("position count and exposure do not decide live pressure", () => {
+  const result = deriveBattleMetrics({ longPnl: -10, shortPnl: -90, longDelta: -3, shortDelta: 8, longExposure: 100_000, shortExposure: 1_000, equity: 10_000 });
+  assert.equal(result.status, "SHORTS DRUKKEN HARDER");
   assert.ok(result.shortShare > result.longShare);
 });
 
 test("rolling delta can make a rapidly recovering long the live momentum leader", () => {
-  const result = deriveBattleMetrics({ longPnl: -40, shortPnl: 10, longDelta: 60, shortDelta: -10, longExposure: 5_000, shortExposure: 5_000, equity: 10_000 });
-  assert.ok(result.longScore > result.shortScore);
+  const result = deriveBattleMetrics({ longPnl: -400, shortPnl: 100, longDelta: 60, shortDelta: -10, longExposure: 5_000, shortExposure: 5_000, equity: 10_000 });
+  assert.equal(result.status, "LONGS DRUKKEN HARDER");
   assert.ok(result.motionBias > 0);
 });
 
-test("loss share is financial impact, not position count or exposure ratio", () => {
-  const result = deriveBattleMetrics({ longPnl: -10, shortPnl: -90, longExposure: 100_000, shortExposure: 1_000, equity: 10_000 });
-  assert.equal(result.longShare, 10);
-  assert.equal(result.shortShare, 90);
-  assert.equal(result.barLabel, "AANDEEL IN OPEN VERLIES");
+test("bar always describes live pressure rather than loss share", () => {
+  const result = deriveBattleMetrics({ longPnl: -10, shortPnl: -90, longDelta: 5, shortDelta: -5, longExposure: 100_000, shortExposure: 1_000, equity: 10_000 });
+  assert.equal(result.barLabel, "LIVE DRUK");
+  assert.ok(result.longShare > result.shortShare);
 });
 
 test("exposure derives from notional first and size x mark as fallback", () => {
