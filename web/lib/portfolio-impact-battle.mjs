@@ -31,15 +31,20 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function livePressure(longDelta, shortDelta, equityBasis) {
-  // A rising LONG P&L is bullish pressure; a rising SHORT P&L is bearish pressure.
-  // The difference between both deltas therefore expresses which side is winning terrain now.
-  // A small equity-scaled floor prevents tiny quote noise from creating fake 95/5 battles.
-  const edge = longDelta - shortDelta;
-  const observedMovement = Math.abs(longDelta) + Math.abs(shortDelta);
-  const noiseFloor = Math.max(equityBasis * 0.00025, 0.5);
+function livePressure(longDelta, shortDelta, longExposure, shortExposure, equityBasis) {
+  // Convert dollar-P&L movement to exposure-normalized return movement first.
+  // This prevents a 2x larger SHORT book from appearing twice as strong purely because it is larger.
+  const longBasis = Math.max(Math.abs(longExposure), equityBasis, 1);
+  const shortBasis = Math.max(Math.abs(shortExposure), equityBasis, 1);
+  const longRate = longDelta / longBasis;
+  const shortRate = shortDelta / shortBasis;
+
+  // Rising LONG return = bullish pressure. Rising SHORT return = bearish pressure.
+  const edge = longRate - shortRate;
+  const observedMovement = Math.abs(longRate) + Math.abs(shortRate);
+  const noiseFloor = 0.000015;
   const scale = Math.max(observedMovement, noiseFloor);
-  const bias = observedMovement <= Math.max(equityBasis * 0.00001, 0.02)
+  const bias = observedMovement <= noiseFloor * 0.35
     ? 0
     : clamp(Math.tanh((edge / scale) * 1.18), -1, 1);
   const longShare = clamp(50 + bias * 42, 8, 92);
@@ -48,7 +53,7 @@ function livePressure(longDelta, shortDelta, equityBasis) {
 
 export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, shortDelta = 0, longExposure = 0, shortExposure = 0, equity = 0 } = {}) {
   const netPnl = longPnl + shortPnl;
-  const equityBasis = Math.max(Math.abs(equity), Math.abs(longExposure) * 0.04 + Math.abs(shortExposure) * 0.04, 100);
+  const equityBasis = Math.max(Math.abs(equity), 100);
   const momentumWeight = 1.35;
   const longScore = longPnl + longDelta * momentumWeight;
   const shortScore = shortPnl + shortDelta * momentumWeight;
@@ -57,11 +62,10 @@ export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, 
   const nearZero = Math.abs(longPnl) + Math.abs(shortPnl) < Math.max(0.05, equityBasis * 0.00001);
 
   // Absolute P&L remains descriptive context only. The battle itself is live pressure.
-  let state = nearZero ? "BALANCED" : bothPositive ? "BOTH_POSITIVE" : bothNegative ? "BOTH_NEGATIVE" : longPnl >= 0 ? "LONG_DOMINANT" : "SHORT_DOMINANT";
-  const pressure = livePressure(longDelta, shortDelta, equityBasis);
+  const state = nearZero ? "BALANCED" : bothPositive ? "BOTH_POSITIVE" : bothNegative ? "BOTH_NEGATIVE" : longPnl >= 0 ? "LONG_DOMINANT" : "SHORT_DOMINANT";
+  const pressure = livePressure(longDelta, shortDelta, longExposure, shortExposure, equityBasis);
   const motionBias = pressure.bias;
-  const longShare = pressure.longShare;
-  const roundedLongShare = Math.round(longShare);
+  const roundedLongShare = Math.round(pressure.longShare);
   const shortShare = 100 - roundedLongShare;
   const barLabel = "LIVE DRUK";
 
@@ -69,7 +73,9 @@ export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, 
   if (motionBias >= 0.12) status = "LONGS DRUKKEN HARDER";
   else if (motionBias <= -0.12) status = "SHORTS DRUKKEN HARDER";
 
-  const intensity = clamp((Math.abs(longDelta) + Math.abs(shortDelta)) / Math.max(equityBasis * 0.0015, 1), 0.18, 1);
+  const normalizedLongMove = Math.abs(longDelta) / Math.max(Math.abs(longExposure), equityBasis, 1);
+  const normalizedShortMove = Math.abs(shortDelta) / Math.max(Math.abs(shortExposure), equityBasis, 1);
+  const intensity = clamp((normalizedLongMove + normalizedShortMove) / 0.0006, 0.18, 1);
   return {
     netPnl,
     longScore,
