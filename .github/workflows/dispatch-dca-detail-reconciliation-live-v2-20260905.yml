@@ -1,0 +1,20 @@
+name: Dispatch DCA detail reconciliation live v2 2026-09-05
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/dispatch-dca-detail-reconciliation-live-v2-20260905.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch canonical V46 production web deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-shared-v44-testapp.yml --repo AmarRakhan/tradementor --ref amar-crypto-bot-2026-cloud
