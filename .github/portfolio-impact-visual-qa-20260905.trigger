@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-approved-reference-direct-fix
+visual-qa-portfolio-impact-bulls-semantic-cinematic-correction-final
