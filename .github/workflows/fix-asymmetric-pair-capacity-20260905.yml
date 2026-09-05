@@ -6,6 +6,7 @@ on:
       - fix/asymmetric-pair-capacity-20260905
     paths:
       - scripts/fix_asymmetric_pair_capacity_20260905.py
+      - scripts/fix_asymmetric_pair_reporting_20260905.py
       - .github/workflows/fix-asymmetric-pair-capacity-20260905.yml
   workflow_dispatch:
 
@@ -26,7 +27,9 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r cloud_api/requirements.txt pytest
       - name: Apply repair
-        run: python scripts/fix_asymmetric_pair_capacity_20260905.py
+        run: |
+          python scripts/fix_asymmetric_pair_capacity_20260905.py
+          python scripts/fix_asymmetric_pair_reporting_20260905.py
       - name: Run focused backend tests
         working-directory: cloud_api
         run: python -m pytest -q test_asymmetric_hedge_20260904.py test_aster_multi_bb.py
