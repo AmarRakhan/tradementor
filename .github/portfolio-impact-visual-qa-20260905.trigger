@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-live-pressure-exposure-normalized-final
+visual-qa-portfolio-impact-bulls-verified-full-body-asset-final
