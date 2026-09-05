@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-verified-full-body-asset-final
+visual-qa-portfolio-impact-bulls-svg-embedded-final-pass
