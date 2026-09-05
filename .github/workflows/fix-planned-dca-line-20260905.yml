@@ -1,0 +1,97 @@
+name: Fix planned DCA line 2026-09-05
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/fix-planned-dca-line-20260905.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Apply planned DCA chart line fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          chart = Path('web/components/trading-chart.tsx')
+          text = chart.read_text()
+          old = '''      plannedActionLevels.filter(level=>level.key==="tp"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#b978ff",lineWidth:2,lineStyle:0,axisLabelVisible:false,title:""}));'''
+          new = '''      plannedActionLevels.filter(level=>level.key==="dca"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));
+      plannedActionLevels.filter(level=>level.key==="tp"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#b978ff",lineWidth:2,lineStyle:0,axisLabelVisible:false,title:""}));'''
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one planned TP native line block, found {text.count(old)}')
+          chart.write_text(text.replace(old, new, 1))
+
+          css = Path('web/app/globals.css')
+          styles = css.read_text()
+          old_css = '.aster-detail-chart .focus-price-line{position:absolute;left:52%;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}'
+          new_css = '.aster-detail-chart .focus-price-line{position:absolute;left:0;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}'
+          if styles.count(old_css) != 1:
+              raise SystemExit(f'Expected one focus price line rule, found {styles.count(old_css)}')
+          styles = styles.replace(old_css, new_css, 1)
+          old_mobile = '@media(max-width:500px){.aster-detail-chart .focus-level-segment{left:8px;right:92px}.aster-detail-chart .focus-price-line{left:42%}.aster-detail-chart .focus-line-label{max-width:158px;padding:4px 7px;font-size:9px;letter-spacing:0}}'
+          new_mobile = '@media(max-width:500px){.aster-detail-chart .focus-level-segment{left:8px;right:92px}.aster-detail-chart .focus-price-line{left:0}.aster-detail-chart .focus-line-label{max-width:158px;padding:4px 7px;font-size:9px;letter-spacing:0}}'
+          if styles.count(old_mobile) != 1:
+              raise SystemExit(f'Expected one mobile focus line rule, found {styles.count(old_mobile)}')
+          css.write_text(styles.replace(old_mobile, new_mobile, 1))
+
+          test = Path('web/tests/trading-chart-aster-detail.test.mjs')
+          t = test.read_text()
+          anchor = '  assert.match(chart, /level\\.key==="tp"/);\n'
+          insert = '  assert.match(chart, /level\\.key==="dca"/);\n  assert.match(chart, /lineWidth:3/);\n'
+          if t.count(anchor) != 1:
+              raise SystemExit('Could not find chart overlay regression anchor')
+          test.write_text(t.replace(anchor, insert + anchor, 1))
+          PY
+
+      - name: Verify scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git status --short | awk '{print $2}')"
+          printf '%s\n' "$changed"
+          bad="$(printf '%s\n' "$changed" | grep -Ev '^(web/components/trading-chart\.tsx|web/app/globals\.css|web/tests/trading-chart-aster-detail\.test\.mjs)$' || true)"
+          test -z "$bad" || { echo "Unexpected modified files: $bad"; exit 1; }
+          git diff --exit-code -- cloud_api/aster_multi_bb.py cloud_api/aster_strategy2.py cloud_api/aster_execution.py cloud_api/aster_strategy2_runtime.py
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run chart regressions
+        working-directory: web
+        run: node --test tests/trading-chart-aster-detail.test.mjs tests/dca-detail-reconciliation.test.mjs
+
+      - name: Run complete web suite
+        working-directory: web
+        run: npm test
+
+      - name: Commit verified UI-only fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/trading-chart.tsx web/app/globals.css web/tests/trading-chart-aster-detail.test.mjs
+          git commit -m 'Fix planned DCA line visibility in Aster detail chart'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
