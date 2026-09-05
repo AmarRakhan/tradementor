@@ -4,31 +4,45 @@ root = Path(__file__).resolve().parents[1]
 css = root / "web/components/portfolio-impact-battle.module.css"
 text = css.read_text()
 
-# Use the verified raster artwork directly. The SVG wrapper caused the broken grey/pixel render in live Android builds.
+# Always use the verified clean raster artwork; this avoids the Android SVG/WebP-wrapper render corruption.
 text = text.replace("background-image:url('/portfolio-impact-bulls.svg?v=2')", "background-image:url('/portfolio-impact-bulls.webp?v=4')")
 text = text.replace("background-image:url('/portfolio-impact-bulls.webp')", "background-image:url('/portfolio-impact-bulls.webp?v=4')")
 
-# Full-body cinematic composition: zoom out, expose the legs/rocky base and reduce panel dominance.
-text = text.replace("inset:17% -1% 18%;background-image:url('/portfolio-impact-bulls.webp?v=4');background-position:center 58%;background-repeat:no-repeat;background-size:100% auto", "inset:14% 1% 17%;background-image:url('/portfolio-impact-bulls.webp?v=4');background-position:center 61%;background-repeat:no-repeat;background-size:94% auto")
-text = text.replace("top:15px;width:22.5%;min-width:104px;max-width:180px;padding:10px 11px 9px", "top:15px;width:20.5%;min-width:100px;max-width:166px;padding:9px 10px 8px")
-text = text.replace("rgba(1,27,17,.50),rgba(2,15,10,.28)", "rgba(1,27,17,.42),rgba(2,15,10,.22)")
-text = text.replace("rgba(41,4,11,.52),rgba(18,3,6,.29)", "rgba(41,4,11,.44),rgba(18,3,6,.23)")
+# Full-body cinematic composition. These replacements handle both old and already-refined CSS states.
+text = text.replace("inset:17% -1% 18%;background-image:url('/portfolio-impact-bulls.webp?v=4');background-position:center 58%;background-repeat:no-repeat;background-size:100% auto", "inset:12% 4% 18%;background-image:url('/portfolio-impact-bulls.webp?v=4');background-position:center 61%;background-repeat:no-repeat;background-size:88% auto")
+text = text.replace("inset:14% 1% 17%;background-image:url('/portfolio-impact-bulls.webp?v=4');background-position:center 61%;background-repeat:no-repeat;background-size:94% auto", "inset:12% 4% 18%;background-image:url('/portfolio-impact-bulls.webp?v=4');background-position:center 61%;background-repeat:no-repeat;background-size:88% auto")
 
-# Refine the center clash: smaller, warm and compact; no radial spokes / spinner effect.
-text = text.replace("top:49%;width:86px;height:86px", "top:49%;width:62px;height:62px")
-text = text.replace("inset:13px;border-radius:50%;background:radial-gradient(circle,#fffde7 0 8%,#fff0ac 15%,#ffcf59 25%,rgba(249,149,34,.88) 38%,transparent 70%);box-shadow:0 0 22px rgba(255,196,75,.8),0 0 45px rgba(255,113,37,.35)", "inset:12px;border-radius:50%;background:radial-gradient(circle,#fffde7 0 9%,#fff0ac 17%,#ffcf59 28%,rgba(249,149,34,.76) 40%,transparent 69%);box-shadow:0 0 16px rgba(255,196,75,.76),0 0 31px rgba(255,113,37,.26)")
-text = text.replace(".impact:after{content:\"\";position:absolute;inset:-18px;background:repeating-conic-gradient(from 8deg,transparent 0 10deg,rgba(255,225,145,.92) 11deg 12deg,transparent 13deg 27deg);mask:radial-gradient(circle,transparent 0 31%,#000 34% 62%,transparent 65%);-webkit-mask:radial-gradient(circle,transparent 0 31%,#000 34% 62%,transparent 65%);opacity:calc(.42 + var(--battle-intensity) * .35);filter:drop-shadow(0 0 5px rgba(255,179,63,.8));animation:none}", ".impact:after{content:\"\";position:absolute;inset:-7px;border-radius:50%;background:radial-gradient(circle,transparent 0 42%,rgba(255,214,115,.22) 48%,transparent 70%);filter:blur(2px);opacity:calc(.32 + var(--battle-intensity) * .28)}")
+# Side panels should support the art rather than obscure it.
+text = text.replace("top:15px;width:22.5%;min-width:104px;max-width:180px;padding:10px 11px 9px", "top:15px;width:18.5%;min-width:92px;max-width:150px;padding:8px 9px 8px")
+text = text.replace("top:15px;width:20.5%;min-width:100px;max-width:166px;padding:9px 10px 8px", "top:15px;width:18.5%;min-width:92px;max-width:150px;padding:8px 9px 8px")
+text = text.replace("rgba(1,27,17,.50),rgba(2,15,10,.28)", "rgba(1,27,17,.38),rgba(2,15,10,.18)")
+text = text.replace("rgba(1,27,17,.42),rgba(2,15,10,.22)", "rgba(1,27,17,.38),rgba(2,15,10,.18)")
+text = text.replace("rgba(41,4,11,.52),rgba(18,3,6,.29)", "rgba(41,4,11,.40),rgba(18,3,6,.19)")
+text = text.replace("rgba(41,4,11,.44),rgba(18,3,6,.23)", "rgba(41,4,11,.40),rgba(18,3,6,.19)")
+
+# Compact, elegant center clash. No spokes and no spinner.
+text = text.replace("top:49%;width:86px;height:86px", "top:49%;width:54px;height:54px")
+text = text.replace("top:49%;width:62px;height:62px", "top:49%;width:54px;height:54px")
+text = text.replace("inset:13px;border-radius:50%;background:radial-gradient(circle,#fffde7 0 8%,#fff0ac 15%,#ffcf59 25%,rgba(249,149,34,.88) 38%,transparent 70%);box-shadow:0 0 22px rgba(255,196,75,.8),0 0 45px rgba(255,113,37,.35)", "inset:11px;border-radius:50%;background:radial-gradient(circle,#fffde7 0 9%,#fff0ac 18%,#ffcf59 29%,rgba(249,149,34,.68) 41%,transparent 69%);box-shadow:0 0 13px rgba(255,196,75,.74),0 0 25px rgba(255,113,37,.22)")
+text = text.replace("inset:12px;border-radius:50%;background:radial-gradient(circle,#fffde7 0 9%,#fff0ac 17%,#ffcf59 28%,rgba(249,149,34,.76) 40%,transparent 69%);box-shadow:0 0 16px rgba(255,196,75,.76),0 0 31px rgba(255,113,37,.26)", "inset:11px;border-radius:50%;background:radial-gradient(circle,#fffde7 0 9%,#fff0ac 18%,#ffcf59 29%,rgba(249,149,34,.68) 41%,transparent 69%);box-shadow:0 0 13px rgba(255,196,75,.74),0 0 25px rgba(255,113,37,.22)")
+text = text.replace(".impact:after{content:\"\";position:absolute;inset:-18px;background:repeating-conic-gradient(from 8deg,transparent 0 10deg,rgba(255,225,145,.92) 11deg 12deg,transparent 13deg 27deg);mask:radial-gradient(circle,transparent 0 31%,#000 34% 62%,transparent 65%);-webkit-mask:radial-gradient(circle,transparent 0 31%,#000 34% 62%,transparent 65%);opacity:calc(.42 + var(--battle-intensity) * .35);filter:drop-shadow(0 0 5px rgba(255,179,63,.8));animation:none}", ".impact:after{content:\"\";position:absolute;inset:-5px;border-radius:50%;background:radial-gradient(circle,transparent 0 43%,rgba(255,214,115,.20) 49%,transparent 69%);filter:blur(2px);opacity:calc(.28 + var(--battle-intensity) * .24)}")
+text = text.replace(".impact:after{content:\"\";position:absolute;inset:-7px;border-radius:50%;background:radial-gradient(circle,transparent 0 42%,rgba(255,214,115,.22) 48%,transparent 70%);filter:blur(2px);opacity:calc(.32 + var(--battle-intensity) * .28)}", ".impact:after{content:\"\";position:absolute;inset:-5px;border-radius:50%;background:radial-gradient(circle,transparent 0 43%,rgba(255,214,115,.20) 49%,transparent 69%);filter:blur(2px);opacity:calc(.28 + var(--battle-intensity) * .24)}")
 text = text.replace("@keyframes sparkSpin{to{transform:rotate(360deg)}}", "")
 text = text.replace("animation:sparkSpin 8s linear infinite", "animation:none")
 
-# Mobile composition: further zoom out and make the hero calmer/more reference-like.
+# Mobile: keep hero height, but show more torso, legs and rocky ground than the previous close crop.
 text = text.replace(".card{aspect-ratio:1.55/1", ".card{aspect-ratio:1.62/1")
-text = text.replace("top:10px;width:23.5%;min-width:0;padding:7px 7px 6px", "top:10px;width:21%;min-width:0;padding:6px 6px 6px")
-text = text.replace("inset:18% -1% 19%;background-position:center 59%;background-size:100% auto", "inset:15% 1% 18%;background-position:center 62%;background-size:93% auto")
-text = text.replace("top:49%;width:60px;height:60px", "top:49%;width:44px;height:44px")
+text = text.replace("top:10px;width:23.5%;min-width:0;padding:7px 7px 6px", "top:10px;width:18.5%;min-width:0;padding:6px 6px 5px")
+text = text.replace("top:10px;width:21%;min-width:0;padding:6px 6px 6px", "top:10px;width:18.5%;min-width:0;padding:6px 6px 5px")
+text = text.replace("inset:18% -1% 19%;background-position:center 59%;background-size:100% auto", "inset:13% 4% 18%;background-position:center 62%;background-size:87% auto")
+text = text.replace("inset:15% 1% 18%;background-position:center 62%;background-size:93% auto", "inset:13% 4% 18%;background-position:center 62%;background-size:87% auto")
+text = text.replace("top:49%;width:60px;height:60px", "top:49%;width:38px;height:38px")
+text = text.replace("top:49%;width:44px;height:44px", "top:49%;width:38px;height:38px")
 text = text.replace(".card{aspect-ratio:1.50/1", ".card{aspect-ratio:1.57/1")
-text = text.replace("width:24.5%;padding-inline:6px", "width:22%;padding-inline:5px")
-text = text.replace("inset:19% -1% 19%;background-size:100% auto", "inset:16% 1% 18%;background-size:92% auto")
+text = text.replace("width:24.5%;padding-inline:6px", "width:19.5%;padding-inline:5px")
+text = text.replace("width:22%;padding-inline:5px", "width:19.5%;padding-inline:5px")
+text = text.replace("inset:19% -1% 19%;background-size:100% auto", "inset:14% 4% 18%;background-size:86% auto")
+text = text.replace("inset:16% 1% 18%;background-size:92% auto", "inset:14% 4% 18%;background-size:86% auto")
 
 css.write_text(text)
-print("Portfolio Impact parity repair applied: verified WebP, full-body crop, slimmer panels, compact non-spinner clash")
+print("Portfolio Impact parity repair applied: clean WebP, wider full-body framing, slimmer panels, compact non-spinner clash")
