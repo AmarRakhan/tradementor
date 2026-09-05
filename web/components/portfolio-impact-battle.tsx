@@ -17,7 +17,13 @@ type Props = {
 
 const money = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const bullArtworkStyle = { backgroundImage: "url('/portfolio-impact-bulls.webp?v=4')" } as CSSProperties;
+const bullArtworkStyle = {
+  backgroundImage: "url('/portfolio-impact-bulls.webp?v=4')",
+  backgroundSize: "88% auto",
+  backgroundPosition: "center 62%",
+} as CSSProperties;
+const sidePanelStyle = { width: "20%" } as CSSProperties;
+const impactStyle = { width: "clamp(38px, 6vw, 54px)", height: "clamp(38px, 6vw, 54px)" } as CSSProperties;
 
 function numberFrom(value: unknown) {
   const parsed = Number(value);
@@ -139,9 +145,9 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     <div className={`${styles.bullLayer} ${styles.shortBull}`} style={bullArtworkStyle} aria-hidden="true" />
     <div className={styles.vignette} aria-hidden="true" />
     <div className={styles.smoke} aria-hidden="true" />
-    <div className={styles.impact} aria-hidden="true"><i /><i /><i /></div>
+    <div className={styles.impact} style={impactStyle} aria-hidden="true"><i /><i /><i /></div>
 
-    <div className={`${styles.sidePanel} ${styles.longPanel}`}>
+    <div className={`${styles.sidePanel} ${styles.longPanel}`} style={sidePanelStyle}>
       <div className={styles.sideTitle}><span>LONGS</span><i>↗</i></div>
       <small>Open P&amp;L</small>
       <strong className={tone(snapshot.longPnl)}>{formatUsd(snapshot.longPnl, true)}</strong>
@@ -158,7 +164,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       <span className={tone(metrics.netPnl)}>{formatPercent(netPercent)}</span>
     </div>
 
-    <div className={`${styles.sidePanel} ${styles.shortPanel}`}>
+    <div className={`${styles.sidePanel} ${styles.shortPanel}`} style={sidePanelStyle}>
       <div className={styles.sideTitle}><i>↙</i><span>SHORTS</span></div>
       <small>Open P&amp;L</small>
       <strong className={tone(snapshot.shortPnl)}>{formatUsd(snapshot.shortPnl, true)}</strong>
