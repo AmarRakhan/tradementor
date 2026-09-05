@@ -1,0 +1,21 @@
+name: Dispatch verified planned DCA line fix live
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/workflows/dispatch-planned-dca-line-live-v2-20260905.yml
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch canonical V46 web deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-shared-v44-testapp.yml --repo AmarRakhan/tradementor --ref amar-crypto-bot-2026-cloud
