@@ -1,0 +1,28 @@
+name: Dispatch dual-side DCA chart fix live
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/dispatch-dual-side-dca-live-20260905.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify fix is on canonical branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api repos/${{ github.repository }}/commits/amar-crypto-bot-2026-cloud --jq .sha)"
+          echo "Canonical HEAD: $sha"
+          gh api repos/${{ github.repository }}/commits/bec7911e2130249a5cdc58210b8c82a26f7303a8 >/dev/null
+      - name: Dispatch shared V46 deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-shared-v44-testapp.yml --ref amar-crypto-bot-2026-cloud
