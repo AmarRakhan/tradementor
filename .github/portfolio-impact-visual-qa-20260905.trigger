@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-wide-fullbody-overlay-shrink-final
+visual-qa-portfolio-impact-high-notional-pressure-live-fix
