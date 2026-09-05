@@ -33,7 +33,7 @@ function clamp(value, min, max) {
 
 function safeShare(left, right) {
   const total = Math.abs(left) + Math.abs(right);
-  return total <= EPSILON ? 50 : clamp((Math.abs(left) / total) * 100, 6, 94);
+  return total <= EPSILON ? 50 : clamp((Math.abs(left) / total) * 100, 4, 96);
 }
 
 function normalizedPressure(pnl, delta, exposure, equityBasis) {
@@ -56,7 +56,7 @@ export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, 
   const bothNegative = longPnl < 0 && shortPnl < 0;
   const nearZero = Math.abs(longPnl) + Math.abs(shortPnl) < Math.max(0.05, equityBasis * 0.00001);
   let state = "BALANCED";
-  let status = "IN EVENWICHT";
+  let status = "PORTFOLIO-IMPACT IN EVENWICHT";
   let barLabel = "P&L BIJDRAGE";
   let longShare = 50;
   let motionBias = 0;
@@ -65,32 +65,43 @@ export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, 
     state = "BALANCED";
   } else if (bothPositive) {
     state = "BOTH_POSITIVE";
-    longShare = safeShare(longScore, shortScore);
+    barLabel = "POSITIEVE PORTFOLIO-IMPACT";
+    longShare = safeShare(longPnl, shortPnl);
     const difference = longScore - shortScore;
     motionBias = Math.tanh(difference / Math.max(Math.abs(longScore) + Math.abs(shortScore), equityBasis * 0.002, 1));
-    status = Math.abs(longShare - 50) < 6 ? "BEIDE KANTEN DRAGEN BIJ" : longShare > 50 ? "LONGS DRUKKEN OMHOOG" : "SHORTS DRUKKEN OMHOOG";
+    status = Math.abs(longShare - 50) < 6
+      ? "BEIDE KANTEN DRAGEN BIJ"
+      : longShare > 50 ? "LONGS DRAGEN MEEST BIJ" : "SHORTS DRAGEN MEEST BIJ";
   } else if (bothNegative) {
     state = "BOTH_NEGATIVE";
-    barLabel = "NEGATIEVE DRUK";
+    barLabel = "AANDEEL IN OPEN VERLIES";
     const longDrag = Math.abs(longPnl);
     const shortDrag = Math.abs(shortPnl);
+    longShare = safeShare(longDrag, shortDrag);
     const longPressure = normalizedPressure(longPnl, longDelta, longExposure, equityBasis);
     const shortPressure = normalizedPressure(shortPnl, shortDelta, shortExposure, equityBasis);
-    longShare = clamp(50 + ((longPressure - shortPressure) / Math.max(longPressure + shortPressure, EPSILON)) * 20, 30, 70);
     motionBias = clamp(((longPressure - shortPressure) / Math.max(longPressure + shortPressure, EPSILON)) * 0.42, -0.42, 0.42);
     status = Math.abs(longDrag - shortDrag) < Math.max(0.5, (longDrag + shortDrag) * 0.08)
-      ? "BEIDE KANTEN DRUKKEN OMLAAG"
-      : shortDrag > longDrag ? "SHORTS DRUKKEN HARDER OMLAAG" : "LONGS DRUKKEN HARDER OMLAAG";
+      ? "OPEN VERLIES GELIJK VERDEELD"
+      : shortDrag > longDrag ? "SHORTS VEROORZAKEN MEESTE VERLIES" : "LONGS VEROORZAKEN MEESTE VERLIES";
   } else {
     const scale = Math.max(Math.abs(longScore) + Math.abs(shortScore), equityBasis * 0.0025, 1);
     motionBias = Math.tanh((longScore - shortScore) / scale);
     longShare = clamp(50 + motionBias * 42, 6, 94);
-    if (longScore > shortScore) {
+    barLabel = "P&L BIJDRAGE";
+
+    if (longPnl >= 0 && shortPnl < 0) {
       state = "LONG_DOMINANT";
-      status = longPnl >= 0 ? "LONGS DRUKKEN OMHOOG" : longDelta > 0 ? "LONGS HERSTELLEN" : "LONGS HOUDEN BETER STAND";
+      status = "LONGS DRAGEN BIJ · SHORTS TREKKEN PORTFOLIO OMLAAG";
+    } else if (shortPnl >= 0 && longPnl < 0) {
+      state = "SHORT_DOMINANT";
+      status = "SHORTS DRAGEN BIJ · LONGS TREKKEN PORTFOLIO OMLAAG";
+    } else if (longScore > shortScore) {
+      state = "LONG_DOMINANT";
+      status = longDelta > 0 ? "LONGS HERSTELLEN" : "LONGS HOUDEN BETER STAND";
     } else if (shortScore > longScore) {
       state = "SHORT_DOMINANT";
-      status = shortPnl >= 0 ? "SHORTS DRUKKEN OMHOOG" : shortDelta > 0 ? "SHORTS HERSTELLEN" : "SHORTS HOUDEN BETER STAND";
+      status = shortDelta > 0 ? "SHORTS HERSTELLEN" : "SHORTS HOUDEN BETER STAND";
     }
   }
 
