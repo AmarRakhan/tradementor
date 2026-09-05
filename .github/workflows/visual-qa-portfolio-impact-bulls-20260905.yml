@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CI: true
@@ -78,11 +78,3 @@ jobs:
             web/public/portfolio-impact-bulls.webp
           if-no-files-found: error
           retention-days: 14
-      - name: Commit tested parity refinement
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add web/app/page.tsx web/components/portfolio-impact-battle.tsx web/components/portfolio-impact-battle.module.css
-          git diff --cached --quiet || git commit -m "Refine Portfolio Impact Bulls visual parity"
-          git push origin HEAD:amar-crypto-bot-2026-cloud
