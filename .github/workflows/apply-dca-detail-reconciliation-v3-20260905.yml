@@ -1,0 +1,206 @@
+name: Apply DCA detail reconciliation v3 2026-09-05
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/apply-dca-detail-reconciliation-v3-20260905.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dca-detail-reconciliation-v3-20260905
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply DCA detail read reconciliation only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/patch.py <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path('web/components/aster-recent-trades.tsx')
+          s=p.read_text()
+
+          def one(old,new,label):
+              global s
+              n=s.count(old)
+              if n!=1: raise SystemExit(f'{label}: expected 1 occurrence, got {n}')
+              s=s.replace(old,new,1)
+
+          one('import { useMemo, useRef, useState, type TouchEvent } from "react";',
+              'import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";', 'react import')
+          one('import { deriveAsterAccountDisplay } from "@/lib/aster-account-display";',
+              'import { deriveAsterAccountDisplay } from "@/lib/aster-account-display";\nimport { deriveDcaPresentation } from "@/lib/dca-presentation.mjs";', 'helper import')
+          one('  const [detail, setDetail] = useState<AsterPairDetail | null>(null);',
+              '  const [detail, setDetail] = useState<AsterPairDetail | null>(null);\n  const [detailFillDcaCount, setDetailFillDcaCount] = useState<number | null>(null);', 'detail state')
+          one('  const liveDetailPosition = detail?.status === "OPEN" ? findOpenPosition(allPositions, detail.selection) : null;',
+              '  const liveDetailPosition = detail?.status === "OPEN" ? findOpenPosition(positionsWithMultiDcaCounts, detail.selection) : null;', 'enriched detail position')
+          one('  const detailDcaCount = finite(liveDetailPosition?.dcaCount) ?? detail?.dcaCount ?? null;',
+              '  const detailPositionDcaCount = liveDetailPosition?.dcaCountReliable === true ? finite(liveDetailPosition?.dcaCount) : null;', 'reliable count')
+
+          old='''  const detailNextDcaPrice = finite(detailRuntime?.nextDcaPrice) ?? finite(detailNextDca?.price);\n  const detailNextDcaNumber = finite(detailRuntime?.nextDcaNumber) ?? finite(detailNextDca?.number) ?? 1;\n  const detailNextDcaDistancePct = finite(detailRuntime?.nextDcaDistancePct);'''
+          new='''  const detailRuntimeDcaCount = finite(detailRuntime?.dcaCount);\n  const detailLadderFilledDcaCount = finite(liveDetailPosition?.strategy2DcaLadder?.filledDcaCount);\n  const detailRawNextDcaPrice = finite(detailRuntime?.nextDcaPrice) ?? finite(detailNextDca?.price);\n  const detailRawNextDcaNumber = finite(detailRuntime?.nextDcaNumber) ?? finite(detailNextDca?.number);\n  const detailNextDcaDistancePct = finite(detailRuntime?.nextDcaDistancePct);\n  const detailDcaPresentation = deriveDcaPresentation({\n    runtimeDcaCount: detailRuntimeDcaCount,\n    positionDcaCount: detailPositionDcaCount,\n    positionDcaCountReliable: liveDetailPosition?.dcaCountReliable === true,\n    ladderFilledDcaCount: detailLadderFilledDcaCount,\n    ladderAvailable: liveDetailPosition?.strategy2DcaLadder?.available === true,\n    confirmedFillDcaCount: detailFillDcaCount,\n    fallbackDcaCount: detail?.status === "CLOSED" ? finite(detail?.dcaCount) : null,\n    nextDcaNumber: detailRawNextDcaNumber,\n    nextDcaPrice: detailRawNextDcaPrice,\n    nextDcaDistancePct: detailNextDcaDistancePct,\n  });\n  const detailDcaCount = detailDcaPresentation.filledDcaCount;\n  const detailNextDcaPrice = detailDcaPresentation.nextDcaPrice;\n  const detailNextDcaNumber = detailDcaPresentation.nextDcaNumber;'''
+          one(old,new,'canonical presentation')
+
+          runtime_anchor='  const detailRuntime = detail ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailMainSide}`] || null : null;\n'
+          if s.count(runtime_anchor)!=1: raise SystemExit('runtime anchor not unique')
+          fill_effect='''  useEffect(() => {\n    let cancelled = false;\n    setDetailFillDcaCount(null);\n    if (!detail || detail.status !== "OPEN" || !detail.selection.symbol || !/^(long|short)$/i.test(detail.selection.side)) return () => { cancelled = true; };\n    const query = new URLSearchParams({ symbol: detail.selection.symbol, side: detail.selection.side });\n    authenticatedRequest(`/api/exchanges/aster/trade-events?${query}`)\n      .then((payload) => {\n        if (cancelled) return;\n        const events = Array.isArray(payload?.events) ? payload.events : [];\n        setDetailFillDcaCount(events.filter((event: Record<string, unknown>) => String(event?.kind || "").toLowerCase() === "dca").length);\n      })\n      .catch(() => { if (!cancelled) setDetailFillDcaCount(null); });\n    return () => { cancelled = true; };\n  }, [detail?.status, detail?.selection.symbol, detail?.selection.side]);\n'''
+          s=s.replace(runtime_anchor,runtime_anchor+fill_effect,1)
+
+          canonical_anchor='  const detailDcaCount = detailDcaPresentation.filledDcaCount;\n  const detailNextDcaPrice = detailDcaPresentation.nextDcaPrice;\n  const detailNextDcaNumber = detailDcaPresentation.nextDcaNumber;\n'
+          if s.count(canonical_anchor)!=1: raise SystemExit('canonical anchor not unique')
+          diagnostic='''  useEffect(() => {\n    if (!detail || !detailDcaPresentation.mismatch) return;\n    console.warn("DCA_PRESENTATION_MISMATCH", {\n      symbol: normalizedSymbol(detail.selection.symbol),\n      side: String(detail.selection.side || "").toUpperCase(),\n      exchangeDcaCount: detailFillDcaCount,\n      runtimeDcaCount: detailRuntimeDcaCount,\n      nextDcaNumber: detailRawNextDcaNumber,\n      ladderFilledDcaCount: detailLadderFilledDcaCount,\n      canonicalFilledDcaCount: detailDcaPresentation.filledDcaCount,\n      canonicalNextDcaNumber: detailDcaPresentation.nextDcaNumber,\n      source: detailDcaPresentation.source,\n      timestamp: Date.now(),\n    });\n  }, [detail, detailDcaPresentation.mismatch, detailDcaPresentation.filledDcaCount, detailDcaPresentation.nextDcaNumber, detailDcaPresentation.source, detailFillDcaCount, detailRuntimeDcaCount, detailRawNextDcaNumber, detailLadderFilledDcaCount]);\n'''
+          s=s.replace(canonical_anchor,canonical_anchor+diagnostic,1)
+
+          one('  const detailFilledDca = Math.max(0, Math.round(Number(detailDcaCount ?? 0)));',
+              '  const detailFilledDca = detailDcaCount === null ? null : Math.max(0, Math.round(detailDcaCount));\n  const detailFilledDcaLabel = detailFilledDca === null ? "—" : String(detailFilledDca);', 'unknown zero')
+
+          # The following are display-only substitutions. Use regex so whitespace changes do not make the patch brittle.
+          s,n=re.subn(r'detailNextDcaPrice && detailNextDcaPrice > 0\s*\? \[\s*\{\s*number: Number\(detailNextDcaNumber \|\| 1\),',
+              'detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null\n      ? [\n          {\n            number: detailNextDcaNumber,',s,count=1)
+          if n!=1: raise SystemExit(f'chart dca guard: got {n}')
+          s,n=re.subn(r'\.\.\.\(detailNextDcaPrice && detailNextDcaPrice > 0\s*\? \[\s*\{\s*key: "dca" as const,\s*price: detailNextDcaPrice,\s*label: `DCA \$\{Math\.round\(Number\(detailNextDcaNumber \|\| 1\)\)\}`,',
+              '...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null\n      ? [\n          {\n            key: "dca" as const,\n            price: detailNextDcaPrice,\n            label: `DCA ${Math.round(detailNextDcaNumber)}`,',s,count=1)
+          if n!=1: raise SystemExit(f'planned dca guard: got {n}')
+
+          one('<strong>Volgende DCA: {Math.round(Number(detailNextDcaNumber || 1))}</strong>\n                    <small>{detailFilledDca} gevuld</small>',
+              '<strong>{detailNextDcaPrice && detailNextDcaNumber !== null ? `Volgende DCA: ${Math.round(detailNextDcaNumber)}` : "Volgende DCA: —"}</strong>\n                    <small>{detailFilledDcaLabel} gevuld</small>', 'top dca card')
+          one('<strong>{detailFilledDca}</strong>','<strong>{detailFilledDcaLabel}</strong>','filled dca display')
+          one('<strong>{detailNextDcaPrice ? `${money(detailNextDcaPrice)} · DCA ${Math.round(Number(detailNextDcaNumber || 1))}` : "Geen volgende DCA beschikbaar"}</strong>',
+              '<strong>{detailNextDcaPrice && detailNextDcaNumber !== null ? `${money(detailNextDcaPrice)} · DCA ${Math.round(detailNextDcaNumber)}` : "Geen volgende DCA beschikbaar"}</strong>', 'next dca summary')
+          one('<span>AFSTAND TOT DCA ({Math.round(Number(detailNextDcaNumber || 1))})</span>',
+              '<span>AFSTAND TOT DCA ({detailNextDcaNumber === null ? "—" : Math.round(detailNextDcaNumber)})</span>', 'distance dca label')
+
+          p.write_text(s)
+          PY
+          python /tmp/patch.py
+
+          cat > web/lib/dca-presentation.mjs <<'EOF'
+          function finiteNonNegative(value) {
+            if (value === null || value === undefined || value === "") return null;
+            const n = Number(value);
+            return Number.isFinite(n) && n >= 0 ? n : null;
+          }
+          function count(value) {
+            const n = finiteNonNegative(value);
+            return n === null ? null : Math.max(0, Math.round(n));
+          }
+          export function deriveDcaPresentation(input = {}) {
+            const runtime = count(input.runtimeDcaCount);
+            const position = input.positionDcaCountReliable === true ? count(input.positionDcaCount) : null;
+            const ladder = input.ladderAvailable === true ? count(input.ladderFilledDcaCount) : null;
+            const confirmed = count(input.confirmedFillDcaCount);
+            const fallback = count(input.fallbackDcaCount);
+            const reliable = [runtime, position, ladder, confirmed].filter(v => v !== null);
+            const filledDcaCount = reliable.length ? Math.max(...reliable) : fallback;
+            let source = "unknown";
+            if (confirmed !== null && filledDcaCount === confirmed && runtime !== null && confirmed !== runtime) source = "confirmed-fills";
+            else if (runtime !== null && filledDcaCount === runtime) source = "runtime";
+            else if (position !== null && filledDcaCount === position) source = "position";
+            else if (ladder !== null && filledDcaCount === ladder) source = "ladder";
+            else if (confirmed !== null && filledDcaCount === confirmed) source = "confirmed-fills";
+            else if (fallback !== null) source = "fallback";
+            const priceCandidate = finiteNonNegative(input.nextDcaPrice);
+            const nextDcaPrice = priceCandidate !== null && priceCandidate > 0 ? priceCandidate : null;
+            const rawNextDcaNumber = count(input.nextDcaNumber);
+            const nextDcaNumber = nextDcaPrice !== null && filledDcaCount !== null ? filledDcaCount + 1 : rawNextDcaNumber;
+            const nextDcaDistancePct = input.nextDcaDistancePct === null || input.nextDcaDistancePct === undefined || input.nextDcaDistancePct === "" ? null : (Number.isFinite(Number(input.nextDcaDistancePct)) ? Number(input.nextDcaDistancePct) : null);
+            const signals = [runtime, position, ladder, confirmed].filter(v => v !== null);
+            const countMismatch = signals.length > 1 && new Set(signals).size > 1;
+            const nextMismatch = nextDcaPrice !== null && filledDcaCount !== null && rawNextDcaNumber !== null && rawNextDcaNumber !== filledDcaCount + 1;
+            return { filledDcaCount, nextDcaNumber, nextDcaPrice, nextDcaDistancePct, dcaCountReliable: reliable.length > 0, source, mismatch: countMismatch || nextMismatch };
+          }
+          EOF
+
+          cat > web/lib/dca-presentation.d.ts <<'EOF'
+          export type DcaPresentationInput={runtimeDcaCount?:unknown;positionDcaCount?:unknown;positionDcaCountReliable?:boolean;ladderFilledDcaCount?:unknown;ladderAvailable?:boolean;confirmedFillDcaCount?:unknown;fallbackDcaCount?:unknown;nextDcaNumber?:unknown;nextDcaPrice?:unknown;nextDcaDistancePct?:unknown};
+          export type DcaPresentation={filledDcaCount:number|null;nextDcaNumber:number|null;nextDcaPrice:number|null;nextDcaDistancePct:number|null;dcaCountReliable:boolean;source:string;mismatch:boolean};
+          export function deriveDcaPresentation(input?:DcaPresentationInput):DcaPresentation;
+          EOF
+
+          cat > web/tests/dca-detail-reconciliation.test.mjs <<'EOF'
+          import test from "node:test";
+          import assert from "node:assert/strict";
+          import { readFile } from "node:fs/promises";
+          import { deriveDcaPresentation } from "../lib/dca-presentation.mjs";
+          const component=await readFile(new URL("../components/aster-recent-trades.tsx",import.meta.url),"utf8");
+          test("runtime 6 presents count 6 and planned DCA 7",()=>{const r=deriveDcaPresentation({runtimeDcaCount:6,positionDcaCount:6,positionDcaCountReliable:true,confirmedFillDcaCount:6,nextDcaNumber:7,nextDcaPrice:630});assert.equal(r.filledDcaCount,6);assert.equal(r.nextDcaNumber,7);assert.equal(r.mismatch,false)});
+          test("unknown count stays unknown",()=>{const r=deriveDcaPresentation({});assert.equal(r.filledDcaCount,null);assert.equal(r.nextDcaNumber,null);assert.equal(r.dcaCountReliable,false)});
+          test("confirmed fills raise stale presentation count and diagnose mismatch",()=>{const r=deriveDcaPresentation({runtimeDcaCount:5,positionDcaCount:5,positionDcaCountReliable:true,confirmedFillDcaCount:6,nextDcaNumber:6,nextDcaPrice:630});assert.equal(r.filledDcaCount,6);assert.equal(r.nextDcaNumber,7);assert.equal(r.source,"confirmed-fills");assert.equal(r.mismatch,true)});
+          test("detail uses enriched side-specific position source and no forced zero/one",()=>{assert.match(component,/findOpenPosition\(positionsWithMultiDcaCounts, detail\.selection\)/);assert.doesNotMatch(component,/findOpenPosition\(allPositions, detail\.selection\)/);assert.match(component,/DCA_PRESENTATION_MISMATCH/);assert.match(component,/new URLSearchParams\(\{ symbol: detail\.selection\.symbol, side: detail\.selection\.side \}\)/);assert.match(component,/detailDcaCount === null \? null/);assert.match(component,/detailFilledDcaLabel = detailFilledDca === null \? "—"/);assert.doesNotMatch(component,/detailDcaCount \?\? 0/);assert.doesNotMatch(component,/detailNextDcaNumber \|\| 1/)})
+          EOF
+
+          cat > cloud_api/test_dca_detail_reconciliation.py <<'EOF'
+          from aster_history import trade_events_from_fills
+          def f(symbol,ps,side,id,price,qty,t): return {"symbol":symbol,"positionSide":ps,"side":side,"id":id,"price":str(price),"qty":str(qty),"time":t}
+          def test_short_sell_increases():
+              e=trade_events_from_fills([f("BNBUSDT","SHORT","SELL","s1",600,.1,1000),f("BNBUSDT","SHORT","SELL","s2",602,.1,2000),f("BNBUSDT","SHORT","SELL","s3",604,.1,3000)],symbol="BNBUSDT",position_side="SHORT")
+              assert [x["kind"] for x in e]==["entry","dca","dca"] and [x["dcaNumber"] for x in e]==[None,1,2]
+          def test_long_buy_increases():
+              e=trade_events_from_fills([f("BNBUSDT","LONG","BUY","l1",600,.1,1000),f("BNBUSDT","LONG","BUY","l2",598,.1,2000),f("BNBUSDT","LONG","BUY","l3",596,.1,3000)],symbol="BNBUSDT",position_side="LONG")
+              assert [x["kind"] for x in e]==["entry","dca","dca"] and [x["dcaNumber"] for x in e]==[None,1,2]
+          def test_long_short_same_pair_isolated():
+              fills=[f("BNBUSDT","LONG","BUY","l1",600,.1,1000),f("BNBUSDT","SHORT","SELL","s1",600,.1,1100),f("BNBUSDT","LONG","BUY","l2",598,.1,2000),f("BNBUSDT","SHORT","SELL","s2",602,.1,2100)]
+              l=trade_events_from_fills(fills,symbol="BNBUSDT",position_side="LONG"); sh=trade_events_from_fills(fills,symbol="BNBUSDT",position_side="SHORT")
+              assert [x["id"] for x in l]==["l1","l2"] and [x["id"] for x in sh]==["s1","s2"]
+          def test_manual_exchange_increase_reconstructed_as_dca():
+              e=trade_events_from_fills([f("BNBUSDT","SHORT","SELL","bot-entry",600,.1,1000),f("BNBUSDT","SHORT","SELL","bot-dca",602,.1,2000),f("BNBUSDT","SHORT","SELL","manual-add",604,.1,3000)],symbol="BNBUSDT",position_side="SHORT")
+              assert [x["kind"] for x in e]==["entry","dca","dca"] and e[-1]["id"]=="manual-add" and e[-1]["dcaNumber"]==2
+          EOF
+
+      - name: Prove live trading source untouched
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed='^(web/components/aster-recent-trades\.tsx|web/lib/dca-presentation\.mjs|web/lib/dca-presentation\.d\.ts|web/tests/dca-detail-reconciliation\.test\.mjs|cloud_api/test_dca_detail_reconciliation\.py)$'
+          changed="$(git status --short | awk '{print $2}')"
+          bad="$(printf '%s\n' "$changed" | grep -Ev "$allowed" || true)"
+          test -z "$bad" || { echo "Unexpected modified files: $bad"; exit 1; }
+          git diff --exit-code -- cloud_api/aster_history.py cloud_api/aster_multi_bb.py cloud_api/aster_strategy2.py cloud_api/aster_execution.py cloud_api/aster_strategy2_runtime.py
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run targeted web regressions
+        working-directory: web
+        run: node --test tests/aster-trade-center.test.mjs tests/trading-chart-aster-detail.test.mjs tests/recent-trades.test.mjs tests/dca-detail-reconciliation.test.mjs
+      - name: Build web
+        working-directory: web
+        run: npm run build
+      - name: Install backend test dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+      - name: Run fill reconstruction regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_aster_history.py test_dca_detail_reconciliation.py
+      - name: Commit tested fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/components/aster-recent-trades.tsx web/lib/dca-presentation.mjs web/lib/dca-presentation.d.ts web/tests/dca-detail-reconciliation.test.mjs cloud_api/test_dca_detail_reconciliation.py
+          git diff --cached --check
+          git commit -m "Fix Aster DCA detail reconciliation"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
