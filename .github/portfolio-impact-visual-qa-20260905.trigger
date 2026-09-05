@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-20260905-valid-asset-rerun-final-7
+visual-qa-portfolio-impact-bulls-valid-artwork-final-pass
