@@ -1,0 +1,60 @@
+name: Apply DCA recovery and manual adoption 2026-09-05
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/dca-recovery-manual-adoption-20260905.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dca-recovery-manual-adoption-20260905
+  cancel-in-progress: false
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply DCA recovery implementation
+        run: python tools/apply_dca_recovery_manual_adoption_20260905.py
+
+      - name: Install backend test dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+
+      - name: Run DCA, asymmetric hedge and TP regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_aster_multi_bb.py test_asymmetric_hedge_20260904.py test_strategy2_tp_toggle_20260903.py
+
+      - name: Run deterministic stress loop
+        working-directory: cloud_api
+        run: |
+          for i in $(seq 1 25); do
+            python -m pytest -q test_aster_multi_bb.py -k 'manual or dca or asymmetric' >/dev/null
+          done
+
+      - name: Commit verified implementation
+        run: |
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb.py cloud_api/test_aster_multi_bb.py
+          if git diff --cached --quiet; then
+            echo 'No implementation changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Repair DCA recovery and adopt manual position adds'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
