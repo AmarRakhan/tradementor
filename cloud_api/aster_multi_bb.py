@@ -565,10 +565,20 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     active = _position_map(client.position_risk()) if sent and not dry_run else pmap
     active_symbols = {k.split("|", 1)[0] for k in active}
     account_position_count = len(active)
-    account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
     strategy_active_keys = {key for key in active if key in state or (settings.manual_symbol_selection_enabled and key in selected_keys)}
     long_count = sum(1 for k in strategy_active_keys if k.endswith("|LONG")); short_count = sum(1 for k in strategy_active_keys if k.endswith("|SHORT"))
-    long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
+    active_pair_count = sum(1 for key, row in state.items() if key.endswith("|LONG") and row.get("asymmetricHedge") and key in active and (row.get("pairedShortPending") or str(row.get("pairedShortKey") or "") in active))
+    legacy_position_count = max(0, len(strategy_active_keys) - active_pair_count * 2) if settings.asymmetric_hedge_enabled else 0
+    if settings.asymmetric_hedge_enabled:
+        # Gekoppelde-parencapaciteit geldt uitsluitend voor NIEUWE asymmetrische cycli.
+        # Bestaande Strategy-2 posities blijven intact en mogen de nieuwe pair allocator niet blokkeren.
+        pair_need = max(0, settings.long_slots - active_pair_count)
+        long_need = pair_need; short_need = pair_need
+        account_remaining_capacity = max(0, 50 - account_position_count)
+    else:
+        pair_need = 0
+        long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
+        account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
 
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
     scanned_candidates = 0
@@ -668,12 +678,19 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         active_symbols.add(symbol)
         consumed = 2 if paired and (dry_run or f"{symbol}|SHORT" in state) else 1
         account_position_count += consumed
-        account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
-        if side == "LONG":
-            long_count += 1; long_need = max(0, settings.long_slots - long_count)
-            if consumed == 2: short_count += 1; short_need = max(0, settings.short_slots - short_count)
+        if settings.asymmetric_hedge_enabled:
+            account_remaining_capacity = max(0, 50 - account_position_count)
+            active_pair_count += 1
+            pair_need = max(0, settings.long_slots - active_pair_count)
+            long_need = pair_need; short_need = pair_need
+            long_count += 1
+            if consumed == 2: short_count += 1
         else:
-            short_count += 1; short_need = max(0, settings.short_slots - short_count)
+            account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
+            if side == "LONG":
+                long_count += 1; long_need = max(0, settings.long_slots - long_count)
+            else:
+                short_count += 1; short_need = max(0, settings.short_slots - short_count)
         available -= total_required if consumed == 2 else required; sent += consumed
 
     managed_long = sum(1 for key in state if key.endswith("|LONG") and key in active)
@@ -695,19 +712,20 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     entry_rows = [a for a in actions if a.get("kind") == "ENTRY"]
     entry_wait = [a for a in actions if a.get("kind") in {"ENTRY_SKIP", "ENTRY_MARGIN_WAIT"}]
     selected_open = bool(settings.manual_symbol_selection_enabled and any(key in active for key in selected_keys))
-    remaining_slots = long_need + short_need
+    remaining_slots = pair_need if settings.asymmetric_hedge_enabled else long_need + short_need
     next_required_margin = min(minimum_margin_rejections, default=None)
     if entry_rows and remaining_slots > 0:
         entry_status = "PARTIAL_FILL_PLANNED" if dry_run else "PARTIAL_FILL_SUBMITTED"
-        entry_reason = f"{len(entry_rows)} nieuwe positie(s) verwerkt; nog {remaining_slots} botslots vrij"
+        entry_reason = (f"{len(entry_rows)} nieuwe gekoppelde cycli verwerkt; nog {remaining_slots} paar/paaren vrij" if settings.asymmetric_hedge_enabled else f"{len(entry_rows)} nieuwe positie(s) verwerkt; nog {remaining_slots} botslots vrij")
         if next_required_margin is not None:
             entry_reason += f"; volgende minimumorder vraagt circa {next_required_margin:.2f} USDT startmargin"
     elif entry_rows: entry_status = "ENTRY_PLANNED" if dry_run else "ENTRY_SUBMITTED"; entry_reason = "verse Strategy 2 entry verwerkt"
     elif selected_open: entry_status = "POSITION_ALREADY_OPEN"; entry_reason = "geselecteerde munt heeft al een open Aster-positie"
-    elif long_need <= 0 and short_need <= 0: entry_status = "WAITING_CAPACITY"; entry_reason = "Strategy 2 slots zijn gevuld"
-    elif account_remaining_capacity <= 0:
+    elif long_need <= 0 and short_need <= 0:
+        entry_status = "WAITING_CAPACITY"; entry_reason = "Gekoppelde-parencapaciteit is gevuld" if settings.asymmetric_hedge_enabled else "Strategy 2 slots zijn gevuld"
+    elif account_remaining_capacity < (2 if settings.asymmetric_hedge_enabled else 1):
         entry_status = "WAITING_ACCOUNT_CAP"
-        entry_reason = f"account heeft {account_position_count} actieve Aster-posities; ingestelde limiet is {settings.maximum_positions}"
+        entry_reason = (f"account heeft {account_position_count} actieve Aster-posities; er zijn twee vrije posities nodig voor één volledig LONG+SHORT-paar" if settings.asymmetric_hedge_enabled else f"account heeft {account_position_count} actieve Aster-posities; ingestelde limiet is {settings.maximum_positions}")
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
     elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
     elif entry_wait: entry_status = "ORDER_REJECTED"; entry_reason = str(entry_wait[0].get("reason", "Aster ordercheck afgewezen"))
@@ -718,8 +736,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
-              "asymmetricHedgeActivePairs": sum(1 for key, row in state.items() if key.endswith("|LONG") and row.get("asymmetricHedge") and (row.get("pairedShortPending") or str(row.get("pairedShortKey") or "") in active)),
-              "activeLong": settings.long_slots - long_need, "activeShort": settings.short_slots - short_need,
+              "asymmetricHedgeActivePairs": active_pair_count, "remainingPairs": pair_need if settings.asymmetric_hedge_enabled else None,
+              "legacyPositionsDuringAsymmetric": legacy_position_count,
+              "activeLong": long_count, "activeShort": short_count,
               "remainingLong": long_need, "remainingShort": short_need,
               "accountPositionCount": account_position_count, "accountRemainingCapacity": account_remaining_capacity,
               "untrackedAccountPositionCount": max(0, account_position_count - len(strategy_active_keys)),
