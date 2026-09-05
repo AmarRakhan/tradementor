@@ -21,3 +21,4 @@ assert old in s, 'legacy report field not found'
 s = s.replace(old, new, 1)
 
 p.write_text(s)
+# reporting repair intentionally runs after the capacity patch
