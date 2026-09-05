@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-clean-asset-confirmed-pass-2
+visual-qa-portfolio-impact-bulls-wide-fullbody-overlay-shrink-final
