@@ -1,0 +1,9 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { deriveDcaPresentation } from "../lib/dca-presentation.mjs";
+const component=await readFile(new URL("../components/aster-recent-trades.tsx",import.meta.url),"utf8");
+test("runtime 6 presents count 6 and planned DCA 7",()=>{const r=deriveDcaPresentation({runtimeDcaCount:6,positionDcaCount:6,positionDcaCountReliable:true,confirmedFillDcaCount:6,nextDcaNumber:7,nextDcaPrice:630});assert.equal(r.filledDcaCount,6);assert.equal(r.nextDcaNumber,7);assert.equal(r.mismatch,false)});
+test("unknown count stays unknown",()=>{const r=deriveDcaPresentation({});assert.equal(r.filledDcaCount,null);assert.equal(r.nextDcaNumber,null);assert.equal(r.dcaCountReliable,false)});
+test("confirmed fills raise stale presentation count and diagnose mismatch",()=>{const r=deriveDcaPresentation({runtimeDcaCount:5,positionDcaCount:5,positionDcaCountReliable:true,confirmedFillDcaCount:6,nextDcaNumber:6,nextDcaPrice:630});assert.equal(r.filledDcaCount,6);assert.equal(r.nextDcaNumber,7);assert.equal(r.source,"confirmed-fills");assert.equal(r.mismatch,true)});
+test("detail uses enriched side-specific position source and no forced zero/one",()=>{assert.match(component,/findOpenPosition\(positionsWithMultiDcaCounts, detail\.selection\)/);assert.doesNotMatch(component,/findOpenPosition\(allPositions, detail\.selection\)/);assert.match(component,/DCA_PRESENTATION_MISMATCH/);assert.match(component,/new URLSearchParams\(\{ symbol: detail\.selection\.symbol, side: detail\.selection\.side \}\)/);assert.match(component,/detailDcaCount === null \? null/);assert.match(component,/detailFilledDcaLabel = detailFilledDca === null \? "—"/);assert.doesNotMatch(component,/detailDcaCount \?\? 0/);assert.doesNotMatch(component,/detailNextDcaNumber \|\| 1/)})

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type TouchEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { createPortal } from "react-dom";
 import type { ExchangeSnapshot } from "@/lib/use-exchange-data";
 import { authenticatedRequest } from "@/lib/cloud-client";
@@ -8,6 +8,7 @@ import { activityTime, reliableReturnPct, sortedActivity, stableActivityId } fro
 import { authoritativePositionReturnPct, positionId, topProfitPositions } from "@/lib/top-profit-positions.mjs";
 import { SafeTradingChart, type AirbagChartEvent, type DcaChartLevel, type PlannedActionLevel, type TradeSelection, type FocusV2Cockpit } from "@/components/trading-chart";
 import { deriveAsterAccountDisplay } from "@/lib/aster-account-display";
+import { deriveDcaPresentation } from "@/lib/dca-presentation.mjs";
 import styles from "./aster-trade-center.module.css";
 import profitStyles from "./aster-profit-close.module.css";
 
@@ -845,6 +846,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const [expanded, setExpanded] = useState(false);
   const [pages, setPages] = useState(1);
   const [detail, setDetail] = useState<AsterPairDetail | null>(null);
+  const [detailFillDcaCount, setDetailFillDcaCount] = useState<number | null>(null);
   const [profitConfirming, setProfitConfirming] = useState(false);
   const [profitBusy, setProfitBusy] = useState(false);
   const [profitPreview, setProfitPreview] = useState<ProfitClosePreview | null>(null);
@@ -956,14 +958,14 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       }),
     [snapshot.data, snapshot.serverConfirmed, snapshot.error, snapshot.updatedAt],
   );
-  const liveDetailPosition = detail?.status === "OPEN" ? findOpenPosition(allPositions, detail.selection) : null;
+  const liveDetailPosition = detail?.status === "OPEN" ? findOpenPosition(positionsWithMultiDcaCounts, detail.selection) : null;
   const detailAverageEntry = averageEntry(liveDetailPosition) ?? detail?.averageEntry ?? null;
   const detailCurrentPrice = finite(liveDetailPosition?.markPrice) ?? detail?.currentPrice ?? null;
   const detailPnl = finite(liveDetailPosition?.unrealizedPnl) ?? detail?.pnl ?? null;
   const detailPnlPct = finite(liveDetailPosition?.returnPct) ?? (detailPnl !== null && detailAverageEntry && detailAverageEntry > 0 && finite(liveDetailPosition?.quantity) ? (detailPnl / (detailAverageEntry * Number(liveDetailPosition?.quantity))) * 100 : null);
   const detailQuantity = finite(liveDetailPosition?.quantity) ?? detail?.quantity ?? null;
   const detailMargin = openPositionMargin(liveDetailPosition);
-  const detailDcaCount = finite(liveDetailPosition?.dcaCount) ?? detail?.dcaCount ?? null;
+  const detailPositionDcaCount = liveDetailPosition?.dcaCountReliable === true ? finite(liveDetailPosition?.dcaCount) : null;
   const detailBreakEvenPrice = finite(liveDetailPosition?.strategy2Tp?.breakEvenPrice) ?? undefined;
   const detailDcaLevels = useMemo(() => {
     const levels = liveDetailPosition?.strategy2DcaLadder?.levels;
@@ -981,9 +983,55 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailMainSide = String(detailAirbag?.mainSide || detail?.selection.side || "").toUpperCase();
   const detailHedgeSide = String(detailAirbag?.hedgeSide || "").toUpperCase();
   const detailRuntime = detail ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailMainSide}`] || null : null;
-  const detailNextDcaPrice = finite(detailRuntime?.nextDcaPrice) ?? finite(detailNextDca?.price);
-  const detailNextDcaNumber = finite(detailRuntime?.nextDcaNumber) ?? finite(detailNextDca?.number) ?? 1;
+  useEffect(() => {
+    let cancelled = false;
+    setDetailFillDcaCount(null);
+    if (!detail || detail.status !== "OPEN" || !detail.selection.symbol || !/^(long|short)$/i.test(detail.selection.side)) return () => { cancelled = true; };
+    const query = new URLSearchParams({ symbol: detail.selection.symbol, side: detail.selection.side });
+    authenticatedRequest(`/api/exchanges/aster/trade-events?${query}`)
+      .then((payload) => {
+        if (cancelled) return;
+        const events = Array.isArray(payload?.events) ? payload.events : [];
+        setDetailFillDcaCount(events.filter((event: Record<string, unknown>) => String(event?.kind || "").toLowerCase() === "dca").length);
+      })
+      .catch(() => { if (!cancelled) setDetailFillDcaCount(null); });
+    return () => { cancelled = true; };
+  }, [detail?.status, detail?.selection.symbol, detail?.selection.side]);
+  const detailRuntimeDcaCount = finite(detailRuntime?.dcaCount);
+  const detailLadderFilledDcaCount = finite(liveDetailPosition?.strategy2DcaLadder?.filledDcaCount);
+  const detailRawNextDcaPrice = finite(detailRuntime?.nextDcaPrice) ?? finite(detailNextDca?.price);
+  const detailRawNextDcaNumber = finite(detailRuntime?.nextDcaNumber) ?? finite(detailNextDca?.number);
   const detailNextDcaDistancePct = finite(detailRuntime?.nextDcaDistancePct);
+  const detailDcaPresentation = deriveDcaPresentation({
+    runtimeDcaCount: detailRuntimeDcaCount,
+    positionDcaCount: detailPositionDcaCount,
+    positionDcaCountReliable: liveDetailPosition?.dcaCountReliable === true,
+    ladderFilledDcaCount: detailLadderFilledDcaCount,
+    ladderAvailable: liveDetailPosition?.strategy2DcaLadder?.available === true,
+    confirmedFillDcaCount: detailFillDcaCount,
+    fallbackDcaCount: detail?.status === "CLOSED" ? finite(detail?.dcaCount) : null,
+    nextDcaNumber: detailRawNextDcaNumber,
+    nextDcaPrice: detailRawNextDcaPrice,
+    nextDcaDistancePct: detailNextDcaDistancePct,
+  });
+  const detailDcaCount = detailDcaPresentation.filledDcaCount;
+  const detailNextDcaPrice = detailDcaPresentation.nextDcaPrice;
+  const detailNextDcaNumber = detailDcaPresentation.nextDcaNumber;
+  useEffect(() => {
+    if (!detail || !detailDcaPresentation.mismatch) return;
+    console.warn("DCA_PRESENTATION_MISMATCH", {
+      symbol: normalizedSymbol(detail.selection.symbol),
+      side: String(detail.selection.side || "").toUpperCase(),
+      exchangeDcaCount: detailFillDcaCount,
+      runtimeDcaCount: detailRuntimeDcaCount,
+      nextDcaNumber: detailRawNextDcaNumber,
+      ladderFilledDcaCount: detailLadderFilledDcaCount,
+      canonicalFilledDcaCount: detailDcaPresentation.filledDcaCount,
+      canonicalNextDcaNumber: detailDcaPresentation.nextDcaNumber,
+      source: detailDcaPresentation.source,
+      timestamp: Date.now(),
+    });
+  }, [detail, detailDcaPresentation.mismatch, detailDcaPresentation.filledDcaCount, detailDcaPresentation.nextDcaNumber, detailDcaPresentation.source, detailFillDcaCount, detailRuntimeDcaCount, detailRawNextDcaNumber, detailLadderFilledDcaCount]);
   const detailTpPct = finite(detailRuntime?.takeProfitPct);
   const detailTpPrice = finite(detailRuntime?.tpPrice);
   const detailTpDistancePct = finite(detailRuntime?.tpDistancePct);
@@ -992,24 +1040,25 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const signedDistance = (value: number | null) => (value === null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(2).replace(".", ",")}%`);
   const detailDcaDistanceLabel = signedDistance(detailNextDcaDistancePct);
   const detailTpDistanceLabel = signedDistance(detailTpDistancePct);
-  const detailFilledDca = Math.max(0, Math.round(Number(detailDcaCount ?? 0)));
+  const detailFilledDca = detailDcaCount === null ? null : Math.max(0, Math.round(detailDcaCount));
+  const detailFilledDcaLabel = detailFilledDca === null ? "—" : String(detailFilledDca);
   const detailChartDcaLevels =
-    detailNextDcaPrice && detailNextDcaPrice > 0
+    detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null
       ? [
           {
-            number: Number(detailNextDcaNumber || 1),
+            number: detailNextDcaNumber,
             price: detailNextDcaPrice,
           },
           ...detailDcaLevels.filter((level) => Math.abs(level.price - detailNextDcaPrice) > 1e-10),
         ]
       : detailDcaLevels;
   const detailPlannedLevels: PlannedActionLevel[] = [
-    ...(detailNextDcaPrice && detailNextDcaPrice > 0
+    ...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null
       ? [
           {
             key: "dca" as const,
             price: detailNextDcaPrice,
-            label: `DCA ${Math.round(Number(detailNextDcaNumber || 1))}`,
+            label: `DCA ${Math.round(detailNextDcaNumber)}`,
             color: "#ffd166",
           },
         ]
@@ -1296,8 +1345,8 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 <div className={styles.tradeNowActions}>
                   <div className={styles.dcaAction}>
                     <span>DCA STATUS</span>
-                    <strong>Volgende DCA: {Math.round(Number(detailNextDcaNumber || 1))}</strong>
-                    <small>{detailFilledDca} gevuld</small>
+                    <strong>{detailNextDcaPrice && detailNextDcaNumber !== null ? `Volgende DCA: ${Math.round(detailNextDcaNumber)}` : "Volgende DCA: —"}</strong>
+                    <small>{detailFilledDcaLabel} gevuld</small>
                   </div>
                   <div className={styles.tpAction}>
                     <span>TP INSTELLING</span>
@@ -1307,7 +1356,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 </div>
                 <div className={styles.tradeNowDistances}>
                   <div>
-                    <span>AFSTAND TOT DCA ({Math.round(Number(detailNextDcaNumber || 1))})</span>
+                    <span>AFSTAND TOT DCA ({detailNextDcaNumber === null ? "—" : Math.round(detailNextDcaNumber)})</span>
                     <strong className={styles.dcaTone}>{detailDcaDistanceLabel}</strong>
                   </div>
                   <div>
@@ -1316,7 +1365,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                   </div>
                   <div>
                     <span>DCA GEVULD</span>
-                    <strong>{detailFilledDca}</strong>
+                    <strong>{detailFilledDcaLabel}</strong>
                   </div>
                 </div>
               </section>
@@ -1349,7 +1398,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 </div>
                 <div>
                   <span>Volgende {detailMainSide} DCA prijs</span>
-                  <strong>{detailNextDcaPrice ? `${money(detailNextDcaPrice)} · DCA ${Math.round(Number(detailNextDcaNumber || 1))}` : "Geen volgende DCA beschikbaar"}</strong>
+                  <strong>{detailNextDcaPrice && detailNextDcaNumber !== null ? `${money(detailNextDcaPrice)} · DCA ${Math.round(detailNextDcaNumber)}` : "Geen volgende DCA beschikbaar"}</strong>
                 </div>
                 <div>
                   <span>Afstand tot volgende DCA</span>
