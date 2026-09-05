@@ -26,6 +26,7 @@ import { BotHealthCard } from "@/components/bot-health-card";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
+import { PortfolioImpactBattle } from "@/components/portfolio-impact-battle";
 
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -439,11 +440,16 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
       </section>}
 
-      {!positionsOnly && <section className="direction-balance" aria-label="Long en short balans">
+      {!positionsOnly && (destination === "aster" ? <PortfolioImpactBattle
+        positions={view.positions}
+        equity={view.equityNumber}
+        dataAvailable={view.accountDataAvailable}
+        updatedAt={snapshot.updatedAt}
+      /> : <section className="direction-balance" aria-label="Long en short balans">
         <DirectionBalanceCell label="LONG" count={view.accountDataAvailable ? longPositions.length : null} value={view.accountDataAvailable ? longPnl : null} />
         <DirectionBalanceCell label="NETTO OPEN PNL" value={view.accountDataAvailable ? netOpenPnl : null} center />
         <DirectionBalanceCell label="SHORT" count={view.accountDataAvailable ? shortPositions.length : null} value={view.accountDataAvailable ? shortPnl : null} />
-      </section>}
+      </section>)}
       {!positionsOnly && destination === "aster" && <AsterRecentTrades snapshot={snapshot} onRetry={onRefresh} />}
       <section className="dashboard-grid">
         {positionsOnly && <article className="primary-card position-card">
