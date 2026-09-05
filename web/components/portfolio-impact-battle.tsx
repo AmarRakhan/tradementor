@@ -17,6 +17,7 @@ type Props = {
 
 const money = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const bullArtworkStyle = { backgroundImage: "url('/portfolio-impact-bulls.svg')" } as CSSProperties;
 
 function numberFrom(value: unknown) {
   const parsed = Number(value);
@@ -108,9 +109,9 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
   }
 
   return <section className={styles.card} style={visualStyle} data-state={metrics.state} aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(metrics.netPnl, true)}. ${metrics.status}.`}>
-    <div className={styles.cinematicBase} aria-hidden="true" />
-    <div className={`${styles.bullLayer} ${styles.longBull}`} aria-hidden="true" />
-    <div className={`${styles.bullLayer} ${styles.shortBull}`} aria-hidden="true" />
+    <div className={styles.cinematicBase} style={bullArtworkStyle} aria-hidden="true" />
+    <div className={`${styles.bullLayer} ${styles.longBull}`} style={bullArtworkStyle} aria-hidden="true" />
+    <div className={`${styles.bullLayer} ${styles.shortBull}`} style={bullArtworkStyle} aria-hidden="true" />
     <div className={styles.vignette} aria-hidden="true" />
     <div className={styles.smoke} aria-hidden="true" />
     <div className={styles.impact} aria-hidden="true"><i /><i /><i /></div>
