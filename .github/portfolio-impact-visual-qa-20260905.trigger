@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-clean-artwork-final-pass
+visual-qa-portfolio-impact-bulls-clean-compressed-final-pass
