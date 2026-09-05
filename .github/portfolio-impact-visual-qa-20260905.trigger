@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-cinematic-approved-ratio-inventory-fixed
+visual-qa-portfolio-impact-bulls-live-pressure-hero-final
