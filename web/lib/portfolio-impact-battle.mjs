@@ -36,6 +36,16 @@ function safeShare(left, right) {
   return total <= EPSILON ? 50 : clamp((Math.abs(left) / total) * 100, 6, 94);
 }
 
+function normalizedPressure(pnl, delta, exposure, equityBasis) {
+  const exposureScale = Math.max(Math.sqrt(Math.max(Math.abs(exposure), 1)), 1);
+  const pnlScale = Math.max(Math.sqrt(equityBasis), 10);
+  const lossPressure = Math.sqrt(Math.max(-pnl, 0) + 0.25) / pnlScale;
+  const adverseMomentum = Math.max(-delta, 0) / Math.max(equityBasis * 0.0015, 1);
+  const recoveryRelief = Math.max(delta, 0) / Math.max(equityBasis * 0.0015, 1);
+  const exposureContext = Math.log1p(Math.abs(exposure)) / Math.max(Math.log1p(equityBasis * 8), 1);
+  return Math.max(0.02, lossPressure * (0.84 + exposureContext * 0.16) + adverseMomentum * 0.18 - recoveryRelief * 0.08 + 1 / exposureScale * 0.005);
+}
+
 export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, shortDelta = 0, longExposure = 0, shortExposure = 0, equity = 0 } = {}) {
   const netPnl = longPnl + shortPnl;
   const equityBasis = Math.max(Math.abs(equity), Math.abs(longExposure) * 0.04 + Math.abs(shortExposure) * 0.04, 100);
@@ -62,11 +72,12 @@ export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, 
   } else if (bothNegative) {
     state = "BOTH_NEGATIVE";
     barLabel = "NEGATIEVE DRUK";
-    longShare = safeShare(longPnl, shortPnl);
     const longDrag = Math.abs(longPnl);
     const shortDrag = Math.abs(shortPnl);
-    const dragDifference = shortDrag - longDrag;
-    motionBias = clamp(Math.tanh((longScore - shortScore) / Math.max(longDrag + shortDrag, 1)) * 0.28, -0.28, 0.28);
+    const longPressure = normalizedPressure(longPnl, longDelta, longExposure, equityBasis);
+    const shortPressure = normalizedPressure(shortPnl, shortDelta, shortExposure, equityBasis);
+    longShare = clamp(50 + ((longPressure - shortPressure) / Math.max(longPressure + shortPressure, EPSILON)) * 20, 30, 70);
+    motionBias = clamp(((longPressure - shortPressure) / Math.max(longPressure + shortPressure, EPSILON)) * 0.42, -0.42, 0.42);
     status = Math.abs(longDrag - shortDrag) < Math.max(0.5, (longDrag + shortDrag) * 0.08)
       ? "BEIDE KANTEN DRUKKEN OMLAAG"
       : shortDrag > longDrag ? "SHORTS DRUKKEN HARDER OMLAAG" : "LONGS DRUKKEN HARDER OMLAAG";
