@@ -1,0 +1,137 @@
+name: Fix dual-side DCA chart lines 2026-09-05
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/fix-dual-side-dca-lines-20260905.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-dual-side-dca-chart-lines
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Apply dual-side planned DCA chart fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          chart = Path('web/components/trading-chart.tsx')
+          s = chart.read_text()
+          old = 'export type PlannedActionLevel = { key: "dca" | "tp"; price: number; label: string; color?: string };'
+          new = 'export type PlannedActionLevel = { key: "dca" | "dca-long" | "dca-short" | "tp"; price: number; label: string; color?: string };'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('PlannedActionLevel union anchor not found')
+
+          old = 'plannedActionLevels.filter(level=>level.key==="dca"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));'
+          new = 'plannedActionLevels.filter(level=>String(level.key).includes("dca")&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('native planned DCA line anchor not found')
+
+          old = 'label:level.label||(level.key==="dca"?`VOLGENDE ${selection.side.toUpperCase()} DCA`:"TP"),color:level.color||(level.key==="dca"?"#ffd166":"#b978ff")'
+          new = 'label:level.label||(String(level.key).includes("dca")?`VOLGENDE ${selection.side.toUpperCase()} DCA`:"TP"),color:level.color||(String(level.key).includes("dca")?"#ffd166":"#b978ff")'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('planned overlay DCA classifier anchor not found')
+          chart.write_text(s)
+
+          recent = Path('web/components/aster-recent-trades.tsx')
+          s = recent.read_text()
+          anchor = '  const detailRuntime = detail ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailMainSide}`] || null : null;\n'
+          insert = '''  const detailOppositeSide = detailMainSide === "LONG" ? "SHORT" : detailMainSide === "SHORT" ? "LONG" : "";\n  const detailOppositePosition = detail?.status === "OPEN" && detailOppositeSide ? findOpenPosition(positionsWithMultiDcaCounts, { symbol: detail.selection.symbol, side: detailOppositeSide }) : null;\n  const detailOppositeRuntime = detail && detailOppositePosition && detailOppositeSide ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailOppositeSide}`] || null : null;\n  const detailOppositeNextDcaPrice = finite(detailOppositeRuntime?.nextDcaPrice);\n  const detailOppositeNextDcaNumber = finite(detailOppositeRuntime?.nextDcaNumber);\n'''
+          if insert not in s:
+              if s.count(anchor) != 1:
+                  raise SystemExit(f'detail runtime anchor count={s.count(anchor)}')
+              s = s.replace(anchor, anchor + insert, 1)
+
+          old = '''          {\n            key: "dca" as const,\n            price: detailNextDcaPrice,\n            label: `DCA ${Math.round(detailNextDcaNumber)}`,\n            color: "#ffd166",\n          },'''
+          new = '''          {\n            key: (detailMainSide === "SHORT" ? "dca-short" : "dca-long") as const,\n            price: detailNextDcaPrice,\n            label: `${detailMainSide || "POSITION"} DCA ${Math.round(detailNextDcaNumber)}`,\n            color: detailMainSide === "SHORT" ? "#55e3ff" : "#ffd166",\n          },'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('selected planned DCA block not found')
+
+          tp_anchor = '''      : []),\n    ...(detailTpPrice && detailTpPrice > 0\n'''
+          opposite_block = '''      : []),\n    ...(detailOppositeNextDcaPrice && detailOppositeNextDcaPrice > 0 && detailOppositeNextDcaNumber !== null\n      ? [\n          {\n            key: (detailOppositeSide === "SHORT" ? "dca-short" : "dca-long") as const,\n            price: detailOppositeNextDcaPrice,\n            label: `${detailOppositeSide} DCA ${Math.round(detailOppositeNextDcaNumber)}`,\n            color: detailOppositeSide === "SHORT" ? "#55e3ff" : "#ffd166",\n          },\n        ]\n      : []),\n    ...(detailTpPrice && detailTpPrice > 0\n'''
+          if 'label: `${detailOppositeSide} DCA ${Math.round(detailOppositeNextDcaNumber)}`' not in s:
+              if s.count(tp_anchor) != 1:
+                  raise SystemExit(f'TP planned-level anchor count={s.count(tp_anchor)}')
+              s = s.replace(tp_anchor, opposite_block, 1)
+
+          summary_anchor = '''                <div>\n                  <span>Afstand tot volgende DCA</span>\n                  <strong>{detailNextDcaPrice ? detailDcaDistanceLabel : "Geen volgende DCA beschikbaar"}</strong>\n                </div>\n'''
+          summary_insert = summary_anchor + '''                {detailOppositePosition && (\n                  <div>\n                    <span>Volgende {detailOppositeSide} DCA prijs</span>\n                    <strong>{detailOppositeNextDcaPrice && detailOppositeNextDcaNumber !== null ? `${money(detailOppositeNextDcaPrice)} · DCA ${Math.round(detailOppositeNextDcaNumber)}` : "Geen volgende DCA beschikbaar"}</strong>\n                  </div>\n                )}\n'''
+          if '<span>Volgende {detailOppositeSide} DCA prijs</span>' not in s:
+              if s.count(summary_anchor) != 1:
+                  raise SystemExit(f'opposite summary anchor count={s.count(summary_anchor)}')
+              s = s.replace(summary_anchor, summary_insert, 1)
+          recent.write_text(s)
+
+          test = Path('web/tests/dual-side-dca-chart.test.mjs')
+          test.write_text('''import test from "node:test";\nimport assert from "node:assert/strict";\nimport { readFileSync } from "node:fs";\n\nconst chart = readFileSync(new URL("../components/trading-chart.tsx", import.meta.url), "utf8");\nconst recent = readFileSync(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");\n\ntest("Aster detail keeps both active LONG and SHORT next-DCA plans visible", () => {\n  assert.match(recent, /detailOppositeSide/);\n  assert.match(recent, /detailOppositePosition/);\n  assert.match(recent, /detailOppositeRuntime/);\n  assert.match(recent, /detailOppositeNextDcaPrice/);\n  assert.match(recent, /detailOppositeNextDcaNumber/);\n  assert.match(recent, /`\\$\\{detailOppositeSide\\} DCA \\$\\{Math\\.round\\(detailOppositeNextDcaNumber\\)\\}`/);\n  assert.match(recent, /Volgende \\{detailOppositeSide\\} DCA prijs/);\n});\n\ntest("planned DCA chart rendering supports side-specific keys without touching TP", () => {\n  assert.match(chart, /"dca-long"/);\n  assert.match(chart, /"dca-short"/);\n  assert.match(chart, /String\\(level\\.key\\)\\.includes\\("dca"\\)/);\n  assert.match(chart, /level\\.key==="tp"/);\n});\n''')
+          PY
+
+      - name: Verify UI-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- cloud_api/aster_multi_bb.py cloud_api/aster_strategy2.py cloud_api/aster_execution.py cloud_api/aster_strategy2_runtime.py cloud_api/aster_history.py
+          changed="$(git status --short | awk '{print $2}')"
+          bad="$(printf '%s\n' "$changed" | grep -Ev '^(web/components/trading-chart\.tsx|web/components/aster-recent-trades\.tsx|web/tests/dual-side-dca-chart\.test\.mjs)$' || true)"
+          test -z "$bad" || { echo "Unexpected modified files: $bad"; exit 1; }
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run full web suite
+        working-directory: web
+        run: npm test
+
+      - name: Commit and safely rebase onto latest branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/trading-chart.tsx web/components/aster-recent-trades.tsx web/tests/dual-side-dca-chart.test.mjs
+          git commit -m 'Show both LONG and SHORT next DCA lines in Aster detail'
+          for attempt in 1 2 3 4 5; do
+            git fetch origin amar-crypto-bot-2026-cloud
+            if ! git rebase origin/amar-crypto-bot-2026-cloud; then
+              git rebase --abort || true
+              echo 'Concurrent conflict while rebasing; refusing unsafe overwrite.'
+              exit 1
+            fi
+            if git push origin HEAD:amar-crypto-bot-2026-cloud; then
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+          echo 'Could not push after safe rebase retries.'
+          exit 1
