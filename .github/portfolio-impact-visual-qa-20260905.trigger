@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-full-body-momentum-nonstuck-final
+visual-qa-portfolio-impact-bulls-clean-asset-final-pass
