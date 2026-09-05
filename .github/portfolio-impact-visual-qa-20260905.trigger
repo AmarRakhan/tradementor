@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-valid-artwork-race-free-final-pass
+visual-qa-portfolio-impact-bulls-clean-artwork-final-pass
