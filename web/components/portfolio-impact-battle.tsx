@@ -107,7 +107,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     </section>;
   }
 
-  return <section className={styles.card} style={visualStyle} data-state={metrics.state} aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(metrics.netPnl, true)}.`}>
+  return <section className={styles.card} style={visualStyle} data-state={metrics.state} aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(metrics.netPnl, true)}. ${metrics.status}.`}>
     <div className={styles.cinematicBase} aria-hidden="true" />
     <div className={`${styles.bullLayer} ${styles.longBull}`} aria-hidden="true" />
     <div className={`${styles.bullLayer} ${styles.shortBull}`} aria-hidden="true" />
@@ -146,10 +146,11 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     <div className={styles.battleFooter}>
       <div className={styles.status}>{metrics.status}</div>
       <div className={styles.balanceRow}>
-        <div className={`${styles.share} ${styles.longShare}`}><strong>{metrics.longShare}%</strong><small>{metrics.barLabel}</small></div>
+        <div className={`${styles.share} ${styles.longShare}`}><strong>{metrics.longShare}%</strong></div>
         <div className={styles.balanceTrack} aria-hidden="true"><div className={styles.longFill} /><div className={styles.shortFill} /><i /></div>
-        <div className={`${styles.share} ${styles.shortShare}`}><strong>{metrics.shortShare}%</strong><small>{metrics.barLabel}</small></div>
+        <div className={`${styles.share} ${styles.shortShare}`}><strong>{metrics.shortShare}%</strong></div>
       </div>
+      <div className={styles.barCaption}>{metrics.barLabel}</div>
     </div>
   </section>;
 }
