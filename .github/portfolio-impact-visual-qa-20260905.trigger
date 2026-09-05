@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-semantic-tests-fixed
+visual-qa-portfolio-impact-bulls-cinematic-approved-ratio-final
