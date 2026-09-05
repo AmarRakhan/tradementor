@@ -1,0 +1,1 @@
+Repair requested 2026-09-05: in asymmetric linked-pair mode, a released/closed SHORT leg must not free a scanner pair seat while its LONG cycle is still active. Example: configured 15 linked pairs must remain capped at 15 logical cycles and must never refill toward the legacy 50-position account ceiling merely because hedge legs were released.
