@@ -32,21 +32,27 @@ function clamp(value, min, max) {
 }
 
 function livePressure(longDelta, shortDelta, longExposure, shortExposure, equityBasis) {
-  // Convert dollar-P&L movement to exposure-normalized return movement first.
-  // This prevents a 2x larger SHORT book from appearing twice as strong purely because it is larger.
-  const longBasis = Math.max(Math.abs(longExposure), equityBasis, 1);
-  const shortBasis = Math.max(Math.abs(shortExposure), equityBasis, 1);
+  // Compare the *direction* of recent P&L movement after normalizing each side by its own book size.
+  // Crucially, do not use a fixed normalized-return floor: with highly leveraged Aster books (millions
+  // of notional against a small equity balance) that floor previously swallowed real $1-$20 moves and
+  // forced the widget to 50/50 forever. Noise filtering is therefore done in account dollars first.
+  const longBasis = Math.max(Math.abs(longExposure), 1);
+  const shortBasis = Math.max(Math.abs(shortExposure), 1);
   const longRate = longDelta / longBasis;
   const shortRate = shortDelta / shortBasis;
 
-  // Rising LONG return = bullish pressure. Rising SHORT return = bearish pressure.
+  const absoluteMovement = Math.abs(longDelta) + Math.abs(shortDelta);
+  const dollarNoiseFloor = Math.max(0.02, equityBasis * 0.00025);
+  if (absoluteMovement <= dollarNoiseFloor) return { bias: 0, longShare: 50 };
+
+  const observedRateMovement = Math.abs(longRate) + Math.abs(shortRate);
+  if (observedRateMovement <= EPSILON) return { bias: 0, longShare: 50 };
+
+  // Rising LONG P&L is bullish pressure; rising SHORT P&L is bearish pressure.
   const edge = longRate - shortRate;
-  const observedMovement = Math.abs(longRate) + Math.abs(shortRate);
-  const noiseFloor = 0.000015;
-  const scale = Math.max(observedMovement, noiseFloor);
-  const bias = observedMovement <= noiseFloor * 0.35
-    ? 0
-    : clamp(Math.tanh((edge / scale) * 1.18), -1, 1);
+  const directionalEdge = clamp(edge / observedRateMovement, -1, 1);
+  const confidence = clamp((absoluteMovement - dollarNoiseFloor) / Math.max(dollarNoiseFloor * 4, 0.05), 0, 1);
+  const bias = clamp(Math.tanh(directionalEdge * 1.32) * confidence, -1, 1);
   const longShare = clamp(50 + bias * 42, 8, 92);
   return { bias, longShare };
 }
