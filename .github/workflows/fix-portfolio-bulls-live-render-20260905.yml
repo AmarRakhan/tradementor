@@ -11,9 +11,13 @@ on:
 permissions:
   contents: write
 
+env:
+  CI: true
+
 jobs:
   fix:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,13 +36,17 @@ jobs:
       - name: Run regression suite
         working-directory: web
         run: npm test
-      - name: Verify render contract
+      - name: Verify render and momentum contract
         working-directory: web
         shell: bash
         run: |
-          grep -q "portfolio-impact-bulls.svg?v=2" components/portfolio-impact-battle.module.css
-          ! grep -q "animation:sparkSpin 8s linear infinite" components/portfolio-impact-battle.module.css
-          test -s public/portfolio-impact-bulls.svg
+          grep -q "portfolio-impact-bulls.webp?v=4" components/portfolio-impact-battle.module.css
+          grep -q "portfolio-impact-bulls.webp?v=4" components/portfolio-impact-battle.tsx
+          grep -q 'const lastSample = useRef' components/portfolio-impact-battle.tsx
+          grep -q 'smoothedMomentum' components/portfolio-impact-battle.tsx
+          ! grep -q "sparkSpin" components/portfolio-impact-battle.module.css
+          grep -q 'LIVE DRUK' lib/portfolio-impact-battle.mjs
+          test -s public/portfolio-impact-bulls.webp
       - name: Commit live repair
         shell: bash
         run: |
@@ -49,5 +57,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add web/components/portfolio-impact-battle.module.css
-          git commit -m "Fix live Portfolio Impact bull render and stop endless spark spin"
+          git commit -m "Refine Portfolio Impact full-body render and center clash"
+          git pull --rebase origin amar-crypto-bot-2026-cloud
           git push origin HEAD:amar-crypto-bot-2026-cloud
