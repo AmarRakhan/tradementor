@@ -46,6 +46,35 @@ test("position count and exposure do not decide live pressure", () => {
   assert.ok(result.shortShare > result.longShare);
 });
 
+test("high-notional leveraged Aster books do not get stuck at 50/50", () => {
+  const result = deriveBattleMetrics({
+    longPnl: -9.57,
+    shortPnl: -256.23,
+    longDelta: 0.45,
+    shortDelta: -1.10,
+    longExposure: 7_089_583.73,
+    shortExposure: 7_707_460.75,
+    equity: 145.89,
+  });
+  assert.equal(result.status, "LONGS DRUKKEN HARDER");
+  assert.ok(result.longShare > 50);
+  assert.notEqual(result.longShare, 50);
+});
+
+test("high-notional short recovery is also visible instead of neutral fallback", () => {
+  const result = deriveBattleMetrics({
+    longPnl: -9.57,
+    shortPnl: -256.23,
+    longDelta: -0.35,
+    shortDelta: 0.95,
+    longExposure: 7_089_583.73,
+    shortExposure: 7_707_460.75,
+    equity: 145.89,
+  });
+  assert.equal(result.status, "SHORTS DRUKKEN HARDER");
+  assert.ok(result.shortShare > 50);
+});
+
 test("rolling delta can make a rapidly recovering long the live momentum leader", () => {
   const result = deriveBattleMetrics({ longPnl: -400, shortPnl: 100, longDelta: 60, shortDelta: -10, longExposure: 5_000, shortExposure: 5_000, equity: 10_000 });
   assert.equal(result.status, "LONGS DRUKKEN HARDER");
