@@ -38,7 +38,7 @@ function formatUsd(value: number, signed = false) {
   if (!Number.isFinite(value)) return "—";
   const normalized = Math.abs(value) < 0.005 ? 0 : value;
   const sign = signed && normalized > 0 ? "+" : normalized < 0 ? "-" : "";
-  return `US$ ${sign}${money.format(Math.abs(normalized))}`;
+  return `$${sign}${money.format(Math.abs(normalized))}`;
 }
 
 function formatPercent(value: number) {
@@ -91,8 +91,9 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
   }), [snapshot, momentum, equity]);
 
   const netPercent = equity && Math.abs(equity) > 0.01 ? metrics.netPnl / Math.abs(equity) * 100 : 0;
-  const longPercent = snapshot.longExposure > 0 ? snapshot.longPnl / snapshot.longExposure * 100 : 0;
-  const shortPercent = snapshot.shortExposure > 0 ? snapshot.shortPnl / snapshot.shortExposure * 100 : 0;
+  const equityBasis = equity && Math.abs(equity) > 0.01 ? Math.abs(equity) : 0;
+  const longPercent = equityBasis ? snapshot.longPnl / equityBasis * 100 : 0;
+  const shortPercent = equityBasis ? snapshot.shortPnl / equityBasis * 100 : 0;
   const visualStyle = {
     "--battle-bias": metrics.motionBias.toFixed(4),
     "--battle-intensity": metrics.intensity.toFixed(4),

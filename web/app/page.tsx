@@ -430,16 +430,6 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
 
       {!positionsOnly && destination === "aster" && <BotHealthCard />}
 
-      {!positionsOnly && <section className="metric-strip" aria-label="Portefeuilleoverzicht">
-        <Metric label="PORTFOLIOWAARDE" value={view.equity} detail={view.metricDetail} />
-        <Metric label="AVAILABLE TO TRADE" value={view.available} detail="Direct van de exchange" />
-        <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
-        <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
-        {isHyperliquid && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail="Perps maintenance margin" />}
-        {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} available={snapshot.data?.historyAvailable === true} positions={view.positions} equity={view.equity} availableToTrade={view.available} openPnl={netOpenPnl} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
-        {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
-      </section>}
-
       {!positionsOnly && (destination === "aster" ? <PortfolioImpactBattle
         positions={view.positions}
         equity={view.equityNumber}
@@ -450,6 +440,17 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <DirectionBalanceCell label="NETTO OPEN PNL" value={view.accountDataAvailable ? netOpenPnl : null} center />
         <DirectionBalanceCell label="SHORT" count={view.accountDataAvailable ? shortPositions.length : null} value={view.accountDataAvailable ? shortPnl : null} />
       </section>)}
+
+      {!positionsOnly && <section className="metric-strip" aria-label="Portefeuilleoverzicht">
+        <Metric label="PORTFOLIOWAARDE" value={view.equity} detail={view.metricDetail} />
+        <Metric label="AVAILABLE TO TRADE" value={view.available} detail="Direct van de exchange" />
+        <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
+        <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
+        {isHyperliquid && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail="Perps maintenance margin" />}
+        {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} available={snapshot.data?.historyAvailable === true} positions={view.positions} equity={view.equity} availableToTrade={view.available} openPnl={netOpenPnl} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
+        {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
+      </section>}
+
       {!positionsOnly && destination === "aster" && <AsterRecentTrades snapshot={snapshot} onRetry={onRefresh} />}
       <section className="dashboard-grid">
         {positionsOnly && <article className="primary-card position-card">
