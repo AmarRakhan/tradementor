@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-bulls-clean-asset-final-pass
+visual-qa-portfolio-impact-bulls-clean-asset-confirmed-pass-2
