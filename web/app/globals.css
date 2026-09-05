@@ -371,10 +371,10 @@ h1, h2, h3, p { margin-top: 0; }
 .aster-detail-chart .chart-stage{position:relative;overflow:hidden}
 .aster-detail-chart .focus-level-overlay{position:absolute;inset:0;z-index:8;pointer-events:none;overflow:hidden}
 .aster-detail-chart .focus-level-segment{position:absolute;left:12px;right:92px;height:0;overflow:visible;pointer-events:none}
-.aster-detail-chart .focus-price-line{position:absolute;left:52%;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}
+.aster-detail-chart .focus-price-line{position:absolute;left:0;right:0;top:-1px;height:2px;min-width:18px;border-radius:999px;background:currentColor;box-shadow:0 0 8px color-mix(in srgb,currentColor 35%,transparent);opacity:.9}
 .aster-detail-chart .focus-line-label{position:absolute;right:0;top:0;transform:translateY(-50%);display:block;max-width:min(190px,62vw);padding:4px 8px;border:1px solid color-mix(in srgb,currentColor 72%,transparent);border-radius:999px;background:rgba(3,13,22,.94);box-shadow:0 4px 14px rgba(0,0,0,.38);color:currentColor;font-size:10px;font-weight:900;line-height:1.1;letter-spacing:.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .aster-detail-chart .focus-label-leader{position:absolute;right:10px;width:0;border-right:1px dashed currentColor;opacity:.78}
-@media(max-width:500px){.aster-detail-chart .focus-level-segment{left:8px;right:92px}.aster-detail-chart .focus-price-line{left:42%}.aster-detail-chart .focus-line-label{max-width:158px;padding:4px 7px;font-size:9px;letter-spacing:0}}
+@media(max-width:500px){.aster-detail-chart .focus-level-segment{left:8px;right:92px}.aster-detail-chart .focus-price-line{left:0}.aster-detail-chart .focus-line-label{max-width:158px;padding:4px 7px;font-size:9px;letter-spacing:0}}
 @media(min-width:501px){.aster-detail-chart .focus-line-label{max-width:220px}}
 
 /* Active Trades Index: compact dashboard card + fullscreen analysis */

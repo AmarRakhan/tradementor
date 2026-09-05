@@ -10,6 +10,8 @@ test("Aster detail chart keeps executed markers and adds planned DCA/TP overlays
   assert.match(chart, /plannedActionLevels/);
   assert.match(chart, /plannedOverlayLevels/);
   assert.match(chart, /VOLGENDE \$\{selection\.side\.toUpperCase\(\)\} DCA/);
+  assert.match(chart, /level\.key==="dca"/);
+  assert.match(chart, /lineWidth:3/);
   assert.match(chart, /level\.key==="tp"/);
   assert.match(chart, /axisLabelVisible:false/);
   assert.match(chart, /layoutFocusLabelYs/);

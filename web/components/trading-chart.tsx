@@ -244,6 +244,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
         const next=index===0;
         priceSeries.createPriceLine({ price:Number(level.price), color:next?"#ffd166":"#496985", lineWidth:next?2:1, lineStyle:next?0:2, axisLabelVisible:false, title:"" });
       });
+      plannedActionLevels.filter(level=>level.key==="dca"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));
       plannedActionLevels.filter(level=>level.key==="tp"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#b978ff",lineWidth:2,lineStyle:0,axisLabelVisible:false,title:""}));
     }
     if (mode === "aster-detail") {
