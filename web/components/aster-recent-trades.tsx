@@ -983,6 +983,11 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailMainSide = String(detailAirbag?.mainSide || detail?.selection.side || "").toUpperCase();
   const detailHedgeSide = String(detailAirbag?.hedgeSide || "").toUpperCase();
   const detailRuntime = detail ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailMainSide}`] || null : null;
+  const detailOppositeSide = detailMainSide === "LONG" ? "SHORT" : detailMainSide === "SHORT" ? "LONG" : "";
+  const detailOppositePosition = detail?.status === "OPEN" && detailOppositeSide ? findOpenPosition(positionsWithMultiDcaCounts, { symbol: detail.selection.symbol, side: detailOppositeSide }) : null;
+  const detailOppositeRuntime = detail && detailOppositePosition && detailOppositeSide ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailOppositeSide}`] || null : null;
+  const detailOppositeNextDcaPrice = finite(detailOppositeRuntime?.nextDcaPrice);
+  const detailOppositeNextDcaNumber = finite(detailOppositeRuntime?.nextDcaNumber);
   useEffect(() => {
     let cancelled = false;
     setDetailFillDcaCount(null);
@@ -1056,10 +1061,20 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     ...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null
       ? [
           {
-            key: "dca" as const,
+            key: (detailMainSide === "SHORT" ? "dca-short" : "dca-long") as const,
             price: detailNextDcaPrice,
-            label: `DCA ${Math.round(detailNextDcaNumber)}`,
-            color: "#ffd166",
+            label: `${detailMainSide || "POSITION"} DCA ${Math.round(detailNextDcaNumber)}`,
+            color: detailMainSide === "SHORT" ? "#55e3ff" : "#ffd166",
+          },
+        ]
+      : []),
+    ...(detailOppositeNextDcaPrice && detailOppositeNextDcaPrice > 0 && detailOppositeNextDcaNumber !== null
+      ? [
+          {
+            key: (detailOppositeSide === "SHORT" ? "dca-short" : "dca-long") as const,
+            price: detailOppositeNextDcaPrice,
+            label: `${detailOppositeSide} DCA ${Math.round(detailOppositeNextDcaNumber)}`,
+            color: detailOppositeSide === "SHORT" ? "#55e3ff" : "#ffd166",
           },
         ]
       : []),
@@ -1404,6 +1419,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                   <span>Afstand tot volgende DCA</span>
                   <strong>{detailNextDcaPrice ? detailDcaDistanceLabel : "Geen volgende DCA beschikbaar"}</strong>
                 </div>
+                {detailOppositePosition && (
+                  <div>
+                    <span>Volgende {detailOppositeSide} DCA prijs</span>
+                    <strong>{detailOppositeNextDcaPrice && detailOppositeNextDcaNumber !== null ? `${money(detailOppositeNextDcaPrice)} · DCA ${Math.round(detailOppositeNextDcaNumber)}` : "Geen volgende DCA beschikbaar"}</strong>
+                  </div>
+                )}
                 <div>
                   <span>Take Profit ingesteld</span>
                   <strong>{detailTpPct === null ? "—" : `${detailTpPct.toFixed(2).replace(".", ",")}%`}</strong>
