@@ -17,7 +17,7 @@ type Props = {
 
 const money = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const bullArtworkStyle = { backgroundImage: "url('/portfolio-impact-bulls.svg')" } as CSSProperties;
+const bullArtworkStyle = { backgroundImage: "url('/portfolio-impact-bulls.webp?v=4')" } as CSSProperties;
 
 function numberFrom(value: unknown) {
   const parsed = Number(value);
@@ -55,6 +55,8 @@ function tone(value: number) {
 
 export function PortfolioImpactBattle({ positions, equity, dataAvailable, updatedAt }: Props) {
   const history = useRef<HistoryPoint[]>([]);
+  const lastSample = useRef<HistoryPoint | null>(null);
+  const smoothedMomentum = useRef<Momentum>({ long: 0, short: 0 });
   const [momentum, setMomentum] = useState<Momentum>({ long: 0, short: 0 });
 
   const snapshot = useMemo(() => {
@@ -70,15 +72,38 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
   useEffect(() => {
     if (!dataAvailable) return;
     const now = Date.now();
-    const next = [...history.current, { at: now, long: snapshot.longPnl, short: snapshot.shortPnl }].filter((point) => now - point.at <= 20_000);
+    const point = { at: now, long: snapshot.longPnl, short: snapshot.shortPnl };
+    const previous = lastSample.current;
+    lastSample.current = point;
+
+    const next = [...history.current, point].filter((sample) => now - sample.at <= 20_000);
     history.current = next;
+
     const target = now - 8_000;
-    const anchor = next.reduce((best, point) => Math.abs(point.at - target) < Math.abs(best.at - target) ? point : best, next[0]);
-    if (!anchor || now - anchor.at < 1_250) {
-      setMomentum({ long: 0, short: 0 });
-      return;
-    }
-    setMomentum({ long: snapshot.longPnl - anchor.long, short: snapshot.shortPnl - anchor.short });
+    const anchor = next.reduce((best, sample) => Math.abs(sample.at - target) < Math.abs(best.at - target) ? sample : best, next[0]);
+    const rollingReady = Boolean(anchor && now - anchor.at >= 1_250);
+    const rolling = rollingReady
+      ? { long: snapshot.longPnl - anchor.long, short: snapshot.shortPnl - anchor.short }
+      : null;
+    const instant = previous && now - previous.at <= 15_000
+      ? { long: snapshot.longPnl - previous.long, short: snapshot.shortPnl - previous.short }
+      : null;
+
+    let raw: Momentum;
+    if (rolling && instant) raw = { long: rolling.long * 0.72 + instant.long * 0.28, short: rolling.short * 0.72 + instant.short * 0.28 };
+    else if (rolling) raw = rolling;
+    else if (instant) raw = instant;
+    else raw = smoothedMomentum.current;
+
+    const moved = Math.abs(raw.long) + Math.abs(raw.short) > 0.0001;
+    const alpha = moved ? 0.58 : 0.18;
+    const previousSmooth = smoothedMomentum.current;
+    const nextSmooth = {
+      long: previousSmooth.long * (1 - alpha) + raw.long * alpha,
+      short: previousSmooth.short * (1 - alpha) + raw.short * alpha,
+    };
+    smoothedMomentum.current = nextSmooth;
+    setMomentum(nextSmooth);
   }, [snapshot.longPnl, snapshot.shortPnl, dataAvailable, updatedAt]);
 
   const metrics: PortfolioBattleMetrics = useMemo(() => deriveBattleMetrics({
