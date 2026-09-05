@@ -1,0 +1,51 @@
+name: Apply Portfolio Impact Bulls 20260905
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/portfolio-impact-bulls-20260905.trigger
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Apply isolated Aster UI integration
+        run: python tools/apply_portfolio_impact_bulls_20260905.py
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run Portfolio Impact battle logic scenarios
+        working-directory: web
+        run: node --test tests/portfolio-impact-bulls.test.mjs
+      - name: Run full web build and regression suite
+        working-directory: web
+        run: npm test
+      - name: Verify old Aster balance strip is replaced without touching Hyperliquid
+        shell: bash
+        run: |
+          grep -q 'destination === "aster" ? <PortfolioImpactBattle' web/app/page.tsx
+          grep -q 'className="direction-balance"' web/app/page.tsx
+          grep -q 'portfolio-impact-bulls.webp' web/components/portfolio-impact-battle.module.css
+      - name: Commit tested integration
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/app/page.tsx
+          git diff --cached --quiet || git commit -m "Add realtime Portfolio Impact Bulls to Aster dashboard"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
