@@ -18,7 +18,10 @@ for (const [name, type, width, height] of cases) {
   const card = page.locator('section[aria-label^="Portfolio impact."]');
   await card.waitFor({ state: 'visible' });
   const box = await card.boundingBox();
-  assert.ok(box && box.width <= width && box.height < 210, `${name}: card geometry outside compact mobile target`);
+  assert.ok(box && box.width <= width, `${name}: card exceeds viewport width`);
+  const ratio = box ? box.width / box.height : 0;
+  assert.ok(box && box.height >= 195 && box.height <= 275, `${name}: card height ${box?.height ?? 'n/a'}px outside approved cinematic mobile target`);
+  assert.ok(ratio >= 1.45 && ratio <= 1.90, `${name}: card ratio ${ratio.toFixed(2)} outside approved cinematic target`);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, `${name}: horizontal overflow ${overflow}px`);
   await card.screenshot({ path: `artifacts/portfolio-impact/${name}.png` });
@@ -27,6 +30,10 @@ for (const [name, type, width, height] of cases) {
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
 await page.goto(url, { waitUntil: 'networkidle' });
-await page.locator('section[aria-label^="Portfolio impact."]').screenshot({ path: 'artifacts/portfolio-impact/reduced-motion-390.png' });
+const reducedCard = page.locator('section[aria-label^="Portfolio impact."]');
+await reducedCard.waitFor({ state: 'visible' });
+const reducedBox = await reducedCard.boundingBox();
+assert.ok(reducedBox && reducedBox.height >= 195 && reducedBox.height <= 275, 'reduced-motion-390: cinematic card geometry regressed');
+await reducedCard.screenshot({ path: 'artifacts/portfolio-impact/reduced-motion-390.png' });
 await browser.close();
 console.log('Portfolio Impact visual QA screenshots complete');
