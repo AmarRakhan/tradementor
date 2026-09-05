@@ -129,16 +129,56 @@ def test_exchange_weighted_entry_drives_tp_after_manual_add():
     assert tp["target"]==pytest.approx(91.35)
 
 
-def test_manual_add_reconciles_without_resetting_dca_counter():
+def test_manual_add_is_adopted_as_dca_and_reanchors_next_level():
     pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"8","entryPrice":"95","markPrice":"95","leverage":"100"}
-    raw={"multiBbPositions":{"AAAUSDT|LONG":{"dcaCount":3,"lastBotFillPrice":90,"lastKnownQty":5,"lastKnownEntry":100,"cycleStartedAtMs":1}}}
-    ref=Ref()
-    run_multi_bb_step(client=Client(positions=[pos],prices={"AAAUSDT":95},leverage=100),ref=ref,raw_state=raw,settings=cfg(),uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=False)
+    raw={"multiBbPositions":{"AAAUSDT|LONG":{"cycleId":"c1","dcaCount":1,"lastBotFillPrice":90,"lastKnownQty":5,"lastKnownEntry":100,"cycleStartedAtMs":1}}}
+    ref=Ref(); now=int(time.time()*1000)
+    result=run_multi_bb_step(client=Client(positions=[pos],prices={"AAAUSDT":95},leverage=100),ref=ref,raw_state=raw,settings=cfg(maxDca=15),uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=now,dry_run=False)
     persisted=ref.updates[-1]["multiBbPositions"]["AAAUSDT|LONG"]
-    assert persisted["dcaCount"]==3
+    # (95*8 - 100*5) / 3 = 86.666... effective added fill.
+    assert persisted["dcaCount"]==2
+    assert persisted["lastManualFillPrice"]==pytest.approx(86.6666666667)
+    assert persisted["lastBotFillPrice"]==pytest.approx(86.6666666667)
+    assert persisted["nextDcaPrice"]==pytest.approx(86.6666666667*(1-.003))
     assert persisted["lastKnownQty"]==8
     assert persisted["lastKnownEntry"]==95
-    assert persisted.get("manualOrExchangeReconciledAtMs")
+    assert any(a["kind"]=="MANUAL_DCA_DETECTED" for a in result["actions"])
+    assert any(a["kind"]=="DCA_REARMED_AFTER_MANUAL" for a in result["actions"])
+
+
+def test_manual_short_add_is_adopted_and_next_dca_is_higher():
+    pos={"symbol":"AAAUSDT","positionSide":"SHORT","positionAmt":"8","entryPrice":"105","markPrice":"105","leverage":"100"}
+    raw={"multiBbPositions":{"AAAUSDT|SHORT":{"cycleId":"c1","dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":5,"lastKnownEntry":100,"cycleStartedAtMs":1}}}
+    ref=Ref(); now=int(time.time()*1000)
+    result=run_multi_bb_step(client=Client(positions=[pos],prices={"AAAUSDT":105},leverage=100),ref=ref,raw_state=raw,settings=cfg(maxDca=15,maximumPositions=1,longSlots=0,shortSlots=1),uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=now,dry_run=False)
+    persisted=ref.updates[-1]["multiBbPositions"]["AAAUSDT|SHORT"]
+    inferred=(105*8-100*5)/3
+    assert persisted["dcaCount"]==1
+    assert persisted["lastManualFillPrice"]==pytest.approx(inferred)
+    assert persisted["nextDcaPrice"]==pytest.approx(inferred*(1+.003))
+    assert any(a["kind"]=="MANUAL_DCA_DETECTED" for a in result["actions"])
+
+
+def test_missing_dca_anchor_self_heals_from_entry_for_zero_dca():
+    pos={"symbol":"AAAUSDT","positionSide":"SHORT","positionAmt":"5","entryPrice":"100","markPrice":"100","leverage":"100"}
+    raw={"multiBbPositions":{"AAAUSDT|SHORT":{"cycleId":"c1","dcaCount":0,"lastKnownQty":5,"lastKnownEntry":100,"cycleStartedAtMs":1}}}
+    ref=Ref()
+    result=run_multi_bb_step(client=Client(positions=[pos],prices={"AAAUSDT":100},leverage=100),ref=ref,raw_state=raw,settings=cfg(maxDca=15,maximumPositions=1,longSlots=0,shortSlots=1),uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=False)
+    persisted=ref.updates[-1]["multiBbPositions"]["AAAUSDT|SHORT"]
+    assert persisted["lastBotFillPrice"]==100
+    assert persisted["nextDcaPrice"]==pytest.approx(100.3)
+    assert any(a["kind"]=="DCA_STATE_RECOVERED" for a in result["actions"])
+
+
+def test_manual_partial_close_does_not_increment_dca():
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"4","entryPrice":"100","markPrice":"100","leverage":"100"}
+    raw={"multiBbPositions":{"AAAUSDT|LONG":{"cycleId":"c1","dcaCount":2,"lastBotFillPrice":97,"lastKnownQty":5,"lastKnownEntry":99,"cycleStartedAtMs":1}}}
+    ref=Ref()
+    result=run_multi_bb_step(client=Client(positions=[pos],prices={"AAAUSDT":100},leverage=100),ref=ref,raw_state=raw,settings=cfg(maxDca=15),uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=False)
+    persisted=ref.updates[-1]["multiBbPositions"]["AAAUSDT|LONG"]
+    assert persisted["dcaCount"]==2
+    assert persisted["lastKnownQty"]==4
+    assert any(a["kind"]=="MANUAL_POSITION_DECREASE_RECONCILED" for a in result["actions"])
 
 
 

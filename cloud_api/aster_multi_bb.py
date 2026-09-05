@@ -342,6 +342,32 @@ def _manual_reopen_boundary(client: Any, symbol: str, side: str, state: dict[str
     return False
 
 
+def _infer_external_add_fill_price(*, previous_qty: float, previous_entry: float, new_qty: float, new_entry: float, fallback: float) -> float:
+    """Infer the effective fill price of an external same-side position increase.
+
+    Aster positionRisk exposes the new weighted entry immediately.  Using the
+    weighted-entry identity gives the exact effective price for the added qty
+    even when the fill endpoint is temporarily unavailable.
+    """
+    delta = new_qty - previous_qty
+    if delta > 1e-12 and previous_qty > 0 and previous_entry > 0 and new_entry > 0:
+        inferred = (new_entry * new_qty - previous_entry * previous_qty) / delta
+        if math.isfinite(inferred) and inferred > 0:
+            return inferred
+    if new_entry > 0:
+        return new_entry
+    return fallback if fallback > 0 else previous_entry
+
+
+def _recovery_anchor(state: dict[str, Any], *, entry: float) -> float:
+    """Deterministic DCA anchor priority used by reconciliation."""
+    for field in ("lastDcaFillPrice", "lastManualFillPrice", "lastBotFillPrice", "strategyAnchorPrice"):
+        value = _f(state.get(field))
+        if value > 0:
+            return value
+    return entry if _i(state.get("dcaCount")) == 0 and entry > 0 else 0.0
+
+
 def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     out = {}
     for row in positions:
@@ -422,28 +448,75 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
 
-    # Exchange truth reconciles every already-managed leg; a manual add never resets/increments the automatic DCA counter.
+    # Exchange truth reconciles every already-managed leg.  Same-side external
+    # increases are adopted as one manual DCA; decreases remain reconciliation
+    # only.  This keeps the strategy/game state aligned with Aster truth.
     for key in list(state):
         row = pmap.get(key)
         if row is None:
             reconciled_closed.append(key); state.pop(key, None); continue
         st = dict(state[key]); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); leverage = max(1, _i(row.get("leverage"), st.get("leverage", 1)))
-        changed = abs(qty - _f(st.get("lastKnownQty"))) > 1e-12 or abs(entry - _f(st.get("lastKnownEntry"))) > 1e-12
+        symbol = str(row.get("symbol", "")).upper(); side = str(row.get("positionSide", "")).upper()
+        previous_qty = abs(_f(st.get("lastKnownQty"))); previous_entry = _f(st.get("lastKnownEntry"))
+        qty_delta = qty - previous_qty
+        changed = abs(qty_delta) > 1e-12 or abs(entry - previous_entry) > 1e-12
         boundary_check = settings.manual_symbol_selection_enabled and _i(st.get("dcaCount")) > 0 and (bool(raw_state.get("multiBbAdoptionPending")) or not st.get("cycleBoundaryCheckedAtMs") or changed)
-        if boundary_check and _manual_reopen_boundary(client, str(row.get("symbol", "")).upper(), str(row.get("positionSide", "")).upper(), st):
+        if boundary_check and _manual_reopen_boundary(client, symbol, side, st):
             old_cycle = str(st.get("cycleId", ""))
             st = {"cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16], "dcaCount": 0,
                 "lastBotFillPrice": entry, "lastKnownQty": qty, "lastKnownEntry": entry, "leverage": leverage,
                 "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "cycleBoundaryCheckedAtMs": timestamp_ms, "botManaged": True}
             actions.append({"kind": "REENTRY_CYCLE_RESET", "key": key, "oldCycleId": old_cycle, "reason": "Aster fills prove prior cycle went flat before this reopen"})
         else:
-            if changed:
+            # A completed exchange-side increase with no currently open bot order
+            # is an explicit external/manual add.  Auto-DCA writes lastKnownQty
+            # immediately on confirmation below, so it is idempotently excluded.
+            external_add = previous_qty > 0 and qty_delta > 1e-12 and (symbol, side) not in order_keys
+            if external_add:
+                manual_price = _infer_external_add_fill_price(previous_qty=previous_qty, previous_entry=previous_entry, new_qty=qty, new_entry=entry, fallback=_f(row.get("markPrice"), entry))
+                old_count = _i(st.get("dcaCount")); old_next = st.get("nextDcaPrice")
+                st.update({
+                    "dcaCount": old_count + 1, "lastManualFillPrice": manual_price, "lastDcaFillPrice": manual_price,
+                    "lastBotFillPrice": manual_price, "lastManualDcaQty": qty_delta, "lastManualDcaAtMs": timestamp_ms,
+                    "manualDcaAdoptedAtMs": timestamp_ms, "manualOrExchangeReconciledAtMs": timestamp_ms,
+                })
+                action = {"kind": "MANUAL_DCA_DETECTED", "symbol": symbol, "side": side, "cycleId": st.get("cycleId"),
+                    "qtyDelta": qty_delta, "fillPrice": manual_price, "oldDcaCount": old_count, "newDcaCount": old_count + 1,
+                    "oldNextDcaPrice": old_next, "timestampMs": timestamp_ms}
+                actions.append(action)
+                if not dry_run:
+                    ref.collection("audit").add({"event": "MANUAL_DCA_DETECTED", "user": uid, **{k: v for k, v in action.items() if k != "kind"}, "timestamp": datetime.now(timezone.utc)})
+            elif qty_delta < -1e-12:
+                actions.append({"kind": "MANUAL_POSITION_DECREASE_RECONCILED", "symbol": symbol, "side": side, "qtyDelta": qty_delta})
+                if not dry_run:
+                    ref.collection("audit").add({"event": "MANUAL_POSITION_DECREASE_RECONCILED", "user": uid, "symbol": symbol, "side": side, "qtyDelta": qty_delta, "timestamp": datetime.now(timezone.utc)})
+            elif changed:
                 st["manualOrExchangeReconciledAtMs"] = timestamp_ms
             if boundary_check:
                 st["cycleBoundaryCheckedAtMs"] = timestamp_ms
+
+            # Self-heal any managed open position that still has DCA capacity but
+            # lost its persisted anchor during restart/deploy/config migration.
+            dca_allowed = settings.unlimited_dca or _i(st.get("dcaCount")) < settings.max_dca
+            old_anchor = _f(st.get("lastBotFillPrice"))
+            recovered_anchor = _recovery_anchor(st, entry=entry) if dca_allowed else old_anchor
+            if dca_allowed and old_anchor <= 0 and recovered_anchor > 0:
+                st["lastBotFillPrice"] = recovered_anchor
+                st["dcaStateRecoveredAtMs"] = timestamp_ms
+                actions.append({"kind": "DCA_STATE_RECOVERED", "symbol": symbol, "side": side, "cycleId": st.get("cycleId"), "anchor": recovered_anchor, "reason": "MISSING_DCA_ANCHOR"})
+                if not dry_run:
+                    ref.collection("audit").add({"event": "DCA_STATE_RECOVERED", "user": uid, "cycleId": st.get("cycleId"), "symbol": symbol, "side": side, "reason": "MISSING_DCA_ANCHOR", "newAnchor": recovered_anchor, "timestamp": datetime.now(timezone.utc)})
+
             st.update({"lastKnownQty": qty, "lastKnownEntry": entry, "leverage": leverage, "updatedAtMs": timestamp_ms})
         account_equity = _f(account.get("totalMarginBalance", account.get("marginBalance", account.get("equity", account.get("totalWalletBalance")))))
-        st.update(position_action_preview(row=row, state=st, settings=settings, account_equity=account_equity))
+        old_next = _f(st.get("nextDcaPrice"))
+        preview = position_action_preview(row=row, state=st, settings=settings, account_equity=account_equity)
+        st.update(preview)
+        if old_next <= 0 and _f(preview.get("nextDcaPrice")) > 0 and not any(a.get("kind") == "DCA_STATE_RECOVERED" and a.get("symbol") == symbol and a.get("side") == side for a in actions):
+            st["dcaStateRecoveredAtMs"] = timestamp_ms
+            actions.append({"kind": "DCA_STATE_RECOVERED", "symbol": symbol, "side": side, "cycleId": st.get("cycleId"), "anchor": _f(st.get("lastBotFillPrice"), entry), "reason": "NEXT_DCA_REARMED"})
+            if not dry_run:
+                ref.collection("audit").add({"event": "DCA_STATE_RECOVERED", "user": uid, "cycleId": st.get("cycleId"), "symbol": symbol, "side": side, "reason": "NEXT_DCA_REARMED", "newNextDcaPrice": preview.get("nextDcaPrice"), "timestamp": datetime.now(timezone.utc)})
         state[key] = st
 
     for key in reconciled_closed:
@@ -526,7 +599,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if asym["active"] and side == "LONG" and st0.get("pairedShortPending"):
             actions.append({"kind": "ASYM_HEDGE_PENDING", "symbol": symbol, "side": side, "reason": "INITIAL_SHORT_NOT_CONFIRMED"}); continue
         if asym["active"] and side == "SHORT" and not asym["allowShortDca"]: continue
-        dca_count = _i(st0.get("dcaCount")); anchor = _f(st0.get("lastBotFillPrice"), entry)
+        # Never stack an automatic DCA in the same reconciliation tick in which
+        # an external/manual add was adopted.  The next tick evaluates normally.
+        if _i(st0.get("manualDcaAdoptedAtMs")) == timestamp_ms:
+            actions.append({"kind": "DCA_REARMED_AFTER_MANUAL", "symbol": symbol, "side": side, "nextDcaPrice": st0.get("nextDcaPrice")})
+            continue
+        dca_count = _i(st0.get("dcaCount")); anchor = _recovery_anchor(st0, entry=entry)
         if (not settings.unlimited_dca and dca_count >= settings.max_dca) or anchor <= 0: continue
         trigger = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance)
         due = mark <= trigger if side == "LONG" else mark >= trigger
@@ -552,8 +630,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 if not is_definite_contract_rejection(exc): raise
                 actions.append({"kind": "DCA_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
                 continue
-            fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), mark)
-            st = dict(st0); st.update({"dcaCount": dca_count + 1, "lastBotFillPrice": fill_price, "updatedAtMs": timestamp_ms,
+            fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), mark); fill_qty = abs(_f(fill.get("executedQty"), float(plan.quantity)))
+            new_qty = qty + fill_qty
+            new_entry = ((entry * qty) + (fill_price * fill_qty)) / new_qty if new_qty > 0 else entry
+            st = dict(st0); st.update({"dcaCount": dca_count + 1, "lastBotFillPrice": fill_price, "lastDcaFillPrice": fill_price,
+                "lastKnownQty": new_qty, "lastKnownEntry": new_entry, "lastBotDcaAtMs": timestamp_ms, "updatedAtMs": timestamp_ms,
                 "leverage": int(tier["leverage"]), "lastTierReductionAtMs": timestamp_ms if tier["tierReduction"] else st0.get("lastTierReductionAtMs")}); state[key] = st
             ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
                      "lastReason": f"Multi DCA actief; DCA {dca_count + 1} bevestigd op {symbol} @ {int(tier['leverage'])}x"}, merge=True)
