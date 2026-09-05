@@ -31,19 +31,19 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function safeShare(left, right) {
-  const total = Math.abs(left) + Math.abs(right);
-  return total <= EPSILON ? 50 : clamp((Math.abs(left) / total) * 100, 4, 96);
-}
-
-function normalizedPressure(pnl, delta, exposure, equityBasis) {
-  const exposureScale = Math.max(Math.sqrt(Math.max(Math.abs(exposure), 1)), 1);
-  const pnlScale = Math.max(Math.sqrt(equityBasis), 10);
-  const lossPressure = Math.sqrt(Math.max(-pnl, 0) + 0.25) / pnlScale;
-  const adverseMomentum = Math.max(-delta, 0) / Math.max(equityBasis * 0.0015, 1);
-  const recoveryRelief = Math.max(delta, 0) / Math.max(equityBasis * 0.0015, 1);
-  const exposureContext = Math.log1p(Math.abs(exposure)) / Math.max(Math.log1p(equityBasis * 8), 1);
-  return Math.max(0.02, lossPressure * (0.84 + exposureContext * 0.16) + adverseMomentum * 0.18 - recoveryRelief * 0.08 + 1 / exposureScale * 0.005);
+function livePressure(longDelta, shortDelta, equityBasis) {
+  // A rising LONG P&L is bullish pressure; a rising SHORT P&L is bearish pressure.
+  // The difference between both deltas therefore expresses which side is winning terrain now.
+  // A small equity-scaled floor prevents tiny quote noise from creating fake 95/5 battles.
+  const edge = longDelta - shortDelta;
+  const observedMovement = Math.abs(longDelta) + Math.abs(shortDelta);
+  const noiseFloor = Math.max(equityBasis * 0.00025, 0.5);
+  const scale = Math.max(observedMovement, noiseFloor);
+  const bias = observedMovement <= Math.max(equityBasis * 0.00001, 0.02)
+    ? 0
+    : clamp(Math.tanh((edge / scale) * 1.18), -1, 1);
+  const longShare = clamp(50 + bias * 42, 8, 92);
+  return { bias, longShare };
 }
 
 export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, shortDelta = 0, longExposure = 0, shortExposure = 0, equity = 0 } = {}) {
@@ -55,64 +55,28 @@ export function deriveBattleMetrics({ longPnl = 0, shortPnl = 0, longDelta = 0, 
   const bothPositive = longPnl > 0 && shortPnl > 0;
   const bothNegative = longPnl < 0 && shortPnl < 0;
   const nearZero = Math.abs(longPnl) + Math.abs(shortPnl) < Math.max(0.05, equityBasis * 0.00001);
-  let state = "BALANCED";
-  let status = "PORTFOLIO-IMPACT IN EVENWICHT";
-  let barLabel = "P&L BIJDRAGE";
-  let longShare = 50;
-  let motionBias = 0;
 
-  if (nearZero) {
-    state = "BALANCED";
-  } else if (bothPositive) {
-    state = "BOTH_POSITIVE";
-    barLabel = "POSITIEVE PORTFOLIO-IMPACT";
-    longShare = safeShare(longPnl, shortPnl);
-    const difference = longScore - shortScore;
-    motionBias = Math.tanh(difference / Math.max(Math.abs(longScore) + Math.abs(shortScore), equityBasis * 0.002, 1));
-    status = Math.abs(longShare - 50) < 6
-      ? "BEIDE KANTEN DRAGEN BIJ"
-      : longShare > 50 ? "LONGS DRAGEN MEEST BIJ" : "SHORTS DRAGEN MEEST BIJ";
-  } else if (bothNegative) {
-    state = "BOTH_NEGATIVE";
-    barLabel = "AANDEEL IN OPEN VERLIES";
-    const longDrag = Math.abs(longPnl);
-    const shortDrag = Math.abs(shortPnl);
-    longShare = safeShare(longDrag, shortDrag);
-    const longPressure = normalizedPressure(longPnl, longDelta, longExposure, equityBasis);
-    const shortPressure = normalizedPressure(shortPnl, shortDelta, shortExposure, equityBasis);
-    motionBias = clamp(((longPressure - shortPressure) / Math.max(longPressure + shortPressure, EPSILON)) * 0.42, -0.42, 0.42);
-    status = Math.abs(longDrag - shortDrag) < Math.max(0.5, (longDrag + shortDrag) * 0.08)
-      ? "OPEN VERLIES GELIJK VERDEELD"
-      : shortDrag > longDrag ? "SHORTS VEROORZAKEN MEESTE VERLIES" : "LONGS VEROORZAKEN MEESTE VERLIES";
-  } else {
-    const scale = Math.max(Math.abs(longScore) + Math.abs(shortScore), equityBasis * 0.0025, 1);
-    motionBias = Math.tanh((longScore - shortScore) / scale);
-    longShare = clamp(50 + motionBias * 42, 6, 94);
-    barLabel = "P&L BIJDRAGE";
+  // Absolute P&L remains descriptive context only. The battle itself is live pressure.
+  let state = nearZero ? "BALANCED" : bothPositive ? "BOTH_POSITIVE" : bothNegative ? "BOTH_NEGATIVE" : longPnl >= 0 ? "LONG_DOMINANT" : "SHORT_DOMINANT";
+  const pressure = livePressure(longDelta, shortDelta, equityBasis);
+  const motionBias = pressure.bias;
+  const longShare = pressure.longShare;
+  const roundedLongShare = Math.round(longShare);
+  const shortShare = 100 - roundedLongShare;
+  const barLabel = "LIVE DRUK";
 
-    if (longPnl >= 0 && shortPnl < 0) {
-      state = "LONG_DOMINANT";
-      status = "LONGS DRAGEN BIJ · SHORTS TREKKEN PORTFOLIO OMLAAG";
-    } else if (shortPnl >= 0 && longPnl < 0) {
-      state = "SHORT_DOMINANT";
-      status = "SHORTS DRAGEN BIJ · LONGS TREKKEN PORTFOLIO OMLAAG";
-    } else if (longScore > shortScore) {
-      state = "LONG_DOMINANT";
-      status = longDelta > 0 ? "LONGS HERSTELLEN" : "LONGS HOUDEN BETER STAND";
-    } else if (shortScore > longScore) {
-      state = "SHORT_DOMINANT";
-      status = shortDelta > 0 ? "SHORTS HERSTELLEN" : "SHORTS HOUDEN BETER STAND";
-    }
-  }
+  let status = "IN EVENWICHT";
+  if (motionBias >= 0.12) status = "LONGS DRUKKEN HARDER";
+  else if (motionBias <= -0.12) status = "SHORTS DRUKKEN HARDER";
 
   const intensity = clamp((Math.abs(longDelta) + Math.abs(shortDelta)) / Math.max(equityBasis * 0.0015, 1), 0.18, 1);
   return {
     netPnl,
     longScore,
     shortScore,
-    longShare: Math.round(longShare),
-    shortShare: 100 - Math.round(longShare),
-    motionBias: clamp(motionBias, -1, 1),
+    longShare: roundedLongShare,
+    shortShare,
+    motionBias,
     intensity,
     state,
     status,
