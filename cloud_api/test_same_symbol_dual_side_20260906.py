@@ -3,6 +3,8 @@ from pathlib import Path
 from aster_multi_bb_core import MultiBbConfig
 
 
+# Production invariant: in normal Multi-DCA, one symbol may occupy one LONG
+# seat and one SHORT seat independently. Asymmetric paired mode is separate.
 def test_normal_multi_dca_capacity_counts_symbol_side_seats():
     cfg = MultiBbConfig.from_mapping({
         "engine": "multi_bb_v1",
