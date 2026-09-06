@@ -44,7 +44,7 @@ jobs:
         run: |
           git config user.name 'TradeMentor Agent'
           git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/aster_multi_bb_core.py cloud_api/test_same_symbol_dual_side_20260906.py
+          git add cloud_api/aster_multi_bb_core.py cloud_api/test_same_symbol_dual_side_20260906.py cloud_api/test_aster_multi_bb.py
           if git diff --cached --quiet; then
             echo 'No implementation changes to commit.'
             exit 0
