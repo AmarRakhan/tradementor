@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install backend test dependencies
-        run: pip install -r cloud_api/requirements.txt
+        run: pip install -r cloud_api/requirements.txt pytest
       - name: Apply persistence patch
         run: python tools/patch_short_dca_persistence_live_20260906.py
       - name: Backend targeted tests
