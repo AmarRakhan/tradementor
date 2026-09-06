@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.13.0
           cache: npm
           cache-dependency-path: web/package-lock.json
       - uses: actions/setup-python@v5
@@ -24,7 +24,7 @@ jobs:
       - name: Install web dependencies
         run: npm ci --prefix web
       - name: Run targeted web regressions
-        run: node --test web/tests/strategy2-botsettings-inline.test.mjs web/tests/strategy2-side-entry-margin.test.mjs web/tests/aster-side-tp-settings.test.mjs web/tests/strategy2-focus-preview-price.test.mjs web/tests/strategy2-seat-volume-wizard.test.mjs web/tests/strategy2-manual-margin-unlimited-dca.test.mjs
+        run: node --test web/tests/botsettings-inline-side-controls-20260906.test.mjs web/tests/aster-strategy2-side-persistence.test.mjs web/tests/aster-side-tp-settings.test.mjs web/tests/strategy2-focus-preview-price.test.mjs web/tests/strategy2-seat-volume-wizard.test.mjs web/tests/strategy2-manual-margin-unlimited-dca.test.mjs web/tests/strategy2-manual-symbol-selection.test.mjs web/tests/strategy2-asymmetric-hedge.test.mjs
       - name: Install backend test dependencies
         run: python -m pip install -r cloud_api/requirements.txt pytest
       - name: Run targeted backend regressions
