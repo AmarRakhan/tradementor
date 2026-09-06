@@ -1,0 +1,53 @@
+name: Apply same-symbol dual-side allocator repair 2026-09-06
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/same-symbol-dual-side-20260906.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: same-symbol-dual-side-20260906
+  cancel-in-progress: false
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply symbol plus side allocator repair
+        run: python tools/apply_same_symbol_dual_side_20260906.py
+
+      - name: Install backend test dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+
+      - name: Run focused and Multi DCA regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_same_symbol_dual_side_20260906.py test_aster_multi_bb.py test_aster_portfolio_tp_mode.py
+
+      - name: Commit verified repair
+        run: |
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb_core.py cloud_api/test_same_symbol_dual_side_20260906.py
+          if git diff --cached --quiet; then
+            echo 'No implementation changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Allow independent LONG and SHORT on same symbol'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
