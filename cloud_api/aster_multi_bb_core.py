@@ -442,7 +442,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     prices = {str(x.get("symbol", "")).upper(): _f(x.get("price")) for x in client.ticker_prices()}
     ranked = rank_top_volume(client.ticker_24h(), info, settings.universe_top_n)
     if settings.manual_symbol_selection_enabled:
-        candidates = [{"symbol": symbol, "forcedSide": side} for symbol, side in settings.manual_symbols]
+        manual_candidates = [{"symbol": symbol, "forcedSide": side, "manualReserved": True} for symbol, side in settings.manual_symbols]
+        manual_symbols = {symbol for symbol, _ in settings.manual_symbols}
+        automatic_candidates = [row for row in ranked if str(row.get("symbol", "")).upper() not in manual_symbols]
+        candidates = manual_candidates + automatic_candidates
     else:
         candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
@@ -684,7 +687,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if long_need <= 0 or short_need <= 0:
                 break
             side = "LONG"
-        elif settings.manual_symbol_selection_enabled:
+        elif settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"):
             side = str(ranked_row.get("forcedSide", "")).upper()
             if side == "LONG" and long_need <= 0: continue
             if side == "SHORT" and short_need <= 0: continue
@@ -701,7 +704,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if not settings.asymmetric_hedge_enabled:
             selected_key = f"{symbol}|{side}"
             if selected_key in active:
-                if settings.manual_symbol_selection_enabled:
+                if settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"):
                     continue
                 opposite = "SHORT" if side == "LONG" else "LONG"
                 opposite_need = short_need if opposite == "SHORT" else long_need
