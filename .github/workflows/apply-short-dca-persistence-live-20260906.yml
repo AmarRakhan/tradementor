@@ -1,0 +1,34 @@
+name: Apply short DCA persistence live 2026-09-06
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/apply-short-dca-persistence-live-20260906.yml'
+permissions:
+  contents: write
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply persistence patch
+        run: python tools/patch_short_dca_persistence_live_20260906.py
+      - name: Backend targeted tests
+        working-directory: cloud_api
+        run: python -m pytest -q test_aster_side_settings_persistence.py test_aster_portfolio_tp_mode.py test_aster_pair_overrides.py
+      - name: Frontend targeted contract
+        working-directory: web
+        run: node tests/aster-strategy2-side-persistence.test.mjs
+      - name: Commit verified fix
+        run: |
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/main.py cloud_api/test_aster_side_settings_persistence.py web/components/aster-strategy2-maker.tsx web/tests/aster-strategy2-side-persistence.test.mjs
+          git commit -m 'Preserve SHORT DCA settings across normal saves'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
