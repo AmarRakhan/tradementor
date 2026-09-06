@@ -1,0 +1,124 @@
+name: Deploy Aavansh Trading
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  PRODUCTION_SERVICE: amar-bot-v44-direct-install
+  AAVANSH_SERVICE: aavansh-trading
+  BASE_BUILD_COMMIT: 8121e754367eb5bf005d2c2bb8b495ba51fef06a
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out Aavansh branch
+        uses: actions/checkout@v4
+
+      - name: Verify isolated source contract
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/aavansh-v46-build263"
+          git merge-base --is-ancestor "$BASE_BUILD_COMMIT" HEAD
+          test "$AAVANSH_SERVICE" != "$PRODUCTION_SERVICE"
+          grep -q 'WEBAPP_VERSION = "46"' web/lib/app-version.ts
+          grep -q 'Aavansh Trading' web/app/layout.tsx
+          test -f web/public/aavansh-logo.png
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install and build web
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run Aavansh safety tests
+        working-directory: web
+        run: node --experimental-strip-types --test tests/aavansh-variant.test.mjs tests/aster-realtime.test.mjs tests/aster-bot-status.test.mjs tests/strategy2-focus-live-ui.test.mjs tests/strategy2-seat-volume-wizard.test.mjs
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Prove production is still V46 build 263
+        shell: bash
+        run: |
+          gcloud run services describe "$PRODUCTION_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/prod-before.json"
+          python - "$RUNNER_TEMP/prod-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1],encoding='utf-8'))
+          live=[x for x in d['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1, live
+          rev=live[0]['revisionName']
+          assert '8121e754' in rev, rev
+          env={x['name']:x.get('value') for x in d['spec']['template']['spec']['containers'][0].get('env',[])}
+          assert env.get('WEBAPP_BUILD_NUMBER')=='263', env
+          print('PROD_REVISION='+rev)
+          print('PROD_URL='+d['status']['url'])
+          sa=d['spec']['template']['spec'].get('serviceAccountName','')
+          assert sa
+          print('WEB_RUNTIME_SERVICE_ACCOUNT='+sa)
+          PY
+
+      - name: Build and push isolated Aavansh image
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/aavansh-trading:$GITHUB_SHA"
+          docker build --tag "$IMAGE" web
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy separate Aavansh service
+        shell: bash
+        run: |
+          gcloud run deploy "$AAVANSH_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "$WEB_RUNTIME_SERVICE_ACCOUNT" \
+            --set-env-vars "WEBAPP_BUILD_NUMBER=263-aavansh" \
+            --allow-unauthenticated \
+            --quiet
+          AAVANSH_URL="$(gcloud run services describe "$AAVANSH_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          echo "AAVANSH_URL=$AAVANSH_URL" >> "$GITHUB_ENV"
+
+      - name: Verify Aavansh URL and production isolation
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$AAVANSH_URL/" > "$RUNNER_TEMP/aavansh.html"
+          grep -q 'Aavansh Trading' "$RUNNER_TEMP/aavansh.html"
+          curl --fail --silent --show-error "$AAVANSH_URL/manifest.webmanifest" | grep -q 'Aavansh Trading'
+          gcloud run services describe "$PRODUCTION_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/prod-after.json"
+          python - "$RUNNER_TEMP/prod-after.json" "$PROD_REVISION" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1],encoding='utf-8')); expected=sys.argv[2]
+          live=[x for x in d['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1 and live[0]['revisionName']==expected, live
+          env={x['name']:x.get('value') for x in d['spec']['template']['spec']['containers'][0].get('env',[])}
+          assert env.get('WEBAPP_BUILD_NUMBER')=='263', env
+          PY
+          echo "Production: $PROD_URL"
+          echo "Aavansh: $AAVANSH_URL"
