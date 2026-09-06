@@ -70,7 +70,8 @@ def cfg(**kw):
 
 def test_config_requires_slot_sum_and_topn_capacity():
     with pytest.raises(ValueError): cfg(maximumPositions=2,longSlots=1,shortSlots=0)
-    with pytest.raises(ValueError): cfg(universeTopN=1,maximumPositions=2,longSlots=1,shortSlots=1)
+    cfg(universeTopN=1,maximumPositions=2,longSlots=1,shortSlots=1)
+    with pytest.raises(ValueError): cfg(universeTopN=1,maximumPositions=3,longSlots=2,shortSlots=1)
 
 
 def test_top_volume_is_dynamic_and_usdt_only():

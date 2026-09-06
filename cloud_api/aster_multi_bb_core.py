@@ -97,7 +97,7 @@ class MultiBbConfig:
     def validated(self) -> "MultiBbConfig":
         if self.engine != ENGINE: raise ValueError("Alleen de nieuwe Multi BB-strategie is toegestaan")
         if not 1 <= self.universe_top_n <= 200: raise ValueError("Top-N moet tussen 1 en 200 liggen")
-        maximum_capacity = 200 if self.manual_symbol_selection_enabled else (self.universe_top_n * 2 if self.asymmetric_hedge_enabled else self.universe_top_n)
+        maximum_capacity = 200 if self.manual_symbol_selection_enabled else self.universe_top_n * 2
         if not 1 <= self.maximum_positions <= maximum_capacity: raise ValueError("Max posities overschrijdt de beschikbare marktcapaciteit")
         if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
@@ -669,7 +669,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
         symbol = ranked_row["symbol"]
-        if symbol in active_symbols or symbol not in info_map or prices.get(symbol, 0) <= 0: continue
+        if (settings.asymmetric_hedge_enabled and symbol in active_symbols) or symbol not in info_map or prices.get(symbol, 0) <= 0: continue
         try:
             bracket_payload = client.leverage_brackets(symbol); maximum = max_contract_leverage(bracket_payload, symbol)
         except Exception as exc:
@@ -692,6 +692,23 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
+
+        # In normal Multi-DCA mode LONG and SHORT are independent seats.
+        # An open BTCUSDT|LONG must never block BTCUSDT|SHORT (or vice versa).
+        # Manual selection keeps its explicitly chosen side; automatic mode may
+        # fall back to the missing opposite side when the preferred side is
+        # already open on the same symbol.
+        if not settings.asymmetric_hedge_enabled:
+            selected_key = f"{symbol}|{side}"
+            if selected_key in active:
+                if settings.manual_symbol_selection_enabled:
+                    continue
+                opposite = "SHORT" if side == "LONG" else "LONG"
+                opposite_need = short_need if opposite == "SHORT" else long_need
+                if opposite_need > 0 and f"{symbol}|{opposite}" not in active:
+                    side = opposite
+                else:
+                    continue
         paired = bool(settings.asymmetric_hedge_enabled)
         if paired and (short_need <= 0 or account_remaining_capacity < 2 or budget - sent < 2):
             actions.append({"kind": "ASYM_PAIR_WAIT", "symbol": symbol, "reason": "SHORT_SLOT_OR_ACCOUNT_CAPACITY_REQUIRED"}); continue
