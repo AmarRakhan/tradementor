@@ -121,13 +121,17 @@ new_trigger = '''    status = str(cycle.get("cycleStatus") or RUNNING).upper()
     if status == RUNNING and mode == "PORTFOLIO":
         latest = ref.get().to_dict() or {}
         latest_settings = latest.get("settings") if isinstance(latest.get("settings"), dict) else {}
-        latest_mode = str(latest_settings.get("takeProfitMode", "PER_TRADE")).upper()
-        if latest_mode != "PORTFOLIO":
-            mode = latest_mode
-        else:
-            portfolio_tp_percent = _f(latest_settings.get("portfolioTpPercent"), portfolio_tp_percent)
-            target = target_equity(_f(cycle.get("cycleStartEquity")), portfolio_tp_percent)
-            cycle["targetEquity"] = target
+        # Only an explicitly persisted mode can overrule this worker snapshot.
+        # Legacy state may have no takeProfitMode field at all; in that case the
+        # caller's already-normalized mode remains authoritative.
+        if "takeProfitMode" in latest_settings:
+            latest_mode = str(latest_settings.get("takeProfitMode") or "PER_TRADE").upper()
+            if latest_mode != "PORTFOLIO":
+                mode = latest_mode
+            else:
+                portfolio_tp_percent = _f(latest_settings.get("portfolioTpPercent"), portfolio_tp_percent)
+                target = target_equity(_f(cycle.get("cycleStartEquity")), portfolio_tp_percent)
+                cycle["targetEquity"] = target
     triggered = mode == "PORTFOLIO" and target > 0 and equity >= target
     if status == RUNNING and triggered:
         cycle.update({"cycleStatus": PORTFOLIO_TP_EXECUTING,'''
