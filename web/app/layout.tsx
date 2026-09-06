@@ -64,10 +64,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <PwaRegistration buildNumber={buildNumber} />
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
-        <AuthProvider>
-          {children}
-          <AsterPairSettingsOverlay />
-        </AuthProvider>
+        <AuthProvider>{children}</AuthProvider>
+        <AsterPairSettingsOverlay />
         <MarketsNavigationBridge />
       </body>
     </html>
