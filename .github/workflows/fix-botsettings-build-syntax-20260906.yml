@@ -1,0 +1,36 @@
+name: Fix Botsettings Build Syntax 20260906
+
+on:
+  push:
+    branches:
+      - feature/botsettings-reference-20260906
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/botsettings-reference-20260906
+      - name: Repair syntax once
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('web/components/aster-strategy2-maker.tsx')
+          s = p.read_text()
+          old = 'const removeSymbol = (symbol: string) => change({ ...v, manualSymbols: v.manualSymbols.filter((row) => row.symbol !== symbol });'
+          new = 'const removeSymbol = (symbol: string) => change({ ...v, manualSymbols: v.manualSymbols.filter((row) => row.symbol !== symbol) });'
+          if old in s:
+              p.write_text(s.replace(old, new, 1))
+          PY
+      - name: Commit repair when needed
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/components/aster-strategy2-maker.tsx
+          git commit -m "Fix Botinstellingen build syntax"
+          git push origin HEAD:feature/botsettings-reference-20260906
