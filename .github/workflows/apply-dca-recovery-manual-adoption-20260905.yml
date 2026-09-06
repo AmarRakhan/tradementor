@@ -57,11 +57,14 @@ jobs:
 
       - name: Verify required source markers
         run: |
-          grep -q 'MANUAL_DCA_DETECTED' cloud_api/aster_multi_bb.py
-          grep -q 'DCA_STATE_RECOVERED' cloud_api/aster_multi_bb.py
-          grep -q 'DCA_REARMED_AFTER_MANUAL' cloud_api/aster_multi_bb.py
-          grep -q 'lastManualFillPrice' cloud_api/aster_multi_bb.py
-          grep -q 'lastDcaFillPrice' cloud_api/aster_multi_bb.py
+          set -euo pipefail
+          grep -q 'MANUAL_DCA_DETECTED' cloud_api/aster_multi_bb_core.py
+          grep -q 'DCA_STATE_RECOVERED' cloud_api/aster_multi_bb_core.py
+          grep -q 'DCA_REARMED_AFTER_MANUAL' cloud_api/aster_multi_bb_core.py
+          grep -q 'lastManualFillPrice' cloud_api/aster_multi_bb_core.py
+          grep -q 'lastDcaFillPrice' cloud_api/aster_multi_bb_core.py
+          grep -q 'SELECTED_POSITION_STATE_RECOVERED' cloud_api/aster_multi_bb_core.py
+          grep -q 'recoveredFromSelectedOpenPosition' cloud_api/aster_multi_bb_core.py
 
       - name: Authenticate Google Cloud
         uses: google-github-actions/auth@v2
