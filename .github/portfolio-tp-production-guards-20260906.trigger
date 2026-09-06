@@ -3,3 +3,4 @@ rerun: 2026-09-06T09:18+02:00
 full-ci: 2026-09-06T09:20+02:00
 restore-growth: 2026-09-06T09:24+02:00
 idempotent-rerun: 2026-09-06T09:28+02:00
+full-ci-restored: 2026-09-06T09:30+02:00
