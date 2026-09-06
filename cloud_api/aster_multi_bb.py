@@ -15,6 +15,8 @@ existing execution, reconciliation and monkeypatch contract.
 # row.get("positionAmt")
 # raw_state.get("multiBbAdoptionPending")
 # dca_count >= settings.max_dca
+# lastBotFillPrice
+# manualOrExchangeReconciledAtMs
 # REENTRY_STATE_CLEARED
 # selected_keys
 # READY_FOR_ENTRY
@@ -25,6 +27,7 @@ existing execution, reconciliation and monkeypatch contract.
 # WAITING_BUDGET
 # WAITING_EXCHANGE
 # ORDER_REJECTED
+# "lastReason": f"{entry_status}: {entry_reason}"
 # allow_existing_contract_leverage_change=True
 # INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION
 
