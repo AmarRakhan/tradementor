@@ -367,20 +367,20 @@ def test_disabling_manual_selection_keeps_existing_managed_legs_and_subtracts_th
     assert sum(row["side"]=="SHORT" for row in entries)==10
 
 
-def test_manual_selection_one_long_opens_only_selected_symbol():
+def test_manual_selection_reserves_selected_symbol_then_fills_remaining_automatically():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"999"},{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
     settings=manual_cfg([{"symbol":"BBBUSDT","side":"LONG"}],maximumPositions=2,longSlots=2,shortSlots=0)
     r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=5)
     entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
-    assert [(x["symbol"],x["side"]) for x in entries]==[("BBBUSDT","LONG")]
+    assert [(x["symbol"],x["side"]) for x in entries]==[("BBBUSDT","LONG"),("AAAUSDT","LONG")]
 
 
-def test_manual_selection_one_short_opens_short():
+def test_manual_selection_one_short_reserves_short_and_auto_fills_long():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"999"},{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
     settings=manual_cfg([{"symbol":"BBBUSDT","side":"SHORT"}],maximumPositions=2,longSlots=1,shortSlots=1)
     r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=5)
     entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
-    assert [(x["symbol"],x["side"]) for x in entries]==[("BBBUSDT","SHORT")]
+    assert [(x["symbol"],x["side"]) for x in entries]==[("BBBUSDT","SHORT"),("AAAUSDT","LONG")]
 
 
 def test_manual_selection_mixed_sides_respects_explicit_direction_and_slot_caps():
@@ -393,12 +393,28 @@ def test_manual_selection_mixed_sides_respects_explicit_direction_and_slot_caps(
     assert all(x["symbol"]!="CCCUSDT" for x in entries)
 
 
-def test_manual_selection_never_opens_unselected_ranked_symbol():
+def test_manual_selection_allows_ranked_symbols_for_unreserved_capacity():
     c=Client(tickers=[{"symbol":"AAAUSDT","quoteVolume":"10000"},{"symbol":"BBBUSDT","quoteVolume":"1"}],prices={"AAAUSDT":100,"BBBUSDT":100},leverage=100)
-    settings=manual_cfg([{"symbol":"BBBUSDT","side":"LONG"}])
-    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
-    assert not any(x.get("symbol")=="AAAUSDT" and x["kind"]=="ENTRY" for x in r["actions"])
+    settings=manual_cfg([{"symbol":"BBBUSDT","side":"LONG"}],maximumPositions=2,longSlots=2,shortSlots=0)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=5)
+    entries=[x for x in r["actions"] if x["kind"]=="ENTRY"]
+    assert [(x["symbol"],x["side"]) for x in entries]==[("BBBUSDT","LONG"),("AAAUSDT","LONG")]
 
+
+
+def test_manual_eight_reserved_plus_automatic_fills_to_fifty_total():
+    manual=[{"symbol":f"M{i}USDT","side":"LONG" if i < 4 else "SHORT"} for i in range(8)]
+    tickers=[{"symbol":row["symbol"],"quoteVolume":str(10000-i)} for i,row in enumerate(manual)]
+    tickers += [{"symbol":f"A{i}USDT","quoteVolume":str(9000-i)} for i in range(50)]
+    prices={row["symbol"]:100 for row in tickers}
+    c=Client(tickers=tickers,prices=prices,leverage=100)
+    settings=manual_cfg(manual,universeTopN=50,maximumPositions=50,longSlots=25,shortSlots=25)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"1000"},positions=[],open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=50)
+    assert r["activeLong"]==25
+    assert r["activeShort"]==25
+    assert r["remainingLong"]==0 and r["remainingShort"]==0
+    assert r["simulatedActions"]==50
+    assert r["candidateMode"]=="manual"
 
 def test_removed_manual_symbol_existing_position_still_gets_tp_management():
     pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"102","leverage":"100"}
