@@ -1,6 +1,6 @@
 {
-  "name": "Crypto Bot 2026",
-  "short_name": "Crypto Bot",
+  "name": "Aavansh Trading – A New Beginning",
+  "short_name": "Aavansh Trading",
   "description": "Persoonlijke multi-exchange portfolio-intelligentie.",
   "id": "/",
   "start_url": "/?source=pwa",
@@ -8,11 +8,10 @@
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
-  "background_color": "#03060d",
-  "theme_color": "#03060d",
+  "background_color": "#031008",
+  "theme_color": "#031008",
   "icons": [
-    { "src": "/tradementor-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/tradementor-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/tradementor-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/aavansh-logo.png", "sizes": "any", "type": "image/png", "purpose": "any" },
+    { "src": "/aavansh-logo.png", "sizes": "any", "type": "image/png", "purpose": "maskable" }
   ]
 }
