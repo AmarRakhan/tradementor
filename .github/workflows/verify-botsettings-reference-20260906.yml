@@ -1,0 +1,33 @@
+name: Verify Botsettings Reference 20260906
+
+on:
+  push:
+    branches:
+      - feature/botsettings-reference-20260906
+  pull_request:
+    branches:
+      - amar-crypto-bot-2026-cloud
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install web dependencies
+        run: npm ci --prefix web
+      - name: Run targeted web regressions
+        run: node --test web/tests/strategy2-botsettings-inline.test.mjs web/tests/strategy2-side-entry-margin.test.mjs web/tests/aster-side-tp-settings.test.mjs web/tests/strategy2-focus-preview-price.test.mjs web/tests/strategy2-seat-volume-wizard.test.mjs web/tests/strategy2-manual-margin-unlimited-dca.test.mjs
+      - name: Install backend test dependencies
+        run: python -m pip install -r cloud_api/requirements.txt pytest
+      - name: Run targeted backend regressions
+        run: PYTHONPATH=cloud_api python -m pytest -q cloud_api/test_aster_side_entry_margin_20260906.py cloud_api/test_aster_portfolio_tp_mode.py cloud_api/test_aster_pair_overrides.py cloud_api/test_same_symbol_dual_side_20260906.py
+      - name: Build web
+        run: npm --prefix web run build
