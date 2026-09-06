@@ -4297,7 +4297,10 @@ def _normalize_focus_slot_target(existing:dict[str,Any],candidate:Strategy2Confi
 @app.put("/v1/me/aster/strategy2/settings")
 def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}; old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
-    try: candidate=MultiBbConfig.from_mapping(request.settings)
+    # Established Multi BB settings updates are patch-like. Older/main forms still
+    # submit shared fields only; absent LONG/SHORT fields must retain their stored values.
+    merged_settings = {**old, **request.settings}
+    try: candidate=MultiBbConfig.from_mapping(merged_settings)
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
     saved=MultiBbConfig.from_mapping({**candidate.public_dict(),"version":version}); now=datetime.now(timezone.utc)

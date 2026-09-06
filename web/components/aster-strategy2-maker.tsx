@@ -83,7 +83,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     const pairSlots = clampInt(n(v.pairSlots), 1, 25);
     const longSlots = v.asymmetricHedgeEnabled ? pairSlots : clampInt(n(v.longSlots), 0, 25);
     const shortSlots = v.asymmetricHedgeEnabled ? pairSlots : clampInt(n(v.shortSlots), 0, 25);
+    const persisted = state.settings && typeof state.settings === "object" ? state.settings as Record<string, unknown> : {};
     return {
+      ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode,
       universeTopN: Math.max(1, Math.round(n(v.universe))), maximumPositions: Math.min(50, longSlots + shortSlots), longSlots, shortSlots,
       minimumLeverage: Math.max(1, Math.round(n(v.minLeverage))),
