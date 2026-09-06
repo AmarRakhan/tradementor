@@ -84,7 +84,7 @@ test("Multi BB always exposes a personal live on/off control without bypassing r
   assert.match(source, /Aster live bot/);
   assert.match(source, /role="switch"/);
   assert.match(source, /async function toggleLive/);
-  assert.match(source, /if \(status\.pending\) return/);
+  assert.match(source, /status\.pending \|\| busy/);
   assert.match(source, /if \(liveReady\) return action\("start"\)/);
   assert.match(source, /return checkReadiness\(true\)/);
   assert.match(source, /startWhenReady && Boolean\(result\.liveReady\)/);
@@ -194,7 +194,7 @@ test("Aster shows one direct settings panel without the retired explanation bloc
   ]);
   assert.match(page, /<AsterStrategy2Maker/);
   assert.doesNotMatch(page, /AsterPerformancePanel|AsterStrategy2Behavior/);
-  assert.match(maker, /Alle actieve instellingen staan direct hieronder\. Geen wizard/);
+  assert.match(maker, /LONG \/ SHORT · DCA & Take Profit/);
 });
 
 test("every trade can create a durable authenticated support report", async () => {

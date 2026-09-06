@@ -9,13 +9,13 @@ test("manual symbol selection remains opt-in inside the direct settings panel", 
   assert.match(maker, /manualEnabled:\s*false/);
   assert.match(maker, /Zelf munten kiezen/);
   assert.match(maker, /UIT = automatische Top-N/);
-  assert.match(maker, /manualSymbolSelectionEnabled:\s*v\.asymmetricHedgeEnabled \? false : v\.manualEnabled/);
-  assert.match(maker, /Geen wizard/);
+  assert.match(maker, /manualSymbolSelectionEnabled:\s*v\.manualEnabled/);
+  assert.match(maker, /manualSymbols:\s*v\.manualEnabled \? v\.manualSymbols : \[\]/);
+  assert.doesNotMatch(maker, /Asymmetrische short-hedge modus/);
 });
 
 test("manual picker loads real Aster markets and stores explicit LONG SHORT sides", () => {
   assert.match(maker, /strategy2\/focus\/markets/);
-  assert.match(maker, /manualSymbols:\s*v\.manualSymbols/);
   assert.match(maker, /setSymbolSide/);
   assert.match(maker, /"LONG"/);
   assert.match(maker, /"SHORT"/);

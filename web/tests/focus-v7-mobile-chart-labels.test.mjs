@@ -1,1 +1,9 @@
-import test from "node:test";import assert from "node:assert/strict";import fs from "node:fs";const maker=fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx",import.meta.url),"utf8");test("active strategy UI no longer exposes Focus v7 price labels",()=>{for(const x of ["TERUGVAL -","RELEASE +","RE-HEDGE","BODEM / RE-HEDGE"])assert.doesNotMatch(maker,new RegExp(x.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));assert.match(maker,/DCA afstand/);});
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+const maker=fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx",import.meta.url),"utf8");
+test("active strategy UI no longer exposes Focus v7 price labels",()=>{
+  for(const x of ["TERUGVAL -","RELEASE +","RE-HEDGE","BODEM / RE-HEDGE"]) assert.doesNotMatch(maker,new RegExp(x.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
+  assert.match(maker,/DCA-afstand LONG/);
+  assert.match(maker,/DCA-afstand SHORT/);
+});
