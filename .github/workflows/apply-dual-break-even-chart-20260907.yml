@@ -1,0 +1,164 @@
+name: Apply dual LONG SHORT break-even chart 2026-09-07
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/apply-dual-break-even-chart-20260907.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Apply dual break-even and side-specific TP chart levels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          chart = Path('web/components/trading-chart.tsx')
+          text = chart.read_text()
+
+          old_type = 'export type PlannedActionLevel = { key: "dca" | "dca-long" | "dca-short" | "tp"; price: number; label: string; color?: string };'
+          new_type = 'export type PlannedActionLevel = { key: "dca" | "dca-long" | "dca-short" | "be-long" | "be-short" | "tp" | "tp-long" | "tp-short"; price: number; label: string; color?: string };'
+          if text.count(old_type) != 1:
+              raise SystemExit(f'PlannedActionLevel type anchor mismatch: {text.count(old_type)}')
+          text = text.replace(old_type, new_type, 1)
+
+          old_lines = '''      plannedActionLevels.filter(level=>(level.key==="dca"||level.key==="dca-long"||level.key==="dca-short")&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));
+      plannedActionLevels.filter(level=>level.key==="tp"&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#b978ff",lineWidth:2,lineStyle:0,axisLabelVisible:false,title:""}));'''
+          new_lines = '''      plannedActionLevels.filter(level=>level.key.startsWith("dca")&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#ffd166",lineWidth:3,lineStyle:0,axisLabelVisible:false,title:""}));
+      plannedActionLevels.filter(level=>level.key.startsWith("be-")&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#21d6a2",lineWidth:2,lineStyle:2,axisLabelVisible:false,title:""}));
+      plannedActionLevels.filter(level=>level.key.startsWith("tp")&&Number.isFinite(level.price)&&level.price>0).forEach(level=>priceSeries.createPriceLine({price:Number(level.price),color:level.color||"#58f0ae",lineWidth:2,lineStyle:0,axisLabelVisible:false,title:""}));'''
+          if text.count(old_lines) != 1:
+              raise SystemExit(f'planned native line block mismatch: {text.count(old_lines)}')
+          text = text.replace(old_lines, new_lines, 1)
+
+          old_overlay = 'const plannedOverlayLevels=useMemo(()=>mode==="aster-detail"&&!focusV2?plannedActionLevels.filter(level=>Number.isFinite(level.price)&&level.price>0).map(level=>({...level,label:level.label||((level.key==="dca"||level.key==="dca-long"||level.key==="dca-short")?`VOLGENDE ${selection.side.toUpperCase()} DCA`:"TP"),color:level.color||((level.key==="dca"||level.key==="dca-long"||level.key==="dca-short")?"#ffd166":"#b978ff")})):[] as Array<{key:string;price:number;label:string;color:string}>,[mode,focusV2,plannedActionLevelsSignature,selection.side]);'
+          new_overlay = 'const plannedOverlayLevels=useMemo(()=>mode==="aster-detail"&&!focusV2?plannedActionLevels.filter(level=>Number.isFinite(level.price)&&level.price>0).map(level=>({...level,label:level.label||(level.key.startsWith("dca")?`VOLGENDE ${selection.side.toUpperCase()} DCA`:level.key.startsWith("be-")?"BREAK-EVEN":"TP"),color:level.color||(level.key.startsWith("dca")?"#ffd166":level.key.startsWith("be-")?"#21d6a2":"#58f0ae")})):[] as Array<{key:string;price:number;label:string;color:string}>,[mode,focusV2,plannedActionLevelsSignature,selection.side]);'
+          if text.count(old_overlay) != 1:
+              raise SystemExit(f'planned overlay block mismatch: {text.count(old_overlay)}')
+          chart.write_text(text.replace(old_overlay, new_overlay, 1))
+
+          recent = Path('web/components/aster-recent-trades.tsx')
+          r = recent.read_text()
+          anchor = '''  const detailOppositeNextDcaPrice = finite(detailOppositeRuntime?.nextDcaPrice);
+  const detailOppositeNextDcaNumber = finite(detailOppositeRuntime?.nextDcaNumber);'''
+          insert = '''  const detailOppositeNextDcaPrice = finite(detailOppositeRuntime?.nextDcaPrice);
+  const detailOppositeNextDcaNumber = finite(detailOppositeRuntime?.nextDcaNumber);
+  const detailOppositeBreakEvenPrice = finite(detailOppositePosition?.strategy2Tp?.breakEvenPrice) ?? undefined;
+  const detailOppositeTpPrice = finite(detailOppositeRuntime?.tpPrice);
+  const detailOppositeTpPct = finite(detailOppositeRuntime?.takeProfitPct);'''
+          if r.count(anchor) != 1:
+              raise SystemExit(f'opposite side data anchor mismatch: {r.count(anchor)}')
+          r = r.replace(anchor, insert, 1)
+
+          old_planned_start = '''  const detailPlannedLevels: PlannedActionLevel[] = [
+    ...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null'''
+          new_planned_start = '''  const detailPlannedLevels: PlannedActionLevel[] = [
+    ...(detailBreakEvenPrice && detailBreakEvenPrice > 0
+      ? [{ key: (detailMainSide === "SHORT" ? "be-short" : "be-long") as const, price: detailBreakEvenPrice, label: `${detailMainSide} BE`, color: detailMainSide === "SHORT" ? "#55e3ff" : "#ffd166" }]
+      : []),
+    ...(detailOppositeBreakEvenPrice && detailOppositeBreakEvenPrice > 0
+      ? [{ key: (detailOppositeSide === "SHORT" ? "be-short" : "be-long") as const, price: detailOppositeBreakEvenPrice, label: `${detailOppositeSide} BE`, color: detailOppositeSide === "SHORT" ? "#55e3ff" : "#ffd166" }]
+      : []),
+    ...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null'''
+          if r.count(old_planned_start) != 1:
+              raise SystemExit(f'planned levels start mismatch: {r.count(old_planned_start)}')
+          r = r.replace(old_planned_start, new_planned_start, 1)
+
+          old_tp = '''    ...(detailTpPrice && detailTpPrice > 0
+      ? [
+          {
+            key: "tp" as const,
+            price: detailTpPrice,
+            label: `TP ${detailTpPct !== null ? `${detailTpPct.toFixed(2).replace(".", ",")}%` : ""}`,
+            color: "#58f0ae",
+          },
+        ]
+      : []),'''
+          new_tp = '''    ...(detailTpPrice && detailTpPrice > 0
+      ? [
+          {
+            key: (detailMainSide === "SHORT" ? "tp-short" : "tp-long") as const,
+            price: detailTpPrice,
+            label: `${detailMainSide} TP ${detailTpPct !== null ? `${detailTpPct.toFixed(2).replace(".", ",")}%` : ""}`,
+            color: "#58f0ae",
+          },
+        ]
+      : []),
+    ...(detailOppositeTpPrice && detailOppositeTpPrice > 0
+      ? [
+          {
+            key: (detailOppositeSide === "SHORT" ? "tp-short" : "tp-long") as const,
+            price: detailOppositeTpPrice,
+            label: `${detailOppositeSide} TP ${detailOppositeTpPct !== null ? `${detailOppositeTpPct.toFixed(2).replace(".", ",")}%` : ""}`,
+            color: "#58f0ae",
+          },
+        ]
+      : []),'''
+          if r.count(old_tp) != 1:
+              raise SystemExit(f'main TP block mismatch: {r.count(old_tp)}')
+          r = r.replace(old_tp, new_tp, 1)
+
+          old_call = 'breakEvenPrice={detailBreakEvenPrice} dcaLevels={detailChartDcaLevels} plannedActionLevels={detailPlannedLevels}'
+          new_call = 'dcaLevels={detailChartDcaLevels} plannedActionLevels={detailPlannedLevels}'
+          if r.count(old_call) != 1:
+              raise SystemExit(f'chart call break-even anchor mismatch: {r.count(old_call)}')
+          recent.write_text(r.replace(old_call, new_call, 1))
+
+          test = Path('web/tests/trading-chart-aster-detail.test.mjs')
+          t = test.read_text()
+          marker = '  assert.match(chart, /plannedActionLevels/);\n'
+          addition = '  assert.match(chart, /be-long/);\n  assert.match(chart, /be-short/);\n  assert.match(chart, /startsWith\\(\\"be-\\"\\)/);\n'
+          if marker not in t:
+              raise SystemExit('chart test marker not found')
+          if 'assert.match(chart, /be-long/);' not in t:
+              t = t.replace(marker, marker + addition, 1)
+          test.write_text(t)
+
+          detail_test = Path('web/tests/strategy2-manual-symbol-selection.test.mjs')
+          dt = detail_test.read_text()
+          if 'detailOppositeBreakEvenPrice' not in dt:
+              dt += '''\n\ntest("detail chart exposes independent LONG and SHORT break-even/TP levels", () => {\n  const src = readFileSync(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");\n  assert.match(src, /detailOppositeBreakEvenPrice/);\n  assert.match(src, /be-long/);\n  assert.match(src, /be-short/);\n  assert.match(src, /tp-long/);\n  assert.match(src, /tp-short/);\n});\n'''
+              detail_test.write_text(dt)
+          PY
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run focused chart and manual-selection regressions
+        working-directory: web
+        run: node --test tests/trading-chart-aster-detail.test.mjs tests/strategy2-manual-symbol-selection.test.mjs
+
+      - name: Verify TypeScript build
+        working-directory: web
+        run: npm run build
+
+      - name: Commit verified dual-side chart levels
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/trading-chart.tsx web/components/aster-recent-trades.tsx web/tests/trading-chart-aster-detail.test.mjs web/tests/strategy2-manual-symbol-selection.test.mjs
+          git commit -m 'Show independent LONG and SHORT break-even and TP chart levels'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
