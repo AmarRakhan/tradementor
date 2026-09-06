@@ -7,6 +7,7 @@ import { AppVersionControl } from "@/components/app-version-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { MarketsNavigationBridge } from "@/components/markets-navigation-bridge";
 import { AsterPairSettingsOverlay } from "@/components/aster-pair-settings-overlay";
+import { AsterSideTpSettings } from "@/components/aster-side-tp-settings";
 import { WEBAPP_VERSION } from "@/lib/app-version";
 import "./globals.css";
 import "./premium.css";
@@ -65,6 +66,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
         <AuthProvider>{children}</AuthProvider>
+        <AsterSideTpSettings />
         <AsterPairSettingsOverlay />
         <MarketsNavigationBridge />
       </body>
