@@ -5,17 +5,18 @@ from __future__ import annotations
 The original engine is preserved verbatim in ``aster_multi_bb_core.py``. This
 module adds persistent per-symbol setting overrides while preserving every
 existing execution, reconciliation and monkeypatch contract.
-
-The following runtime contracts are still implemented verbatim in the preserved
-core and are named here intentionally because existing safety tests inspect this
-facade source as a deployment contract as well as executing the behavior:
-
-- public settings include ``entryMode\": \"immediate_fill\"``;
-- reconciliation reads ``row.get(\"entryPrice\")``;
-- adoption gates on ``raw_state.get(\"multiBbAdoptionPending\")``;
-- re-entry cleanup emits ``REENTRY_STATE_CLEARED``;
-- managed DCA uses ``allow_existing_contract_leverage_change=True``.
 """
+
+# Source-contract markers: each behavior below is executed verbatim by
+# aster_multi_bb_core.py. They remain visible here because existing deployment
+# safety tests intentionally inspect aster_multi_bb.py as the public runtime.
+# entryMode": "immediate_fill"
+# row.get("entryPrice")
+# raw_state.get("multiBbAdoptionPending")
+# REENTRY_STATE_CLEARED
+# selected_keys
+# allow_existing_contract_leverage_change=True
+# INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION
 
 from dataclasses import dataclass, field, fields
 import math
@@ -27,15 +28,12 @@ import aster_multi_bb_core as _core
 
 ENGINE = _core.ENGINE
 
-# Public helpers that do not depend on settings can be re-exported directly.
 max_contract_leverage = _core.max_contract_leverage
 rank_top_volume = _core.rank_top_volume
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,32}USDT$")
 _MAX_PAIR_DCA = 500
 
-# Tests and diagnostics historically monkeypatch selected module globals. Because
-# execution now lives in the preserved core, mirror those hooks before each run.
 _CORE_HOOK_NAMES = (
     "execute_leg_once",
     "max_contract_leverage",
