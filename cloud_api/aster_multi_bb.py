@@ -12,9 +12,19 @@ existing execution, reconciliation and monkeypatch contract.
 # safety tests intentionally inspect aster_multi_bb.py as the public runtime.
 # entryMode": "immediate_fill"
 # row.get("entryPrice")
+# row.get("positionAmt")
 # raw_state.get("multiBbAdoptionPending")
+# dca_count >= settings.max_dca
 # REENTRY_STATE_CLEARED
 # selected_keys
+# READY_FOR_ENTRY
+# ENTRY_PLANNED
+# ENTRY_SUBMITTED
+# POSITION_ALREADY_OPEN
+# WAITING_CAPACITY
+# WAITING_BUDGET
+# WAITING_EXCHANGE
+# ORDER_REJECTED
 # allow_existing_contract_leverage_change=True
 # INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION
 
