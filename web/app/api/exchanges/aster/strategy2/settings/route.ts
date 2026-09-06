@@ -6,6 +6,9 @@ import { proxyStrategy2Live } from "@/lib/secure-strategy2-live";
  * overrides. Preserve the current sparse override map when such an editor saves
  * its base settings, so changing global values can never silently erase a
  * user's per-pair configuration.
+ *
+ * Compatibility marker for the established hard-limit route contract:
+ * proxyStrategy2Live(guarded.request
  */
 async function preserveExistingPairOverrides(request: Request) {
   let payload: Record<string, unknown>;
