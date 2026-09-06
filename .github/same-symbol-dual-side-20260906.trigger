@@ -1,1 +1,1 @@
-apply same-symbol dual-side allocator repair
+apply same-symbol dual-side allocator repair retry 2
