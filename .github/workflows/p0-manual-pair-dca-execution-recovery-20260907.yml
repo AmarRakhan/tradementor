@@ -51,7 +51,7 @@ jobs:
           grep -q 'SELECTED_POSITION_STATE_RECOVERED' cloud_api/aster_multi_bb_core.py
           grep -q 'recoveredFromSelectedOpenPosition' cloud_api/aster_multi_bb_core.py
           grep -q 'key=(symbol, side)' cloud_api/aster_multi_bb_core.py
-          grep -q 'len(sides) > 1 and settings.asymmetric_hedge_enabled' cloud_api/aster_multi_bb_core.py
+          grep -q 'settings.manual_symbol_selection_enabled and all' cloud_api/aster_multi_bb_core.py
 
       - name: Commit verified P0 backend fix
         shell: bash
