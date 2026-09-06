@@ -4302,19 +4302,42 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
     saved=MultiBbConfig.from_mapping({**candidate.public_dict(),"version":version}); now=datetime.now(timezone.utc)
     switching=str(old.get("engine",old.get("strategyKind","")))!=MULTI_BB_ENGINE
-    update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"phase":"CONFIGURED",
-        "lastReason":"Nieuwe Multi DCA-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
-        # A scan report is only valid for the settings version that produced it.
-        # Clear it atomically with the settings update so the UI can never show
-        # an old order minimum or old position capacity as a current blocker.
-        "multiBbReport":{},
-        "pendingReopens":[],"focusLiveState":{},"focusLiveSlots":[],"focusV2State":{},"focusV2History":{},
-        "moneyGrabberActivated":False,"moneyGrabberRound":None,"moneyGrabberPairs":[]}
-    if switching: update.update({"enabled":False,"monitor":False,"multiBbPositions":{}})
+    if switching:
+        # Engine migration is the only settings save that is allowed to build a
+        # clean state. Existing Multi BB accounts never pass through this path.
+        update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"phase":"CONFIGURED",
+            "lastReason":"Nieuwe Multi DCA-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
+            "multiBbReport":{},"pendingReopens":[],"focusLiveState":{},"focusLiveSlots":[],"focusV2State":{},"focusV2History":{},
+            "moneyGrabberActivated":False,"moneyGrabberRound":None,"moneyGrabberPairs":[],
+            "enabled":False,"monitor":False,"multiBbPositions":{}}
+    else:
+        # Live config edits are deliberately state-preserving. In particular:
+        # no phase reset, no DCA reset, no position reset, no baseline reset and
+        # no clearing of recovery/asymmetric state.
+        update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"settingsChangedAt":now,
+            "lastReason":"Multi DCA-instellingen live bijgewerkt; actieve positie-, DCA- en cycle-state behouden"}
     ref.set(update,merge=True)
     ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved.public_dict(),"source":"user-multi-bb-v1","timestamp":now})
-    return {"saved":True,**aster_strategy2_public(uid)}
 
+    # Switching to Portfolio while the bot is live gets an immediate protected
+    # evaluation instead of waiting for the next scheduler minute. The same
+    # account-scoped lease used by the scheduler serializes this with DCA/TP.
+    immediate=None
+    if not switching and bool(existing.get("enabled",False)) and saved.take_profit_mode=="PORTFOLIO":
+        latest=ref.get().to_dict() or {};queue_enabled=_strategy2_order_queue_enabled(latest)
+        if queue_enabled:
+            token=_acquire_strategy2_queue_lease(ref)
+            if token:
+                try: immediate=_run_aster_strategy2_queue_scan(uid,maximum_orders=MAX_ORDERS_PER_ACCOUNT_SCAN)
+                finally: _release_strategy2_queue_lease(ref,str(token))
+            else:
+                immediate={"status":"lease-busy","reason":"Bestaande Strategy-2-worker verwerkt de zojuist opgeslagen Portfolio-modus"}
+        elif _acquire_mexc_automation_lease(ref):
+            try: immediate=_run_aster_strategy2_tick(uid)
+            finally: ref.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+        else:
+            immediate={"status":"lease-busy","reason":"Bestaande Strategy-2-worker verwerkt de zojuist opgeslagen Portfolio-modus"}
+    return {"saved":True,"activeStatePreserved":not switching,"immediateEvaluation":immediate,**aster_strategy2_public(uid)}
 
 @app.post("/v1/me/aster/strategy2/simulate")
 def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
@@ -4504,111 +4527,19 @@ def reset_aster_strategy2_focus_cycle(request: AsterStrategy2FocusResetRequest, 
 @app.post("/v1/me/aster/strategy2/stop")
 def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Bevestig veilig stoppen")
-    uid=str(user["uid"]); ref=aster_strategy2_reference(uid)
-    ref.set({"enabled":False,"monitor":False,"phase":"STOPPED","pendingReopens":[],
-        "lastReason":"Multi BB handmatig gestopt; er worden geen automatische orders geplaatst",
+    uid=str(user["uid"]); ref=aster_strategy2_reference(uid); raw=ref.get().to_dict() or {}
+    cycle=raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"),dict) else {}
+    cycle_status=str(cycle.get("cycleStatus","")).upper()
+    exit_in_progress=cycle_status in {"PORTFOLIO_TP_EXECUTING","FLAT_CONFIRMING"}
+    # User intent to stop wins for *new* exposure immediately. If a transactional
+    # Portfolio exit is already active, monitoring stays alive only to finish the
+    # close/reconciliation; the flat-confirmed branch then turns monitor off.
+    ref.set({"enabled":False,"monitor":exit_in_progress,
+        "phase":cycle_status if exit_in_progress else "STOPPED","pendingReopens":[],
+        "lastReason":("Bot UIT; lopende Portfolio-exit wordt alleen nog veilig tot FLAT_CONFIRMED afgerond"
+            if exit_in_progress else "Multi BB handmatig gestopt; er worden geen automatische orders geplaatst"),
         "updatedAt":datetime.now(timezone.utc)},merge=True)
-    return {"stopped":True,**aster_strategy2_public(uid)}
-
-
-def _portfolio_growth_client(user:dict[str,Any],*,live:bool)->AsterV3Client:
-    secret=load_aster_secret(user)
-    return AsterV3Client(signer_address=secret.signer_address,
-        sign_message=local_eip712_signer(secret),live_authorized=live)
-
-
-
-def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
-    uid=str(user["uid"]);ref=portfolio_growth_reference(uid);now=datetime.now(timezone.utc)
-    amsterdam=ZoneInfo("Europe/Amsterdam");local_now=now.astimezone(amsterdam)
-    if local_now.date().isoformat()<PORTFOLIO_GROWTH_START_DATE:
-        return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,"blockReason":"Meting is nog niet gestart"}
-    start_local=datetime(2026,8,23,0,0,0,tzinfo=amsterdam)
-    client=_portfolio_growth_client(user,live=False)
-    try:
-        account=client.account_information();equity,_,_,_,_=aster_account_information_values(account)
-        if equity<=0:raise ValueError("Actuele portfolio/equity is niet positief")
-        income=[]
-        for income_type in ("TRANSFER","WELCOME_BONUS","INSURANCE_CLEAR"):
-            income.extend(client.income_history(income_type=income_type,start_time=utc_ms(start_local),limit=1000))
-        cumulative_cashflow=external_cashflow_since(income,utc_ms(start_local))
-        today=local_now.date().isoformat();transaction=db.transaction()
-        @firestore.transactional
-        def update(txn:Any)->dict[str,Any]:
-            doc=ref.get(transaction=txn);stored=doc.to_dict() or {};state=dict(stored.get("dailyGrowth") or {})
-            if state.get("startDate")!=PORTFOLIO_GROWTH_START_DATE or safe_float(state.get("referenceEquity"))<=0:
-                state={"startDate":PORTFOLIO_GROWTH_START_DATE,"referenceDate":today,"referenceEquity":equity,
-                    "referenceCashflow":cumulative_cashflow,"lastObservedDate":today,"lastObservedEquity":equity,
-                    "lastObservedCashflow":cumulative_cashflow,"completedReturnSum":0.0,"completedReturnCount":0}
-            elif state.get("lastObservedDate")!=today:
-                previous_equity=safe_float(state.get("referenceEquity"));last_equity=safe_float(state.get("lastObservedEquity"))
-                reference_cashflow=safe_float(state.get("referenceCashflow"));last_cashflow=safe_float(state.get("lastObservedCashflow"))
-                if previous_equity>0 and last_equity>0:
-                    finished=daily_return_percentage(previous_equity,last_equity,last_cashflow-reference_cashflow)
-                    previous_avg=average_daily_return(safe_float(state.get("completedReturnSum")),int(state.get("completedReturnCount",0)),finished)
-                    completed_day={"date":str(state.get("lastObservedDate")),"startEquity":round(previous_equity,8),"endEquity":round(last_equity,8),
-                        "usdChange":round((last_equity-(last_cashflow-reference_cashflow))-previous_equity,8),"percentage":round(finished,8),
-                        "averageDailyPercentage":round(previous_avg,8),"levels":max(0,int(math.floor(finished/previous_avg+1e-12))) if previous_avg>0 and finished>0 else 0}
-                    history=list(state.get("history") or []);history=[row for row in history if isinstance(row,dict) and row.get("date")!=completed_day["date"]]
-                    history.append(completed_day);state["history"]=history[-120:]
-                    state["completedReturnSum"]=safe_float(state.get("completedReturnSum"))+finished
-                    state["completedReturnCount"]=int(state.get("completedReturnCount",0))+1
-                    state["referenceEquity"]=last_equity;state["referenceCashflow"]=last_cashflow
-                    state["referenceDate"]=str(state.get("lastObservedDate"))
-            state["lastObservedDate"]=today;state["lastObservedEquity"]=equity;state["lastObservedCashflow"]=cumulative_cashflow
-            today_pct=daily_return_percentage(safe_float(state.get("referenceEquity")),equity,cumulative_cashflow-safe_float(state.get("referenceCashflow")))
-            completed_count=int(state.get("completedReturnCount",0));completed_sum=safe_float(state.get("completedReturnSum"))
-            average_pct=average_daily_return(completed_sum,completed_count,today_pct)
-            state["updatedAt"]=now
-            txn.set(ref,{"dailyGrowth":state},merge=True)
-            today_usd=(equity-(cumulative_cashflow-safe_float(state.get("referenceCashflow"))))-safe_float(state.get("referenceEquity"))
-            today_levels=max(0,int(math.floor(today_pct/average_pct+1e-12))) if average_pct>0 and today_pct>0 else 0
-            history=list(state.get("history") or [])
-            return {"reliable":True,"todayPercentage":round(today_pct,8),"todayUsd":round(today_usd,8),"todayLevels":today_levels,
-                "averageDailyPercentage":round(average_pct,8),"measuredDays":completed_count+1,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,
-                "referenceDate":state.get("referenceDate"),"dayStartEquity":round(safe_float(state.get("referenceEquity")),8),
-                "currentEquity":round(equity,8),"history":history[-120:]}
-        return update(transaction)
-    except Exception as exc:
-        return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,
-            "blockReason":f"Dagelijkse portfoliogroei niet betrouwbaar beschikbaar: {str(exc)[:180]}"}
-
-def _portfolio_growth_estimate(user:dict[str,Any],*,persist_quote:bool=True)->dict[str,Any]:
-    uid=str(user["uid"]);ref=portfolio_growth_reference(uid);stored=ref.get().to_dict() or {}
-    baseline=safe_float(stored.get("baseline"));set_at=stored.get("baselineSetAt")
-    if baseline<=0 or not isinstance(set_at,datetime):
-        return {"setupRequired":True,"currency":"USD","reliable":False,"closeEnabled":False,
-            "blockReason":"Stel eerst een persoonlijke startwaarde in"}
-    client=_portfolio_growth_client(user,live=False)
-    try:
-        account=client.account_information();positions=client.position_risk()
-        income=client.income_history(start_time=utc_ms(set_at),limit=1000)
-        fees=client.fee_details("BTC_USDT")
-        taker=abs(safe_float(fees.get("realTakerFee",fees.get("originalTakerFee"))))
-        if taker>0.05:taker/=100
-        if taker<=0 or taker>0.05:raise ValueError("Aster-takerfee is niet betrouwbaar bevestigd")
-        slippage=safe_float(os.getenv("ASTER_CLOSE_ALL_SLIPPAGE_RATE","0.001"))
-        if slippage<=0 or slippage>0.05:raise ValueError("Slippagebuffer is niet conservatief geconfigureerd")
-        equity,_,_,_,_=aster_account_information_values(account)
-        cashflow=external_cashflow_since(income,utc_ms(set_at))
-        estimate=estimate_close_value(baseline=baseline,exchange_equity=equity,positions=positions,
-            external_cashflow=cashflow,taker_fee_rate=taker,slippage_rate=slippage,
-            other_costs=0,equity_includes_unrealized=("totalMarginBalance" in account and "totalUnrealizedProfit" in account),
-            funding_in_equity=("totalMarginBalance" in account and "totalWalletBalance" in account),data_fresh=True,
-            cashflow_complete=len(income)<1000)
-        payload={"setupRequired":False,"currency":"USD",**estimate.public(),"generatedAt":datetime.now(timezone.utc).isoformat(),
-            "evidence":{"equitySource":"totalMarginBalance","unrealizedIncluded":True,"fundingTreatment":"settled funding included in wallet/equity; no not-yet-due funding deducted",
-                "cashflowRows":len(income),"feeRate":taker,"slippageRate":slippage}}
-    except Exception as exc:
-        return {"setupRequired":False,"currency":"USD","baseline":baseline,"reliable":False,"closeEnabled":False,
-            "blockReason":f"Actuele exchangegegevens niet betrouwbaar: {str(exc)[:180]}"}
-    if persist_quote:
-        quote_id=python_secrets.token_urlsafe(24);expires=datetime.now(timezone.utc)+timedelta(seconds=45)
-        ref.collection("quotes").document(quote_id).set({"uid":uid,"payload":payload,"expiresAt":expires,"createdAt":datetime.now(timezone.utc)})
-        payload={**payload,"quoteId":quote_id,"quoteExpiresAt":expires.isoformat()}
-    return payload
-
-
+    return {"stopped":True,"finishingPortfolioExit":exit_in_progress,**aster_strategy2_public(uid)}
 
 @app.get("/v1/me/aster/portfolio-growth/daily")
 def get_aster_portfolio_daily_growth(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
@@ -5880,7 +5811,9 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     scan_id=f"{now.strftime('%Y%m%dT%H%M%S')}-{python_secrets.token_hex(4)}"
     raw=ref.get().to_dict() or {};prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
     current_intent=prior.get("currentIntent") if isinstance(prior.get("currentIntent"),dict) else {}
-    if not bool(raw.get("enabled",False)) and not (raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []) and not current_intent:
+    cycle=raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"),dict) else {}
+    portfolio_exit_active=str(cycle.get("cycleStatus","")).upper() in {"PORTFOLIO_TP_EXECUTING","FLAT_CONFIRMING"}
+    if not bool(raw.get("enabled",False)) and not portfolio_exit_active and not (raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []) and not current_intent:
         return {"status":"stopped-flat","scanId":scan_id,"ordersSent":0,"ordersUsed":0,"maximumOrders":scan_limit,"actions":[]}
     if current_intent:
         reconciled,reconcile_reason=_reconcile_strategy2_queue_intent(uid,ref,raw,current_intent)

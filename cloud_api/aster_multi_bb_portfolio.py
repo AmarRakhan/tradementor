@@ -231,6 +231,20 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
 
     status = str(cycle.get("cycleStatus") or RUNNING).upper()
     target = _f(cycle.get("targetEquity"))
+    if status == RUNNING and mode == "PORTFOLIO":
+        latest = ref.get().to_dict() or {}
+        latest_settings = latest.get("settings") if isinstance(latest.get("settings"), dict) else {}
+        # Only an explicitly persisted mode can overrule this worker snapshot.
+        # Legacy state may have no takeProfitMode field at all; in that case the
+        # caller's already-normalized mode remains authoritative.
+        if "takeProfitMode" in latest_settings:
+            latest_mode = str(latest_settings.get("takeProfitMode") or "PER_TRADE").upper()
+            if latest_mode != "PORTFOLIO":
+                mode = latest_mode
+            else:
+                portfolio_tp_percent = _f(latest_settings.get("portfolioTpPercent"), portfolio_tp_percent)
+                target = target_equity(_f(cycle.get("cycleStartEquity")), portfolio_tp_percent)
+                cycle["targetEquity"] = target
     triggered = mode == "PORTFOLIO" and target > 0 and equity >= target
     if status == RUNNING and triggered:
         cycle.update({"cycleStatus": PORTFOLIO_TP_EXECUTING,
@@ -331,7 +345,8 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
     base_extra = {"multiBbPositions": {}, "multiBbLastCompletedCycle": completed_cycle}
     if not enabled:
         _write_cycle(ref, cycle, phase=FLAT_CONFIRMED,
-                     reason="Portfolio TP afgerond en exchange flat; bot staat UIT dus geen herstart", extra=base_extra)
+                     reason="Portfolio TP afgerond en exchange flat; bot staat UIT dus geen herstart",
+                     extra={**base_extra, "monitor": False})
         report = {**portfolio_cycle_snapshot(cycle, mode=mode, current_equity=end_equity,
                                              portfolio_tp_percent=portfolio_tp_percent),
                   "actions": actions[-50:], "ordersSent": sent, "autoRestarted": False}
