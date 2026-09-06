@@ -4302,19 +4302,42 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
     saved=MultiBbConfig.from_mapping({**candidate.public_dict(),"version":version}); now=datetime.now(timezone.utc)
     switching=str(old.get("engine",old.get("strategyKind","")))!=MULTI_BB_ENGINE
-    update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"phase":"CONFIGURED",
-        "lastReason":"Nieuwe Multi DCA-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
-        # A scan report is only valid for the settings version that produced it.
-        # Clear it atomically with the settings update so the UI can never show
-        # an old order minimum or old position capacity as a current blocker.
-        "multiBbReport":{},
-        "pendingReopens":[],"focusLiveState":{},"focusLiveSlots":[],"focusV2State":{},"focusV2History":{},
-        "moneyGrabberActivated":False,"moneyGrabberRound":None,"moneyGrabberPairs":[]}
-    if switching: update.update({"enabled":False,"monitor":False,"multiBbPositions":{}})
+    if switching:
+        # Engine migration is the only settings save that is allowed to build a
+        # clean state. Existing Multi BB accounts never pass through this path.
+        update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"phase":"CONFIGURED",
+            "lastReason":"Nieuwe Multi DCA-strategie opgeslagen; start de bot handmatig wanneer je klaar bent",
+            "multiBbReport":{},"pendingReopens":[],"focusLiveState":{},"focusLiveSlots":[],"focusV2State":{},"focusV2History":{},
+            "moneyGrabberActivated":False,"moneyGrabberRound":None,"moneyGrabberPairs":[],
+            "enabled":False,"monitor":False,"multiBbPositions":{}}
+    else:
+        # Live config edits are deliberately state-preserving. In particular:
+        # no phase reset, no DCA reset, no position reset, no baseline reset and
+        # no clearing of recovery/asymmetric state.
+        update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"settingsChangedAt":now,
+            "lastReason":"Multi DCA-instellingen live bijgewerkt; actieve positie-, DCA- en cycle-state behouden"}
     ref.set(update,merge=True)
     ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved.public_dict(),"source":"user-multi-bb-v1","timestamp":now})
-    return {"saved":True,**aster_strategy2_public(uid)}
 
+    # Switching to Portfolio while the bot is live gets an immediate protected
+    # evaluation instead of waiting for the next scheduler minute. The same
+    # account-scoped lease used by the scheduler serializes this with DCA/TP.
+    immediate=None
+    if not switching and bool(existing.get("enabled",False)) and saved.take_profit_mode=="PORTFOLIO":
+        latest=ref.get().to_dict() or {};queue_enabled=_strategy2_order_queue_enabled(latest)
+        if queue_enabled:
+            token=_acquire_strategy2_queue_lease(ref)
+            if token:
+                try: immediate=_run_aster_strategy2_queue_scan(uid,maximum_orders=MAX_ORDERS_PER_ACCOUNT_SCAN)
+                finally: _release_strategy2_queue_lease(ref,str(token))
+            else:
+                immediate={"status":"lease-busy","reason":"Bestaande Strategy-2-worker verwerkt de zojuist opgeslagen Portfolio-modus"}
+        elif _acquire_mexc_automation_lease(ref):
+            try: immediate=_run_aster_strategy2_tick(uid)
+            finally: ref.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+        else:
+            immediate={"status":"lease-busy","reason":"Bestaande Strategy-2-worker verwerkt de zojuist opgeslagen Portfolio-modus"}
+    return {"saved":True,"activeStatePreserved":not switching,"immediateEvaluation":immediate,**aster_strategy2_public(uid)}
 
 @app.post("/v1/me/aster/strategy2/simulate")
 def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
@@ -4504,12 +4527,19 @@ def reset_aster_strategy2_focus_cycle(request: AsterStrategy2FocusResetRequest, 
 @app.post("/v1/me/aster/strategy2/stop")
 def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Bevestig veilig stoppen")
-    uid=str(user["uid"]); ref=aster_strategy2_reference(uid)
-    ref.set({"enabled":False,"monitor":False,"phase":"STOPPED","pendingReopens":[],
-        "lastReason":"Multi BB handmatig gestopt; er worden geen automatische orders geplaatst",
+    uid=str(user["uid"]); ref=aster_strategy2_reference(uid); raw=ref.get().to_dict() or {}
+    cycle=raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"),dict) else {}
+    cycle_status=str(cycle.get("cycleStatus","")).upper()
+    exit_in_progress=cycle_status in {"PORTFOLIO_TP_EXECUTING","FLAT_CONFIRMING"}
+    # User intent to stop wins for *new* exposure immediately. If a transactional
+    # Portfolio exit is already active, monitoring stays alive only to finish the
+    # close/reconciliation; the flat-confirmed branch then turns monitor off.
+    ref.set({"enabled":False,"monitor":exit_in_progress,
+        "phase":cycle_status if exit_in_progress else "STOPPED","pendingReopens":[],
+        "lastReason":("Bot UIT; lopende Portfolio-exit wordt alleen nog veilig tot FLAT_CONFIRMED afgerond"
+            if exit_in_progress else "Multi BB handmatig gestopt; er worden geen automatische orders geplaatst"),
         "updatedAt":datetime.now(timezone.utc)},merge=True)
-    return {"stopped":True,**aster_strategy2_public(uid)}
-
+    return {"stopped":True,"finishingPortfolioExit":exit_in_progress,**aster_strategy2_public(uid)}
 
 def _portfolio_growth_client(user:dict[str,Any],*,live:bool)->AsterV3Client:
     secret=load_aster_secret(user)
@@ -5880,7 +5910,9 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     scan_id=f"{now.strftime('%Y%m%dT%H%M%S')}-{python_secrets.token_hex(4)}"
     raw=ref.get().to_dict() or {};prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
     current_intent=prior.get("currentIntent") if isinstance(prior.get("currentIntent"),dict) else {}
-    if not bool(raw.get("enabled",False)) and not (raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []) and not current_intent:
+    cycle=raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"),dict) else {}
+    portfolio_exit_active=str(cycle.get("cycleStatus","")).upper() in {"PORTFOLIO_TP_EXECUTING","FLAT_CONFIRMING"}
+    if not bool(raw.get("enabled",False)) and not portfolio_exit_active and not (raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []) and not current_intent:
         return {"status":"stopped-flat","scanId":scan_id,"ordersSent":0,"ordersUsed":0,"maximumOrders":scan_limit,"actions":[]}
     if current_intent:
         reconciled,reconcile_reason=_reconcile_strategy2_queue_intent(uid,ref,raw,current_intent)

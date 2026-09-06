@@ -8,7 +8,13 @@ from pathlib import Path
 
 
 SOURCE = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
-ROUTE = SOURCE[SOURCE.index('def _portfolio_growth_client'):SOURCE.index('@app.post("/v1/me/aster/positions/{symbol}/close")')]
+_START = SOURCE.index('def _portfolio_growth_client')
+# The close-all block owns this terminal fail-closed audit marker.  Use the next
+# FastAPI route after that marker as the boundary instead of depending on the
+# name/order of an unrelated endpoint that may move during Strategy-2 work.
+_TAIL = SOURCE.index('"PARTIAL_FAIL_CLOSED"', _START)
+_NEXT_ROUTE = SOURCE.find("\n@app.", _TAIL)
+ROUTE = SOURCE[_START:_NEXT_ROUTE if _NEXT_ROUTE != -1 else len(SOURCE)]
 
 
 def test_state_is_strictly_nested_below_authenticated_uid():

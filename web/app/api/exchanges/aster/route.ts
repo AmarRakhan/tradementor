@@ -5,5 +5,16 @@ import { proxyCloud } from "@/lib/cloud-proxy";
  * must never be merged into the live Aster status response.
  */
 export async function GET(request: Request) {
-  return proxyCloud(request, "/v1/me/aster/status", "GET");
+  const response = await proxyCloud(request, "/v1/me/aster/status", "GET");
+  if (!response.ok) return response;
+  try {
+    const payload = await response.json() as Record<string, unknown>;
+    const strategy2 = payload.strategy2 && typeof payload.strategy2 === "object" ? payload.strategy2 as Record<string, unknown> : null;
+    if (!strategy2 || strategy2.multiBbReport || !strategy2.multiBb || typeof strategy2.multiBb !== "object") {
+      return Response.json(payload, { status: response.status });
+    }
+    return Response.json({ ...payload, strategy2: { ...strategy2, multiBbReport: strategy2.multiBb } }, { status: response.status });
+  } catch {
+    return response;
+  }
 }
