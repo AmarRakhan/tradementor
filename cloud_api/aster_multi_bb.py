@@ -18,11 +18,9 @@ import aster_multi_bb_core as _core
 
 ENGINE = _core.ENGINE
 
-# Public helpers used elsewhere in the control plane.
-position_action_preview = _core.position_action_preview
+# Public helpers that do not depend on settings can be re-exported directly.
 max_contract_leverage = _core.max_contract_leverage
 rank_top_volume = _core.rank_top_volume
-leverage_tier_preview = _core.leverage_tier_preview
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,32}USDT$")
 _MAX_PAIR_DCA = 500
@@ -153,12 +151,12 @@ def _symbol_from_execution_stack() -> str:
     """Resolve the symbol currently being handled by the unchanged core loop.
 
     The core already keeps ``symbol`` or the current position ``row`` local in
-    every price/order decision.  Looking only a few frames upward therefore
-    lets the facade select the correct sparse override without changing the
-    proven order/reconciliation implementation.
+    every price/order decision. Looking only a few frames upward therefore lets
+    the facade select the correct sparse override without modifying the proven
+    order/reconciliation implementation.
     """
     frame = sys._getframe(2)
-    for _ in range(10):
+    for _ in range(12):
         if frame is None:
             break
         direct = _normalize_symbol(frame.f_locals.get("symbol"))
@@ -194,7 +192,7 @@ class _PairAwareSettings:
 
 
 def effective_pair_settings(settings: MultiBbConfig, symbol: str) -> dict[str, Any]:
-    """Public, deterministic view used by tests/UI diagnostics."""
+    """Public deterministic pair view used by tests and UI diagnostics."""
     normalized = _normalize_symbol(symbol)
     override = settings.pair_overrides.get(normalized, {})
     base = settings.public_dict()
@@ -202,8 +200,28 @@ def effective_pair_settings(settings: MultiBbConfig, symbol: str) -> dict[str, A
     return {**base, **override, "symbol": normalized, "custom": bool(override)}
 
 
+def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], settings: MultiBbConfig, account_equity: float = 0.0) -> dict[str, Any]:
+    """Preview DCA/TP using the same effective pair settings as execution."""
+    return _core.position_action_preview(
+        row=row,
+        state=state,
+        settings=_PairAwareSettings(settings),
+        account_equity=account_equity,
+    )
+
+
+def leverage_tier_preview(client: Any, symbol: str, settings: MultiBbConfig) -> dict[str, Any]:
+    """Leverage preview also honors pair entry/DCA overrides."""
+    return _core.leverage_tier_preview(client, symbol, _PairAwareSettings(settings))
+
+
 def run_multi_bb_step(*, settings: MultiBbConfig, **kwargs: Any) -> dict[str, Any]:
     """Execute the existing engine with pair-aware values for per-symbol fields."""
     report = _core.run_multi_bb_step(settings=_PairAwareSettings(settings), **kwargs)
     report["pairOverrideCount"] = len(settings.pair_overrides)
     return report
+
+
+def __getattr__(name: str) -> Any:
+    """Keep all untouched public/private imports backward compatible."""
+    return getattr(_core, name)
