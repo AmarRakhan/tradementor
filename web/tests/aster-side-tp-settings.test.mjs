@@ -7,9 +7,9 @@ const layout = fs.readFileSync(new URL("../app/layout.tsx", import.meta.url), "u
 
 test("global settings expose exactly three mutually exclusive TP modes", () => {
   for (const value of ["PER_TRADE", "PORTFOLIO", "OFF"]) assert.ok(ui.includes(`"${value}"`));
-  assert.match(ui, /Per trade/);
-  assert.match(ui, /Portfolio/);
-  assert.match(ui, />Uit</);
+  assert.match(ui, /mode === "PER_TRADE" \? "Per trade"/);
+  assert.match(ui, /mode === "PORTFOLIO" \? "Portfolio"/);
+  assert.match(ui, /: "Uit"/);
   assert.match(layout, /<AsterSideTpSettings \/>/);
 });
 
@@ -39,7 +39,8 @@ test("portfolio mode warns before saving when current equity already meets targe
 });
 
 test("individual LONG SHORT TP remains stored but visibly inactive in PORTFOLIO or OFF", () => {
-  assert.match(ui, /disabled=!individualActive/);
+  assert.match(ui, /disabled=\{!individualActive\}/);
+  assert.match(ui, /const individualActive = draft\.mode === "PER_TRADE"/);
   assert.match(ui, /Niet actief in/);
   assert.match(ui, /Automatische Take Profit uitgeschakeld/);
 });
