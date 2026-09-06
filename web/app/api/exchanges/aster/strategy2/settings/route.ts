@@ -22,7 +22,7 @@ const preserveKeys = [
   "takeProfitShort",
 ] as const;
 
-async function preserveExtendedSettings(request: Request) {
+async function preserveExistingPairOverrides(request: Request) {
   let payload: Record<string, unknown>;
   try {
     payload = await request.clone().json() as Record<string, unknown>;
@@ -67,6 +67,9 @@ async function preserveExtendedSettings(request: Request) {
 export async function PUT(request: Request) {
   const guarded = await guardedAsterStrategy2Request(request);
   if ("response" in guarded) return guarded.response;
-  const preserved = await preserveExtendedSettings(guarded.request);
+  const preserved = await preserveExistingPairOverrides(guarded.request);
+  if (preserved === guarded.request) {
+    return proxyStrategy2Live(guarded.request, "/v1/me/aster/strategy2/settings", "PUT");
+  }
   return proxyStrategy2Live(preserved, "/v1/me/aster/strategy2/settings", "PUT");
 }
