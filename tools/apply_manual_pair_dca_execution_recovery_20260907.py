@@ -21,12 +21,13 @@ replace_once(
     '''            key=(symbol, side)\n            if not symbol or side not in {"LONG", "SHORT"} or key in seen: continue\n            seen.add(key); manual_symbols.append(key)''',
 )
 
-# Old hedge-era adoption isolated LONG+SHORT on the same symbol. In the current
-# independent-side model this must only apply to the legacy asymmetric mode.
+# Preserve legacy isolation for unselected/manual-external dual-side positions,
+# but when manual selection explicitly reserves both LONG and SHORT of one symbol,
+# those sides are independent managed seats and must not be isolated as a hedge.
 replace_once(
     core,
     '''        conflicts = sorted(symbol for symbol, sides in symbol_sides.items() if len(sides) > 1)''',
-    '''        conflicts = sorted(symbol for symbol, sides in symbol_sides.items() if len(sides) > 1 and settings.asymmetric_hedge_enabled)''',
+    '''        conflicts = sorted(symbol for symbol, sides in symbol_sides.items()\n                           if len(sides) > 1 and not (settings.manual_symbol_selection_enabled and all(f"{symbol}|{side}" in selected_keys for side in sides)))''',
 )
 
 # If a manually selected exchange position is present but its managed state row
