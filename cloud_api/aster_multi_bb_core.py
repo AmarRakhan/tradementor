@@ -66,8 +66,9 @@ class MultiBbConfig:
         for item in manual_rows:
             if not isinstance(item, dict): continue
             symbol=str(item.get("symbol", "")).upper().strip(); side=str(item.get("side", "")).upper().strip()
-            if not symbol or side not in {"LONG", "SHORT"} or symbol in seen: continue
-            seen.add(symbol); manual_symbols.append((symbol, side))
+            key=(symbol, side)
+            if not symbol or side not in {"LONG", "SHORT"} or key in seen: continue
+            seen.add(key); manual_symbols.append(key)
         cfg = cls(
             engine=str(raw.get("engine", raw.get("strategyKind", ENGINE))),
             name=str(raw.get("name", "Aster Multi DCA")),
@@ -417,7 +418,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         symbol_sides: dict[str, set[str]] = {}
         for key in pmap:
             symbol, side = key.split("|", 1); symbol_sides.setdefault(symbol, set()).add(side)
-        conflicts = sorted(symbol for symbol, sides in symbol_sides.items() if len(sides) > 1)
+        conflicts = sorted(symbol for symbol, sides in symbol_sides.items()
+                           if len(sides) > 1 and not (settings.manual_symbol_selection_enabled and all(f"{symbol}|{side}" in selected_keys for side in sides)))
         # A pre-existing/manual hedge may legitimately have LONG and SHORT on the
         # same symbol. It must never be auto-adopted because the Multi DCA engine
         # promises one managed side per symbol, but it also must not shut down the
@@ -450,6 +452,51 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
+
+    # P0 recovery: selected manual-mode positions must never exist on Aster
+    # without a managed state row. Such a missing row makes the DCA management
+    # loop skip the position entirely. Recover from exchange truth and re-arm
+    # from the current mark so missed historical levels are not blindly replayed.
+    if settings.manual_symbol_selection_enabled:
+        for key in sorted(selected_keys):
+            if key in state or key not in pmap:
+                continue
+            row = pmap[key]
+            qty = abs(_f(row.get("positionAmt")))
+            entry = _f(row.get("entryPrice"))
+            mark = _f(row.get("markPrice"), prices.get(str(row.get("symbol", "")).upper(), entry))
+            if qty <= 0 or entry <= 0:
+                continue
+            rearm_anchor = mark if mark > 0 else entry
+            symbol, side = key.split("|", 1)
+            recovered = {
+                "cycleId": hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16],
+                "dcaCount": 0,
+                "lastBotFillPrice": rearm_anchor,
+                "lastKnownQty": qty,
+                "lastKnownEntry": entry,
+                "leverage": max(1, _i(row.get("leverage"))),
+                "cycleStartedAtMs": timestamp_ms,
+                "updatedAtMs": timestamp_ms,
+                "botManaged": True,
+                "selectedStateRecoveredAtMs": timestamp_ms,
+                "selectedStateRecoveryAnchor": rearm_anchor,
+                "recoveredFromSelectedOpenPosition": True,
+            }
+            state[key] = recovered
+            action = {
+                "kind": "SELECTED_POSITION_STATE_RECOVERED",
+                "symbol": symbol, "side": side,
+                "anchor": rearm_anchor,
+                "reason": "SELECTED_OPEN_POSITION_MISSING_MANAGED_STATE",
+            }
+            actions.append(action)
+            if not dry_run:
+                ref.collection("audit").add({
+                    "event": "SELECTED_POSITION_STATE_RECOVERED", "user": uid,
+                    "symbol": symbol, "side": side, "anchor": rearm_anchor,
+                    "reason": action["reason"], "timestamp": datetime.now(timezone.utc),
+                })
 
     # Exchange truth reconciles every already-managed leg.  Same-side external
     # increases are adopted as one manual DCA; decreases remain reconciliation

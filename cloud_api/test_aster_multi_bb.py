@@ -547,3 +547,36 @@ def test_manual_close_and_reopen_same_coin_resets_old_dca_cycle(monkeypatch):
     assert fresh["lastBotFillPrice"] == pytest.approx(110)
     assert fresh["nextDcaNumber"] == 1
     assert any(x["kind"]=="REENTRY_CYCLE_RESET" for x in r["actions"])
+
+
+
+def test_manual_selected_open_position_missing_state_is_safely_rearmed():
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"89.41","markPrice":"87.34","leverage":"100"}
+    c=Client(positions=[pos],tickers=[{"symbol":"AAAUSDT","quoteVolume":"100"}],prices={"AAAUSDT":87.34},leverage=100)
+    settings=manual_cfg([{"symbol":"AAAUSDT","side":"LONG"}],maximumPositions=1,longSlots=1,shortSlots=0,dcaDistance=.003)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=10000,dry_run=True)
+    recovered=next(x for x in r["actions"] if x["kind"]=="SELECTED_POSITION_STATE_RECOVERED")
+    assert recovered["anchor"] == pytest.approx(87.34)
+    assert not any(x["kind"]=="DCA" for x in r["actions"])
+
+
+def test_manual_selected_missing_state_recovery_persists_and_next_real_move_can_dca():
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"89.41","markPrice":"87.34","leverage":"100"}
+    c=Client(positions=[pos],tickers=[{"symbol":"AAAUSDT","quoteVolume":"100"}],prices={"AAAUSDT":87.34},leverage=100)
+    settings=manual_cfg([{"symbol":"AAAUSDT","side":"LONG"}],maximumPositions=1,longSlots=1,shortSlots=0,dcaDistance=.003)
+    ref=Ref()
+    run_multi_bb_step(client=c,ref=ref,raw_state={},settings=settings,uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],timestamp_ms=10000,dry_run=False)
+    persisted=next(row["multiBbPositions"] for row in reversed(ref.updates) if "multiBbPositions" in row)
+    assert persisted["AAAUSDT|LONG"]["lastBotFillPrice"] == pytest.approx(87.34)
+    pos2={**pos,"markPrice":"87.00"}
+    c2=Client(positions=[pos2],tickers=[{"symbol":"AAAUSDT","quoteVolume":"100"}],prices={"AAAUSDT":87.00},leverage=100)
+    r2=run_multi_bb_step(client=c2,ref=Ref(),raw_state={"multiBbPositions":persisted},settings=settings,uid="u",account={"availableBalance":"100"},positions=[pos2],open_orders=[],timestamp_ms=11000,dry_run=True)
+    assert any(x["kind"]=="DCA" and x["symbol"]=="AAAUSDT" and x["side"]=="LONG" for x in r2["actions"])
+
+
+def test_manual_selection_allows_same_symbol_long_and_short_as_independent_sides():
+    settings=manual_cfg([
+        {"symbol":"BTCUSDT","side":"LONG"},
+        {"symbol":"BTCUSDT","side":"SHORT"},
+    ],maximumPositions=2,longSlots=1,shortSlots=1)
+    assert settings.manual_symbols == (("BTCUSDT","LONG"),("BTCUSDT","SHORT"))
