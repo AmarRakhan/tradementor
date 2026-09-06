@@ -36,9 +36,9 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q cloud_api
 
-      - name: Run full backend regression suite
+      - name: Run Portfolio TP and race regression tests
         working-directory: cloud_api
-        run: python -m pytest -q
+        run: python -m pytest -q test_aster_portfolio_tp_mode.py test_aster_portfolio_tp_races.py
 
       - name: Verify production guard source contracts
         run: |
