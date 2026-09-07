@@ -6,6 +6,7 @@ on:
       - chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
     paths:
       - tools/refine_portfolio_bulls_state_pan_20260907.py
+      - web/tests/visual/portfolio-impact-screenshots.mjs
       - .github/workflows/apply-portfolio-bulls-timeframes-20260907.yml
   workflow_dispatch:
 
@@ -88,6 +89,9 @@ jobs:
           test -s artifacts/portfolio-impact/chromium-412.png
           test -s artifacts/portfolio-impact/chromium-430.png
           test -s artifacts/portfolio-impact/webkit-390.png
+          test -s artifacts/portfolio-impact/extreme-short-390.png
+          test -s artifacts/portfolio-impact/balance-390.png
+          test -s artifacts/portfolio-impact/extreme-long-390.png
           test -s artifacts/portfolio-impact/reduced-motion-390.png
           grep -q 'MARKTDRUK' lib/portfolio-impact-battle.mjs
           grep -q 'destination === "aster" && <PortfolioImpactBattle' app/page.tsx
