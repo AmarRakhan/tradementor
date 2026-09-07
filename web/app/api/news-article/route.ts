@@ -1,9 +1,4 @@
-type DigestPayload = {
-  title: string;
-  source: string;
-  sourceUrl: string;
-  summary: string;
-};
+import { isIP } from "node:net";
 
 const entityMap: Record<string,string> = { amp:"&", quot:'"', apos:"'", lt:"<", gt:">", nbsp:" " };
 
@@ -22,12 +17,48 @@ function stripHtml(value: string) {
   return clean(decodeHtml(value.replace(/<script\b[\s\S]*?<\/script>/gi, " ").replace(/<style\b[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ")));
 }
 
-function safeUrl(value: string) {
+function privateHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host === "metadata.google.internal" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true;
+  if (isIP(host) === 4) {
+    const octets = host.split(".").map(Number);
+    if (octets[0] === 10 || octets[0] === 127 || octets[0] === 0) return true;
+    if (octets[0] === 169 && octets[1] === 254) return true;
+    if (octets[0] === 192 && octets[1] === 168) return true;
+    if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  }
+  if (isIP(host) === 6 && (host === "::1" || host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd"))) return true;
+  return false;
+}
+
+function safeUrl(value: string, base?: URL) {
   try {
-    const url = new URL(value);
-    if (!/^https?:$/.test(url.protocol)) return null;
+    const url = base ? new URL(value, base) : new URL(value);
+    if (!/^https?:$/.test(url.protocol) || privateHost(url.hostname)) return null;
     return url;
   } catch { return null; }
+}
+
+async function fetchPublicHtml(initial: URL) {
+  let current = initial;
+  for (let hop = 0; hop < 5; hop += 1) {
+    const response = await fetch(current.toString(), {
+      redirect: "manual",
+      headers: { "User-Agent":"Mozilla/5.0 (compatible; CryptoBot2026/1.0; +news digest)", Accept:"text/html,application/xhtml+xml" },
+      signal: AbortSignal.timeout(8500),
+      cache: "no-store",
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location") || "";
+      const next = safeUrl(location, current);
+      if (!next) return null;
+      current = next;
+      continue;
+    }
+    if (!response.ok || !/text\/html|xhtml/i.test(response.headers.get("content-type") || "")) return null;
+    return { html: await response.text(), url: response.url || current.toString() };
+  }
+  return null;
 }
 
 function extractArticleText(html: string) {
@@ -127,14 +158,11 @@ export async function GET(request: Request) {
   let finalUrl = sourceUrl;
   if (target) {
     try {
-      const response = await fetch(target.toString(), {
-        redirect: "follow",
-        headers: { "User-Agent":"Mozilla/5.0 (compatible; CryptoBot2026/1.0; +news digest)", Accept:"text/html,application/xhtml+xml" },
-        signal: AbortSignal.timeout(8500),
-        cache: "no-store",
-      });
-      finalUrl = response.url || sourceUrl;
-      if (response.ok && /text\/html|xhtml/i.test(response.headers.get("content-type") || "")) extracted = extractArticleText(await response.text());
+      const result = await fetchPublicHtml(target);
+      if (result) {
+        finalUrl = result.url;
+        extracted = extractArticleText(result.html);
+      }
     } catch {}
   }
 
