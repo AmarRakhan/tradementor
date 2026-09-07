@@ -18,13 +18,18 @@ test("News is mounted without changing the trading page destination model", asyn
   assert.doesNotMatch(page, /type Destination = [^;]*"news"/);
 });
 
-test("News overview keeps the approved compact density and Dutch timeframe controls", async () => {
-  const [view, css] = await Promise.all([read("../components/news-view.tsx"), read("../components/news-view.module.css")]);
+test("News overview keeps approved density while detailed advice lives behind the flip", async () => {
+  const [view, css, expanded] = await Promise.all([
+    read("../components/news-view.tsx"),
+    read("../components/news-view.module.css"),
+    read("../components/news-article-expanded.tsx"),
+  ]);
   for (const timeframe of ["1m", "5m", "15m", "1u", "4u", "24u"]) assert.match(view, new RegExp(`\\"${timeframe}\\"`));
   assert.match(view, /Zoek nieuws, munt of onderwerp/);
   assert.match(view, /Samenwerkingen/);
-  assert.match(view, /Advies per tijdsvenster/);
   assert.match(view, /Nieuwsmeldingen/);
+  assert.match(expanded, /ADVIES PER TIJDSVENSTER/);
+  assert.match(expanded, /detailAdvice/);
   assert.doesNotMatch(view, />Breaking news</);
   assert.doesNotMatch(view, /coin-universe/);
   assert.match(css, /min-height:70px/);
@@ -109,6 +114,24 @@ test("News detail measures factual Aster price impact separately from expected s
   assert.match(impactRoute, /pricedIn/);
   assert.doesNotMatch(impactRoute, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/i);
   assert.doesNotMatch(impactRoute, /\/start|\/stop|\/close-position|\/orders/i);
+});
+
+test("Detailed timeframe advice combines news direction with measured reaction", async () => {
+  const [view, expanded, css] = await Promise.all([
+    read("../components/news-view.tsx"),
+    read("../components/news-article-expanded.tsx"),
+    read("../components/news-article-expanded.module.css"),
+  ]);
+  assert.match(expanded, /function detailAdvice/);
+  assert.match(expanded, /Positief bevestigd/);
+  assert.match(expanded, /Negatief bevestigd/);
+  assert.match(expanded, /Tegenstrijdig/);
+  assert.match(expanded, /Waarschijnlijk verwerkt/);
+  assert.match(expanded, /Nieuws \+ gemeten koersreactie/);
+  assert.match(expanded, /Advies voor \{timeframe\}/);
+  assert.match(css, /\.advicePanel/);
+  assert.match(css, /\.adviceRow/);
+  assert.doesNotMatch(view, /<section className=\{styles\.impact\}><strong>💡 Wat betekent dit voor \{timeframe\}\?/);
 });
 
 test("Detail double tap reverses the 3D flip without treating scroll or controls as taps", async () => {
