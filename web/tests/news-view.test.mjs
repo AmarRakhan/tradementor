@@ -44,7 +44,10 @@ test("News uses live sources, Dutch translation and never sends trading mutation
   assert.match(route, /cointelegraph\.com\/rss/);
   assert.match(route, /dedupe/);
   assert.match(dutchRoute, /translation\.googleapis\.com\/language\/translate\/v2/);
+  assert.match(dutchRoute, /api\.mymemory\.translated\.net\/get/);
   assert.match(dutchRoute, /translate\.googleapis\.com\/translate_a\/single/);
+  assert.match(dutchRoute, /translatedCount === translatedItems\.length/);
+  assert.doesNotMatch(dutchRoute, /translationCache\.set\(source, value\)/);
   assert.match(view, /\/api\/news-nl/);
   assert.match(view, /universeTopN/);
   assert.match(view, /strategy2\/focus\/markets/);
