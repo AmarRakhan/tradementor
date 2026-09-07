@@ -1,0 +1,119 @@
+name: Premium Portfolio Bulls 20260907
+
+on:
+  push:
+    branches:
+      - chatgpt/premium-bulls-v46-build273-20260907
+    paths:
+      - tools/premiumize_portfolio_bulls_20260907.py
+      - web/public/portfolio-impact-premium-scene.svg
+      - web/components/portfolio-impact-battle.module.css
+      - .github/workflows/premium-portfolio-bulls-20260907.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CI: true
+
+jobs:
+  premium-build-test-visual-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/premium-bulls-v46-build273-20260907
+          fetch-depth: 0
+
+      - name: Generate premium sharp Bulls states
+        run: python tools/premiumize_portfolio_bulls_20260907.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build production web candidate
+        working-directory: web
+        run: npm run build
+
+      - name: Run Bulls and protected trading regression tests
+        working-directory: web
+        run: |
+          node --experimental-strip-types --test \
+            tests/portfolio-impact-bulls.test.mjs \
+            tests/portfolio-impact-timeframes.test.mjs \
+            tests/aster-trade-center.test.mjs \
+            tests/position-slot-input.test.mjs \
+            tests/strategy2-asymmetric-hedge.test.mjs \
+            tests/strategy2-manual-symbol-selection.test.mjs
+
+      - name: Install visual QA browser tooling
+        working-directory: web
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium webkit
+
+      - name: Start visual QA server
+        working-directory: web
+        shell: bash
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 4173 >/tmp/premium-bulls-v46.log 2>&1 &
+          echo $! >/tmp/premium-bulls-v46.pid
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:4173/tests/visual/portfolio-impact.html >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/premium-bulls-v46.log
+          exit 1
+
+      - name: Capture mobile premium Bulls QA
+        working-directory: web
+        run: node tests/visual/portfolio-impact-screenshots.mjs
+
+      - name: Verify premium scene contract
+        working-directory: web
+        shell: bash
+        run: |
+          test "$(find public/portfolio-impact-states -maxdepth 1 -name 'state-*.svg' | wc -l)" -eq 17
+          test -s public/portfolio-impact-premium-scene.svg
+          grep -q 'data:image/webp;base64' public/portfolio-impact-premium-scene.svg
+          grep -q '/portfolio-impact-premium-scene.svg' public/portfolio-impact-states/state-08.svg
+          ! grep -q '>Exposure<' components/portfolio-impact-battle.tsx
+          test -s artifacts/portfolio-impact/chromium-360.png
+          test -s artifacts/portfolio-impact/chromium-390.png
+          test -s artifacts/portfolio-impact/chromium-412.png
+          test -s artifacts/portfolio-impact/chromium-430.png
+          test -s artifacts/portfolio-impact/webkit-390.png
+          test -s artifacts/portfolio-impact/extreme-short-390.png
+          test -s artifacts/portfolio-impact/balance-390.png
+          test -s artifacts/portfolio-impact/extreme-long-390.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: premium-portfolio-bulls-v46-mobile-visual-qa
+          path: web/artifacts/portfolio-impact/*.png
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit verified premium state assets
+        shell: bash
+        run: |
+          git config user.name "ChatGPT Premium Bulls Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/public/portfolio-impact-states
+          if git diff --cached --quiet; then
+            echo "No generated state changes to commit"
+          else
+            git commit -m "Generate premium Portfolio Impact Bulls states"
+            git push origin HEAD:chatgpt/premium-bulls-v46-build273-20260907
+          fi
