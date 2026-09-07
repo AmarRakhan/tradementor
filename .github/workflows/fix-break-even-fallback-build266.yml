@@ -1,0 +1,64 @@
+name: Fix missing break-even fallback build 266
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: ['.github/workflows/fix-break-even-fallback-build266.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Add weighted-entry fallback for missing BE contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('web/components/aster-recent-trades.tsx')
+          s=p.read_text()
+          a='const detailBreakEvenPrice = finite(liveDetailPosition?.strategy2Tp?.breakEvenPrice) ?? undefined;'
+          b='const detailBreakEvenPrice = finite(liveDetailPosition?.strategy2Tp?.breakEvenPrice) ?? averageEntry(liveDetailPosition) ?? undefined;'
+          c='const detailOppositeBreakEvenPrice = finite(detailOppositePosition?.strategy2Tp?.breakEvenPrice) ?? undefined;'
+          d='const detailOppositeBreakEvenPrice = finite(detailOppositePosition?.strategy2Tp?.breakEvenPrice) ?? averageEntry(detailOppositePosition) ?? undefined;'
+          if s.count(a)!=1: raise SystemExit(f'main BE anchor mismatch {s.count(a)}')
+          if s.count(c)!=1: raise SystemExit(f'opposite BE anchor mismatch {s.count(c)}')
+          p.write_text(s.replace(a,b,1).replace(c,d,1))
+
+          t=Path('web/tests/trading-chart-aster-detail.test.mjs')
+          x=t.read_text()
+          marker='  assert.match(recent, /strategy2Tp\\?\\.breakEvenPrice/);\n'
+          addition='  assert.match(recent, /strategy2Tp\\?\\.breakEvenPrice\\) \\?\\? averageEntry\\(liveDetailPosition\\)/);\n  assert.match(recent, /strategy2Tp\\?\\.breakEvenPrice\\) \\?\\? averageEntry\\(detailOppositePosition\\)/);\n'
+          if marker not in x: raise SystemExit('test marker missing')
+          if 'averageEntry\\(liveDetailPosition\\)' not in x:
+              x=x.replace(marker,marker+addition,1)
+          t.write_text(x)
+          PY
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+      - name: Run full web regression suite
+        working-directory: web
+        run: npm test
+      - name: Commit verified fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/aster-recent-trades.tsx web/tests/trading-chart-aster-detail.test.mjs
+          git commit -m 'Show break-even from weighted entry when server BE is absent'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
