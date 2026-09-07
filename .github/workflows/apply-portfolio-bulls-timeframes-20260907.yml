@@ -5,8 +5,6 @@ on:
     branches:
       - chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
     paths:
-      - tools/apply_portfolio_bulls_timeframes_20260907.py
-      - tools/fix_portfolio_bulls_generator_legacy_20260907.py
       - tools/refine_portfolio_bulls_state_pan_20260907.py
       - .github/workflows/apply-portfolio-bulls-timeframes-20260907.yml
   workflow_dispatch:
@@ -27,11 +25,8 @@ jobs:
           ref: chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
           fetch-depth: 0
 
-      - name: Apply read-only Bulls timeframe implementation
-        run: |
-          python tools/apply_portfolio_bulls_timeframes_20260907.py
-          python tools/fix_portfolio_bulls_generator_legacy_20260907.py
-          python tools/refine_portfolio_bulls_state_pan_20260907.py
+      - name: Refine seam-free Bulls state scenes
+        run: python tools/refine_portfolio_bulls_state_pan_20260907.py
 
       - uses: actions/setup-node@v4
         with:
@@ -110,17 +105,7 @@ jobs:
         run: |
           git config user.name "ChatGPT Portfolio Bulls Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            web/components/portfolio-impact-battle.tsx \
-            web/components/portfolio-impact-battle.module.css \
-            web/lib/portfolio-impact-battle.mjs \
-            web/lib/portfolio-impact-battle.d.ts \
-            web/app/api/markets/aster/pressure/route.ts \
-            web/app/page.tsx \
-            web/public/portfolio-impact-states \
-            web/tests/portfolio-impact-timeframes.test.mjs \
-            web/tests/visual/portfolio-impact-main.tsx \
-            web/tests/visual/portfolio-impact-screenshots.mjs
+          git add web/public/portfolio-impact-states
           if git diff --cached --quiet; then
             echo "No generated changes to commit"
           else
