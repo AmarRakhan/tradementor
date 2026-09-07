@@ -12,6 +12,14 @@ async function waitForSettled(page) {
   }, null, { timeout: 8000 });
 }
 
+async function qaClick(page, selector) {
+  await page.evaluate((target) => {
+    const button = document.querySelector(target);
+    if (!(button instanceof HTMLButtonElement)) throw new Error(`Missing QA button ${target}`);
+    button.click();
+  }, selector);
+}
+
 const cases = [
   ['chromium-360', chromium, 360, 800],
   ['chromium-390', chromium, 390, 844],
@@ -69,7 +77,7 @@ const motionPage = await motionBrowser.newPage({ viewport: { width: 390, height:
 await motionPage.goto(url, { waitUntil: 'networkidle' });
 const motionCard = motionPage.locator('section[aria-label^="Portfolio impact."]');
 await motionCard.waitFor({ state: 'visible' });
-await motionPage.locator('#qa-neutral').click({ force: true });
+await qaClick(motionPage, '#qa-neutral');
 await waitForSettled(motionPage);
 assert.equal(await motionCard.getAttribute('data-frame-index'), '100', 'neutral must be frame 100');
 
@@ -84,7 +92,7 @@ async function captureTransition(targetSelector, expectedEnd, direction) {
     });
     window.__bullObserver.observe(card, { attributes: true, attributeFilter: ['data-frame-index'] });
   });
-  await motionPage.locator(targetSelector).click({ force: true });
+  await qaClick(motionPage, targetSelector);
   await waitForSettled(motionPage);
   const frames = await motionPage.evaluate(() => {
     window.__bullObserver?.disconnect?.();
@@ -99,7 +107,7 @@ async function captureTransition(targetSelector, expectedEnd, direction) {
 }
 
 await captureTransition('#qa-short60', 80, -1);
-await motionPage.locator('#qa-neutral').click({ force: true });
+await qaClick(motionPage, '#qa-neutral');
 await waitForSettled(motionPage);
 await captureTransition('#qa-long60', 120, 1);
 await motionCard.screenshot({ path: 'artifacts/portfolio-impact/smooth-motion-390.png' });
