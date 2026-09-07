@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VIEW = ROOT / "web/components/news-view.tsx"
 NEWS = ROOT / "web/app/api/news/route.ts"
+EXPANDED = ROOT / "web/components/news-article-expanded.tsx"
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -57,6 +58,8 @@ old_article = '''              <div className={styles.heroImage}>{selected.coins
 new_article = '''              <NewsArticleExpanded article={selected} digest={detailDigest} loading={detailLoading} error={detailError} timeframe={timeframe} />'''
 view = replace_once(view, old_article, new_article, "expanded article renderer")
 view = view.replace('<section className={styles.tfPanel}><h3>💡 Advies per tijdsvenster</h3>', '<section className={styles.tfPanel} data-no-doubletap="true"><h3>💡 Advies per tijdsvenster</h3>')
+legacy_detail_analysis = '''              <section className={styles.impact}><strong>💡 Wat betekent dit voor {timeframe}?</strong><p>{impactText(selected, timeframe)}</p></section>\n              <section className={styles.tfPanel} data-no-doubletap="true"><h3>💡 Advies per tijdsvenster</h3>{TIMEFRAMES.map((value) => { const advice = adviceFor(selected, value); return <div className={styles.tfRow} key={value}><b>{value}</b><span>{advice.detail}</span><span className={styles.statusPill} data-tone={advice.tone}>{advice.status}</span></div>; })}</section>'''
+view = replace_once(view, legacy_detail_analysis, '', "remove duplicate content-only detail advice")
 VIEW.write_text(view)
 
 news = NEWS.read_text()
@@ -67,4 +70,75 @@ news = replace_once(
     "LINK false-positive alias",
 )
 NEWS.write_text(news)
+
+expanded = EXPANDED.read_text()
+expanded = replace_once(
+    expanded,
+    '  sentiment: "bullish" | "bearish" | "neutral";\n};',
+    '  sentiment: "bullish" | "bearish" | "neutral";\n  importance: "high" | "normal";\n};',
+    "importance for detail advice",
+)
+detail_helper = r'''type DetailAdvice = { status: string; detail: string; tone: "positive" | "negative" | "caution" | "neutral" };
+
+function detailAdvice(article: NewsArticleLike, timeframe: Timeframe, impact: Impact | null): DetailAdvice {
+  const row = impact?.windows?.[timeframe];
+  const expected = article.sentiment === "bullish" ? 1 : article.sentiment === "bearish" ? -1 : 0;
+  const expectedWord = expected > 0 ? "positief" : expected < 0 ? "negatief" : "gemengd";
+
+  if (impact?.available && row && !row.available) {
+    return { status:"Nog te vroeg", detail:`Het ${timeframe}-venster is nog niet verstreken. Wacht op echte koersdata voordat je dit tijdsvenster beoordeelt.`, tone:"neutral" };
+  }
+
+  if (impact?.available && row?.available && row.changePercent !== null) {
+    const measured = row.changePercent;
+    const measuredDirection = Math.abs(measured) < .15 ? 0 : measured > 0 ? 1 : -1;
+    if (expected === 0) {
+      if (measuredDirection === 0) return { status:"Afwachten", detail:`De nieuwsinhoud is gemengd en de gemeten ${timeframe}-reactie is ${fmtPct(measured)}. Er is nog geen duidelijke richting.`, tone:"neutral" };
+      return { status:"Voorzichtig", detail:`De nieuwsinhoud is gemengd, maar de koers bewoog op ${timeframe} ${fmtPct(measured)}. Behandel die beweging als marktreactie, niet automatisch als gevolg van dit bericht.`, tone:"caution" };
+    }
+    if (measuredDirection === expected) {
+      if (/grotendeels ingeprijsd/i.test(impact.pricedIn || "")) return { status:"Waarschijnlijk verwerkt", detail:`De ${timeframe}-reactie van ${fmtPct(measured)} sluit aan bij de ${expectedWord}e nieuwsinhoud, maar de totale reactie lijkt inmiddels grotendeels verwerkt.`, tone:"caution" };
+      return { status:expected > 0 ? "Positief bevestigd" : "Negatief bevestigd", detail:`De gemeten ${timeframe}-reactie is ${fmtPct(measured)} en sluit voorlopig aan bij de ${expectedWord}e nieuwsinhoud. Controleer of volume en marktstructuur dit blijven bevestigen.`, tone:expected > 0 ? "positive" : "negative" };
+    }
+    if (measuredDirection === 0) return { status:"Afwachten", detail:`De nieuwsinhoud is ${expectedWord}, maar de gemeten ${timeframe}-reactie is slechts ${fmtPct(measured)}. De koers bevestigt de richting nog niet.`, tone:"neutral" };
+    return { status:"Tegenstrijdig", detail:`De nieuwsinhoud is ${expectedWord}, maar de koers reageerde op ${timeframe} met ${fmtPct(measured)} in de andere richting. Andere marktontwikkelingen kunnen zwaarder wegen.`, tone:"caution" };
+  }
+
+  if (article.importance === "high" && (timeframe === "1m" || timeframe === "5m")) {
+    return { status:"Voorzichtig", detail:"Dit is nieuws met hoge impact. Op zeer korte tijdsvensters kunnen snelle uitschieters en omkeringen optreden; gemeten koersbevestiging ontbreekt nog.", tone:"caution" };
+  }
+  if (expected === 0) return { status:"Afwachten", detail:"De inhoud geeft geen sterke richting en er is geen betrouwbare koersreactie beschikbaar om die beoordeling aan te scherpen.", tone:"neutral" };
+  return { status:expected > 0 ? "Inhoud positief" : "Inhoud negatief", detail:`De inhoud is ${expectedWord}, maar er is nog geen betrouwbare gemeten koersreactie beschikbaar. Gebruik dit niet als zelfstandige koop- of verkoopbeslissing.`, tone:expected > 0 ? "positive" : "negative" };
+}
+
+'''
+expanded = replace_once(expanded, 'function MiniChart({ impact }: { impact: Impact }) {', detail_helper + 'function MiniChart({ impact }: { impact: Impact }) {', "price-aware detail advice helper")
+expanded = replace_once(
+    expanded,
+    '''  const sections = digest?.article.sections?.length\n    ? digest.article.sections\n    : digest?.article.paragraphs?.length\n      ? [{ heading:"Wat is er gebeurd?", paragraphs:digest.article.paragraphs }]\n      : [];''',
+    '''  const sections = digest?.article.sections?.length\n    ? digest.article.sections\n    : digest?.article.paragraphs?.length\n      ? [{ heading:"Wat is er gebeurd?", paragraphs:digest.article.paragraphs }]\n      : [];\n  const currentAdvice = detailAdvice(article, timeframe, impact);''',
+    "current price-aware advice",
+)
+price_advice_panel = r'''
+
+    <section className={styles.advicePanel} data-no-doubletap="true" aria-label="Advies per tijdsvenster op basis van nieuws en koersreactie">
+      <div className={styles.articleTopline}><span>ADVIES PER TIJDSVENSTER</span><small>Nieuws + gemeten koersreactie</small></div>
+      <div className={styles.adviceFocus} data-tone={currentAdvice.tone}>
+        <strong>Advies voor {timeframe}: {currentAdvice.status}</strong>
+        <p>{currentAdvice.detail}</p>
+      </div>
+      <div className={styles.adviceRows}>
+        {TIMEFRAMES.map((value) => {
+          const advice = detailAdvice(article, value, impact);
+          return <div className={styles.adviceRow} data-active={value === timeframe} key={value}>
+            <b>{value}</b>
+            <span>{advice.detail}</span>
+            <em data-tone={advice.tone}>{advice.status}</em>
+          </div>;
+        })}
+      </div>
+      <small className={styles.marketNote}>Dit is beslissingsondersteuning. Nieuws en gemeten koersreactie openen, sluiten of wijzigen nooit automatisch een positie.</small>
+    </section>'''
+expanded = replace_once(expanded, '    </section>\n  </>;\n}', '    </section>' + price_advice_panel + '\n  </>;\n}', "price-aware timeframe panel")
+EXPANDED.write_text(expanded)
 print("Applied News detail/article/impact patch successfully")
