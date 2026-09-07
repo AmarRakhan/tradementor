@@ -18,6 +18,6 @@ test("Aster detail keeps both active LONG and SHORT next-DCA plans visible", () 
 test("planned DCA chart rendering supports side-specific keys without touching TP", () => {
   assert.match(chart, /"dca-long"/);
   assert.match(chart, /"dca-short"/);
-  assert.match(chart, /level\.key==="dca"\|\|level\.key==="dca-long"\|\|level\.key==="dca-short"/);
-  assert.match(chart, /level\.key==="tp"/);
+  assert.match(chart, /level\.key\.startsWith\("dca"\)/);
+  assert.match(chart, /level\.key\.startsWith\("tp"\)/);
 });
