@@ -8,14 +8,12 @@ const css = readFileSync(new URL("../components/portfolio-impact-battle.module.c
 const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/markets/aster/pressure/route.ts", import.meta.url), "utf8");
 
-test("dominance score maps deterministically to pressure, status and one of 17 states", () => {
+test("dominance score remains deterministic while visual motion is presentation-only", () => {
   assert.deepEqual(dominancePresentation(0), { score: 0, longShare: 50, shortShare: 50, stateIndex: 8, status: "IN EVENWICHT", barLabel: "MARKTDRUK" });
   assert.equal(dominancePresentation(82).status, "LONGS DOMINEREN");
   assert.equal(dominancePresentation(-82).status, "SHORTS DOMINEREN");
-  assert.ok(dominancePresentation(100).stateIndex === 16);
-  assert.ok(dominancePresentation(-100).stateIndex === 0);
-  assert.ok(dominancePresentation(38).longShare > 50);
-  assert.ok(dominancePresentation(-38).shortShare > 50);
+  assert.equal(dominancePresentation(100).stateIndex, 16);
+  assert.equal(dominancePresentation(-100).stateIndex, 0);
 });
 
 test("legacy battle helper remains backward-compatible while market score can drive it explicitly", () => {
@@ -26,7 +24,7 @@ test("legacy battle helper remains backward-compatible while market score can dr
   assert.equal(market.barLabel, "MARKTDRUK");
 });
 
-test("all six requested timeframes are functional controls and Exposure is absent from visible side panels", () => {
+test("all six requested timeframes remain functional and Exposure stays absent", () => {
   for (const token of ['id: "1m"', 'id: "5m"', 'id: "15m"', 'id: "1h"', 'id: "4h"', 'id: "24h"']) assert.match(component, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(component, /label: "1u"/);
   assert.match(component, /label: "4u"/);
@@ -35,13 +33,35 @@ test("all six requested timeframes are functional controls and Exposure is absen
   assert.match(component, /positionCount/);
 });
 
-test("state-based visual engine ships 17 precomposed assets and does not filter or animate the bull scene", () => {
-  const assets = readdirSync(new URL("../public/portfolio-impact-states/", import.meta.url)).filter((name) => /^state-\d\d\.svg$/.test(name));
-  assert.equal(assets.length, 17);
-  assert.match(component, /portfolio-impact-states\/state-/);
+test("premium visual engine ships 201 half-percent frames with no bull filter or morph animation", () => {
+  const frames = readdirSync(new URL("../public/portfolio-impact-frames/", import.meta.url)).filter((name) => /^frame-\d{3}\.svg$/.test(name));
+  assert.equal(frames.length, 201);
+  assert.match(component, /const FRAME_COUNT = 201/);
+  assert.match(component, /Math\.round\(numberFrom\(longShare\) \* 2\)/);
+  assert.match(component, /portfolio-impact-frames\/frame-/);
   const sceneRule = css.match(/\.scene\{[^}]+\}/)?.[0] || "";
   assert.doesNotMatch(sceneRule, /filter:/);
   assert.doesNotMatch(sceneRule, /animation:/);
+});
+
+test("a ten percentage-point push is exactly twenty adjacent visual frames", () => {
+  const frame = (share) => Math.round(share * 2);
+  assert.equal(frame(50), 100);
+  assert.equal(frame(40), 80);
+  assert.equal(frame(60), 120);
+  assert.equal(frame(50) - frame(40), 20);
+  assert.equal(frame(60) - frame(50), 20);
+  assert.match(component, /current \+ \(targetFrameIndex > current \? 1 : -1\)/);
+  assert.match(component, /FRAME_INTERVAL_MS = 25/);
+  assert.match(component, /data-frame-index=/);
+  assert.match(component, /data-target-frame-index=/);
+});
+
+test("pressure bar and visible percentages are driven by the same display frame", () => {
+  assert.match(component, /const displayLongShare = frameToShare\(displayFrameIndex\)/);
+  assert.match(component, /"--long-share": `\$\{displayLongShare\}%`/);
+  assert.match(component, /formatShare\(displayLongShare\)/);
+  assert.match(component, /formatShare\(displayShortShare\)/);
 });
 
 test("Aster page places Bulls after account metrics and directly before Tradecentrum component", () => {
@@ -54,7 +74,7 @@ test("Aster page places Bulls after account metrics and directly before Tradecen
   assert.doesNotMatch(between, /<section className=/, "No other main section may sit between Bulls and Tradecentrum");
 });
 
-test("market-pressure route is read-only, deterministic and based on candles rather than account Open P&L", () => {
+test("market-pressure route remains read-only, deterministic and based on candles rather than account Open P&L", () => {
   assert.match(route, /export async function GET/);
   assert.match(route, /deterministic: true/);
   assert.match(route, /readOnly: true/);

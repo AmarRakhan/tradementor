@@ -46,6 +46,9 @@ const REFRESH_MS: Record<Timeframe, number> = {
   "4h": 120_000,
   "24h": 300_000,
 };
+const FRAME_COUNT = 201;
+const NEUTRAL_FRAME = 100;
+const FRAME_INTERVAL_MS = 25;
 const money = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -84,12 +87,25 @@ function formatPercent(value: number | null) {
   return `${sign}${percent.format(Math.abs(normalized))}%`;
 }
 
+function formatShare(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(".", ",");
+}
+
 function tone(value: number) {
   return value > 0.005 ? styles.positive : value < -0.005 ? styles.negative : styles.neutral;
 }
 
-function scenePath(index: number) {
-  return `/portfolio-impact-states/state-${String(index).padStart(2, "0")}.svg`;
+function framePath(index: number) {
+  const safe = Math.min(FRAME_COUNT - 1, Math.max(0, Math.round(index)));
+  return `/portfolio-impact-frames/frame-${String(safe).padStart(3, "0")}.svg`;
+}
+
+function shareToFrame(longShare: number) {
+  return Math.min(FRAME_COUNT - 1, Math.max(0, Math.round(numberFrom(longShare) * 2)));
+}
+
+function frameToShare(index: number) {
+  return Math.min(100, Math.max(0, index / 2));
 }
 
 function asPressure(value: unknown, timeframe: Timeframe): MarketPressurePayload | null {
@@ -127,9 +143,8 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
   const [pressure, setPressure] = useState<MarketPressurePayload | null>(null);
   const [loadingPressure, setLoadingPressure] = useState(true);
   const [pressureError, setPressureError] = useState("");
-  const [visualStateIndex, setVisualStateIndex] = useState(8);
-  const visualStateRef = useRef(8);
-  const pendingStateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [displayFrameIndex, setDisplayFrameIndex] = useState(NEUTRAL_FRAME);
+  const displayFrameRef = useRef(NEUTRAL_FRAME);
   const pressureCache = useRef(new Map<string, MarketPressurePayload>());
 
   const snapshot = useMemo(() => {
@@ -155,37 +170,39 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
   const symbolKey = marketSymbols.join(",");
 
   useEffect(() => {
-    const images = Array.from({ length: 17 }, (_, index) => {
-      const image = new Image();
-      image.decoding = "async";
-      image.src = scenePath(index);
-      return image;
-    });
-    return () => { images.forEach((image) => { image.src = ""; }); };
+    let cancelled = false;
+    const timers: number[] = [];
+    const loaded: HTMLImageElement[] = [];
+    const order: number[] = [];
+    for (let radius = 0; radius <= 24; radius += 1) {
+      if (NEUTRAL_FRAME - radius >= 0) order.push(NEUTRAL_FRAME - radius);
+      if (radius && NEUTRAL_FRAME + radius < FRAME_COUNT) order.push(NEUTRAL_FRAME + radius);
+    }
+    for (let index = 0; index < FRAME_COUNT; index += 1) if (!order.includes(index)) order.push(index);
+    let cursor = 0;
+    const loadBatch = () => {
+      if (cancelled) return;
+      const end = Math.min(order.length, cursor + 18);
+      while (cursor < end) {
+        const image = new Image();
+        image.decoding = "async";
+        image.src = framePath(order[cursor]);
+        loaded.push(image);
+        cursor += 1;
+      }
+      if (cursor < order.length) timers.push(window.setTimeout(loadBatch, 32));
+    };
+    loadBatch();
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+      loaded.forEach((image) => { image.src = ""; });
+    };
   }, []);
 
   useEffect(() => {
     let active = true;
     const cacheKey = `${timeframe}|${symbolKey}`;
-    const setStateSafely = (target: number, immediate = false) => {
-      const next = Math.min(16, Math.max(0, Math.round(target)));
-      if (pendingStateTimer.current) {
-        clearTimeout(pendingStateTimer.current);
-        pendingStateTimer.current = null;
-      }
-      if (immediate || Math.abs(next - visualStateRef.current) >= 2) {
-        visualStateRef.current = next;
-        setVisualStateIndex(next);
-        return;
-      }
-      if (next === visualStateRef.current) return;
-      pendingStateTimer.current = setTimeout(() => {
-        if (!active) return;
-        visualStateRef.current = next;
-        setVisualStateIndex(next);
-      }, 650);
-    };
-
     const overrideScore = marketPressureOverride?.[timeframe];
     if (Number.isFinite(Number(overrideScore))) {
       const presentation = dominancePresentation(Number(overrideScore));
@@ -203,7 +220,6 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       setPressure(next);
       setLoadingPressure(false);
       setPressureError("");
-      setStateSafely(next.stateIndex, true);
       return () => { active = false; };
     }
 
@@ -212,12 +228,9 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       setPressure(cached);
       setLoadingPressure(false);
       setPressureError("");
-      setStateSafely(cached.stateIndex, true);
     } else {
-      setPressure(null);
       setLoadingPressure(true);
       setPressureError("");
-      setStateSafely(8, true);
     }
 
     const load = async (quiet = false) => {
@@ -232,7 +245,6 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
         setPressure(next);
         setPressureError("");
         setLoadingPressure(false);
-        setStateSafely(next.stateIndex);
       } catch (reason) {
         if (!active) return;
         setLoadingPressure(false);
@@ -245,25 +257,51 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     return () => {
       active = false;
       window.clearInterval(interval);
-      if (pendingStateTimer.current) {
-        clearTimeout(pendingStateTimer.current);
-        pendingStateTimer.current = null;
-      }
     };
   }, [timeframe, symbolKey, marketPressureOverride]);
+
+  const currentPressure = pressure ?? { ...dominancePresentation(0), timeframe, symbolsUsed: [], updatedAt: 0 };
+  const targetFrameIndex = shareToFrame(currentPressure.longShare);
+
+  useEffect(() => {
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    if (reduced) {
+      displayFrameRef.current = targetFrameIndex;
+      setDisplayFrameIndex(targetFrameIndex);
+      return;
+    }
+    if (displayFrameRef.current === targetFrameIndex) return;
+    const interval = window.setInterval(() => {
+      const current = displayFrameRef.current;
+      if (current === targetFrameIndex) {
+        window.clearInterval(interval);
+        return;
+      }
+      const next = current + (targetFrameIndex > current ? 1 : -1);
+      displayFrameRef.current = next;
+      setDisplayFrameIndex(next);
+      if (next === targetFrameIndex) window.clearInterval(interval);
+    }, FRAME_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [targetFrameIndex]);
 
   const netPnl = snapshot.longPnl + snapshot.shortPnl;
   const equityBasis = equity && Math.abs(equity) > 0.01 ? Math.abs(equity) : 0;
   const netPercent = equityBasis ? netPnl / equityBasis * 100 : null;
   const longPercent = equityBasis ? snapshot.longPnl / equityBasis * 100 : null;
   const shortPercent = equityBasis ? snapshot.shortPnl / equityBasis * 100 : null;
-  const currentPressure = pressure ?? { ...dominancePresentation(0), timeframe, symbolsUsed: [], updatedAt: 0 };
   const scoreLabel = currentPressure.score > 0 ? `+${currentPressure.score}` : String(currentPressure.score);
   const pressureStatus = loadingPressure && !pressure ? "MARKTDRUK WORDT BEREKEND" : pressure?.status ?? "IN EVENWICHT";
   const pressureCaption = pressure
     ? `${pressure.barLabel} · ${TIMEFRAMES.find((item) => item.id === timeframe)?.label} · SCORE ${scoreLabel}${pressure.symbolsUsed.length ? ` · ${pressure.symbolsUsed.length} MARKTEN` : ""}`
     : pressureError ? "MARKTDRUK TIJDELIJK ONBESCHIKBAAR" : "MARKTDRUK";
-  const visualStyle = { "--long-share": `${currentPressure.longShare}%` } as React.CSSProperties;
+  const displayLongShare = frameToShare(displayFrameIndex);
+  const displayShortShare = 100 - displayLongShare;
+  const impactPosition = 50 + (displayLongShare - 50) * 0.10;
+  const visualStyle = {
+    "--long-share": `${displayLongShare}%`,
+    "--impact-x": `${impactPosition}%`,
+  } as React.CSSProperties;
 
   return <div className={styles.module}>
     <div className={styles.timeframes} role="group" aria-label="Marktdruk timeframe">
@@ -279,12 +317,17 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     <section
       className={`${styles.card} ${!dataAvailable ? styles.unavailable : ""}`}
       style={visualStyle}
-      data-state-index={visualStateIndex}
+      data-state-index={currentPressure.stateIndex}
+      data-frame-index={displayFrameIndex}
+      data-target-frame-index={targetFrameIndex}
+      data-visual-long-share={displayLongShare}
+      data-target-long-share={currentPressure.longShare}
       data-timeframe={timeframe}
       data-score={currentPressure.score}
+      data-updated-at={updatedAt ?? ""}
       aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(netPnl, true)}. Marktdruk ${pressureStatus}.`}
     >
-      <img className={styles.scene} src={scenePath(visualStateIndex)} alt="" aria-hidden="true" />
+      <img className={styles.scene} src={framePath(displayFrameIndex)} alt="" aria-hidden="true" />
       <div className={styles.vignette} aria-hidden="true" />
       <div className={styles.impact} aria-hidden="true"><i /><i /><i /></div>
 
@@ -319,9 +362,9 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       <div className={styles.battleFooter}>
         <div className={styles.status}>{pressureStatus}</div>
         <div className={styles.balanceRow}>
-          <div className={`${styles.share} ${styles.longShare}`}><strong>{currentPressure.longShare}%</strong></div>
+          <div className={`${styles.share} ${styles.longShare}`}><strong>{formatShare(displayLongShare)}%</strong></div>
           <div className={styles.balanceTrack} aria-hidden="true"><div className={styles.longFill} /><div className={styles.shortFill} /><i /></div>
-          <div className={`${styles.share} ${styles.shortShare}`}><strong>{currentPressure.shortShare}%</strong></div>
+          <div className={`${styles.share} ${styles.shortShare}`}><strong>{formatShare(displayShortShare)}%</strong></div>
         </div>
         <div className={styles.barCaption}>{pressureCaption}</div>
       </div>
