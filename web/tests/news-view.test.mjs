@@ -27,7 +27,7 @@ test("News overview keeps the approved compact density and Dutch timeframe contr
   assert.match(view, /Nieuwsmeldingen/);
   assert.doesNotMatch(view, />Breaking news</);
   assert.doesNotMatch(view, /coin-universe/);
-  assert.match(css, /min-height:66px/);
+  assert.match(css, /min-height:70px/);
   assert.match(css, /rotateY\(180deg\)/);
   assert.match(css, /grid-template-columns:\s*repeat\(6/);
 });
@@ -53,4 +53,23 @@ test("News uses live sources, Dutch translation and never sends trading mutation
   assert.match(view, /strategy2\/focus\/markets/);
   assert.doesNotMatch(view, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/i);
   assert.doesNotMatch(view, /\/start|\/stop|\/close-position|\/orders/i);
+});
+
+test("Opened News stays inside the app as a simplified source-based article", async () => {
+  const [view, digestRoute, detailCss] = await Promise.all([
+    read("../components/news-view.tsx"),
+    read("../app/api/news-article/route.ts"),
+    read("../components/news-article-detail.module.css"),
+  ]);
+  assert.match(view, /\/api\/news-article/);
+  assert.match(view, /Crypto Bot 2026 · duidelijk uitgelegd/);
+  assert.match(view, /Belangrijkste punten/);
+  assert.match(view, /Bron: \{selected\.source\}/);
+  assert.doesNotMatch(view, /Lees volledig artikel/);
+  assert.match(digestRoute, /extractArticleText/);
+  assert.match(digestRoute, /capWords\(translated.*170/);
+  assert.match(digestRoute, /privateHost/);
+  assert.match(digestRoute, /redirect:\s*"manual"/);
+  assert.match(detailCss, /\.sourceLink/);
+  assert.match(detailCss, /font-size:\s*8\.5px/);
 });

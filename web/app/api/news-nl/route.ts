@@ -29,6 +29,12 @@ function decodeHtml(value: string) {
 function polishDutch(value: string) {
   let text = clean(decodeHtml(value));
   const rules: Array<[RegExp, string]> = [
+    [/\bHarmony om Layer-1 Blockchain af te sluiten, Ethereum-migratie voor ÉÉN token na te streven\b/gi, "Harmony wil zijn Layer-1-blockchain sluiten en het ONE-token naar Ethereum migreren"],
+    [/\bAltcoin openstaande futuresposities overtreft\b/gi, "Openstaande posities in altcoinfutures overtreffen"],
+    [/\bolieprijzen opdrijft, vertroebelt de rentevooruitzichten van de Fed\b/gi, "olieprijzen opdrijft en de rentevooruitzichten van de Fed vertroebelt"],
+    [/\bEDT cryptovoorspellingsmarkt\b/g, "EDT op de cryptovoorspellingsmarkt"],
+    [/\bsprong om plaats te nemen in de top 3 stijgers\b/gi, "sprong naar de top 3 stijgers"],
+    [/\bdat AI Bitcoin met 50% crasht\b/gi, "dat AI Bitcoin met 50% laat crashen"],
     [/\bClouds Fed Outlook\b/gi, "vertroebelt de rentevooruitzichten van de Fed"],
     [/\bfutures open rente\b/gi, "openstaande futuresposities"],
     [/\bopen interest\b/gi, "openstaande posities"],
@@ -58,12 +64,13 @@ function polishDutch(value: string) {
   for (const [pattern, replacement] of rules) text = text.replace(pattern, replacement);
   if (/\bHarmony\b|\bHarmonie\b/i.test(text)) {
     text = text.replace(/\bHarmonie\b/g, "Harmony");
-    text = text.replace(/\b(?:ÉÉN|EEN) token\b/gi, "ONE-token");
-    text = text.replace(/\bER EEN\b/gi, "ONE");
+    text = text.replace(/(?:ÉÉN|EEN)\s+token/gi, "ONE-token");
+    text = text.replace(/ER EEN/gi, "ONE");
   }
   return text
     .replace(/\bETF's Zien\b/g, "ETF's zien")
     .replace(/\bEdT\b/g, "EDT")
+    .replace(/:\s*hier is de Co$/gi, "")
     .replace(/\s+([,.;:!?])/g, "$1")
     .replace(/\$\s+(\d)/g, "$$$1")
     .replace(/\s{2,}/g, " ")
