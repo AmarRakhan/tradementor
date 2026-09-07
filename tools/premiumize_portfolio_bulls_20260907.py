@@ -26,44 +26,42 @@ FRAME_DIR.mkdir(parents=True, exist_ok=True)
 for old in FRAME_DIR.glob("frame-*.svg"):
     old.unlink()
 
-# IMPORTANT: the approved artwork is 900x363. Keep that exact composition ratio.
-# The previous 720x444 canvas added artificial top/bottom space plus opaque masking
-# rectangles. On mobile that made the artwork look like a picture pasted into a grey
-# card. These frames now use the artwork itself as the edge-to-edge card surface.
+# The approved Portfolio Impact artwork is 900x363. That ratio is binding: the
+# artwork itself is the card. Never add a taller canvas around it or mask it into
+# a smaller rectangle; that is what caused the former pasted-photo appearance.
 W, H = 900, 363
 
 # 201 frames = 0.5 percentage-point increments from LONG 0.0% to 100.0%.
-# The artwork stays compositionally stable; pressure is expressed through subtle
-# integrated light and the live UI overlays, so timeframe changes never expose seams.
+# The composition never moves/crops between states. Market pressure is shown by
+# restrained integrated light so timeframe transitions stay seamless.
 for index in range(201):
     long_share = index / 2.0
     bias = (long_share - 50.0) / 50.0
     impact_x = 450 + round(bias * 24)
-    green = 0.055 + max(0.0, bias) * 0.15
-    red = 0.055 + max(0.0, -bias) * 0.15
-    lose_left = max(0.0, -bias) * 0.22
-    lose_right = max(0.0, bias) * 0.22
+    green = 0.045 + max(0.0, bias) * 0.12
+    red = 0.045 + max(0.0, -bias) * 0.12
+    lose_left = max(0.0, -bias) * 0.18
+    lose_right = max(0.0, bias) * 0.18
 
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="726" viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid slice">
 <defs>
-  <radialGradient id="g"><stop stop-color="#20f29a" stop-opacity=".64"/><stop offset="1" stop-color="#20f29a" stop-opacity="0"/></radialGradient>
-  <radialGradient id="r"><stop stop-color="#ff405f" stop-opacity=".64"/><stop offset="1" stop-color="#ff405f" stop-opacity="0"/></radialGradient>
+  <radialGradient id="g"><stop stop-color="#20f29a" stop-opacity=".58"/><stop offset="1" stop-color="#20f29a" stop-opacity="0"/></radialGradient>
+  <radialGradient id="r"><stop stop-color="#ff405f" stop-opacity=".58"/><stop offset="1" stop-color="#ff405f" stop-opacity="0"/></radialGradient>
   <linearGradient id="fadeL"><stop stop-color="#000" stop-opacity="{lose_left:.3f}"/><stop offset=".82" stop-color="#000" stop-opacity="0"/></linearGradient>
   <linearGradient id="fadeR" x1="1" x2="0"><stop stop-color="#000" stop-opacity="{lose_right:.3f}"/><stop offset=".82" stop-color="#000" stop-opacity="0"/></linearGradient>
-  <linearGradient id="footerVeil" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity="0"/><stop offset=".48" stop-color="#020705" stop-opacity=".20"/><stop offset="1" stop-color="#020705" stop-opacity=".58"/></linearGradient>
-  <radialGradient id="centerVeil"><stop stop-color="#030806" stop-opacity=".62"/><stop offset=".58" stop-color="#030806" stop-opacity=".28"/><stop offset="1" stop-color="#030806" stop-opacity="0"/></radialGradient>
-  <filter id="uiBlur" x="-15%" y="-15%" width="130%" height="130%"><feGaussianBlur stdDeviation="7.5"/></filter>
-  <filter id="spark" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-  <clipPath id="leftUi"><rect x="10" y="38" width="170" height="214" rx="22"/></clipPath>
-  <clipPath id="rightUi"><rect x="720" y="38" width="170" height="214" rx="22"/></clipPath>
-  <clipPath id="centerUi"><ellipse cx="450" cy="48" rx="155" ry="58"/></clipPath>
-  <clipPath id="footerUi"><rect x="0" y="274" width="900" height="89"/></clipPath>
+  <linearGradient id="footerVeil" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity="0"/><stop offset=".46" stop-color="#020705" stop-opacity=".14"/><stop offset="1" stop-color="#020705" stop-opacity=".48"/></linearGradient>
+  <radialGradient id="centerVeil"><stop stop-color="#030806" stop-opacity=".54"/><stop offset=".58" stop-color="#030806" stop-opacity=".22"/><stop offset="1" stop-color="#030806" stop-opacity="0"/></radialGradient>
+  <filter id="uiBlur" x="-22%" y="-22%" width="144%" height="144%"><feGaussianBlur stdDeviation="12.5"/></filter>
+  <filter id="spark" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <clipPath id="leftUi"><rect x="10" y="36" width="170" height="216" rx="22"/></clipPath>
+  <clipPath id="rightUi"><rect x="720" y="36" width="170" height="216" rx="22"/></clipPath>
+  <clipPath id="centerUi"><rect x="246" y="0" width="408" height="112" rx="36"/></clipPath>
+  <clipPath id="footerUi"><rect x="0" y="270" width="900" height="93"/></clipPath>
 </defs>
 <rect width="900" height="363" fill="#020705"/>
 <image id="art" href="{REFERENCE_DATA_URI}" x="0" y="0" width="900" height="363" preserveAspectRatio="xMidYMid slice"/>
-<!-- Repaint only the source text zones with a blurred copy of the same artwork.
-     This keeps the lighting, texture and bull/bear scene continuous instead of
-     covering it with opaque green/red/grey rectangles. -->
+<!-- Blur only source text/value zones using the artwork itself. No opaque green,
+     red or grey blocks are allowed: the scene and lighting must remain continuous. -->
 <use href="#art" filter="url(#uiBlur)" clip-path="url(#leftUi)"/>
 <use href="#art" filter="url(#uiBlur)" clip-path="url(#rightUi)"/>
 <use href="#art" filter="url(#uiBlur)" clip-path="url(#centerUi)"/>
@@ -72,9 +70,9 @@ for index in range(201):
 <ellipse cx="750" cy="190" rx="255" ry="205" fill="url(#r)" opacity="{red:.3f}"/>
 <rect x="0" y="0" width="320" height="363" fill="url(#fadeL)"/>
 <rect x="580" y="0" width="320" height="363" fill="url(#fadeR)"/>
-<ellipse cx="450" cy="48" rx="158" ry="60" fill="url(#centerVeil)"/>
-<rect x="0" y="266" width="900" height="97" fill="url(#footerVeil)"/>
-<g transform="translate({impact_x} 191)" filter="url(#spark)" opacity=".58"><circle r="2.4" fill="#fff5c4"/><circle r="8.5" fill="none" stroke="#ffc65f" stroke-opacity=".42"/></g>
+<ellipse cx="450" cy="45" rx="205" ry="66" fill="url(#centerVeil)"/>
+<rect x="0" y="264" width="900" height="99" fill="url(#footerVeil)"/>
+<g transform="translate({impact_x} 191)" filter="url(#spark)" opacity=".38"><circle r="2.1" fill="#fff5c4"/><circle r="7.4" fill="none" stroke="#ffc65f" stroke-opacity=".34"/></g>
 </svg>'''
     (FRAME_DIR / f"frame-{index:03d}.svg").write_text(svg, encoding="utf-8")
 

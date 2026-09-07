@@ -37,13 +37,15 @@ for (const [name, type, width, height] of cases) {
   const box = await card.boundingBox();
   assert.ok(box && box.width <= width, `${name}: card exceeds viewport width`);
   const ratio = box ? box.width / box.height : 0;
-  assert.ok(box && box.height >= 195 && box.height <= 300, `${name}: card height ${box?.height ?? 'n/a'}px outside approved mobile target`);
-  assert.ok(ratio >= 1.40 && ratio <= 1.90, `${name}: card ratio ${ratio.toFixed(2)} outside approved mobile target`);
+  assert.ok(box && box.height >= 130 && box.height <= 180, `${name}: card height ${box?.height ?? 'n/a'}px outside approved 900x363 mobile composition`);
+  assert.ok(ratio >= 2.42 && ratio <= 2.54, `${name}: card ratio ${ratio.toFixed(2)} must match approved 900x363 reference`);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, `${name}: horizontal overflow ${overflow}px`);
   assert.match(await card.innerText(), /SHORTS DRUKKEN HARDER/, `${name}: 15m fixture must show short pressure`);
   const sceneSrc = await card.locator('img').first().getAttribute('src');
   assert.match(sceneSrc || '', /portfolio-impact-frames\/frame-\d{3}\.svg/, `${name}: half-percent frame asset missing`);
+  const centerBackground = await card.locator('div').filter({ hasText: 'PORTFOLIO IMPACT' }).first().evaluate((node) => getComputedStyle(node).backgroundColor);
+  assert.ok(centerBackground === 'rgba(0, 0, 0, 0)' || centerBackground === 'transparent', `${name}: center P&L must not be an opaque pasted block`);
   await card.screenshot({ path: `artifacts/portfolio-impact/${name}.png` });
   await browser.close();
 }
@@ -113,4 +115,4 @@ await captureTransition('#qa-long60', 120, 1);
 await motionCard.screenshot({ path: 'artifacts/portfolio-impact/smooth-motion-390.png' });
 await motionBrowser.close();
 
-console.log('Portfolio Impact premium half-percent frame QA complete');
+console.log('Portfolio Impact exact 900x363 premium composition QA complete');
