@@ -1,0 +1,103 @@
+name: Apply seamless Bulls scene 2026-09-07
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/apply-bulls-seamless-scene-20260907.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Make Bulls scene seamless
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          component = Path('web/components/portfolio-impact-battle.tsx')
+          text = component.read_text()
+
+          old_scene = '<img className={styles.scene} src="/portfolio-impact-premium-clean.webp" alt="" aria-hidden="true" />'
+          new_scene = '<img className={styles.scene} src={BATTLE_SOURCE} alt="" aria-hidden="true" />'
+          if text.count(old_scene) != 1:
+              raise SystemExit(f'Expected one clean scene source, found {text.count(old_scene)}')
+          text = text.replace(old_scene, new_scene, 1)
+
+          old_eraser = '  const eraserOpacity = 0.28 + intensity * 0.20;\n'
+          if text.count(old_eraser) != 1:
+              raise SystemExit(f'Expected one eraser opacity line, found {text.count(old_eraser)}')
+          text = text.replace(old_eraser, '', 1)
+
+          old_rects = '''    <rect width="720" height="303" fill="#00140b" opacity={eraserOpacity} mask="url(#longSilhouette)" />\n    <rect width="720" height="303" fill="#180306" opacity={eraserOpacity} mask="url(#shortSilhouette)" />\n\n'''
+          if text.count(old_rects) != 1:
+              raise SystemExit(f'Expected one opaque eraser pair, found {text.count(old_rects)}')
+          text = text.replace(old_rects, '', 1)
+          component.write_text(text)
+
+          unit = Path('web/tests/portfolio-impact-frame-battle-poc.test.mjs')
+          test = unit.read_text()
+          old_assert = '  assert.match(component, /src="\\/portfolio-impact-premium-clean\\.webp"/);\n'
+          new_assert = '  assert.match(component, /src=\\{BATTLE_SOURCE\\}/);\n  assert.doesNotMatch(component, /eraserOpacity|fill="#00140b"|fill="#180306"/);\n'
+          if test.count(old_assert) != 1:
+              raise SystemExit('Could not find Bulls source regression assertion')
+          unit.write_text(test.replace(old_assert, new_assert, 1))
+
+          visual = Path('web/tests/visual/portfolio-impact-screenshots.mjs')
+          visual_text = visual.read_text()
+          old_visual = "  assert.equal(sceneSrc, '/portfolio-impact-premium-clean.webp', `${name}: fixed clean background missing`);"
+          new_visual = "  assert.equal(sceneSrc, '/portfolio-impact-premium-reference.webp', `${name}: seamless premium scene source missing`);"
+          if visual_text.count(old_visual) != 1:
+              raise SystemExit('Could not find visual scene-source assertion')
+          visual.write_text(visual_text.replace(old_visual, new_visual, 1))
+          PY
+
+      - name: Verify UI-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git status --short | awk '{print $2}')"
+          printf '%s\n' "$changed"
+          bad="$(printf '%s\n' "$changed" | grep -Ev '^(web/components/portfolio-impact-battle\.tsx|web/tests/portfolio-impact-frame-battle-poc\.test\.mjs|web/tests/visual/portfolio-impact-screenshots\.mjs)$' || true)"
+          test -z "$bad" || { echo "Unexpected modified files: $bad"; exit 1; }
+          git diff --exit-code -- cloud_api/aster_multi_bb.py cloud_api/aster_strategy2.py cloud_api/aster_execution.py cloud_api/aster_strategy2_runtime.py
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run Bulls regressions
+        working-directory: web
+        run: node --test tests/portfolio-impact-frame-battle-poc.test.mjs tests/portfolio-impact-battle.test.mjs tests/portfolio-impact-market-pressure.test.mjs
+
+      - name: Run complete web suite
+        working-directory: web
+        run: npm test
+
+      - name: Commit seamless cinematic scene
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web/components/portfolio-impact-battle.tsx web/tests/portfolio-impact-frame-battle-poc.test.mjs web/tests/visual/portfolio-impact-screenshots.mjs
+          git commit -m 'Blend Bulls animation into one premium scene source'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
