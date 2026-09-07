@@ -1,0 +1,336 @@
+.hero {
+  position: relative;
+  width: 100%;
+  min-height: 150px;
+  max-height: 240px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(0,243,154,.22);
+  border-radius: 12px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 45% 35%, rgba(0,243,154,.2), rgba(0,16,10,.96));
+}
+
+.hero img {
+  width: 100%;
+  height: 100%;
+  min-height: 150px;
+  max-height: 240px;
+  object-fit: cover;
+}
+
+.hero[data-source-image="false"] img {
+  width: 96px;
+  height: 96px;
+  min-height: 0;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 13px rgba(0,0,0,.55));
+}
+
+.heroFallback {
+  color: #dfffee;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.imageBadge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 4px 7px;
+  border: 1px solid rgba(0,243,154,.32);
+  border-radius: 999px;
+  background: rgba(0,10,6,.72);
+  color: #9ac8b7;
+  font-size: 8px;
+  backdrop-filter: blur(8px);
+}
+
+.article,
+.impact {
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 1px solid rgba(0,243,154,.28);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(4,28,19,.92), rgba(2,15,10,.96));
+  box-shadow: inset 0 0 18px rgba(0,243,154,.025);
+}
+
+.articleTopline,
+.impactHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.articleTopline > span,
+.impactHeader > div > span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(0,243,154,.34);
+  border-radius: 999px;
+  color: #5cf0b4;
+  background: rgba(0,243,154,.055);
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.articleTopline small,
+.impactHeader small {
+  color: #78958a;
+  font-size: 8px;
+}
+
+.article h3,
+.meaning h3 {
+  margin: 0 0 6px;
+  color: #e6c957;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.lead {
+  margin: 0 0 12px;
+  color: #f0f7f4;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 730;
+}
+
+.textSection,
+.points,
+.watch,
+.conclusion {
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(0,243,154,.12);
+}
+
+.textSection p,
+.points p,
+.watch p,
+.conclusion p,
+.meaning p {
+  margin: 0 0 8px;
+  color: #c4d5cf;
+  font-size: 11px;
+  line-height: 1.52;
+}
+
+.points p,
+.watch p {
+  color: #aec5bc;
+}
+
+.note,
+.marketNote {
+  display: block;
+  margin-top: 10px;
+  color: #718f84;
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 56px;
+  color: #9eb7ad;
+  font-size: 10px;
+}
+
+.loading i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00f39a;
+  box-shadow: 0 0 9px #00f39a;
+}
+
+.impactHeader h3 {
+  margin: 4px 0 0;
+  color: #edf7f3;
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0,1fr));
+  gap: 5px;
+  margin-bottom: 9px;
+}
+
+.metrics > div {
+  min-width: 0;
+  padding: 7px 6px;
+  border: 1px solid rgba(0,243,154,.14);
+  border-radius: 9px;
+  background: rgba(0,9,6,.48);
+}
+
+.metrics small {
+  display: block;
+  margin-bottom: 3px;
+  color: #729186;
+  font-size: 7.5px;
+}
+
+.metrics strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e8f4ef;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+[data-tone="positive"] { color: #46e9a6 !important; }
+[data-tone="negative"] { color: #ff7890 !important; }
+[data-tone="neutral"] { color: #d8c96c !important; }
+
+.chartWrap {
+  margin: 0 0 9px;
+  padding: 7px;
+  border: 1px solid rgba(0,243,154,.16);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(0,15,9,.78), rgba(0,8,5,.9));
+  touch-action: pan-y;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: 112px;
+  color: #22eaa0;
+}
+
+.gridLine {
+  stroke: rgba(113,159,139,.13);
+  stroke-width: 1;
+}
+
+.priceLine {
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 4px rgba(0,243,154,.35));
+}
+
+.publishLine {
+  stroke: #e8c94d;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+  opacity: .8;
+}
+
+.publishDot { fill: #e8c94d; }
+.nowDot { fill: #5af0b5; }
+
+.chartLegend {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #78958a;
+  font-size: 7.5px;
+}
+
+.chartLegend span:first-child { color: #d7bd50; }
+
+.chartEmpty,
+.unavailable {
+  min-height: 60px;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  border: 1px dashed rgba(0,243,154,.18);
+  border-radius: 10px;
+  color: #79968b;
+  font-size: 9px;
+  text-align: center;
+}
+
+.windowGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0,1fr));
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.windowGrid > div {
+  min-width: 0;
+  padding: 6px 3px;
+  border: 1px solid rgba(0,243,154,.13);
+  border-radius: 8px;
+  text-align: center;
+  background: rgba(0,9,6,.45);
+}
+
+.windowGrid > div[data-active="true"] {
+  border-color: rgba(0,243,154,.72);
+  box-shadow: inset 0 0 9px rgba(0,243,154,.08);
+}
+
+.windowGrid b {
+  display: block;
+  color: #8fb6a6;
+  font-size: 8px;
+  margin-bottom: 3px;
+}
+
+.windowGrid span {
+  display: block;
+  min-height: 20px;
+  color: #d7e5df;
+  font-size: 7.6px;
+  line-height: 1.18;
+}
+
+.meaning {
+  padding-top: 10px;
+  border-top: 1px solid rgba(0,243,154,.14);
+}
+
+.impactFacts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.impactFacts span {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(0,243,154,.12);
+  border-radius: 8px;
+  background: rgba(0,9,6,.4);
+}
+
+.impactFacts small {
+  display: block;
+  color: #729186;
+  font-size: 7.5px;
+  margin-bottom: 3px;
+}
+
+.impactFacts b {
+  display: block;
+  color: #d9e7e1;
+  font-size: 8.5px;
+  line-height: 1.28;
+}
+
+@media (max-width: 390px) {
+  .article,
+  .impact { padding: 10px; }
+  .metrics { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .windowGrid { gap: 3px; }
+  .windowGrid span { font-size: 7px; }
+}
