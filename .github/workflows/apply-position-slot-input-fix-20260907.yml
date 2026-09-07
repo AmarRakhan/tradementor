@@ -1,0 +1,152 @@
+name: Apply position slot input fix 2026-09-07
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/position-slot-input-fix-20260907.trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: position-slot-input-fix-20260907
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  apply-test-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply position-slot input repair
+        run: python tools/apply_position_slot_input_fix_20260907.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run position-slot focused regressions
+        working-directory: web
+        run: node --experimental-strip-types --test tests/position-slot-input.test.mjs tests/strategy2-seat-volume-wizard.test.mjs tests/strategy2-settings-hard-limits.test.mjs
+
+      - name: Run complete web regression suite
+        working-directory: web
+        run: npm test
+
+      - name: Build web app
+        working-directory: web
+        run: npm run build
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add web/components/aster-strategy2-maker.tsx web/lib/aster-strategy2-settings-guard.ts web/lib/position-slot-input.ts web/tests/position-slot-input.test.mjs web/tests/strategy2-seat-volume-wizard.test.mjs web/tests/strategy2-settings-hard-limits.test.mjs
+          if ! git diff --cached --quiet; then
+            git commit -m 'Fix mobile position slot inputs and raise total cap to 100'
+            git push origin HEAD:amar-crypto-bot-2026-cloud
+          fi
+          echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture current web service and IAM
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+
+      - name: Build and push immutable web image
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/amar-bot-v44-direct-install:$DEPLOY_SHA"
+          docker build --tag "$IMAGE" web
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy zero-traffic candidate preserving runtime config
+        shell: bash
+        run: |
+          REVISION_SUFFIX="slots-${DEPLOY_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          TAG="slots-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$REVISION_SUFFIX" --no-traffic --tag "$TAG"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
+          python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/after.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          before=json.load(open(sys.argv[1],encoding='utf-8')); after=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
+          bs=before['spec']['template']['spec']; ass=after['spec']['template']['spec']
+          assert bs.get('serviceAccountName')==ass.get('serviceAccountName')
+          assert bs.get('timeoutSeconds')==ass.get('timeoutSeconds')
+          assert bs.get('containerConcurrency')==ass.get('containerConcurrency')
+          be={x['name']:x.get('value') for x in bs['containers'][0].get('env',[])}
+          ae={x['name']:x.get('value') for x in ass['containers'][0].get('env',[])}
+          assert be==ae
+          candidate=next(x for x in after['status']['traffic'] if x.get('tag')==tag)
+          print('CANDIDATE_URL='+candidate['url'])
+          print('CANDIDATE_REVISION='+candidate['revisionName'])
+          PY
+
+      - name: Verify candidate serves successfully
+        shell: bash
+        run: |
+          HTML="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/")"
+          test -n "$HTML"
+
+      - name: Promote verified candidate to 100 percent
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+          URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          HTML="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$URL/")"
+          test -n "$HTML"
+          echo "LIVE_URL=$URL" >> "$GITHUB_ENV"
+
+      - name: Verify web IAM unchanged
+        shell: bash
+        run: |
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json,sys
+          before=json.load(open(sys.argv[1],encoding='utf-8')); after=json.load(open(sys.argv[2],encoding='utf-8'))
+          assert before==after
+          PY
+
+      - name: Deployment summary
+        run: |
+          echo "Position-slot fix live on $LIVE_URL"
+          echo "Revision: $CANDIDATE_REVISION"
+          echo "Commit: $DEPLOY_SHA"
