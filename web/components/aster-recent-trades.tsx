@@ -988,6 +988,9 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailOppositeRuntime = detail && detailOppositePosition && detailOppositeSide ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailOppositeSide}`] || null : null;
   const detailOppositeNextDcaPrice = finite(detailOppositeRuntime?.nextDcaPrice);
   const detailOppositeNextDcaNumber = finite(detailOppositeRuntime?.nextDcaNumber);
+  const detailOppositeBreakEvenPrice = finite(detailOppositePosition?.strategy2Tp?.breakEvenPrice) ?? undefined;
+  const detailOppositeTpPrice = finite(detailOppositeRuntime?.tpPrice);
+  const detailOppositeTpPct = finite(detailOppositeRuntime?.takeProfitPct);
   useEffect(() => {
     let cancelled = false;
     setDetailFillDcaCount(null);
@@ -1058,6 +1061,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
         ]
       : detailDcaLevels;
   const detailPlannedLevels: PlannedActionLevel[] = [
+    ...(detailBreakEvenPrice && detailBreakEvenPrice > 0
+      ? [{ key: (detailMainSide === "SHORT" ? "be-short" : "be-long") as const, price: detailBreakEvenPrice, label: `${detailMainSide} BE`, color: detailMainSide === "SHORT" ? "#55e3ff" : "#ffd166" }]
+      : []),
+    ...(detailOppositeBreakEvenPrice && detailOppositeBreakEvenPrice > 0
+      ? [{ key: (detailOppositeSide === "SHORT" ? "be-short" : "be-long") as const, price: detailOppositeBreakEvenPrice, label: `${detailOppositeSide} BE`, color: detailOppositeSide === "SHORT" ? "#55e3ff" : "#ffd166" }]
+      : []),
     ...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null
       ? [
           {
@@ -1081,9 +1090,19 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     ...(detailTpPrice && detailTpPrice > 0
       ? [
           {
-            key: "tp" as const,
+            key: (detailMainSide === "SHORT" ? "tp-short" : "tp-long") as const,
             price: detailTpPrice,
-            label: `TP ${detailTpPct !== null ? `${detailTpPct.toFixed(2).replace(".", ",")}%` : ""}`,
+            label: `${detailMainSide} TP ${detailTpPct !== null ? `${detailTpPct.toFixed(2).replace(".", ",")}%` : ""}`,
+            color: "#58f0ae",
+          },
+        ]
+      : []),
+    ...(detailOppositeTpPrice && detailOppositeTpPrice > 0
+      ? [
+          {
+            key: (detailOppositeSide === "SHORT" ? "tp-short" : "tp-long") as const,
+            price: detailOppositeTpPrice,
+            label: `${detailOppositeSide} TP ${detailOppositeTpPct !== null ? `${detailOppositeTpPct.toFixed(2).replace(".", ",")}%` : ""}`,
             color: "#58f0ae",
           },
         ]
@@ -1384,7 +1403,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                   </div>
                 </div>
               </section>
-              <SafeTradingChart selection={detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} breakEvenPrice={detailBreakEvenPrice} dcaLevels={detailChartDcaLevels} plannedActionLevels={detailPlannedLevels} selectedActionId={detail.selectedActionId} airbagEvents={detailAirbagEvents} cockpit={detailFocusV2Cockpit} accountDisplay={accountDisplay} />
+              <SafeTradingChart selection={detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} dcaLevels={detailChartDcaLevels} plannedActionLevels={detailPlannedLevels} selectedActionId={detail.selectedActionId} airbagEvents={detailAirbagEvents} cockpit={detailFocusV2Cockpit} accountDisplay={accountDisplay} />
               {detailFocusV2Cockpit && <FocusV2CockpitPanel value={detailFocusV2Cockpit} />}
               <div className={styles.summary}>
                 <div>

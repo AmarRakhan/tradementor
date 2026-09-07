@@ -10,9 +10,10 @@ test("Aster detail chart keeps executed markers and adds planned DCA/TP overlays
   assert.match(chart, /plannedActionLevels/);
   assert.match(chart, /plannedOverlayLevels/);
   assert.match(chart, /VOLGENDE \$\{selection\.side\.toUpperCase\(\)\} DCA/);
-  assert.match(chart, /level\.key==="dca"/);
+  assert.match(chart, /level\.key\.startsWith\("dca"\)/);
   assert.match(chart, /lineWidth:3/);
-  assert.match(chart, /level\.key==="tp"/);
+  assert.match(chart, /level\.key\.startsWith\("tp"\)/);
+  assert.match(chart, /level\.key\.startsWith\("be-"\)/);
   assert.match(chart, /axisLabelVisible:false/);
   assert.match(chart, /layoutFocusLabelYs/);
   assert.match(chart, /dcaLevels/);
@@ -31,7 +32,12 @@ test("open detail consumes server Strategy 2 next-action preview values", () => 
   assert.match(recent, /detailRuntime\?\.expectedPnlAtTp/);
   assert.match(recent, /detailRuntime\?\.portfolioValueAtTp/);
   assert.doesNotMatch(recent, /nextDcaDistanceUsd|tpDistanceUsd/);
-  assert.match(recent, /breakEvenPrice=\{detailBreakEvenPrice\}/);
+  assert.match(recent, /detailOppositeBreakEvenPrice/);
+  assert.match(recent, /be-long/);
+  assert.match(recent, /be-short/);
+  assert.match(recent, /tp-long/);
+  assert.match(recent, /tp-short/);
+  assert.doesNotMatch(recent, /breakEvenPrice=\{detailBreakEvenPrice\}/);
   assert.match(recent, /dcaLevels=\{detailChartDcaLevels\}/);
   assert.match(recent, /plannedActionLevels=\{detailPlannedLevels\}/);
 });
