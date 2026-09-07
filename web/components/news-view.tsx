@@ -459,8 +459,7 @@ export function NewsView() {
             <div className={styles.detailScroll}>
               <h2 className={styles.detailTitle}>{selected.title}</h2>
               <NewsArticleExpanded article={selected} digest={detailDigest} loading={detailLoading} error={detailError} timeframe={timeframe} />
-              <section className={styles.impact}><strong>💡 Wat betekent dit voor {timeframe}?</strong><p>{impactText(selected, timeframe)}</p></section>
-              <section className={styles.tfPanel} data-no-doubletap="true"><h3>💡 Advies per tijdsvenster</h3>{TIMEFRAMES.map((value) => { const advice = adviceFor(selected, value); return <div className={styles.tfRow} key={value}><b>{value}</b><span>{advice.detail}</span><span className={styles.statusPill} data-tone={advice.tone}>{advice.status}</span></div>; })}</section>
+
             </div>
             <footer className={styles.detailActions}><button type="button" className={articleStyles.sourceLink} onClick={() => window.open(detailDigest?.sourceUrl || selected.sourceUrl, "_blank", "noopener,noreferrer")}>Bron: {selected.source} ↗</button><div className={styles.doubleHint}>◇ Dubbeltik<br/>om terug te draaien</div></footer>
           </article>

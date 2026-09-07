@@ -15,6 +15,7 @@ type NewsArticleLike = {
   publishedAt: string;
   coins: string[];
   sentiment: "bullish" | "bearish" | "neutral";
+  importance: "high" | "normal";
 };
 
 type Digest = {
@@ -134,6 +135,39 @@ function impactExplanation(impact: Impact | null, symbol: string) {
   return `De nieuwsinhoud wordt als ${expected.toLowerCase()} beoordeeld, terwijl de gemeten koersreactie ${measured.toLowerCase()} is. Dat verschil is belangrijk: andere marktontwikkelingen kunnen momenteel sterker zijn dan dit nieuwsbericht.`;
 }
 
+type DetailAdvice = { status: string; detail: string; tone: "positive" | "negative" | "caution" | "neutral" };
+
+function detailAdvice(article: NewsArticleLike, timeframe: Timeframe, impact: Impact | null): DetailAdvice {
+  const row = impact?.windows?.[timeframe];
+  const expected = article.sentiment === "bullish" ? 1 : article.sentiment === "bearish" ? -1 : 0;
+  const expectedWord = expected > 0 ? "positief" : expected < 0 ? "negatief" : "gemengd";
+
+  if (impact?.available && row && !row.available) {
+    return { status:"Nog te vroeg", detail:`Het ${timeframe}-venster is nog niet verstreken. Wacht op echte koersdata voordat je dit tijdsvenster beoordeelt.`, tone:"neutral" };
+  }
+
+  if (impact?.available && row?.available && row.changePercent !== null) {
+    const measured = row.changePercent;
+    const measuredDirection = Math.abs(measured) < .15 ? 0 : measured > 0 ? 1 : -1;
+    if (expected === 0) {
+      if (measuredDirection === 0) return { status:"Afwachten", detail:`De nieuwsinhoud is gemengd en de gemeten ${timeframe}-reactie is ${fmtPct(measured)}. Er is nog geen duidelijke richting.`, tone:"neutral" };
+      return { status:"Voorzichtig", detail:`De nieuwsinhoud is gemengd, maar de koers bewoog op ${timeframe} ${fmtPct(measured)}. Behandel die beweging als marktreactie, niet automatisch als gevolg van dit bericht.`, tone:"caution" };
+    }
+    if (measuredDirection === expected) {
+      if (/grotendeels ingeprijsd/i.test(impact.pricedIn || "")) return { status:"Waarschijnlijk verwerkt", detail:`De ${timeframe}-reactie van ${fmtPct(measured)} sluit aan bij de ${expectedWord}e nieuwsinhoud, maar de totale reactie lijkt inmiddels grotendeels verwerkt.`, tone:"caution" };
+      return { status:expected > 0 ? "Positief bevestigd" : "Negatief bevestigd", detail:`De gemeten ${timeframe}-reactie is ${fmtPct(measured)} en sluit voorlopig aan bij de ${expectedWord}e nieuwsinhoud. Controleer of volume en marktstructuur dit blijven bevestigen.`, tone:expected > 0 ? "positive" : "negative" };
+    }
+    if (measuredDirection === 0) return { status:"Afwachten", detail:`De nieuwsinhoud is ${expectedWord}, maar de gemeten ${timeframe}-reactie is slechts ${fmtPct(measured)}. De koers bevestigt de richting nog niet.`, tone:"neutral" };
+    return { status:"Tegenstrijdig", detail:`De nieuwsinhoud is ${expectedWord}, maar de koers reageerde op ${timeframe} met ${fmtPct(measured)} in de andere richting. Andere marktontwikkelingen kunnen zwaarder wegen.`, tone:"caution" };
+  }
+
+  if (article.importance === "high" && (timeframe === "1m" || timeframe === "5m")) {
+    return { status:"Voorzichtig", detail:"Dit is nieuws met hoge impact. Op zeer korte tijdsvensters kunnen snelle uitschieters en omkeringen optreden; gemeten koersbevestiging ontbreekt nog.", tone:"caution" };
+  }
+  if (expected === 0) return { status:"Afwachten", detail:"De inhoud geeft geen sterke richting en er is geen betrouwbare koersreactie beschikbaar om die beoordeling aan te scherpen.", tone:"neutral" };
+  return { status:expected > 0 ? "Inhoud positief" : "Inhoud negatief", detail:`De inhoud is ${expectedWord}, maar er is nog geen betrouwbare gemeten koersreactie beschikbaar. Gebruik dit niet als zelfstandige koop- of verkoopbeslissing.`, tone:expected > 0 ? "positive" : "negative" };
+}
+
 function MiniChart({ impact }: { impact: Impact }) {
   const points = useMemo(() => (impact.chart || []).filter((point) => point.close !== null && Number.isFinite(point.close)), [impact.chart]);
   if (points.length < 2) return <div className={styles.chartEmpty}>Niet genoeg koerspunten voor een grafiek.</div>;
@@ -201,6 +235,7 @@ export function NewsArticleExpanded({ article, digest, loading, error, timeframe
     : digest?.article.paragraphs?.length
       ? [{ heading:"Wat is er gebeurd?", paragraphs:digest.article.paragraphs }]
       : [];
+  const currentAdvice = detailAdvice(article, timeframe, impact);
 
   return <>
     <div className={styles.hero} data-source-image={Boolean(sourceImage && !imageFailed)}>
@@ -259,6 +294,25 @@ export function NewsArticleExpanded({ article, digest, loading, error, timeframe
         </section>
       </>}
       {!impactLoading && impact && !impact.available && <div className={styles.unavailable}>{impact.reason || "Voor dit bericht is geen betrouwbare koersreactie beschikbaar."}</div>}
+    </section>
+
+    <section className={styles.advicePanel} data-no-doubletap="true" aria-label="Advies per tijdsvenster op basis van nieuws en koersreactie">
+      <div className={styles.articleTopline}><span>ADVIES PER TIJDSVENSTER</span><small>Nieuws + gemeten koersreactie</small></div>
+      <div className={styles.adviceFocus} data-tone={currentAdvice.tone}>
+        <strong>Advies voor {timeframe}: {currentAdvice.status}</strong>
+        <p>{currentAdvice.detail}</p>
+      </div>
+      <div className={styles.adviceRows}>
+        {TIMEFRAMES.map((value) => {
+          const advice = detailAdvice(article, value, impact);
+          return <div className={styles.adviceRow} data-active={value === timeframe} key={value}>
+            <b>{value}</b>
+            <span>{advice.detail}</span>
+            <em data-tone={advice.tone}>{advice.status}</em>
+          </div>;
+        })}
+      </div>
+      <small className={styles.marketNote}>Dit is beslissingsondersteuning. Nieuws en gemeten koersreactie openen, sluiten of wijzigen nooit automatisch een positie.</small>
     </section>
   </>;
 }

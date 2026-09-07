@@ -334,3 +334,84 @@
   .windowGrid { gap: 3px; }
   .windowGrid span { font-size: 7px; }
 }
+
+
+.advicePanel {
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 1px solid rgba(0,243,154,.3);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(4,28,19,.92), rgba(2,15,10,.96));
+}
+
+.adviceFocus {
+  padding: 9px 10px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(0,243,154,.16);
+  border-radius: 9px;
+  background: rgba(0,10,6,.48);
+}
+
+.adviceFocus strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.adviceFocus p {
+  margin: 0;
+  color: #b8ccc4;
+  font-size: 9.5px;
+  line-height: 1.42;
+}
+
+.adviceRows {
+  display: grid;
+  gap: 4px;
+}
+
+.adviceRow {
+  display: grid;
+  grid-template-columns: 34px minmax(0,1fr) 102px;
+  gap: 7px;
+  align-items: center;
+  padding: 7px 6px;
+  border: 1px solid rgba(0,243,154,.1);
+  border-radius: 8px;
+  background: rgba(0,8,5,.38);
+}
+
+.adviceRow[data-active="true"] {
+  border-color: rgba(0,243,154,.58);
+  box-shadow: inset 0 0 10px rgba(0,243,154,.055);
+}
+
+.adviceRow b {
+  color: #8fd8b9;
+  font-size: 9px;
+}
+
+.adviceRow span {
+  color: #aebfb9;
+  font-size: 8.5px;
+  line-height: 1.32;
+}
+
+.adviceRow em {
+  justify-self: end;
+  max-width: 102px;
+  padding: 4px 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 7.5px;
+  line-height: 1.05;
+  font-style: normal;
+  text-align: center;
+}
+
+@media (max-width: 390px) {
+  .advicePanel { padding: 10px; }
+  .adviceRow { grid-template-columns: 30px minmax(0,1fr) 88px; gap: 5px; }
+  .adviceRow span { font-size: 8px; }
+  .adviceRow em { max-width: 88px; font-size: 7px; }
+}
