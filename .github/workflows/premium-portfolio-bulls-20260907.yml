@@ -90,7 +90,8 @@ jobs:
         run: |
           test "$(find public/portfolio-impact-frames -maxdepth 1 -name 'frame-*.svg' | wc -l)" -eq 201
           test "$(stat -c%s public/portfolio-impact-premium-reference.webp)" -ge 40000
-          grep -q '/portfolio-impact-premium-reference.webp' public/portfolio-impact-frames/frame-100.svg
+          grep -q 'data:image/webp;base64,' public/portfolio-impact-frames/frame-100.svg
+          ! grep -q 'href="/portfolio-impact-premium-reference.webp"' public/portfolio-impact-frames/frame-100.svg
           grep -q 'const FRAME_COUNT = 201' components/portfolio-impact-battle.tsx
           grep -q 'data-frame-index' components/portfolio-impact-battle.tsx
           grep -q 'data-target-frame-index' components/portfolio-impact-battle.tsx
@@ -108,7 +109,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: premium-portfolio-bulls-half-percent-v46-mobile-visual-qa
-          path: web/artifacts/portfolio-impact/*.png
+          path: |
+            web/artifacts/portfolio-impact/*.png
+            web/public/portfolio-impact-premium-reference.webp
           if-no-files-found: error
           retention-days: 14
 
@@ -121,6 +124,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No generated premium frame changes to commit"
           else
-            git commit -m "Generate 0.5pct premium Portfolio Impact Bulls frames"
+            git commit -m "Generate embedded 0.5pct premium Portfolio Impact Bulls frames"
             git push origin HEAD:chatgpt/premium-bulls-v46-build273-20260907
           fi
