@@ -6,6 +6,7 @@ on:
       - chatgpt/news-detail-impact-v46-build274-20260907
     paths:
       - "tools/apply_news_detail_impact_20260907.py"
+      - "tools/fix_news_detail_duplicate_20260907.py"
       - "web/app/api/news-article/route.ts"
       - "web/app/api/news-impact/route.ts"
       - "web/app/api/news/route.ts"
@@ -34,7 +35,9 @@ jobs:
           fetch-depth: 0
 
       - name: Apply deterministic News patch
-        run: python tools/apply_news_detail_impact_20260907.py
+        run: |
+          python tools/apply_news_detail_impact_20260907.py
+          python tools/fix_news_detail_duplicate_20260907.py
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
