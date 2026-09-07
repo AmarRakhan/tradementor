@@ -13,9 +13,16 @@ PARTS = sorted((ROOT / "tools" / "assets").glob("premium-bulls-webp.b64.*"))
 if len(PARTS) < 4:
     raise SystemExit(f"Expected premium reference asset chunks, found {len(PARTS)}")
 encoded = "".join(part.read_text(encoding="utf-8").strip() for part in PARTS)
-REFERENCE.write_bytes(base64.b64decode(encoded))
+reference_bytes = base64.b64decode(encoded)
+REFERENCE.write_bytes(reference_bytes)
 if REFERENCE.stat().st_size < 40_000:
     raise SystemExit("Premium reference WebP is unexpectedly small")
+
+# SVGs loaded through an <img> are intentionally isolated from external resources
+# by browsers. Therefore the premium bull reference must be embedded into every
+# state as a data URI; a root-relative href renders only the frame overlays and
+# makes the bulls disappear on real mobile browsers.
+REFERENCE_DATA_URI = f"data:image/webp;base64,{encoded}"
 
 FRAME_DIR.mkdir(parents=True, exist_ok=True)
 for old in FRAME_DIR.glob("frame-*.svg"):
@@ -47,7 +54,7 @@ for index in range(201):
 <rect width="720" height="444" fill="url(#bg)"/>
 <ellipse cx="145" cy="215" rx="270" ry="215" fill="url(#g)" opacity="{green:.3f}"/>
 <ellipse cx="575" cy="215" rx="270" ry="215" fill="url(#r)" opacity="{red:.3f}"/>
-<image href="/portfolio-impact-premium-reference.webp" x="{source_x}" y="68" width="900" height="363" preserveAspectRatio="xMidYMid slice"/>
+<image href="{REFERENCE_DATA_URI}" x="{source_x}" y="68" width="900" height="363" preserveAspectRatio="xMidYMid slice"/>
 <rect x="0" y="65" width="255" height="190" fill="#03110b" opacity=".74"/>
 <rect x="465" y="65" width="255" height="190" fill="#150307" opacity=".74"/>
 <rect x="232" y="49" width="256" height="105" fill="url(#centerMask)"/>
@@ -61,4 +68,4 @@ for index in range(201):
     (FRAME_DIR / f"frame-{index:03d}.svg").write_text(svg, encoding="utf-8")
 
 print(f"Premium Portfolio Impact reference: {REFERENCE.stat().st_size} bytes")
-print("Generated 201 premium Bulls frames at 0.5 percentage-point granularity")
+print("Generated 201 premium Bulls frames at 0.5 percentage-point granularity with embedded reference")
