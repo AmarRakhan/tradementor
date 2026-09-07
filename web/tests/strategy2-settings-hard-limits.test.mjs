@@ -8,9 +8,9 @@ const startRoute = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2
 const simulateRoute = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/simulate/route.ts", import.meta.url), "utf8");
 
 test("server-side guard caps Strategy 2 exposure controls independently of the browser", () => {
-  assert.match(guard, /MAX_TOTAL_POSITIONS = 50/);
-  assert.match(guard, /MAX_LONG_SLOTS = 25/);
-  assert.match(guard, /MAX_SHORT_SLOTS = 25/);
+  assert.match(guard, /MAX_TOTAL_POSITIONS = 100/);
+  assert.match(guard, /MAX_LONG_SLOTS = 100/);
+  assert.match(guard, /MAX_SHORT_SLOTS = 100/);
   assert.match(guard, /MAX_DCA = 500/);
   assert.match(guard, /next\.unlimitedDca = false/);
   assert.match(guard, /next\.maximumPositions = Math\.max\(1, Math\.min\(MAX_TOTAL_POSITIONS/);

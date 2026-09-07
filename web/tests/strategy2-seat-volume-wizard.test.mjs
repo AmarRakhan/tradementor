@@ -4,13 +4,13 @@ import fs from "node:fs";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
 
-test("direct settings cap the Aster bot at 25 LONG plus 25 SHORT and 50 total", () => {
+test("direct settings support up to 100 total positions with independent LONG and SHORT inputs", () => {
   assert.match(maker, /Totaal posities/);
   assert.match(maker, /LONG slots/);
   assert.match(maker, /SHORT slots/);
-  assert.match(maker, /maximumPositions:\s*Math\.min\(50, longSlots \+ shortSlots\)/);
-  assert.match(maker, /const longSlots = clampInt\(n\(v\.longSlots\), 0, 25\)/);
-  assert.match(maker, /const shortSlots = clampInt\(n\(v\.shortSlots\), 0, 25\)/);
+  assert.match(maker, /maximumPositions:\s*Math\.min\(MAX_TOTAL_POSITIONS, longSlots \+ shortSlots\)/);
+  assert.match(maker, /const longSlots = clampInt\(n\(v\.longSlots\), 0, MAX_SIDE_SLOTS\)/);
+  assert.match(maker, /const shortSlots = clampInt\(n\(v\.shortSlots\), 0, MAX_SIDE_SLOTS\)/);
   assert.match(maker, /entrySizingMode: "margin"/);
   assert.match(maker, /entryMarginLongUsd/);
   assert.match(maker, /entryMarginShortUsd/);

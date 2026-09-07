@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { strategy2ServerStatus } from "@/lib/aster-strategy2-server-status.mjs";
+import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, splitTotalPositions } from "@/lib/position-slot-input";
 
 type ManualSide = "LONG" | "SHORT";
 type ManualSymbol = { symbol: string; side: ManualSide };
@@ -59,6 +60,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const [tierPreviews, setTierPreviews] = useState<Record<string, TierPreview>>({});
   const [tierBusy, setTierBusy] = useState(false);
   const [totalDraft, setTotalDraft] = useState<string | null>(null);
+  const [longDraft, setLongDraft] = useState<string | null>(null);
+  const [shortDraft, setShortDraft] = useState<string | null>(null);
 
   const snapshotState = (snapshot?.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 : {}) as Record<string, unknown>;
   const status = strategy2ServerStatus(snapshotState, confirmedState, serverConfirmed);
@@ -71,11 +74,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     if (dirty) return;
     const x = persisted;
     if (!x || String(x.engine || x.strategyKind) !== "multi_bb_v1") return;
-    const longSlots = clampInt(Number(x.longSlots ?? 20), 0, 25); const shortSlots = clampInt(Number(x.shortSlots ?? 10), 0, 25);
+    const longSlots = clampInt(Number(x.longSlots ?? 20), 0, MAX_SIDE_SLOTS); const shortSlots = clampInt(Number(x.shortSlots ?? 10), 0, MAX_SIDE_SLOTS);
     const legacyEntry = Number(x.entryMarginUsd ?? 5);
     const legacyDcaDistance = Number(x.dcaDistance ?? .003); const legacyDcaAmount = Number(x.dcaMarginUsd ?? 2); const legacyMax = Number(x.maxDca ?? 3); const legacyTp = Number(x.takeProfit ?? .015);
     setV({
-      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(50, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50),
+      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50),
       entryMarginLong: txt(x.entryMarginLongUsd ?? x.entryMarginLong ?? legacyEntry, legacyEntry), entryMarginShort: txt(x.entryMarginShortUsd ?? x.entryMarginShort ?? legacyEntry, legacyEntry),
       longDcaDistance: pct(x.longDcaDistance ?? legacyDcaDistance, legacyDcaDistance), shortDcaDistance: pct(x.shortDcaDistance ?? legacyDcaDistance, legacyDcaDistance),
       longDcaAmount: txt(x.longDcaMarginUsd ?? x.longDcaAmount ?? legacyDcaAmount, legacyDcaAmount), shortDcaAmount: txt(x.shortDcaMarginUsd ?? x.shortDcaAmount ?? legacyDcaAmount, legacyDcaAmount),
@@ -85,11 +88,13 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
     });
     setTotalDraft(null);
+    setLongDraft(null);
+    setShortDraft(null);
   }, [persisted, dirty]);
 
   const change = (next: Values) => { setV(next); setDirty(true); setMessage(""); };
   const settings = useMemo(() => {
-    const longSlots = clampInt(n(v.longSlots), 0, 25); const shortSlots = clampInt(n(v.shortSlots), 0, 25); const minLeverage = Math.max(1, Math.round(n(v.minLeverage)));
+    const longSlots = clampInt(n(v.longSlots), 0, MAX_SIDE_SLOTS); const shortSlots = clampInt(n(v.shortSlots), 0, MAX_SIDE_SLOTS); const minLeverage = Math.max(1, Math.round(n(v.minLeverage)));
     const longEntry = n(v.entryMarginLong); const shortEntry = n(v.entryMarginShort);
     const longDistance = n(v.longDcaDistance) / 100; const shortDistance = n(v.shortDcaDistance) / 100;
     const longAmount = n(v.longDcaAmount); const shortAmount = n(v.shortDcaAmount); const maxLong = clampInt(n(v.maxDcaLong), 0, MAX_DCA); const maxShort = clampInt(n(v.maxDcaShort), 0, MAX_DCA);
@@ -97,7 +102,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
-      maximumPositions: Math.min(50, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, entrySizingMode: "margin",
+      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, entrySizingMode: "margin",
       entryMarginUsd: longEntry, entryMarginLongUsd: longEntry, entryMarginShortUsd: shortEntry, entryMarginLong: longEntry, entryMarginShort: shortEntry,
       entryNotionalUsd: longEntry * minLeverage,
       dcaDistance: longDistance, longDcaDistance: longDistance, shortDcaDistance: shortDistance,
@@ -111,13 +116,20 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   }, [v, persisted]);
 
   const setTotal = (raw: string) => {
-    const total = clampInt(Number(raw), 1, 50); const oldLong = clampInt(n(v.longSlots), 0, 25); const oldShort = clampInt(n(v.shortSlots), 0, 25); const oldTotal = Math.max(1, oldLong + oldShort);
-    let long = Math.min(25, Math.round(total * oldLong / oldTotal)); let short = Math.min(25, total - long); if (long + short < total) long = Math.min(25, total - short);
-    change({ ...v, positions: String(long + short), longSlots: String(long), shortSlots: String(short) });
+    const slots = splitTotalPositions(raw);
+    change({ ...v, positions: String(slots.total), longSlots: String(slots.long), shortSlots: String(slots.short) });
   };
   const commitTotal = () => { const raw = String(totalDraft ?? v.positions).trim(); setTotalDraft(null); if (raw) setTotal(raw); };
-  const setLong = (raw: string) => { const long = clampInt(Number(raw), 0, 25); const short = clampInt(n(v.shortSlots), 0, 25); change({ ...v, positions: String(long + short), longSlots: String(long), shortSlots: String(short) }); };
-  const setShort = (raw: string) => { const short = clampInt(Number(raw), 0, 25); const long = clampInt(n(v.longSlots), 0, 25); change({ ...v, positions: String(long + short), longSlots: String(long), shortSlots: String(short) }); };
+  const setLong = (raw: string) => {
+    const slots = applyLongSlots(v.positions, raw);
+    change({ ...v, positions: String(slots.total), longSlots: String(slots.long), shortSlots: String(slots.short) });
+  };
+  const commitLong = () => { const raw = String(longDraft ?? v.longSlots).trim(); setLongDraft(null); if (raw) setLong(raw); };
+  const setShort = (raw: string) => {
+    const slots = applyShortSlots(v.positions, raw);
+    change({ ...v, positions: String(slots.total), longSlots: String(slots.long), shortSlots: String(slots.short) });
+  };
+  const commitShort = () => { const raw = String(shortDraft ?? v.shortSlots).trim(); setShortDraft(null); if (raw) setShort(raw); };
 
   async function loadMarkets() {
     if (marketBusy) return; setMarketAttempted(true); setMarketBusy(true);
@@ -145,7 +157,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   async function action(kind: "save" | "simulate" | "start" | "stop") {
     setBusy(true); setMessage("");
     try {
-      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > 25 || settings.shortSlots > 25 || settings.maximumPositions > 50) throw new Error("Positielimieten zijn ongeldig: maximaal 25 LONG + 25 SHORT (50 totaal).");
+      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
       if (settings.longSlots > 0 && settings.entryMarginLongUsd * settings.minimumLeverage < 5) throw new Error(`Instap LONG te laag: minimaal circa ${(5 / settings.minimumLeverage).toFixed(2)} USDT bij ${settings.minimumLeverage}x.`);
       if (settings.shortSlots > 0 && settings.entryMarginShortUsd * settings.minimumLeverage < 5) throw new Error(`Instap SHORT te laag: minimaal circa ${(5 / settings.minimumLeverage).toFixed(2)} USDT bij ${settings.minimumLeverage}x.`);
       if (settings.longDcaDistance <= 0 || settings.shortDcaDistance <= 0 || settings.longDcaDistance > .5 || settings.shortDcaDistance > .5) throw new Error("DCA-afstand moet tussen 0,01% en 50% liggen.");
@@ -190,7 +202,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     <div className="maker-input compact-settings-grid">
       <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
       <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
-      <div className="position-settings-grid"><Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} /><Field label="LONG slots" value={v.longSlots} set={setLong} /><Field label="SHORT slots" value={v.shortSlots} set={setShort} /></div>
+      <div className="position-settings-grid"><Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} /><Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} /><Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} /></div>
       <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
 
       <section className="side-settings-block">

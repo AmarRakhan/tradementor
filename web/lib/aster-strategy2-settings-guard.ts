@@ -1,6 +1,6 @@
-const MAX_TOTAL_POSITIONS = 50;
-const MAX_LONG_SLOTS = 25;
-const MAX_SHORT_SLOTS = 25;
+const MAX_TOTAL_POSITIONS = 100;
+const MAX_LONG_SLOTS = 100;
+const MAX_SHORT_SLOTS = 100;
 const MAX_DCA = 500;
 
 function finiteInteger(value: unknown, fallback: number) {
