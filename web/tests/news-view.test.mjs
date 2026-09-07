@@ -18,24 +18,34 @@ test("News is mounted without changing the trading page destination model", asyn
   assert.doesNotMatch(page, /type Destination = [^;]*"news"/);
 });
 
-test("News overview keeps the approved compact density and timeframe controls", async () => {
+test("News overview keeps the approved compact density and Dutch timeframe controls", async () => {
   const [view, css] = await Promise.all([read("../components/news-view.tsx"), read("../components/news-view.module.css")]);
   for (const timeframe of ["1m", "5m", "15m", "1u", "4u", "24u"]) assert.match(view, new RegExp(`\\"${timeframe}\\"`));
-  assert.match(view, /Zoek nieuws, coin of onderwerp/);
-  assert.match(view, /Opgeslagen/);
-  assert.match(view, /Advies op timeframe/);
+  assert.match(view, /Zoek nieuws, munt of onderwerp/);
+  assert.match(view, /Samenwerkingen/);
+  assert.match(view, /Advies per tijdsvenster/);
+  assert.match(view, /Nieuwsmeldingen/);
+  assert.doesNotMatch(view, />Breaking news</);
+  assert.doesNotMatch(view, /coin-universe/);
   assert.match(css, /min-height:66px/);
   assert.match(css, /rotateY\(180deg\)/);
   assert.match(css, /grid-template-columns:\s*repeat\(6/);
 });
 
-test("News uses live sources and never sends trading mutations", async () => {
-  const [view, route] = await Promise.all([read("../components/news-view.tsx"), read("../app/api/news/route.ts")]);
+test("News uses live sources, Dutch translation and never sends trading mutations", async () => {
+  const [view, route, dutchRoute] = await Promise.all([
+    read("../components/news-view.tsx"),
+    read("../app/api/news/route.ts"),
+    read("../app/api/news-nl/route.ts"),
+  ]);
   assert.match(route, /news\.google\.com\/rss\/search/);
   assert.match(route, /coindesk\.com\/arc\/outboundfeeds\/rss/);
   assert.match(route, /decrypt\.co\/feed/);
   assert.match(route, /cointelegraph\.com\/rss/);
   assert.match(route, /dedupe/);
+  assert.match(dutchRoute, /translation\.googleapis\.com\/language\/translate\/v2/);
+  assert.match(dutchRoute, /translate\.googleapis\.com\/translate_a\/single/);
+  assert.match(view, /\/api\/news-nl/);
   assert.match(view, /universeTopN/);
   assert.match(view, /strategy2\/focus\/markets/);
   assert.doesNotMatch(view, /method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/i);

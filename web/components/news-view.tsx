@@ -31,7 +31,7 @@ type AlertPrefs = { breaking: boolean; important: boolean; topN: boolean; highIm
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1u", "4u", "24u"];
 const CATEGORIES = ["Alles", "Belangrijk", "Koers", "Analyse", "Partnerships", "Regulatie"] as const;
 const FALLBACK = ["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","HYPE","AVAX","LINK","SUI","TRX","TON","BCH","AAVE","NEAR","LTC","DOT","UNI","XLM","SHIB","ATOM","ARB","OP","INJ","FIL","RENDER","SEI","TIA","ASTER","ENA","APT","PEPE","WIF","ONDO","MKR","LDO","JUP","FET","TAO","ETC","ALGO","ICP","VET","HBAR","RUNE","GRT","KAS","IMX","STX"];
-const ARCHIVE_KEY = "tradementor.news.archive.v1";
+const ARCHIVE_KEY = "tradementor.news.archive.nl.v2";
 const SAVED_KEY = "tradementor.news.saved.v1";
 const ALERT_KEY = "tradementor.news.alerts.v1";
 
@@ -91,18 +91,18 @@ function adviceFor(article: NewsArticle, timeframe: Timeframe): Advice {
   const age = hoursOld(article);
   const windows: Record<Timeframe, number> = { "1m": .35, "5m": 1.5, "15m": 4, "1u": 16, "4u": 48, "24u": 96 };
   const ageLimit = windows[timeframe];
-  if (age > ageLimit * 2.2) return { label: "rust", detail: "Dit nieuws is voor dit timeframe waarschijnlijk grotendeels verwerkt; kijk vooral naar de actuele prijsreactie.", status: "Neutraal", tone: "neutral" };
+  if (age > ageLimit * 2.2) return { label: "weinig invloed", detail: "Dit nieuws is voor dit tijdsvenster waarschijnlijk grotendeels verwerkt; kijk vooral naar de actuele prijsreactie.", status: "Neutraal", tone: "neutral" };
   if (article.sentiment === "neutral" || Math.abs(article.sentimentScore) < .15) return { label: "afwachten", detail: "De nieuwsrichting is niet sterk genoeg om op zichzelf een richting te bevestigen.", status: "Neutraal", tone: "neutral" };
   if ((timeframe === "1m" || timeframe === "5m") && article.importance === "high") {
-    return { label: "voorzichtig", detail: "Hoge nieuwsimpact kan op korte timeframes veel ruis en snelle reversals veroorzaken.", status: "Voorzichtig", tone: "caution" };
+    return { label: "voorzichtig", detail: "Nieuws met hoge impact kan op korte tijdsvensters veel ruis en snelle omkeringen veroorzaken.", status: "Voorzichtig", tone: "caution" };
   }
-  if (age > ageLimit) return { label: "bevestiging", detail: "Het nieuws is nog relevant, maar controleer of de marktbeweging al is ingezet voordat je een conclusie trekt.", status: "Voorzichtig", tone: "caution" };
+  if (age > ageLimit) return { label: "wacht op bevestiging", detail: "Het nieuws is nog relevant, maar controleer of de marktbeweging al is ingezet voordat je een conclusie trekt.", status: "Voorzichtig", tone: "caution" };
   if (article.sentiment === "bullish") {
     const strong = (timeframe === "4u" || timeframe === "24u") && article.confidence >= .68;
-    return { label: strong ? "bullish" : "positief", detail: strong ? "De nieuwsimpact ondersteunt op dit timeframe een positieve bias, zolang marktstructuur en volume bevestigen." : "Positieve nieuwsimpact; wacht op bevestiging in koers en volume.", status: strong ? "Bullish" : "Positief", tone: "positive" };
+    return { label: strong ? "sterk positief" : "positief", detail: strong ? "De nieuwsimpact ondersteunt op dit tijdsvenster een positieve richting, zolang marktstructuur en volume dit bevestigen." : "Positieve nieuwsimpact; wacht op bevestiging in koers en volume.", status: strong ? "Sterk positief" : "Positief", tone: "positive" };
   }
   const strong = (timeframe === "4u" || timeframe === "24u") && article.confidence >= .68;
-  return { label: strong ? "bearish" : "negatief", detail: strong ? "De nieuwsimpact ondersteunt op dit timeframe een negatieve bias, zolang marktstructuur en volume bevestigen." : "Negatieve nieuwsimpact; controleer of koers en volume de beweging bevestigen.", status: strong ? "Bearish" : "Negatief", tone: "negative" };
+  return { label: strong ? "sterk negatief" : "negatief", detail: strong ? "De nieuwsimpact ondersteunt op dit tijdsvenster een negatieve richting, zolang marktstructuur en volume dit bevestigen." : "Negatieve nieuwsimpact; controleer of koers en volume de beweging bevestigen.", status: strong ? "Sterk negatief" : "Negatief", tone: "negative" };
 }
 
 function relativeTime(value: string) {
@@ -138,9 +138,20 @@ function logoUrl(symbol: string) {
   return `https://assets.coincap.io/assets/icons/${symbol.toLowerCase()}@2x.png`;
 }
 
+function categoryLabel(value: string) {
+  const labels: Record<string, string> = {
+    Partnerships: "Samenwerkingen",
+    Listing: "Notering",
+    Security: "Beveiliging",
+    Exchange: "Beurs",
+    Tokenomics: "Tokeneconomie",
+  };
+  return labels[value] || value;
+}
+
 function primaryCategory(article: NewsArticle) {
   if (article.importance === "high") return "Belangrijk";
-  return article.categories.find((item) => item !== "Belangrijk") || "Analyse";
+  return categoryLabel(article.categories.find((item) => item !== "Belangrijk") || "Analyse");
 }
 
 function impactText(article: NewsArticle, timeframe: Timeframe) {
@@ -227,14 +238,14 @@ export function NewsView() {
       setLoading(true); setError("");
       try {
         const params = new URLSearchParams({ symbols: universe.slice(0, 60).join(","), range: requestRange, limit: "160" });
-        const response = await fetch(`/api/news?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
+        const response = await fetch(`/api/news-nl?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
         if (!response.ok) throw new Error("Nieuwsfeed kon niet worden geladen.");
         const payload = await response.json() as { items?: NewsArticle[] };
         if (cancelled) return;
         const fresh = Array.isArray(payload.items) ? payload.items : [];
         const cached = readArchive();
         const merged = new Map<string, NewsArticle>();
-        for (const item of [...fresh, ...cached]) merged.set(item.id, item);
+        for (const item of [...cached, ...fresh]) merged.set(item.id, item);
         const all = Array.from(merged.values()).sort((a,b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
         setArticles(all);
         persistArchive(all);
@@ -317,33 +328,33 @@ export function NewsView() {
 
   const archiveLabel = archiveMode === "today" ? "Vandaag" : archiveMode === "yesterday" ? "Gisteren" : archiveMode === "7d" ? "7 dagen" : archiveMode === "30d" ? "30 dagen" : archiveMode === "saved" ? "Opgeslagen" : archiveMode === "custom" ? "Periode" : "Archief";
 
-  return <section className={styles.news} aria-label="Crypto nieuws op basis van Top-N">
-    <header className={styles.header}><div><h1>Nieuws</h1><p>Actueel nieuws op basis van jouw top-{topN} coins</p></div><button type="button" className={styles.alertButton} onClick={() => setAlertsOpen(true)}>♧ Meldingen</button></header>
+  return <section className={styles.news} aria-label="Cryptonieuws op basis van Top-N">
+    <header className={styles.header}><div><h1>Nieuws</h1><p>Actueel nieuws op basis van jouw top-{topN} munten</p></div><button type="button" className={styles.alertButton} onClick={() => setAlertsOpen(true)}>♧ Meldingen</button></header>
 
-    <div className={`${styles.scroller} ${styles.coinRow}`} aria-label="Coinfilters">
+    <div className={`${styles.scroller} ${styles.coinRow}`} aria-label="Muntfilters">
       <button type="button" className={`${styles.coinFilter} ${coin === "Alle" ? styles.active : ""}`} onClick={() => setCoin("Alle")}>Alle</button>
       {coinFilters.map((symbol) => <button type="button" key={symbol} className={`${styles.coinFilter} ${coin === symbol ? styles.active : ""}`} onClick={() => setCoin(symbol)}><span className={styles.coinDot} data-symbol={symbol}>{symbol.slice(0,2)}</span>{symbol}</button>)}
     </div>
 
     <div className={`${styles.scroller} ${styles.categoryRow}`} aria-label="Nieuwscategorieën">
-      {CATEGORIES.map((value) => <button type="button" key={value} className={`${styles.filter} ${category === value ? styles.active : ""}`} onClick={() => setCategory(value)}>{value}</button>)}
+      {CATEGORIES.map((value) => <button type="button" key={value} className={`${styles.filter} ${category === value ? styles.active : ""}`} onClick={() => setCategory(value)}>{categoryLabel(value)}</button>)}
     </div>
 
-    <div className={styles.timeframes} aria-label="Timeframe voor nieuwsadvies">
+    <div className={styles.timeframes} aria-label="Tijdsvenster voor nieuwsadvies">
       {TIMEFRAMES.map((value) => <button type="button" key={value} className={`${styles.timeButton} ${timeframe === value ? styles.active : ""}`} onClick={() => setTimeframe(value)}>{value}</button>)}
     </div>
 
     <div className={styles.tools}>
-      <label className={styles.search}><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Zoek nieuws, coin of onderwerp..." /></label>
+      <label className={styles.search}><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Zoek nieuws, munt of onderwerp..." /></label>
       <div className={styles.archiveWrap}><button type="button" className={styles.archiveButton} onClick={() => setArchiveOpen((value) => !value)}>◷ {archiveLabel}⌄</button>{archiveOpen && <div className={styles.popover}>
         {([['today','Vandaag'],['yesterday','Gisteren'],['7d','Afgelopen 7 dagen'],['30d','Afgelopen 30 dagen'],['all','Alle historie'],['saved','Opgeslagen'],['custom','Eigen periode']] as Array<[ArchiveMode,string]>).map(([mode,label]) => <button type="button" key={mode} data-active={archiveMode === mode} onClick={() => { setArchiveMode(mode); if (mode !== "custom") setArchiveOpen(false); }}>{label}</button>)}
         {archiveMode === "custom" && <div className={styles.dateInputs}><input type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} aria-label="Vanaf datum" /><input type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} aria-label="Tot datum" /></div>}
       </div>}</div>
     </div>
 
-    <div className={styles.statusLine}><i />{loading ? "Nieuws wordt bijgewerkt…" : error ? `${error} · lokale historie blijft zichtbaar` : `${filtered.length} artikelen · Top-${topN} gekoppeld`}</div>
+    <div className={styles.statusLine}><i />{loading ? "Nieuws wordt bijgewerkt…" : error ? `${error} · lokale historie blijft zichtbaar` : `${filtered.length} artikelen · Top-${topN} munten gekoppeld`}</div>
 
-    {groups.length ? groups.map((group) => <section key={group.key}><div className={styles.dayHeader}><h2>{dayLabel(group.key)}</h2><time>{dayDisplay(group.key)}</time></div><div className={styles.list}>{group.items.map((article) => <CompactArticle key={article.id} article={article} timeframe={timeframe} saved={saved.has(article.id)} onOpen={() => setSelected(article)} />)}</div></section>) : <div className={styles.empty}><div><strong>Geen nieuws voor deze selectie</strong><span>Kies een andere coin, categorie of archiefperiode.</span></div></div>}
+    {groups.length ? groups.map((group) => <section key={group.key}><div className={styles.dayHeader}><h2>{dayLabel(group.key)}</h2><time>{dayDisplay(group.key)}</time></div><div className={styles.list}>{group.items.map((article) => <CompactArticle key={article.id} article={article} timeframe={timeframe} saved={saved.has(article.id)} onOpen={() => setSelected(article)} />)}</div></section>) : <div className={styles.empty}><div><strong>Geen nieuws voor deze selectie</strong><span>Kies een andere munt, categorie of archiefperiode.</span></div></div>}
 
     {selected && <div className={styles.detailLayer} onPointerUp={handleDetailTap} onDoubleClick={() => setSelected(null)} role="dialog" aria-modal="true" aria-label={`Nieuwsartikel ${selected.title}`}>
       <div className={`${styles.detailCard} ${flipped ? styles.flipped : ""}`}>
@@ -353,10 +364,10 @@ export function NewsView() {
             <header className={styles.detailHeader}><button type="button" className={styles.backButton} onClick={() => setSelected(null)} aria-label="Terug naar overzicht">←</button><span className={styles.ticker}>{selected.coins[0] || "Macro"}</span><span className={styles.source}>{selected.source} · {relativeTime(selected.publishedAt)}</span><button type="button" className={styles.saveButton} onClick={() => toggleSaved(selected)}>{saved.has(selected.id) ? "♥ Opgeslagen" : "♡ Opslaan"}</button></header>
             <div className={styles.detailScroll}>
               <h2 className={styles.detailTitle}>{selected.title}</h2>
-              <div className={styles.heroImage}>{selected.coins[0] ? <img src={logoUrl(selected.coins[0])} alt={`${selected.coins[0]} logo`} /> : <span className={styles.thumbFallback}>◎ Macro</span>}</div>
+              <div className={styles.heroImage}>{selected.coins[0] ? <img src={logoUrl(selected.coins[0])} alt={`${selected.coins[0]}-logo`} /> : <span className={styles.thumbFallback}>◎ Macro</span>}</div>
               <p className={styles.quote}>{selected.summary || "Open het originele bronartikel voor de volledige publicatie."}</p>
-              <section className={styles.impact}><strong>💡 Advies op {timeframe}</strong><p>{impactText(selected, timeframe)}</p></section>
-              <section className={styles.tfPanel}><h3>💡 Advies op timeframe</h3>{TIMEFRAMES.map((value) => { const advice = adviceFor(selected, value); return <div className={styles.tfRow} key={value}><b>{value}</b><span>{advice.detail}</span><span className={styles.statusPill} data-tone={advice.tone}>{advice.status}</span></div>; })}</section>
+              <section className={styles.impact}><strong>💡 Advies voor {timeframe}</strong><p>{impactText(selected, timeframe)}</p></section>
+              <section className={styles.tfPanel}><h3>💡 Advies per tijdsvenster</h3>{TIMEFRAMES.map((value) => { const advice = adviceFor(selected, value); return <div className={styles.tfRow} key={value}><b>{value}</b><span>{advice.detail}</span><span className={styles.statusPill} data-tone={advice.tone}>{advice.status}</span></div>; })}</section>
             </div>
             <footer className={styles.detailActions}><button type="button" className={styles.readButton} onClick={() => window.open(selected.sourceUrl, "_blank", "noopener,noreferrer")}>↗ Lees volledig artikel</button><div className={styles.doubleHint}>◇ Dubbeltik<br/>om terug te draaien</div></footer>
           </article>
@@ -364,12 +375,12 @@ export function NewsView() {
       </div>
     </div>}
 
-    {alertsOpen && <div className={styles.modalLayer} onMouseDown={() => setAlertsOpen(false)}><section className={styles.sheet} onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Nieuws meldingen"><header><h3>Nieuws meldingen</h3><button type="button" onClick={() => setAlertsOpen(false)}>×</button></header>
-      <label className={styles.toggleRow}><span><strong>Belangrijk nieuws</strong><small>Hoge impact, regulatie, ETF, hacks en macro.</small></span><input type="checkbox" checked={alerts.important} onChange={(event) => updateAlert("important", event.target.checked)} /></label>
-      <label className={styles.toggleRow}><span><strong>Alleen mijn Top-N</strong><small>Gebruik dezelfde coin-universe als de Aster bot.</small></span><input type="checkbox" checked={alerts.topN} onChange={(event) => updateAlert("topN", event.target.checked)} /></label>
-      <label className={styles.toggleRow}><span><strong>Breaking news</strong><small>Voorbereiding voor directe pushmeldingen.</small></span><input type="checkbox" checked={alerts.breaking} onChange={(event) => updateAlert("breaking", event.target.checked)} /></label>
-      <label className={styles.toggleRow}><span><strong>Alleen hoge impact</strong><small>Beperk meldingen tot nieuws met sterke potentiële marktimpact.</small></span><input type="checkbox" checked={alerts.highImpact} onChange={(event) => updateAlert("highImpact", event.target.checked)} /></label>
-      <p className={styles.disclaimer}>Nieuwsadvies is beslissingsondersteuning. Het nieuws-tabblad opent, sluit of wijzigt nooit automatisch een LONG, SHORT, DCA, TP of leverage-instelling.</p>
+    {alertsOpen && <div className={styles.modalLayer} onMouseDown={() => setAlertsOpen(false)}><section className={styles.sheet} onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Nieuwsmeldingen"><header><h3>Nieuwsmeldingen</h3><button type="button" onClick={() => setAlertsOpen(false)}>×</button></header>
+      <label className={styles.toggleRow}><span><strong>Belangrijk nieuws</strong><small>Hoge impact, regulatie, ETF, hacks en macro-economisch nieuws.</small></span><input type="checkbox" checked={alerts.important} onChange={(event) => updateAlert("important", event.target.checked)} /></label>
+      <label className={styles.toggleRow}><span><strong>Alleen mijn Top-N</strong><small>Gebruik dezelfde muntselectie als de Aster-bot.</small></span><input type="checkbox" checked={alerts.topN} onChange={(event) => updateAlert("topN", event.target.checked)} /></label>
+      <label className={styles.toggleRow}><span><strong>Direct nieuws</strong><small>Voorbereiding voor directe meldingen bij belangrijk nieuw nieuws.</small></span><input type="checkbox" checked={alerts.breaking} onChange={(event) => updateAlert("breaking", event.target.checked)} /></label>
+      <label className={styles.toggleRow}><span><strong>Alleen hoge impact</strong><small>Beperk meldingen tot nieuws met een sterke mogelijke marktimpact.</small></span><input type="checkbox" checked={alerts.highImpact} onChange={(event) => updateAlert("highImpact", event.target.checked)} /></label>
+      <p className={styles.disclaimer}>Nieuwsadvies is beslissingsondersteuning. Het nieuwstabblad opent, sluit of wijzigt nooit automatisch een LONG, SHORT, DCA, TP of leverage-instelling.</p>
     </section></div>}
   </section>;
 }
