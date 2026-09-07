@@ -966,7 +966,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailQuantity = finite(liveDetailPosition?.quantity) ?? detail?.quantity ?? null;
   const detailMargin = openPositionMargin(liveDetailPosition);
   const detailPositionDcaCount = liveDetailPosition?.dcaCountReliable === true ? finite(liveDetailPosition?.dcaCount) : null;
-  const detailBreakEvenPrice = finite(liveDetailPosition?.strategy2Tp?.breakEvenPrice) ?? undefined;
+  const detailBreakEvenPrice = finite(liveDetailPosition?.strategy2Tp?.breakEvenPrice) ?? averageEntry(liveDetailPosition) ?? undefined;
   const detailDcaLevels = useMemo(() => {
     const levels = liveDetailPosition?.strategy2DcaLadder?.levels;
     if (!Array.isArray(levels)) return [] as DcaChartLevel[];
@@ -988,7 +988,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailOppositeRuntime = detail && detailOppositePosition && detailOppositeSide ? multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailOppositeSide}`] || null : null;
   const detailOppositeNextDcaPrice = finite(detailOppositeRuntime?.nextDcaPrice);
   const detailOppositeNextDcaNumber = finite(detailOppositeRuntime?.nextDcaNumber);
-  const detailOppositeBreakEvenPrice = finite(detailOppositePosition?.strategy2Tp?.breakEvenPrice) ?? undefined;
+  const detailOppositeBreakEvenPrice = finite(detailOppositePosition?.strategy2Tp?.breakEvenPrice) ?? averageEntry(detailOppositePosition) ?? undefined;
   const detailOppositeTpPrice = finite(detailOppositeRuntime?.tpPrice);
   const detailOppositeTpPct = finite(detailOppositeRuntime?.takeProfitPct);
   useEffect(() => {

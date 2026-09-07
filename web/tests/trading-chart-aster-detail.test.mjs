@@ -23,6 +23,8 @@ test("Aster detail chart keeps executed markers and adds planned DCA/TP overlays
 
 test("open detail consumes server Strategy 2 next-action preview values", () => {
   assert.match(recent, /strategy2Tp\?\.breakEvenPrice/);
+  assert.match(recent, /averageEntry\(liveDetailPosition\)/);
+  assert.match(recent, /averageEntry\(detailOppositePosition\)/);
   assert.match(recent, /strategy2DcaLadder\?\.levels/);
   assert.match(recent, /multiDcaPositions/);
   assert.match(recent, /detailRuntime\?\.nextDcaPrice/);
