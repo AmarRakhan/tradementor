@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+type Tone = "positive" | "negative" | "neutral";
+
 type SnapshotValues = {
   equity: string;
   available: string;
@@ -14,7 +16,11 @@ type SnapshotValues = {
   shorts: string;
   dca: string;
   liquidation: string;
-  realizedTone: "positive" | "negative" | "neutral";
+  todayGrowth: string;
+  averageDailyGrowth: string;
+  realizedTone: Tone;
+  todayGrowthTone: Tone;
+  averageDailyGrowthTone: Tone;
   riskTone: "safe" | "caution" | "high" | "critical" | "unknown";
   closeDisabled: boolean;
   closeBusy: boolean;
@@ -23,7 +29,8 @@ type SnapshotValues = {
 const EMPTY: SnapshotValues = {
   equity: "—", available: "—", activeCapital: "—", activePositions: "—",
   realized: "—", tradesClosed: "—", longs: "—", shorts: "—", dca: "—",
-  liquidation: "—", realizedTone: "neutral", riskTone: "unknown",
+  liquidation: "—", todayGrowth: "—", averageDailyGrowth: "—",
+  realizedTone: "neutral", todayGrowthTone: "neutral", averageDailyGrowthTone: "neutral", riskTone: "unknown",
   closeDisabled: true, closeBusy: false,
 };
 
@@ -39,6 +46,12 @@ function metric(label: string) {
   return row ? directText(row, "strong") : "—";
 }
 
+function percentageTone(value: string): Tone {
+  if (value === "—") return "neutral";
+  const parsed = Number(value.replace("%", "").replace("+", "").replace(",", ".").trim());
+  return Number.isFinite(parsed) && parsed > 0 ? "positive" : Number.isFinite(parsed) && parsed < 0 ? "negative" : "neutral";
+}
+
 function readSnapshot(): SnapshotValues {
   const realizedRow = Array.from(document.querySelectorAll<HTMLElement>(".metric-strip .metric")).find((item) =>
     item.querySelector("span")?.textContent?.trim().toUpperCase() === "GESLOTEN RESULTAAT VANDAAG",
@@ -50,6 +63,10 @@ function readSnapshot(): SnapshotValues {
   const risk = document.querySelector<HTMLElement>(".liquidation-risk");
   const riskClass = risk?.className || "";
   const closeButton = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
+  const dailyGrowth = document.querySelector<HTMLElement>(".portfolio-growth-daily");
+  const dailyValues = dailyGrowth ? Array.from(dailyGrowth.querySelectorAll<HTMLElement>("strong")) : [];
+  const todayGrowth = dailyValues[0]?.textContent?.trim() || "—";
+  const averageDailyGrowth = dailyValues[1]?.textContent?.trim() || "—";
   return {
     equity: metric("PORTFOLIOWAARDE"),
     available: metric("AVAILABLE TO TRADE"),
@@ -61,7 +78,11 @@ function readSnapshot(): SnapshotValues {
     shorts: counts?.[3] || "—",
     dca: counts?.[4] || "—",
     liquidation: directText(risk, ".risk-core strong"),
+    todayGrowth,
+    averageDailyGrowth,
     realizedTone: realizedRow?.classList.contains("positive") ? "positive" : realizedRow?.classList.contains("negative") ? "negative" : "neutral",
+    todayGrowthTone: percentageTone(todayGrowth),
+    averageDailyGrowthTone: percentageTone(averageDailyGrowth),
     riskTone: riskClass.includes("risk-safe") ? "safe" : riskClass.includes("risk-caution") ? "caution" : riskClass.includes("risk-high") ? "high" : riskClass.includes("risk-critical") ? "critical" : "unknown",
     closeDisabled: !closeButton || closeButton.disabled,
     closeBusy: Boolean(closeButton && /sluiten…|bezig|wachten/i.test(closeButton.textContent || "")),
@@ -72,7 +93,7 @@ function valuesEqual(a: SnapshotValues, b: SnapshotValues) {
   return Object.keys(a).every((key) => a[key as keyof SnapshotValues] === b[key as keyof SnapshotValues]);
 }
 
-function Icon({ name }: { name: "wallet" | "coins" | "capital" | "positions" | "result" | "trades" | "balance" | "dca" | "shield" }) {
+function Icon({ name }: { name: "wallet" | "coins" | "capital" | "positions" | "result" | "trades" | "balance" | "dca" | "shield" | "growth" | "calendar" }) {
   const common = { width: 27, height: 27, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
   if (name === "wallet") return <svg {...common}><path d="M4 7.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h12"/><path d="M15 12h6v4h-6a2 2 0 0 1 0-4Z"/></svg>;
   if (name === "coins") return <svg {...common}><ellipse cx="9" cy="6" rx="5" ry="2.5"/><path d="M4 6v4c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5V6M4 10v4c0 1.4 2.2 2.5 5 2.5 1.2 0 2.3-.2 3.2-.6"/><ellipse cx="16.5" cy="15.5" rx="4.5" ry="2.3"/><path d="M12 15.5v3.2c0 1.3 2 2.3 4.5 2.3s4.5-1 4.5-2.3v-3.2"/></svg>;
@@ -82,11 +103,17 @@ function Icon({ name }: { name: "wallet" | "coins" | "capital" | "positions" | "
   if (name === "trades") return <svg {...common}><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>;
   if (name === "balance") return <svg {...common}><path d="m3 16 5-5 4 3 7-8"/><path d="M16 6h3v3"/></svg>;
   if (name === "dca") return <svg {...common}><path d="m12 3 7 4-7 4-7-4 7-4Z"/><path d="m5 11 7 4 7-4M5 15l7 4 7-4"/></svg>;
+  if (name === "growth") return <svg {...common}><path d="M4 19V12M10 19V8M16 19V4"/><path d="M3 21h18"/></svg>;
+  if (name === "calendar") return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>;
   return <svg {...common}><path d="M12 3 5 6v5c0 4.7 2.8 8.2 7 10 4.2-1.8 7-5.3 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>;
 }
 
 function MetricCard({ icon, label, value, tone = "normal" }: { icon: Parameters<typeof Icon>[0]["name"]; label: string; value: string; tone?: "normal" | "positive" | "negative" }) {
   return <article className={`aps-metric aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong></div></article>;
+}
+
+function GrowthCard({ icon, label, value, tone }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone }) {
+  return <article className={`aps-growth-card aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong></div></article>;
 }
 
 function Snapshot({ values, onCloseAll }: { values: SnapshotValues; onCloseAll: () => void }) {
@@ -111,6 +138,10 @@ function Snapshot({ values, onCloseAll }: { values: SnapshotValues; onCloseAll: 
       <div className="aps-status aps-balance"><Icon name="balance" /><strong><b>{values.longs}L</b><span>/</span><em>{values.shorts}S</em></strong></div>
       <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
       <div className={`aps-status aps-risk aps-risk-${values.riskTone}`}><Icon name="shield" /><span><small>LIQUIDATIERISICO</small><strong>{values.liquidation}</strong></span></div>
+    </div>
+    <div className="aps-growth-row">
+      <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} />
+      <GrowthCard icon="calendar" label="GEMIDDELD PER DAG" value={values.averageDailyGrowth} tone={values.averageDailyGrowthTone} />
     </div>
   </section>;
 }
