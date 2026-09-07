@@ -26,7 +26,7 @@ test("News overview keeps the approved compact density and timeframe controls", 
   assert.match(view, /Advies op timeframe/);
   assert.match(css, /min-height:66px/);
   assert.match(css, /rotateY\(180deg\)/);
-  assert.match(css, /grid-template-columns:repeat\(6/);
+  assert.match(css, /grid-template-columns:\s*repeat\(6/);
 });
 
 test("News uses live sources and never sends trading mutations", async () => {
