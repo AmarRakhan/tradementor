@@ -13,6 +13,6 @@ jobs:
       - name: Dispatch canonical V46 deployment
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run deploy-shared-v44-testapp.yml --ref amar-crypto-bot-2026-cloud
+        run: gh workflow run deploy-shared-v44-testapp.yml -R AmarRakhan/tradementor --ref amar-crypto-bot-2026-cloud
 
-# p0-dual-break-even-live-dispatch-20260907
+# p0-dual-break-even-live-dispatch-20260907-v2
