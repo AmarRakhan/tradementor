@@ -68,6 +68,10 @@ function readSnapshot(): SnapshotValues {
   };
 }
 
+function valuesEqual(a: SnapshotValues, b: SnapshotValues) {
+  return Object.keys(a).every((key) => a[key as keyof SnapshotValues] === b[key as keyof SnapshotValues]);
+}
+
 function Icon({ name }: { name: "wallet" | "coins" | "capital" | "positions" | "result" | "trades" | "balance" | "dca" | "shield" }) {
   const common = { width: 27, height: 27, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
   if (name === "wallet") return <svg {...common}><path d="M4 7.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2h12"/><path d="M15 12h6v4h-6a2 2 0 0 1 0-4Z"/></svg>;
@@ -108,6 +112,7 @@ function Snapshot({ values, onCloseAll }: { values: SnapshotValues; onCloseAll: 
 export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
+  const valuesRef = useRef<SnapshotValues>(EMPTY);
   const syncing = useRef(false);
 
   useEffect(() => {
@@ -124,7 +129,7 @@ export function AsterPortfolioSnapshotEnhancer() {
         const active = Boolean(asterHero && impact);
         if (!active) {
           document.documentElement.removeAttribute("data-aster-compact-snapshot");
-          setHost(null);
+          setHost((current) => current === null ? current : null);
           return;
         }
         document.documentElement.setAttribute("data-aster-compact-snapshot", "true");
@@ -134,10 +139,13 @@ export function AsterPortfolioSnapshotEnhancer() {
           mount.id = "aster-portfolio-snapshot-host";
         }
         const battleRoot = impact.parentElement;
-        if (battleRoot?.parentElement && mount.parentElement !== battleRoot.parentElement) battleRoot.parentElement.insertBefore(mount, battleRoot);
-        else if (battleRoot?.parentElement && mount.nextElementSibling !== battleRoot) battleRoot.parentElement.insertBefore(mount, battleRoot);
-        setHost(mount);
-        setValues(readSnapshot());
+        if (battleRoot?.parentElement && (mount.parentElement !== battleRoot.parentElement || mount.nextElementSibling !== battleRoot)) battleRoot.parentElement.insertBefore(mount, battleRoot);
+        setHost((current) => current === mount ? current : mount);
+        const next = readSnapshot();
+        if (!valuesEqual(valuesRef.current, next)) {
+          valuesRef.current = next;
+          setValues(next);
+        }
       });
     };
     observer = new MutationObserver(sync);
