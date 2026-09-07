@@ -19,9 +19,7 @@ if REFERENCE.stat().st_size < 40_000:
     raise SystemExit("Premium reference WebP is unexpectedly small")
 
 # SVGs loaded through an <img> are intentionally isolated from external resources
-# by browsers. Therefore the premium bull reference must be embedded into every
-# state as a data URI; a root-relative href renders only the frame overlays and
-# makes the bulls disappear on real mobile browsers.
+# by browsers. Therefore the premium bull reference is embedded into every frame.
 REFERENCE_DATA_URI = f"data:image/webp;base64,{encoded}"
 
 FRAME_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,23 +45,25 @@ for index in range(201):
   <radialGradient id="r"><stop stop-color="#ff506e" stop-opacity=".78"/><stop offset="1" stop-color="#ff506e" stop-opacity="0"/></radialGradient>
   <linearGradient id="fadeL"><stop stop-color="#000" stop-opacity="{lose_left:.3f}"/><stop offset=".86" stop-color="#000" stop-opacity="0"/></linearGradient>
   <linearGradient id="fadeR" x1="1" x2="0"><stop stop-color="#000" stop-opacity="{lose_right:.3f}"/><stop offset=".86" stop-color="#000" stop-opacity="0"/></linearGradient>
-  <linearGradient id="centerMask" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity=".985"/><stop offset=".72" stop-color="#020705" stop-opacity=".90"/><stop offset="1" stop-color="#020705" stop-opacity="0"/></linearGradient>
-  <linearGradient id="footerMask" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity="0"/><stop offset=".34" stop-color="#020705" stop-opacity=".72"/><stop offset="1" stop-color="#020705" stop-opacity=".985"/></linearGradient>
+  <linearGradient id="centerMask" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity=".995"/><stop offset=".72" stop-color="#020705" stop-opacity=".94"/><stop offset="1" stop-color="#020705" stop-opacity=".16"/></linearGradient>
+  <linearGradient id="footerMask" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity=".08"/><stop offset=".22" stop-color="#020705" stop-opacity=".78"/><stop offset=".58" stop-color="#020705" stop-opacity=".95"/><stop offset="1" stop-color="#020705" stop-opacity=".995"/></linearGradient>
   <filter id="spark" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
 </defs>
 <rect width="720" height="444" fill="url(#bg)"/>
 <ellipse cx="145" cy="215" rx="270" ry="215" fill="url(#g)" opacity="{green:.3f}"/>
 <ellipse cx="575" cy="215" rx="270" ry="215" fill="url(#r)" opacity="{red:.3f}"/>
 <image href="{REFERENCE_DATA_URI}" x="{source_x}" y="68" width="900" height="363" preserveAspectRatio="xMidYMid slice"/>
-<rect x="0" y="65" width="255" height="190" fill="#03110b" opacity=".74"/>
-<rect x="465" y="65" width="255" height="190" fill="#150307" opacity=".74"/>
-<rect x="232" y="49" width="256" height="105" fill="url(#centerMask)"/>
+<!-- The source reference contains its own UI. These narrow masks remove only that
+     old UI while preserving the bull bodies, impact light and the rocky ridge. -->
+<rect x="0" y="66" width="86" height="266" fill="#03110b" opacity=".94"/>
+<rect x="634" y="66" width="86" height="266" fill="#150307" opacity=".94"/>
+<rect x="230" y="52" width="260" height="142" rx="22" fill="url(#centerMask)"/>
 <rect x="0" y="65" width="255" height="300" fill="url(#fadeL)"/>
 <rect x="465" y="65" width="255" height="300" fill="url(#fadeR)"/>
-<rect x="0" y="333" width="720" height="111" fill="url(#footerMask)"/>
+<rect x="0" y="326" width="720" height="118" fill="url(#footerMask)"/>
 <g transform="translate({impact_x} 222)" filter="url(#spark)" opacity=".98"><circle r="3.8" fill="#fff5c4"/><circle r="12" fill="none" stroke="#ffc65f" stroke-opacity=".66"/><path d="M-4 -7L-27 -34M5 -6L29 -31M-7 2L-35 17M7 3L36 20M0 8L3 38" stroke="#ffd670" stroke-width="1.7" stroke-linecap="round"/></g>
-<path d="M0 386 C84 365 132 381 205 361 S351 389 426 364 S575 386 720 358 L720 444 L0 444 Z" fill="#090c09" opacity=".58"/>
-<path d="M0 400 C88 377 143 399 218 378 S361 404 442 380 S590 402 720 374" fill="none" stroke="#54594f" stroke-width="2" opacity=".28"/>
+<path d="M0 386 C84 365 132 381 205 361 S351 389 426 364 S575 386 720 358 L720 444 L0 444 Z" fill="#090c09" opacity=".48"/>
+<path d="M0 400 C88 377 143 399 218 378 S361 404 442 380 S590 402 720 374" fill="none" stroke="#54594f" stroke-width="2" opacity=".24"/>
 </svg>'''
     (FRAME_DIR / f"frame-{index:03d}.svg").write_text(svg, encoding="utf-8")
 
