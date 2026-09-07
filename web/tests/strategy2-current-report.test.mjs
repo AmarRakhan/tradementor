@@ -20,8 +20,14 @@ test("live toggle remains server/readiness gated", () => {
   assert.match(maker, /return checkReadiness\(true\)/);
 });
 
-test("total position input waits until blur and preserves long-short ratio", () => {
+test("position inputs wait until blur and commit through deterministic slot helpers", () => {
   assert.match(maker, /totalDraft \?\? v\.positions/);
+  assert.match(maker, /longDraft \?\? v\.longSlots/);
+  assert.match(maker, /shortDraft \?\? v\.shortSlots/);
   assert.match(maker, /onBlur=\{commitTotal\}/);
-  assert.match(maker, /Math\.round\(total \* oldLong \/ oldTotal\)/);
+  assert.match(maker, /onBlur=\{commitLong\}/);
+  assert.match(maker, /onBlur=\{commitShort\}/);
+  assert.match(maker, /splitTotalPositions\(raw\)/);
+  assert.match(maker, /applyLongSlots\(v\.positions, raw\)/);
+  assert.match(maker, /applyShortSlots\(v\.positions, raw\)/);
 });
