@@ -1,0 +1,82 @@
+name: Apply News Detail Impact 20260907
+
+on:
+  push:
+    branches:
+      - chatgpt/news-detail-impact-v46-build274-20260907
+    paths:
+      - "tools/apply_news_detail_impact_20260907.py"
+      - "tools/fix_news_detail_duplicate_20260907.py"
+      - "web/app/api/news-article/route.ts"
+      - "web/app/api/news-impact/route.ts"
+      - "web/app/api/news/route.ts"
+      - "web/components/news-view.tsx"
+      - "web/components/news-article-expanded.tsx"
+      - "web/components/news-article-expanded.module.css"
+      - "web/tests/news-view.test.mjs"
+      - ".github/workflows/apply-news-detail-impact-20260907.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CI: true
+
+jobs:
+  patch-build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: chatgpt/news-detail-impact-v46-build274-20260907
+          fetch-depth: 0
+
+      - name: Apply deterministic News patch
+        run: |
+          python tools/apply_news_detail_impact_20260907.py
+          python tools/fix_news_detail_duplicate_20260907.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build production candidate
+        working-directory: web
+        run: npm run build
+
+      - name: Run full web regression suite
+        working-directory: web
+        run: node --experimental-strip-types --test tests/*.test.mjs
+
+      - name: Verify News-only mutation boundary
+        shell: bash
+        run: |
+          git diff -- web/components/news-view.tsx web/app/api/news/route.ts web/components/news-article-expanded.tsx web/components/news-article-expanded.module.css
+          ! git diff --name-only | grep -E '^(backend|server|src/.+strategy|web/app/api/exchanges/aster/strategy2|web/lib/.+strategy)'
+
+      - name: Commit verified generated patch
+        shell: bash
+        run: |
+          git config user.name "ChatGPT News Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            web/components/news-view.tsx \
+            web/components/news-article-expanded.tsx \
+            web/components/news-article-expanded.module.css \
+            web/app/api/news/route.ts
+          if git diff --cached --quiet; then
+            echo "News patch already applied"
+          else
+            git commit -m "Apply expanded News detail and double-tap fix"
+            git push origin HEAD:chatgpt/news-detail-impact-v46-build274-20260907
+          fi

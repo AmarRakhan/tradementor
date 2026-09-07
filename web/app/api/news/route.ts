@@ -21,7 +21,7 @@ type NewsArticle = {
 const COIN_ALIASES: Record<string, string[]> = {
   BTC: ["bitcoin", "btc"], ETH: ["ethereum", "ether", "eth"], SOL: ["solana", "sol"], BNB: ["bnb", "bnb chain", "binance coin"],
   HYPE: ["hyperliquid", "hype"], XRP: ["xrp", "ripple"], DOGE: ["dogecoin", "doge"], ADA: ["cardano", "ada"],
-  AVAX: ["avalanche", "avax"], LINK: ["chainlink", "link"], DOT: ["polkadot", "dot"], SUI: ["sui"], AAVE: ["aave"],
+  AVAX: ["avalanche", "avax"], LINK: ["chainlink", "$link", "link token"], ZEC: ["zcash", "zec"], DOT: ["polkadot", "dot"], SUI: ["sui"], AAVE: ["aave"],
   NEAR: ["near protocol", "near"], BCH: ["bitcoin cash", "bch"], LTC: ["litecoin", "ltc"], TRX: ["tron", "trx"],
   UNI: ["uniswap", "uni"], TON: ["toncoin", "the open network", "ton"], XLM: ["stellar", "xlm"], SHIB: ["shiba inu", "shib"],
   ATOM: ["cosmos", "atom"], ARB: ["arbitrum", "arb"], OP: ["optimism", "op"], INJ: ["injective", "inj"],
