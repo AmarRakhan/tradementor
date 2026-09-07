@@ -430,16 +430,11 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
 
       {!positionsOnly && destination === "aster" && <BotHealthCard />}
 
-      {!positionsOnly && (destination === "aster" ? <PortfolioImpactBattle
-        positions={view.positions}
-        equity={view.equityNumber}
-        dataAvailable={view.accountDataAvailable}
-        updatedAt={snapshot.updatedAt}
-      /> : <section className="direction-balance" aria-label="Long en short balans">
+      {!positionsOnly && destination !== "aster" && <section className="direction-balance" aria-label="Long en short balans">
         <DirectionBalanceCell label="LONG" count={view.accountDataAvailable ? longPositions.length : null} value={view.accountDataAvailable ? longPnl : null} />
         <DirectionBalanceCell label="NETTO OPEN PNL" value={view.accountDataAvailable ? netOpenPnl : null} center />
         <DirectionBalanceCell label="SHORT" count={view.accountDataAvailable ? shortPositions.length : null} value={view.accountDataAvailable ? shortPnl : null} />
-      </section>)}
+      </section>}
 
       {!positionsOnly && <section className="metric-strip" aria-label="Portefeuilleoverzicht">
         <Metric label="PORTFOLIOWAARDE" value={view.equity} detail={view.metricDetail} />
@@ -450,6 +445,13 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} available={snapshot.data?.historyAvailable === true} positions={view.positions} equity={view.equity} availableToTrade={view.available} openPnl={netOpenPnl} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
         {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
       </section>}
+
+      {!positionsOnly && destination === "aster" && <PortfolioImpactBattle
+        positions={view.positions}
+        equity={view.equityNumber}
+        dataAvailable={view.accountDataAvailable}
+        updatedAt={snapshot.updatedAt}
+      />}
 
       {!positionsOnly && destination === "aster" && <AsterRecentTrades snapshot={snapshot} onRetry={onRefresh} />}
       <section className="dashboard-grid">

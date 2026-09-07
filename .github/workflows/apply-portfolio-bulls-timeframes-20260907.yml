@@ -1,0 +1,120 @@
+name: Apply Portfolio Bulls Timeframes 20260907
+
+on:
+  push:
+    branches:
+      - chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
+    paths:
+      - tools/refine_portfolio_bulls_state_pan_20260907.py
+      - web/tests/visual/portfolio-impact-screenshots.mjs
+      - .github/workflows/apply-portfolio-bulls-timeframes-20260907.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CI: true
+
+jobs:
+  build-test-visual-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
+          fetch-depth: 0
+
+      - name: Refine seam-free Bulls state scenes
+        run: python tools/refine_portfolio_bulls_state_pan_20260907.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build production web candidate
+        working-directory: web
+        run: npm run build
+
+      - name: Run Bulls and protected trading regression tests
+        working-directory: web
+        run: |
+          node --experimental-strip-types --test \
+            tests/portfolio-impact-bulls.test.mjs \
+            tests/portfolio-impact-timeframes.test.mjs \
+            tests/aster-trade-center.test.mjs \
+            tests/position-slot-input.test.mjs \
+            tests/strategy2-asymmetric-hedge.test.mjs \
+            tests/strategy2-manual-symbol-selection.test.mjs
+
+      - name: Install visual QA browser tooling
+        working-directory: web
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium webkit
+
+      - name: Start visual QA server
+        working-directory: web
+        shell: bash
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 4173 >/tmp/portfolio-impact-v46.log 2>&1 &
+          echo $! >/tmp/portfolio-impact-v46.pid
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:4173/tests/visual/portfolio-impact.html >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/portfolio-impact-v46.log
+          exit 1
+
+      - name: Capture mobile Bulls visual QA
+        working-directory: web
+        run: node tests/visual/portfolio-impact-screenshots.mjs
+
+      - name: Verify generated state inventory
+        working-directory: web
+        shell: bash
+        run: |
+          test "$(find public/portfolio-impact-states -maxdepth 1 -name 'state-*.svg' | wc -l)" -eq 17
+          test -s artifacts/portfolio-impact/chromium-360.png
+          test -s artifacts/portfolio-impact/chromium-390.png
+          test -s artifacts/portfolio-impact/chromium-412.png
+          test -s artifacts/portfolio-impact/chromium-430.png
+          test -s artifacts/portfolio-impact/webkit-390.png
+          test -s artifacts/portfolio-impact/extreme-short-390.png
+          test -s artifacts/portfolio-impact/balance-390.png
+          test -s artifacts/portfolio-impact/extreme-long-390.png
+          test -s artifacts/portfolio-impact/reduced-motion-390.png
+          grep -q 'MARKTDRUK' lib/portfolio-impact-battle.mjs
+          grep -q 'destination === "aster" && <PortfolioImpactBattle' app/page.tsx
+          ! grep -q '>Exposure<' components/portfolio-impact-battle.tsx
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-bulls-timeframes-v46-build268-visual-qa
+          path: web/artifacts/portfolio-impact/*.png
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit verified candidate files
+        shell: bash
+        run: |
+          git config user.name "ChatGPT Portfolio Bulls Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/public/portfolio-impact-states
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit"
+          else
+            git commit -m "Refine Portfolio Impact Bulls state scenes"
+            git push origin HEAD:chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
+          fi
+
+# post-production-sync-qa-20260907
