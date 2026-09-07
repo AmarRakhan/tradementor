@@ -49,6 +49,10 @@ const REFRESH_MS: Record<Timeframe, number> = {
 const FRAME_COUNT = 201;
 const NEUTRAL_FRAME = 100;
 const FRAME_INTERVAL_MS = 25;
+const BATTLE_LOOP_FRAMES = 50;
+const BATTLE_FPS = 20;
+const BATTLE_FRAME_MS = Math.round(1000 / BATTLE_FPS);
+const BATTLE_SOURCE = "/portfolio-impact-frames/frame-100.svg";
 const money = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -138,12 +142,89 @@ function asPressure(value: unknown, timeframe: Timeframe): MarketPressurePayload
   };
 }
 
+function BattleArtwork({ frame, longShare }: { frame: number; longShare: number }) {
+  const phase = frame / BATTLE_LOOP_FRAMES * Math.PI * 4;
+  const shove = Math.sin(phase);
+  const secondary = Math.sin(phase * 2 + 0.35);
+  const longLift = Math.max(0, Math.sin(phase));
+  const shortLift = Math.max(0, Math.sin(phase + Math.PI));
+  const longRear = Math.max(0, Math.sin(phase + Math.PI));
+  const shortRear = Math.max(0, Math.sin(phase));
+  const battleShift = Math.max(-42, Math.min(42, (longShare - 50) * 1.4));
+  const longHeadX = shove * 4.2 + secondary * 0.9;
+  const shortHeadX = -shove * 4.2 - secondary * 0.9;
+  const longBodyX = shove * 1.7;
+  const shortBodyX = -shove * 1.7;
+  const longBodyY = Math.sin(phase + 0.25) * 1.4;
+  const shortBodyY = Math.sin(phase + Math.PI + 0.25) * 1.4;
+  const sparkPulse = 0.72 + (Math.sin(phase * 3) + 1) * 0.12;
+  const dust = Array.from({ length: 18 }, (_, index) => {
+    const seed = index * 1.618 + frame * 0.21;
+    const side = index % 2 === 0 ? -1 : 1;
+    const cx = side < 0 ? 250 + Math.sin(seed) * 42 : 470 + Math.sin(seed * 1.17) * 42;
+    const cy = 218 + Math.cos(seed * 0.73) * 9 - (frame % 8) * 0.45;
+    const opacity = 0.12 + ((index * 17 + frame * 7) % 31) / 100;
+    return { cx, cy, opacity, side };
+  });
+  const sparks = Array.from({ length: 14 }, (_, index) => {
+    const angle = index / 14 * Math.PI * 2 + frame * 0.08;
+    const radius = 9 + (index % 5) * 5 + (frame % 6);
+    return {
+      cx: 360 + Math.cos(angle) * radius,
+      cy: 139 + Math.sin(angle) * radius * 0.72 - (frame % 5) * 0.35,
+      opacity: 0.38 + (index % 4) * 0.11,
+    };
+  });
+
+  return <svg
+    className={styles.battleScene}
+    viewBox="0 0 720 303"
+    preserveAspectRatio="none"
+    aria-hidden="true"
+    focusable="false"
+  >
+    <defs>
+      <filter id="battleFeather" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.15" /></filter>
+      <filter id="battleGlow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="2.4" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+      <radialGradient id="leftSmoke" cx="50%" cy="50%" r="50%"><stop offset="0" stopColor="#00170d" stopOpacity=".94" /><stop offset=".62" stopColor="#00170d" stopOpacity=".67" /><stop offset="1" stopColor="#00170d" stopOpacity="0" /></radialGradient>
+      <radialGradient id="rightSmoke" cx="50%" cy="50%" r="50%"><stop offset="0" stopColor="#190306" stopOpacity=".94" /><stop offset=".62" stopColor="#190306" stopOpacity=".67" /><stop offset="1" stopColor="#190306" stopOpacity="0" /></radialGradient>
+      <mask id="longBodyMask" maskUnits="userSpaceOnUse" x="70" y="15" width="305" height="205"><polygon points="90,70 132,46 187,31 243,38 296,65 326,94 327,132 300,160 255,174 205,169 154,154 114,132 96,105" fill="white" filter="url(#battleFeather)" /></mask>
+      <mask id="longHeadMask" maskUnits="userSpaceOnUse" x="220" y="65" width="155" height="145"><polygon points="248,86 288,74 328,88 355,116 352,156 330,190 292,198 258,181 238,150 240,112" fill="white" filter="url(#battleFeather)" /></mask>
+      <mask id="longFrontLegMask" maskUnits="userSpaceOnUse" x="200" y="130" width="145" height="110"><polygon points="228,139 287,143 319,169 308,212 279,232 249,218 234,188" fill="white" filter="url(#battleFeather)" /></mask>
+      <mask id="longRearLegMask" maskUnits="userSpaceOnUse" x="80" y="122" width="150" height="110"><polygon points="102,132 158,137 202,159 198,201 170,223 130,212 102,181" fill="white" filter="url(#battleFeather)" /></mask>
+      <mask id="shortBodyMask" maskUnits="userSpaceOnUse" x="345" y="15" width="305" height="205"><polygon points="390,76 424,54 472,38 528,39 586,58 626,86 642,116 632,151 599,177 548,187 495,176 447,159 408,133 388,105" fill="white" filter="url(#battleFeather)" /></mask>
+      <mask id="shortHeadMask" maskUnits="userSpaceOnUse" x="345" y="65" width="155" height="145"><polygon points="365,92 401,76 443,83 474,108 481,146 464,181 430,198 393,191 367,163 357,125" fill="white" filter="url(#battleFeather)" /></mask>
+      <mask id="shortFrontLegMask" maskUnits="userSpaceOnUse" x="380" y="130" width="145" height="110"><polygon points="401,146 461,142 493,166 487,208 459,230 426,219 408,188" fill="white" filter="url(#battleFeather)" /></mask>
+      <mask id="shortRearLegMask" maskUnits="userSpaceOnUse" x="500" y="122" width="150" height="110"><polygon points="518,142 568,132 620,151 635,184 612,216 575,225 540,205 521,176" fill="white" filter="url(#battleFeather)" /></mask>
+    </defs>
+
+    <ellipse cx="230" cy="138" rx="195" ry="122" fill="url(#leftSmoke)" />
+    <ellipse cx="500" cy="138" rx="195" ry="122" fill="url(#rightSmoke)" />
+
+    <g transform={`translate(${battleShift.toFixed(2)} 0)`}>
+      <g transform={`translate(${longBodyX.toFixed(2)} ${longBodyY.toFixed(2)})`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longBodyMask)" /></g>
+      <g transform={`translate(${longHeadX.toFixed(2)} ${(longBodyY * 0.55).toFixed(2)}) rotate(${(-shove * 0.9).toFixed(2)} 300 137)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longHeadMask)" /></g>
+      <g transform={`translate(${(longLift * 3.4).toFixed(2)} ${(-longLift * 7.5).toFixed(2)}) rotate(${(-longLift * 3.4).toFixed(2)} 271 169)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longFrontLegMask)" /></g>
+      <g transform={`translate(${(longRear * 2.2).toFixed(2)} ${(-longRear * 3.8).toFixed(2)}) rotate(${(longRear * 2.1).toFixed(2)} 155 165)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longRearLegMask)" /></g>
+
+      <g transform={`translate(${shortBodyX.toFixed(2)} ${shortBodyY.toFixed(2)})`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortBodyMask)" /></g>
+      <g transform={`translate(${shortHeadX.toFixed(2)} ${(shortBodyY * 0.55).toFixed(2)}) rotate(${(shove * 0.9).toFixed(2)} 420 137)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortHeadMask)" /></g>
+      <g transform={`translate(${(-shortLift * 3.4).toFixed(2)} ${(-shortLift * 7.5).toFixed(2)}) rotate(${(shortLift * 3.4).toFixed(2)} 449 169)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortFrontLegMask)" /></g>
+      <g transform={`translate(${(-shortRear * 2.2).toFixed(2)} ${(-shortRear * 3.8).toFixed(2)}) rotate(${(-shortRear * 2.1).toFixed(2)} 565 165)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortRearLegMask)" /></g>
+
+      <g className={styles.impactSparks} filter="url(#battleGlow)" opacity={sparkPulse}>{sparks.map((spark, index) => <circle key={`spark-${index}`} cx={spark.cx} cy={spark.cy} r={index % 5 === 0 ? 1.7 : 1.05} fill="#ffc45e" opacity={spark.opacity} />)}</g>
+      <g className={styles.battleDust}>{dust.map((particle, index) => <circle key={`dust-${index}`} cx={particle.cx} cy={particle.cy} r={index % 4 === 0 ? 2.4 : 1.5} fill={particle.side < 0 ? "#4bf2a2" : "#ff6a7d"} opacity={particle.opacity} />)}</g>
+    </g>
+  </svg>;
+}
+
 export function PortfolioImpactBattle({ positions, equity, dataAvailable, updatedAt, marketPressureOverride }: Props) {
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [pressure, setPressure] = useState<MarketPressurePayload | null>(null);
   const [loadingPressure, setLoadingPressure] = useState(true);
   const [pressureError, setPressureError] = useState("");
   const [displayFrameIndex, setDisplayFrameIndex] = useState(NEUTRAL_FRAME);
+  const [battleAnimationFrame, setBattleAnimationFrame] = useState(0);
   const displayFrameRef = useRef(NEUTRAL_FRAME);
   const pressureCache = useRef(new Map<string, MarketPressurePayload>());
 
@@ -170,34 +251,15 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
   const symbolKey = marketSymbols.join(",");
 
   useEffect(() => {
-    let cancelled = false;
-    const timers: number[] = [];
-    const loaded: HTMLImageElement[] = [];
-    const order: number[] = [];
-    for (let radius = 0; radius <= 24; radius += 1) {
-      if (NEUTRAL_FRAME - radius >= 0) order.push(NEUTRAL_FRAME - radius);
-      if (radius && NEUTRAL_FRAME + radius < FRAME_COUNT) order.push(NEUTRAL_FRAME + radius);
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    if (reduced) {
+      setBattleAnimationFrame(0);
+      return;
     }
-    for (let index = 0; index < FRAME_COUNT; index += 1) if (!order.includes(index)) order.push(index);
-    let cursor = 0;
-    const loadBatch = () => {
-      if (cancelled) return;
-      const end = Math.min(order.length, cursor + 18);
-      while (cursor < end) {
-        const image = new Image();
-        image.decoding = "async";
-        image.src = framePath(order[cursor]);
-        loaded.push(image);
-        cursor += 1;
-      }
-      if (cursor < order.length) timers.push(window.setTimeout(loadBatch, 32));
-    };
-    loadBatch();
-    return () => {
-      cancelled = true;
-      timers.forEach((timer) => window.clearTimeout(timer));
-      loaded.forEach((image) => { image.src = ""; });
-    };
+    const interval = window.setInterval(() => {
+      setBattleAnimationFrame((current) => (current + 1) % BATTLE_LOOP_FRAMES);
+    }, BATTLE_FRAME_MS);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -305,13 +367,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
 
   return <div className={styles.module}>
     <div className={styles.timeframes} role="group" aria-label="Marktdruk timeframe">
-      {TIMEFRAMES.map((item) => <button
-        key={item.id}
-        type="button"
-        className={item.id === timeframe ? styles.activeTimeframe : ""}
-        aria-pressed={item.id === timeframe}
-        onClick={() => setTimeframe(item.id)}
-      >{item.label}</button>)}
+      {TIMEFRAMES.map((item) => <button key={item.id} type="button" className={item.id === timeframe ? styles.activeTimeframe : ""} aria-pressed={item.id === timeframe} onClick={() => setTimeframe(item.id)}>{item.label}</button>)}
     </div>
 
     <section
@@ -320,6 +376,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       data-state-index={currentPressure.stateIndex}
       data-frame-index={displayFrameIndex}
       data-target-frame-index={targetFrameIndex}
+      data-battle-animation-frame={battleAnimationFrame}
       data-visual-long-share={displayLongShare}
       data-target-long-share={currentPressure.longShare}
       data-timeframe={timeframe}
@@ -327,7 +384,8 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       data-updated-at={updatedAt ?? ""}
       aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(netPnl, true)}. Marktdruk ${pressureStatus}.`}
     >
-      <img className={styles.scene} src={framePath(displayFrameIndex)} alt="" aria-hidden="true" />
+      <span className={styles.scene} aria-hidden="true" />
+      <BattleArtwork frame={battleAnimationFrame} longShare={displayLongShare} />
       <div className={styles.vignette} aria-hidden="true" />
       <div className={styles.impact} aria-hidden="true"><i /><i /><i /></div>
 
@@ -340,34 +398,38 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
           <div className={styles.sideTitle}><span>LONGS</span><i>↗</i></div>
           <small>Open P&amp;L</small>
           <strong className={tone(snapshot.longPnl)}>{formatUsd(snapshot.longPnl, true)}</strong>
-          <em className={tone(snapshot.longPnl)}>{formatPercent(longPercent)}</em>
+          <em className={longPercent === null ? styles.neutral : tone(longPercent)}>{formatPercent(longPercent)}</em>
           <span className={styles.positionCount}>{snapshot.longs.length} posities</span>
         </div>
 
         <div className={styles.centerPanel}>
           <div className={styles.centerTitle}><i />PORTFOLIO IMPACT</div>
           <strong className={tone(netPnl)}>{formatUsd(netPnl, true)}</strong>
-          <span className={tone(netPnl)}>{formatPercent(netPercent)}</span>
+          <span className={netPercent === null ? styles.neutral : tone(netPercent)}>{formatPercent(netPercent)}</span>
         </div>
 
         <div className={`${styles.sidePanel} ${styles.shortPanel}`}>
           <div className={styles.sideTitle}><i>↘</i><span>SHORTS</span></div>
           <small>Open P&amp;L</small>
           <strong className={tone(snapshot.shortPnl)}>{formatUsd(snapshot.shortPnl, true)}</strong>
-          <em className={tone(snapshot.shortPnl)}>{formatPercent(shortPercent)}</em>
+          <em className={shortPercent === null ? styles.neutral : tone(shortPercent)}>{formatPercent(shortPercent)}</em>
           <span className={styles.positionCount}>{snapshot.shorts.length} posities</span>
         </div>
-      </>}
 
-      <div className={styles.battleFooter}>
-        <div className={styles.status}>{pressureStatus}</div>
-        <div className={styles.balanceRow}>
-          <div className={`${styles.share} ${styles.longShare}`}><strong>{formatShare(displayLongShare)}%</strong></div>
-          <div className={styles.balanceTrack} aria-hidden="true"><div className={styles.longFill} /><div className={styles.shortFill} /><i /></div>
-          <div className={`${styles.share} ${styles.shortShare}`}><strong>{formatShare(displayShortShare)}%</strong></div>
+        <div className={styles.battleFooter}>
+          <div className={styles.status}>{pressureStatus}</div>
+          <div className={styles.balanceRow}>
+            <div className={`${styles.share} ${styles.longShare}`}><strong>{formatShare(displayLongShare)}%</strong></div>
+            <div className={styles.balanceTrack} aria-label={`Marktdruk longs ${formatShare(displayLongShare)} procent, shorts ${formatShare(displayShortShare)} procent`}>
+              <span className={styles.longFill} />
+              <span className={styles.shortFill} />
+              <i />
+            </div>
+            <div className={`${styles.share} ${styles.shortShare}`}><strong>{formatShare(displayShortShare)}%</strong></div>
+          </div>
+          <div className={styles.barCaption}>{pressureCaption}</div>
         </div>
-        <div className={styles.barCaption}>{pressureCaption}</div>
-      </div>
+      </>}
     </section>
   </div>;
 }
