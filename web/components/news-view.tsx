@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import styles from "./news-view.module.css";
 import articleStyles from "./news-article-detail.module.css";
+import { NewsArticleExpanded } from "./news-article-expanded";
 
 type Timeframe = "1m" | "5m" | "15m" | "1u" | "4u" | "24u";
 type ArchiveMode = "today" | "yesterday" | "7d" | "30d" | "all" | "saved" | "custom";
@@ -34,7 +35,14 @@ type ArticleDigest = {
     label: string;
     intro: string;
     paragraphs: string[];
+    sections?: Array<{ heading: string; paragraphs: string[] }>;
     keyPoints: string[];
+    watchFor?: string[];
+    conclusion?: string;
+    imageUrl?: string;
+    imageFromSource?: boolean;
+    author?: string;
+    wordCount?: number;
     basedOnFullSource: boolean;
     note: string;
   };
@@ -46,7 +54,7 @@ const FALLBACK = ["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","HYPE","AVAX","LINK
 const ARCHIVE_KEY = "tradementor.news.archive.nl.v2";
 const SAVED_KEY = "tradementor.news.saved.v1";
 const ALERT_KEY = "tradementor.news.alerts.v1";
-const DETAIL_KEY = "tradementor.news.detail.nl.v1";
+const DETAIL_KEY = "tradementor.news.detail.nl.v2";
 
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function pairSymbol(value: unknown) { return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/(USDT|USDC|USD|PERP)$/i, "").replace(/^1000(?=[A-Z])/, ""); }
@@ -228,7 +236,9 @@ export function NewsView() {
   const [detailError, setDetailError] = useState("");
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [alerts, setAlerts] = useState<AlertPrefs>({ breaking:false, important:true, topN:true, highImpact:false });
-  const lastTap = useRef(0);
+  const lastTap = useRef<{ time: number; x: number; y: number } | null>(null);
+  const pointerStart = useRef<{ pointerId: number; time: number; x: number; y: number } | null>(null);
+  const closeTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setSaved(readSaved());
@@ -308,7 +318,7 @@ export function NewsView() {
     let cancelled = false;
     const controller = new AbortController();
     setDetailLoading(true); setDetailError(""); setDetailDigest(null);
-    const params = new URLSearchParams({ url:selected.sourceUrl, title:selected.title, source:selected.source, summary:selected.summary });
+    const params = new URLSearchParams({ url:selected.sourceUrl, title:selected.title, source:selected.source, summary:selected.summary, image:selected.imageUrl || "", coin:selected.coins[0] || "", category:primaryCategory(selected) });
     fetch(`/api/news-article?${params.toString()}`, { signal:controller.signal, cache:"no-store" })
       .then(async (response) => { if (!response.ok) throw new Error("De vereenvoudigde versie kon niet volledig worden opgebouwd."); return response.json() as Promise<ArticleDigest>; })
       .then((digest) => { if (!cancelled) { setDetailDigest(digest); persistDetailCache(selected.id, digest); } })
@@ -369,11 +379,45 @@ export function NewsView() {
     });
   };
 
-  const handleDetailTap = (event: React.PointerEvent) => {
-    if ((event.target as HTMLElement).closest("button,a,input")) return;
-    const now = Date.now();
-    if (now - lastTap.current < 330) { setSelected(null); lastTap.current = 0; }
-    else lastTap.current = now;
+  const isNeutralDetailTarget = (target: EventTarget | null) => {
+    const element = target instanceof HTMLElement ? target : null;
+    return !element?.closest("button,a,input,select,textarea,[data-no-doubletap='true']");
+  };
+
+  const closeDetail = () => {
+    if (!selected || closeTimer.current !== null) return;
+    setFlipped(false);
+    lastTap.current = null;
+    pointerStart.current = null;
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      setSelected(null);
+    }, 680);
+  };
+
+  const handleDetailPointerDown = (event: React.PointerEvent) => {
+    if (!isNeutralDetailTarget(event.target)) { pointerStart.current = null; return; }
+    pointerStart.current = { pointerId:event.pointerId, time:Date.now(), x:event.clientX, y:event.clientY };
+  };
+
+  const handleDetailPointerUp = (event: React.PointerEvent) => {
+    const start = pointerStart.current;
+    pointerStart.current = null;
+    if (!start || start.pointerId !== event.pointerId || !isNeutralDetailTarget(event.target)) return;
+    const duration = Date.now() - start.time;
+    const movement = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+    if (duration > 450 || movement > 14) return;
+    const tap = { time:Date.now(), x:event.clientX, y:event.clientY };
+    const previous = lastTap.current;
+    if (previous && tap.time - previous.time <= 380 && Math.hypot(tap.x - previous.x, tap.y - previous.y) <= 30) {
+      closeDetail();
+      return;
+    }
+    lastTap.current = tap;
+  };
+
+  const handleDetailDoubleClick = (event: React.MouseEvent) => {
+    if (isNeutralDetailTarget(event.target)) closeDetail();
   };
 
   const archiveLabel = archiveMode === "today" ? "Vandaag" : archiveMode === "yesterday" ? "Gisteren" : archiveMode === "7d" ? "7 dagen" : archiveMode === "30d" ? "30 dagen" : archiveMode === "saved" ? "Opgeslagen" : archiveMode === "custom" ? "Periode" : "Archief";
@@ -406,28 +450,17 @@ export function NewsView() {
 
     {groups.length ? groups.map((group) => <section key={group.key}><div className={styles.dayHeader}><h2>{dayLabel(group.key)}</h2><time>{dayDisplay(group.key)}</time></div><div className={styles.list}>{group.items.map((article) => <CompactArticle key={article.id} article={article} timeframe={timeframe} saved={saved.has(article.id)} onOpen={() => setSelected(article)} />)}</div></section>) : <div className={styles.empty}><div><strong>Geen nieuws voor deze selectie</strong><span>Kies een andere munt, categorie of archiefperiode.</span></div></div>}
 
-    {selected && <div className={styles.detailLayer} onPointerUp={handleDetailTap} onDoubleClick={() => setSelected(null)} role="dialog" aria-modal="true" aria-label={`Nieuwsartikel ${selected.title}`}>
+    {selected && <div className={styles.detailLayer} onPointerDown={handleDetailPointerDown} onPointerUp={handleDetailPointerUp} onDoubleClick={handleDetailDoubleClick} role="dialog" aria-modal="true" aria-label={`Nieuwsartikel ${selected.title}`}>
       <div className={`${styles.detailCard} ${flipped ? styles.flipped : ""}`}>
         <div className={styles.detailInner}>
           <div className={`${styles.detailFace} ${styles.detailFront}`}><div className={styles.frontPreview}><CompactArticle article={selected} timeframe={timeframe} saved={saved.has(selected.id)} onOpen={() => {}} /></div></div>
           <article className={`${styles.detailFace} ${styles.detailBack}`}>
-            <header className={styles.detailHeader}><button type="button" className={styles.backButton} onClick={() => setSelected(null)} aria-label="Terug naar overzicht">←</button><span className={styles.ticker}>{selected.coins[0] || "Macro"}</span><span className={styles.source}>{selected.source} · {relativeTime(selected.publishedAt)}</span><button type="button" className={styles.saveButton} onClick={() => toggleSaved(selected)}>{saved.has(selected.id) ? "♥ Opgeslagen" : "♡ Opslaan"}</button></header>
+            <header className={styles.detailHeader}><button type="button" className={styles.backButton} onClick={closeDetail} aria-label="Terug naar overzicht">←</button><span className={styles.ticker}>{selected.coins[0] || "Macro"}</span><span className={styles.source}>{selected.source} · {relativeTime(selected.publishedAt)}</span><button type="button" className={styles.saveButton} onClick={() => toggleSaved(selected)}>{saved.has(selected.id) ? "♥ Opgeslagen" : "♡ Opslaan"}</button></header>
             <div className={styles.detailScroll}>
               <h2 className={styles.detailTitle}>{selected.title}</h2>
-              <div className={styles.heroImage}>{selected.coins[0] ? <img src={logoUrl(selected.coins[0])} alt={`${selected.coins[0]}-logo`} /> : <span className={styles.thumbFallback}>◎ Macro</span>}</div>
-              <section className={articleStyles.article} aria-label="Vereenvoudigd artikel in de app">
-                <div className={articleStyles.label}>Crypto Bot 2026 · duidelijk uitgelegd</div>
-                {detailLoading && <div className={articleStyles.loading}><i /> We maken van de bron een helder Nederlands artikel…</div>}
-                {!detailLoading && detailDigest && <>
-                  <p className={articleStyles.lead}>{detailDigest.article.intro}</p>
-                  {detailDigest.article.paragraphs.map((paragraph, index) => <p className={articleStyles.paragraph} key={`${selected.id}-p-${index}`}>{paragraph}</p>)}
-                  {!!detailDigest.article.keyPoints.length && <div className={articleStyles.points}><strong>Belangrijkste punten</strong>{detailDigest.article.keyPoints.map((point, index) => <span key={`${selected.id}-k-${index}`}>• {point}</span>)}</div>}
-                  <small className={articleStyles.note}>{detailDigest.article.note}{detailDigest.article.basedOnFullSource ? " De oorspronkelijke bron kon volledig worden ingelezen." : " De bron gaf niet alle tekst vrij; daarom is de beschikbare broninformatie gebruikt."}</small>
-                </>}
-                {!detailLoading && !detailDigest && <><p className={articleStyles.lead}>{selected.summary || "Voor dit bericht is nog geen uitgebreide brontekst beschikbaar."}</p>{detailError && <small className={articleStyles.note}>{detailError}</small>}</>}
-              </section>
+              <NewsArticleExpanded article={selected} digest={detailDigest} loading={detailLoading} error={detailError} timeframe={timeframe} />
               <section className={styles.impact}><strong>💡 Wat betekent dit voor {timeframe}?</strong><p>{impactText(selected, timeframe)}</p></section>
-              <section className={styles.tfPanel}><h3>💡 Advies per tijdsvenster</h3>{TIMEFRAMES.map((value) => { const advice = adviceFor(selected, value); return <div className={styles.tfRow} key={value}><b>{value}</b><span>{advice.detail}</span><span className={styles.statusPill} data-tone={advice.tone}>{advice.status}</span></div>; })}</section>
+              <section className={styles.tfPanel} data-no-doubletap="true"><h3>💡 Advies per tijdsvenster</h3>{TIMEFRAMES.map((value) => { const advice = adviceFor(selected, value); return <div className={styles.tfRow} key={value}><b>{value}</b><span>{advice.detail}</span><span className={styles.statusPill} data-tone={advice.tone}>{advice.status}</span></div>; })}</section>
             </div>
             <footer className={styles.detailActions}><button type="button" className={articleStyles.sourceLink} onClick={() => window.open(detailDigest?.sourceUrl || selected.sourceUrl, "_blank", "noopener,noreferrer")}>Bron: {selected.source} ↗</button><div className={styles.doubleHint}>◇ Dubbeltik<br/>om terug te draaien</div></footer>
           </article>
