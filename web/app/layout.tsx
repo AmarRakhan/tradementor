@@ -5,6 +5,7 @@ import { PwaRegistration } from "@/components/pwa-registration";
 import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
+import { AsterPortfolioSnapshotEnhancer } from "@/components/aster-portfolio-snapshot-enhancer";
 import { MarketsNavigationBridge } from "@/components/markets-navigation-bridge";
 import { NewsNavigationBridge } from "@/components/news-navigation-bridge";
 import { AsterPairSettingsOverlay } from "@/components/aster-pair-settings-overlay";
@@ -18,6 +19,7 @@ import "./suriname-heritage.css";
 import "./aster-tables.css";
 import "./strategy2-reference.css";
 import "./markets-bridge.css";
+import "./portfolio-snapshot.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -67,6 +69,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <PwaRegistration buildNumber={buildNumber} />
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
+        <AsterPortfolioSnapshotEnhancer />
         <AuthProvider>{children}</AuthProvider>
         <AsterSideTpSettings />
         <AsterShortDcaSaveGuard />
