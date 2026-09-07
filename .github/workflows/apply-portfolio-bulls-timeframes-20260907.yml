@@ -6,6 +6,7 @@ on:
       - chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
     paths:
       - tools/apply_portfolio_bulls_timeframes_20260907.py
+      - tools/fix_portfolio_bulls_generator_legacy_20260907.py
       - .github/workflows/apply-portfolio-bulls-timeframes-20260907.yml
   workflow_dispatch:
 
@@ -26,7 +27,9 @@ jobs:
           fetch-depth: 0
 
       - name: Apply read-only Bulls timeframe implementation
-        run: python tools/apply_portfolio_bulls_timeframes_20260907.py
+        run: |
+          python tools/apply_portfolio_bulls_timeframes_20260907.py
+          python tools/fix_portfolio_bulls_generator_legacy_20260907.py
 
       - uses: actions/setup-node@v4
         with:
