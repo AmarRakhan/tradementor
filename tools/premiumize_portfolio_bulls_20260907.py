@@ -38,6 +38,14 @@ for index in range(201):
     red = 0.10 + max(0.0, -bias) * 0.28
     lose_left = max(0.0, -bias) * 0.55
     lose_right = max(0.0, bias) * 0.55
+
+    # The source panel coordinates are mapped through the 1.25x source scaling.
+    # These masks follow source_x frame-by-frame so source UI can never peek out
+    # when one bull pushes the other side toward the edge.
+    source_left_ui_x = source_x
+    source_right_ui_x = source_x + 730
+    source_center_ui_x = source_x + 330
+
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="888" viewBox="0 0 720 444" preserveAspectRatio="xMidYMid slice">
 <defs>
   <linearGradient id="bg" x1="0" x2="1"><stop stop-color="#00130b"/><stop offset=".48" stop-color="#07100b"/><stop offset=".52" stop-color="#110707"/><stop offset="1" stop-color="#190007"/></linearGradient>
@@ -53,11 +61,10 @@ for index in range(201):
 <ellipse cx="145" cy="215" rx="270" ry="215" fill="url(#g)" opacity="{green:.3f}"/>
 <ellipse cx="575" cy="215" rx="270" ry="215" fill="url(#r)" opacity="{red:.3f}"/>
 <image href="{REFERENCE_DATA_URI}" x="{source_x}" y="68" width="900" height="363" preserveAspectRatio="xMidYMid slice"/>
-<!-- The source reference contains its own UI. These narrow masks remove only that
-     old UI while preserving the bull bodies, impact light and the rocky ridge. -->
-<rect x="0" y="66" width="86" height="266" fill="#03110b" opacity=".94"/>
-<rect x="634" y="66" width="86" height="266" fill="#150307" opacity=".94"/>
-<rect x="230" y="52" width="260" height="142" rx="22" fill="url(#centerMask)"/>
+<!-- Source UI masks move with the reference itself. Bull bodies and rocky ridge remain visible. -->
+<rect x="{source_left_ui_x}" y="66" width="174" height="268" fill="#03110b" opacity=".95"/>
+<rect x="{source_right_ui_x}" y="66" width="184" height="268" fill="#150307" opacity=".95"/>
+<rect x="{source_center_ui_x}" y="52" width="258" height="144" rx="22" fill="url(#centerMask)"/>
 <rect x="0" y="65" width="255" height="300" fill="url(#fadeL)"/>
 <rect x="465" y="65" width="255" height="300" fill="url(#fadeR)"/>
 <rect x="0" y="326" width="720" height="118" fill="url(#footerMask)"/>
