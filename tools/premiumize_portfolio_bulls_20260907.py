@@ -39,9 +39,9 @@ for index in range(201):
     lose_left = max(0.0, -bias) * 0.55
     lose_right = max(0.0, bias) * 0.55
 
-    # The source panel coordinates are mapped through the 1.25x source scaling.
-    # These masks follow source_x frame-by-frame so source UI can never peek out
-    # when one bull pushes the other side toward the edge.
+    # The source UI coordinates are mapped through the 1.25x source scaling.
+    # Masks follow source_x frame-by-frame so the original reference labels never
+    # reappear when one bull pushes the other side toward the edge.
     source_left_ui_x = source_x
     source_right_ui_x = source_x + 730
     source_center_ui_x = source_x + 330
@@ -53,24 +53,26 @@ for index in range(201):
   <radialGradient id="r"><stop stop-color="#ff506e" stop-opacity=".78"/><stop offset="1" stop-color="#ff506e" stop-opacity="0"/></radialGradient>
   <linearGradient id="fadeL"><stop stop-color="#000" stop-opacity="{lose_left:.3f}"/><stop offset=".86" stop-color="#000" stop-opacity="0"/></linearGradient>
   <linearGradient id="fadeR" x1="1" x2="0"><stop stop-color="#000" stop-opacity="{lose_right:.3f}"/><stop offset=".86" stop-color="#000" stop-opacity="0"/></linearGradient>
-  <linearGradient id="centerMask" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity=".995"/><stop offset=".72" stop-color="#020705" stop-opacity=".94"/><stop offset="1" stop-color="#020705" stop-opacity=".16"/></linearGradient>
-  <linearGradient id="footerMask" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity=".08"/><stop offset=".22" stop-color="#020705" stop-opacity=".78"/><stop offset=".58" stop-color="#020705" stop-opacity=".95"/><stop offset="1" stop-color="#020705" stop-opacity=".995"/></linearGradient>
+  <linearGradient id="footerMask" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#020705" stop-opacity=".15"/><stop offset=".16" stop-color="#020705" stop-opacity=".86"/><stop offset=".46" stop-color="#020705" stop-opacity=".97"/><stop offset="1" stop-color="#020705" stop-opacity="1"/></linearGradient>
   <filter id="spark" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
 </defs>
 <rect width="720" height="444" fill="url(#bg)"/>
 <ellipse cx="145" cy="215" rx="270" ry="215" fill="url(#g)" opacity="{green:.3f}"/>
 <ellipse cx="575" cy="215" rx="270" ry="215" fill="url(#r)" opacity="{red:.3f}"/>
 <image href="{REFERENCE_DATA_URI}" x="{source_x}" y="68" width="900" height="363" preserveAspectRatio="xMidYMid slice"/>
-<!-- Source UI masks move with the reference itself. Bull bodies and rocky ridge remain visible. -->
-<rect x="{source_left_ui_x}" y="66" width="174" height="268" fill="#03110b" opacity=".95"/>
-<rect x="{source_right_ui_x}" y="66" width="184" height="268" fill="#150307" opacity=".95"/>
-<rect x="{source_center_ui_x}" y="52" width="258" height="144" rx="22" fill="url(#centerMask)"/>
+<!-- Remove only the UI that exists inside the source reference. -->
+<rect x="{source_left_ui_x}" y="66" width="174" height="270" fill="#03110b" opacity="1"/>
+<rect x="{source_right_ui_x}" y="66" width="184" height="270" fill="#150307" opacity="1"/>
+<rect x="{source_center_ui_x}" y="52" width="258" height="121" rx="22" fill="#020705" opacity=".995"/>
 <rect x="0" y="65" width="255" height="300" fill="url(#fadeL)"/>
 <rect x="465" y="65" width="255" height="300" fill="url(#fadeR)"/>
+<!-- The source status line sits just above its old pressure bar. A narrow solid
+     band removes it while keeping the rocky ridge above clearly visible. -->
+<rect x="0" y="334" width="720" height="42" fill="#020705" opacity=".96"/>
 <rect x="0" y="326" width="720" height="118" fill="url(#footerMask)"/>
 <g transform="translate({impact_x} 222)" filter="url(#spark)" opacity=".98"><circle r="3.8" fill="#fff5c4"/><circle r="12" fill="none" stroke="#ffc65f" stroke-opacity=".66"/><path d="M-4 -7L-27 -34M5 -6L29 -31M-7 2L-35 17M7 3L36 20M0 8L3 38" stroke="#ffd670" stroke-width="1.7" stroke-linecap="round"/></g>
-<path d="M0 386 C84 365 132 381 205 361 S351 389 426 364 S575 386 720 358 L720 444 L0 444 Z" fill="#090c09" opacity=".48"/>
-<path d="M0 400 C88 377 143 399 218 378 S361 404 442 380 S590 402 720 374" fill="none" stroke="#54594f" stroke-width="2" opacity=".24"/>
+<path d="M0 386 C84 365 132 381 205 361 S351 389 426 364 S575 386 720 358 L720 444 L0 444 Z" fill="#090c09" opacity=".44"/>
+<path d="M0 400 C88 377 143 399 218 378 S361 404 442 380 S590 402 720 374" fill="none" stroke="#54594f" stroke-width="2" opacity=".22"/>
 </svg>'''
     (FRAME_DIR / f"frame-{index:03d}.svg").write_text(svg, encoding="utf-8")
 
