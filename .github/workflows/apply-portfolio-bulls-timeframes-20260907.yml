@@ -7,6 +7,7 @@ on:
     paths:
       - tools/apply_portfolio_bulls_timeframes_20260907.py
       - tools/fix_portfolio_bulls_generator_legacy_20260907.py
+      - tools/refine_portfolio_bulls_state_pan_20260907.py
       - .github/workflows/apply-portfolio-bulls-timeframes-20260907.yml
   workflow_dispatch:
 
@@ -30,6 +31,7 @@ jobs:
         run: |
           python tools/apply_portfolio_bulls_timeframes_20260907.py
           python tools/fix_portfolio_bulls_generator_legacy_20260907.py
+          python tools/refine_portfolio_bulls_state_pan_20260907.py
 
       - uses: actions/setup-node@v4
         with:
@@ -122,6 +124,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No generated changes to commit"
           else
-            git commit -m "Build Portfolio Impact Bulls timeframe state engine"
+            git commit -m "Refine Portfolio Impact Bulls state scenes"
             git push origin HEAD:chatgpt/portfolio-bulls-timeframes-v46-build268-20260907
           fi
