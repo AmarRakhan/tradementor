@@ -11,6 +11,7 @@ const cases = [
   ['chromium-430', chromium, 430, 932],
   ['webkit-390', webkit, 390, 844],
 ];
+
 for (const [name, type, width, height] of cases) {
   const browser = await type.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
@@ -20,13 +21,18 @@ for (const [name, type, width, height] of cases) {
   const box = await card.boundingBox();
   assert.ok(box && box.width <= width, `${name}: card exceeds viewport width`);
   const ratio = box ? box.width / box.height : 0;
-  assert.ok(box && box.height >= 195 && box.height <= 290, `${name}: card height ${box?.height ?? 'n/a'}px outside approved cinematic mobile target`);
-  assert.ok(ratio >= 1.45 && ratio <= 1.90, `${name}: card ratio ${ratio.toFixed(2)} outside approved cinematic target`);
+  assert.ok(box && box.height >= 140 && box.height <= 190, `${name}: card height ${box?.height ?? 'n/a'}px outside approved premium banner target`);
+  assert.ok(ratio >= 2.20 && ratio <= 2.50, `${name}: card ratio ${ratio.toFixed(2)} outside reference target`);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, `${name}: horizontal overflow ${overflow}px`);
   assert.match(await card.innerText(), /SHORTS DRUKKEN HARDER/, `${name}: 15m fixture must show short pressure`);
   const sceneSrc = await card.locator('img').first().getAttribute('src');
-  assert.match(sceneSrc || '', /portfolio-impact-states\/state-0[0-9]\.svg/, `${name}: state-based scene asset missing`);
+  assert.equal(sceneSrc, '/portfolio-impact-premium-clean.webp', `${name}: fixed clean background missing`);
+  const firstFrame = Number(await card.getAttribute('data-battle-animation-frame'));
+  await page.waitForTimeout(180);
+  const laterFrame = Number(await card.getAttribute('data-battle-animation-frame'));
+  assert.notEqual(firstFrame, laterFrame, `${name}: battle foreground is not continuously animating`);
+  assert.ok(Number(await card.getAttribute('data-battle-intensity')) > 0.28, `${name}: short pressure should raise battle intensity`);
   await card.screenshot({ path: `artifacts/portfolio-impact/${name}.png` });
   await browser.close();
 }
@@ -45,14 +51,14 @@ for (const [label, expected] of [
   ['24u', 'LONGS DOMINEREN'],
 ]) {
   await page.getByRole('button', { name: label, exact: true }).click();
-  await page.waitForTimeout(50);
+  await page.waitForTimeout(80);
   assert.match(await card.innerText(), new RegExp(expected), `${label}: expected ${expected}`);
   if (label === '1m') await card.screenshot({ path: 'artifacts/portfolio-impact/extreme-short-390.png' });
   if (label === '1u') await card.screenshot({ path: 'artifacts/portfolio-impact/balance-390.png' });
   if (label === '24u') await card.screenshot({ path: 'artifacts/portfolio-impact/extreme-long-390.png' });
 }
 const reducedBox = await card.boundingBox();
-assert.ok(reducedBox && reducedBox.height >= 195 && reducedBox.height <= 290, 'reduced-motion-390: cinematic card geometry regressed');
+assert.ok(reducedBox && reducedBox.height >= 140 && reducedBox.height <= 190, 'reduced-motion-390: reference card geometry regressed');
 await card.screenshot({ path: 'artifacts/portfolio-impact/reduced-motion-390.png' });
 await browser.close();
-console.log('Portfolio Impact timeframe/state visual QA complete');
+console.log('Portfolio Impact film-battle visual QA complete');
