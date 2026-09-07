@@ -28,6 +28,8 @@ for (const [name, type, width, height] of cases) {
   assert.match(await card.innerText(), /SHORTS DRUKKEN HARDER/, `${name}: 15m fixture must show short pressure`);
   const sceneSrc = await card.locator('img').first().getAttribute('src');
   assert.equal(sceneSrc, '/portfolio-impact-premium-reference.webp', `${name}: seamless premium scene source missing`);
+  const battleImageHref = await card.locator('svg image').first().getAttribute('href');
+  assert.equal(battleImageHref, sceneSrc, `${name}: static scene and animated battle source must remain identical`);
   const firstFrame = Number(await card.getAttribute('data-battle-animation-frame'));
   await page.waitForTimeout(180);
   const laterFrame = Number(await card.getAttribute('data-battle-animation-frame'));
