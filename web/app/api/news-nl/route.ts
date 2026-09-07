@@ -26,6 +26,50 @@ function decodeHtml(value: string) {
     .replace(/&gt;/gi, ">");
 }
 
+function polishDutch(value: string) {
+  let text = clean(decodeHtml(value));
+  const rules: Array<[RegExp, string]> = [
+    [/\bClouds Fed Outlook\b/gi, "vertroebelt de rentevooruitzichten van de Fed"],
+    [/\bfutures open rente\b/gi, "openstaande futuresposities"],
+    [/\bopen interest\b/gi, "openstaande posities"],
+    [/\bBitcoin's\b/g, "die van Bitcoin"],
+    [/\bCrypto Prediction Market\b/gi, "cryptovoorspellingsmarkt"],
+    [/\bTokenized Stock Cashback\b/gi, "cashback in getokeniseerde aandelen"],
+    [/\bGold\b/g, "goud"],
+    [/\bAmerikaanse evenementen\b/gi, "Amerikaanse gebeurtenissen"],
+    [/\bolie tillen\b/gi, "olieprijzen opdrijft"],
+    [/\bAmerikaans-Iraanse conflicten\b/gi, "het conflict tussen de VS en Iran"],
+    [/\bDash Beat Bitcoin, Ethereum en Solana vorige week\b/gi, "Dash presteerde vorige week beter dan Bitcoin, Ethereum en Solana"],
+    [/\bSprang\b/g, "sprong"],
+    [/\bGainers\b/gi, "stijgers"],
+    [/\bUS Spot Bitcoin ETF'?s\b/gi, "Amerikaanse spot-Bitcoin-ETF's"],
+    [/\bSpot Bitcoin ETF'?s\b/gi, "spot-Bitcoin-ETF's"],
+    [/\bDerde Rechte Week van Instromen\b/gi, "derde week op rij met instroom"],
+    [/\bGouden Kruis Looms\b/gi, "gouden kruis nadert"],
+    [/\bGouden Kruis\b/gi, "gouden kruis"],
+    [/\bBitcoin ETF'?s ontwijken de instroomdaling die Ethereum, Solana en XRP opving\b/gi, "Bitcoin-ETF's vermijden de terugval in instroom die Ethereum-, Solana- en XRP-fondsen trof"],
+    [/\bIraanse ruwe luchtvaartmaatschappijen\b/gi, "Iraanse olietankers"],
+    [/\bruwe luchtvaartmaatschappijen\b/gi, "olietankers"],
+    [/\bBitcoin-netwerk zegt dat\b/gi, "Bitcoin-netwerk meldt dat"],
+    [/\bBitcoin crasht waarschijnlijk niet 50% op AI-risico's: Buterin zegt\b/gi, "Volgens Buterin zal Bitcoin waarschijnlijk niet 50% crashen door AI-risico's"],
+    [/\bEthereum mede-oprichter\b/gi, "Ethereum-medeoprichter"],
+    [/\blaag 1\b/gi, "Layer 1"],
+  ];
+  for (const [pattern, replacement] of rules) text = text.replace(pattern, replacement);
+  if (/\bHarmony\b|\bHarmonie\b/i.test(text)) {
+    text = text.replace(/\bHarmonie\b/g, "Harmony");
+    text = text.replace(/\b(?:ÉÉN|EEN) token\b/gi, "ONE-token");
+    text = text.replace(/\bER EEN\b/gi, "ONE");
+  }
+  return text
+    .replace(/\bETF's Zien\b/g, "ETF's zien")
+    .replace(/\bEdT\b/g, "EDT")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\$\s+(\d)/g, "$$$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function looksDutch(value: string) {
   const text = ` ${value.toLowerCase()} `;
   const dutchWords = [" de ", " het ", " een ", " van ", " voor ", " met ", " naar ", " op ", " als ", " bij ", " en ", " niet ", " blijft ", " stijgt ", " daalt ", " nieuws ", " markt "];
@@ -74,7 +118,7 @@ async function cloudTranslate(texts: string[]) {
     const payload = await response.json() as { data?: { translations?: Array<{ translatedText?: string }> } };
     const translated = payload.data?.translations || [];
     if (translated.length !== texts.length) return [];
-    return translated.map((row) => clean(decodeHtml(String(row.translatedText || ""))));
+    return translated.map((row) => polishDutch(String(row.translatedText || "")));
   } catch {
     return [];
   }
@@ -88,14 +132,14 @@ async function myMemoryTranslate(text: string) {
     url.searchParams.set("q", source);
     url.searchParams.set("langpair", "en|nl");
     const response = await fetch(url.toString(), {
-      headers: { Accept: "application/json", "User-Agent": "CryptoBot2026-News-NL/1.1" },
+      headers: { Accept: "application/json", "User-Agent": "CryptoBot2026-News-NL/1.2" },
       signal: AbortSignal.timeout(6_000),
       cache: "no-store",
     });
     if (!response.ok) return "";
     const payload = await response.json() as { responseStatus?: number | string; responseData?: { translatedText?: string } };
     if (Number(payload.responseStatus || 200) >= 400) return "";
-    return clean(decodeHtml(String(payload.responseData?.translatedText || "")));
+    return polishDutch(String(payload.responseData?.translatedText || ""));
   } catch {
     return "";
   }
@@ -112,14 +156,14 @@ async function publicGoogleTranslate(text: string) {
     url.searchParams.set("dt", "t");
     url.searchParams.set("q", source);
     const response = await fetch(url.toString(), {
-      headers: { Accept: "application/json", "User-Agent": "CryptoBot2026-News-NL/1.1" },
+      headers: { Accept: "application/json", "User-Agent": "CryptoBot2026-News-NL/1.2" },
       signal: AbortSignal.timeout(5_000),
       cache: "no-store",
     });
     if (!response.ok) return "";
     const payload = await response.json() as unknown;
     if (!Array.isArray(payload) || !Array.isArray(payload[0])) return "";
-    return clean((payload[0] as unknown[]).map((segment) => Array.isArray(segment) ? String(segment[0] || "") : "").join(""));
+    return polishDutch((payload[0] as unknown[]).map((segment) => Array.isArray(segment) ? String(segment[0] || "") : "").join(""));
   } catch {
     return "";
   }
@@ -127,7 +171,7 @@ async function publicGoogleTranslate(text: string) {
 
 async function translateOne(text: string) {
   const source = clean(text);
-  if (!source || looksDutch(source)) return source;
+  if (!source || looksDutch(source)) return polishDutch(source);
   const cached = translationCache.get(source);
   if (cached) return cached;
 
@@ -143,12 +187,12 @@ async function translateOne(text: string) {
     return google;
   }
 
-  return source;
+  return polishDutch(source);
 }
 
 async function translateTexts(texts: string[]) {
   const sources = texts.map(clean);
-  const result = [...sources];
+  const result = sources.map(polishDutch);
   const unresolved: Array<{ index: number; source: string }> = [];
 
   sources.forEach((source, index) => {
@@ -173,11 +217,11 @@ async function translateTexts(texts: string[]) {
     }
   }
 
-  const remaining = unresolved.filter((row) => result[row.index] === row.source);
+  const remaining = unresolved.filter((row) => result[row.index] === polishDutch(row.source));
   for (let start = 0; start < remaining.length; start += 6) {
     const batch = remaining.slice(start, start + 6);
     const translations = await Promise.all(batch.map((row) => translateOne(row.source)));
-    batch.forEach((row, localIndex) => { result[row.index] = translations[localIndex] || row.source; });
+    batch.forEach((row, localIndex) => { result[row.index] = translations[localIndex] || polishDutch(row.source); });
   }
 
   if (translationCache.size > 1500) {
@@ -208,8 +252,8 @@ export async function GET(request: Request) {
   const translatedItems = items.map((item, index) => {
     const titleSource = clean(item.title);
     const summarySource = clean(item.summary);
-    const title = translated[index * 2] || titleSource;
-    const summary = translated[index * 2 + 1] || summarySource;
+    const title = polishDutch(translated[index * 2] || titleSource);
+    const summary = polishDutch(translated[index * 2 + 1] || summarySource);
     if (usableTranslation(titleSource, title) || looksDutch(titleSource)) translatedCount += 1;
     return { ...item, title, summary, language: TARGET_LANGUAGE };
   });
