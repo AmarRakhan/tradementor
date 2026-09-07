@@ -6,8 +6,12 @@ on:
       - chatgpt/premium-bulls-v46-build273-20260907
     paths:
       - tools/premiumize_portfolio_bulls_20260907.py
-      - web/public/portfolio-impact-premium-scene.svg
+      - tools/assets/premium-bulls-webp.b64.*
+      - web/components/portfolio-impact-battle.tsx
       - web/components/portfolio-impact-battle.module.css
+      - web/tests/portfolio-impact-timeframes.test.mjs
+      - web/tests/visual/portfolio-impact-main.tsx
+      - web/tests/visual/portfolio-impact-screenshots.mjs
       - .github/workflows/premium-portfolio-bulls-20260907.yml
   workflow_dispatch:
 
@@ -27,7 +31,7 @@ jobs:
           ref: chatgpt/premium-bulls-v46-build273-20260907
           fetch-depth: 0
 
-      - name: Generate premium sharp Bulls states
+      - name: Generate premium reference and 0.5 percent Bulls frames
         run: python tools/premiumize_portfolio_bulls_20260907.py
 
       - uses: actions/setup-node@v4
@@ -76,18 +80,20 @@ jobs:
           cat /tmp/premium-bulls-v46.log
           exit 1
 
-      - name: Capture mobile premium Bulls QA
+      - name: Capture mobile premium Bulls QA and verify smooth motion
         working-directory: web
         run: node tests/visual/portfolio-impact-screenshots.mjs
 
-      - name: Verify premium scene contract
+      - name: Verify premium frame contract
         working-directory: web
         shell: bash
         run: |
-          test "$(find public/portfolio-impact-states -maxdepth 1 -name 'state-*.svg' | wc -l)" -eq 17
-          test -s public/portfolio-impact-premium-scene.svg
-          grep -q 'data:image/webp;base64' public/portfolio-impact-premium-scene.svg
-          grep -q '/portfolio-impact-premium-scene.svg' public/portfolio-impact-states/state-08.svg
+          test "$(find public/portfolio-impact-frames -maxdepth 1 -name 'frame-*.svg' | wc -l)" -eq 201
+          test "$(stat -c%s public/portfolio-impact-premium-reference.webp)" -ge 40000
+          grep -q '/portfolio-impact-premium-reference.webp' public/portfolio-impact-frames/frame-100.svg
+          grep -q 'const FRAME_COUNT = 201' components/portfolio-impact-battle.tsx
+          grep -q 'data-frame-index' components/portfolio-impact-battle.tsx
+          grep -q 'data-target-frame-index' components/portfolio-impact-battle.tsx
           ! grep -q '>Exposure<' components/portfolio-impact-battle.tsx
           test -s artifacts/portfolio-impact/chromium-360.png
           test -s artifacts/portfolio-impact/chromium-390.png
@@ -97,23 +103,24 @@ jobs:
           test -s artifacts/portfolio-impact/extreme-short-390.png
           test -s artifacts/portfolio-impact/balance-390.png
           test -s artifacts/portfolio-impact/extreme-long-390.png
+          test -s artifacts/portfolio-impact/smooth-motion-390.png
 
       - uses: actions/upload-artifact@v4
         with:
-          name: premium-portfolio-bulls-v46-mobile-visual-qa
+          name: premium-portfolio-bulls-half-percent-v46-mobile-visual-qa
           path: web/artifacts/portfolio-impact/*.png
           if-no-files-found: error
           retention-days: 14
 
-      - name: Commit verified premium state assets
+      - name: Commit verified premium reference and frame assets
         shell: bash
         run: |
           git config user.name "ChatGPT Premium Bulls Agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add web/public/portfolio-impact-states
+          git add web/public/portfolio-impact-premium-reference.webp web/public/portfolio-impact-frames
           if git diff --cached --quiet; then
-            echo "No generated state changes to commit"
+            echo "No generated premium frame changes to commit"
           else
-            git commit -m "Generate premium Portfolio Impact Bulls states"
+            git commit -m "Generate 0.5pct premium Portfolio Impact Bulls frames"
             git push origin HEAD:chatgpt/premium-bulls-v46-build273-20260907
           fi
