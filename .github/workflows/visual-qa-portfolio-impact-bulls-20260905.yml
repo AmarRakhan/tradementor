@@ -55,7 +55,7 @@ jobs:
       - name: Capture Chromium and WebKit mobile screenshots
         working-directory: web
         run: node tests/visual/portfolio-impact-screenshots.mjs
-      - name: Verify visual output inventory
+      - name: Verify film-battle implementation and screenshots
         working-directory: web
         shell: bash
         run: |
@@ -64,22 +64,27 @@ jobs:
           test -s artifacts/portfolio-impact/chromium-412.png
           test -s artifacts/portfolio-impact/chromium-430.png
           test -s artifacts/portfolio-impact/webkit-390.png
+          test -s artifacts/portfolio-impact/extreme-short-390.png
+          test -s artifacts/portfolio-impact/balance-390.png
+          test -s artifacts/portfolio-impact/extreme-long-390.png
           test -s artifacts/portfolio-impact/reduced-motion-390.png
-          test -s public/portfolio-impact-bulls.webp
-          grep -q 'aspect-ratio:1.62/1' components/portfolio-impact-battle.module.css
-          grep -q 'portfolio-impact-bulls.webp?v=4' components/portfolio-impact-battle.tsx
-          grep -q 'LONGS DRUKKEN HARDER' lib/portfolio-impact-battle.mjs
-          grep -q 'SHORTS DRUKKEN HARDER' lib/portfolio-impact-battle.mjs
-          grep -q 'LIVE DRUK' lib/portfolio-impact-battle.mjs
-          grep -q 'smoothedMomentum' components/portfolio-impact-battle.tsx
-          grep -q 'barCaption' components/portfolio-impact-battle.tsx
-          ! grep -q 'sparkSpin' components/portfolio-impact-battle.module.css
-          grep -q 'destination === "aster" ? <PortfolioImpactBattle' app/page.tsx
+          test -s public/portfolio-impact-premium-clean.webp
+          test -s public/portfolio-impact-premium-reference.webp
+          grep -q 'aspect-ratio:720/303' components/portfolio-impact-battle.module.css
+          grep -q 'BATTLE_FPS = 20' components/portfolio-impact-battle.tsx
+          grep -q 'portfolio-impact-premium-reference.webp' components/portfolio-impact-battle.tsx
+          grep -q 'portfolio-impact-premium-clean.webp' components/portfolio-impact-battle.tsx
+          grep -q 'data-battle-animation-frame' components/portfolio-impact-battle.tsx
+          grep -q 'data-battle-intensity' components/portfolio-impact-battle.tsx
+          grep -q 'longFrontLegMask' components/portfolio-impact-battle.tsx
+          grep -q 'shortFrontLegMask' components/portfolio-impact-battle.tsx
+          grep -q 'battleDust' components/portfolio-impact-battle.tsx
+          grep -q 'impactSparks' components/portfolio-impact-battle.tsx
+          ! grep -qi '<video\|\.mp4\|video/mp4' components/portfolio-impact-battle.tsx
+          grep -q 'background:transparent!important' components/portfolio-impact-battle.module.css
       - uses: actions/upload-artifact@v4
         with:
           name: portfolio-impact-bulls-visual-qa
-          path: |
-            web/artifacts/portfolio-impact/*.png
-            web/public/portfolio-impact-bulls.webp
+          path: web/artifacts/portfolio-impact/*.png
           if-no-files-found: error
           retention-days: 14
