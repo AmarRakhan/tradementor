@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { PortfolioImpactBattle } from "../../components/portfolio-impact-battle";
 
@@ -8,7 +8,7 @@ function positions(longPnl: number, shortPnl: number) {
   return [...longs, ...shorts];
 }
 
-const pressure = {
+const basePressure = {
   "1m": -82,
   "5m": -64,
   "15m": -42,
@@ -18,7 +18,22 @@ const pressure = {
 } as const;
 
 function Fixture() {
-  return <PortfolioImpactBattle positions={positions(-20.55, -147.92)} equity={41278.62} dataAvailable updatedAt={Date.now()} marketPressureOverride={pressure} />;
+  const [pressure, setPressure] = useState<Record<string, number>>({ ...basePressure });
+  const set15m = (score: number) => setPressure((current) => ({ ...current, "15m": score }));
+  return <>
+    <div style={{ position: "fixed", left: -10000, top: 0 }} aria-hidden="true">
+      <button id="qa-neutral" onClick={() => set15m(0)}>neutral</button>
+      <button id="qa-short60" onClick={() => set15m(-22)}>short60</button>
+      <button id="qa-long60" onClick={() => set15m(22)}>long60</button>
+    </div>
+    <PortfolioImpactBattle
+      positions={positions(-20.55, -147.92)}
+      equity={41278.62}
+      dataAvailable
+      updatedAt={Date.now()}
+      marketPressureOverride={pressure}
+    />
+  </>;
 }
 
 createRoot(document.getElementById("root")!).render(<main className="qa-shell"><Fixture /></main>);
