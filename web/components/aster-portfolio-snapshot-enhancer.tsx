@@ -91,7 +91,14 @@ function MetricCard({ icon, label, value, tone = "normal" }: { icon: Parameters<
 
 function Snapshot({ values, onCloseAll }: { values: SnapshotValues; onCloseAll: () => void }) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={REFERENCE}>
-    <header><div className="aps-title-icon"><Icon name="positions" /></div><h2>PORTFOLIO SNAPSHOT</h2><span className="aps-live"><i />Live</span></header>
+    <header>
+      <div className="aps-title-icon"><Icon name="positions" /></div>
+      <h2>PORTFOLIO SNAPSHOT</h2>
+      <div className="aps-header-actions">
+        <span className="aps-live"><i />Live</span>
+        <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
+      </div>
+    </header>
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
@@ -105,7 +112,6 @@ function Snapshot({ values, onCloseAll }: { values: SnapshotValues; onCloseAll: 
       <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
       <div className={`aps-status aps-risk aps-risk-${values.riskTone}`}><Icon name="shield" /><span><small>LIQUIDATIERISICO</small><strong>{values.liquidation}</strong></span></div>
     </div>
-    <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
   </section>;
 }
 
