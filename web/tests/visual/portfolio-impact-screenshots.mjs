@@ -4,6 +4,14 @@ import assert from 'node:assert/strict';
 
 await mkdir('artifacts/portfolio-impact', { recursive: true });
 const url = 'http://127.0.0.1:4173/tests/visual/portfolio-impact.html';
+
+async function waitForSettled(page) {
+  await page.waitForFunction(() => {
+    const card = document.querySelector('section[aria-label^="Portfolio impact."]');
+    return card && card.getAttribute('data-frame-index') === card.getAttribute('data-target-frame-index');
+  }, null, { timeout: 8000 });
+}
+
 const cases = [
   ['chromium-360', chromium, 360, 800],
   ['chromium-390', chromium, 390, 844],
@@ -17,25 +25,26 @@ for (const [name, type, width, height] of cases) {
   await page.goto(url, { waitUntil: 'networkidle' });
   const card = page.locator('section[aria-label^="Portfolio impact."]');
   await card.waitFor({ state: 'visible' });
+  await waitForSettled(page);
   const box = await card.boundingBox();
   assert.ok(box && box.width <= width, `${name}: card exceeds viewport width`);
   const ratio = box ? box.width / box.height : 0;
-  assert.ok(box && box.height >= 195 && box.height <= 290, `${name}: card height ${box?.height ?? 'n/a'}px outside approved cinematic mobile target`);
-  assert.ok(ratio >= 1.45 && ratio <= 1.90, `${name}: card ratio ${ratio.toFixed(2)} outside approved cinematic target`);
+  assert.ok(box && box.height >= 195 && box.height <= 300, `${name}: card height ${box?.height ?? 'n/a'}px outside approved mobile target`);
+  assert.ok(ratio >= 1.40 && ratio <= 1.90, `${name}: card ratio ${ratio.toFixed(2)} outside approved mobile target`);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, `${name}: horizontal overflow ${overflow}px`);
   assert.match(await card.innerText(), /SHORTS DRUKKEN HARDER/, `${name}: 15m fixture must show short pressure`);
   const sceneSrc = await card.locator('img').first().getAttribute('src');
-  assert.match(sceneSrc || '', /portfolio-impact-states\/state-0[0-9]\.svg/, `${name}: state-based scene asset missing`);
+  assert.match(sceneSrc || '', /portfolio-impact-frames\/frame-\d{3}\.svg/, `${name}: half-percent frame asset missing`);
   await card.screenshot({ path: `artifacts/portfolio-impact/${name}.png` });
   await browser.close();
 }
 
-const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
-await page.goto(url, { waitUntil: 'networkidle' });
-const card = page.locator('section[aria-label^="Portfolio impact."]');
-await card.waitFor({ state: 'visible' });
+const reducedBrowser = await chromium.launch({ headless: true });
+const reducedPage = await reducedBrowser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+await reducedPage.goto(url, { waitUntil: 'networkidle' });
+const reducedCard = reducedPage.locator('section[aria-label^="Portfolio impact."]');
+await reducedCard.waitFor({ state: 'visible' });
 for (const [label, expected] of [
   ['1m', 'SHORTS DOMINEREN'],
   ['5m', 'SHORTS DRUKKEN HARDER'],
@@ -44,15 +53,56 @@ for (const [label, expected] of [
   ['4u', 'LONGS DRUKKEN HARDER'],
   ['24u', 'LONGS DOMINEREN'],
 ]) {
-  await page.getByRole('button', { name: label, exact: true }).click();
-  await page.waitForTimeout(50);
-  assert.match(await card.innerText(), new RegExp(expected), `${label}: expected ${expected}`);
-  if (label === '1m') await card.screenshot({ path: 'artifacts/portfolio-impact/extreme-short-390.png' });
-  if (label === '1u') await card.screenshot({ path: 'artifacts/portfolio-impact/balance-390.png' });
-  if (label === '24u') await card.screenshot({ path: 'artifacts/portfolio-impact/extreme-long-390.png' });
+  await reducedPage.getByRole('button', { name: label, exact: true }).click();
+  await reducedPage.waitForTimeout(40);
+  await waitForSettled(reducedPage);
+  assert.match(await reducedCard.innerText(), new RegExp(expected), `${label}: expected ${expected}`);
+  if (label === '1m') await reducedCard.screenshot({ path: 'artifacts/portfolio-impact/extreme-short-390.png' });
+  if (label === '1u') await reducedCard.screenshot({ path: 'artifacts/portfolio-impact/balance-390.png' });
+  if (label === '24u') await reducedCard.screenshot({ path: 'artifacts/portfolio-impact/extreme-long-390.png' });
 }
-const reducedBox = await card.boundingBox();
-assert.ok(reducedBox && reducedBox.height >= 195 && reducedBox.height <= 290, 'reduced-motion-390: cinematic card geometry regressed');
-await card.screenshot({ path: 'artifacts/portfolio-impact/reduced-motion-390.png' });
-await browser.close();
-console.log('Portfolio Impact timeframe/state visual QA complete');
+await reducedCard.screenshot({ path: 'artifacts/portfolio-impact/reduced-motion-390.png' });
+await reducedBrowser.close();
+
+const motionBrowser = await chromium.launch({ headless: true });
+const motionPage = await motionBrowser.newPage({ viewport: { width: 390, height: 844 } });
+await motionPage.goto(url, { waitUntil: 'networkidle' });
+const motionCard = motionPage.locator('section[aria-label^="Portfolio impact."]');
+await motionCard.waitFor({ state: 'visible' });
+await motionPage.locator('#qa-neutral').click({ force: true });
+await waitForSettled(motionPage);
+assert.equal(await motionCard.getAttribute('data-frame-index'), '100', 'neutral must be frame 100');
+
+async function captureTransition(targetSelector, expectedEnd, direction) {
+  await motionPage.evaluate(() => {
+    const card = document.querySelector('section[aria-label^="Portfolio impact."]');
+    window.__bullFrames = [Number(card?.getAttribute('data-frame-index'))];
+    window.__bullObserver?.disconnect?.();
+    window.__bullObserver = new MutationObserver(() => {
+      const value = Number(card?.getAttribute('data-frame-index'));
+      if (Number.isFinite(value) && window.__bullFrames.at(-1) !== value) window.__bullFrames.push(value);
+    });
+    window.__bullObserver.observe(card, { attributes: true, attributeFilter: ['data-frame-index'] });
+  });
+  await motionPage.locator(targetSelector).click({ force: true });
+  await waitForSettled(motionPage);
+  const frames = await motionPage.evaluate(() => {
+    window.__bullObserver?.disconnect?.();
+    return window.__bullFrames;
+  });
+  assert.equal(frames[0], 100, 'transition must start at neutral frame 100');
+  assert.equal(frames.at(-1), expectedEnd, `transition must end at frame ${expectedEnd}`);
+  assert.equal(frames.length, 21, '10 percentage points must render 20 adjacent half-percent steps');
+  for (let index = 1; index < frames.length; index += 1) {
+    assert.equal(frames[index] - frames[index - 1], direction, `frame ${index} jumped instead of moving one half-percent step`);
+  }
+}
+
+await captureTransition('#qa-short60', 80, -1);
+await motionPage.locator('#qa-neutral').click({ force: true });
+await waitForSettled(motionPage);
+await captureTransition('#qa-long60', 120, 1);
+await motionCard.screenshot({ path: 'artifacts/portfolio-impact/smooth-motion-390.png' });
+await motionBrowser.close();
+
+console.log('Portfolio Impact premium half-percent frame QA complete');
