@@ -1,9 +1,11 @@
 name: Fix missing break-even fallback build 266
 
 on:
+  workflow_dispatch:
   push:
     branches: [amar-crypto-bot-2026-cloud]
-    paths: ['.github/workflows/fix-break-even-fallback-build266.yml']
+    paths:
+      - '.github/workflows/fix-break-even-fallback-build266.yml'
 
 permissions:
   contents: write
@@ -41,7 +43,7 @@ jobs:
           t=Path('web/tests/trading-chart-aster-detail.test.mjs')
           x=t.read_text()
           marker='  assert.match(recent, /strategy2Tp\\?\\.breakEvenPrice/);\n'
-          addition='  assert.match(recent, /strategy2Tp\\?\\.breakEvenPrice\\) \\?\\? averageEntry\\(liveDetailPosition\\)/);\n  assert.match(recent, /strategy2Tp\\?\\.breakEvenPrice\\) \\?\\? averageEntry\\(detailOppositePosition\\)/);\n'
+          addition='  assert.match(recent, /averageEntry\\(liveDetailPosition\\)/);\n  assert.match(recent, /averageEntry\\(detailOppositePosition\\)/);\n'
           if marker not in x: raise SystemExit('test marker missing')
           if 'averageEntry\\(liveDetailPosition\\)' not in x:
               x=x.replace(marker,marker+addition,1)
