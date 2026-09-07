@@ -6,6 +6,7 @@ import { MarketsPage } from "@/components/markets-page";
 
 const VIEW_PARAM = "tmView";
 const MOBILE_DESTINATIONS = ["markets", "aster", "news", "journey", "wallet"] as const;
+const NAV_DESTINATIONS = ["home", ...MOBILE_DESTINATIONS] as const;
 
 function isMarketsRoute() {
   return new URL(window.location.href).searchParams.get(VIEW_PARAM) === "markets";
@@ -57,13 +58,13 @@ function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
 
   for (const item of Array.from(nav.querySelectorAll<HTMLElement>(":scope > .nav-button[data-destination]"))) {
     const destination = item.dataset.destination || "";
-    const hidden = !MOBILE_DESTINATIONS.includes(destination as (typeof MOBILE_DESTINATIONS)[number]);
+    const hidden = !NAV_DESTINATIONS.includes(destination as (typeof NAV_DESTINATIONS)[number]);
     if (item.hidden !== hidden) item.hidden = hidden;
     if (item.getAttribute("aria-hidden") !== String(hidden)) item.setAttribute("aria-hidden", String(hidden));
     if (hidden && item.tabIndex !== -1) item.tabIndex = -1;
   }
 
-  const visible = MOBILE_DESTINATIONS.flatMap((destination) => {
+  const visible = NAV_DESTINATIONS.flatMap((destination) => {
     const item = nav.querySelector<HTMLElement>(`:scope > .nav-button[data-destination="${destination}"]`);
     return item ? [item] : [];
   });

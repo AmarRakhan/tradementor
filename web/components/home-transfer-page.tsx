@@ -56,9 +56,8 @@ export function HomeTransferPage() {
   const [addDestination, setAddDestination] = useState(false);
   const pollRef = useRef<number | null>(null);
 
-  const aster = snapshots.aster;
+  const aster = snapshots.aster.data || {};
   const portfolio = number(aster.equity ?? aster.accountValue ?? aster.balance);
-  const available = number(aster.availableBalance ?? aster.availableToTrade);
   const pnl = number(aster.unrealizedPnl);
   const changePct = portfolio > 0 ? (pnl / Math.max(0.01, portfolio - pnl)) * 100 : 0;
 
@@ -80,7 +79,7 @@ export function HomeTransferPage() {
       .then((payload) => {
         const current = payload.intent as Intent;
         if (!current) return;
-        setIntent(current);
+        setIntent(current); setTypedData((payload.typedData as Record<string, unknown> | undefined) || null);
         if (current.status === "COMPLETED") setFlow("done");
         else if (["SUBMITTED", "CONFIRMING", "SIGNED"].includes(current.status)) setFlow("status");
         else if (current.status === "AWAITING_SIGNATURE") setFlow("review");
@@ -146,8 +145,11 @@ export function HomeTransferPage() {
     setBusy(true); setError(""); setFlow("signing");
     try {
       if (!window.ethereum) {
-        setFlow("review");
-        setError("MetaMask is op dit scherm niet beschikbaar. Open deze app in de MetaMask-browser of verbind MetaMask en probeer opnieuw.");
+        const session = await authenticatedRequest(`/api/transfers/intents/${encodeURIComponent(intent.id)}/signing-session`, { method: "POST", body: "{}" }) as { token: string };
+        if (!session.token) throw new Error("MetaMask-ondertekensessie kon niet worden gestart.");
+        const signUrl = `${window.location.origin}/sign-withdrawal?token=${encodeURIComponent(session.token)}`;
+        const dappPath = signUrl.replace(/^https?:\/\//, "");
+        window.location.href = `https://metamask.app.link/dapp/${dappPath}`;
         return;
       }
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
@@ -172,7 +174,13 @@ export function HomeTransferPage() {
   return <section className="tm-transfer-shell">
     <header className="tm-transfer-header"><button type="button" className="tm-back" onClick={() => flow === "contacts" ? setFlow("home") : setFlow(flow === "destinations" ? "contacts" : flow === "amount" ? "destinations" : flow === "review" ? "amount" : "contacts")}>‹</button><strong>{flow === "done" ? "Voltooid" : flow === "status" ? "Opname bezig" : flow === "review" || flow === "signing" ? "Bevestigen" : flow === "amount" ? "Bedrag en details" : flow === "destinations" ? "Bestemming kiezen" : "Overboeken"}</strong><span /></header>
     {error && <div className="tm-transfer-error" role="alert">{error}</div>}
-    {flow === "contacts" && <ContactsScreen contacts={contacts} recent={recent} mode={mode} setMode={(next) => { setMode(next); if (next === "recent") void loadRecent(); }} onChoose={chooseContact} onAdd={() => setAddContact(true)} onRecent={(item) => { setIntent(item); setFlow(item.status === "COMPLETED" ? "done" : "status"); }} />}
+    {flow === "contacts" && <ContactsScreen contacts={contacts} recent={recent} mode={mode} setMode={(next) => { setMode(next); if (next === "recent") void loadRecent(); }} onChoose={chooseContact} onAdd={() => setAddContact(true)} onRecent={(item) => {
+      if (item.status === "COMPLETED") { setIntent(item); setFlow("done"); return; }
+      void authenticatedRequest(`/api/transfers/intents/${encodeURIComponent(item.id)}`).then((payload) => {
+        const current = payload.intent as Intent; setIntent(current); setTypedData((payload.typedData as Record<string, unknown> | undefined) || null);
+        setFlow(current.status === "AWAITING_SIGNATURE" ? "review" : current.status === "COMPLETED" ? "done" : "status");
+      }).catch((reason) => setError(reason instanceof Error ? reason.message : "Overboeking kon niet worden geopend."));
+    }} />}
     {flow === "destinations" && contact && <DestinationsScreen contact={contact} busy={busy} onChoose={chooseDestination} onAdd={() => setAddDestination(true)} />}
     {flow === "amount" && destination && quote && <AmountScreen destination={destination} quote={quote} amount={amount} setAmount={setAmount} net={net} busy={busy} onFraction={setFraction} onContinue={prepareIntent} />}
     {flow === "review" && intent && <ReviewScreen intent={intent} busy={busy} onConfirm={signAndSubmit} />}

@@ -1,4 +1,4 @@
-const CLOUD_API = "https://tradementor-api-604335232956.europe-west4.run.app";
+export const CLOUD_API = "https://tradementor-api-604335232956.europe-west4.run.app";
 
 export async function proxyCloud(request: Request, pathname: string, method: "GET" | "POST" | "PUT", bodyOverride?: string) {
   const authorization = request.headers.get("authorization");
@@ -33,5 +33,22 @@ export async function proxyCloud(request: Request, pathname: string, method: "GE
       { detail: "TradeMentor Cloud is tijdelijk niet bereikbaar" },
       { status: 503, headers: { "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate" } },
     );
+  }
+}
+
+
+export async function proxyCloudPublic(pathname: string, method: "GET" | "POST", body?: string) {
+  try {
+    const upstream = await fetch(`${CLOUD_API}${pathname}`, {
+      method, cache: "no-store",
+      headers: { "Cache-Control": "no-cache, no-store, max-age=0", ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body || undefined,
+    });
+    return new Response(await upstream.text(), {
+      status: upstream.status,
+      headers: { "Content-Type": upstream.headers.get("content-type") ?? "application/json", "Cache-Control": "no-store" },
+    });
+  } catch {
+    return Response.json({ detail: "MetaMask-ondertekensessie is tijdelijk niet bereikbaar" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }

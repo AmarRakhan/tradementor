@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlencode
@@ -91,6 +92,14 @@ def _intent_root(user: dict[str, Any]):
     return main.user_reference(user).collection("withdrawalIntents")
 
 
+def _signing_session_root():
+    return main.db.collection("withdrawalSigningSessions")
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def _audit(user: dict[str, Any], action: str, intent_id: str = "", **extra: Any) -> None:
     main.user_reference(user).collection("withdrawalAudit").document().set({
         "action": action, "intentId": intent_id, "at": _now(), **extra,
@@ -106,15 +115,15 @@ def _network(value: str) -> tuple[str, dict[str, Any]]:
     return normalized, SUPPORTED_NETWORKS[normalized]
 
 
-def _amount(value: str) -> Decimal:
+def _amount(value: str, max_decimals: int = 8) -> Decimal:
     try:
         number = Decimal(value)
     except InvalidOperation as exc:
         raise HTTPException(422, "Ongeldig bedrag") from exc
     if not number.is_finite() or number <= 0:
         raise HTTPException(422, "Bedrag moet groter dan nul zijn")
-    if number.as_tuple().exponent < -8:
-        raise HTTPException(422, "Bedrag heeft te veel decimalen")
+    if number.as_tuple().exponent < -max(0, int(max_decimals)):
+        raise HTTPException(422, f"Bedrag mag maximaal {max_decimals} decimalen hebben")
     return number
 
 
@@ -124,12 +133,35 @@ def _plain(value: Decimal | str | float) -> str:
 
 
 def _profile_wallet(user: dict[str, Any]) -> str:
+    control = main.user_reference(user).collection("executionControls").document("aster").get().to_dict() or {}
+    master = str(control.get("masterAddress", "")).strip().lower()
+    if EVM_ADDRESS.fullmatch(master):
+        return master
     profile = main.user_reference(user).get().to_dict() or {}
-    for key in ("asterWalletAddress", "walletAddress"):
-        address = str(profile.get(key, "")).strip().lower()
-        if EVM_ADDRESS.fullmatch(address):
-            return address
-    raise HTTPException(409, "Koppel eerst je MetaMask-wallet aan je account")
+    address = str(profile.get("asterWalletAddress", "")).strip().lower()
+    if EVM_ADDRESS.fullmatch(address):
+        return address
+    raise HTTPException(409, "Koppel eerst je MetaMask-wallet aan je Aster-account")
+
+
+def _asset_metadata_on_chain(chain_id: int, asset: str) -> dict[str, Any]:
+    try:
+        response = httpx.get(
+            "https://www.asterdex.com/bapi/futures/v1/public/future/aster/withdraw/assets",
+            params={"chainIds": str(chain_id), "networks": "EVM", "accountType": "perp"},
+            timeout=12.0,
+        )
+        payload = response.json()
+        response.raise_for_status()
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        match = next((row for row in rows or [] if isinstance(row, dict) and str(row.get("name", "")).upper() == asset), None)
+        if not match:
+            raise HTTPException(422, "Deze asset/netwerkcombinatie wordt door Aster niet ondersteund voor opnemen")
+        return match
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "Aster-netwerkondersteuning kon niet betrouwbaar worden gecontroleerd") from exc
 
 
 def _v3_request(user: dict[str, Any], method: str, path: str, params: dict[str, Any]) -> Any:
@@ -270,11 +302,13 @@ def create_transfer_destination(request: DestinationCreate, user: dict[str, Any]
     address = request.address.strip()
     if not EVM_ADDRESS.fullmatch(address):
         raise HTTPException(422, "Dit is geen geldig EVM-adres")
+    asset_meta = _asset_metadata_on_chain(int(network["chainId"]), asset)
+    asset_decimals = int(asset_meta.get("decimals", 8) or 8)
     ref = _destination_root(user).document()
     value = {"userId": _uid(user), "contactId": request.contactId, "label": request.label.strip(),
              "destinationType": request.destinationType, "asset": asset, "network": network_key,
              "networkLabel": network["label"], "chainId": network["chainId"], "address": address,
-             "validationStatus": "VALIDATED", "createdAt": _now(), "updatedAt": _now()}
+             "assetDecimals": asset_decimals, "validationStatus": "VALIDATED", "createdAt": _now(), "updatedAt": _now()}
     ref.set(value)
     _audit(user, "DESTINATION_CREATED", destinationId=ref.id, chainId=network["chainId"], asset=asset)
     return {"destination": _clean_doc(ref.get())}
@@ -303,7 +337,7 @@ def create_withdrawal_intent(request: IntentCreate, user: dict[str, Any] = Depen
         value = duplicate[0].to_dict() or {}
         return {"intent": _public_intent(value, duplicate[0].id), "typedData": value.get("typedData")}
     destination = _destination(user, request.destinationId)
-    amount = _amount(request.amount)
+    amount = _amount(request.amount, int(destination.get("assetDecimals", 8) or 8))
     quote = transfer_quote(request.destinationId, user)
     maximum, fee = Decimal(str(quote["withdrawableAmount"])), Decimal(str(quote["fee"]))
     if amount > maximum:
@@ -329,9 +363,7 @@ def create_withdrawal_intent(request: IntentCreate, user: dict[str, Any] = Depen
     return {"intent": _public_intent(value, ref.id), "typedData": typed_data}
 
 
-@main.app.post("/v1/me/transfers/intents/{intent_id}/signature")
-def submit_withdrawal_signature(intent_id: str, request: SignatureSubmit,
-                                user: dict[str, Any] = Depends(main.authenticated_user)) -> dict[str, Any]:
+def _submit_withdrawal_signature_for_user(intent_id: str, request: SignatureSubmit, user: dict[str, Any]) -> dict[str, Any]:
     ref = _intent_root(user).document(intent_id)
     value = ref.get().to_dict() or {}
     if str(value.get("userId")) != _uid(user):
@@ -368,6 +400,70 @@ def submit_withdrawal_signature(intent_id: str, request: SignatureSubmit,
     return {"intent": _public_intent(ref.get().to_dict() or {}, intent_id)}
 
 
+@main.app.post("/v1/me/transfers/intents/{intent_id}/signature")
+def submit_withdrawal_signature(intent_id: str, request: SignatureSubmit,
+                                user: dict[str, Any] = Depends(main.authenticated_user)) -> dict[str, Any]:
+    return _submit_withdrawal_signature_for_user(intent_id, request, user)
+
+
+@main.app.post("/v1/me/transfers/intents/{intent_id}/signing-session")
+def create_withdrawal_signing_session(intent_id: str,
+                                      user: dict[str, Any] = Depends(main.authenticated_user)) -> dict[str, Any]:
+    value = _intent_root(user).document(intent_id).get().to_dict() or {}
+    if str(value.get("userId")) != _uid(user):
+        raise HTTPException(404, "Opname niet gevonden")
+    if value.get("status") != "AWAITING_SIGNATURE":
+        raise HTTPException(409, "Deze opname wacht niet meer op een MetaMask-handtekening")
+    token = secrets.token_urlsafe(48)
+    expires = _now() + timedelta(minutes=5)
+    _signing_session_root().document(_token_hash(token)).set({
+        "uid": _uid(user), "intentId": intent_id, "expiresAt": expires, "used": False, "createdAt": _now(),
+    })
+    _audit(user, "WITHDRAWAL_SIGNING_SESSION_CREATED", intent_id)
+    return {"token": token, "intentId": intent_id, "expiresAt": _iso(expires)}
+
+
+def _signing_session(token: str) -> tuple[dict[str, Any], dict[str, Any], Any]:
+    if len(token) < 40 or len(token) > 160:
+        raise HTTPException(404, "Ondertekensessie niet gevonden")
+    session_ref = _signing_session_root().document(_token_hash(token))
+    session = session_ref.get().to_dict() or {}
+    expires = session.get("expiresAt")
+    if not session or session.get("used") or not isinstance(expires, datetime) or expires <= _now():
+        raise HTTPException(410, "Deze MetaMask-ondertekensessie is verlopen")
+    uid = str(session.get("uid", ""))
+    intent_id = str(session.get("intentId", ""))
+    if not uid or not intent_id:
+        raise HTTPException(410, "Deze MetaMask-ondertekensessie is ongeldig")
+    user = {"uid": uid}
+    value = _intent_root(user).document(intent_id).get().to_dict() or {}
+    if str(value.get("userId")) != uid or value.get("status") != "AWAITING_SIGNATURE":
+        raise HTTPException(409, "Deze opname wacht niet meer op een MetaMask-handtekening")
+    return session, {"id": intent_id, **value}, session_ref
+
+
+@main.app.get("/v1/transfers/signing/{token}")
+def public_withdrawal_signing_session(token: str) -> dict[str, Any]:
+    session, value, _ = _signing_session(token)
+    user = {"uid": str(session["uid"])}
+    expected = _profile_wallet(user)
+    return {
+        "intent": _public_intent(value, str(value["id"])),
+        "typedData": value.get("typedData"),
+        "walletAddress": expected,
+        "expiresAt": _iso(session.get("expiresAt")),
+    }
+
+
+@main.app.post("/v1/transfers/signing/{token}")
+def public_submit_withdrawal_signature(token: str, request: SignatureSubmit) -> dict[str, Any]:
+    session, value, session_ref = _signing_session(token)
+    user = {"uid": str(session["uid"])}
+    result = _submit_withdrawal_signature_for_user(str(value["id"]), request, user)
+    session_ref.set({"used": True, "usedAt": _now()}, merge=True)
+    return result
+
+
 @main.app.get("/v1/me/transfers/intents/{intent_id}")
 def withdrawal_intent_status(intent_id: str, user: dict[str, Any] = Depends(main.authenticated_user)) -> dict[str, Any]:
     ref = _intent_root(user).document(intent_id)
@@ -389,7 +485,10 @@ def withdrawal_intent_status(intent_id: str, user: dict[str, Any] = Depends(main
                 value.update(update)
         except Exception:
             pass
-    return {"intent": _public_intent(value, intent_id)}
+    response: dict[str, Any] = {"intent": _public_intent(value, intent_id)}
+    if value.get("status") == "AWAITING_SIGNATURE":
+        response["typedData"] = value.get("typedData")
+    return response
 
 
 @main.app.post("/v1/me/transfers/intents/{intent_id}/cancel")

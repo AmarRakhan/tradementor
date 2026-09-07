@@ -11,7 +11,6 @@ import { NewsNavigationBridge } from "@/components/news-navigation-bridge";
 import { AsterPairSettingsOverlay } from "@/components/aster-pair-settings-overlay";
 import { AsterSideTpSettings } from "@/components/aster-side-tp-settings";
 import { AsterShortDcaSaveGuard } from "@/components/aster-short-dca-save-guard";
-import { HomeNavigationBridge } from "@/components/home-navigation-bridge";
 import { WEBAPP_VERSION } from "@/lib/app-version";
 import "./globals.css";
 import "./premium.css";
@@ -72,7 +71,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
         <AsterPortfolioSnapshotEnhancer />
-        <AuthProvider>{children}<HomeNavigationBridge /></AuthProvider>
+        <AuthProvider>{children}</AuthProvider>
         <AsterSideTpSettings />
         <AsterShortDcaSaveGuard />
         <AsterPairSettingsOverlay />

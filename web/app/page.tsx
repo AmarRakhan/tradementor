@@ -27,6 +27,7 @@ import { PullToRefresh } from "@/components/pull-to-refresh";
 import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
 import { PortfolioImpactBattle } from "@/components/portfolio-impact-battle";
+import { HomeNavigationBridge } from "@/components/home-navigation-bridge";
 
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -87,7 +88,7 @@ const exchangeCopy: Record<TradingExchange, { eyebrow: string; title: string; st
 };
 
 export default function HomePage() {
-  return <AuthGate><TradeMentorHome /></AuthGate>;
+  return <AuthGate><><HomeNavigationBridge /><TradeMentorHome /></></AuthGate>;
 }
 
 function TradeMentorHome() {

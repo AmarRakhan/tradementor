@@ -55,7 +55,7 @@ export function HomeNavigationBridge() {
   useEffect(() => {
     const initialUrl = new URL(window.location.href);
     const explicitView = initialUrl.searchParams.has(VIEW_PARAM);
-    const explicitHash = /^#\/(aster|journey|positions|risk|wallet|admin)/.test(initialUrl.hash);
+    const explicitHash = /^#\/(hyperliquid|aster|journey|positions|risk|wallet|admin)/.test(initialUrl.hash);
     if (!explicitView && !explicitHash && !window.sessionStorage.getItem(SESSION_EXIT)) {
       window.history.replaceState({ ...window.history.state, home: true }, "", urlWithHome(true));
     }

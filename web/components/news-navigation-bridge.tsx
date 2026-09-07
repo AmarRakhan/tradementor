@@ -7,6 +7,7 @@ import styles from "./news-view.module.css";
 
 const VIEW_PARAM = "tmView";
 const MOBILE_DESTINATIONS = ["markets", "aster", "news", "journey", "wallet"] as const;
+const NAV_DESTINATIONS = ["home", ...MOBILE_DESTINATIONS] as const;
 
 function isNewsRoute() {
   return new URL(window.location.href).searchParams.get(VIEW_PARAM) === "news";
@@ -64,12 +65,12 @@ function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
   const news = ensureNewsButton(nav);
   for (const item of Array.from(nav.querySelectorAll<HTMLElement>(":scope > .nav-button[data-destination]"))) {
     const destination = item.dataset.destination || "";
-    const hidden = !MOBILE_DESTINATIONS.includes(destination as (typeof MOBILE_DESTINATIONS)[number]);
+    const hidden = !NAV_DESTINATIONS.includes(destination as (typeof NAV_DESTINATIONS)[number]);
     item.hidden = hidden;
     item.setAttribute("aria-hidden", String(hidden));
     item.tabIndex = hidden ? -1 : 0;
   }
-  const visible = MOBILE_DESTINATIONS.flatMap((destination) => {
+  const visible = NAV_DESTINATIONS.flatMap((destination) => {
     const item = nav.querySelector<HTMLElement>(`:scope > .nav-button[data-destination="${destination}"]`);
     return item ? [item] : [];
   });
