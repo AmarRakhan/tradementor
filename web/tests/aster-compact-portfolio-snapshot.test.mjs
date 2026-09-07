@@ -16,8 +16,12 @@ test("Aster compact Portfolio Snapshot follows the approved reference and preser
   assert.match(component, /legacy\.click\(\)/);
   assert.match(component, /active-trades-index > small/);
   assert.match(component, /section\[aria-label\^="Portfolio impact\."\]/);
+  assert.match(component, /<header>[\s\S]*aps-header-actions[\s\S]*aps-close-all[\s\S]*<\/header>/);
+  assert.doesNotMatch(component, /<\/div>\s*<button type="button" className="aps-close-all"/);
   assert.match(css, /\.aster-liquidation-hero/);
   assert.match(css, /\.aster-bot-status/);
   assert.match(css, /\.metric-strip>\.metric\{display:none!important\}/);
+  assert.match(css, /\.aps-close-all\{[^}]*rgba\(255,116,67,\.9\)/);
+  assert.doesNotMatch(css, /\.aps-close-all\{[^}]*#20e98b/);
   assert.doesNotMatch(component, /Reset startwaarde/i);
 });
