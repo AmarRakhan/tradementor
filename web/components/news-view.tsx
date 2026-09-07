@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import styles from "./news-view.module.css";
+import articleStyles from "./news-article-detail.module.css";
 
 type Timeframe = "1m" | "5m" | "15m" | "1u" | "4u" | "24u";
 type ArchiveMode = "today" | "yesterday" | "7d" | "30d" | "all" | "saved" | "custom";
@@ -27,6 +28,17 @@ type NewsArticle = {
 
 type Advice = { label: string; detail: string; status: string; tone: AdviceTone };
 type AlertPrefs = { breaking: boolean; important: boolean; topN: boolean; highImpact: boolean };
+type ArticleDigest = {
+  sourceUrl: string;
+  article: {
+    label: string;
+    intro: string;
+    paragraphs: string[];
+    keyPoints: string[];
+    basedOnFullSource: boolean;
+    note: string;
+  };
+};
 
 const TIMEFRAMES: Timeframe[] = ["1m", "5m", "15m", "1u", "4u", "24u"];
 const CATEGORIES = ["Alles", "Belangrijk", "Koers", "Analyse", "Partnerships", "Regulatie"] as const;
@@ -34,6 +46,7 @@ const FALLBACK = ["BTC","ETH","SOL","BNB","XRP","DOGE","ADA","HYPE","AVAX","LINK
 const ARCHIVE_KEY = "tradementor.news.archive.nl.v2";
 const SAVED_KEY = "tradementor.news.saved.v1";
 const ALERT_KEY = "tradementor.news.alerts.v1";
+const DETAIL_KEY = "tradementor.news.detail.nl.v1";
 
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function pairSymbol(value: unknown) { return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/(USDT|USDC|USD|PERP)$/i, "").replace(/^1000(?=[A-Z])/, ""); }
@@ -83,6 +96,24 @@ function readAlerts(): AlertPrefs {
     const row = record(JSON.parse(window.localStorage.getItem(ALERT_KEY) || "{}"));
     return { breaking: row.breaking === true, important: row.important !== false, topN: row.topN !== false, highImpact: row.highImpact === true };
   } catch { return { breaking:false, important:true, topN:true, highImpact:false }; }
+}
+
+function readDetailCache(articleId: string): ArticleDigest | null {
+  try {
+    const row = record(JSON.parse(window.localStorage.getItem(DETAIL_KEY) || "{}"));
+    const value = row[articleId];
+    return value && typeof value === "object" ? value as ArticleDigest : null;
+  } catch { return null; }
+}
+
+function persistDetailCache(articleId: string, digest: ArticleDigest) {
+  try {
+    const row = record(JSON.parse(window.localStorage.getItem(DETAIL_KEY) || "{}"));
+    const next: Record<string, unknown> = { ...row, [articleId]: digest };
+    const keys = Object.keys(next);
+    while (keys.length > 120) delete next[keys.shift()!];
+    window.localStorage.setItem(DETAIL_KEY, JSON.stringify(next));
+  } catch { /* De detailkaart blijft bruikbaar zonder lokale opslag. */ }
 }
 
 function hoursOld(article: NewsArticle) { return Math.max(0, (Date.now() - Date.parse(article.publishedAt)) / 3_600_000); }
@@ -192,6 +223,9 @@ export function NewsView() {
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<NewsArticle | null>(null);
   const [flipped, setFlipped] = useState(false);
+  const [detailDigest, setDetailDigest] = useState<ArticleDigest | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [alerts, setAlerts] = useState<AlertPrefs>({ breaking:false, important:true, topN:true, highImpact:false });
   const lastTap = useRef(0);
@@ -258,7 +292,7 @@ export function NewsView() {
   }, [universe.join(","), requestRange]);
 
   useEffect(() => {
-    if (!selected) { setFlipped(false); return; }
+    if (!selected) { setFlipped(false); setDetailDigest(null); setDetailError(""); return; }
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const frame = window.requestAnimationFrame(() => setFlipped(true));
@@ -266,6 +300,22 @@ export function NewsView() {
     window.addEventListener("keydown", esc);
     return () => { window.cancelAnimationFrame(frame); window.removeEventListener("keydown", esc); document.body.style.overflow = previous; };
   }, [selected]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const cached = readDetailCache(selected.id);
+    if (cached) { setDetailDigest(cached); setDetailLoading(false); setDetailError(""); return; }
+    let cancelled = false;
+    const controller = new AbortController();
+    setDetailLoading(true); setDetailError(""); setDetailDigest(null);
+    const params = new URLSearchParams({ url:selected.sourceUrl, title:selected.title, source:selected.source, summary:selected.summary });
+    fetch(`/api/news-article?${params.toString()}`, { signal:controller.signal, cache:"no-store" })
+      .then(async (response) => { if (!response.ok) throw new Error("De vereenvoudigde versie kon niet volledig worden opgebouwd."); return response.json() as Promise<ArticleDigest>; })
+      .then((digest) => { if (!cancelled) { setDetailDigest(digest); persistDetailCache(selected.id, digest); } })
+      .catch((reason) => { if (!cancelled && !controller.signal.aborted) setDetailError(reason instanceof Error ? reason.message : "De artikelweergave is tijdelijk niet beschikbaar."); })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; controller.abort(); };
+  }, [selected?.id]);
 
   const filtered = useMemo(() => {
     const now = Date.now();
@@ -365,11 +415,21 @@ export function NewsView() {
             <div className={styles.detailScroll}>
               <h2 className={styles.detailTitle}>{selected.title}</h2>
               <div className={styles.heroImage}>{selected.coins[0] ? <img src={logoUrl(selected.coins[0])} alt={`${selected.coins[0]}-logo`} /> : <span className={styles.thumbFallback}>◎ Macro</span>}</div>
-              <p className={styles.quote}>{selected.summary || "Open het originele bronartikel voor de volledige publicatie."}</p>
-              <section className={styles.impact}><strong>💡 Advies voor {timeframe}</strong><p>{impactText(selected, timeframe)}</p></section>
+              <section className={articleStyles.article} aria-label="Vereenvoudigd artikel in de app">
+                <div className={articleStyles.label}>Crypto Bot 2026 · duidelijk uitgelegd</div>
+                {detailLoading && <div className={articleStyles.loading}><i /> We maken van de bron een helder Nederlands artikel…</div>}
+                {!detailLoading && detailDigest && <>
+                  <p className={articleStyles.lead}>{detailDigest.article.intro}</p>
+                  {detailDigest.article.paragraphs.map((paragraph, index) => <p className={articleStyles.paragraph} key={`${selected.id}-p-${index}`}>{paragraph}</p>)}
+                  {!!detailDigest.article.keyPoints.length && <div className={articleStyles.points}><strong>Belangrijkste punten</strong>{detailDigest.article.keyPoints.map((point, index) => <span key={`${selected.id}-k-${index}`}>• {point}</span>)}</div>}
+                  <small className={articleStyles.note}>{detailDigest.article.note}{detailDigest.article.basedOnFullSource ? " De oorspronkelijke bron kon volledig worden ingelezen." : " De bron gaf niet alle tekst vrij; daarom is de beschikbare broninformatie gebruikt."}</small>
+                </>}
+                {!detailLoading && !detailDigest && <><p className={articleStyles.lead}>{selected.summary || "Voor dit bericht is nog geen uitgebreide brontekst beschikbaar."}</p>{detailError && <small className={articleStyles.note}>{detailError}</small>}</>}
+              </section>
+              <section className={styles.impact}><strong>💡 Wat betekent dit voor {timeframe}?</strong><p>{impactText(selected, timeframe)}</p></section>
               <section className={styles.tfPanel}><h3>💡 Advies per tijdsvenster</h3>{TIMEFRAMES.map((value) => { const advice = adviceFor(selected, value); return <div className={styles.tfRow} key={value}><b>{value}</b><span>{advice.detail}</span><span className={styles.statusPill} data-tone={advice.tone}>{advice.status}</span></div>; })}</section>
             </div>
-            <footer className={styles.detailActions}><button type="button" className={styles.readButton} onClick={() => window.open(selected.sourceUrl, "_blank", "noopener,noreferrer")}>↗ Lees volledig artikel</button><div className={styles.doubleHint}>◇ Dubbeltik<br/>om terug te draaien</div></footer>
+            <footer className={styles.detailActions}><button type="button" className={articleStyles.sourceLink} onClick={() => window.open(detailDigest?.sourceUrl || selected.sourceUrl, "_blank", "noopener,noreferrer")}>Bron: {selected.source} ↗</button><div className={styles.doubleHint}>◇ Dubbeltik<br/>om terug te draaien</div></footer>
           </article>
         </div>
       </div>
