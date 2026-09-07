@@ -9,7 +9,8 @@ test("Bulls battle is a continuous frame loop over one fixed premium background"
   assert.match(component, /const BATTLE_LOOP_FRAMES = 50/);
   assert.match(component, /const BATTLE_FPS = 20/);
   assert.match(component, /BATTLE_SOURCE = "\/portfolio-impact-premium-reference\.webp"/);
-  assert.match(component, /src="\/portfolio-impact-premium-clean\.webp"/);
+  assert.match(component, /src=\{BATTLE_SOURCE\}/);
+  assert.doesNotMatch(component, /eraserOpacity|fill="#00140b"|fill="#180306"/);
   assert.match(component, /function BattleArtwork/);
   assert.match(component, /data-battle-animation-frame/);
   assert.match(component, /battleShift = pressure \* 24/);

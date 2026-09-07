@@ -27,7 +27,7 @@ for (const [name, type, width, height] of cases) {
   assert.ok(overflow <= 0, `${name}: horizontal overflow ${overflow}px`);
   assert.match(await card.innerText(), /SHORTS DRUKKEN HARDER/, `${name}: 15m fixture must show short pressure`);
   const sceneSrc = await card.locator('img').first().getAttribute('src');
-  assert.equal(sceneSrc, '/portfolio-impact-premium-clean.webp', `${name}: fixed clean background missing`);
+  assert.equal(sceneSrc, '/portfolio-impact-premium-reference.webp', `${name}: seamless premium scene source missing`);
   const firstFrame = Number(await card.getAttribute('data-battle-animation-frame'));
   await page.waitForTimeout(180);
   const laterFrame = Number(await card.getAttribute('data-battle-animation-frame'));

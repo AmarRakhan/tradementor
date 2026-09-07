@@ -147,7 +147,6 @@ function BattleArtwork({ frame, longShare }: { frame: number; longShare: number 
   const shortBodyX = -shove * (1.0 + intensity * 1.5) + pressure * 1.4;
   const longBodyY = Math.sin(phase + 0.2) * (0.6 + intensity * 1.1);
   const shortBodyY = Math.sin(phase + Math.PI + 0.2) * (0.6 + intensity * 1.1);
-  const eraserOpacity = 0.28 + intensity * 0.20;
   const dustCount = 12 + Math.round(intensity * 12);
   const sparkCount = 10 + Math.round(intensity * 12);
 
@@ -187,9 +186,6 @@ function BattleArtwork({ frame, longShare }: { frame: number; longShare: number 
       <mask id="shortFrontLegMask" maskUnits="userSpaceOnUse" x="379" y="126" width="145" height="116" style={{ maskType: "alpha" }}><polygon points="400,145 462,141 496,165 490,210 459,234 425,221 407,188" fill="white" filter="url(#battleFeather)" /></mask>
       <mask id="shortRearLegMask" maskUnits="userSpaceOnUse" x="497" y="122" width="155" height="118" style={{ maskType: "alpha" }}><polygon points="516,139 570,131 623,150 639,184 613,220 574,229 539,207 519,177" fill="white" filter="url(#battleFeather)" /></mask>
     </defs>
-
-    <rect width="720" height="303" fill="#00140b" opacity={eraserOpacity} mask="url(#longSilhouette)" />
-    <rect width="720" height="303" fill="#180306" opacity={eraserOpacity} mask="url(#shortSilhouette)" />
 
     <g transform={`translate(${battleShift.toFixed(2)} 0)`}>
       <g transform={`translate(${longBodyX.toFixed(2)} ${longBodyY.toFixed(2)}) scale(1.015 1.015)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longBodyMask)" /></g>
@@ -342,7 +338,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       data-visual-long-share={displayLongShare} data-target-long-share={currentPressure.longShare} data-timeframe={timeframe} data-score={currentPressure.score}
       data-updated-at={updatedAt ?? ""} data-battle-animation-frame={battleAnimationFrame} data-battle-intensity={visualIntensity.toFixed(3)} data-legacy-frame-path={legacyFramePath}
       aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(netPnl, true)}. Marktdruk ${pressureStatus}.`}>
-      <img className={styles.scene} src="/portfolio-impact-premium-clean.webp" alt="" aria-hidden="true" />
+      <img className={styles.scene} src={BATTLE_SOURCE} alt="" aria-hidden="true" />
       <BattleArtwork frame={battleAnimationFrame} longShare={displayLongShare} />
       <div className={styles.vignette} aria-hidden="true" />
 
