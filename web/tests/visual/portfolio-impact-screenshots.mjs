@@ -45,8 +45,11 @@ for (const [label, expected] of [
   ['24u', 'LONGS DOMINEREN'],
 ]) {
   await page.getByRole('button', { name: label, exact: true }).click();
-  await page.waitForTimeout(40);
+  await page.waitForTimeout(50);
   assert.match(await card.innerText(), new RegExp(expected), `${label}: expected ${expected}`);
+  if (label === '1m') await card.screenshot({ path: 'artifacts/portfolio-impact/extreme-short-390.png' });
+  if (label === '1u') await card.screenshot({ path: 'artifacts/portfolio-impact/balance-390.png' });
+  if (label === '24u') await card.screenshot({ path: 'artifacts/portfolio-impact/extreme-long-390.png' });
 }
 const reducedBox = await card.boundingBox();
 assert.ok(reducedBox && reducedBox.height >= 195 && reducedBox.height <= 290, 'reduced-motion-390: cinematic card geometry regressed');
