@@ -1,1 +1,1 @@
-visual-qa-portfolio-impact-premium-film-battle-seamless-scene-20260907-v3
+visual-qa-portfolio-impact-premium-film-battle-seamless-scene-20260908-v4
