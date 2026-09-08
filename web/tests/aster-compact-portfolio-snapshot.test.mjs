@@ -36,3 +36,29 @@ test("Aster compact Portfolio Snapshot follows the approved reference and preser
   assert.doesNotMatch(css, /\.aps-close-all\{[^}]*#20e98b/);
   assert.doesNotMatch(component, /Reset startwaarde/i);
 });
+
+test("Snapshot has three live-data profit actions with separate LONG SHORT and ALL scopes", async () => {
+  const [component, css, previewRoute, closeRoute] = await Promise.all([
+    readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/portfolio-snapshot.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/positions/snapshot-profit-close-preview/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/positions/snapshot-close-profitable/route.ts", import.meta.url), "utf8"),
+  ]);
+
+  for (const label of ["Close Long", "Close Short", "Close All"]) assert.match(component, new RegExp(label));
+  assert.match(component, /type ProfitScope = "LONG" \| "SHORT" \| "ALL"/);
+  assert.match(component, /comparison: "strictly_greater_than"/);
+  assert.match(component, /profitPreview\?\.long/);
+  assert.match(component, /profitPreview\?\.short/);
+  assert.match(component, /profitPreview\?\.all/);
+  assert.match(component, /snapshot-profit-close-preview/);
+  assert.match(component, /snapshot-close-profitable/);
+  assert.match(component, /eligibleCount/);
+  assert.match(component, /totalProfitUsd/);
+  assert.match(component, /aria-label=\{`\$\{label\}, \$\{profitMoney/);
+  assert.match(css, /\.aps-profit-row\{/);
+  assert.match(css, /\.aps-profit-action\{/);
+  assert.match(previewRoute, /snapshot-profit-close-preview/);
+  assert.match(closeRoute, /snapshot-close-profitable/);
+  assert.match(closeRoute, /"POST"/);
+});
