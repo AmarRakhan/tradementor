@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { authenticatedRequest } from "@/lib/cloud-client";
 
 type Tone = "positive" | "negative" | "neutral";
+type ProfitScope = "LONG" | "SHORT" | "ALL";
 
 type SnapshotValues = {
   equity: string;
@@ -24,6 +26,20 @@ type SnapshotValues = {
   riskTone: "safe" | "caution" | "high" | "critical" | "unknown";
   closeDisabled: boolean;
   closeBusy: boolean;
+};
+
+type ProfitBucket = {
+  eligibleCount: number;
+  totalProfitUsd: number;
+};
+
+type ProfitPreview = {
+  reliable: true;
+  minimumProfitUsd: number;
+  comparison: "strictly_greater_than";
+  long: ProfitBucket;
+  short: ProfitBucket;
+  all: ProfitBucket;
 };
 
 const EMPTY: SnapshotValues = {
@@ -116,7 +132,56 @@ function GrowthCard({ icon, label, value, tone }: { icon: "growth" | "calendar";
   return <article className={`aps-growth-card aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong></div></article>;
 }
 
-function Snapshot({ values, onCloseAll }: { values: SnapshotValues; onCloseAll: () => void }) {
+function profitMoney(value: number | undefined) {
+  if (value === undefined || !Number.isFinite(value)) return "—";
+  return `+US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.max(0, value))}`;
+}
+
+function ProfitAction({
+  scope,
+  label,
+  bucket,
+  busy,
+  onClick,
+}: {
+  scope: ProfitScope;
+  label: string;
+  bucket: ProfitBucket | null;
+  busy: boolean;
+  onClick: (scope: ProfitScope) => void;
+}) {
+  const count = bucket?.eligibleCount ?? 0;
+  const countLabel = bucket ? `${count} ${count === 1 ? "positie" : "posities"}` : "—";
+  const icon = scope === "LONG" ? "↗" : scope === "SHORT" ? "↘" : "◎";
+  return <button
+    type="button"
+    className={`aps-profit-action aps-profit-${scope.toLowerCase()}`}
+    disabled={!bucket || count === 0 || busy}
+    onClick={() => onClick(scope)}
+    aria-label={`${label}, ${profitMoney(bucket?.totalProfitUsd)}, ${countLabel}`}
+  >
+    <span className="aps-profit-icon" aria-hidden="true">{icon}</span>
+    <span className="aps-profit-copy">
+      <b>{busy ? "Bezig…" : label}</b>
+      <strong>{profitMoney(bucket?.totalProfitUsd)}</strong>
+      <small>{countLabel}</small>
+    </span>
+  </button>;
+}
+
+function Snapshot({
+  values,
+  profitPreview,
+  profitBusy,
+  onCloseAll,
+  onCloseProfit,
+}: {
+  values: SnapshotValues;
+  profitPreview: ProfitPreview | null;
+  profitBusy: ProfitScope | null;
+  onCloseAll: () => void;
+  onCloseProfit: (scope: ProfitScope) => void;
+}) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={REFERENCE}>
     <header>
       <div className="aps-title-icon"><Icon name="positions" /></div>
@@ -143,12 +208,29 @@ function Snapshot({ values, onCloseAll }: { values: SnapshotValues; onCloseAll: 
       <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} />
       <GrowthCard icon="calendar" label="GEMIDDELD PER DAG" value={values.averageDailyGrowth} tone={values.averageDailyGrowthTone} />
     </div>
+    <div className="aps-profit-row" aria-label="Winstposities sluiten">
+      <ProfitAction scope="LONG" label="Close Long" bucket={profitPreview?.long ?? null} busy={profitBusy === "LONG"} onClick={onCloseProfit} />
+      <ProfitAction scope="SHORT" label="Close Short" bucket={profitPreview?.short ?? null} busy={profitBusy === "SHORT"} onClick={onCloseProfit} />
+      <ProfitAction scope="ALL" label="Close All" bucket={profitPreview?.all ?? null} busy={profitBusy === "ALL"} onClick={onCloseProfit} />
+    </div>
   </section>;
+}
+
+async function loadProfitPreview(): Promise<ProfitPreview> {
+  const payload = await authenticatedRequest("/api/exchanges/aster/positions/snapshot-profit-close-preview", { cache: "no-store" }) as ProfitPreview;
+  const buckets = [payload?.long, payload?.short, payload?.all];
+  const valid = payload?.reliable === true
+    && payload?.comparison === "strictly_greater_than"
+    && buckets.every((bucket) => bucket && Number.isInteger(bucket.eligibleCount) && bucket.eligibleCount >= 0 && Number.isFinite(bucket.totalProfitUsd));
+  if (!valid) throw new Error("De actuele winstselectie is niet betrouwbaar beschikbaar.");
+  return payload;
 }
 
 export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
+  const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
+  const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
   const syncing = useRef(false);
 
@@ -203,11 +285,74 @@ export function AsterPortfolioSnapshotEnhancer() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!host) return;
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const preview = await loadProfitPreview();
+        if (alive) setProfitPreview(preview);
+      } catch {
+        if (alive) setProfitPreview(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 15000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [host]);
+
   const closeAll = () => {
     const legacy = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
     if (!legacy || legacy.disabled) return;
     legacy.click();
   };
 
-  return host ? createPortal(<Snapshot values={values} onCloseAll={closeAll} />, host) : null;
+  const closeProfit = async (scope: ProfitScope) => {
+    if (profitBusy) return;
+    setProfitBusy(scope);
+    try {
+      const fresh = await loadProfitPreview();
+      setProfitPreview(fresh);
+      const bucket = scope === "LONG" ? fresh.long : scope === "SHORT" ? fresh.short : fresh.all;
+      if (bucket.eligibleCount < 1) return;
+      const label = scope === "LONG" ? "Close Long" : scope === "SHORT" ? "Close Short" : "Close All";
+      const positions = `${bucket.eligibleCount} ${bucket.eligibleCount === 1 ? "positie" : "posities"}`;
+      const confirmed = window.confirm(`${label}\n\n${profitMoney(bucket.totalProfitUsd)} · ${positions}\n\nAlleen posities die bij de servercontrole nog steeds meer dan US$ 0,50 winst hebben worden gesloten. Doorgaan?`);
+      if (!confirmed) return;
+
+      await authenticatedRequest("/api/exchanges/aster/positions/snapshot-close-profitable", {
+        method: "POST",
+        body: JSON.stringify({
+          confirm: true,
+          side: scope,
+          idempotency_key: `snapshot-profit-${scope.toLowerCase()}-${Date.now()}-${crypto.randomUUID()}`,
+        }),
+      });
+
+      try {
+        setProfitPreview(await loadProfitPreview());
+      } catch {
+        setProfitPreview(null);
+      }
+      window.setTimeout(() => window.location.reload(), 250);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "De winstposities konden niet veilig worden gesloten.");
+    } finally {
+      setProfitBusy(null);
+    }
+  };
+
+  return host ? createPortal(
+    <Snapshot
+      values={values}
+      profitPreview={profitPreview}
+      profitBusy={profitBusy}
+      onCloseAll={closeAll}
+      onCloseProfit={closeProfit}
+    />,
+    host,
+  ) : null;
 }
