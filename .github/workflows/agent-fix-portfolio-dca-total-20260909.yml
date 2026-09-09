@@ -1,0 +1,68 @@
+name: Fix Portfolio DCA total 2026-09-09
+
+on:
+  push:
+    branches: [agent/fix-portfolio-dca-total-20260909]
+    paths:
+      - '.github/triggers/fix-portfolio-dca-total-20260909.txt'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  patch-test-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Patch canonical Aster DCA aggregation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          page = Path('web/app/page.tsx')
+          text = page.read_text(encoding='utf-8')
+          import_line = 'import { HomeNavigationBridge } from "@/components/home-navigation-bridge";\n'
+          new_import = 'import { effectiveAsterDcaCount } from "@/lib/aster-dca-count.mjs";\n'
+          if new_import not in text:
+              assert import_line in text
+              text = text.replace(import_line, import_line + new_import, 1)
+          old = '      dcaCount: asNumber(row.dcaCount),\n'
+          new = '      dcaCount: effectiveAsterDcaCount(row, asRecord(data.strategy2)),\n'
+          assert old in text or new in text
+          text = text.replace(old, new, 1)
+          page.write_text(text, encoding='utf-8')
+
+          helper = Path('web/lib/aster-dca-count.mjs')
+          helper.write_text('''function record(value) {\n  return value && typeof value === "object" && !Array.isArray(value) ? value : {};\n}\n\nfunction finite(value) {\n  if (value === null || value === undefined || value === "") return null;\n  const number = Number(value);\n  return Number.isFinite(number) ? number : null;\n}\n\nexport function asterDcaPositionKey(position) {\n  const row = record(position);\n  const symbol = String(row.symbol ?? "").toUpperCase().replace(/[\\/_-]/g, "");\n  const side = String(row.side ?? row.positionSide ?? "").toUpperCase();\n  return `${symbol}|${side}`;\n}\n\nexport function effectiveAsterDcaCount(position, strategy2) {\n  const row = record(position);\n  const state = record(strategy2);\n  const managed = record(state.multiBbPositions);\n  const runtime = record(managed[asterDcaPositionKey(row)]);\n  const runtimeDca = finite(runtime.dcaCount);\n  if (runtimeDca !== null && runtimeDca >= 0) return Math.max(0, Math.round(runtimeDca));\n  const directDca = finite(row.dcaCount);\n  return directDca === null ? 0 : Math.max(0, Math.round(directDca));\n}\n\nexport function totalAsterDca(positions, strategy2) {\n  return (Array.isArray(positions) ? positions : []).reduce((total, position) => {\n    const row = record(position);\n    const quantity = finite(row.quantity ?? row.positionAmt ?? row.size);\n    if (quantity !== null && quantity === 0) return total;\n    return total + effectiveAsterDcaCount(row, strategy2);\n  }, 0);\n}\n''', encoding='utf-8')
+
+          test_file = Path('web/tests/aster-portfolio-dca-total.test.mjs')
+          test_file.write_text('''import test from "node:test";\nimport assert from "node:assert/strict";\nimport { readFile } from "node:fs/promises";\nimport { effectiveAsterDcaCount, totalAsterDca } from "../lib/aster-dca-count.mjs";\n\nconst page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");\n\ntest("Aster active-trades index uses the same Multi BB runtime DCA count as Tradecentrum", () => {\n  assert.match(page, /effectiveAsterDcaCount\\(row, asRecord\\(data\\.strategy2\\)\\)/);\n  const position = { symbol: "ICPUSDT", side: "LONG", quantity: 1, dcaCount: 2 };\n  const strategy2 = { multiBbPositions: { "ICPUSDT|LONG": { dcaCount: 25 } } };\n  assert.equal(effectiveAsterDcaCount(position, strategy2), 25);\n});\n\ntest("Portfolio DCA total excludes initial entries and sums every confirmed DCA add", () => {\n  const entries = [1, 1, 11, 11, 7, 1, 11, 10, 11, 5, 26, 28];\n  const positions = entries.map((entryCount, index) => ({ symbol: `C${index}USDT`, side: "LONG", quantity: 1, dcaCount: 0 }));\n  const multiBbPositions = Object.fromEntries(entries.map((entryCount, index) => [`C${index}USDT|LONG`, { dcaCount: entryCount - 1 }]));\n  assert.equal(totalAsterDca(positions, { multiBbPositions }), 111);\n});\n\ntest("runtime DCA falls back to the server position count when no managed runtime exists", () => {\n  assert.equal(effectiveAsterDcaCount({ symbol: "BTCUSDT", side: "SHORT", dcaCount: 4 }, {}), 4);\n});\n''', encoding='utf-8')
+          PY
+
+      - name: Run focused regression
+        run: node --test web/tests/active-trades-index.test.mjs web/tests/aster-portfolio-dca-total.test.mjs
+
+      - name: Commit canonical fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AmarRakhan"
+          git config user.email "amar_rakhan@hotmail.com"
+          git add web/app/page.tsx web/lib/aster-dca-count.mjs web/tests/aster-portfolio-dca-total.test.mjs
+          git diff --cached --check
+          git commit -m "Fix Portfolio Snapshot total DCA count"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+
+      - name: Deploy updated V46 webapp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run deploy-shared-v44-testapp.yml --ref amar-crypto-bot-2026-cloud
