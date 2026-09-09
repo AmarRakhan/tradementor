@@ -44,6 +44,6 @@ jobs:
         run: |
           git config user.name 'TradeMentor Agent'
           git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/main.py cloud_api/test_aster_full_close_contract.py web/components/aster-portfolio-snapshot-enhancer.tsx web/app/portfolio-snapshot.css web/app/api/exchanges/aster/positions/close-all/route.ts web/tests/aster-full-close-flow.test.mjs web/tests/aster-compact-portfolio-snapshot.test.mjs .github/workflows/deploy-v46-full-close-backend.yml
+          git add cloud_api/main.py cloud_api/test_aster_full_close_contract.py web/components/aster-portfolio-snapshot-enhancer.tsx web/app/portfolio-snapshot.css web/app/api/exchanges/aster/positions/close-all/route.ts web/tests/aster-full-close-flow.test.mjs web/tests/aster-compact-portfolio-snapshot.test.mjs
           git commit -m 'Implement V46 full close flow'
           git push origin HEAD:agent/all-close-flow-20260910
