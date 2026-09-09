@@ -1,0 +1,2 @@
+run=2026-09-09T22:15:00+02:00
+scope=portfolio-snapshot-total-dca
