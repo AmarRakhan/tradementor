@@ -1,0 +1,49 @@
+name: Run V46 full close implementation
+
+on:
+  push:
+    branches:
+      - agent/all-close-flow-20260910
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test:
+    if: ${{ !contains(github.event.head_commit.message, 'Implement V46 full close flow') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/all-close-flow-20260910
+          fetch-depth: 0
+      - name: Apply patch
+        run: python .github/scripts/apply_full_close_v310.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Web regression
+        working-directory: web
+        run: |
+          npm ci
+          npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Backend regression
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          python -m py_compile cloud_api/main.py
+          cd cloud_api
+          pytest -q test_aster_full_close_contract.py test_aster_manual_close_contract.py test_aster_profit_close_contract.py test_aster_close_guard.py
+      - name: Commit product changes
+        shell: bash
+        run: |
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/main.py cloud_api/test_aster_full_close_contract.py web/components/aster-portfolio-snapshot-enhancer.tsx web/app/portfolio-snapshot.css web/app/api/exchanges/aster/positions/close-all/route.ts web/tests/aster-full-close-flow.test.mjs web/tests/aster-compact-portfolio-snapshot.test.mjs .github/workflows/deploy-v46-full-close-backend.yml
+          git commit -m 'Implement V46 full close flow'
+          git push origin HEAD:agent/all-close-flow-20260910
