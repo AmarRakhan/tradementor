@@ -1,7 +1,7 @@
-run=2026-09-07T07:14:00+02:00
-scope=p0-manual-selected-pair-dca-state-recovery
-retry=5
+run=2026-09-09T13:22:00+02:00
+scope=snapshot-profit-source-of-truth-backend-deploy
+reason=Portfolio-Snapshot-profit-buttons-require-canonical-profitable-close-backend
+backend_commit=8f435ad4cfd14da359bba3033a5d50d973afc3f6
+expected_threshold=gte-0.50
+expected_scopes=LONG,SHORT,ALL
 phase=verify-deploy-production
-base=webapp-v46-build263
-backend_commit=2c1de7a2e414097ef48dd17bc984826197093e88
-workflow_marker_fix=21c6316eb2c362e797a8ffc0c40526da3358d7a4
