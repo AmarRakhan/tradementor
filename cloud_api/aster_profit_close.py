@@ -69,12 +69,28 @@ def strictly_profitable_positions(
 
 
 def profit_preview(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    positions = profitable_positions(rows)
+    """Canonical Tradecentrum/Snapshot preview from one exchange-truth read."""
+    materialized = list(rows)
+    positions = profitable_positions(materialized)
+    long_positions = [item for item in positions if item["side"] == "LONG"]
+    short_positions = [item for item in positions if item["side"] == "SHORT"]
+
+    def bucket(selected: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "eligible": selected,
+            "eligibleCount": len(selected),
+            "totalProfitUsd": round(sum(item["unrealizedPnl"] for item in selected), 8),
+        }
+
     return {
         "eligible": positions,
         "eligibleCount": len(positions),
         "totalProfitUsd": round(sum(item["unrealizedPnl"] for item in positions), 8),
         "minimumProfitUsd": MINIMUM_PROFIT_USD,
+        "comparison": "greater_than_or_equal",
+        "long": bucket(long_positions),
+        "short": bucket(short_positions),
+        "all": bucket(positions),
     }
 
 

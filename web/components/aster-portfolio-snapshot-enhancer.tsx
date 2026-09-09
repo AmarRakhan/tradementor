@@ -36,7 +36,7 @@ type ProfitBucket = {
 type ProfitPreview = {
   reliable: true;
   minimumProfitUsd: number;
-  comparison: "strictly_greater_than";
+  comparison: "greater_than_or_equal";
   long: ProfitBucket;
   short: ProfitBucket;
   all: ProfitBucket;
@@ -217,10 +217,10 @@ function Snapshot({
 }
 
 async function loadProfitPreview(): Promise<ProfitPreview> {
-  const payload = await authenticatedRequest("/api/exchanges/aster/positions/snapshot-profit-close-preview", { cache: "no-store" }) as ProfitPreview;
+  const payload = await authenticatedRequest("/api/exchanges/aster/positions/profitable-close-preview", { cache: "no-store" }) as ProfitPreview;
   const buckets = [payload?.long, payload?.short, payload?.all];
   const valid = payload?.reliable === true
-    && payload?.comparison === "strictly_greater_than"
+    && payload?.comparison === "greater_than_or_equal"
     && buckets.every((bucket) => bucket && Number.isInteger(bucket.eligibleCount) && bucket.eligibleCount >= 0 && Number.isFinite(bucket.totalProfitUsd));
   if (!valid) throw new Error("De actuele winstselectie is niet betrouwbaar beschikbaar.");
   return payload;
@@ -320,14 +320,13 @@ export function AsterPortfolioSnapshotEnhancer() {
       if (bucket.eligibleCount < 1) return;
       const label = scope === "LONG" ? "Close Long" : scope === "SHORT" ? "Close Short" : "Close All";
       const positions = `${bucket.eligibleCount} ${bucket.eligibleCount === 1 ? "positie" : "posities"}`;
-      const confirmed = window.confirm(`${label}\n\n${profitMoney(bucket.totalProfitUsd)} · ${positions}\n\nAlleen posities die bij de servercontrole nog steeds meer dan US$ 0,50 winst hebben worden gesloten. Doorgaan?`);
+      const confirmed = window.confirm(`${label}\n\n${profitMoney(bucket.totalProfitUsd)} · ${positions}\n\nAlleen posities die bij de servercontrole nog steeds minimaal US$ 0,50 winst hebben worden gesloten. Doorgaan?`);
       if (!confirmed) return;
 
-      await authenticatedRequest("/api/exchanges/aster/positions/snapshot-close-profitable", {
+      await authenticatedRequest(`/api/exchanges/aster/positions/close-profitable?side=${scope}`, {
         method: "POST",
         body: JSON.stringify({
           confirm: true,
-          side: scope,
           idempotency_key: `snapshot-profit-${scope.toLowerCase()}-${Date.now()}-${crypto.randomUUID()}`,
         }),
       });

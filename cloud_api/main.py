@@ -4788,20 +4788,24 @@ def preview_profitable_aster_positions(
 @app.post("/v1/me/aster/positions/close-profitable")
 def close_profitable_aster_positions(
     request: AsterProfitableCloseRequest,
+    side: str = "ALL",
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
     """Close only still-profitable Aster legs after explicit user confirmation."""
+    scope = str(side).upper().strip()
+    if scope not in {"ALL", "LONG", "SHORT"}:
+        raise HTTPException(422, "Profit close scope moet ALL, LONG of SHORT zijn")
     if not request.confirm:
         raise HTTPException(422, "Bevestiging voor winstposities sluiten ontbreekt")
     if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
         raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
 
     uid = str(user["uid"])
-    action_hash = hashlib.sha256(f"{uid}:{request.idempotency_key}".encode()).hexdigest()
+    action_hash = hashlib.sha256(f"{uid}:{scope}:{request.idempotency_key}".encode()).hexdigest()
     action_ref = user_reference(user).collection("asterBulkProfitCloseIntents").document(action_hash)
     try:
         action_ref.create({
-            "uid": uid, "status": "prepared", "minimumProfitUsd": MINIMUM_PROFIT_USD,
+            "uid": uid, "scope": scope, "status": "prepared", "minimumProfitUsd": MINIMUM_PROFIT_USD,
             "createdAt": datetime.now(timezone.utc),
         })
     except google_exceptions.AlreadyExists:
@@ -4822,6 +4826,8 @@ def close_profitable_aster_positions(
     try:
         client = _portfolio_growth_client(user, live=True)
         initial = profitable_positions(client.position_risk())
+        if scope != "ALL":
+            initial = [candidate for candidate in initial if candidate["side"] == scope]
         for index, candidate in enumerate(initial, 1):
             symbol = candidate["symbol"]
             side = candidate["side"]
@@ -4866,6 +4872,7 @@ def close_profitable_aster_positions(
                 failed.append({"symbol": symbol, "side": side, "reason": str(exc)[:240]})
 
         result = {
+            "scope": scope,
             "closedCount": len(closed), "skippedCount": len(skipped), "failedCount": len(failed),
             "profitAtSubmitUsd": round(sum(item["profitAtSubmitUsd"] for item in closed), 8),
             "closed": closed, "skipped": skipped, "failed": failed,
@@ -4874,7 +4881,7 @@ def close_profitable_aster_positions(
         }
         action_ref.set({"status": "completed", "result": result, "completedAt": datetime.now(timezone.utc)}, merge=True)
         strategy_ref.collection("audit").document().set({
-            "event": "BULK_PROFIT_CLOSE_COMPLETED", "uid": uid, "actionId": action_hash,
+            "event": "BULK_PROFIT_CLOSE_COMPLETED", "uid": uid, "scope": scope, "actionId": action_hash,
             "closedCount": len(closed), "skippedCount": len(skipped), "failedCount": len(failed),
             "profitAtSubmitUsd": result["profitAtSubmitUsd"], "timestamp": datetime.now(timezone.utc),
         })

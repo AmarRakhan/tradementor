@@ -41,24 +41,24 @@ test("Snapshot has three live-data profit actions with separate LONG SHORT and A
   const [component, css, previewRoute, closeRoute] = await Promise.all([
     readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/portfolio-snapshot.css", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/exchanges/aster/positions/snapshot-profit-close-preview/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/exchanges/aster/positions/snapshot-close-profitable/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/positions/profitable-close-preview/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/positions/close-profitable/route.ts", import.meta.url), "utf8"),
   ]);
 
   for (const label of ["Close Long", "Close Short", "Close All"]) assert.match(component, new RegExp(label));
   assert.match(component, /type ProfitScope = "LONG" \| "SHORT" \| "ALL"/);
-  assert.match(component, /comparison: "strictly_greater_than"/);
+  assert.match(component, /comparison: "greater_than_or_equal"/);
   assert.match(component, /profitPreview\?\.long/);
   assert.match(component, /profitPreview\?\.short/);
   assert.match(component, /profitPreview\?\.all/);
-  assert.match(component, /snapshot-profit-close-preview/);
-  assert.match(component, /snapshot-close-profitable/);
+  assert.match(component, /profitable-close-preview/);
+  assert.match(component, /close-profitable/);
   assert.match(component, /eligibleCount/);
   assert.match(component, /totalProfitUsd/);
   assert.match(component, /aria-label=\{`\$\{label\}, \$\{profitMoney/);
   assert.match(css, /\.aps-profit-row\{/);
   assert.match(css, /\.aps-profit-action\{/);
-  assert.match(previewRoute, /snapshot-profit-close-preview/);
-  assert.match(closeRoute, /snapshot-close-profitable/);
+  assert.match(previewRoute, /profitable-close-preview/);
+  assert.match(closeRoute, /close-profitable/);
   assert.match(closeRoute, /"POST"/);
 });
