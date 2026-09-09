@@ -42,6 +42,26 @@ type ProfitPreview = {
   all: ProfitBucket;
 };
 
+
+type FullClosePreview = { active: number; longs: number; shorts: number };
+type FullCloseFailure = { symbol?: string; side?: string; reason?: string };
+type FullCloseResult = {
+  actionId: string;
+  requestedCount: number;
+  requestedLongs: number;
+  requestedShorts: number;
+  closedCount: number;
+  remainingCount: number;
+  remainingOrders: number;
+  failedCount: number;
+  failures: FullCloseFailure[];
+  complete: boolean;
+  botPaused: boolean;
+  message: string;
+  duplicate?: boolean;
+};
+type FullCloseMode = "idle" | "confirm" | "closing" | "partial" | "error";
+
 const EMPTY: SnapshotValues = {
   equity: "—", available: "—", activeCapital: "—", activePositions: "—",
   realized: "—", tradesClosed: "—", longs: "—", shorts: "—", dca: "—",
@@ -51,6 +71,7 @@ const EMPTY: SnapshotValues = {
 };
 
 const REFERENCE = "https://chatgpt.com/s/m_6a9e9a59189881918875e6317fdfc847";
+const FULL_CLOSE_REFERENCE = "file_00000000b4bc8210aa8f4c8e32f5e7dd";
 
 function directText(element: Element | null, selector: string) {
   return element?.querySelector<HTMLElement>(selector)?.textContent?.trim() || "—";
@@ -78,7 +99,8 @@ function readSnapshot(): SnapshotValues {
   const counts = indexSummary.match(/(\d+)\s*posities\s*·\s*(\d+)L\s*\/\s*(\d+)S\s*·\s*(\d+)\s*DCA/i);
   const risk = document.querySelector<HTMLElement>(".liquidation-risk");
   const riskClass = risk?.className || "";
-  const closeButton = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
+  const activePositions = metric("ACTIEVE POSITIES");
+  const activePositionCount = Number(activePositions.replace(/[^\d]/g, "")) || 0;
   const dailyGrowth = document.querySelector<HTMLElement>(".portfolio-growth-daily");
   const dailyValues = dailyGrowth ? Array.from(dailyGrowth.querySelectorAll<HTMLElement>("strong")) : [];
   const todayGrowth = dailyValues[0]?.textContent?.trim() || "—";
@@ -87,7 +109,7 @@ function readSnapshot(): SnapshotValues {
     equity: metric("PORTFOLIOWAARDE"),
     available: metric("AVAILABLE TO TRADE"),
     activeCapital: metric("ACTIVE TRADE CAPITAL"),
-    activePositions: metric("ACTIEVE POSITIES"),
+    activePositions,
     realized,
     tradesClosed,
     longs: counts?.[2] || "—",
@@ -100,8 +122,8 @@ function readSnapshot(): SnapshotValues {
     todayGrowthTone: percentageTone(todayGrowth),
     averageDailyGrowthTone: percentageTone(averageDailyGrowth),
     riskTone: riskClass.includes("risk-safe") ? "safe" : riskClass.includes("risk-caution") ? "caution" : riskClass.includes("risk-high") ? "high" : riskClass.includes("risk-critical") ? "critical" : "unknown",
-    closeDisabled: !closeButton || closeButton.disabled,
-    closeBusy: Boolean(closeButton && /sluiten…|bezig|wachten/i.test(closeButton.textContent || "")),
+    closeDisabled: activePositionCount < 1,
+    closeBusy: false,
   };
 }
 
@@ -173,12 +195,14 @@ function Snapshot({
   values,
   profitPreview,
   profitBusy,
+  fullCloseBusy,
   onCloseAll,
   onCloseProfit,
 }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   profitBusy: ProfitScope | null;
+  fullCloseBusy: boolean;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
 }) {
@@ -188,7 +212,7 @@ function Snapshot({
       <h2>PORTFOLIO SNAPSHOT</h2>
       <div className="aps-header-actions">
         <span className="aps-live"><i />Live</span>
-        <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
+        <button type="button" className="aps-close-all" disabled={values.closeDisabled || fullCloseBusy} onClick={onCloseAll}>{fullCloseBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
     <div className="aps-grid">
@@ -216,6 +240,92 @@ function Snapshot({
   </section>;
 }
 
+
+function fullCloseQuantity(value: unknown) {
+  if (!value || typeof value !== "object") return 0;
+  const row = value as Record<string, unknown>;
+  const raw = Number(row.quantity ?? row.positionAmt ?? 0);
+  return Number.isFinite(raw) ? Math.abs(raw) : 0;
+}
+
+function fullCloseSide(value: unknown) {
+  if (!value || typeof value !== "object") return "";
+  const row = value as Record<string, unknown>;
+  return String(row.side ?? row.positionSide ?? "").toUpperCase();
+}
+
+async function loadFullClosePreview(): Promise<FullClosePreview> {
+  const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
+  if (!Array.isArray(payload?.positions)) throw new Error("Actuele Aster-posities konden niet betrouwbaar worden opgehaald.");
+  const active = payload.positions.filter((row) => fullCloseQuantity(row) > 0);
+  return {
+    active: active.length,
+    longs: active.filter((row) => fullCloseSide(row) === "LONG").length,
+    shorts: active.filter((row) => fullCloseSide(row) === "SHORT").length,
+  };
+}
+
+function FullCloseOverlay({ mode, preview, result, error, onCancel, onConfirm, onRetry }: {
+  mode: Exclude<FullCloseMode, "idle">;
+  preview: FullClosePreview | null;
+  result: FullCloseResult | null;
+  error: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onRetry: () => void;
+}) {
+  const requested = result?.requestedCount ?? preview?.active ?? 0;
+  const closed = result?.closedCount ?? 0;
+  const canDismiss = mode !== "closing";
+  return <div className="aps-full-close-backdrop" role="presentation" data-reference={FULL_CLOSE_REFERENCE}>
+    <section className={`aps-full-close-modal aps-full-close-${mode}`} role="dialog" aria-modal="true" aria-labelledby="aps-full-close-title">
+      <button className="aps-full-close-x" type="button" aria-label="Sluiten" disabled={!canDismiss} onClick={onCancel}>×</button>
+      {mode === "confirm" && <>
+        <div className="aps-full-close-warning" aria-hidden="true">!</div>
+        <h3 id="aps-full-close-title">Alles sluiten</h3>
+        <p className="aps-full-close-question">Weet je zeker dat je alle actieve posities wilt sluiten?</p>
+        <p className="aps-full-close-sub">Dit sluit alle open LONG- en SHORT-posities, ongeacht winst of verlies.</p>
+        <dl className="aps-full-close-counts">
+          <div><dt>Actieve posities</dt><dd>{preview?.active ?? 0}</dd></div>
+          <div><dt>Long posities</dt><dd>{preview?.longs ?? 0}</dd></div>
+          <div><dt>Short posities</dt><dd>{preview?.shorts ?? 0}</dd></div>
+        </dl>
+        <footer className="aps-full-close-actions">
+          <button type="button" onClick={onCancel}>Annuleren</button>
+          <button type="button" className="aps-full-close-danger" onClick={onConfirm}>Alles sluiten</button>
+        </footer>
+      </>}
+      {mode === "closing" && <>
+        <div className="aps-full-close-spinner" aria-hidden="true"><i /></div>
+        <h3 id="aps-full-close-title">Bezig met sluiten...</h3>
+        <p className="aps-full-close-question">Alle actieve posities worden gesloten.<br />Dit kan even duren.</p>
+        <div className="aps-full-close-progress" aria-label="Sluitstatus wordt bij Aster bevestigd"><i /></div>
+        <strong className="aps-full-close-progress-label">Sluitstatus wordt rechtstreeks bij Aster bevestigd</strong>
+        <div className="aps-full-close-info">De pagina wordt na afronding automatisch vernieuwd. Laat dit venster gerust openstaan.</div>
+      </>}
+      {mode === "partial" && <>
+        <div className="aps-full-close-warning" aria-hidden="true">!</div>
+        <h3 id="aps-full-close-title">Niet alle posities konden worden gesloten</h3>
+        <p className="aps-full-close-question">{closed} van {requested} posities bevestigd gesloten.</p>
+        <p className="aps-full-close-sub">{result?.remainingCount ?? 0} positie(s) staan nog open. De bot blijft gestopt zodat je veilig opnieuw kunt proberen.</p>
+        <footer className="aps-full-close-actions">
+          <button type="button" onClick={onCancel}>Sluiten</button>
+          <button type="button" className="aps-full-close-danger" onClick={onRetry}>Opnieuw proberen</button>
+        </footer>
+      </>}
+      {mode === "error" && <>
+        <div className="aps-full-close-warning" aria-hidden="true">!</div>
+        <h3 id="aps-full-close-title">Alles sluiten mislukt</h3>
+        <p className="aps-full-close-sub">{error || "De sluitstatus kon niet betrouwbaar worden bevestigd."}</p>
+        <footer className="aps-full-close-actions">
+          <button type="button" onClick={onCancel}>Sluiten</button>
+          <button type="button" className="aps-full-close-danger" onClick={onRetry}>Opnieuw proberen</button>
+        </footer>
+      </>}
+    </section>
+  </div>;
+}
+
 async function loadProfitPreview(): Promise<ProfitPreview> {
   const payload = await authenticatedRequest("/api/exchanges/aster/positions/profitable-close-preview", { cache: "no-store" }) as ProfitPreview;
   const buckets = [payload?.long, payload?.short, payload?.all];
@@ -230,11 +340,26 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
-  const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
-  const valuesRef = useRef<SnapshotValues>(EMPTY);
-  const syncing = useRef(false);
 
-  useEffect(() => {
+const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
+const [fullCloseMode, setFullCloseMode] = useState<FullCloseMode>("idle");
+const [fullClosePreview, setFullClosePreview] = useState<FullClosePreview | null>(null);
+const [fullCloseResult, setFullCloseResult] = useState<FullCloseResult | null>(null);
+const [fullCloseError, setFullCloseError] = useState("");
+const [fullCloseSuccess, setFullCloseSuccess] = useState(false);
+const fullCloseRequestKey = useRef("");
+  const valuesRef = useRef<SnapshotValues>(EMPTY);
+
+const syncing = useRef(false);
+
+useEffect(() => {
+  if (fullCloseMode === "idle") return;
+  const previous = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+  return () => { document.body.style.overflow = previous; };
+}, [fullCloseMode]);
+
+useEffect(() => {
     let observer: MutationObserver | null = null;
     let frame = 0;
     let alive = true;
@@ -304,11 +429,76 @@ export function AsterPortfolioSnapshotEnhancer() {
     };
   }, [host]);
 
-  const closeAll = () => {
-    const legacy = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
-    if (!legacy || legacy.disabled) return;
-    legacy.click();
-  };
+
+const openFullCloseConfirm = async () => {
+  if (fullCloseMode === "closing") return;
+  setFullCloseError("");
+  setFullCloseResult(null);
+  fullCloseRequestKey.current = "";
+  try {
+    const preview = await loadFullClosePreview();
+    setFullClosePreview(preview);
+    if (preview.active < 1) return;
+    setFullCloseMode("confirm");
+  } catch (reason) {
+    setFullCloseError(reason instanceof Error ? reason.message : "Actuele Aster-posities konden niet worden opgehaald.");
+    setFullCloseMode("error");
+  }
+};
+
+const executeFullClose = async () => {
+  if (fullCloseMode === "closing") return;
+  setFullCloseError("");
+  setFullCloseResult(null);
+  setFullCloseMode("closing");
+  try {
+    const fresh = await loadFullClosePreview();
+    setFullClosePreview(fresh);
+    if (fresh.active < 1) {
+      setFullCloseMode("idle");
+      return;
+    }
+    if (!fullCloseRequestKey.current) fullCloseRequestKey.current = `snapshot-full-close-${Date.now()}-${crypto.randomUUID()}`;
+    const payload = await authenticatedRequest("/api/exchanges/aster/positions/close-all", {
+      method: "POST",
+      body: JSON.stringify({ confirm: true, idempotency_key: fullCloseRequestKey.current }),
+    }) as FullCloseResult;
+    if (!payload || !Number.isInteger(payload.requestedCount) || !Number.isInteger(payload.closedCount) || !Number.isInteger(payload.remainingCount) || typeof payload.complete !== "boolean") {
+      throw new Error("Aster gaf geen betrouwbare eindstatus voor Alles sluiten.");
+    }
+    setFullCloseResult(payload);
+    if (payload.complete && payload.remainingCount === 0) {
+      setFullCloseMode("idle");
+      setFullCloseSuccess(true);
+      window.setTimeout(() => window.location.reload(), 1600);
+    } else {
+      setFullCloseMode("partial");
+    }
+  } catch (reason) {
+    setFullCloseError(reason instanceof Error ? reason.message : "De sluitstatus kon niet betrouwbaar worden bevestigd.");
+    setFullCloseMode("error");
+  }
+};
+
+const retryFullClose = async () => {
+  try {
+    const preview = await loadFullClosePreview();
+    setFullClosePreview(preview);
+    if (preview.active < 1) {
+      setFullCloseMode("idle");
+      setFullCloseSuccess(true);
+      window.setTimeout(() => window.location.reload(), 1200);
+      return;
+    }
+    if (fullCloseResult) fullCloseRequestKey.current = "";
+    setFullCloseResult(null);
+    setFullCloseError("");
+    setFullCloseMode("confirm");
+  } catch (reason) {
+    setFullCloseError(reason instanceof Error ? reason.message : "Actuele Aster-posities konden niet worden opgehaald.");
+    setFullCloseMode("error");
+  }
+};
 
   const closeProfit = async (scope: ProfitScope) => {
     if (profitBusy) return;
@@ -344,14 +534,38 @@ export function AsterPortfolioSnapshotEnhancer() {
     }
   };
 
-  return host ? createPortal(
-    <Snapshot
-      values={values}
-      profitPreview={profitPreview}
-      profitBusy={profitBusy}
-      onCloseAll={closeAll}
-      onCloseProfit={closeProfit}
-    />,
-    host,
-  ) : null;
+
+  return host ? <>
+    {createPortal(
+      <Snapshot
+        values={values}
+        profitPreview={profitPreview}
+        profitBusy={profitBusy}
+        fullCloseBusy={fullCloseMode === "closing"}
+        onCloseAll={openFullCloseConfirm}
+        onCloseProfit={closeProfit}
+      />,
+      host,
+    )}
+    {fullCloseMode !== "idle" && typeof document !== "undefined" && createPortal(
+      <FullCloseOverlay
+        mode={fullCloseMode}
+        preview={fullClosePreview}
+        result={fullCloseResult}
+        error={fullCloseError}
+        onCancel={() => { if (fullCloseMode !== "closing") setFullCloseMode("idle"); }}
+        onConfirm={executeFullClose}
+        onRetry={retryFullClose}
+      />,
+      document.body,
+    )}
+    {fullCloseSuccess && typeof document !== "undefined" && createPortal(
+      <div className="aps-full-close-success" role="status" data-reference={FULL_CLOSE_REFERENCE}>
+        <span aria-hidden="true">✓</span>
+        <strong>Alle actieve posities zijn gesloten</strong>
+        <button type="button" aria-label="Melding sluiten" onClick={() => setFullCloseSuccess(false)}>×</button>
+      </div>,
+      document.body,
+    )}
+  </> : null;
 }

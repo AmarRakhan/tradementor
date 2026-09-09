@@ -358,6 +358,11 @@ class AsterCloseAllRequest(BaseModel):
     idempotency_key: str = Field(min_length=16, max_length=120)
 
 
+class AsterFullCloseRequest(BaseModel):
+    confirm: bool
+    idempotency_key: str = Field(min_length=16, max_length=120)
+
+
 class PortfolioGrowthBaselineRequest(BaseModel):
     amount: float = Field(gt=0, le=1_000_000_000)
     currency: str = Field(pattern="^USD$")
@@ -4770,6 +4775,222 @@ def close_all_aster_strategy(
         action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE","submitted":len(submitted),
             "reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,f"Alles sluiten is fail-closed gestopt; account blijft gepauzeerd: {str(exc)[:300]}") from exc
+
+
+
+@app.post("/v1/me/aster/positions/close-all")
+def close_all_aster_positions(
+    request: AsterFullCloseRequest,
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Explicitly close every current Aster hedge leg, independent of profit."""
+    if not request.confirm:
+        raise HTTPException(422, "Bevestiging voor Alles sluiten ontbreekt")
+    if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
+        raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
+
+    uid = str(user["uid"])
+    action_hash = hashlib.sha256(f"{uid}:full-close:{request.idempotency_key}".encode()).hexdigest()
+    action_ref = user_reference(user).collection("asterFullCloseIntents").document(action_hash)
+    growth = portfolio_growth_reference(uid)
+    strategy_ref = aster_strategy2_reference(uid)
+    lock_token = python_secrets.token_hex(16)
+    now = datetime.now(timezone.utc)
+
+    try:
+        action_ref.create({
+            "uid": uid,
+            "status": "RESERVED",
+            "createdAt": now,
+            "idempotencyKeyHash": action_hash,
+        })
+    except google_exceptions.AlreadyExists as exc:
+        existing = action_ref.get().to_dict() or {}
+        result = existing.get("result")
+        if existing.get("status") in {"CONFIRMED_FLAT", "PARTIAL_FAIL_CLOSED"} and isinstance(result, dict):
+            return {**result, "duplicate": True}
+        raise HTTPException(409, "Deze Alles sluiten-opdracht is al ontvangen; er wordt geen tweede set orders geplaatst") from exc
+
+    reserved = False
+
+    def release_account_lock(reason: str) -> None:
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def release(txn):
+            current = growth.get(transaction=txn).to_dict() or {}
+            lock = current.get("closeLock") if isinstance(current.get("closeLock"), dict) else {}
+            if lock.get("token") == lock_token:
+                txn.set(growth, {"closeLock": {
+                    "active": False,
+                    "token": "",
+                    "actionId": action_hash,
+                    "releasedAt": datetime.now(timezone.utc),
+                }}, merge=True)
+            txn.set(strategy_ref, {
+                "enabled": False,
+                "monitor": False,
+                "closeAllPause": False,
+                "phase": "STOPPED",
+                "pendingReopens": [],
+                "lastReason": reason,
+                "updatedAt": datetime.now(timezone.utc),
+            }, merge=True)
+
+        release(transaction)
+
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def reserve_account(txn):
+        current = growth.get(transaction=txn).to_dict() or {}
+        lock = current.get("closeLock") if isinstance(current.get("closeLock"), dict) else {}
+        until = lock.get("until")
+        active = bool(lock.get("active")) and (not isinstance(until, datetime) or until > now)
+        if active:
+            raise HTTPException(409, "Voor dit account loopt al een Alles sluiten-actie")
+        txn.set(growth, {"closeLock": {
+            "active": True,
+            "token": lock_token,
+            "actionId": action_hash,
+            "until": now + timedelta(hours=1),
+        }}, merge=True)
+        txn.set(strategy_ref, {
+            "enabled": False,
+            "monitor": True,
+            "closeAllPause": True,
+            "phase": "CLOSING_ALL",
+            "pendingReopens": [],
+            "lastReason": "Persoonlijk Alles sluiten actief",
+            "updatedAt": now,
+        }, merge=True)
+
+    try:
+        reserve_account(transaction)
+        reserved = True
+        client = _portfolio_growth_client(user, live=True)
+
+        open_orders = client.open_orders()
+        unknown = [row for row in open_orders if is_exposure_order(row) is None]
+        if unknown:
+            raise RuntimeError("Open order(s) kunnen niet veilig als instap of bescherming worden geclassificeerd")
+        for order in [row for row in open_orders if is_exposure_order(row) is True]:
+            client.cancel_order(
+                str(order.get("symbol", "")),
+                order_id=order.get("orderId"),
+                client_order_id=order.get("clientOrderId"),
+            )
+
+        starting_positions = [row for row in client.position_risk() if abs(safe_float(row.get("positionAmt"))) > 0]
+        requested_count = len(starting_positions)
+        requested_longs = sum(1 for row in starting_positions if str(row.get("positionSide", "")).upper() == "LONG")
+        requested_shorts = sum(1 for row in starting_positions if str(row.get("positionSide", "")).upper() == "SHORT")
+        starting_keys = {
+            (str(row.get("symbol", "")).upper(), str(row.get("positionSide", "")).upper())
+            for row in starting_positions
+        }
+        failures: list[dict[str, Any]] = []
+
+        for index, initial in enumerate(starting_positions, 1):
+            symbol = str(initial.get("symbol", "")).upper()
+            side = str(initial.get("positionSide", "")).upper()
+            try:
+                current_rows = client.position_risk()
+                current = next((row for row in current_rows
+                    if str(row.get("symbol", "")).upper() == symbol
+                    and str(row.get("positionSide", "")).upper() == side
+                    and abs(safe_float(row.get("positionAmt"))) > 0), None)
+                if current is None:
+                    continue
+                quantity = abs(Decimal(str(current.get("positionAmt"))))
+                mark = safe_float(current.get("markPrice")) or safe_float(current.get("entryPrice"))
+                if not symbol or side not in {"LONG", "SHORT"} or quantity <= 0 or mark <= 0:
+                    raise RuntimeError("Aster gaf geen betrouwbare actuele sluitgegevens")
+                plan = PairExecutionPlan(
+                    symbol,
+                    quantity,
+                    quantity * Decimal(str(mark)),
+                    max(1, int(safe_float(current.get("leverage")) or 1)),
+                )
+                execute_aster_leg(
+                    client,
+                    plan,
+                    side=PositionSide(side),
+                    action="CLOSE",
+                    id_prefix=f"tm-full-{action_hash[:12]}-{index}",
+                    confirm=True,
+                    manual_loss_confirmation=True,
+                )
+                tolerance = max(Decimal("0.000000000001"), quantity * Decimal("0.000000001"))
+                remaining_leg = next((row for row in client.position_risk()
+                    if str(row.get("symbol", "")).upper() == symbol
+                    and str(row.get("positionSide", "")).upper() == side
+                    and abs(Decimal(str(row.get("positionAmt")))) > tolerance), None)
+                if remaining_leg is not None:
+                    raise RuntimeError("Aster heeft de volledige sluiting nog niet bevestigd; er wordt niet blind opnieuw besteld")
+            except Exception as exc:
+                failures.append({"symbol": symbol or "?", "side": side or "?", "reason": str(exc)[:220]})
+
+        final_positions = [row for row in client.position_risk() if abs(safe_float(row.get("positionAmt"))) > 0]
+        final_keys = {
+            (str(row.get("symbol", "")).upper(), str(row.get("positionSide", "")).upper())
+            for row in final_positions
+        }
+        remaining_starting = len(starting_keys & final_keys)
+        closed_count = max(0, requested_count - remaining_starting)
+
+        remaining_orders: list[dict[str, Any]] = []
+        if not final_positions:
+            for order in client.open_orders():
+                try:
+                    client.cancel_order(
+                        str(order.get("symbol", "")),
+                        order_id=order.get("orderId"),
+                        client_order_id=order.get("clientOrderId"),
+                    )
+                except Exception as exc:
+                    failures.append({"symbol": str(order.get("symbol", "?")), "side": "ORDER", "reason": str(exc)[:220]})
+            remaining_orders = client.open_orders()
+
+        complete = len(final_positions) == 0 and len(remaining_orders) == 0
+        result = {
+            "actionId": action_hash,
+            "requestedCount": requested_count,
+            "requestedLongs": requested_longs,
+            "requestedShorts": requested_shorts,
+            "closedCount": closed_count,
+            "remainingCount": len(final_positions),
+            "remainingOrders": len(remaining_orders),
+            "failedCount": len(failures),
+            "failures": failures[:20],
+            "complete": complete,
+            "botPaused": True,
+            "duplicate": False,
+            "message": (
+                "Alle actieve posities zijn exchange-bevestigd gesloten."
+                if complete else
+                f"{closed_count} van {requested_count} startposities zijn bevestigd gesloten; {len(final_positions)} positie(s) staan nog open."
+            ),
+        }
+        status = "CONFIRMED_FLAT" if complete else "PARTIAL_FAIL_CLOSED"
+        action_ref.set({"status": status, "result": result, "completedAt": datetime.now(timezone.utc)}, merge=True)
+        release_account_lock(
+            "Alles sluiten voltooid; bot blijft bewust gestopt"
+            if complete else
+            "Alles sluiten gedeeltelijk voltooid; bot blijft gestopt voor veilige herhaling"
+        )
+        reserved = False
+        return result
+    except HTTPException as exc:
+        action_ref.set({"status": "FAILED_BEFORE_CLOSE", "detail": str(exc.detail), "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        if reserved:
+            release_account_lock("Alles sluiten veilig gestopt na fout; bot blijft gestopt")
+        raise
+    except Exception as exc:
+        action_ref.set({"status": "FAILED_BEFORE_CLOSE", "detail": str(exc)[:500], "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        if reserved:
+            release_account_lock("Alles sluiten veilig gestopt na fout; bot blijft gestopt")
+        raise HTTPException(409, f"Alles sluiten is veilig gestopt: {str(exc)[:300]}") from exc
 
 
 @app.get("/v1/me/aster/positions/profitable-close-preview")
