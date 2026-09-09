@@ -1,0 +1,1 @@
+Deploy the canonical amar-crypto-bot-2026-cloud backend commit containing the Snapshot/Tradecentrum profit source-of-truth fix.
