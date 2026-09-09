@@ -1,0 +1,60 @@
+name: Fix full close implementation workflow anchor
+
+on:
+  push:
+    branches:
+      - agent/all-close-flow-20260910
+
+permissions:
+  contents: write
+
+jobs:
+  fix-anchor:
+    if: ${{ !contains(github.event.head_commit.message, 'Fix full close workflow regex anchor') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/all-close-flow-20260910
+          fetch-depth: 0
+      - name: Replace fragile legacy handler anchor with regex
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/agent-apply-full-close-v310.yml')
+          s=p.read_text()
+          old='''          old_close = '''  const closeAll = () => {
+            const legacy = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
+            if (!legacy || legacy.disabled) return;
+            legacy.click();
+          };
+          '''
+          if old_close not in s:
+              raise SystemExit('legacy closeAll handler anchor missing')
+          new_close = '''  const openFullCloseConfirm = async () => {
+'''
+          new='''          old_close_pattern = re.compile(r'  const closeAll = \\(\\) => \\{\\n\\s*const legacy = document\\.querySelector<HTMLButtonElement>\\("\\.portfolio-close-all"\\);\\n\\s*if \\(!legacy \\|\\| legacy\\.disabled\\) return;\\n\\s*legacy\\.click\\(\\);\\n\\s*\\};')
+          match_close = old_close_pattern.search(s)
+          if not match_close:
+              raise SystemExit('legacy closeAll handler anchor missing')
+          new_close = '''  const openFullCloseConfirm = async () => {
+'''
+          if old not in s:
+              raise SystemExit('workflow legacy anchor block not found')
+          s=s.replace(old,new,1)
+          old2='''          s = s.replace(old_close, new_close, 1)
+'''
+          new2='''          s = s[:match_close.start()] + new_close + s[match_close.end():]
+'''
+          if old2 not in s:
+              raise SystemExit('workflow replacement call not found')
+          s=s.replace(old2,new2,1)
+          p.write_text(s)
+          PY
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add .github/workflows/agent-apply-full-close-v310.yml
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'Fix full close workflow regex anchor'
+          git push origin HEAD:agent/all-close-flow-20260910
