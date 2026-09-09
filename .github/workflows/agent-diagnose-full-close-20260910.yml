@@ -1,0 +1,37 @@
+name: Diagnose Aster full close paths
+
+on:
+  push:
+    branches:
+      - agent/all-close-flow-20260910
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate close implementations
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo '=== repository root ==='
+          ls -la
+          echo '=== files mentioning execute_aster_close_all ==='
+          grep -RIl --exclude-dir=.git 'execute_aster_close_all' . || true
+          echo '=== files mentioning /v1/me/aster/positions ==='
+          grep -RIl --exclude-dir=.git '/v1/me/aster/positions' . || true
+          echo '=== files mentioning AsterCloseBlocked ==='
+          grep -RIl --exclude-dir=.git 'AsterCloseBlocked' . || true
+          echo '=== close route excerpts ==='
+          for f in $(grep -RIl --exclude-dir=.git '/v1/me/aster/positions' . || true); do
+            echo "--- $f"
+            grep -n -C 14 '/v1/me/aster/positions' "$f" || true
+          done
+          echo '=== execute close all excerpts ==='
+          for f in $(grep -RIl --exclude-dir=.git 'execute_aster_close_all' . || true); do
+            echo "--- $f"
+            grep -n -C 20 'execute_aster_close_all' "$f" || true
+          done
