@@ -20,6 +20,7 @@ import "./aster-tables.css";
 import "./strategy2-reference.css";
 import "./markets-bridge.css";
 import "./portfolio-snapshot.css";
+import "./portfolio-hedge.css";
 import "./home-transfer.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
