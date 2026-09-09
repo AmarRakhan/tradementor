@@ -1,0 +1,177 @@
+name: Deploy Snapshot profit backend 2026-09-09
+
+on:
+  push:
+    branches: [deploy/snapshot-profit-backend-20260909]
+    paths:
+      - '.github/triggers/deploy-snapshot-profit-backend-20260909.txt'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-snapshot-profit-backend-20260909
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend test dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Compile and test profit-close backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q cloud_api
+          PYTHONPATH=cloud_api python -m pytest -q cloud_api/test_aster_profit_close_contract.py
+          PYTHONPATH=cloud_api python - <<'PY'
+          from aster_profit_close import profit_preview
+          rows = [
+              {"symbol":"LITUSDT","positionSide":"LONG","positionAmt":"1","markPrice":"1","unRealizedProfit":"1.16"},
+              {"symbol":"UNIUSDT","positionSide":"LONG","positionAmt":"1","markPrice":"1","unRealizedProfit":"0.98"},
+              {"symbol":"WLDUSDT","positionSide":"SHORT","positionAmt":"-1","markPrice":"1","unRealizedProfit":"1.51"},
+              {"symbol":"ICPUSDT","positionSide":"SHORT","positionAmt":"-1","markPrice":"1","unRealizedProfit":"0.62"},
+              {"symbol":"TRUMPUSDT","positionSide":"SHORT","positionAmt":"-1","markPrice":"1","unRealizedProfit":"0.60"},
+              {"symbol":"ARBUSD","positionSide":"SHORT","positionAmt":"-1","markPrice":"1","unRealizedProfit":"0.48"},
+          ]
+          preview = profit_preview(rows)
+          assert preview["comparison"] == "greater_than_or_equal"
+          assert preview["long"]["eligibleCount"] == 2
+          assert abs(preview["long"]["totalProfitUsd"] - 2.14) < 1e-9
+          assert preview["short"]["eligibleCount"] == 3
+          assert abs(preview["short"]["totalProfitUsd"] - 2.73) < 1e-9
+          assert preview["all"]["eligibleCount"] == 5
+          assert abs(preview["all"]["totalProfitUsd"] - 4.87) < 1e-9
+          PY
+
+      - name: Authenticate Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture current production service
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          live=[x for x in service["status"].get("traffic",[]) if int(x.get("percent",0))==100]
+          assert len(live)==1, live
+          env={x['name']:x.get('value') for x in service['spec']['template']['spec']['containers'][0].get('env',[])}
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED')=='true'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED')=='true'
+          print(f'BEFORE_REVISION={live[0]["revisionName"]}')
+          print(f'SERVICE_URL={service["status"]["url"]}')
+          PY
+
+      - name: Build backend candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:profit-close-${SOURCE_SHA}"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy candidate without traffic and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          SUFFIX="profit-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          TAG="profit-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          before=json.load(open(sys.argv[1],encoding="utf-8")); after=json.load(open(sys.argv[2],encoding="utf-8")); tag=sys.argv[3]
+          b=before['spec']['template']['spec']; a=after['spec']['template']['spec']
+          assert b.get('serviceAccountName')==a.get('serviceAccountName')
+          assert b.get('timeoutSeconds')==a.get('timeoutSeconds')
+          assert b.get('containerConcurrency')==a.get('containerConcurrency')
+          benv=sorted((x.get('name'),x.get('value')) for x in b['containers'][0].get('env',[]))
+          aenv=sorted((x.get('name'),x.get('value')) for x in a['containers'][0].get('env',[]))
+          assert benv==aenv
+          row=next(x for x in after['status']['traffic'] if x.get('tag')==tag)
+          print(f'CANDIDATE_REVISION={row["revisionName"]}')
+          print(f'CANDIDATE_URL={row["url"]}')
+          PY
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready' and h['multiUser'] is True
+          PY
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/openapi.json" > "$RUNNER_TEMP/openapi-candidate.json"
+          python - "$RUNNER_TEMP/openapi-candidate.json" <<'PY'
+          import json,sys
+          spec=json.load(open(sys.argv[1],encoding='utf-8'))
+          op=spec['paths']['/v1/me/aster/positions/close-profitable']['post']
+          params={p['name']:p for p in op.get('parameters',[])}
+          assert params['side']['in']=='query'
+          assert params['side']['schema'].get('default')=='ALL'
+          PY
+
+      - name: Promote verified backend candidate
+        shell: bash
+        run: |
+          set -eEuo pipefail
+          PROMOTED=0
+          rollback() {
+            if [ "$PROMOTED" = "1" ]; then
+              gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$BEFORE_REVISION=100" || true
+            fi
+          }
+          trap rollback ERR
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+          PROMOTED=1
+          FINAL_HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$FINAL_HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready' and h['multiUser'] is True
+          PY
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$SERVICE_URL/openapi.json" > "$RUNNER_TEMP/openapi-final.json"
+          python - "$RUNNER_TEMP/openapi-final.json" "$CANDIDATE_REVISION" "$RUNNER_TEMP/iam-before.json" <<'PY'
+          import json,sys,subprocess
+          spec=json.load(open(sys.argv[1],encoding='utf-8'))
+          op=spec['paths']['/v1/me/aster/positions/close-profitable']['post']
+          params={p['name']:p for p in op.get('parameters',[])}
+          assert params['side']['schema'].get('default')=='ALL'
+          candidate=sys.argv[2]
+          service=json.loads(subprocess.check_output(['gcloud','run','services','describe','tradementor-api','--project','tradementor-production','--region','europe-west4','--format=json']))
+          live=[x for x in service['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1 and live[0].get('revisionName')==candidate, live
+          iam_before=json.load(open(sys.argv[3],encoding='utf-8'))
+          iam_after=json.loads(subprocess.check_output(['gcloud','run','services','get-iam-policy','tradementor-api','--project','tradementor-production','--region','europe-west4','--format=json']))
+          assert iam_before==iam_after
+          print('PROMOTED_REVISION='+candidate)
+          PY
+          PROMOTED=0
