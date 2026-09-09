@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 
 type Tone = "positive" | "negative" | "neutral";
 type ProfitScope = "LONG" | "SHORT" | "ALL";
+type HedgeStatus = "below_target" | "within_target" | "above_target" | "unavailable";
+type ImpactType = "toward_target" | "away_from_target" | "neutral";
+type ProtectionDirection = "increases" | "decreases" | "unchanged";
 
 type SnapshotValues = {
   equity: string;
@@ -28,15 +31,47 @@ type SnapshotValues = {
   closeBusy: boolean;
 };
 
+type ExposureSnapshot = {
+  reliable: boolean;
+  longExposureUsd: number;
+  shortExposureUsd: number;
+  netExposureUsd: number;
+  netSide: "LONG" | "SHORT" | "FLAT";
+  hedgeCoveragePercent: number | null;
+  status: HedgeStatus;
+  openPositionCount: number;
+  invalidOpenCount: number;
+};
+
+type CloseImpact = {
+  before: ExposureSnapshot;
+  after: ExposureSnapshot;
+  removedLongExposureUsd: number;
+  removedShortExposureUsd: number;
+  impactType: ImpactType;
+  protectionDirection: ProtectionDirection;
+  targetDistanceBefore: number | null;
+  targetDistanceAfter: number | null;
+};
+
 type ProfitBucket = {
   eligibleCount: number;
   totalProfitUsd: number;
+  impact: CloseImpact;
+};
+
+type HedgeConfig = {
+  targetPercent: number;
+  healthyMinPercent: number;
+  healthyMaxPercent: number;
 };
 
 type ProfitPreview = {
   reliable: true;
   minimumProfitUsd: number;
   comparison: "greater_than_or_equal";
+  hedgeConfig: HedgeConfig;
+  exposure: ExposureSnapshot;
   long: ProfitBucket;
   short: ProfitBucket;
   all: ProfitBucket;
@@ -50,7 +85,10 @@ const EMPTY: SnapshotValues = {
   closeDisabled: true, closeBusy: false,
 };
 
-const REFERENCE = "https://chatgpt.com/s/m_6a9e9a59189881918875e6317fdfc847";
+const REFERENCE = "file_00000000a7bc82438e4e1d5f076b47c9";
+const HEDGE_DETAIL_REFERENCE = "file_00000000d9bc81f49ce775b27ff69a7f";
+const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
+const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
 
 function directText(element: Element | null, selector: string) {
   return element?.querySelector<HTMLElement>(selector)?.textContent?.trim() || "—";
@@ -137,13 +175,39 @@ function profitMoney(value: number | undefined) {
   return `+US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.max(0, value))}`;
 }
 
-function ProfitAction({
-  scope,
-  label,
-  bucket,
-  busy,
-  onClick,
-}: {
+function exposureMoney(value: number | null | undefined, signed = false) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const prefix = signed ? (value > 0 ? "+" : value < 0 ? "-" : "") : "";
+  return `${prefix}US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.abs(value))}`;
+}
+
+function hedgePercent(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  return `${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: Number.isInteger(value) ? 0 : 1, maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function hedgeStatusLabel(status: HedgeStatus) {
+  if (status === "below_target") return "Onder doel";
+  if (status === "above_target") return "Boven doel";
+  if (status === "within_target") return "Binnen doel";
+  return "Niet beschikbaar";
+}
+
+function netExposureLabel(exposure: ExposureSnapshot | null | undefined) {
+  if (!exposure) return "—";
+  if (exposure.netSide === "FLAT") return "NEUTRAAL";
+  return exposure.netSide;
+}
+
+function impactNote(scope: ProfitScope, bucket: ProfitBucket | null) {
+  if (!bucket?.impact || bucket.eligibleCount < 1) return null;
+  if (bucket.impact.impactType === "toward_target") return "richting hedge-doel";
+  if (bucket.impact.protectionDirection === "decreases") return "verlaagt hedge";
+  if (bucket.impact.protectionDirection === "increases") return "verhoogt hedge";
+  return scope === "ALL" ? "wijzigt bescherming" : null;
+}
+
+function ProfitAction({ scope, label, bucket, busy, onClick }: {
   scope: ProfitScope;
   label: string;
   bucket: ProfitBucket | null;
@@ -152,35 +216,183 @@ function ProfitAction({
 }) {
   const count = bucket?.eligibleCount ?? 0;
   const countLabel = bucket ? `${count} ${count === 1 ? "positie" : "posities"}` : "—";
+  const note = impactNote(scope, bucket);
   const icon = scope === "LONG" ? "↗" : scope === "SHORT" ? "↘" : "◎";
   return <button
     type="button"
     className={`aps-profit-action aps-profit-${scope.toLowerCase()}`}
     disabled={!bucket || count === 0 || busy}
     onClick={() => onClick(scope)}
-    aria-label={`${label}, ${profitMoney(bucket?.totalProfitUsd)}, ${countLabel}`}
+    aria-label={`${label}, ${profitMoney(bucket?.totalProfitUsd)}, ${countLabel}${note ? `, ${note}` : ""}`}
   >
     <span className="aps-profit-icon" aria-hidden="true">{icon}</span>
     <span className="aps-profit-copy">
-      <b>{busy ? "Bezig…" : label}</b>
+      <b>{busy ? "Controleren…" : label}</b>
       <strong>{profitMoney(bucket?.totalProfitUsd)}</strong>
       <small>{countLabel}</small>
+      {note ? <em>{note}</em> : null}
     </span>
   </button>;
 }
 
-function Snapshot({
-  values,
-  profitPreview,
-  profitBusy,
-  onCloseAll,
-  onCloseProfit,
-}: {
+function HedgeSummary({ preview, onOpen }: { preview: ProfitPreview | null; onOpen: () => void }) {
+  const exposure = preview?.exposure;
+  const config = preview?.hedgeConfig;
+  const coverage = exposure?.reliable ? exposure.hedgeCoveragePercent : null;
+  const status = exposure?.reliable ? exposure.status : "unavailable";
+  return <div className="aps-hedge-row" data-reference={REFERENCE}>
+    <button type="button" className={`aps-hedge-card aps-hedge-${status}`} onClick={onOpen} aria-label={`Hedge dekking ${hedgePercent(coverage)}, doel ${hedgePercent(config?.targetPercent)}`}>
+      <span className="aps-hedge-shield"><Icon name="shield" /></span>
+      <span className="aps-hedge-copy">
+        <small>HEDGE DEKKING <i aria-hidden="true">i</i></small>
+        <strong>{hedgePercent(coverage)}</strong>
+      </span>
+      <span className="aps-hedge-goal">
+        <small>Doel {hedgePercent(config?.targetPercent)}</small>
+        <b>{hedgeStatusLabel(status)}</b>
+      </span>
+    </button>
+    <div className="aps-exposure-strip" aria-label="Portfolio exposure">
+      <article className="aps-exposure aps-exposure-long"><small>LONG EXPOSURE</small><strong>{exposure?.reliable ? exposureMoney(exposure.longExposureUsd) : "—"}</strong><span>LONG</span></article>
+      <article className="aps-exposure aps-exposure-short"><small>SHORT EXPOSURE</small><strong>{exposure?.reliable ? exposureMoney(exposure.shortExposureUsd) : "—"}</strong><span>SHORT</span></article>
+      <article className={`aps-exposure aps-exposure-net aps-net-${exposure?.netSide?.toLowerCase() || "flat"}`}><small>NETTO OPEN</small><strong>{exposure?.reliable ? exposureMoney(exposure.netExposureUsd, true) : "—"}</strong><span>{exposure?.reliable ? netExposureLabel(exposure) : "—"}</span></article>
+    </div>
+  </div>;
+}
+
+function HedgeDetail({ preview, onClose }: { preview: ProfitPreview | null; onClose: () => void }) {
+  const exposure = preview?.exposure;
+  const config = preview?.hedgeConfig;
+  const reliable = Boolean(exposure?.reliable && config);
+  const coverage = reliable ? exposure?.hedgeCoveragePercent ?? null : null;
+  const status = reliable ? exposure?.status ?? "unavailable" : "unavailable";
+  const ringDegrees = Math.min(360, Math.max(0, (coverage ?? 0) * 3.6));
+  const action = status === "within_target"
+    ? "Je zit rond je doel. Nu niets doen."
+    : status === "above_target"
+      ? "Je hebt meer bescherming dan je doel. Winst op shorts kan ruimte geven om gecontroleerd af te bouwen."
+      : status === "below_target"
+        ? "Je hedge ligt onder je doel. Bij een verdere daling beweegt je portfoliowaarde sterker mee."
+        : "De hedge-dekking kan nu niet betrouwbaar worden berekend.";
+  return <div className="aps-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }} data-reference={HEDGE_DETAIL_REFERENCE}>
+    <section className="aps-sheet aps-hedge-sheet" role="dialog" aria-modal="true" aria-labelledby="aps-hedge-title">
+      <div className="aps-sheet-handle" />
+      <button type="button" className="aps-sheet-x" onClick={onClose} aria-label="Sluiten">×</button>
+      <header className="aps-sheet-title"><span className="aps-big-shield"><Icon name="shield" /></span><div><h3 id="aps-hedge-title">Hedge dekking</h3><p>Hoeveel van je longs nu beschermd worden door shorts</p></div></header>
+      <div className="aps-hedge-overview">
+        <div className="aps-coverage-ring" style={{ "--aps-coverage-angle": `${ringDegrees}deg` } as CSSProperties}>
+          <div><strong>{hedgePercent(coverage)}</strong><b>{hedgeStatusLabel(status)}</b></div>
+        </div>
+        <div className="aps-hedge-target-card">
+          <p>Doel <strong>{hedgePercent(config?.targetPercent)}</strong></p>
+          <b>Gezonde zone: {hedgePercent(config?.healthyMinPercent)} – {hedgePercent(config?.healthyMaxPercent)}</b>
+          <span>{reliable ? `Je hedge dekking is ${hedgePercent(coverage)}. ${status === "within_target" ? "Dit ligt binnen de doelzone." : status === "above_target" ? "Dit ligt boven je doelzone." : "Dit ligt onder je doelzone."}` : "Live exposure is tijdelijk niet betrouwbaar beschikbaar."}</span>
+        </div>
+      </div>
+      <div className="aps-detail-exposures">
+        <article className="long"><small>LONG EXPOSURE</small><strong>{reliable ? exposureMoney(exposure?.longExposureUsd) : "—"}</strong><span>LONG</span></article>
+        <article className="short"><small>SHORT EXPOSURE</small><strong>{reliable ? exposureMoney(exposure?.shortExposureUsd) : "—"}</strong><span>SHORT</span></article>
+        <article className="net"><small>NETTO OPEN</small><strong>{reliable ? exposureMoney(exposure?.netExposureUsd, true) : "—"}</strong><span>{reliable ? netExposureLabel(exposure) : "—"}</span></article>
+      </div>
+      <div className="aps-explain">
+        <h4>Wat betekent dit?</h4>
+        <p><span>🛡</span> Shorts beschermen je longs</p>
+        <p><span>▥</span> Meer dekking = minder schommeling</p>
+        <p><span>↗</span> Minder dekking = meer kans op winst, maar ook meer risico</p>
+      </div>
+      <div className={`aps-action-now aps-action-${status}`}><h4>Actie nu</h4><p><Icon name="shield" /><strong>{action}</strong></p></div>
+      <button type="button" className="aps-sheet-close" onClick={onClose}>Sluiten</button>
+    </section>
+  </div>;
+}
+
+function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: {
+  scope: ProfitScope;
+  bucket: ProfitBucket;
+  config: HedgeConfig;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const impact = bucket.impact;
+  const reliable = impact.before.reliable && impact.after.reliable;
+  const towardTarget = reliable && impact.impactType === "toward_target";
+  const protectionFalls = reliable && impact.protectionDirection === "decreases";
+  const protectionRises = reliable && impact.protectionDirection === "increases";
+  const riskyShort = scope === "SHORT" && protectionFalls && !towardTarget;
+  const awayFromTarget = reliable && impact.impactType === "away_from_target";
+  const positive = towardTarget;
+  const caution = !positive && (riskyShort || awayFromTarget || protectionRises);
+  const mode = positive ? "positive" : caution ? "warning" : "neutral";
+  const countLabel = `${bucket.eligibleCount} ${bucket.eligibleCount === 1 ? "positie" : "posities"}`;
+  const title = scope === "LONG" ? "Close Long" : scope === "SHORT" ? "Close Short" : "Close All";
+  const beforeCoverage = reliable ? hedgePercent(impact.before.hedgeCoveragePercent) : "—";
+  const afterCoverage = reliable ? hedgePercent(impact.after.hedgeCoveragePercent) : "—";
+  const beforeStatus = reliable ? hedgeStatusLabel(impact.before.status) : "—";
+  const afterStatus = reliable ? hedgeStatusLabel(impact.after.status) : "—";
+  const reference = positive ? CLOSE_POSITIVE_REFERENCE : CLOSE_RISK_REFERENCE;
+
+  let headline = "Bekijk wat deze sluiting met je bescherming doet.";
+  let subline = "Je houdt zelf de beslissing.";
+  if (!reliable) {
+    headline = "De hedge-impact kan nu niet volledig betrouwbaar worden berekend.";
+    subline = "De winstselectie is wel opnieuw gecontroleerd. Sluit alleen als je de gevolgen zelf accepteert.";
+  } else if (positive) {
+    headline = "Deze sluiting brengt je hedge richting je doel.";
+    subline = "Je pakt winst en brengt je bescherming dichter bij de ingestelde verhouding.";
+  } else if (riskyShort) {
+    headline = "Je sluit winst, maar je haalt ook bescherming weg.";
+    subline = "Bij verdere daling kan je portfoliowaarde harder dalen.";
+  } else if (protectionRises && awayFromTarget) {
+    headline = "Deze sluiting maakt je portefeuille zwaarder gehedged.";
+    subline = "Je bescherming stijgt, maar je beweegt verder weg van je hedge-doel.";
+  } else if (awayFromTarget) {
+    headline = "Deze sluiting beweegt je hedge weg van je doel.";
+    subline = "Controleer de verhouding voordat je doorgaat.";
+  }
+
+  const confirmLabel = busy ? "Sluiten…" : positive
+    ? scope === "SHORT" ? `Sluit ${bucket.eligibleCount} ${bucket.eligibleCount === 1 ? "short" : "shorts"}` : "Sluiten"
+    : riskyShort ? "Toch sluiten" : "Sluiten";
+
+  return <div className="aps-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) onCancel(); }} data-reference={reference}>
+    <section className={`aps-sheet aps-close-sheet aps-close-${mode}`} role="dialog" aria-modal="true" aria-labelledby="aps-close-title">
+      <div className="aps-sheet-handle" />
+      <button type="button" className="aps-sheet-x" onClick={onCancel} disabled={busy} aria-label="Sluiten">×</button>
+      <header className="aps-close-heading"><span className={`aps-close-direction scope-${scope.toLowerCase()}`}>{scope === "LONG" ? "↗" : scope === "SHORT" ? "↘" : "◎"}</span><h3 id="aps-close-title">{title}</h3></header>
+      <div className="aps-close-profit"><span>$</span><div><strong>{profitMoney(bucket.totalProfitUsd)}</strong><small>{countLabel}</small></div></div>
+      <div className={`aps-close-message aps-message-${mode}`}><span>{positive ? "✓" : mode === "warning" ? "!" : "i"}</span><div><strong>{headline}</strong><p>{subline}</p></div></div>
+
+      <div className="aps-before-after">
+        <div className="aps-ba-head"><span /><small>NU</small><small>NA SLUITEN</small></div>
+        <div className="aps-ba-row"><b>Hedge dekking<small>Bescherming van je portfolio</small></b><strong>{beforeCoverage}</strong><i>→</i><strong>{afterCoverage}</strong></div>
+        <div className="aps-ba-row"><b>Netto open<small>Marktexposure (US$)</small></b><strong>{reliable ? exposureMoney(impact.before.netExposureUsd, true) : "—"}<small>{reliable ? netExposureLabel(impact.before) : ""}</small></strong><i>→</i><strong>{reliable ? exposureMoney(impact.after.netExposureUsd, true) : "—"}<small>{reliable ? netExposureLabel(impact.after) : ""}</small></strong></div>
+        <div className="aps-ba-row"><b>Status<small>Doel {hedgePercent(config.targetPercent)}</small></b><strong>{beforeStatus}</strong><i>→</i><strong>{afterStatus}</strong></div>
+      </div>
+
+      {scope === "SHORT" && reliable ? <div className="aps-removed-exposure"><span>SHORT exposure die je sluit</span><strong>{exposureMoney(impact.removedShortExposureUsd)}</strong></div> : null}
+      {scope === "LONG" && reliable ? <div className="aps-removed-exposure"><span>LONG exposure die je sluit</span><strong>{exposureMoney(impact.removedLongExposureUsd)}</strong></div> : null}
+      {scope === "ALL" && reliable ? <div className="aps-removed-exposure"><span>Exposure die je sluit</span><strong>L {exposureMoney(impact.removedLongExposureUsd)} · S {exposureMoney(impact.removedShortExposureUsd)}</strong></div> : null}
+
+      {positive ? <div className="aps-close-reason"><h4>Waarom past dit nu?</h4><p>✓ Je beweegt richting je hedge-doel</p><p>✓ De nieuwe verhouding is gunstiger ten opzichte van je ingestelde doel</p></div> : null}
+      {riskyShort ? <div className="aps-close-advice">Advies: nu liever niet sluiten als je deze shorts als hedge nodig hebt.</div> : null}
+      {!reliable ? <div className="aps-close-advice">Geen risico-percentages verzonnen: onbetrouwbare hedge-data wordt bewust niet ingevuld.</div> : null}
+
+      <div className="aps-close-buttons">
+        <button type="button" className="aps-cancel" onClick={onCancel} disabled={busy}>Annuleren<small>{riskyShort ? "Houd je bescherming aan" : "Niets wijzigen"}</small></button>
+        <button type="button" className={`aps-confirm aps-confirm-${mode}`} onClick={onConfirm} disabled={busy}>{confirmLabel}<small>{riskyShort ? "Neem winst en verlaag hedge" : positive ? "Pak winst en herstel verhouding" : "Voer sluiting uit"}</small></button>
+      </div>
+    </section>
+  </div>;
+}
+
+function Snapshot({ values, profitPreview, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   profitBusy: ProfitScope | null;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
+  onOpenHedge: () => void;
 }) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={REFERENCE}>
     <header>
@@ -199,6 +411,7 @@ function Snapshot({
       <MetricCard icon="result" label="GESLOTEN RESULTAAT" value={values.realized} tone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "normal"} />
       <MetricCard icon="trades" label="TRADES GESLOTEN" value={values.tradesClosed} />
     </div>
+    <HedgeSummary preview={profitPreview} onOpen={onOpenHedge} />
     <div className="aps-status-row">
       <div className="aps-status aps-balance"><Icon name="balance" /><strong><b>{values.longs}L</b><span>/</span><em>{values.shorts}S</em></strong></div>
       <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
@@ -216,13 +429,33 @@ function Snapshot({
   </section>;
 }
 
+function finiteExposure(exposure: ExposureSnapshot | undefined) {
+  return Boolean(exposure
+    && typeof exposure.reliable === "boolean"
+    && Number.isFinite(exposure.longExposureUsd)
+    && Number.isFinite(exposure.shortExposureUsd)
+    && Number.isFinite(exposure.netExposureUsd));
+}
+
 async function loadProfitPreview(): Promise<ProfitPreview> {
   const payload = await authenticatedRequest("/api/exchanges/aster/positions/profitable-close-preview", { cache: "no-store" }) as ProfitPreview;
   const buckets = [payload?.long, payload?.short, payload?.all];
+  const validConfig = payload?.hedgeConfig
+    && Number.isFinite(payload.hedgeConfig.targetPercent)
+    && Number.isFinite(payload.hedgeConfig.healthyMinPercent)
+    && Number.isFinite(payload.hedgeConfig.healthyMaxPercent);
   const valid = payload?.reliable === true
     && payload?.comparison === "greater_than_or_equal"
-    && buckets.every((bucket) => bucket && Number.isInteger(bucket.eligibleCount) && bucket.eligibleCount >= 0 && Number.isFinite(bucket.totalProfitUsd));
-  if (!valid) throw new Error("De actuele winstselectie is niet betrouwbaar beschikbaar.");
+    && validConfig
+    && finiteExposure(payload?.exposure)
+    && buckets.every((bucket) => bucket
+      && Number.isInteger(bucket.eligibleCount)
+      && bucket.eligibleCount >= 0
+      && Number.isFinite(bucket.totalProfitUsd)
+      && bucket.impact
+      && finiteExposure(bucket.impact.before)
+      && finiteExposure(bucket.impact.after));
+  if (!valid) throw new Error("De actuele winst- en hedgecontrole is niet betrouwbaar beschikbaar.");
   return payload;
 }
 
@@ -231,6 +464,8 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
+  const [hedgeOpen, setHedgeOpen] = useState(false);
+  const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
   const syncing = useRef(false);
 
@@ -298,11 +533,32 @@ export function AsterPortfolioSnapshotEnhancer() {
     };
     void refresh();
     const timer = window.setInterval(refresh, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       alive = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [host]);
+
+  useEffect(() => {
+    const modalOpen = hedgeOpen || Boolean(confirmScope);
+    if (!modalOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !profitBusy) {
+        setHedgeOpen(false);
+        setConfirmScope(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [hedgeOpen, confirmScope, profitBusy]);
 
   const closeAll = () => {
     const legacy = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
@@ -310,7 +566,7 @@ export function AsterPortfolioSnapshotEnhancer() {
     legacy.click();
   };
 
-  const closeProfit = async (scope: ProfitScope) => {
+  const openProfitPreview = async (scope: ProfitScope) => {
     if (profitBusy) return;
     setProfitBusy(scope);
     try {
@@ -318,11 +574,26 @@ export function AsterPortfolioSnapshotEnhancer() {
       setProfitPreview(fresh);
       const bucket = scope === "LONG" ? fresh.long : scope === "SHORT" ? fresh.short : fresh.all;
       if (bucket.eligibleCount < 1) return;
-      const label = scope === "LONG" ? "Close Long" : scope === "SHORT" ? "Close Short" : "Close All";
-      const positions = `${bucket.eligibleCount} ${bucket.eligibleCount === 1 ? "positie" : "posities"}`;
-      const confirmed = window.confirm(`${label}\n\n${profitMoney(bucket.totalProfitUsd)} · ${positions}\n\nAlleen posities die bij de servercontrole nog steeds minimaal US$ 0,50 winst hebben worden gesloten. Doorgaan?`);
-      if (!confirmed) return;
+      setConfirmScope(scope);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "De winst- en hedgecontrole kon niet veilig worden geladen.");
+    } finally {
+      setProfitBusy(null);
+    }
+  };
 
+  const confirmProfitClose = async () => {
+    const scope = confirmScope;
+    if (!scope || profitBusy) return;
+    setProfitBusy(scope);
+    try {
+      const fresh = await loadProfitPreview();
+      setProfitPreview(fresh);
+      const bucket = scope === "LONG" ? fresh.long : scope === "SHORT" ? fresh.short : fresh.all;
+      if (bucket.eligibleCount < 1) {
+        setConfirmScope(null);
+        return;
+      }
       await authenticatedRequest(`/api/exchanges/aster/positions/close-profitable?side=${scope}`, {
         method: "POST",
         body: JSON.stringify({
@@ -330,13 +601,13 @@ export function AsterPortfolioSnapshotEnhancer() {
           idempotency_key: `snapshot-profit-${scope.toLowerCase()}-${Date.now()}-${crypto.randomUUID()}`,
         }),
       });
-
-      try {
-        setProfitPreview(await loadProfitPreview());
-      } catch {
-        setProfitPreview(null);
-      }
-      window.setTimeout(() => window.location.reload(), 250);
+      setConfirmScope(null);
+      window.setTimeout(async () => {
+        try { setProfitPreview(await loadProfitPreview()); } catch { setProfitPreview(null); }
+      }, 600);
+      window.setTimeout(async () => {
+        try { setProfitPreview(await loadProfitPreview()); } catch { /* keep last reliable values */ }
+      }, 2400);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "De winstposities konden niet veilig worden gesloten.");
     } finally {
@@ -344,14 +615,30 @@ export function AsterPortfolioSnapshotEnhancer() {
     }
   };
 
+  const confirmBucket = confirmScope && profitPreview
+    ? confirmScope === "LONG" ? profitPreview.long : confirmScope === "SHORT" ? profitPreview.short : profitPreview.all
+    : null;
+
   return host ? createPortal(
-    <Snapshot
-      values={values}
-      profitPreview={profitPreview}
-      profitBusy={profitBusy}
-      onCloseAll={closeAll}
-      onCloseProfit={closeProfit}
-    />,
+    <>
+      <Snapshot
+        values={values}
+        profitPreview={profitPreview}
+        profitBusy={profitBusy}
+        onCloseAll={closeAll}
+        onCloseProfit={openProfitPreview}
+        onOpenHedge={() => setHedgeOpen(true)}
+      />
+      {hedgeOpen ? <HedgeDetail preview={profitPreview} onClose={() => setHedgeOpen(false)} /> : null}
+      {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
+        scope={confirmScope}
+        bucket={confirmBucket}
+        config={profitPreview.hedgeConfig}
+        busy={profitBusy === confirmScope}
+        onCancel={() => { if (!profitBusy) setConfirmScope(null); }}
+        onConfirm={confirmProfitClose}
+      /> : null}
+    </>,
     host,
   ) : null;
 }
