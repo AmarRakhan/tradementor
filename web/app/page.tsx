@@ -28,6 +28,7 @@ import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
 import { PortfolioImpactBattle } from "@/components/portfolio-impact-battle";
 import { HomeNavigationBridge } from "@/components/home-navigation-bridge";
+import { effectiveAsterDcaCount } from "@/lib/aster-dca-count.mjs";
 
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -930,7 +931,7 @@ function exchangeView(exchange: TradingExchange, snapshot: ExchangeSnapshot) {
       liquidationPrice: asNumber(row.liquidationPrice),
       pnl: asNumber(row.unrealizedPnl),
       leverage: asNumber(row.leverage),
-      dcaCount: asNumber(row.dcaCount),
+      dcaCount: effectiveAsterDcaCount(row, asRecord(data.strategy2)),
       lastOrderAt: asTimestamp(row.lastOrderAt ?? row.updatedAt ?? row.openedAt),
       openedAt: asTimestamp(row.openedAt),
       strategy: String(row.strategyName ?? row.strategyId ?? ""),
