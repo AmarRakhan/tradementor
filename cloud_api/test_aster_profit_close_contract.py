@@ -27,6 +27,14 @@ def test_bulk_close_rechecks_each_leg_and_never_reverses_it():
     assert "remaining is not None" in route
 
 
+def test_bulk_close_supports_long_short_all_from_the_same_route():
+    route = route_source()
+    assert 'side: str = "ALL"' in route
+    assert 'scope not in {"ALL", "LONG", "SHORT"}' in route
+    assert 'candidate["side"] == scope' in route
+    assert 'f"{uid}:{scope}:{request.idempotency_key}"' in route
+
+
 def test_bulk_close_is_sequential_and_holds_strategy_queue_lease():
     route = route_source()
     assert "_acquire_strategy2_queue_lease" in route
