@@ -12,7 +12,7 @@ test("Bull vs Bear BTC state is independent of positions and leverage enrichment
   assert.doesNotMatch(component, /authenticatedRequest\("\/api\/markets\/aster"\)/);
   assert.match(btcRoute, /const SYMBOL = "BTCUSDT"/);
   assert.match(btcRoute, /fapi\/v1\/klines/);
-  assert.match(btcRoute, /fapi\/v1\/ticker\/price/);
+  assert.match(btcRoute, /const livePrice = closes\.at\(-1\)/);
   assert.doesNotMatch(btcRoute, /leverage|positions|strategy2\/focus\/markets|close-all|strategy2\/start|strategy2\/stop/);
 });
 
