@@ -36,12 +36,15 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q cloud_api
 
-      - name: Run Dynamic Hedge and liquidation safety tests
+      - name: Run Dynamic Hedge, close-isolation and 15-scenario safety tests
         working-directory: cloud_api
         run: >-
           python -m pytest -q
           test_aster_dynamic_hedge.py
           test_aster_dynamic_hedge_api.py
+          test_aster_dynamic_hedge_manual.py
+          test_dynamic_hedge_scenario_matrix_20260910.py
+          test_dynamic_hedge_main_integration_20260910.py
           test_aster_cross_risk.py
           test_aster_profit_close.py
           test_aster_profit_close_contract.py
@@ -80,5 +83,5 @@ jobs:
             echo 'No generated main.py integration changes to commit.'
             exit 0
           fi
-          git commit -m 'Wire Dynamic Hedge liquidation safety routes'
+          git commit -m 'Wire Dynamic Hedge manual-close safety locks'
           git push origin HEAD:feature/dynamic-hedge-liquidation-safety-20260910
