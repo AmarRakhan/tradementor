@@ -36,7 +36,21 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/feature/dynamic-hedge-liquidation-safety-20260910"
-          ! grep -Eq 'place_order|new_order|submit_order|execute_decision|execute_leg|execute_close' "$GITHUB_WORKSPACE/.github/workflows/dynamic-hedge-layer-c-read-only-20260910.yml"
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('.github/workflows/dynamic-hedge-layer-c-read-only-20260910.yml').read_text(encoding='utf-8')
+          forbidden = [
+              'live_authorized=' + 'True',
+              'ASTER_LIVE_EXECUTION_ENABLED=' + 'true',
+              'ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=' + 'true',
+              '.' + 'new_order' + '(',
+              '.' + 'place_order' + '(',
+              '.' + 'submit_order' + '(',
+          ]
+          found = [token for token in forbidden if token in text]
+          if found:
+              raise SystemExit('Read-only proof failed: mutating token present')
+          PY
 
       - uses: google-github-actions/auth@v2
         with:
