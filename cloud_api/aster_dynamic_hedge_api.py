@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from aster_cross_risk import cross_account_risk
 from aster_dynamic_hedge import DynamicHedgeConfig, assess_dynamic_hedge, robust_hedge_coverage
+from aster_dynamic_hedge_verify import verify_read_only_projection
 
 
 class DynamicHedgeToggleRequest(BaseModel):
@@ -108,21 +109,23 @@ def install_aster_dynamic_hedge_routes(
             raise HTTPException(502, "Aster gaf onvolledige margin-/positiedata terug")
         positions = _position_payload(rows)
         risk = cross_account_risk(account, rows)
+        verification = verify_read_only_projection(account, rows, risk)
         return {
             "account": account,
             "positions": positions,
             "openOrders": orders,
             "risk": risk,
+            "verification": verification,
             "fingerprint": _fingerprint(positions, orders),
             "capturedAt": _now(),
         }
 
-    def exposure_from_risk(risk: dict[str, Any], positions: list[dict[str, Any]]) -> dict[str, Any]:
+    def exposure_from_risk(risk: dict[str, Any], positions: list[dict[str, Any]], verified: bool) -> dict[str, Any]:
         long_value = _number(risk.get("longNotional"))
         short_value = _number(risk.get("shortNotional"))
         net = long_value - short_value
         return {
-            "reliable": bool(risk.get("reliable", False)) and len(positions) == int(risk.get("positionCountIncluded", len(positions))),
+            "reliable": bool(verified) and bool(risk.get("reliable", False)) and len(positions) == int(risk.get("positionCountIncluded", len(positions))),
             "longExposureUsd": long_value,
             "shortExposureUsd": short_value,
             "netExposureUsd": net,
@@ -151,10 +154,13 @@ def install_aster_dynamic_hedge_routes(
                 "lastActionAt": _iso(stored.get("lastActionAt")),
                 "generatedAt": _now().isoformat(),
                 "executionGateOpen": False,
+                "readOnlyVerification": {"passed": False, "readOnly": True, "ordersSubmitted": 0, "failureCodes": ["ASTER_READ_FAILED"]},
             }
         risk = exchange["risk"]
+        verification = exchange["verification"]
+        verified = bool(verification.get("passed", False))
         positions = exchange["positions"]
-        exposure = exposure_from_risk(risk, positions)
+        exposure = exposure_from_risk(risk, positions, verified)
         enabled = bool(stored.get("enabled", False))
         owner = str(stored.get("ownershipState", "NORMAL" if not enabled else "ADOPTING")).upper()
         stored_fp = str(stored.get("positionFingerprint", ""))
@@ -178,16 +184,17 @@ def install_aster_dynamic_hedge_routes(
                 }
             elif owner == "ADOPTING":
                 stable_reads += 1
-                if stable_reads >= 2:
+                if stable_reads >= 2 and verified:
                     owner = "DYNAMIC_HEDGE_ACTIVE"
                     update = {
                         "ownershipState": owner,
                         "stableReads": stable_reads,
                         "positionFingerprint": current_fp,
                         "adoptedPositionCount": len(positions),
-                        "lastReason": "Bestaande Aster-posities stabiel gereconcilieerd; Dynamic Hedge ownership actief",
+                        "lastReason": "Bestaande Aster-posities en read-only safety-data stabiel gereconcilieerd; Dynamic Hedge ownership actief",
                         "lastAction": "ADOPTION_CONFIRMED",
                         "lastActionAt": _now(),
+                        "lastVerifiedAt": _now(),
                         "updatedAt": _now(),
                     }
                 else:
@@ -200,11 +207,12 @@ def install_aster_dynamic_hedge_routes(
                 stored = {**stored, **update}
         if not enabled:
             owner = "NORMAL"
+        verified_risk = risk if verified else {**risk, "reliable": False}
         assessment = assess_dynamic_hedge(
             enabled=enabled,
             ownership_state=owner,
             exposure=exposure,
-            risk=risk,
+            risk=verified_risk,
             candidate=None,
             config=policy,
         )
@@ -215,7 +223,7 @@ def install_aster_dynamic_hedge_routes(
         maintenance = _number(risk.get("maintenanceMarginUsd"))
         return {
             **assessment,
-            "reliable": bool(assessment.get("reliable")) and bool(risk.get("reliable")),
+            "reliable": bool(assessment.get("reliable")) and verified,
             "monitoringAlwaysActive": True,
             "enabled": enabled,
             "ownershipState": owner,
@@ -237,9 +245,10 @@ def install_aster_dynamic_hedge_routes(
             "bufferRatio": risk.get("bufferRatio"),
             "liquidationRiskPct": risk.get("liquidationRiskPct"),
             "liquidationRiskSource": risk.get("liquidationRiskSource"),
-            "safetyStatus": risk.get("liquidationSafetyStatus", assessment.get("safetyStatus")),
+            "safetyStatus": risk.get("liquidationSafetyStatus", assessment.get("safetyStatus")) if verified else "DATA_ONBETROUWBAAR",
             "openOrderCount": len(exchange["openOrders"]),
             "executionGateOpen": execution_gate,
+            "readOnlyVerification": verification,
             "lastAction": str(stored.get("lastAction", "MONITORING")),
             "lastActionAt": _iso(stored.get("lastActionAt")),
             "lastReason": str(stored.get("lastReason", assessment.get("reasonCode", "MONITORING_ONLY"))),
@@ -252,6 +261,15 @@ def install_aster_dynamic_hedge_routes(
     def dynamic_hedge_state(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
         return public_state(user)
 
+    @app.get("/v1/me/aster/dynamic-hedge/verify")
+    def dynamic_hedge_verify(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+        exchange = read_exchange(user)
+        return {
+            **exchange["verification"],
+            "capturedAt": _iso(exchange["capturedAt"]),
+            "positionFingerprint": exchange["fingerprint"],
+        }
+
     @app.put("/v1/me/aster/dynamic-hedge/enabled")
     def dynamic_hedge_enabled(request: DynamicHedgeToggleRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
         if not request.confirm:
@@ -260,6 +278,8 @@ def install_aster_dynamic_hedge_routes(
             exchange = read_exchange(user)
             if not bool(exchange["risk"].get("reliable", False)):
                 raise HTTPException(409, "Dynamic Hedge kan niet starten zonder betrouwbare Aster margin-data")
+            if not bool(exchange["verification"].get("passed", False)):
+                raise HTTPException(409, "Dynamic Hedge kan niet starten: read-only Aster-verificatie wijkt af")
             ref(user).set({
                 "enabled": True,
                 "ownershipState": "ADOPTING",
@@ -267,6 +287,8 @@ def install_aster_dynamic_hedge_routes(
                 "positionFingerprint": exchange["fingerprint"],
                 "adoptedPositionCount": len(exchange["positions"]),
                 "enabledAt": _now(),
+                "lastVerifiedAt": _now(),
+                "lastVerification": exchange["verification"],
                 "lastAction": "ADOPTION_STARTED",
                 "lastActionAt": _now(),
                 "lastReason": "Bestaande posities worden overgenomen; er is geen positie gesloten of opnieuw geopend",
