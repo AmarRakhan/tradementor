@@ -126,11 +126,7 @@ export function PortfolioGrowthCard({ onChanged = () => {} }: { onChanged?: () =
     try {
       const result = await authenticatedRequest("/api/exchanges/aster/automation/close-all", {
         method: "POST",
-        body: JSON.stringify({
-          confirm: true,
-          quote_id: quoteId,
-          idempotency_key: closeRequest.current.key,
-        }),
+        body: JSON.stringify({confirm: true, quote_id:data.quoteId, idempotency_key: closeRequest.current.key}),
       }) as CloseResult;
       if (String(result.status || "").toUpperCase() !== "COMPLETED") {
         throw new Error("Aster heeft Alles sluiten niet als voltooid bevestigd.");
