@@ -33,9 +33,27 @@ def test_emergency_all_close_locks_entire_dynamic_controller_until_flat_confirme
     assert 'if remaining:' in text
 
 
+def test_strategy2_scheduler_runs_dynamic_overlay_before_multi_bb():
+    text = segment("def _run_aster_strategy2_tick(", "def _run_aster_strategy2_queue_scan(")
+    overlay = text.index("run_dynamic_hedge_overlay(")
+    normal = text.index("run_multi_bb_step(", overlay)
+    assert overlay < normal
+    assert 'dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)' in text
+    assert 'dynamic_hedge_blocked_side=blocked_side' in text
+
+
+def test_old_asymmetric_and_portfolio_tp_are_suppressed_only_during_dynamic_ownership():
+    text = segment("def _run_aster_strategy2_tick(", "def _run_aster_strategy2_queue_scan(")
+    assert 'replace(runtime_settings,asymmetric_hedge_enabled=False)' in text
+    assert 'replace(runtime_settings,take_profit_mode="OFF")' in text
+    assert 'if bool(dynamic_stored.get("enabled",False))' in text
+
+
 def test_dynamic_execution_gate_remains_off_by_default():
     api = Path(__file__).with_name("aster_dynamic_hedge_api.py").read_text(encoding="utf-8")
+    executor = Path(__file__).with_name("aster_dynamic_hedge_execution.py").read_text(encoding="utf-8")
     assert 'os.getenv("ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED", "false")' in api
+    assert 'os.getenv("ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED", "false")' in executor
 
 
 def test_main_installs_one_dynamic_hedge_route_family():
