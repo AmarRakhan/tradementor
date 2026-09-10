@@ -1,0 +1,41 @@
+name: Fix Hedge Hardening Whitespace 20260910
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .github/workflows/fix-hedge-hardening-whitespace-20260910.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Normalize generated test EOF
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/apply-interactive-hedge-recovery-20260910.yml')
+          text = path.read_text()
+          old = "text = text.rstrip() + tests + '\\n'"
+          new = "text = text.rstrip() + tests.rstrip() + '\\n'"
+          count = text.count(old)
+          if count != 2:
+              raise SystemExit(f'expected 2 EOF-normalization anchors, found {count}')
+          path.write_text(text.replace(old, new))
+          PY
+          git diff --check
+      - name: Commit workflow correction
+        run: |
+          git config user.name 'AmarRakhan'
+          git config user.email 'amar_rakhan@hotmail.com'
+          git add .github/workflows/apply-interactive-hedge-recovery-20260910.yml
+          git commit -m 'Normalize hedge hardening generated test files'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
