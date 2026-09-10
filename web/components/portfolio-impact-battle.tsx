@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import {
   battleStatus,
-  bollingerScore,
   clampBollingerScore,
   legacyPressureOverrideToBollingerScore,
   scoreToTimelineTime,
@@ -17,7 +16,6 @@ import videoStyles from "./portfolio-impact-bull-bear-video.module.css";
 
 type BattlePosition = Record<string, unknown>;
 type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "24h";
-type AsterMarketRow = Record<string, unknown>;
 type BollingerSnapshot = {
   timeframe: Timeframe;
   price: number;
@@ -52,7 +50,7 @@ const REFRESH_MS: Record<Timeframe, number> = {
   "4h": 120_000,
   "24h": 300_000,
 };
-const MASTER_SOURCE = "/portfolio-impact-bull-bear-master.mp4";
+const MASTER_SOURCE = "/api/media/bull-bear-master?v=2";
 const POSTER_SOURCE = "/portfolio-impact-bull-bear-neutral.webp";
 const SEEK_EPSILON_SECONDS = 1 / 30;
 const money = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -94,26 +92,25 @@ function formatShare(value: number) {
 function tone(value: number) {
   return value > 0.005 ? styles.positive : value < -0.005 ? styles.negative : styles.neutral;
 }
-function marketRows(value: unknown): AsterMarketRow[] {
-  if (!value || typeof value !== "object") return [];
-  const rows = (value as Record<string, unknown>).markets;
-  return Array.isArray(rows) ? rows.filter((row): row is AsterMarketRow => Boolean(row && typeof row === "object")) : [];
-}
-function btcRow(value: unknown) {
-  return marketRows(value).find((row) => String(row.symbol ?? "").toUpperCase().replace(/[\/_-]/g, "") === "BTCUSDT") ?? null;
-}
-function parseBollingerSnapshot(enriched: unknown, base: unknown, timeframe: Timeframe): BollingerSnapshot | null {
-  const bandRow = btcRow(enriched);
-  const priceRow = btcRow(base);
-  if (!bandRow || !priceRow) return null;
-  const lower = finiteNumber(bandRow.bbLower);
-  const middle = finiteNumber(bandRow.bbMiddle);
-  const upper = finiteNumber(bandRow.bbUpper);
-  const price = finiteNumber(priceRow.lastPrice ?? priceRow.price ?? priceRow.markPrice);
-  if (lower === null || middle === null || upper === null || price === null) return null;
-  const score = bollingerScore(price, lower, upper);
-  if (score === null) return null;
-  return { timeframe, price, lower, middle, upper, score, updatedAt: Date.now() };
+function parseBollingerSnapshot(value: unknown, timeframe: Timeframe): BollingerSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (String(row.symbol ?? "").toUpperCase().replace(/[\/_-]/g, "") !== "BTCUSDT") return null;
+  const lower = finiteNumber(row.lower);
+  const middle = finiteNumber(row.middle);
+  const upper = finiteNumber(row.upper);
+  const price = finiteNumber(row.price);
+  const score = finiteNumber(row.score);
+  if (lower === null || middle === null || upper === null || price === null || score === null || !(upper > lower)) return null;
+  return {
+    timeframe,
+    price,
+    lower,
+    middle,
+    upper,
+    score: clampBollingerScore(score),
+    updatedAt: finiteNumber(row.updatedAt) ?? Date.now(),
+  };
 }
 function easeInOutCubic(value: number) {
   return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
@@ -158,6 +155,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       setLoadingPressure(false);
       setPressureError("");
     } else {
+      setBollinger(null);
       setLoadingPressure(true);
       setPressureError("");
     }
@@ -166,11 +164,8 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       if (!quiet && !bollingerCache.current.has(timeframe)) setLoadingPressure(true);
       try {
         const interval = timeframeToAsterInterval(timeframe);
-        const [enriched, base] = await Promise.all([
-          authenticatedRequest(`/api/markets/aster?mode=enrich&symbols=BTCUSDT&interval=${encodeURIComponent(interval)}`),
-          authenticatedRequest("/api/markets/aster"),
-        ]);
-        const next = parseBollingerSnapshot(enriched, base, timeframe);
+        const payload = await authenticatedRequest(`/api/markets/aster/btc-bollinger?interval=${encodeURIComponent(interval)}`);
+        const next = parseBollingerSnapshot(payload, timeframe);
         if (!active) return;
         if (!next) throw new Error("BTC Bollinger-data tijdelijk niet beschikbaar");
         bollingerCache.current.set(timeframe, next);
@@ -203,7 +198,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
     const from = displayScoreRef.current;
     if (reduced || !shouldAnimateScore(from, targetScore)) {
-      if (reduced && from !== targetScore) {
+      if (from !== targetScore && reduced) {
         displayScoreRef.current = targetScore;
         setDisplayScore(targetScore);
         seek(targetScore);
@@ -269,8 +264,10 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       <img className={videoStyles.poster} src={POSTER_SOURCE} alt="" aria-hidden="true" />
       {!videoFailed ? <video ref={videoRef} className={`${videoStyles.video} ${videoReady ? videoStyles.videoReady : ""}`} src={MASTER_SOURCE} poster={POSTER_SOURCE}
         preload="auto" muted playsInline disablePictureInPicture aria-hidden="true" tabIndex={-1}
-        onLoadedMetadata={syncVideoToScore}
+        onLoadedMetadata={() => { setVideoFailed(false); syncVideoToScore(); }}
+        onLoadedData={syncVideoToScore}
         onCanPlay={() => { syncVideoToScore(); setVideoReady(true); }}
+        onSeeked={() => setVideoReady(true)}
         onError={() => { setVideoFailed(true); setVideoReady(false); }} /> : null}
       <div className={styles.vignette} aria-hidden="true" />
 
