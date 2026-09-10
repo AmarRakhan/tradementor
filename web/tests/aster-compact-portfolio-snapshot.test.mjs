@@ -11,7 +11,7 @@ test("Aster compact Portfolio Snapshot follows the approved reference and preser
   ]);
   assert.match(layout, /AsterPortfolioSnapshotEnhancer/);
   assert.match(layout, /portfolio-snapshot\.css/);
-  assert.match(component, /m_6a9e9a59189881918875e6317fdfc847/);
+  assert.match(component, /file_00000000a7bc82438e4e1d5f076b47c9/);
   for (const label of ["PORTFOLIO SNAPSHOT", "PORTFOLIOWAARDE", "AVAILABLE TO TRADE", "ACTIEF TRADE CAPITAL", "ACTIEVE POSITIES", "GESLOTEN RESULTAAT", "TRADES GESLOTEN", "LIQUIDATIERISICO", "RENDEMENT VANDAAG", "GEMIDDELD PER DAG", "ALLES SLUITEN"]) assert.match(component, new RegExp(label));
   assert.match(component, /portfolio-close-all/);
   assert.match(component, /legacy\.click\(\)/);
