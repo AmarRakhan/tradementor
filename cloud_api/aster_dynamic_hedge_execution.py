@@ -259,10 +259,13 @@ def _close_evidence(client: Any, uid: str, row: dict[str, Any], reason: str) -> 
     )
 
 
-def _plan_profitable_reduction(client: Any, uid: str, positions: list[dict[str, Any]], side: str, reason: str) -> dict[str, Any] | None:
+def _plan_profitable_reduction(client: Any, uid: str, positions: list[dict[str, Any]], side: str, reason: str, *, maximum_notional_usd: float | None = None) -> dict[str, Any] | None:
     candidates = [row for row in _active(positions) if _side(row) == side and _n(row.get("unRealizedProfit", row.get("unrealizedPnl"))) > 0]
     candidates.sort(key=lambda row: (_notional(row), -_n(row.get("unRealizedProfit", row.get("unrealizedPnl"))), str(row.get("symbol", ""))))
     for row in candidates:
+        row_notional=_notional(row)
+        if maximum_notional_usd is not None and row_notional > max(0.0, float(maximum_notional_usd)) * 1.001:
+            continue
         try:
             evidence = _close_evidence(client, uid, row, reason)
         except Exception:
@@ -338,11 +341,14 @@ def run_dynamic_hedge_overlay(
     if not bool(stored.get("enabled", False)):
         return {"handled": False, "ordersSent": 0, "status": "off", "action": "MONITORING"}
     owner = str(stored.get("ownershipState", "ADOPTING")).upper()
-    if owner != "DYNAMIC_HEDGE_ACTIVE":
-        return {"handled": True, "ordersSent": 0, "status": "waiting", "action": "HOLD", "reason": f"ownership_{owner.lower()}"}
+    # A previously submitted Dynamic Hedge intent is reconciled from exchange
+    # truth before ownership-state gating. This permits safe recovery from a
+    # 503/restart while still preventing any second POST.
     pending = _pending_result(control_ref, client, positions)
     if pending is not None:
         return {"handled": True, **pending}
+    if owner != "DYNAMIC_HEDGE_ACTIVE":
+        return {"handled": True, "ordersSent": 0, "status": "waiting", "action": "HOLD", "reason": f"ownership_{owner.lower()}"}
     risk = cross_account_risk(account, positions)
     verification = verify_read_only_projection(account, positions, risk)
     if not verification["passed"]:
@@ -364,12 +370,14 @@ def run_dynamic_hedge_overlay(
         if reduction_side:
             action = _plan_profitable_reduction(client, uid, positions, reduction_side, "CRITICAL_MARGIN_GROSS_REDUCTION")
         reason = "CRITICAL_MARGIN_REDUCE_GROSS"
-    elif coverage is not None and target and coverage > target[1] + policy.hysteresis_percent:
+    elif coverage is not None and target and coverage > target[1] + policy.target_hysteresis_pct:
         hedge_side = "SHORT" if dominant_side == "LONG" else "LONG" if dominant_side == "SHORT" else ""
         if hedge_side:
-            action = _plan_profitable_reduction(client, uid, positions, hedge_side, "DYNAMIC_HEDGE_ABOVE_TARGET")
+            dominant_value=max(long_value,short_value); hedge_value=min(long_value,short_value)
+            maximum_close=max(0.0,hedge_value-dominant_value*target[1]/100.0)
+            action = _plan_profitable_reduction(client, uid, positions, hedge_side, "DYNAMIC_HEDGE_ABOVE_TARGET", maximum_notional_usd=maximum_close)
         reason = "HEDGE_ABOVE_DYNAMIC_TARGET"
-    elif coverage is not None and target and coverage < target[0] - policy.hysteresis_percent and desired_side:
+    elif coverage is not None and target and coverage < target[0] - policy.target_hysteresis_pct and desired_side:
         dominant_value = max(long_value, short_value)
         hedge_value = min(long_value, short_value)
         needed = max(0.0, dominant_value * target[0] / 100.0 - hedge_value)

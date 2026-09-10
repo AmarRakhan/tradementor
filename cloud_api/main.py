@@ -118,6 +118,8 @@ from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_previ
 from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings
 from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action
+from aster_dynamic_hedge_execution import dynamic_strategy_order_guard
+from aster_dynamic_hedge_sequence import run_dynamic_hedge_sequence
 from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_state import (
     account_values as aster_account_values, reconcile_aster_state,
@@ -1401,7 +1403,36 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
-    # The legacy Focus/Strategy-2 planners are retired. The new engine owns all active decisions.
+    # The legacy Focus/Strategy-2 planners are retired. Multi BB remains the
+    # dominant-side strategy; Dynamic Hedge exclusively owns the smaller hedge
+    # side while its optional toggle is enabled.
+    dynamic_ref=user_reference({"uid":uid}).collection("asterDynamicHedge").document("control")
+    dynamic_stored=dynamic_ref.get().to_dict() or {}
+    if bool(dynamic_stored.get("enabled",False)):
+        dynamic=run_dynamic_hedge_sequence(client=client,control_ref=dynamic_ref,settings=settings,uid=uid,account=account,
+            positions=positions,open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
+        ref.set({"dynamicHedgeReport":dynamic,"dynamicHedgeUpdatedAt":now},merge=True)
+        if int(safe_float(dynamic.get("ordersSent")))>0 or str(dynamic.get("reason",""))!="HEDGE_STABLE" or str(dynamic.get("safetyStatus","VEILIG"))!="VEILIG":
+            return {"status":str(dynamic.get("status","waiting")),"action":"DYNAMIC_HEDGE","ordersSent":int(safe_float(dynamic.get("ordersSent"))),"dynamicHedge":dynamic}
+        long_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="LONG")
+        short_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="SHORT")
+        blocked_side="SHORT" if long_exposure>short_exposure else "LONG" if short_exposure>long_exposure else ""
+        runtime_settings=settings
+        if bool(getattr(runtime_settings,"asymmetric_hedge_enabled",False)):
+            runtime_settings=replace(runtime_settings,asymmetric_hedge_enabled=False)
+        if str(getattr(runtime_settings,"take_profit_mode",""))=="PORTFOLIO":
+            runtime_settings=replace(runtime_settings,take_profit_mode="OFF")
+        def dynamic_before_order(intent):
+            dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)
+            if before_order is not None:
+                try:return before_order(intent)
+                except TypeError:return before_order(intent,None)
+            return None
+        report=run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=runtime_settings,uid=uid,account=account,positions=positions,
+            open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=dynamic_before_order,
+            dynamic_hedge_blocked_side=blocked_side)
+        report["dynamicHedge"]={**dynamic,"blockedStrategySide":blocked_side or None,"portfolioTpSuppressed":str(getattr(settings,"take_profit_mode",""))=="PORTFOLIO"}
+        return report
     return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=positions,
         open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
     # Realtime Simple Mode must make DCA/release decisions from the exact websocket
