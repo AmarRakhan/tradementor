@@ -32,6 +32,7 @@ jobs:
           python tools/apply_dynamic_hedge_execution_hardening_20260910.py
           python tools/apply_dynamic_hedge_multi_bb_ownership_20260910.py
           python tools/apply_dynamic_hedge_liquidation_safety_20260910.py
+          python tools/apply_dynamic_hedge_fast_sequence_20260910.py
 
       - name: Install backend dependencies
         run: python -m pip install -q -r cloud_api/requirements.txt pytest
@@ -39,7 +40,7 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q cloud_api
 
-      - name: Run Dynamic Hedge, execution, close-isolation, read-only verification and 15-scenario tests
+      - name: Run Dynamic Hedge, fast sequence, close-isolation, read-only verification and scenario tests
         working-directory: cloud_api
         run: >-
           python -m pytest -q
@@ -49,6 +50,7 @@ jobs:
           test_aster_dynamic_hedge_verify.py
           test_aster_dynamic_hedge_execution.py
           test_aster_dynamic_hedge_execution_hardening.py
+          test_aster_dynamic_hedge_sequence.py
           test_aster_dynamic_hedge_multi_bb_ownership.py
           test_dynamic_hedge_scenario_matrix_20260910.py
           test_dynamic_hedge_main_integration_20260910.py
@@ -91,5 +93,5 @@ jobs:
             echo 'No generated integration changes to commit.'
             exit 0
           fi
-          git commit -m 'Wire Dynamic Hedge execution ownership and safety gates'
+          git commit -m 'Wire fast Dynamic Hedge sequence and safety ownership'
           git push origin HEAD:feature/dynamic-hedge-liquidation-safety-20260910
