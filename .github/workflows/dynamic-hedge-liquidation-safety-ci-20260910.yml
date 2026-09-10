@@ -27,8 +27,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Apply guarded main integration
-        run: python tools/apply_dynamic_hedge_liquidation_safety_20260910.py
+      - name: Apply guarded Dynamic Hedge integrations
+        run: |
+          python tools/apply_dynamic_hedge_execution_hardening_20260910.py
+          python tools/apply_dynamic_hedge_multi_bb_ownership_20260910.py
+          python tools/apply_dynamic_hedge_liquidation_safety_20260910.py
 
       - name: Install backend dependencies
         run: python -m pip install -q -r cloud_api/requirements.txt pytest
@@ -36,7 +39,7 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q cloud_api
 
-      - name: Run Dynamic Hedge, close-isolation, read-only verification and 15-scenario safety tests
+      - name: Run Dynamic Hedge, execution, close-isolation, read-only verification and 15-scenario tests
         working-directory: cloud_api
         run: >-
           python -m pytest -q
@@ -44,6 +47,9 @@ jobs:
           test_aster_dynamic_hedge_api.py
           test_aster_dynamic_hedge_manual.py
           test_aster_dynamic_hedge_verify.py
+          test_aster_dynamic_hedge_execution.py
+          test_aster_dynamic_hedge_execution_hardening.py
+          test_aster_dynamic_hedge_multi_bb_ownership.py
           test_dynamic_hedge_scenario_matrix_20260910.py
           test_dynamic_hedge_main_integration_20260910.py
           test_aster_cross_risk.py
@@ -54,6 +60,7 @@ jobs:
           test_focus_manual_hedge_close_reconcile.py
           test_aster_gateway.py
           test_aster_execution.py
+          test_aster_multi_bb.py
 
       - uses: actions/setup-node@v4
         with:
@@ -75,14 +82,14 @@ jobs:
         working-directory: web
         run: npm run build
 
-      - name: Commit guarded main integration only after all tests pass
+      - name: Commit generated integrations only after all tests pass
         run: |
           git config user.name 'TradeMentor Safety Agent'
           git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/main.py
+          git add cloud_api/main.py cloud_api/aster_multi_bb.py cloud_api/aster_dynamic_hedge_execution.py
           if git diff --cached --quiet; then
-            echo 'No generated main.py integration changes to commit.'
+            echo 'No generated integration changes to commit.'
             exit 0
           fi
-          git commit -m 'Wire Dynamic Hedge manual-close safety locks'
+          git commit -m 'Wire Dynamic Hedge execution ownership and safety gates'
           git push origin HEAD:feature/dynamic-hedge-liquidation-safety-20260910
