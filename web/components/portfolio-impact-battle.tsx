@@ -2,24 +2,30 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
-import { dominancePresentation, positionExposure } from "@/lib/portfolio-impact-battle.mjs";
+import {
+  battleStatus,
+  bollingerScore,
+  clampBollingerScore,
+  legacyPressureOverrideToBollingerScore,
+  scoreToTimelineTime,
+  shouldAnimateScore,
+  timeframeToAsterInterval,
+  transitionDurationMs,
+} from "@/lib/bollinger-battle.mjs";
 import styles from "./portfolio-impact-battle.module.css";
+import videoStyles from "./portfolio-impact-bull-bear-video.module.css";
 
 type BattlePosition = Record<string, unknown>;
 type Timeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "24h";
-type PressureComponents = { price: number; candles: number; momentum: number; trend: number; breadth: number };
-type MarketPressurePayload = {
+type AsterMarketRow = Record<string, unknown>;
+type BollingerSnapshot = {
   timeframe: Timeframe;
+  price: number;
+  lower: number;
+  middle: number;
+  upper: number;
   score: number;
-  longShare: number;
-  shortShare: number;
-  stateIndex: number;
-  status: string;
-  barLabel: string;
-  symbolsUsed: string[];
   updatedAt: number;
-  breadth?: { up: number; down: number; flat: number };
-  components?: PressureComponents;
 };
 
 type Props = {
@@ -46,27 +52,24 @@ const REFRESH_MS: Record<Timeframe, number> = {
   "4h": 120_000,
   "24h": 300_000,
 };
-const FRAME_COUNT = 201;
-const NEUTRAL_FRAME = 100;
-const FRAME_INTERVAL_MS = 25;
-const BATTLE_LOOP_FRAMES = 50;
-const BATTLE_FPS = 20;
-const BATTLE_FRAME_MS = Math.round(1000 / BATTLE_FPS);
-const BATTLE_SOURCE = "/portfolio-impact-premium-reference.webp";
+const MASTER_SOURCE = "/portfolio-impact-bull-bear-master.mp4";
+const POSTER_SOURCE = "/portfolio-impact-bull-bear-neutral.webp";
+const SEEK_EPSILON_SECONDS = 1 / 30;
 const money = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const percent = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const scoreNumber = new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 function numberFrom(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+function finiteNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 function positionSide(position: unknown) {
   if (!position || typeof position !== "object") return "";
   return String((position as BattlePosition).side ?? "").toLowerCase();
-}
-function positionSymbol(position: unknown) {
-  if (!position || typeof position !== "object") return "";
-  return String((position as BattlePosition).symbol ?? "").toUpperCase().replace(/[\/_-]/g, "");
 }
 function positionPnl(position: unknown) {
   if (!position || typeof position !== "object") return 0;
@@ -91,133 +94,43 @@ function formatShare(value: number) {
 function tone(value: number) {
   return value > 0.005 ? styles.positive : value < -0.005 ? styles.negative : styles.neutral;
 }
-function framePath(index: number) {
-  const safe = Math.min(FRAME_COUNT - 1, Math.max(0, Math.round(index)));
-  return `/portfolio-impact-frames/frame-${String(safe).padStart(3, "0")}.svg`;
+function marketRows(value: unknown): AsterMarketRow[] {
+  if (!value || typeof value !== "object") return [];
+  const rows = (value as Record<string, unknown>).markets;
+  return Array.isArray(rows) ? rows.filter((row): row is AsterMarketRow => Boolean(row && typeof row === "object")) : [];
 }
-function shareToFrame(longShare: number) {
-  return Math.min(FRAME_COUNT - 1, Math.max(0, Math.round(numberFrom(longShare) * 2)));
+function btcRow(value: unknown) {
+  return marketRows(value).find((row) => String(row.symbol ?? "").toUpperCase().replace(/[\/_-]/g, "") === "BTCUSDT") ?? null;
 }
-function frameToShare(index: number) {
-  return Math.min(100, Math.max(0, index / 2));
+function parseBollingerSnapshot(enriched: unknown, base: unknown, timeframe: Timeframe): BollingerSnapshot | null {
+  const bandRow = btcRow(enriched);
+  const priceRow = btcRow(base);
+  if (!bandRow || !priceRow) return null;
+  const lower = finiteNumber(bandRow.bbLower);
+  const middle = finiteNumber(bandRow.bbMiddle);
+  const upper = finiteNumber(bandRow.bbUpper);
+  const price = finiteNumber(priceRow.lastPrice ?? priceRow.price ?? priceRow.markPrice);
+  if (lower === null || middle === null || upper === null || price === null) return null;
+  const score = bollingerScore(price, lower, upper);
+  if (score === null) return null;
+  return { timeframe, price, lower, middle, upper, score, updatedAt: Date.now() };
 }
-function asPressure(value: unknown, timeframe: Timeframe): MarketPressurePayload | null {
-  if (!value || typeof value !== "object") return null;
-  const row = value as Record<string, unknown>;
-  const score = Number(row.score);
-  if (!Number.isFinite(score)) return null;
-  const presentation = dominancePresentation(score);
-  const symbolsUsed = Array.isArray(row.symbolsUsed) ? row.symbolsUsed.map(String).filter(Boolean) : [];
-  const breadthRow = row.breadth && typeof row.breadth === "object" ? row.breadth as Record<string, unknown> : null;
-  const componentsRow = row.components && typeof row.components === "object" ? row.components as Record<string, unknown> : null;
-  return {
-    timeframe,
-    score: presentation.score,
-    longShare: presentation.longShare,
-    shortShare: presentation.shortShare,
-    stateIndex: presentation.stateIndex,
-    status: presentation.status,
-    barLabel: presentation.barLabel,
-    symbolsUsed,
-    updatedAt: Number.isFinite(Number(row.updatedAt)) ? Number(row.updatedAt) : Date.now(),
-    breadth: breadthRow ? { up: numberFrom(breadthRow.up), down: numberFrom(breadthRow.down), flat: numberFrom(breadthRow.flat) } : undefined,
-    components: componentsRow ? {
-      price: numberFrom(componentsRow.price), candles: numberFrom(componentsRow.candles),
-      momentum: numberFrom(componentsRow.momentum), trend: numberFrom(componentsRow.trend), breadth: numberFrom(componentsRow.breadth),
-    } : undefined,
-  };
-}
-
-function BattleArtwork({ frame, longShare }: { frame: number; longShare: number }) {
-  const phase = frame / BATTLE_LOOP_FRAMES * Math.PI * 2;
-  const pressure = Math.max(-1, Math.min(1, (longShare - 50) / 50));
-  const intensity = Math.min(1, 0.28 + Math.abs(pressure) * 1.18);
-  const shove = Math.sin(phase);
-  const brace = Math.sin(phase * 2 + 0.55);
-  const battleShift = pressure * 24;
-  const shoveAmplitude = 2.3 + intensity * 4.8;
-  const legAmplitude = 2.4 + intensity * 7.0;
-  const longLift = Math.max(0, Math.sin(phase));
-  const shortLift = Math.max(0, Math.sin(phase + Math.PI));
-  const longRear = Math.max(0, Math.sin(phase + Math.PI));
-  const shortRear = Math.max(0, Math.sin(phase));
-  const longHeadX = shove * shoveAmplitude + brace * 0.7 + pressure * 2.2;
-  const shortHeadX = -shove * shoveAmplitude - brace * 0.7 + pressure * 2.2;
-  const longBodyX = shove * (1.0 + intensity * 1.5) + pressure * 1.4;
-  const shortBodyX = -shove * (1.0 + intensity * 1.5) + pressure * 1.4;
-  const longBodyY = Math.sin(phase + 0.2) * (0.6 + intensity * 1.1);
-  const shortBodyY = Math.sin(phase + Math.PI + 0.2) * (0.6 + intensity * 1.1);
-  const dustCount = 12 + Math.round(intensity * 12);
-  const sparkCount = 10 + Math.round(intensity * 12);
-
-  const dust = Array.from({ length: dustCount }, (_, index) => {
-    const seed = index * 1.618 + frame * 0.19;
-    const side = index % 2 === 0 ? -1 : 1;
-    return {
-      cx: side < 0 ? 235 + Math.sin(seed) * 58 : 485 + Math.sin(seed * 1.13) * 58,
-      cy: 222 + Math.cos(seed * 0.79) * 8 - (frame % 8) * (0.18 + intensity * 0.36),
-      r: 1.0 + (index % 4) * 0.55 + intensity * 0.8,
-      opacity: 0.08 + intensity * 0.20 + ((index * 13) % 17) / 100,
-    };
-  });
-  const sparks = Array.from({ length: sparkCount }, (_, index) => {
-    const angle = index / sparkCount * Math.PI * 2 + frame * (0.035 + intensity * 0.045);
-    const radius = 7 + (index % 6) * (3.5 + intensity * 2.4) + (frame % 5) * 0.8;
-    return {
-      cx: 360 + Math.cos(angle) * radius,
-      cy: 143 + Math.sin(angle) * radius * 0.72 - (frame % 4) * 0.25,
-      r: 0.8 + (index % 3) * 0.45,
-      opacity: 0.25 + intensity * 0.50,
-    };
-  });
-
-  return <svg className={styles.battleScene} viewBox="0 0 720 303" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-    <defs>
-      <filter id="battleFeather" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.05" /></filter>
-      <filter id="battleGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="2.2" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-      <mask id="longSilhouette" maskUnits="userSpaceOnUse" x="40" y="20" width="340" height="225" style={{ maskType: "alpha" }}><polygon points="70,77 110,50 165,29 230,30 286,51 333,83 357,113 351,159 322,196 278,225 209,229 148,210 99,176 75,130" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="shortSilhouette" maskUnits="userSpaceOnUse" x="340" y="20" width="340" height="225" style={{ maskType: "alpha" }}><polygon points="363,84 402,55 455,33 522,31 581,50 627,78 651,112 648,155 621,192 574,221 510,228 449,213 402,184 373,148" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="longBodyMask" maskUnits="userSpaceOnUse" x="55" y="18" width="320" height="205" style={{ maskType: "alpha" }}><polygon points="72,74 115,48 170,31 236,36 296,62 333,93 330,130 302,163 257,182 202,176 149,157 104,130 85,105" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="longHeadMask" maskUnits="userSpaceOnUse" x="225" y="70" width="155" height="140" style={{ maskType: "alpha" }}><polygon points="246,91 286,76 329,86 357,115 354,157 331,193 290,200 256,181 238,148 239,112" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="longFrontLegMask" maskUnits="userSpaceOnUse" x="196" y="126" width="145" height="116" style={{ maskType: "alpha" }}><polygon points="222,137 284,143 319,169 310,214 278,237 244,219 229,187" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="longRearLegMask" maskUnits="userSpaceOnUse" x="70" y="122" width="155" height="118" style={{ maskType: "alpha" }}><polygon points="93,132 151,137 202,158 202,203 169,229 126,215 94,183" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="shortBodyMask" maskUnits="userSpaceOnUse" x="345" y="18" width="320" height="205" style={{ maskType: "alpha" }}><polygon points="389,79 424,55 474,36 532,38 590,58 632,88 647,119 635,154 600,179 549,190 493,178 445,158 407,131 388,105" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="shortHeadMask" maskUnits="userSpaceOnUse" x="340" y="70" width="155" height="140" style={{ maskType: "alpha" }}><polygon points="365,92 402,77 444,83 477,109 482,147 464,183 429,201 391,190 365,161 356,124" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="shortFrontLegMask" maskUnits="userSpaceOnUse" x="379" y="126" width="145" height="116" style={{ maskType: "alpha" }}><polygon points="400,145 462,141 496,165 490,210 459,234 425,221 407,188" fill="white" filter="url(#battleFeather)" /></mask>
-      <mask id="shortRearLegMask" maskUnits="userSpaceOnUse" x="497" y="122" width="155" height="118" style={{ maskType: "alpha" }}><polygon points="516,139 570,131 623,150 639,184 613,220 574,229 539,207 519,177" fill="white" filter="url(#battleFeather)" /></mask>
-    </defs>
-
-    <g transform={`translate(${battleShift.toFixed(2)} 0)`}>
-      <g transform={`translate(${longBodyX.toFixed(2)} ${longBodyY.toFixed(2)}) scale(1.015 1.015)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longBodyMask)" /></g>
-      <g transform={`translate(${longHeadX.toFixed(2)} ${(longBodyY * 0.45).toFixed(2)}) rotate(${(-shove * (0.5 + intensity)).toFixed(2)} 302 139)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longHeadMask)" /></g>
-      <g transform={`translate(${(longLift * legAmplitude * 0.45).toFixed(2)} ${(-longLift * legAmplitude).toFixed(2)}) rotate(${(-longLift * (2.2 + intensity * 2.4)).toFixed(2)} 271 169)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longFrontLegMask)" /></g>
-      <g transform={`translate(${(longRear * legAmplitude * 0.28).toFixed(2)} ${(-longRear * legAmplitude * 0.48).toFixed(2)}) rotate(${(longRear * (1.2 + intensity * 2)).toFixed(2)} 155 168)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#longRearLegMask)" /></g>
-
-      <g transform={`translate(${shortBodyX.toFixed(2)} ${shortBodyY.toFixed(2)}) scale(1.015 1.015)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortBodyMask)" /></g>
-      <g transform={`translate(${shortHeadX.toFixed(2)} ${(shortBodyY * 0.45).toFixed(2)}) rotate(${(shove * (0.5 + intensity)).toFixed(2)} 418 139)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortHeadMask)" /></g>
-      <g transform={`translate(${(-shortLift * legAmplitude * 0.45).toFixed(2)} ${(-shortLift * legAmplitude).toFixed(2)}) rotate(${(shortLift * (2.2 + intensity * 2.4)).toFixed(2)} 449 169)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortFrontLegMask)" /></g>
-      <g transform={`translate(${(-shortRear * legAmplitude * 0.28).toFixed(2)} ${(-shortRear * legAmplitude * 0.48).toFixed(2)}) rotate(${(-shortRear * (1.2 + intensity * 2)).toFixed(2)} 565 168)`}><image href={BATTLE_SOURCE} x="0" y="0" width="720" height="303" preserveAspectRatio="none" mask="url(#shortRearLegMask)" /></g>
-    </g>
-
-    <g className={styles.battleDust}>
-      {dust.map((particle, index) => <circle key={index} cx={particle.cx} cy={particle.cy} r={particle.r} fill={index % 2 ? "#ffb15b" : "#b1e78d"} opacity={particle.opacity} />)}
-    </g>
-    <g className={styles.impactSparks} filter="url(#battleGlow)">
-      {sparks.map((spark, index) => <circle key={index} cx={spark.cx} cy={spark.cy} r={spark.r} fill={index % 3 === 0 ? "#fff4bc" : "#ffb342"} opacity={spark.opacity} />)}
-      <circle cx="360" cy="143" r={4.8 + intensity * 3.8 + Math.max(0, shove) * 1.4} fill="#fff7c9" opacity={0.55 + intensity * 0.30} />
-    </g>
-  </svg>;
+function easeInOutCubic(value: number) {
+  return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
 }
 
 export function PortfolioImpactBattle({ positions, equity, dataAvailable, updatedAt, marketPressureOverride }: Props) {
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
-  const [pressure, setPressure] = useState<MarketPressurePayload | null>(null);
+  const [bollinger, setBollinger] = useState<BollingerSnapshot | null>(null);
   const [loadingPressure, setLoadingPressure] = useState(true);
   const [pressureError, setPressureError] = useState("");
-  const [displayFrameIndex, setDisplayFrameIndex] = useState(NEUTRAL_FRAME);
-  const [battleAnimationFrame, setBattleAnimationFrame] = useState(0);
-  const displayFrameRef = useRef(NEUTRAL_FRAME);
-  const pressureCache = useRef(new Map<string, MarketPressurePayload>());
+  const [displayScore, setDisplayScore] = useState(50);
+  const [videoReady, setVideoReady] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const displayScoreRef = useRef(50);
+  const animationRef = useRef<number | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const bollingerCache = useRef(new Map<Timeframe, BollingerSnapshot>());
 
   const snapshot = useMemo(() => {
     const longs = positions.filter((position) => positionSide(position) === "long");
@@ -227,39 +140,21 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     return { longs, shorts, longPnl, shortPnl };
   }, [positions]);
 
-  const marketSymbols = useMemo(() => {
-    const exposureBySymbol = new Map<string, number>();
-    for (const position of positions) {
-      const symbol = positionSymbol(position);
-      if (!/^[A-Z0-9]+USDT$/.test(symbol)) continue;
-      exposureBySymbol.set(symbol, (exposureBySymbol.get(symbol) ?? 0) + positionExposure(position));
-    }
-    return Array.from(exposureBySymbol.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 16).map(([symbol]) => symbol);
-  }, [positions]);
-  const symbolKey = marketSymbols.join(",");
-
-  useEffect(() => {
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-    if (reduced) return;
-    const interval = window.setInterval(() => setBattleAnimationFrame((current) => (current + 1) % BATTLE_LOOP_FRAMES), BATTLE_FRAME_MS);
-    return () => window.clearInterval(interval);
-  }, []);
-
   useEffect(() => {
     let active = true;
-    const cacheKey = `${timeframe}|${symbolKey}`;
     const overrideScore = marketPressureOverride?.[timeframe];
     if (Number.isFinite(Number(overrideScore))) {
-      const presentation = dominancePresentation(Number(overrideScore));
-      setPressure({ timeframe, score: presentation.score, longShare: presentation.longShare, shortShare: presentation.shortShare, stateIndex: presentation.stateIndex, status: presentation.status, barLabel: presentation.barLabel, symbolsUsed: marketSymbols.length ? marketSymbols : ["BTCUSDT", "ETHUSDT", "SOLUSDT"], updatedAt: Date.now() });
+      const score = legacyPressureOverrideToBollingerScore(Number(overrideScore));
+      const mock = { timeframe, price: 0, lower: 0, middle: 0, upper: 0, score, updatedAt: Date.now() };
+      setBollinger(mock);
       setLoadingPressure(false);
       setPressureError("");
       return () => { active = false; };
     }
 
-    const cached = pressureCache.current.get(cacheKey);
+    const cached = bollingerCache.current.get(timeframe);
     if (cached) {
-      setPressure(cached);
+      setBollinger(cached);
       setLoadingPressure(false);
       setPressureError("");
     } else {
@@ -268,81 +163,118 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     }
 
     const load = async (quiet = false) => {
-      if (!quiet && !pressureCache.current.has(cacheKey)) setLoadingPressure(true);
+      if (!quiet && !bollingerCache.current.has(timeframe)) setLoadingPressure(true);
       try {
-        const query = new URLSearchParams({ timeframe });
-        if (marketSymbols.length) query.set("symbols", marketSymbols.join(","));
-        const response = await authenticatedRequest(`/api/markets/aster/pressure?${query.toString()}`);
-        const next = asPressure(response, timeframe);
-        if (!next || !active) return;
-        pressureCache.current.set(cacheKey, next);
-        setPressure(next);
+        const interval = timeframeToAsterInterval(timeframe);
+        const [enriched, base] = await Promise.all([
+          authenticatedRequest(`/api/markets/aster?mode=enrich&symbols=BTCUSDT&interval=${encodeURIComponent(interval)}`),
+          authenticatedRequest("/api/markets/aster"),
+        ]);
+        const next = parseBollingerSnapshot(enriched, base, timeframe);
+        if (!active) return;
+        if (!next) throw new Error("BTC Bollinger-data tijdelijk niet beschikbaar");
+        bollingerCache.current.set(timeframe, next);
+        setBollinger(next);
         setPressureError("");
         setLoadingPressure(false);
       } catch (reason) {
         if (!active) return;
         setLoadingPressure(false);
-        setPressureError(reason instanceof Error ? reason.message : "Marktdruk tijdelijk niet beschikbaar");
+        setPressureError(reason instanceof Error ? reason.message : "BTC Bollinger-data tijdelijk niet beschikbaar");
       }
     };
 
     void load(Boolean(cached));
-    const interval = window.setInterval(() => { void load(true); }, REFRESH_MS[timeframe]);
-    return () => { active = false; window.clearInterval(interval); };
-  }, [timeframe, symbolKey, marketPressureOverride]);
+    const refresh = window.setInterval(() => { void load(true); }, REFRESH_MS[timeframe]);
+    return () => { active = false; window.clearInterval(refresh); };
+  }, [timeframe, marketPressureOverride]);
 
-  const currentPressure = pressure ?? { ...dominancePresentation(0), timeframe, symbolsUsed: [], updatedAt: 0 };
-  const targetFrameIndex = shareToFrame(currentPressure.longShare);
+  const targetScore = clampBollingerScore(bollinger?.score ?? 50);
 
   useEffect(() => {
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
-    if (reduced) {
-      displayFrameRef.current = targetFrameIndex;
-      setDisplayFrameIndex(targetFrameIndex);
+    const video = videoRef.current;
+    const seek = (score: number) => {
+      if (!video || video.readyState < 1 || !Number.isFinite(video.duration) || video.duration <= 0) return;
+      const targetTime = Math.min(Math.max(0, scoreToTimelineTime(score, video.duration)), Math.max(0, video.duration - 0.001));
+      if (Math.abs(video.currentTime - targetTime) >= SEEK_EPSILON_SECONDS) video.currentTime = targetTime;
+    };
+
+    if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
+    const from = displayScoreRef.current;
+    if (reduced || !shouldAnimateScore(from, targetScore)) {
+      if (reduced && from !== targetScore) {
+        displayScoreRef.current = targetScore;
+        setDisplayScore(targetScore);
+        seek(targetScore);
+      }
       return;
     }
-    if (displayFrameRef.current === targetFrameIndex) return;
-    const interval = window.setInterval(() => {
-      const current = displayFrameRef.current;
-      if (current === targetFrameIndex) { window.clearInterval(interval); return; }
-      const next = current + (targetFrameIndex > current ? 1 : -1);
-      displayFrameRef.current = next;
-      setDisplayFrameIndex(next);
-      if (next === targetFrameIndex) window.clearInterval(interval);
-    }, FRAME_INTERVAL_MS);
-    return () => window.clearInterval(interval);
-  }, [targetFrameIndex]);
+
+    const started = performance.now();
+    const duration = transitionDurationMs(from, targetScore);
+    const tick = (now: number) => {
+      const progress = Math.min(1, Math.max(0, (now - started) / duration));
+      const next = from + (targetScore - from) * easeInOutCubic(progress);
+      displayScoreRef.current = next;
+      setDisplayScore(next);
+      seek(next);
+      if (progress < 1) animationRef.current = requestAnimationFrame(tick);
+      else animationRef.current = null;
+    };
+    animationRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    };
+  }, [targetScore]);
+
+  useEffect(() => () => {
+    if (animationRef.current !== null) cancelAnimationFrame(animationRef.current);
+  }, []);
+
+  const syncVideoToScore = () => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 1 || !Number.isFinite(video.duration) || video.duration <= 0) return;
+    const targetTime = Math.min(Math.max(0, scoreToTimelineTime(displayScoreRef.current, video.duration)), Math.max(0, video.duration - 0.001));
+    video.pause();
+    video.currentTime = targetTime;
+  };
 
   const netPnl = snapshot.longPnl + snapshot.shortPnl;
   const equityBasis = equity && Math.abs(equity) > 0.01 ? Math.abs(equity) : 0;
   const netPercent = equityBasis ? netPnl / equityBasis * 100 : null;
   const longPercent = equityBasis ? snapshot.longPnl / equityBasis * 100 : null;
   const shortPercent = equityBasis ? snapshot.shortPnl / equityBasis * 100 : null;
-  const scoreLabel = currentPressure.score > 0 ? `+${currentPressure.score}` : String(currentPressure.score);
-  const pressureStatus = loadingPressure && !pressure ? "MARKTDRUK WORDT BEREKEND" : pressure?.status ?? "IN EVENWICHT";
-  const pressureCaption = pressure ? `${pressure.barLabel} · ${TIMEFRAMES.find((item) => item.id === timeframe)?.label} · SCORE ${scoreLabel}${pressure.symbolsUsed.length ? ` · ${pressure.symbolsUsed.length} MARKTEN` : ""}` : pressureError ? "MARKTDRUK TIJDELIJK ONBESCHIKBAAR" : "MARKTDRUK";
-  const displayLongShare = frameToShare(displayFrameIndex);
+  const displayLongShare = clampBollingerScore(displayScore);
   const displayShortShare = 100 - displayLongShare;
+  const pressureStatus = loadingPressure && !bollinger ? "BTC BOLLINGER WORDT BEREKEND" : battleStatus(displayLongShare);
+  const timeframeLabel = TIMEFRAMES.find((item) => item.id === timeframe)?.label ?? timeframe;
+  const pressureCaption = bollinger
+    ? `BTCUSDT · ${timeframeLabel} · BOLLINGER ${scoreNumber.format(targetScore)}%${bollinger.price > 0 ? ` · $${money.format(bollinger.price)}` : ""}`
+    : pressureError ? "BTC BOLLINGER TIJDELIJK ONBESCHIKBAAR" : "BTC BOLLINGER";
   const impactPosition = 50 + (displayLongShare - 50) * 0.10;
   const visualIntensity = Math.min(1, 0.28 + Math.abs(displayLongShare - 50) / 50 * 1.18);
   const visualStyle = { "--long-share": `${displayLongShare}%`, "--impact-x": `${impactPosition}%`, "--battle-intensity": visualIntensity } as React.CSSProperties;
-  const legacyFramePath = framePath(displayFrameIndex);
 
   return <div className={styles.module}>
-    <div className={styles.timeframes} role="group" aria-label="Marktdruk timeframe">
+    <div className={styles.timeframes} role="group" aria-label="BTC Bollinger timeframe">
       {TIMEFRAMES.map((item) => <button key={item.id} type="button" className={item.id === timeframe ? styles.activeTimeframe : ""} aria-pressed={item.id === timeframe} onClick={() => setTimeframe(item.id)}>{item.label}</button>)}
     </div>
 
     <section className={`${styles.card} ${!dataAvailable ? styles.unavailable : ""}`} style={visualStyle}
-      data-state-index={currentPressure.stateIndex} data-frame-index={displayFrameIndex} data-target-frame-index={targetFrameIndex}
-      data-visual-long-share={displayLongShare} data-target-long-share={currentPressure.longShare} data-timeframe={timeframe} data-score={currentPressure.score}
-      data-updated-at={updatedAt ?? ""} data-battle-animation-frame={battleAnimationFrame} data-battle-intensity={visualIntensity.toFixed(3)} data-legacy-frame-path={legacyFramePath}
-      aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(netPnl, true)}. Marktdruk ${pressureStatus}.`}>
-      <img className={styles.scene} src={BATTLE_SOURCE} alt="" aria-hidden="true" />
-      <BattleArtwork frame={battleAnimationFrame} longShare={displayLongShare} />
+      data-bollinger-score={targetScore.toFixed(3)} data-visual-long-share={displayLongShare.toFixed(3)} data-target-long-share={targetScore.toFixed(3)}
+      data-timeframe={timeframe} data-updated-at={bollinger?.updatedAt ?? updatedAt ?? ""} data-video-ready={videoReady ? "true" : "false"} data-video-failed={videoFailed ? "true" : "false"}
+      aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(netPnl, true)}. BTC Bollinger ${scoreNumber.format(targetScore)} procent. ${pressureStatus}.`}>
+      <img className={videoStyles.poster} src={POSTER_SOURCE} alt="" aria-hidden="true" />
+      {!videoFailed ? <video ref={videoRef} className={`${videoStyles.video} ${videoReady ? videoStyles.videoReady : ""}`} src={MASTER_SOURCE} poster={POSTER_SOURCE}
+        preload="auto" muted playsInline disablePictureInPicture aria-hidden="true" tabIndex={-1}
+        onLoadedMetadata={syncVideoToScore}
+        onCanPlay={() => { syncVideoToScore(); setVideoReady(true); }}
+        onError={() => { setVideoFailed(true); setVideoReady(false); }} /> : null}
       <div className={styles.vignette} aria-hidden="true" />
 
-      {!dataAvailable ? <div className={styles.loadingCopy}><span>PORTFOLIO IMPACT</span><strong>Exchangegegevens laden…</strong><small>Marktdruk blijft read-only en opent of sluit nooit posities.</small></div> : <>
+      {!dataAvailable ? <div className={styles.loadingCopy}><span>PORTFOLIO IMPACT</span><strong>Exchangegegevens laden…</strong><small>De Bull vs Bear-visualisatie is read-only en opent of sluit nooit posities.</small></div> : <>
         <div className={`${styles.sidePanel} ${styles.longPanel}`}><div className={styles.sideTitle}><span>LONGS</span><i>↗</i></div><small>Open P&amp;L</small><strong className={tone(snapshot.longPnl)}>{formatUsd(snapshot.longPnl, true)}</strong><em className={tone(snapshot.longPnl)}>{formatPercent(longPercent)}</em><span className={styles.positionCount}>{snapshot.longs.length} posities</span></div>
         <div className={styles.centerPanel}><div className={styles.centerTitle}><i />PORTFOLIO IMPACT</div><strong className={tone(netPnl)}>{formatUsd(netPnl, true)}</strong><span className={tone(netPnl)}>{formatPercent(netPercent)}</span></div>
         <div className={`${styles.sidePanel} ${styles.shortPanel}`}><div className={styles.sideTitle}><i>↘</i><span>SHORTS</span></div><small>Open P&amp;L</small><strong className={tone(snapshot.shortPnl)}>{formatUsd(snapshot.shortPnl, true)}</strong><em className={tone(snapshot.shortPnl)}>{formatPercent(shortPercent)}</em><span className={styles.positionCount}>{snapshot.shorts.length} posities</span></div>

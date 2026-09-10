@@ -1,0 +1,33 @@
+.poster,
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+.poster {
+  z-index: 0;
+  opacity: 1;
+}
+
+.video {
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 180ms ease-out;
+  background: transparent;
+}
+
+.videoReady {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video {
+    transition: none;
+  }
+}

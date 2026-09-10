@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dominancePresentation, deriveBattleMetrics } from "../lib/portfolio-impact-battle.mjs";
+import { bollingerScore, scoreToTimelineTime, timeframeToAsterInterval } from "../lib/bollinger-battle.mjs";
 
 const component = readFileSync(new URL("../components/portfolio-impact-battle.tsx", import.meta.url), "utf8");
-const css = readFileSync(new URL("../components/portfolio-impact-battle.module.css", import.meta.url), "utf8");
 const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/markets/aster/pressure/route.ts", import.meta.url), "utf8");
 
@@ -31,34 +31,31 @@ test("all six requested timeframes remain functional and Exposure stays absent",
   assert.doesNotMatch(component, />Exposure</);
   assert.match(component, /Open P&amp;L/);
   assert.match(component, /positionCount/);
+  assert.equal(timeframeToAsterInterval("24h"), "1d");
 });
 
-test("premium visual engine ships 201 half-percent frames with no bull filter or morph animation", () => {
-  const frames = readdirSync(new URL("../public/portfolio-impact-frames/", import.meta.url)).filter((name) => /^frame-\d{3}\.svg$/.test(name));
-  assert.equal(frames.length, 201);
-  assert.match(component, /const FRAME_COUNT = 201/);
-  assert.match(component, /Math\.round\(numberFrom\(longShare\) \* 2\)/);
-  assert.match(component, /portfolio-impact-frames\/frame-/);
-  const sceneRule = css.match(/\.scene\{[^}]+\}/)?.[0] || "";
-  assert.doesNotMatch(sceneRule, /filter:/);
-  assert.doesNotMatch(sceneRule, /animation:/);
+test("Bollinger 0 to 100 maps continuously onto the full master timeline", () => {
+  assert.equal(bollingerScore(100, 100, 200), 0);
+  assert.equal(bollingerScore(150, 100, 200), 50);
+  assert.equal(bollingerScore(200, 100, 200), 100);
+  assert.equal(scoreToTimelineTime(0, 12), 0);
+  assert.equal(scoreToTimelineTime(50, 12), 6);
+  assert.equal(scoreToTimelineTime(100, 12), 12);
+  assert.match(component, /scoreToTimelineTime\(score, video\.duration\)/);
+  assert.match(component, /data-bollinger-score=/);
 });
 
-test("a ten percentage-point push is exactly twenty adjacent visual frames", () => {
-  const frame = (share) => Math.round(share * 2);
-  assert.equal(frame(50), 100);
-  assert.equal(frame(40), 80);
-  assert.equal(frame(60), 120);
-  assert.equal(frame(50) - frame(40), 20);
-  assert.equal(frame(60) - frame(50), 20);
-  assert.match(component, /current \+ \(targetFrameIndex > current \? 1 : -1\)/);
-  assert.match(component, /FRAME_INTERVAL_MS = 25/);
-  assert.match(component, /data-frame-index=/);
-  assert.match(component, /data-target-frame-index=/);
+test("visual movement interpolates smoothly instead of stepping through image frames", () => {
+  assert.match(component, /requestAnimationFrame\(tick\)/);
+  assert.match(component, /easeInOutCubic/);
+  assert.match(component, /transitionDurationMs\(from, targetScore\)/);
+  assert.match(component, /SEEK_EPSILON_SECONDS = 1 \/ 30/);
+  assert.doesNotMatch(component, /portfolio-impact-frames\/frame-|FRAME_COUNT|targetFrameIndex/);
 });
 
-test("pressure bar and visible percentages are driven by the same display frame", () => {
-  assert.match(component, /const displayLongShare = frameToShare\(displayFrameIndex\)/);
+test("pressure bar and visible percentages use the same interpolated Bollinger score", () => {
+  assert.match(component, /const displayLongShare = clampBollingerScore\(displayScore\)/);
+  assert.match(component, /const displayShortShare = 100 - displayLongShare/);
   assert.match(component, /"--long-share": `\$\{displayLongShare\}%`/);
   assert.match(component, /formatShare\(displayLongShare\)/);
   assert.match(component, /formatShare\(displayShortShare\)/);
