@@ -67,19 +67,11 @@ async function loadSnapshot(interval: string) {
   klinesUrl.searchParams.set("interval", interval);
   klinesUrl.searchParams.set("limit", String(PERIOD));
 
-  const tickerUrl = new URL(`${ASTER}/fapi/v1/ticker/price`);
-  tickerUrl.searchParams.set("symbol", SYMBOL);
-
-  const [klinesPayload, tickerPayload] = await Promise.all([
-    fetchJson(klinesUrl.toString()),
-    fetchJson(tickerUrl.toString()),
-  ]);
-
+  const klinesPayload = await fetchJson(klinesUrl.toString());
   if (!Array.isArray(klinesPayload)) throw new Error("BTC candle-response heeft een ongeldig formaat");
   const closes = klinesPayload.map((row) => Array.isArray(row) ? finite(row[4]) ?? 0 : 0);
-  const ticker = tickerPayload && typeof tickerPayload === "object" ? tickerPayload as Record<string, unknown> : null;
-  const livePrice = finite(ticker?.price) ?? closes.at(-1) ?? null;
-  if (livePrice === null || livePrice <= 0) throw new Error("Actuele BTC-prijs ontbreekt");
+  const livePrice = closes.at(-1) ?? null;
+  if (livePrice === null || livePrice <= 0) throw new Error("Actuele BTC candle-close ontbreekt");
 
   const snapshot = calculate(closes, livePrice, interval);
   cache.set(interval, { expiresAt: Date.now() + (CACHE_TTL_MS[interval] ?? 15_000), value: snapshot });
