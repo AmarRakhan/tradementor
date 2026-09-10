@@ -3,15 +3,18 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 test("Aster compact Portfolio Snapshot follows the approved reference and preserves close-all flow", async () => {
-  const [layout, component, css, growth] = await Promise.all([
+  const [layout, component, css, growth, hedgeManager] = await Promise.all([
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/portfolio-snapshot.css", import.meta.url), "utf8"),
     readFile(new URL("../components/portfolio-growth-card.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/aster-hedge-manager.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(layout, /AsterPortfolioSnapshotEnhancer/);
   assert.match(layout, /portfolio-snapshot\.css/);
-  assert.match(component, /file_00000000a7bc82438e4e1d5f076b47c9/);
+  assert.match(component, /file_000000002444821084b234da2ddec369/);
+  assert.match(component, /AsterHedgeManager/);
+  assert.match(hedgeManager, /file_00000000032881f495cdc99757a7d126/);
   for (const label of ["PORTFOLIO SNAPSHOT", "PORTFOLIOWAARDE", "AVAILABLE TO TRADE", "ACTIEF TRADE CAPITAL", "ACTIEVE POSITIES", "GESLOTEN RESULTAAT", "TRADES GESLOTEN", "LIQUIDATIERISICO", "RENDEMENT VANDAAG", "GEMIDDELD PER DAG", "ALLES SLUITEN"]) assert.match(component, new RegExp(label));
   assert.match(component, /portfolio-close-all/);
   assert.match(component, /legacy\.click\(\)/);
