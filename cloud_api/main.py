@@ -116,6 +116,7 @@ from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings
+from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_state import (
     account_values as aster_account_values, reconcile_aster_state,
     account_information_values as aster_account_information_values,
@@ -7711,4 +7712,22 @@ install_aster_hedge_recovery_routes(
     acquire_queue_lease=_acquire_strategy2_queue_lease,
     release_queue_lease=_release_strategy2_queue_lease,
     before_order_submit_factory=_block_order_during_close_all,
+)
+
+
+# DYNAMIC_HEDGE_LIQUIDATION_SAFETY_ROUTES_20260910
+def _dynamic_hedge_aster_client(user: dict[str, Any], live: bool = False) -> AsterV3Client:
+    secret = load_aster_secret(user)
+    return AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),
+        live_authorized=bool(live),
+    )
+
+
+install_aster_dynamic_hedge_routes(
+    app,
+    authenticated_user=authenticated_user,
+    user_reference=user_reference,
+    client_factory=_dynamic_hedge_aster_client,
 )
