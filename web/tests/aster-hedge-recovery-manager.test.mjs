@@ -1,3 +1,4 @@
+// Release verification contract for the definitive interactive Hedge Dekking flow.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
