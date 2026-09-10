@@ -19,7 +19,7 @@ replace_once(
 
 replace_once(
 '''    core_kwargs=dict(kwargs); core_kwargs["before_order"]=guarded_before_order\n''',
-'''    blocked_side=str(kwargs.get("dynamic_hedge_blocked_side","")).upper()\n    blocked_count=sum(1 for row in positions if str(row.get("positionSide","")).upper()==blocked_side and abs(float(row.get("positionAmt",0) or 0))>0) if blocked_side in {"LONG","SHORT"} else 0\n    core_kwargs=dict(kwargs); core_kwargs.pop("dynamic_hedge_blocked_side",None); core_kwargs["before_order"]=guarded_before_order\n''')
+'''    blocked_side=str(kwargs.get("dynamic_hedge_blocked_side","")).upper()\n    blocked_count=sum(1 for row in positions if str(row.get("positionSide","")).upper()==blocked_side and abs(_finite(row.get("positionAmt",0)))>0) if blocked_side in {"LONG","SHORT"} else 0\n    core_kwargs=dict(kwargs); core_kwargs.pop("dynamic_hedge_blocked_side",None); core_kwargs["before_order"]=guarded_before_order\n''')
 
 replace_once(
 '''    extra={"pairOverrideCount":len(settings.pair_overrides),"takeProfitMode":settings.take_profit_mode,\n''',
