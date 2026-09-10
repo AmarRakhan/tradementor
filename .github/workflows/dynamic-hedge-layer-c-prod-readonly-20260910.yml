@@ -62,8 +62,7 @@ jobs:
               '.' + 'execute_leg' + '(',
               '.' + 'execute_close' + '(',
           ]
-          found = [token for token in forbidden if token in text]
-          if found:
+          if any(token in text for token in forbidden):
               raise SystemExit('Read-only proof failed: mutating token present')
           required = [
               'live_authorized=False',
@@ -76,7 +75,7 @@ jobs:
           missing = [token for token in required if token not in text]
           if missing:
               raise SystemExit('Read-only proof failed: required guard/read missing')
-          print('Static Layer C proof PASS: only guarded account/position/order reads are present')
+          print('Static Layer C proof PASS: GET-only, live execution disabled')
           PY
 
       - uses: google-github-actions/auth@v2
@@ -103,9 +102,9 @@ jobs:
           root = pathlib.Path('feature-src/cloud_api')
           sources = {}
           for name in ('aster_dynamic_hedge','aster_cross_risk','aster_dynamic_hedge_verify'):
-              raw = (root / f'{name}.py').read_bytes()
-              sources[name] = base64.b64encode(raw).decode()
-          script = f'''import base64, hashlib, json, sys, types\nfrom google.cloud import firestore\n\ndef load_module(name, encoded):\n    module=types.ModuleType(name)\n    module.__file__=name+'.py'\n    sys.modules[name]=module\n    exec(compile(base64.b64decode(encoded), module.__file__, 'exec'), module.__dict__)\n    return module\n\ndynamic=load_module('aster_dynamic_hedge', {sources['aster_dynamic_hedge']!r})\ncross=load_module('aster_cross_risk', {sources['aster_cross_risk']!r})\nverify=load_module('aster_dynamic_hedge_verify', {sources['aster_dynamic_hedge_verify']!r})\nimport main\nfrom aster_gateway import AsterV3Client\n\ndb=firestore.Client(project='tradementor-production')\nresults=[]\nfor doc in db.collection('asterStrategy2').stream():\n    state=doc.to_dict() or {{}}\n    if not (state.get('enabled') or state.get('monitor')):\n        continue\n    account_ref=hashlib.sha256(doc.id.encode()).hexdigest()[:10]\n    try:\n        secret=main.load_aster_secret({{'uid':doc.id}})\n        client=AsterV3Client(signer_address=secret.signer_address,sign_message=main.local_eip712_signer(secret),live_authorized=False)\n        account=client.account_information()\n        positions=client.position_risk()\n        open_orders=client.open_orders()\n        risk=cross.cross_account_risk(account,positions)\n        proof=verify.verify_read_only_projection(account,positions,risk)\n        results.append({{\n            'accountRef':account_ref,\n            'passed':bool(proof.get('passed')),\n            'failureCodes':proof.get('failureCodes',[]),\n            'ordersSubmitted':int(proof.get('ordersSubmitted',-1)),\n            'equity':round(float(risk.get('equity') or 0),8),\n            'maintenanceMargin':round(float(risk.get('maintenanceMarginUsd') or 0),8),\n            'availableBalance':round(float(account.get('availableBalance') or 0),8),\n            'marginBuffer':round(float(risk.get('marginBufferUsd') or 0),8),\n            'bufferRatio':None if risk.get('bufferRatio') is None else round(float(risk.get('bufferRatio')),8),\n            'longExposure':round(float(risk.get('longNotional') or 0),8),\n            'shortExposure':round(float(risk.get('shortNotional') or 0),8),\n            'grossExposure':round(float(risk.get('grossExposure') or 0),8),\n            'signedNetExposure':round(float(risk.get('signedNetExposure') or 0),8),\n            'hedgeCoveragePercent':round(float(risk.get('hedgeCoveragePercent') or 0),8),\n            'liquidationRiskPct':round(float(risk.get('liquidationRiskPct') or 0),8),\n            'liquidationSafetyStatus':str(risk.get('liquidationSafetyStatus','DATA_ONBETROUWBAAR')),\n            'activePositionCount':int(risk.get('positionCountIncluded') or 0),\n            'openOrderCount':len(open_orders) if isinstance(open_orders,list) else -1,\n        }})\n    except Exception as exc:\n        results.append({{'accountRef':account_ref,'passed':False,'failureCodes':['READ_EXCEPTION'],'errorType':type(exc).__name__}})\nsummary={{\n    'readOnly':True,\n    'featureSha':'{ '44b93fa684067ceb17006d79f8173a5d95119410' }',\n    'liveAuthorized':False,\n    'ordersSubmitted':sum(int(x.get('ordersSubmitted',0)) for x in results),\n    'accounts':len(results),\n    'passed':sum(1 for x in results if x.get('passed')),\n    'failed':sum(1 for x in results if not x.get('passed')),\n    'results':results,\n}}\nprint('DYNAMIC_HEDGE_LAYER_C_READONLY '+json.dumps(summary,sort_keys=True,separators=(',',':')))\nif not results or any(not x.get('passed') for x in results) or summary['ordersSubmitted'] != 0:\n    raise SystemExit(2)\n'''
+              sources[name] = base64.b64encode((root / f'{name}.py').read_bytes()).decode()
+          feature_sha = '44b93fa684067ceb17006d79f8173a5d95119410'
+          script = f'''import base64, hashlib, json, sys, types\nfrom google.cloud import firestore\n\ndef load_module(name, encoded):\n    module=types.ModuleType(name)\n    module.__file__=name+'.py'\n    sys.modules[name]=module\n    exec(compile(base64.b64decode(encoded), module.__file__, 'exec'), module.__dict__)\n    return module\n\ndynamic=load_module('aster_dynamic_hedge', {sources['aster_dynamic_hedge']!r})\ncross=load_module('aster_cross_risk', {sources['aster_cross_risk']!r})\nverify=load_module('aster_dynamic_hedge_verify', {sources['aster_dynamic_hedge_verify']!r})\nimport main\nfrom aster_gateway import AsterV3Client\n\ndb=firestore.Client(project='tradementor-production')\nresults=[]\nfor doc in db.collection('asterStrategy2').stream():\n    state=doc.to_dict() or {{}}\n    if not (state.get('enabled') or state.get('monitor')):\n        continue\n    account_ref=hashlib.sha256(doc.id.encode()).hexdigest()[:10]\n    try:\n        secret=main.load_aster_secret({{'uid':doc.id}})\n        client=AsterV3Client(signer_address=secret.signer_address,sign_message=main.local_eip712_signer(secret),live_authorized=False)\n        account=client.account_information()\n        positions=client.position_risk()\n        open_orders=client.open_orders()\n        risk=cross.cross_account_risk(account,positions)\n        proof=verify.verify_read_only_projection(account,positions,risk)\n        results.append({{\n            'accountRef':account_ref,\n            'passed':bool(proof.get('passed')),\n            'failureCodes':proof.get('failureCodes',[]),\n            'ordersSubmitted':int(proof.get('ordersSubmitted',-1)),\n            'equity':risk.get('equity'),\n            'maintenanceMargin':risk.get('maintenanceMarginUsd'),\n            'availableBalance':account.get('availableBalance'),\n            'marginBuffer':risk.get('marginBufferUsd'),\n            'bufferRatio':risk.get('bufferRatio'),\n            'longExposure':risk.get('longNotional'),\n            'shortExposure':risk.get('shortNotional'),\n            'grossExposure':risk.get('grossExposure'),\n            'signedNetExposure':risk.get('signedNetExposure'),\n            'hedgeCoveragePercent':risk.get('hedgeCoveragePercent'),\n            'liquidationRiskPct':risk.get('liquidationRiskPct'),\n            'liquidationSafetyStatus':risk.get('liquidationSafetyStatus'),\n            'activePositionCount':risk.get('positionCountIncluded'),\n            'openOrderCount':len(open_orders) if isinstance(open_orders,list) else -1,\n        }})\n    except Exception as exc:\n        results.append({{'accountRef':account_ref,'passed':False,'failureCodes':['READ_EXCEPTION'],'errorType':type(exc).__name__}})\nsummary={{\n    'readOnly':True,\n    'featureSha':feature_sha,\n    'liveAuthorized':False,\n    'ordersSubmitted':sum(int(x.get('ordersSubmitted',0)) for x in results),\n    'accounts':len(results),\n    'passed':sum(1 for x in results if x.get('passed')),\n    'failed':sum(1 for x in results if not x.get('passed')),\n}}\nprint('DYNAMIC_HEDGE_LAYER_C_READONLY '+json.dumps(summary,sort_keys=True,separators=(',',':')))\nif not results:\n    raise SystemExit(2)\nif any(not x.get('passed') for x in results):\n    raise SystemExit(3)\nif summary['ordersSubmitted'] != 0:\n    raise SystemExit(4)\n'''
           print(base64.b64encode(script.encode()).decode())
           PY
           )"
@@ -118,24 +117,11 @@ jobs:
             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,FIREBASE_AUTH_PROJECT_ID=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=dynamic-hedge-layer-c-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false" \
             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
 
-          set +e
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/tmp/dh-layer-c-exec.out 2>/tmp/dh-layer-c-exec.err
-          EXEC_RC=$?
-          set -e
-          sleep 3
-          RESULT="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"DYNAMIC_HEDGE_LAYER_C_READONLY\"" --project "$GCP_PROJECT_ID" --freshness 10m --limit 1 --order desc --format='value(textPayload)' || true)"
-          echo "$RESULT"
-          if [ -z "$RESULT" ]; then
-            echo 'Layer C produced no read-only result.' >&2
-            cat /tmp/dh-layer-c-exec.err >&2 || true
-            exit 3
-          fi
-          if [ "$EXEC_RC" -ne 0 ]; then
-            echo "Layer C exchange-read verification failed rc=$EXEC_RC" >&2
-            exit "$EXEC_RC"
-          fi
-          grep -q '"liveAuthorized":false' <<<"$RESULT"
-          grep -q '"ordersSubmitted":0' <<<"$RESULT"
-          grep -q '"failed":0' <<<"$RESULT"
+          # The container itself contains the assertions above. Cloud Run returns
+          # success only if: at least one active account was read, every raw-vs-
+          # projection comparison passed, and ordersSubmitted stayed exactly zero.
+          gcloud run jobs execute "$JOB" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          echo 'LAYER_C_PASS: real Aster GET data matched the tested Dynamic Hedge projection; liveAuthorized=false; ordersSubmitted=0.'
           cleanup
           trap - EXIT
