@@ -36,3 +36,12 @@ test("Next proxies use the UID-authenticated cloud routes", () => {
   assert.match(previewProxy, /\/v1\/me\/aster\/positions\/profitable-close-preview/);
   assert.match(closeProxy, /\/v1\/me\/aster\/positions\/close-profitable/);
 });
+
+test("scoped profitable close preserves LONG or SHORT across the cloud proxy boundary", () => {
+  assert.match(closeProxy, /new URL\(request\.url\)/);
+  assert.match(closeProxy, /searchParams\.get\("side"\)/);
+  assert.match(closeProxy, /VALID_SCOPES\.has\(scope\)/);
+  assert.match(closeProxy, /LONG/);
+  assert.match(closeProxy, /SHORT/);
+  assert.match(closeProxy, /\?side=\$\{encodeURIComponent\(scope\)\}/);
+});
