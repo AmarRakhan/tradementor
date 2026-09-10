@@ -39,6 +39,12 @@ text = replace_once(
     "from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes\n"
     "from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action\n",
 )
+text = replace_once(
+    text,
+    "from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action\n",
+    "from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action\n"
+    "from aster_dynamic_hedge_execution import run_dynamic_hedge_overlay, dynamic_strategy_order_guard\n",
+)
 
 # Profit bulk close: lock Dynamic Hedge before any live close and reconcile exact
 # LONG/SHORT quantities from Aster before automation can resume.
@@ -145,9 +151,18 @@ text = patch_between(
     "        action_ref.set({\"status\":\"PARTIAL_FAIL_CLOSED\"",
 )
 
+# Strategy-2 scheduler integration. Dynamic Hedge gets first right of action and
+# at most one hedge order per leased tick. Only when the hedge is already inside
+# its safe dynamic band may Multi BB continue on the dominant trading side.
+strategy_start = "def _run_aster_strategy2_tick("
+strategy_end = "def _run_aster_strategy2_queue_scan("
+old_run = '''    # The legacy Focus/Strategy-2 planners are retired. The new engine owns all active decisions.\n    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=positions,\n        open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)\n'''
+new_run = '''    # The legacy Focus/Strategy-2 planners are retired. Multi BB remains the\n    # dominant-side strategy; Dynamic Hedge exclusively owns the smaller hedge\n    # side while its optional toggle is enabled.\n    dynamic_ref=user_reference({"uid":uid}).collection("asterDynamicHedge").document("control")\n    dynamic_stored=dynamic_ref.get().to_dict() or {}\n    if bool(dynamic_stored.get("enabled",False)):\n        dynamic=run_dynamic_hedge_overlay(client=client,control_ref=dynamic_ref,settings=settings,uid=uid,account=account,\n            positions=positions,open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)\n        ref.set({"dynamicHedgeReport":dynamic,"dynamicHedgeUpdatedAt":now},merge=True)\n        if int(safe_float(dynamic.get("ordersSent")))>0 or str(dynamic.get("reason",""))!="HEDGE_STABLE" or str(dynamic.get("safetyStatus","VEILIG"))!="VEILIG":\n            return {"status":str(dynamic.get("status","waiting")),"action":"DYNAMIC_HEDGE","ordersSent":int(safe_float(dynamic.get("ordersSent"))),"dynamicHedge":dynamic}\n        long_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="LONG")\n        short_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="SHORT")\n        blocked_side="SHORT" if long_exposure>short_exposure else "LONG" if short_exposure>long_exposure else ""\n        runtime_settings=settings\n        if bool(getattr(runtime_settings,"asymmetric_hedge_enabled",False)):\n            runtime_settings=replace(runtime_settings,asymmetric_hedge_enabled=False)\n        if str(getattr(runtime_settings,"take_profit_mode",""))=="PORTFOLIO":\n            runtime_settings=replace(runtime_settings,take_profit_mode="OFF")\n        def dynamic_before_order(intent):\n            dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)\n            if before_order is not None:\n                try:return before_order(intent)\n                except TypeError:return before_order(intent,None)\n            return None\n        report=run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=runtime_settings,uid=uid,account=account,positions=positions,\n            open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=dynamic_before_order,\n            dynamic_hedge_blocked_side=blocked_side)\n        report["dynamicHedge"]={**dynamic,"blockedStrategySide":blocked_side or None,"portfolioTpSuppressed":str(getattr(settings,"take_profit_mode",""))=="PORTFOLIO"}\n        return report\n    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=positions,\n        open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)\n'''
+text = patch_between(text, strategy_start, strategy_end, old_run, new_run)
+
 marker = "# DYNAMIC_HEDGE_LIQUIDATION_SAFETY_ROUTES_20260910"
 if marker not in text:
     text += f'''\n\n{marker}\ndef _dynamic_hedge_aster_client(user: dict[str, Any], live: bool = False) -> AsterV3Client:\n    secret = load_aster_secret(user)\n    return AsterV3Client(\n        signer_address=secret.signer_address,\n        sign_message=local_eip712_signer(secret),\n        live_authorized=bool(live),\n    )\n\n\ninstall_aster_dynamic_hedge_routes(\n    app,\n    authenticated_user=authenticated_user,\n    user_reference=user_reference,\n    client_factory=_dynamic_hedge_aster_client,\n)\n'''
 
 MAIN.write_text(text, encoding="utf-8")
-print("Dynamic Hedge liquidation-safety routes and manual-close locks installed in cloud_api/main.py")
+print("Dynamic Hedge routes, manual-close locks and Strategy-2 overlay installed in cloud_api/main.py")
