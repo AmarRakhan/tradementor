@@ -19,6 +19,9 @@ test("manual picker loads real Aster markets and stores explicit LONG SHORT side
   assert.match(maker, /setSymbolSide/);
   assert.match(maker, /"LONG"/);
   assert.match(maker, /"SHORT"/);
+  assert.match(maker, /symbol === `\$\{marketQuery\}USDT`/);
+  assert.match(maker, /Laden mislukt · opnieuw proberen/);
+  assert.match(maker, /Array\.isArray\(result\.ranking\)/);
   assert.doesNotMatch(maker, /\[\s*\{\s*symbol:\s*"BTCUSDT"/);
 });
 

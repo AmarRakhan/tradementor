@@ -57,6 +57,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const [marketSearch, setMarketSearch] = useState("");
   const [marketBusy, setMarketBusy] = useState(false);
   const [marketAttempted, setMarketAttempted] = useState(false);
+  const [marketLoadError, setMarketLoadError] = useState("");
   const [tierPreviews, setTierPreviews] = useState<Record<string, TierPreview>>({});
   const [tierBusy, setTierBusy] = useState(false);
   const [totalDraft, setTotalDraft] = useState<string | null>(null);
@@ -132,9 +133,15 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const commitShort = () => { const raw = String(shortDraft ?? v.shortSlots).trim(); setShortDraft(null); if (raw) setShort(raw); };
 
   async function loadMarkets() {
-    if (marketBusy) return; setMarketAttempted(true); setMarketBusy(true);
-    try { const result = await authenticatedRequest("/api/exchanges/aster/strategy2/focus/markets") as Record<string, unknown>; const ranking = Array.isArray(result.ranking) ? result.ranking : []; setMarkets(ranking.flatMap((row) => row && typeof row === "object" ? [String((row as Record<string, unknown>).symbol || "").toUpperCase()] : []).filter(Boolean)); }
-    catch (error) { setMessage(error instanceof Error ? error.message : "Aster-markten konden niet worden geladen."); }
+    if (marketBusy) return; setMarketAttempted(true); setMarketBusy(true); setMarketLoadError("");
+    try {
+      const result = await authenticatedRequest("/api/exchanges/aster/strategy2/focus/markets") as Record<string, unknown>;
+      if (!Array.isArray(result.ranking)) throw new Error("Aster-marktlijst gaf geen geldige ranking terug.");
+      const symbols = result.ranking.flatMap((row) => row && typeof row === "object" ? [String((row as Record<string, unknown>).symbol || "").toUpperCase().trim()] : []).filter(Boolean);
+      if (!symbols.length) throw new Error("Aster retourneerde geen actieve USDT perpetuals.");
+      setMarkets([...new Set(symbols)]);
+    }
+    catch (error) { const text = error instanceof Error ? error.message : "Aster-markten konden niet worden geladen."; setMarketLoadError(text); setMessage(text); }
     finally { setMarketBusy(false); }
   }
   useEffect(() => { if (v.manualEnabled && !marketAttempted) void loadMarkets(); }, [v.manualEnabled, marketAttempted]);
@@ -149,7 +156,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return () => { cancelled = true; };
   }, [v.manualEnabled, v.manualSymbols, v.minLeverage, v.entryMarginLong, v.entryMarginShort, v.longDcaAmount, v.shortDcaAmount]);
 
-  const selected = new Set(v.manualSymbols.map((row) => row.symbol)); const marketMatches = markets.filter((symbol) => !selected.has(symbol) && symbol.includes(marketSearch.trim().toUpperCase())).slice(0, 12);
+  const selected = new Set(v.manualSymbols.map((row) => row.symbol));
+  const marketQuery = marketSearch.trim().toUpperCase();
+  const marketMatches = markets.filter((symbol) => !selected.has(symbol) && symbol.includes(marketQuery)).slice(0, 12);
+  const directMarket = markets.find((symbol) => !selected.has(symbol) && (symbol === marketQuery || symbol === `${marketQuery}USDT`)) || (marketMatches.length === 1 ? marketMatches[0] : "");
   const addSymbol = (symbol: string) => { if (!symbol || selected.has(symbol)) return; change({ ...v, manualSymbols: [...v.manualSymbols, { symbol, side: "LONG" }] }); setMarketSearch(""); };
   const setSymbolSide = (symbol: string, side: ManualSide) => change({ ...v, manualSymbols: v.manualSymbols.map((row) => row.symbol === symbol ? { ...row, side } : row) });
   const removeSymbol = (symbol: string) => change({ ...v, manualSymbols: v.manualSymbols.filter((row) => row.symbol !== symbol) });
@@ -216,7 +226,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       </section>
 
       <label className="manual-symbol-toggle"><span><b>Zelf munten kiezen</b><small>UIT = automatische Top-N. AAN = uitsluitend jouw geselecteerde Aster USDT perpetuals.</small></span><input type="checkbox" checked={v.manualEnabled} onChange={(event) => change({ ...v, manualEnabled: event.target.checked })} /></label>
-      {v.manualEnabled && <div className="manual-symbol-picker"><div className="manual-symbol-search"><input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value.toUpperCase())} onFocus={() => { if (!markets.length) void loadMarkets(); }} placeholder="Zoek BTC, HYPE, BTCUSDT…" /><button type="button" disabled={marketBusy || !marketSearch.trim()} onClick={() => { const exact = markets.find((symbol) => symbol === marketSearch.trim().toUpperCase()); if (exact) addSymbol(exact); }}>+ toevoegen</button></div>{marketSearch.trim() && <div className="manual-symbol-results">{marketBusy ? <small>Markten laden…</small> : marketMatches.length ? marketMatches.map((symbol) => <button type="button" key={symbol} onClick={() => addSymbol(symbol)}>{symbol}<i>+</i></button>) : <small>Geen actieve Aster USDT perpetual gevonden.</small>}</div>}<div className="manual-symbol-selected">{v.manualSymbols.map((row) => { const preview = tierPreviews[row.symbol]; const leverage = preview?.entryPlan?.leverage || preview?.currentLeverage; return <div key={row.symbol}><div><b>{row.symbol}</b>{leverage ? <small>{leverage}×</small> : tierBusy ? <small>…</small> : null}<span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)}>×</button></div>{preview?.entryOrderValid === false && <small className="inline-warning">Instapmargin te laag. Advies minimaal ${Number(preview.suggestedEntryMarginUsd ?? preview.minimumEntryMarginUsd ?? 0).toFixed(2)}.</small>}</div>; })}</div><p className="manual-symbol-summary">{v.manualSymbols.length} geselecteerd · {v.manualSymbols.filter((row) => row.side === "LONG").length} LONG · {v.manualSymbols.filter((row) => row.side === "SHORT").length} SHORT</p></div>}
+      {v.manualEnabled && <div className="manual-symbol-picker"><div className="manual-symbol-search"><input value={marketSearch} onChange={(event) => setMarketSearch(event.target.value.toUpperCase())} onFocus={() => { if (!markets.length) void loadMarkets(); }} placeholder="Zoek BTC, HYPE, BTCUSDT…" /><button type="button" disabled={marketBusy || !marketQuery || !directMarket} onClick={() => { if (directMarket) addSymbol(directMarket); }}>+ toevoegen</button></div>{marketQuery && <div className="manual-symbol-results">{marketBusy ? <small>Markten laden…</small> : marketLoadError ? <button type="button" onClick={() => void loadMarkets()}>Laden mislukt · opnieuw proberen</button> : marketMatches.length ? marketMatches.map((symbol) => <button type="button" key={symbol} onClick={() => addSymbol(symbol)}>{symbol}<i>+</i></button>) : <small>Geen actieve Aster USDT perpetual gevonden.</small>}</div>}<div className="manual-symbol-selected">{v.manualSymbols.map((row) => { const preview = tierPreviews[row.symbol]; const leverage = preview?.entryPlan?.leverage || preview?.currentLeverage; return <div key={row.symbol}><div><b>{row.symbol}</b>{leverage ? <small>{leverage}×</small> : tierBusy ? <small>…</small> : null}<span><button type="button" className={row.side === "LONG" ? "active long" : ""} onClick={() => setSymbolSide(row.symbol, "LONG")}>LONG</button><button type="button" className={row.side === "SHORT" ? "active short" : ""} onClick={() => setSymbolSide(row.symbol, "SHORT")}>SHORT</button></span><button type="button" className="remove" onClick={() => removeSymbol(row.symbol)}>×</button></div>{preview?.entryOrderValid === false && <small className="inline-warning">Instapmargin te laag. Advies minimaal ${Number(preview.suggestedEntryMarginUsd ?? preview.minimumEntryMarginUsd ?? 0).toFixed(2)}.</small>}</div>; })}</div><p className="manual-symbol-summary">{v.manualSymbols.length} geselecteerd · {v.manualSymbols.filter((row) => row.side === "LONG").length} LONG · {v.manualSymbols.filter((row) => row.side === "SHORT").length} SHORT</p></div>}
     </div>
 
     <div className="maker-nav"><button disabled={busy || !dirty} onClick={() => action("save")}>Instellingen opslaan</button><button disabled={busy} onClick={() => action("simulate")}>Veilig simuleren</button><button disabled={busy} onClick={() => checkReadiness(false)}>Readiness controleren</button></div>
