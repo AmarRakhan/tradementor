@@ -117,6 +117,8 @@ from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings
 from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
+from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action
+from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_state import (
     account_values as aster_account_values, reconcile_aster_state,
     account_information_values as aster_account_information_values,
@@ -4724,6 +4726,12 @@ def close_all_aster_strategy(
     status=reserve(transaction)
     if status!="RESERVED":return {"actionId":action_hash,"status":status,"duplicate":True}
     client=_portfolio_growth_client(user,live=True);submitted=[]
+    dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
+    manual_guard = None
+    try:
+        manual_guard = begin_manual_action(dynamic_hedge_ref, "ALL", client.position_risk())
+    except Exception as exc:
+        raise HTTPException(502, "Dynamic Hedge kon vóór Alles sluiten niet veilig worden vergrendeld") from exc
     try:
         open_orders=client.open_orders();unknown=[row for row in open_orders if is_exposure_order(row) is None]
         if unknown:raise RuntimeError("Open order(s) kunnen niet veilig als instap of bescherming worden geclassificeerd")
@@ -4766,9 +4774,11 @@ def close_all_aster_strategy(
                 "ordersSubmitted":len(submitted),"timestamp":finished_at}
             txn.set(growth.collection("audit").document(),audit);txn.set(action_ref,{"status":"COMPLETED","result":audit,"completedAt":finished_at},merge=True)
         complete(finish)
+        complete_manual_action(dynamic_hedge_ref, manual_guard, remaining)
         return {"actionId":action_hash,"status":"COMPLETED","closedPositions":len(submitted),"newBaseline":final_equity,
             "botPaused":True,"message":"Alle posities en orders zijn exchange-bevestigd weg; het account blijft bewust gepauzeerd."}
     except Exception as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE","submitted":len(submitted),
             "reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,f"Alles sluiten is fail-closed gestopt; account blijft gepauzeerd: {str(exc)[:300]}") from exc
@@ -4821,6 +4831,15 @@ def close_profitable_aster_positions(
     if not queue_token:
         action_ref.set({"status": "blocked", "reason": "strategy2_order_busy", "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise HTTPException(409, "Strategy 2 verwerkt nog een order; probeer het zo opnieuw")
+
+    dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
+    manual_guard = None
+    try:
+        before_manual_rows = _portfolio_growth_client(user, live=False).position_risk()
+        manual_guard = begin_manual_action(dynamic_hedge_ref, scope, before_manual_rows)
+    except Exception as exc:
+        _release_strategy2_queue_lease(strategy_ref, queue_token)
+        raise HTTPException(502, "Dynamic Hedge kon vóór de sluiting niet veilig worden vergrendeld") from exc
 
     closed: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -4887,10 +4906,14 @@ def close_profitable_aster_positions(
             "closedCount": len(closed), "skippedCount": len(skipped), "failedCount": len(failed),
             "profitAtSubmitUsd": result["profitAtSubmitUsd"], "timestamp": datetime.now(timezone.utc),
         })
+        after_manual_rows = client.position_risk()
+        complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
         return {**result, "duplicate": False}
-    except HTTPException:
+    except HTTPException as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc.detail))
         raise
     except Exception as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         action_ref.set({
             "status": "PARTIAL_FAIL_CLOSED" if closed else "FAILED_BEFORE_CLOSE",
             "reason": str(exc)[:500], "updatedAt": datetime.now(timezone.utc),
@@ -4927,8 +4950,11 @@ def close_one_aster_position(
         signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=True,
         before_order_submit=_block_order_during_close_all(uid),
     )
+    dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
+    manual_guard = None
     try:
         live_rows = client.position_risk()
+        manual_guard = begin_manual_action(dynamic_hedge_ref, request.side, live_rows)
         position = next((row for row in live_rows
             if str(row.get("symbol", "")).upper() == normalized_symbol
             and str(row.get("positionSide", "")).upper() == request.side
@@ -4957,12 +4983,16 @@ def close_one_aster_position(
             and abs(safe_float(row.get("positionAmt"))) > tolerance), None)
         if remaining is not None:
             raise HTTPException(502, "Aster heeft de volledige sluiting nog niet bevestigd; er wordt niet opnieuw besteld")
+        after_manual_rows = client.position_risk()
+        complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
         intent_ref.set({"status": "confirmed_closed", "result": result, "completedAt": datetime.now(timezone.utc)}, merge=True)
         return {"closed": True, "symbol": normalized_symbol, "side": request.side, "closedSize": live_quantity}
     except HTTPException as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc.detail))
         intent_ref.set({"status": "failed_closed", "detail": str(exc.detail), "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise
     except Exception as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         intent_ref.set({"status": "unknown_fail_closed", "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise HTTPException(502, "Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld") from exc
 
