@@ -33,13 +33,22 @@ def test_emergency_all_close_locks_entire_dynamic_controller_until_flat_confirme
     assert 'if remaining:' in text
 
 
-def test_strategy2_scheduler_runs_dynamic_overlay_before_multi_bb():
+def test_strategy2_scheduler_runs_fast_dynamic_sequence_before_multi_bb():
     text = segment("def _run_aster_strategy2_tick(", "def _run_aster_strategy2_queue_scan(")
-    overlay = text.index("run_dynamic_hedge_overlay(")
-    normal = text.index("run_multi_bb_step(", overlay)
-    assert overlay < normal
+    dynamic = text.index("run_dynamic_hedge_sequence(")
+    normal = text.index("run_multi_bb_step(", dynamic)
+    assert dynamic < normal
     assert 'dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)' in text
     assert 'dynamic_hedge_blocked_side=blocked_side' in text
+    assert "run_dynamic_hedge_overlay(" not in text
+
+
+def test_fast_sequence_is_not_limited_by_strategy2_scan_order_budget():
+    seq = Path(__file__).with_name("aster_dynamic_hedge_sequence.py").read_text(encoding="utf-8")
+    assert "order_budget=None" in seq
+    assert 'ASTER_DYNAMIC_HEDGE_ACTION_DELAY_SECONDS' in seq
+    assert 'min(5.0, max(2.0, raw))' in seq
+    assert '"oneOrderPerTick"] = False' in seq
 
 
 def test_old_asymmetric_and_portfolio_tp_are_suppressed_only_during_dynamic_ownership():
