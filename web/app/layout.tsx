@@ -6,6 +6,7 @@ import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { AsterPortfolioSnapshotEnhancer } from "@/components/aster-portfolio-snapshot-enhancer";
+import { AsterLiquidationSafetyEnhancer } from "@/components/aster-liquidation-safety-enhancer";
 import { MarketsNavigationBridge } from "@/components/markets-navigation-bridge";
 import { NewsNavigationBridge } from "@/components/news-navigation-bridge";
 import { AsterPairSettingsOverlay } from "@/components/aster-pair-settings-overlay";
@@ -21,6 +22,7 @@ import "./strategy2-reference.css";
 import "./markets-bridge.css";
 import "./portfolio-snapshot.css";
 import "./portfolio-hedge.css";
+import "./portfolio-liquidation-safety.css";
 import "./home-transfer.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -72,6 +74,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
         <AsterPortfolioSnapshotEnhancer />
+        <AsterLiquidationSafetyEnhancer />
         <AuthProvider>{children}</AuthProvider>
         <AsterSideTpSettings />
         <AsterShortDcaSaveGuard />
