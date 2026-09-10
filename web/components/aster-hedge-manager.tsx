@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import styles from "./aster-hedge-manager.module.css";
 
@@ -150,7 +150,23 @@ export function AsterHedgeManager({ onClose }: { onClose: () => void }) {
     return next;
   }, []);
 
-  useEffect(() => { void loadState().catch((error) => setMessage(error instanceof Error ? error.message : "Hedgegegevens konden niet worden geladen.")); }, [loadState]);
+  useEffect(() => {
+    let alive = true;
+    const boot = async () => {
+      try {
+        await loadState();
+        const active = await authenticatedRequest("/api/exchanges/aster/hedge-recovery/active", { cache: "no-store" }) as ({ active: boolean } & Partial<RecoveryStatus>);
+        if (alive && active.active && active.actionId) {
+          setRecovery(active as RecoveryStatus);
+          setView("progress");
+        }
+      } catch (error) {
+        if (alive) setMessage(error instanceof Error ? error.message : "Hedgegegevens konden niet worden geladen.");
+      }
+    };
+    void boot();
+    return () => { alive = false; };
+  }, [loadState]);
 
   useEffect(() => {
     if (view !== "recovery" || !action || !state || state.exposure.status === "within_target") return;

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { AsterHedgeManager } from "./aster-hedge-manager";
 
 type Tone = "positive" | "negative" | "neutral";
 type ProfitScope = "LONG" | "SHORT" | "ALL";
@@ -85,8 +86,8 @@ const EMPTY: SnapshotValues = {
   closeDisabled: true, closeBusy: false,
 };
 
-const REFERENCE = "file_00000000a7bc82438e4e1d5f076b47c9";
-const HEDGE_DETAIL_REFERENCE = "file_00000000d9bc81f49ce775b27ff69a7f";
+const REFERENCE = "file_000000002444821084b234da2ddec369";
+const HEDGE_DETAIL_REFERENCE = "file_00000000032881f495cdc99757a7d126";
 const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
 const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
 
@@ -629,7 +630,7 @@ export function AsterPortfolioSnapshotEnhancer() {
         onCloseProfit={openProfitPreview}
         onOpenHedge={() => setHedgeOpen(true)}
       />
-      {hedgeOpen ? <HedgeDetail preview={profitPreview} onClose={() => setHedgeOpen(false)} /> : null}
+      {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
       {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
         scope={confirmScope}
         bucket={confirmBucket}

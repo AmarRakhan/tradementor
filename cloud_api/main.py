@@ -115,6 +115,7 @@ from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rej
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
+from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings
 from aster_state import (
     account_values as aster_account_values, reconcile_aster_state,
     account_information_values as aster_account_information_values,
@@ -4779,7 +4780,7 @@ def preview_profitable_aster_positions(
     """Return a fresh, UID-scoped Aster preview; this endpoint never trades."""
     client = _portfolio_growth_client(user, live=False)
     try:
-        preview = profit_preview(client.position_risk())
+        preview = profit_preview_with_settings(client.position_risk(), load_hedge_settings(user, user_reference))
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
     return {**preview, "generatedAt": datetime.now(timezone.utc).isoformat(), "reliable": True}
@@ -7696,3 +7697,18 @@ def close_bitcoin_trade_scheduled(uid: str, trade_id: str, authorization: str | 
     except Exception as exc:
         raise HTTPException(401, "Ongeldige Cloud Tasks-identiteit") from exc
     return _close_bitcoin_trade(uid, trade_id, reason="timer_expired")
+
+# Register the interactive Hedge Dekking routes only after every injected
+# production dependency has been defined. This keeps the API module free of a
+# circular import back into main.py.
+install_aster_hedge_recovery_routes(
+    app,
+    authenticated_user=authenticated_user,
+    db=db,
+    user_reference=user_reference,
+    aster_strategy2_reference=aster_strategy2_reference,
+    client_factory=_portfolio_growth_client,
+    acquire_queue_lease=_acquire_strategy2_queue_lease,
+    release_queue_lease=_release_strategy2_queue_lease,
+    before_order_submit_factory=_block_order_during_close_all,
+)
