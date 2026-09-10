@@ -1,3 +1,4 @@
+# Release verification contract for the interactive Hedge Dekking production flow.
 from aster_hedge_recovery import (
     apply_notional_impact,
     average_start_margin,
@@ -68,6 +69,7 @@ def test_open_and_close_impact_use_notional_not_seat_count():
     closed = apply_notional_impact(before, "CLOSE_LONG", 5000, settings, seat_count=2)
     assert closed["hedgeCoveragePercent"] == 40
 
+
 def test_original_margin_prevents_eager_fallback_evaluation():
     calls = []
     result = average_start_margin_with_fallback([row("S1", "SHORT", 1, 100, margin=2.8)], "SHORT",
@@ -84,4 +86,3 @@ def test_max_correction_is_a_hard_ceiling_not_an_overshoot_hint():
     assert not would_exceed_step_target(18.9, 28.8, 28.9)
     assert would_exceed_step_target(112.0, 99.0, 102.0)
     assert not would_exceed_step_target(112.0, 102.1, 102.0)
-
