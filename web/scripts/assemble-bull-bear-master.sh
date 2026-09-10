@@ -35,7 +35,7 @@ ffmpeg -hide_banner -loglevel error -y -i "$BULL_HALF" \
 
 ffmpeg -hide_banner -loglevel error -y \
   -i "$TMP/bear-reversed.mp4" -i "$TMP/bull-normalized.mp4" \
-  -filter_complex "[0:v]setpts=PTS-STARTPTS[bear];[1:v]setpts=PTS-STARTPTS[bull];[bear][bull]concat=n=2:v=1:a=0[v]" \
+  -filter_complex "[0:v]setpts=PTS-STARTPTS[bear];[1:v]setpts=PTS-STARTPTS[bull];[bear][bull]concat=n=2:v=1:a=0[joined];[joined]fps=30[v]" \
   -map "[v]" -an -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p \
   -g 6 -keyint_min 6 -sc_threshold 0 -movflags +faststart "$OUT_VIDEO"
 
