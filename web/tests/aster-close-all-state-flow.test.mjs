@@ -11,6 +11,7 @@ test("Alles sluiten exposes confirmation, busy and exchange-confirmed success st
   assert.match(growth, /Alle posities en open orders zijn door Aster bevestigd gesloten/);
   assert.match(growth, /String\(result\.status \|\| ""\)\.toUpperCase\(\) !== "COMPLETED"/);
   assert.match(growth, /closeRequest\.current\.quoteId !== quoteId/);
+  assert.match(growth, /quote_id:data\.quoteId/);
   assert.match(growth, /idempotency_key: closeRequest\.current\.key/);
   assert.match(growth, /if \(!busy\) setConfirm\(false\)/);
 });
