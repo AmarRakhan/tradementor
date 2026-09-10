@@ -5,17 +5,11 @@ const VALID_SCOPES = new Set(["ALL", "LONG", "SHORT"]);
 
 export async function POST(request: Request) {
   const requestUrl = new URL(request.url);
-  const requestedSide = requestUrl.searchParams.get("side");
 
-  // Tradecentrum historically omits the side parameter and intentionally means ALL.
-  // When a caller explicitly supplies a side (Portfolio Snapshot LONG/SHORT), preserve
-  // that scope across the Next -> Cloud proxy boundary. Never downgrade an explicit
-  // scoped request to ALL.
-  if (requestedSide === null) {
-    return proxyCloud(request, CLOUD_PATH, "POST");
-  }
-
-  const scope = requestedSide.trim().toUpperCase();
+  // Tradecentrum intentionally means ALL when it omits side. Normalize that here so
+  // the Cloud API never receives an ambiguous bulk-close request. Portfolio Snapshot
+  // supplies LONG/SHORT explicitly and that scope is preserved end-to-end.
+  const scope = (requestUrl.searchParams.get("side") ?? "ALL").trim().toUpperCase();
   if (!VALID_SCOPES.has(scope)) {
     return Response.json(
       { detail: "Profit close scope moet ALL, LONG of SHORT zijn" },
