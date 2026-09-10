@@ -24,12 +24,15 @@ def test_naked_short_uses_same_account_wide_threshold_math():
     result=cross_account_risk(account(800,16),[pos("ETHUSDT","SHORT",800,leverage=50)])
     assert result["liquidationRiskPct"] == 2
     assert result["shortNotional"] == 800
+    assert result["netSide"] == "SHORT"
+    assert result["signedNetExposure"] == -800
 
 
 def test_equal_same_pair_hedge_never_hardcodes_liquidation_risk_to_zero():
     result=cross_account_risk(account(1000,20),[pos("BTCUSDT","LONG",1000),pos("BTCUSDT","SHORT",1000)])
     assert result["netExposure"] == 0
     assert result["grossExposure"] == 2000
+    assert result["hedgeCoveragePercent"] == 100
     assert result["liquidationRiskPct"] == 2
     assert result["maintenanceMarginPct"] == 1
     assert result["positionCountIncluded"] == 2
@@ -39,6 +42,7 @@ def test_partial_hedge_preserves_residual_exposure():
     result=cross_account_risk(account(1000,15),[pos("BTCUSDT","LONG",1000),pos("BTCUSDT","SHORT",500)])
     assert result["netExposure"] == 500
     assert result["grossExposure"] == 1500
+    assert result["hedgeCoveragePercent"] == 50
     assert result["liquidationRiskPct"] == 1.5
 
 
@@ -69,18 +73,37 @@ def test_reconstructed_source_uses_total_maintenance_over_margin_balance():
     result=cross_account_risk(account(250,25),[pos("BTCUSDT","LONG",1000)])
     assert result["liquidationRiskPct"] == 10
     assert result["liquidationRiskSource"] == "SERVER_RECONSTRUCTED"
+    assert result["marginBufferUsd"] == 225
+    assert result["bufferRatio"] == 10
+    assert result["liquidationSafetyStatus"] == "VEILIG"
+
+
+def test_available_zero_does_not_create_fake_liquidation():
+    result=cross_account_risk(account(250,25,availableBalance=0),[pos("BTCUSDT","LONG",1000)])
+    assert result["liquidationRiskPct"] == 10
+    assert result["marginBufferUsd"] == 225
+    assert result["liquidationSafetyStatus"] == "VEILIG"
 
 
 def test_near_liquidation_and_no_position_boundaries():
     near=cross_account_risk(account(101,100),[pos("BTCUSDT","LONG",1000)])
     empty=cross_account_risk(account(1000,0),[])
     assert 99 < near["liquidationRiskPct"] < 100
+    assert near["liquidationSafetyStatus"] == "KRITIEK"
     assert empty["liquidationRiskPct"] == 0
     assert empty["maintenanceMarginPct"] == 0
     assert empty["positionCountIncluded"] == 0
+    assert empty["bufferRatio"] is None
 
 
 def test_isolated_rows_do_not_pollute_cross_exposure_diagnostics():
     result=cross_account_risk(account(1000,10),[pos("BTCUSDT","LONG",1000),pos("ETHUSDT","SHORT",500,margin_type="isolated")])
     assert result["positionCountIncluded"] == 1
     assert result["grossExposure"] == 1000
+
+
+def test_missing_maintenance_evidence_is_never_called_safe():
+    raw={"totalMarginBalance":1000,"totalWalletBalance":1000,"totalUnrealizedProfit":0}
+    result=cross_account_risk(raw,[pos("BTCUSDT","LONG",1000)])
+    assert result["reliable"] is False
+    assert result["liquidationSafetyStatus"] == "DATA_ONBETROUWBAAR"
