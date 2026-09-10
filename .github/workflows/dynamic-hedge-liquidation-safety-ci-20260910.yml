@@ -31,7 +31,14 @@ jobs:
         run: |
           python tools/apply_dynamic_hedge_execution_hardening_20260910.py
           python tools/apply_dynamic_hedge_multi_bb_ownership_20260910.py
-          python tools/apply_dynamic_hedge_liquidation_safety_20260910.py
+          if grep -q 'run_dynamic_hedge_sequence(' cloud_api/main.py \
+             && grep -q 'begin_manual_action(dynamic_hedge_ref, request.side, live_rows)' cloud_api/main.py \
+             && grep -q 'begin_manual_action(dynamic_hedge_ref, "ALL", client.position_risk())' cloud_api/main.py \
+             && grep -q 'install_aster_dynamic_hedge_routes(' cloud_api/main.py; then
+            echo 'Dynamic Hedge main.py integration already present after production sync; do not inject it twice.'
+          else
+            python tools/apply_dynamic_hedge_liquidation_safety_20260910.py
+          fi
           python tools/apply_dynamic_hedge_fast_sequence_20260910.py
 
       - name: Install backend dependencies
