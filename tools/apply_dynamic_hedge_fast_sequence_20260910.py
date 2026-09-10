@@ -1,6 +1,16 @@
 from pathlib import Path
 
 MAIN = Path("cloud_api/main.py")
+EXECUTOR = Path("cloud_api/aster_dynamic_hedge_execution.py")
+
+# Fix the execution primitive to use the canonical policy field name.  This
+# stays a pure field-name correction; the fast-sequence behavior is handled by
+# aster_dynamic_hedge_sequence.py.
+executor_text = EXECUTOR.read_text(encoding="utf-8")
+if "policy.hysteresis_percent" in executor_text:
+    executor_text = executor_text.replace("policy.hysteresis_percent", "policy.target_hysteresis_pct")
+EXECUTOR.write_text(executor_text, encoding="utf-8")
+
 text = MAIN.read_text(encoding="utf-8")
 
 old_import = "from aster_dynamic_hedge_execution import run_dynamic_hedge_overlay, dynamic_strategy_order_guard\n"
