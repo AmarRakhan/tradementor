@@ -36,13 +36,14 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q cloud_api
 
-      - name: Run Dynamic Hedge, close-isolation and 15-scenario safety tests
+      - name: Run Dynamic Hedge, close-isolation, read-only verification and 15-scenario safety tests
         working-directory: cloud_api
         run: >-
           python -m pytest -q
           test_aster_dynamic_hedge.py
           test_aster_dynamic_hedge_api.py
           test_aster_dynamic_hedge_manual.py
+          test_aster_dynamic_hedge_verify.py
           test_dynamic_hedge_scenario_matrix_20260910.py
           test_dynamic_hedge_main_integration_20260910.py
           test_aster_cross_risk.py
