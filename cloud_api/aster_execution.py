@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Callable
@@ -171,16 +172,18 @@ def require_exact_new_position_leverage(client: Any, plan: PairExecutionPlan,
     return requested
 
 
-def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, Any]) -> dict[str, Any]:
-    """Confirm dependent market-order steps from exchange truth.
+def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, Any], *,
+                    poll_attempts: int = 1, poll_delay_seconds: float = 0.0) -> dict[str, Any]:
+    """Confirm one submitted market order from exchange truth without resubmitting.
 
-    Aster can acknowledge a market order before its final fill is visible.  A
-    follow-up OPEN/CLOSE is therefore forbidden while the first leg is still
-    NEW/PARTIALLY_FILLED or has an unknown terminal state.
+    Aster can acknowledge a market order before its final fill is visible. Hedge
+    recovery may poll that same client-order id briefly; a persistent NEW or
+    PARTIALLY_FILLED state fails closed and is never converted into a new order.
     """
     current = result
     status = str(current.get("status", "")).upper()
-    if status in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}:
+    terminal = {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+    if status in terminal:
         if status != "FILLED":
             raise RuntimeError(f"Aster-order eindigde als {status}")
         return current
@@ -191,11 +194,18 @@ def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, 
         return current
     if query is None:
         raise RuntimeError("Aster-orderfill kan niet worden bevestigd")
-    current = query(symbol, intent_id)
-    status = str(current.get("status", "")).upper()
-    if status != "FILLED":
-        raise RuntimeError(f"Aster-order is nog niet definitief gevuld ({status or 'ONBEKEND'})")
-    return current
+    attempts = max(1, int(poll_attempts))
+    delay = max(0.0, float(poll_delay_seconds))
+    for attempt in range(attempts):
+        current = query(symbol, intent_id)
+        status = str(current.get("status", "")).upper()
+        if status == "FILLED":
+            return current
+        if status in terminal:
+            raise RuntimeError(f"Aster-order eindigde als {status}")
+        if attempt + 1 < attempts and delay > 0:
+            time.sleep(delay)
+    raise RuntimeError(f"Aster-order is nog niet definitief gevuld ({status or 'ONBEKEND'})")
 
 
 def maximum_notional_for_leverage(brackets: list[LeverageBracket], leverage: int) -> Decimal:
@@ -291,7 +301,9 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
                      manual_loss_confirmation: bool = False,
                      before_submit: Callable[[AsterOrderIntent], None] | None = None,
                      new_position_leverage: int | None = None,
-                     allow_existing_contract_leverage_change: bool = False) -> dict[str, Any]:
+                     allow_existing_contract_leverage_change: bool = False,
+                     fill_poll_attempts: int = 1,
+                     fill_poll_delay_seconds: float = 0.0) -> dict[str, Any]:
     if not confirm: raise ValueError("Persoonlijke bevestiging ontbreekt")
     # Aster stores margin/leverage per contract.  A freshly selected symbol can
     # therefore still carry an old or unsupported value.  Configure it before
@@ -314,7 +326,8 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
         intent, config=AsterAutomationConfig(enabled=True, mode="live"), confirm=True,
         hedge_mode_confirmed=True, risk_approved=True,
     )
-    result = _confirmed_fill(client, intent.intent_id, plan.symbol, result)
+    result = _confirmed_fill(client, intent.intent_id, plan.symbol, result,
+                             poll_attempts=fill_poll_attempts, poll_delay_seconds=fill_poll_delay_seconds)
     return {"side": side.value, "action": action, "result": result, "recovered": recovered,
             "leverage": accepted_leverage}
 

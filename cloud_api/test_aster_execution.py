@@ -340,3 +340,33 @@ def test_close_all_requires_confirmation_and_closes_every_leg():
     result=execute_close_all(f,[(p,PositionSide.LONG),(p,PositionSide.SHORT)],id_prefix="tm-all",confirm=True,
         explicit_loss_confirmation=True)
     assert len(result)==2 and f.calls[-2:]==[("CLOSE","LONG"),("CLOSE","SHORT")]
+
+class PartialFillFake(Fake):
+    def __init__(self, query_statuses):
+        super().__init__(); self.query_statuses = list(query_statuses); self.query_calls = 0; self.submit_calls = 0
+    def submit_order_once(self, intent, **kwargs):
+        self.submit_calls += 1; self.calls.append((intent.action, intent.position_side.value))
+        return {"orderId": 101, "status": "PARTIALLY_FILLED"}, False
+    def query_order(self, symbol, client_order_id):
+        self.query_calls += 1
+        status = self.query_statuses.pop(0) if self.query_statuses else "PARTIALLY_FILLED"
+        return {"orderId": 101, "symbol": symbol, "clientOrderId": client_order_id, "status": status}
+
+
+def test_partial_fill_can_settle_to_filled_without_duplicate_submit():
+    client = PartialFillFake(["PARTIALLY_FILLED", "FILLED"]); plan = plan_pair(SYMBOL, BRACKETS, 65000, 10)
+    result = execute_leg_once(client, plan, side=PositionSide.SHORT, action="CLOSE", id_prefix="partial-settle", confirm=True,
+                              manual_loss_confirmation=True, fill_poll_attempts=3, fill_poll_delay_seconds=0)
+    assert result["result"]["status"] == "FILLED"
+    assert client.submit_calls == 1
+    assert client.query_calls == 2
+
+
+def test_persistent_partial_fill_fails_closed_without_duplicate_submit():
+    client = PartialFillFake(["PARTIALLY_FILLED", "PARTIALLY_FILLED", "PARTIALLY_FILLED"]); plan = plan_pair(SYMBOL, BRACKETS, 65000, 10)
+    with pytest.raises(RuntimeError, match="PARTIALLY_FILLED"):
+        execute_leg_once(client, plan, side=PositionSide.SHORT, action="CLOSE", id_prefix="partial-open", confirm=True,
+                         manual_loss_confirmation=True, fill_poll_attempts=3, fill_poll_delay_seconds=0)
+    assert client.submit_calls == 1
+    assert client.query_calls == 3
+

@@ -7,7 +7,7 @@ tests for the interactive Hedge Dekking flow.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 import math
 
 from aster_profit_close import position_notional
@@ -158,6 +158,38 @@ def average_start_margin(rows: Iterable[dict[str, Any]], side: str, fallback_mar
     if fallback is None or fallback <= 0:
         raise ValueError(f"Geen betrouwbare {normalized} startmargin beschikbaar")
     return {"marginUsd": round(fallback, 8), "source": "configured_same_side_fallback", "sampleCount": 0}
+
+
+def average_start_margin_with_fallback(rows: Iterable[dict[str, Any]], side: str,
+                                       fallback_factory: Callable[[], float]) -> dict[str, Any]:
+    """Prefer proven same-side original margin and evaluate fallback only when needed."""
+    materialized = list(rows)
+    try:
+        return average_start_margin(materialized, side, -1.0)
+    except ValueError:
+        return average_start_margin(materialized, side, fallback_factory())
+
+
+def correction_step_reached(start_coverage: float | None, current_coverage: float | None,
+                            step_target: float | None, tolerance: float = .05) -> bool:
+    if start_coverage is None or current_coverage is None or step_target is None:
+        return False
+    if start_coverage < step_target:
+        return current_coverage >= step_target - tolerance
+    if start_coverage > step_target:
+        return current_coverage <= step_target + tolerance
+    return True
+
+
+def would_exceed_step_target(start_coverage: float | None, projected_coverage: float | None,
+                             step_target: float | None, tolerance: float = .05) -> bool:
+    if start_coverage is None or projected_coverage is None or step_target is None:
+        return False
+    if start_coverage < step_target:
+        return projected_coverage > step_target + tolerance
+    if start_coverage > step_target:
+        return projected_coverage < step_target - tolerance
+    return False
 
 
 def strategy_fallback_start_margin(raw: dict[str, Any] | None, side: str) -> float:

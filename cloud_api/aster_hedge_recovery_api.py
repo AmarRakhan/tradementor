@@ -28,6 +28,8 @@ from mexc_gateway import safe_float
 from aster_hedge_recovery import (
     apply_notional_impact,
     average_start_margin,
+    average_start_margin_with_fallback,
+    correction_step_reached,
     normalize_settings,
     portfolio_exposure,
     ranked_close_candidates,
@@ -35,6 +37,7 @@ from aster_hedge_recovery import (
     step_target_percent,
     strategy_fallback_start_margin,
     validate_recovery_direction,
+    would_exceed_step_target,
 )
 
 
@@ -155,8 +158,8 @@ def install_aster_hedge_recovery_routes(
         exposure = portfolio_exposure(rows, settings)
         if not exposure["reliable"]: raise HTTPException(409, "Niet alle open Aster-exposure kon betrouwbaar worden geclassificeerd")
         try:
-            long_margin = average_start_margin(rows, "LONG", fallback_margin(raw, config, "LONG"))
-            short_margin = average_start_margin(rows, "SHORT", fallback_margin(raw, config, "SHORT"))
+            long_margin = average_start_margin_with_fallback(rows, "LONG", lambda: fallback_margin(raw, config, "LONG"))
+            short_margin = average_start_margin_with_fallback(rows, "SHORT", lambda: fallback_margin(raw, config, "SHORT"))
         except ValueError as exc: raise HTTPException(409, str(exc)) from exc
         return {
             "reliable": True, "settings": settings, "exposure": exposure,
@@ -202,24 +205,63 @@ def install_aster_hedge_recovery_routes(
                 continue
         return None
 
+    def refresh_open_execution_plan(user: dict[str, Any], client: Any, current_rows: list[dict[str, Any]],
+                                    item: dict[str, Any]) -> PairExecutionPlan:
+        """Re-run the same market/order planner immediately before one confirmed OPEN seat."""
+        raw, config = strategy_mapping(user)
+        symbol = str(item.get("symbol", "")).upper(); side = str(item.get("side", "")).upper()
+        requested_margin = safe_float(item.get("requestedMarginUsd")) or safe_float(item.get("plannedMarginUsd"))
+        if requested_margin <= 0:
+            raise RuntimeError("Bevestigde startmargin van deze stoel ontbreekt")
+        available = available_usdt(client)
+        if available + 1e-9 < requested_margin:
+            raise RuntimeError(f"Onvoldoende beschikbare margin voor de volgende stoel; nodig US$ {requested_margin:.2f}, beschikbaar US$ {available:.2f}")
+        exchange_info = client.public_exchange_info()
+        prices = {str(x.get("symbol", "")).upper(): safe_float(x.get("price")) for x in client.ticker_prices() if safe_float(x.get("price")) > 0}
+        rows_by_symbol = {str(x.get("symbol", "")).upper(): x for x in exchange_info.get("symbols", []) if isinstance(x, dict)}
+        market = build_snapshot(exchange_info, client.ticker_24h(), config.universe_top_n,
+                                minimum_quote_volume_24h_usdt=config.minimum_quote_volume_24h_usdt)
+        symbols = entry_fill_symbols([x.symbol for x in market.selected], rows_by_symbol, prices)
+        symbols = [x for x in side_entry_candidates(symbols, active_keys(current_rows), side) if x not in blocked_symbols(raw)]
+        if symbol not in symbols:
+            raise RuntimeError("De bevestigde coin is niet langer een geldige vrije hedge-stoel; maak een nieuwe preview")
+        side_cap = config.maximum_short_positions if side == "SHORT" else config.maximum_long_positions
+        current_side_count = sum(1 for row in current_rows if str(row.get("positionSide", "")).upper() == side and abs(safe_float(row.get("positionAmt"))) > 0)
+        if side_cap is not None and current_side_count >= int(side_cap):
+            raise RuntimeError(f"De actuele {side}-stoelcapaciteit is volledig bezet")
+        symbol_row = rows_by_symbol.get(symbol); price = prices.get(symbol, 0)
+        if not symbol_row or price <= 0:
+            raise RuntimeError("Aster gaf geen betrouwbare actuele contractprijs voor de bevestigde coin")
+        bulk_brackets = client.leverage_brackets()
+        contract_rows = [row for row in current_rows if str(row.get("symbol", "")).upper() == symbol]
+        fresh = best_open_plan(client, symbol_row, price, requested_margin, max(1, config.leverage), bulk_brackets, contract_rows)
+        if fresh is None:
+            raise RuntimeError("De bevestigde hedge-stoel voldoet niet langer aan de actuele leverage/orderregels")
+        if int(fresh.leverage) != int(item.get("leverage", 0)):
+            raise RuntimeError("De geldige leverage is gewijzigd sinds bevestiging; maak een nieuwe preview")
+        if not math.isclose(float(fresh.notional_per_leg), float(item.get("plannedNotionalUsd", 0)), rel_tol=.015, abs_tol=.05):
+            raise RuntimeError("De uitvoerbare notional is materieel gewijzigd sinds bevestiging; maak een nieuwe preview")
+        return fresh
+
     def after_for_items(before: dict[str, Any], action: str, items: list[dict[str, Any]], settings: dict[str, float]) -> dict[str, Any]:
         return apply_notional_impact(before, action, sum(float(x["plannedNotionalUsd"]) for x in items), settings, seat_count=len(items))
 
     def limit_items_to_step(before: dict[str, Any], action: str, items: list[dict[str, Any]], settings: dict[str, float]) -> list[dict[str, Any]]:
-        if not items or before.get("hedgeCoveragePercent") is None: return items
-        target = step_target_percent(before["hedgeCoveragePercent"], settings)
+        start_coverage = before.get("hedgeCoveragePercent")
+        if not items or start_coverage is None: return items
+        target = step_target_percent(start_coverage, settings)
         if target is None: return items
-        allowed: list[dict[str, Any]] = []; best_distance = abs(before["hedgeCoveragePercent"] - target)
+        allowed: list[dict[str, Any]] = []
         for item in items:
             candidate = allowed + [item]
             after = after_for_items(before, action, candidate, settings)
             coverage = after.get("hedgeCoveragePercent")
-            if coverage is None: break
-            distance = abs(coverage - target)
-            if allowed and distance > best_distance + .05: break
-            allowed = candidate; best_distance = distance
-            if distance <= .05: break
-        return allowed or items[:1]
+            if coverage is None or would_exceed_step_target(start_coverage, coverage, target):
+                break
+            allowed = candidate
+            if correction_step_reached(start_coverage, coverage, target):
+                break
+        return allowed
 
     def build_preview(user: dict[str, Any], action: str, seat_count: int, *, persist: bool = True) -> dict[str, Any]:
         action = str(action).upper().strip(); settings = load_hedge_settings(user, user_reference)
@@ -229,12 +271,15 @@ def install_aster_hedge_recovery_routes(
             if not before["reliable"]: raise ValueError("Actuele exposure bevat onbetrouwbare open posities")
             validate_recovery_direction(before["status"], action)
             side = "SHORT" if action.endswith("SHORT") else "LONG"
-            margin_evidence = average_start_margin(rows, side, fallback_margin(raw, config, side))
+            margin_evidence = average_start_margin_with_fallback(rows, side, lambda: fallback_margin(raw, config, side))
             margin_per_seat = float(margin_evidence["marginUsd"])
             available = available_usdt(client)
             items: list[dict[str, Any]] = []
+            margin_capacity = int(available // margin_per_seat) if margin_per_seat > 0 else 0
             max_by_margin = seat_count
             if action.startswith("OPEN"):
+                if margin_capacity < seat_count:
+                    raise HTTPException(409, f"Onvoldoende beschikbare margin voor {seat_count} stoelen. Maximaal mogelijk met huidige beschikbare margin: {margin_capacity} stoelen")
                 if not client.position_mode(): raise ValueError("Aster Hedge Mode staat niet aan")
                 exchange_info = client.public_exchange_info(); prices = {str(x.get("symbol", "")).upper(): safe_float(x.get("price")) for x in client.ticker_prices() if safe_float(x.get("price")) > 0}
                 rows_by_symbol = {str(x.get("symbol", "")).upper(): x for x in exchange_info.get("symbols", []) if isinstance(x, dict)}
@@ -244,7 +289,7 @@ def install_aster_hedge_recovery_routes(
                 symbols = [x for x in side_entry_candidates(symbols, active_keys(rows), side) if x not in blocked_symbols(raw)]
                 side_cap = config.maximum_short_positions if side == "SHORT" else config.maximum_long_positions
                 slot_capacity = max(0, int(side_cap) - int(before[f"{side.lower()}PositionCount"])) if side_cap is not None else len(symbols)
-                max_by_margin = min(len(symbols), slot_capacity, int(available // margin_per_seat) if margin_per_seat > 0 else 0)
+                max_by_margin = min(len(symbols), slot_capacity, margin_capacity)
                 bulk_brackets = client.leverage_brackets()
                 by_contract: dict[str, list[dict[str, Any]]] = {}
                 for row in rows: by_contract.setdefault(str(row.get("symbol", "")).upper(), []).append(row)
@@ -256,7 +301,8 @@ def install_aster_hedge_recovery_routes(
                     if plan is None: continue
                     items.append({"index": len(items), "symbol": symbol, "side": side,
                                   "quantity": float(plan.quantity), "plannedNotionalUsd": float(plan.notional_per_leg),
-                                  "leverage": int(plan.leverage), "plannedMarginUsd": float(plan.notional_per_leg) / max(1, plan.leverage)})
+                                  "leverage": int(plan.leverage), "requestedMarginUsd": margin_per_seat,
+                                  "plannedMarginUsd": float(plan.notional_per_leg) / max(1, plan.leverage)})
                 max_by_margin = min(max_by_margin, len(items) if len(items) < seat_count else max_by_margin)
             else:
                 candidates = ranked_close_candidates(rows, side)
@@ -283,7 +329,8 @@ def install_aster_hedge_recovery_routes(
                 "reliable": True, "previewId": preview_id, "uid": str(user["uid"]), "action": action,
                 "seatCount": len(items), "marginPerSeatUsd": margin_per_seat, "marginSource": margin_evidence["source"],
                 "totalMarginUsd": round(total_margin, 8), "plannedNotionalUsd": round(total_notional, 8),
-                "maximumSeatsByMargin": max_by_margin, "before": before, "after": after, "settings": settings,
+                "maximumSeatsByMargin": margin_capacity if action.startswith("OPEN") else max_by_margin, "maximumSeatsPlanable": max_by_margin,
+                "before": before, "after": after, "settings": settings,
                 "stepTargetPercent": step_target_percent(before.get("hedgeCoveragePercent"), settings),
                 "items": items, "generatedAt": now.isoformat(), "expiresAt": expires.isoformat(),
             }
@@ -369,8 +416,8 @@ def install_aster_hedge_recovery_routes(
                 if active.get("status") not in {"COMPLETED", "STOPPED"}: raise HTTPException(409, "Er loopt al een hedge-herstelactie")
             data = {"uid": str(user["uid"]), "status": "ACTIVE", "action": fresh["action"], "seatCount": fresh["seatCount"],
                     "completedCount": 0, "nextIndex": 0, "processing": False, "plan": fresh["items"], "before": fresh["before"],
-                    "expectedAfter": fresh["after"], "settings": fresh["settings"], "results": [], "createdAt": now,
-                    "previewId": request.preview_id}
+                    "expectedAfter": fresh["after"], "settings": fresh["settings"], "stepTargetPercent": fresh.get("stepTargetPercent"),
+                    "results": [], "createdAt": now, "previewId": request.preview_id}
             txn.set(action_ref, data); txn.set(root(user), {"activeActionId": action_id, "activeUpdatedAt": now}, merge=True); return data
         data = reserve(transaction)
         return public_status(user, action_id, data)
@@ -410,24 +457,40 @@ def install_aster_hedge_recovery_routes(
                 action_ref.set({"status": "STOPPED", "seatCount": index, "processing": False, "processingToken": "", "lastKnown": current,
                                 "error": "De actuele markt/exposure vraagt niet langer om dezelfde herstelrichting.", "stoppedAt": datetime.now(timezone.utc)}, merge=True)
                 clear_active(user, action_id); return public_status(user, action_id)
-            symbol = str(item["symbol"]).upper(); side = str(item["side"]).upper(); quantity = float(item["quantity"]); action = str(data["action"])
+            initial_coverage = (data.get("before") or {}).get("hedgeCoveragePercent")
+            current_coverage = current.get("hedgeCoveragePercent"); step_target = data.get("stepTargetPercent")
+            if correction_step_reached(initial_coverage, current_coverage, step_target):
+                action_ref.set({"status": "COMPLETED", "seatCount": index, "processing": False, "processingToken": "", "lastKnown": current,
+                                "completedAt": datetime.now(timezone.utc), "error": "Maximale correctie voor deze herstelstap is bereikt."}, merge=True)
+                clear_active(user, action_id); return public_status(user, action_id)
+            symbol = str(item["symbol"]).upper(); side = str(item["side"]).upper(); preview_quantity = float(item["quantity"]); action = str(data["action"])
             matching = next((row for row in current_rows if str(row.get("symbol", "")).upper() == symbol and str(row.get("positionSide", "")).upper() == side and abs(safe_float(row.get("positionAmt"))) > 0), None)
             if action.startswith("OPEN") and matching is not None: raise RuntimeError("Doelstoel is sinds de preview al bezet; er wordt niet dubbel geopend")
             if action.startswith("CLOSE"):
                 if matching is None: raise RuntimeError("De te sluiten positie bestaat niet meer; er wordt niet opnieuw gesloten")
-                live_qty = abs(safe_float(matching.get("positionAmt"))); tolerance = max(1e-10, quantity * 1e-7)
-                if abs(live_qty - quantity) > tolerance: raise RuntimeError("De te sluiten positieomvang is gewijzigd; maak een nieuwe preview")
+                live_qty = abs(safe_float(matching.get("positionAmt"))); tolerance = max(1e-10, preview_quantity * 1e-7)
+                if abs(live_qty - preview_quantity) > tolerance: raise RuntimeError("De te sluiten positieomvang is gewijzigd; maak een nieuwe preview")
                 mark = safe_float(matching.get("markPrice")); leverage = max(1, int(safe_float(matching.get("leverage")) or 1))
                 if mark <= 0: raise RuntimeError("Aster gaf geen betrouwbare actuele marktprijs")
                 execution_plan = PairExecutionPlan(symbol, Decimal(str(live_qty)), Decimal(str(live_qty * mark)), leverage)
-                result = execute_leg_once(live, execution_plan, side=PositionSide(side), action="CLOSE", id_prefix=f"tmhr-{action_id[:8]}-{index}",
-                                          confirm=True, manual_loss_confirmation=True, before_submit=before_order_submit_factory(str(user["uid"])))
             else:
-                execution_plan = PairExecutionPlan(symbol, Decimal(str(quantity)), Decimal(str(item["plannedNotionalUsd"])), int(item["leverage"]))
+                execution_plan = refresh_open_execution_plan(user, live, current_rows, item)
+            execution_notional = float(execution_plan.notional_per_leg)
+            projected = apply_notional_impact(current, action, execution_notional, current_settings, seat_count=1)
+            if would_exceed_step_target(initial_coverage, projected.get("hedgeCoveragePercent"), step_target):
+                action_ref.set({"status": "COMPLETED", "seatCount": index, "processing": False, "processingToken": "", "lastKnown": current,
+                                "completedAt": datetime.now(timezone.utc), "error": "Een extra stoel zou de maximale correctie per stap overschrijden."}, merge=True)
+                clear_active(user, action_id); return public_status(user, action_id)
+            if action.startswith("CLOSE"):
+                result = execute_leg_once(live, execution_plan, side=PositionSide(side), action="CLOSE", id_prefix=f"tmhr-{action_id[:8]}-{index}",
+                                          confirm=True, manual_loss_confirmation=True, before_submit=before_order_submit_factory(str(user["uid"])),
+                                          fill_poll_attempts=8, fill_poll_delay_seconds=.35)
+            else:
                 result = execute_leg_once(live, execution_plan, side=PositionSide(side), action="OPEN", id_prefix=f"tmhr-{action_id[:8]}-{index}", confirm=True,
-                                          before_submit=before_order_submit_factory(str(user["uid"])), new_position_leverage=int(item["leverage"]))
+                                          before_submit=before_order_submit_factory(str(user["uid"])), new_position_leverage=int(execution_plan.leverage),
+                                          fill_poll_attempts=8, fill_poll_delay_seconds=.35)
             after_rows = live.position_risk(); after = portfolio_exposure(after_rows, current_settings); results = list(data.get("results") or [])
-            results.append({"index": index, "symbol": symbol, "side": side, "status": "FILLED", "notionalUsd": float(item["plannedNotionalUsd"]), "order": result})
+            results.append({"index": index, "symbol": symbol, "side": side, "status": "FILLED", "notionalUsd": execution_notional, "order": result})
             next_index = index + 1; final = next_index >= int(data.get("seatCount", 0)); update = {"completedCount": next_index, "nextIndex": next_index,
                 "processing": False, "processingToken": "", "results": results, "lastKnown": after, "updatedAt": datetime.now(timezone.utc), "error": ""}
             if final: update.update({"status": "COMPLETED", "completedAt": datetime.now(timezone.utc)})
