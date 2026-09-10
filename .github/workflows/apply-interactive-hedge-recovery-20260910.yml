@@ -1,0 +1,141 @@
+name: Apply Interactive Hedge Recovery 20260910
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - .github/workflows/apply-interactive-hedge-recovery-20260910.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-interactive-hedge-recovery-20260910
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+
+      - name: Wire backend and definitive hedge UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          enhancer = Path('web/components/aster-portfolio-snapshot-enhancer.tsx')
+          text = enhancer.read_text()
+          import_anchor = 'import { authenticatedRequest } from "@/lib/cloud-client";\n'
+          manager_import = 'import { AsterHedgeManager } from "./aster-hedge-manager";\n'
+          if manager_import not in text:
+              if import_anchor not in text: raise SystemExit('enhancer import anchor missing')
+              text = text.replace(import_anchor, import_anchor + manager_import, 1)
+          text = text.replace('const REFERENCE = "file_00000000a7bc82438e4e1d5f076b47c9";',
+                              'const REFERENCE = "file_000000002444821084b234da2ddec369";', 1)
+          text = text.replace('const HEDGE_DETAIL_REFERENCE = "file_00000000d9bc81f49ce775b27ff69a7f";',
+                              'const HEDGE_DETAIL_REFERENCE = "file_00000000032881f495cdc99757a7d126";', 1)
+          old_render = '{hedgeOpen ? <HedgeDetail preview={profitPreview} onClose={() => setHedgeOpen(false)} /> : null}'
+          new_render = '{hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}'
+          if old_render in text: text = text.replace(old_render, new_render, 1)
+          elif new_render not in text: raise SystemExit('hedge modal render anchor missing')
+          enhancer.write_text(text)
+
+          manager = Path('web/components/aster-hedge-manager.tsx')
+          text = manager.read_text().replace('useCallback, useEffect, useMemo, useRef, useState', 'useCallback, useEffect, useRef, useState', 1)
+          old_boot = '  useEffect(() => { void loadState().catch((error) => setMessage(error instanceof Error ? error.message : "Hedgegegevens konden niet worden geladen.")); }, [loadState]);\n'
+          new_boot = '''  useEffect(() => {\n    let alive = true;\n    const boot = async () => {\n      try {\n        await loadState();\n        const active = await authenticatedRequest("/api/exchanges/aster/hedge-recovery/active", { cache: "no-store" }) as ({ active: boolean } & Partial<RecoveryStatus>);\n        if (alive && active.active && active.actionId) {\n          setRecovery(active as RecoveryStatus);\n          setView("progress");\n        }\n      } catch (error) {\n        if (alive) setMessage(error instanceof Error ? error.message : "Hedgegegevens konden niet worden geladen.");\n      }\n    };\n    void boot();\n    return () => { alive = false; };\n  }, [loadState]);\n'''
+          if old_boot in text: text = text.replace(old_boot, new_boot, 1)
+          elif '/hedge-recovery/active' not in text: raise SystemExit('hedge manager boot anchor missing')
+          manager.write_text(text)
+
+          main = Path('cloud_api/main.py')
+          text = main.read_text()
+          import_anchor = 'from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions\n'
+          service_import = 'from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings\n'
+          if service_import not in text:
+              if import_anchor not in text: raise SystemExit('main import anchor missing')
+              text = text.replace(import_anchor, import_anchor + service_import, 1)
+          old_preview = '        preview = profit_preview(client.position_risk())\n'
+          new_preview = '        preview = profit_preview_with_settings(client.position_risk(), load_hedge_settings(user, user_reference))\n'
+          if old_preview in text: text = text.replace(old_preview, new_preview, 1)
+          elif new_preview not in text: raise SystemExit('profit preview anchor missing')
+          installer = '''\n\n# Register the interactive Hedge Dekking routes only after every injected\n# production dependency has been defined. This keeps the API module free of a\n# circular import back into main.py.\ninstall_aster_hedge_recovery_routes(\n    app,\n    authenticated_user=authenticated_user,\n    db=db,\n    user_reference=user_reference,\n    aster_strategy2_reference=aster_strategy2_reference,\n    client_factory=_portfolio_growth_client,\n    acquire_queue_lease=_acquire_strategy2_queue_lease,\n    release_queue_lease=_release_strategy2_queue_lease,\n    before_order_submit_factory=_block_order_during_close_all,\n)\n'''
+          if 'install_aster_hedge_recovery_routes(\n    app,' not in text:
+              text = text.rstrip() + installer
+          main.write_text(text)
+          PY
+
+      - name: Verify binding and source-of-truth wiring
+        run: |
+          grep -q 'file_000000002444821084b234da2ddec369' web/components/aster-portfolio-snapshot-enhancer.tsx
+          grep -q 'file_00000000032881f495cdc99757a7d126' web/components/aster-hedge-manager.tsx
+          grep -q 'AsterHedgeManager' web/components/aster-portfolio-snapshot-enhancer.tsx
+          grep -q 'profit_preview_with_settings' cloud_api/main.py
+          grep -q 'install_aster_hedge_recovery_routes' cloud_api/main.py
+          grep -q '/hedge-recovery/active' web/components/aster-hedge-manager.tsx
+          grep -q '"recommended": "OPEN_SHORT"' cloud_api/aster_hedge_recovery.py
+          grep -q '"alternative": "CLOSE_LONG"' cloud_api/aster_hedge_recovery.py
+
+      - name: Install backend dependencies
+        run: python -m pip install -r cloud_api/requirements.txt
+
+      - name: Compile and run hedge calculation tests
+        run: |
+          python -m py_compile cloud_api/aster_hedge_recovery.py cloud_api/aster_hedge_recovery_api.py cloud_api/main.py
+          cd cloud_api
+          python -m pytest -q test_aster_hedge_recovery.py
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run full web build and regression tests
+        working-directory: web
+        run: npm test
+
+      - name: Verify patch scope
+        run: |
+          git diff --check
+          git status --short
+          python - <<'PY'
+          import subprocess
+          paths = set(subprocess.check_output(['git','diff','--name-only'], text=True).splitlines())
+          allowed = {
+            'cloud_api/main.py',
+            'web/components/aster-portfolio-snapshot-enhancer.tsx',
+            'web/components/aster-hedge-manager.tsx',
+          }
+          extra = paths - allowed
+          if extra:
+              raise SystemExit(f'unexpected patch files: {sorted(extra)}')
+          if not {'cloud_api/main.py','web/components/aster-portfolio-snapshot-enhancer.tsx'} <= paths:
+              raise SystemExit(f'required patch files missing: {sorted(paths)}')
+          PY
+
+      - name: Commit verified integration
+        run: |
+          git config user.name 'AmarRakhan'
+          git config user.email 'amar_rakhan@hotmail.com'
+          git add cloud_api/main.py web/components/aster-portfolio-snapshot-enhancer.tsx web/components/aster-hedge-manager.tsx
+          if git diff --cached --quiet; then
+            echo 'No integration changes required.'
+            exit 0
+          fi
+          git commit -m 'Integrate interactive hedge recovery flow'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
