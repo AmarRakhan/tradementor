@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from aster_dynamic_hedge import DynamicHedgeConfig, robust_hedge_coverage, safety_status
+
 
 def _f(value: Any) -> float:
     try:
@@ -16,6 +18,10 @@ def _f(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return out if math.isfinite(out) else 0.0
+
+
+def _present(mapping: dict[str, Any], key: str) -> bool:
+    return key in mapping and mapping.get(key) not in (None, "")
 
 
 def _active(row: dict[str, Any]) -> bool:
@@ -47,9 +53,10 @@ def cross_account_risk(account: dict[str, Any], positions: list[dict[str, Any]])
     active = [row for row in positions if isinstance(row, dict) and _active(row)]
     cross = [row for row in active if _cross(row)]
     margin_balance = _f(account.get("totalMarginBalance"))
-    equity = margin_balance or _f(account.get("totalWalletBalance")) + _f(account.get("totalUnrealizedProfit"))
-    maintenance = _f(account.get("totalMaintMargin"))
+    wallet = _f(account.get("totalWalletBalance"))
     unrealized = _f(account.get("totalUnrealizedProfit"))
+    equity = margin_balance if _present(account, "totalMarginBalance") else wallet + unrealized
+    maintenance = _f(account.get("totalMaintMargin"))
 
     long_notional = 0.0
     short_notional = 0.0
@@ -64,7 +71,8 @@ def cross_account_risk(account: dict[str, Any], positions: list[dict[str, Any]])
             short_notional += notional
 
     gross = long_notional + short_notional
-    net = abs(long_notional - short_notional)
+    signed_net = long_notional - short_notional
+    net = abs(signed_net)
     official = _official_ratio_percent(account)
     if official is not None:
         liquidation_pct = official
@@ -76,10 +84,15 @@ def cross_account_risk(account: dict[str, Any], positions: list[dict[str, Any]])
         liquidation_pct = 100.0 if active and maintenance > 0 else 0.0
         source = "SERVER_RECONSTRUCTED"
 
-    # This is deliberately distinct from liquidation proximity: it is the
-    # weighted maintenance requirement over gross cross exposure.
     maintenance_pct = maintenance / gross * 100 if gross > 0 else 0.0
-    return {
+    margin_buffer = equity - maintenance
+    buffer_ratio = equity / maintenance if maintenance > 0 else None
+    reliable = (
+        (_present(account, "totalMarginBalance") or _present(account, "totalWalletBalance"))
+        and _present(account, "totalMaintMargin")
+    )
+    result = {
+        "reliable": reliable,
         "maintenanceMarginUsd": maintenance,
         "maintenanceMarginPct": max(0.0, maintenance_pct),
         "liquidationRiskPct": max(0.0, min(100.0, liquidation_pct)),
@@ -91,6 +104,13 @@ def cross_account_risk(account: dict[str, Any], positions: list[dict[str, Any]])
         "longNotional": long_notional,
         "shortNotional": short_notional,
         "netExposure": net,
+        "signedNetExposure": signed_net,
+        "netSide": "FLAT" if abs(signed_net) < 1e-9 else ("LONG" if signed_net > 0 else "SHORT"),
         "grossExposure": gross,
+        "hedgeCoveragePercent": robust_hedge_coverage(long_notional, short_notional),
+        "marginBufferUsd": margin_buffer,
+        "bufferRatio": buffer_ratio,
         "positionCountIncluded": len(cross),
     }
+    result["liquidationSafetyStatus"] = safety_status(result, DynamicHedgeConfig())
+    return result
