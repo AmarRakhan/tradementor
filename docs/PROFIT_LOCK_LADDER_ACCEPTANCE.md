@@ -1,0 +1,11 @@
+- opt-in default OFF
+- existing settings preserved when OFF
+- LONG-only primary trading when ON
+- manual and automatic seat filling supported
+- net-cycle-profit ladder
+- ratchet-only SHORT behavior
+- hard no-overhedge invariant
+- 100% symbol cycle exit and restart
+- weighted Portfolio Snapshot hedge coverage
+- per-symbol detail status
+- approved visual reference applied
