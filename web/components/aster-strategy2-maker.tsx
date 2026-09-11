@@ -164,6 +164,20 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const setSymbolSide = (symbol: string, side: ManualSide) => change({ ...v, manualSymbols: v.manualSymbols.map((row) => row.symbol === symbol ? { ...row, side } : row) });
   const removeSymbol = (symbol: string) => change({ ...v, manualSymbols: v.manualSymbols.filter((row) => row.symbol !== symbol) });
 
+  async function withLatestProfitLockSettings(draft: Record<string, unknown>) {
+    // Profit Lock is edited by its own bridge. A stale maker snapshot must never
+    // turn it off, restore old levels, or alter its primary-side marker when a
+    // normal Bot Settings save/start happens afterwards.
+    const latest = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
+    const latestStrategy2 = latest.strategy2 && typeof latest.strategy2 === "object" ? latest.strategy2 as Record<string, unknown> : {};
+    const latestSettings = latestStrategy2.settings && typeof latestStrategy2.settings === "object" ? latestStrategy2.settings as Record<string, unknown> : {};
+    const merged = { ...draft };
+    for (const key of ["profitLockLadderEnabled", "profitLockLevels", "profitLockPrimarySide"] as const) {
+      if (Object.prototype.hasOwnProperty.call(latestSettings, key)) merged[key] = latestSettings[key];
+    }
+    return merged;
+  }
+
   async function action(kind: "save" | "simulate" | "start" | "stop") {
     setBusy(true); setMessage("");
     try {
@@ -177,7 +191,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (v.tpMode === "PORTFOLIO" && settings.portfolioTpPercent <= 0) throw new Error("Portfolio TP moet positief zijn.");
       if (v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
       if (kind === "start" && v.manualEnabled) { const blocked = v.manualSymbols.map((row) => tierPreviews[row.symbol]).filter((row) => row?.entryOrderValid === false); if (blocked.length) throw new Error(`${blocked[0].symbol}: instapmargin voldoet niet aan de actuele Aster minimumorder.`); }
-      const route = kind === "save" ? "settings" : kind; const method = kind === "save" ? "PUT" : "POST"; const body = kind === "start" ? { confirm: true, settings } : kind === "stop" ? { confirm: true } : { settings };
+      const outgoingSettings = kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
+      const route = kind === "save" ? "settings" : kind; const method = kind === "save" ? "PUT" : "POST"; const body = kind === "start" ? { confirm: true, settings: outgoingSettings } : kind === "stop" ? { confirm: true } : { settings: outgoingSettings };
       const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/${route}`, { method, body: JSON.stringify(body) }) as Record<string, unknown>;
       const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null; if (confirmed) { setConfirmedState(confirmed); onConfirmed(confirmed); }
       if (kind === "save") { setDirty(false); setMessage("Instellingen server-side opgeslagen. Actieve posities, fills, avg entry, DCA-counts en Portfolio TP-cycle zijn intact gebleven."); }

@@ -145,7 +145,12 @@ export function AsterProfitLockLadderBridge() {
         profitUsd: Number(String(row.profitUsd).replace(",", ".")),
         hedgePercent: Number(String(row.hedgePercent).replace(",", ".")),
       }));
-      const nextSettings = { ...settings, profitLockLadderEnabled: enabled, profitLockLevels: payloadLevels };
+      // Always merge into exchange-backed server truth at the moment of save.
+      // The bridge refreshes periodically, so its local settings snapshot can be
+      // older than a Bot Settings save that happened a few seconds earlier.
+      const latestSnapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
+      const latestSettings = extract(latestSnapshot).settings;
+      const nextSettings = { ...latestSettings, profitLockLadderEnabled: enabled, profitLockLevels: payloadLevels };
       const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {
         method: "PUT",
         body: JSON.stringify({ settings: nextSettings }),
