@@ -52,11 +52,12 @@ test("recent trade freshness window remains above the 60 second exchange refresh
   assert.doesNotMatch(component, /Date\.now\(\) - snapshot\.updatedAt < 45_000/);
 });
 
-test("Tradecentrum exposes the compact approved columns and real close control", () => {
-  assert.match(component, /<span>PAIR<\/span>\s*<span>SIDE<\/span>\s*<span>LEV<\/span>\s*<span>MARGIN<\/span>\s*<span>PNL<\/span>\s*<span>PNL %<\/span>/);
-  assert.match(component, /showDcaCount \? "DCA" : "#"/);
+test("Tradecentrum exposes the approved compact columns and preserves the real close flow", () => {
+  assert.match(component, /<span>Munt<\/span>\s*<span>Richting<\/span>\s*<span>PnL<\/span>\s*<span>Margin<\/span>\s*<span>DCA<\/span>\s*<span>Liq<\/span>/);
+  assert.doesNotMatch(component, /<span>LEV<\/span>/);
+  assert.match(component, /row\.leverage !== null \? <em>\{Math\.round\(row\.leverage\)\}x<\/em> : null/);
   assert.match(component, /function money\(value: unknown, signed = false\)/);
-  assert.match(component, /<ClosePositionControl position=\{row\.position\}/);
+  assert.match(component, /<ClosePositionControl position=\{liveDetailPosition\} onClosed=\{onRetry\}/);
   assert.match(component, /"Toon alles"/);
   assert.match(component, /Laad nog 100/);
 });
@@ -90,13 +91,14 @@ test("manual Aster close is confirmed, idempotent and refreshes exchange truth",
   assert.match(component, />\s*Annuleren\s*<\/button>/);
 });
 
-test("scan actions and closed rows use real status labels in the shared Tradecentrum table", () => {
+test("scan actions and closed rows preserve real status semantics without a dedicated status column", () => {
   assert.match(component, /function scanActionLabel/);
   assert.match(component, /TP_KINDS/);
   assert.match(component, /DCA_KINDS/);
   assert.match(component, /closed \? \(matching && TP_KINDS/);
   assert.match(component, /\? "TP" : "Gesloten"/);
-  assert.match(component, /className=\{styles\.statusText\}>\{row\.status\}/);
+  assert.match(component, /row\.status === "Gesloten" \|\| row\.status === "TP" \? "CLOSED" : "OPEN"/);
+  assert.doesNotMatch(component, /className=\{styles\.statusText\}>\{row\.status\}/);
 });
 
 test("Aster close confirmation is portalled to document.body so table containment cannot distort it", () => {
