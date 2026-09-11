@@ -1,0 +1,1 @@
+Profit Lock Ladder must merge through reviewed CI path; no direct production branch write before validation.
