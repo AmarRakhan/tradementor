@@ -9,6 +9,7 @@ import { authoritativePositionReturnPct, positionId, topProfitPositions } from "
 import { SafeTradingChart, type AirbagChartEvent, type DcaChartLevel, type PlannedActionLevel, type TradeSelection, type FocusV2Cockpit } from "@/components/trading-chart";
 import { deriveAsterAccountDisplay } from "@/lib/aster-account-display";
 import { deriveDcaPresentation } from "@/lib/dca-presentation.mjs";
+import { liquidationDistancePercent, liquidationRiskTone } from "@/lib/liquidation-risk.mjs";
 import styles from "./aster-trade-center.module.css";
 import profitStyles from "./aster-profit-close.module.css";
 
@@ -43,6 +44,7 @@ type OpenPosition = {
   quantity?: number;
   notionalUsd?: number | null;
   markPrice?: number | null;
+  liquidationPrice?: number | null;
   unrealizedPnl?: number | null;
   returnPct?: number | null;
   roePct?: number | null;
@@ -122,6 +124,7 @@ type TradeCenterRow = {
   symbol: string;
   side: string;
   leverage: number | null;
+  markPrice: number | null;
   margin: number | null;
   pnl: number | null;
   pnlPct: number | null;
@@ -277,6 +280,26 @@ function percent(value: unknown) {
   const n = finite(value);
   return n === null ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(2).replace(".", ",")}%`;
 }
+function marketPrice(value: unknown) {
+  const n = finite(value);
+  if (n === null || n <= 0) return "—";
+  const digits = n < 1 ? 6 : n < 100 ? 4 : 2;
+  return `$${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: n < 1 ? 4 : 2, maximumFractionDigits: digits }).format(n)}`;
+}
+type LiquidationPresentation = { label: string; tone: "safe" | "caution" | "high" | "critical" | "unknown"; shield: boolean; distance: number | null; price: number | null };
+function liquidationPresentation(position: OpenPosition | null | undefined): LiquidationPresentation {
+  if (!position) return { label: "—", tone: "unknown", shield: false, distance: null, price: null };
+  const side = String(position.side || "").toUpperCase();
+  const mark = finite(position.markPrice);
+  const rawLiq = finite(position.liquidationPrice);
+  if (side === "LONG" && mark !== null && mark > 0 && rawLiq !== null && rawLiq <= 0) {
+    return { label: "100%+", tone: "safe", shield: true, distance: 100, price: null };
+  }
+  const distance = liquidationDistancePercent(position as Record<string, unknown>);
+  if (distance === null || !Number.isFinite(distance)) return { label: "—", tone: "unknown", shield: false, distance: null, price: rawLiq && rawLiq > 0 ? rawLiq : null };
+  const tone = liquidationRiskTone(distance) as LiquidationPresentation["tone"];
+  return { label: `${distance.toFixed(1).replace(".", ",")}%`, tone, shield: false, distance, price: rawLiq && rawLiq > 0 ? rawLiq : null };
+}
 function openPositionMargin(position: OpenPosition | null) {
   if (!position) return null;
   const direct = finite(position.initialMarginUsd);
@@ -414,6 +437,7 @@ function rowFromPosition(position: OpenPosition, status = "Live"): TradeCenterRo
     symbol: normalizedSymbol(position.symbol),
     side: String(position.side || "—").toUpperCase(),
     leverage: finite(position.leverage),
+    markPrice: finite(position.markPrice),
     margin: openPositionMargin(position),
     pnl,
     pnlPct: positionPricePnlPct(position),
@@ -436,6 +460,7 @@ function rowFromActivity(trade: Activity, closed: boolean, positions: OpenPositi
     symbol: normalizedSymbol(trade.symbol),
     side: String(trade.side || "—").toUpperCase(),
     leverage,
+    markPrice: finite(position?.markPrice),
     margin,
     pnl,
     pnlPct: position ? positionPricePnlPct(position) : reliableReturnPct(trade),
@@ -458,6 +483,7 @@ function rowFromAction(action: ScanAction, positions: OpenPosition[], exits: Act
     symbol: normalizedSymbol(action.symbol),
     side: String(action.side || "—").toUpperCase(),
     leverage: finite(action.leverage) ?? finite(position?.leverage),
+    markPrice: finite(position?.markPrice),
     margin: finite(action.marginUsd) ?? openPositionMargin(position),
     pnl,
     pnlPct: positionPricePnlPct(position),
@@ -471,57 +497,48 @@ function rowFromAction(action: ScanAction, positions: OpenPosition[], exits: Act
   };
 }
 
-function TradeCenterTable({ rows, onOpenDetail, onClosed, showDcaCount = false }: { rows: TradeCenterRow[]; onOpenDetail: (row: TradeCenterRow) => void; onClosed: () => void; showDcaCount?: boolean }) {
+function TradeCenterTable({ rows, onOpenDetail }: { rows: TradeCenterRow[]; onOpenDetail: (row: TradeCenterRow) => void }) {
   return (
     <div className={styles.table} role="table" aria-label="Aster Tradecentrum">
       <div className={styles.head} role="row">
-        <span>PAIR</span>
-        <span>SIDE</span>
-        <span>LEV</span>
-        <span>MARGIN</span>
-        <span>PNL</span>
-        <span>PNL %</span>
-        <span>{showDcaCount ? "DCA" : "#"}</span>
-        <span>STATUS</span>
+        <span>Munt</span>
+        <span>Richting</span>
+        <span>PnL</span>
+        <span>Margin</span>
+        <span>DCA</span>
+        <span>Liq</span>
       </div>
       {rows.length ? (
-        rows.map((row) => (
-          <div className={styles.row} role="row" key={row.id}>
-            <button className={styles.pair} role="cell" type="button" onClick={() => onOpenDetail(row)}>
-              <CoinIcon symbol={row.symbol} />
-              <span className={styles.pairCopy}>
-                <b>{baseAsset(row.symbol)}</b>
-                <small>{dateTime(row.timestamp)}</small>
+        rows.map((row) => {
+          const liq = liquidationPresentation(row.position);
+          const dca = row.entries === null ? null : Math.max(0, row.entries - 1);
+          return (
+            <div className={styles.row} role="row" key={row.id}>
+              <button className={styles.pair} role="cell" type="button" onClick={() => onOpenDetail(row)} aria-label={`${baseAsset(row.symbol)} openen in grafiek`}>
+                <CoinIcon symbol={row.symbol} />
+                <span className={styles.pairCopy}>
+                  <b>{baseAsset(row.symbol)}</b>
+                  <small className={styles.coinMeta}>
+                    <span>{marketPrice(row.markPrice)}</span>
+                    {row.leverage !== null ? <em>{Math.round(row.leverage)}x</em> : null}
+                  </small>
+                </span>
+                {row.position?.asymmetricPairStatus === "covered" ? <span className={`${styles.pairLinkStatus} ${styles.covered}`}><i />Covered</span> : row.position?.asymmetricPairStatus === "covering" ? <span className={`${styles.pairLinkStatus} ${styles.covering}`}><i />Covering</span> : null}
+              </button>
+              <strong role="cell" className={`${styles.sideBadge} ${row.side === "LONG" ? styles.longBadge : row.side === "SHORT" ? styles.shortBadge : styles.neutralBadge}`}>{row.side}</strong>
+              <span role="cell" className={styles.pnlCell}>
+                <strong className={styles[row.tone]}>{money(row.pnl, true)}</strong>
+                <small className={styles[toneFor(row.pnlPct)]}>{percent(row.pnlPct)}</small>
               </span>
-              {row.position?.asymmetricPairStatus === "covered" ? (
-                <span className={`${styles.pairLinkStatus} ${styles.covered}`}><i />Covered</span>
-              ) : row.position?.asymmetricPairStatus === "covering" ? (
-                <span className={`${styles.pairLinkStatus} ${styles.covering}`}><i />Covering</span>
-              ) : null}
-            </button>
-            <strong role="cell" className={`${styles.side} ${row.side === "LONG" ? styles.long : row.side === "SHORT" ? styles.short : styles.neutral}`}>
-              {row.side}
-            </strong>
-            <span role="cell">{row.leverage === null ? "—" : `${Math.round(row.leverage)}x`}</span>
-            <span role="cell">{money(row.margin)}</span>
-            <strong role="cell" className={styles[row.tone]}>
-              {money(row.pnl, true)}
-            </strong>
-            <strong role="cell" className={styles[toneFor(row.pnlPct)]}>
-              {percent(row.pnlPct)}
-            </strong>
-            <strong role="cell" className={styles.entries} title={showDcaCount ? "Aantal bevestigde DCA's" : "Aantal instappen inclusief eerste entry"}>
-              {row.entries === null ? "—" : showDcaCount ? Math.max(0, row.entries - 1) : row.entries}
-            </strong>
-            <span role="cell" className={styles.status}>
-              <span className={styles.statusText}>{row.status}</span>
-              {row.source === "position" && row.position ? row.position.focusAirbagHedge === true ? <span className={styles.managed}>BOT BEHEERT</span> : <ClosePositionControl position={row.position} onClosed={onClosed} /> : null}
-            </span>
-          </div>
-        ))
-      ) : (
-        <div className={styles.empty}>Geen bevestigde gegevens voor dit filter.</div>
-      )}
+              <strong role="cell" className={styles.marginCell}>{money(row.margin)}</strong>
+              <strong role="cell" className={styles.entries} title="Aantal bevestigde DCA's">{dca === null ? "—" : dca}</strong>
+              <span role="cell" className={`${styles.liqBadge} ${styles[`liq_${liq.tone}`]}`} title={liq.shield ? "Geen downside-liquidatie tot $0 bij huidige portfolio-status" : liq.distance === null ? "Geen bevestigde liquidatieafstand" : `Afstand tot liquidatie ${liq.label}`}>
+                {liq.shield ? <i aria-hidden="true">🛡</i> : null}<b>{liq.label}</b>
+              </span>
+            </div>
+          );
+        })
+      ) : <div className={styles.empty}>Geen bevestigde gegevens voor dit filter.</div>}
     </div>
   );
 }
@@ -958,6 +975,22 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       }),
     [snapshot.data, snapshot.serverConfirmed, snapshot.error, snapshot.updatedAt],
   );
+  const livePnlTotal = useMemo(() => livePositions.reduce((sum, position) => sum + (finite(position.unrealizedPnl) || 0), 0), [livePositions]);
+  const liveLongCount = useMemo(() => livePositions.filter((position) => String(position.side || "").toUpperCase() === "LONG").length, [livePositions]);
+  const liveShortCount = livePositions.length - liveLongCount;
+  const scopedProfitCandidates = useMemo(() => ({
+    LONG: profitCandidates.filter((position) => String(position.side || "").toUpperCase() === "LONG"),
+    SHORT: profitCandidates.filter((position) => String(position.side || "").toUpperCase() === "SHORT"),
+  }), [profitCandidates]);
+  function forwardSnapshotProfit(scope: "LONG" | "SHORT" | "ALL") {
+    const selector = `.aps-profit-${scope.toLowerCase()}`;
+    const button = document.querySelector<HTMLButtonElement>(selector);
+    if (!button || button.disabled) {
+      setProfitMessage("De actuele hedgecontrole voor deze sluiting is nog niet beschikbaar.");
+      return;
+    }
+    button.click();
+  }
   const liveDetailPosition = detail?.status === "OPEN" ? findOpenPosition(positionsWithMultiDcaCounts, detail.selection) : null;
   const detailAverageEntry = averageEntry(liveDetailPosition) ?? detail?.averageEntry ?? null;
   const detailCurrentPrice = finite(liveDetailPosition?.markPrice) ?? detail?.currentPrice ?? null;
@@ -965,6 +998,16 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailPnlPct = finite(liveDetailPosition?.returnPct) ?? (detailPnl !== null && detailAverageEntry && detailAverageEntry > 0 && finite(liveDetailPosition?.quantity) ? (detailPnl / (detailAverageEntry * Number(liveDetailPosition?.quantity))) * 100 : null);
   const detailQuantity = finite(liveDetailPosition?.quantity) ?? detail?.quantity ?? null;
   const detailMargin = openPositionMargin(liveDetailPosition);
+  const detailLeverage = finite(liveDetailPosition?.leverage);
+  const detailLiquidation = liquidationPresentation(liveDetailPosition);
+  const detailChartSelection = useMemo<TradeSelection | null>(() => {
+    if (!detail) return null;
+    return {
+      ...detail.selection,
+      mark: detailCurrentPrice ?? detail.selection.mark,
+      liquidationPrice: finite(liveDetailPosition?.liquidationPrice) ?? detail.selection.liquidationPrice,
+    };
+  }, [detail, detailCurrentPrice, liveDetailPosition?.liquidationPrice]);
   const detailPositionDcaCount = liveDetailPosition?.dcaCountReliable === true ? finite(liveDetailPosition?.dcaCount) : null;
   const detailBreakEvenPrice = finite(liveDetailPosition?.strategy2Tp?.breakEvenPrice) ?? averageEntry(liveDetailPosition) ?? undefined;
   const detailDcaLevels = useMemo(() => {
@@ -1179,6 +1222,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
         side,
         entry: averageEntry(position) ?? undefined,
         mark: finite(position?.markPrice) ?? undefined,
+        liquidationPrice: finite(position?.liquidationPrice) ?? undefined,
         dcaCount: finite(position?.dcaCount) ?? undefined,
         openedAt: position && exchangeTimestampMs(position.openedAt) ? new Date(exchangeTimestampMs(position.openedAt)).toISOString() : undefined,
         strategy2Role: managedByMultiDca ? "MULTI_DCA" : position?.strategy2Role || (historicalFocusV2 ? "FOCUS_V2_LONG" : undefined),
@@ -1195,6 +1239,11 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       exitPrice: row.status === "Gesloten" || row.status === "TP" ? null : undefined,
       linkedFromAirbag,
     });
+    if (row.status !== "Gesloten" && row.status !== "TP") {
+      window.setTimeout(() => {
+        try { void onRetry(); } catch { /* detail still opens from the confirmed current snapshot */ }
+      }, 0);
+    }
   }
   function closeDetail() {
     detailTapRef.current = { at: 0, x: 0, y: 0 };
@@ -1251,77 +1300,52 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     <section className={`${styles.shell} ${styles.detailShell} ${detail ? styles.detailOpen : ""}`} aria-label="Aster Tradecentrum">
       <div className={styles.detailInner}>
         <div className={styles.front} aria-hidden={Boolean(detail)} inert={detail ? true : undefined}>
-          <article className={styles.card}>
+          <article className={styles.card} data-reference="nexora_tradecentrum_actieve_posities.png">
             <header className={styles.header}>
               <div className={styles.title}>
                 <h2>Tradecentrum</h2>
-                <p>Eén overzicht · negen live filters</p>
+                <p>Actieve posities · Real-time · Handel slimmer</p>
               </div>
               <span className={`${styles.live} ${styles[liveState.toLowerCase()] || ""}`}>{liveState}</span>
             </header>
-            <nav className={styles.filters} aria-label="Tradecentrum filters">
-              {FILTERS.map((filter) => (
-                <button type="button" key={filter.key} className={`${styles.filter} ${active === filter.key ? styles.active : ""}`} aria-pressed={active === filter.key} onClick={() => selectFilter(filter.key)}>
-                  {filter.label}
-                  <b>{counts[filter.key]}</b>
-                </button>
-              ))}
-            </nav>
-            <TradeCenterTable rows={visibleRows} onOpenDetail={openDetail} onClosed={onRetry} showDcaCount={active === "mostDca"} />
+            <section className={styles.topSummary} aria-label="Tradecentrum samenvatting">
+              <article><span>Totaal PnL</span><strong className={livePnlTotal >= 0 ? styles.profit : styles.loss}>{money(livePnlTotal, true)}</strong><small>Open posities</small></article>
+              <article><span>Actieve posities</span><strong>{livePositions.length}</strong><small>{liveLongCount} LONG · {liveShortCount} SHORT</small></article>
+              <article><span>Totale waarde</span><strong>{accountDisplay.equity}</strong><small>Portfolio</small></article>
+            </section>
+            <div className={styles.filterBar}>
+              <label htmlFor="tradecentrum-filter">Posities</label>
+              <select id="tradecentrum-filter" value={active} onChange={(event) => selectFilter(event.target.value as FilterKey)} aria-label="Tradecentrum filter">
+                {FILTERS.map((filter) => <option key={filter.key} value={filter.key}>{filter.key === "live" ? "Alle posities" : filter.label} · {counts[filter.key]}</option>)}
+              </select>
+            </div>
+            <TradeCenterTable rows={visibleRows} onOpenDetail={openDetail} />
+            <div className={styles.liqHelp}><span aria-hidden="true">🛡</span><b>100%+</b><span>= geen downside-liquidatie tot $0 bij huidige portfolio-status</span></div>
+            <div className={styles.scopeActions} aria-label="Winstposities sluiten per richting">
+              <button type="button" className={styles.scopeLong} disabled={!profitSnapshotReliable || scopedProfitCandidates.LONG.length === 0} onClick={() => forwardSnapshotProfit("LONG")}>Close Long</button>
+              <button type="button" className={styles.scopeShort} disabled={!profitSnapshotReliable || scopedProfitCandidates.SHORT.length === 0} onClick={() => forwardSnapshotProfit("SHORT")}>Close Short</button>
+              <button type="button" className={styles.scopeAll} disabled={!profitSnapshotReliable || profitCandidates.length === 0} onClick={() => forwardSnapshotProfit("ALL")}>Close All</button>
+            </div>
             <footer className={styles.footer}>
               <span className={profitStyles.footerPrimary}>
-                {selectedRows.length > 6 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExpanded((value) => !value);
-                      setPages(1);
-                    }}
-                  >
-                    {expanded ? "Compact tonen" : "Toon alles"}
-                  </button>
-                )}
-                {expanded && hasMore && (
-                  <button type="button" onClick={() => setPages((value) => value + 1)}>
-                    Laad nog 100
-                  </button>
-                )}
+                {selectedRows.length > 6 && <button type="button" onClick={() => { setExpanded((value) => !value); setPages(1); }}>{expanded ? "Compact tonen" : "Toon alles"}</button>}
+                {expanded && hasMore && <button type="button" onClick={() => setPages((value) => value + 1)}>Laad nog 100</button>}
               </span>
-              <button type="button" className={profitStyles.closeProfits} disabled={profitBusy || !profitSnapshotReliable || profitCandidates.length === 0} onClick={openProfitConfirmation}>
+              <button type="button" className={`${profitStyles.closeProfits} ${styles.profitCta}`} disabled={profitBusy || !profitSnapshotReliable || profitCandidates.length === 0} onClick={openProfitConfirmation}>
                 {profitBusy ? "Profits controleren…" : profitCandidates.length ? `Close ${profitCandidates.length} profits · ${money(profitCandidateTotal, true)}` : "Geen profits om te sluiten"}
               </button>
             </footer>
-            {profitMessage && (
-              <p className={profitStyles.bulkMessage} role="status">
-                {profitMessage}
-              </p>
+            {profitMessage && <p className={profitStyles.bulkMessage} role="status">{profitMessage}</p>}
+            {profitConfirming && profitPreview && typeof document !== "undefined" && createPortal(
+              <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="profit-close-title">
+                <div>
+                  <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
+                  <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
+                  <p>Zowel LONG- als SHORT-posities kunnen worden gesloten. Iedere positie wordt vlak vóór de order opnieuw bij Aster gecontroleerd en wordt overgeslagen als deze niet meer positief is.</p>
+                  <footer><button type="button" disabled={profitBusy} onClick={() => setProfitConfirming(false)}>Annuleren</button><button type="button" disabled={profitBusy} onClick={closeProfits}>{profitBusy ? "Veilig sluiten…" : `${profitPreview.eligibleCount} winstposities sluiten`}</button></footer>
+                </div>
+              </div>, document.body,
             )}
-            {profitConfirming &&
-              profitPreview &&
-              typeof document !== "undefined" &&
-              createPortal(
-                <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="profit-close-title">
-                  <div>
-                    <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
-                    <dl>
-                      <dt>Actuele totale winst</dt>
-                      <dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd>
-                      <dt>Geschikte posities</dt>
-                      <dd>{profitPreview.eligibleCount}</dd>
-                    </dl>
-                    <p>Zowel LONG- als SHORT-posities kunnen worden gesloten. Iedere positie wordt vlak vóór de order opnieuw bij Aster gecontroleerd en wordt overgeslagen als deze niet meer positief is.</p>
-                    <footer>
-                      <button type="button" disabled={profitBusy} onClick={() => setProfitConfirming(false)}>
-                        Annuleren
-                      </button>
-                      <button type="button" disabled={profitBusy} onClick={closeProfits}>
-                        {profitBusy ? "Veilig sluiten…" : `${profitPreview.eligibleCount} winstposities sluiten`}
-                      </button>
-                    </footer>
-                  </div>
-                </div>,
-                document.body,
-              )}
           </article>
         </div>
         <div
@@ -1345,9 +1369,10 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                   </h2>
                   <small>{detail.linkedFromAirbag ? `Je bekijkt de Airbag van ${baseAsset(detail.selection.symbol)} ${detailMainSide}` : `HOOFDPOSITIE · ${detailMainSide}`} · dubbel tikken of × om terug te gaan</small>
                 </div>
-                <button type="button" onClick={closeDetail} aria-label="Terug naar Tradecentrum">
-                  ×
-                </button>
+                <div className={styles.detailHeaderActions}>
+                  {liveDetailPosition && liveDetailPosition.focusAirbagHedge !== true ? <ClosePositionControl position={liveDetailPosition} onClosed={onRetry} /> : null}
+                  <button type="button" className={styles.detailBack} onClick={closeDetail} aria-label="Terug naar Tradecentrum">×</button>
+                </div>
               </header>
               <section className={styles.tradeNow} aria-label="Actuele Strategy 2 tradegegevens">
                 <div className={styles.tradeNowTop}>
@@ -1358,6 +1383,14 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                   <div>
                     <span>MARGIN IN TRADE</span>
                     <strong>{money(detailMargin)}</strong>
+                  </div>
+                  <div>
+                    <span>LEVERAGE</span>
+                    <strong>{detailLeverage === null ? "—" : `${Math.round(detailLeverage)}x`}</strong>
+                  </div>
+                  <div>
+                    <span>AFSTAND TOT LIQ</span>
+                    <strong className={`${styles.detailLiq} ${styles[`liq_${detailLiquidation.tone}`]}`}>{detailLiquidation.shield ? "🛡 " : ""}{detailLiquidation.label}</strong>
                   </div>
                   <div>
                     <span>WINST BIJ TP</span>
@@ -1401,9 +1434,13 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                     <span>DCA GEVULD</span>
                     <strong>{detailFilledDcaLabel}</strong>
                   </div>
+                  <div>
+                    <span>LIQUIDATIE</span>
+                    <strong className={`${styles.detailLiq} ${styles[`liq_${detailLiquidation.tone}`]}`}>{detailLiquidation.shield ? "🛡 100%+" : detailLiquidation.distance === null ? "—" : `${detailLiquidation.label} · ${marketPrice(detailLiquidation.price)}`}</strong>
+                  </div>
                 </div>
               </section>
-              <SafeTradingChart selection={detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} dcaLevels={detailChartDcaLevels} plannedActionLevels={detailPlannedLevels} selectedActionId={detail.selectedActionId} airbagEvents={detailAirbagEvents} cockpit={detailFocusV2Cockpit} accountDisplay={accountDisplay} />
+              <SafeTradingChart selection={detailChartSelection ?? detail.selection} mode="aster-detail" focusAtMs={detail.focusAtMs} dcaLevels={detailChartDcaLevels} plannedActionLevels={detailPlannedLevels} selectedActionId={detail.selectedActionId} airbagEvents={detailAirbagEvents} cockpit={detailFocusV2Cockpit} accountDisplay={accountDisplay} />
               {detailFocusV2Cockpit && <FocusV2CockpitPanel value={detailFocusV2Cockpit} />}
               <div className={styles.summary}>
                 <div>
@@ -1425,6 +1462,14 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 <div>
                   <span>Margin in trade</span>
                   <strong>{money(detailMargin)}</strong>
+                </div>
+                <div>
+                  <span>Leverage</span>
+                  <strong>{detailLeverage === null ? "—" : `${Math.round(detailLeverage)}x`}</strong>
+                </div>
+                <div>
+                  <span>Afstand tot liquidatie</span>
+                  <strong className={`${styles.detailLiq} ${styles[`liq_${detailLiquidation.tone}`]}`}>{detailLiquidation.shield ? "🛡 100%+" : detailLiquidation.label}</strong>
                 </div>
                 <div>
                   <span>Aantal DCA</span>

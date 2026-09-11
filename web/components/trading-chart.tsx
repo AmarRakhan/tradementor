@@ -9,7 +9,7 @@ import type { AsterAccountDisplay } from "@/lib/aster-account-display";
 import { layoutFocusLabelYs } from "@/lib/focus-chart-label-layout.mjs";
 
 export type ChartExchange = "aster" | "hyperliquid" | "portfolio";
-export type TradeSelection = { id: string; symbol: string; exchange: ChartExchange; side: string; entry?: number; mark?: number; exit?: number; openedAt?: string; closedAt?: string; dcaCount?: number; strategy2Role?: string };
+export type TradeSelection = { id: string; symbol: string; exchange: ChartExchange; side: string; entry?: number; mark?: number; liquidationPrice?: number; exit?: number; openedAt?: string; closedAt?: string; dcaCount?: number; strategy2Role?: string };
 export type FocusV2Cockpit = {
   symbol?:string; cycleId?:string; currentPrice?:number; longQuantity?:number; longEntry?:number; longBreakEvenPrice?:number; longNotional?:number; longPnl?:number; longLeverage?:number;
   shortQuantity?:number; shortEntry?:number; shortNotional?:number; shortPnl?:number; shortLeverage?:number; netExposure?:number; grossExposure?:number; hedgeRatio?:number; dcaCount?:number;
@@ -235,6 +235,15 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
       addSegment("be","#4aa3ff",2);addSegment("dca","#ffd166",2);addSegment("tp","#b978ff",2);addSegment("lastfill","#4aa3ff",2);addSegment("release","#ff9f43",2);addSegment("rehedge","#f06292",2);
     } else {currentPriceLineRef.current=null;focusSegmentRefs.current={};}
     const onCrosshair=(param:any)=>{if(!param.time){setCrosshair(null);return;} const time=Number(param.time),c=candleDataRef.current.find(row=>row.time===time);if(c)setCrosshair(c);const group=markerGroups.filter(item=>item.time===time).flatMap(item=>item.events);if(group.length)setSelectedMarkerEvents(group)}; chart.subscribeCrosshairMove(onCrosshair);
+    if (mode === "aster-detail") {
+      const liquidationPrice = Number(selection.liquidationPrice || 0);
+      const markPrice = Number(selection.mark || chartCandles.at(-1)?.close || 0);
+      const side = String(selection.side || "").toUpperCase();
+      const validDirection = side === "LONG" ? liquidationPrice > 0 && liquidationPrice < markPrice : side === "SHORT" ? liquidationPrice > markPrice && markPrice > 0 : false;
+      if (validDirection) {
+        priceSeries.createPriceLine({ price: liquidationPrice, color: "#ff4f73", lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: "LIQUIDATIE" });
+      }
+    }
     if (mode === "aster-detail" && !focusV2) {
       if (Number.isFinite(breakEvenPrice) && Number(breakEvenPrice) > 0) {
         priceSeries.createPriceLine({ price:Number(breakEvenPrice), color:"#21d6a2", lineWidth:2, lineStyle:0, axisLabelVisible:true, title:"WINST VANAF" });
