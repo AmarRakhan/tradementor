@@ -3,8 +3,9 @@ from __future__ import annotations
 """Side-aware facade for the proven Multi BB runtime.
 
 The established engine remains in ``aster_multi_bb_core.py``. This facade adds
-split LONG/SHORT defaults, sparse pair overrides and an account-equity exit gate
-without changing the asymmetric strategy implementation.
+split LONG/SHORT defaults, sparse pair overrides, portfolio exits and the
+optional LONG-only Profit Lock Ladder without changing legacy behavior when the
+new mode is disabled.
 """
 
 # Source-contract markers retained for established regression tests.
@@ -29,7 +30,7 @@ without changing the asymmetric strategy implementation.
 # allow_existing_contract_leverage_change=True
 # INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 import math
 import re
 import sys
@@ -37,6 +38,8 @@ from typing import Any
 
 import aster_multi_bb_core as _core
 from aster_multi_bb_portfolio import PortfolioCycleOrderBlocked, assert_order_allowed, portfolio_cycle_gate
+from aster_profit_lock_ladder import DEFAULT_LEVELS, account_summary, normalize_levels, public_levels
+from aster_profit_lock_ladder_runtime import run_profit_lock_ladder_gate
 
 ENGINE = _core.ENGINE
 max_contract_leverage = _core.max_contract_leverage
@@ -143,6 +146,24 @@ def _parse_pair_overrides(raw: Any) -> dict[str, dict[str, Any]]:
     return result
 
 
+def _profit_lock_source(source: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Normalize runtime direction without changing legacy accounts when OFF."""
+    enabled = bool(source.get("profitLockLadderEnabled", False))
+    if not enabled:
+        return dict(source), False
+    if bool(source.get("asymmetricHedgeModeEnabled", False)):
+        raise ValueError("Profit Lock Ladder kan niet tegelijk met Asymmetrische Hedge actief zijn")
+    normalized = dict(source)
+    total = _integer(source.get("maximumPositions", source.get("maximumPairs", 30)), 30)
+    normalized["longSlots"] = total
+    normalized["shortSlots"] = 0
+    normalized["asymmetricHedgeModeEnabled"] = False
+    manual = source.get("manualSymbols") if isinstance(source.get("manualSymbols"), list) else []
+    if manual:
+        normalized["manualSymbols"] = [{**row, "side": "LONG"} for row in manual if isinstance(row, dict)]
+    return normalized, True
+
+
 @dataclass(frozen=True)
 class MultiBbConfig(_core.MultiBbConfig):
     take_profit_mode: str = "PER_TRADE"
@@ -158,11 +179,14 @@ class MultiBbConfig(_core.MultiBbConfig):
     short_take_profit_value: float = .015
     portfolio_tp_percent: float = 20.0
     pair_overrides: dict[str, dict[str, Any]] = field(default_factory=dict, compare=False)
+    profit_lock_ladder_enabled: bool = False
+    profit_lock_levels: tuple[tuple[float, float], ...] = DEFAULT_LEVELS
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "MultiBbConfig":
         source = raw or {}
-        base = _core.MultiBbConfig.from_mapping(source)
+        normalized, profit_lock_enabled = _profit_lock_source(source)
+        base = _core.MultiBbConfig.from_mapping(normalized)
         values = {item.name:getattr(base,item.name) for item in fields(_core.MultiBbConfig)}
         legacy_entry = base.entry_margin_usd
         values.update({
@@ -179,6 +203,8 @@ class MultiBbConfig(_core.MultiBbConfig):
             "short_take_profit_value": _positive_ratio(source,("shortTakeProfitValue","takeProfitShort"),base.take_profit),
             "portfolio_tp_percent": _finite(source.get("portfolioTpPercent"),20.0),
             "pair_overrides": _parse_pair_overrides(source.get("pairOverrides")),
+            "profit_lock_ladder_enabled": profit_lock_enabled,
+            "profit_lock_levels": normalize_levels(source.get("profitLockLevels")),
         })
         return cls(**values).validated()
 
@@ -191,6 +217,8 @@ class MultiBbConfig(_core.MultiBbConfig):
         if any(not 0 <= x <= _MAX_PAIR_DCA for x in (self.max_dca_long,self.max_dca_short)): raise ValueError(f"LONG/SHORT max DCA moet tussen 0 en {_MAX_PAIR_DCA} liggen")
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_take_profit_value,self.short_take_profit_value)): raise ValueError("LONG/SHORT Take Profit moet positief zijn")
         if not math.isfinite(self.portfolio_tp_percent) or not 0 < self.portfolio_tp_percent <= 10000: raise ValueError("Portfolio TP percentage moet groter dan 0 zijn")
+        if self.profit_lock_ladder_enabled and (self.short_slots != 0 or self.long_slots != self.maximum_positions):
+            raise ValueError("Profit Lock Ladder is LONG-only: alle primaire slots moeten LONG zijn")
         return self
 
     def public_dict(self) -> dict[str, Any]:
@@ -211,6 +239,9 @@ class MultiBbConfig(_core.MultiBbConfig):
             "longTakeProfitValue":self.long_take_profit_value, "shortTakeProfitValue":self.short_take_profit_value,
             "takeProfitLong":self.long_take_profit_value, "takeProfitShort":self.short_take_profit_value,
             "portfolioTpPercent":self.portfolio_tp_percent,
+            "profitLockLadderEnabled":self.profit_lock_ladder_enabled,
+            "profitLockLevels":public_levels(self.profit_lock_levels),
+            "profitLockPrimarySide":"LONG" if self.profit_lock_ladder_enabled else None,
         })
         payload["pairOverrides"] = {s:{"enabled":True,**dict(v)} for s,v in sorted(self.pair_overrides.items())}
         return payload
@@ -267,6 +298,9 @@ class _PairAwareSettings:
         blocked_side=object.__getattribute__(self,"_blocked_side");blocked_count=object.__getattribute__(self,"_blocked_side_count")
         if name=="long_slots" and blocked_side=="LONG": return blocked_count
         if name=="short_slots" and blocked_side=="SHORT": return blocked_count
+        if name=="maximum_positions" and blocked_side=="SHORT" and base.profit_lock_ladder_enabled:
+            # Profit Lock SHORT legs protect LONG seats; they do not consume a user seat.
+            return base.maximum_positions + blocked_count
         symbol,side=_execution_context_from_stack(); override=base.pair_overrides.get(symbol,{}) if symbol else {}
         if side==blocked_side and name=="take_profit_enabled": return False
         if side==blocked_side and name=="max_dca": return -1
@@ -298,13 +332,14 @@ def effective_pair_settings(settings:MultiBbConfig,symbol:str)->dict[str,Any]:
         "maxDcaShort":_side_value(settings,override,"SHORT","max_dca"),
         "longTakeProfitValue":_side_value(settings,override,"LONG","take_profit"),
         "shortTakeProfitValue":_side_value(settings,override,"SHORT","take_profit"),
-        "individualTpActive":settings.take_profit_mode=="PER_TRADE" and bool(override.get("takeProfitEnabled",settings.take_profit_enabled)),
+        "individualTpActive":settings.take_profit_mode=="PER_TRADE" and not settings.profit_lock_ladder_enabled and bool(override.get("takeProfitEnabled",settings.take_profit_enabled)),
     })
     return result
 
 
 def position_action_preview(*,row:dict[str,Any],state:dict[str,Any],settings:MultiBbConfig,account_equity:float=0.0)->dict[str,Any]:
-    return _core.position_action_preview(row=row,state=state,settings=_PairAwareSettings(settings),account_equity=account_equity)
+    preview_settings = replace(settings, take_profit_mode="OFF") if settings.profit_lock_ladder_enabled else settings
+    return _core.position_action_preview(row=row,state=state,settings=_PairAwareSettings(preview_settings),account_equity=account_equity)
 
 
 def leverage_tier_preview(*,client:Any,symbol:str,settings:MultiBbConfig)->dict[str,Any]:
@@ -326,8 +361,12 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     client=kwargs["client"]; ref=kwargs["ref"]; raw_state=kwargs["raw_state"]; uid=kwargs["uid"]
     account=kwargs["account"]; positions=kwargs["positions"]; open_orders=kwargs["open_orders"]
     timestamp_ms=kwargs["timestamp_ms"]; dry_run=bool(kwargs.get("dry_run",False)); order_budget=kwargs.get("order_budget"); before_order=kwargs.get("before_order")
+
+    # Profit Lock Ladder owns the cycle exit while enabled. Existing TP settings
+    # stay persisted but cannot close the LONG and accidentally leave its hedge naked.
+    effective_tp_mode = "OFF" if settings.profit_lock_ladder_enabled else settings.take_profit_mode
     gate=portfolio_cycle_gate(client=client,ref=ref,raw_state=raw_state,uid=uid,account=account,positions=positions,
-        open_orders=open_orders,timestamp_ms=timestamp_ms,take_profit_mode=settings.take_profit_mode,
+        open_orders=open_orders,timestamp_ms=timestamp_ms,take_profit_mode=effective_tp_mode,
         portfolio_tp_percent=settings.portfolio_tp_percent,dry_run=dry_run,order_budget=order_budget,before_order=before_order)
     cycle_snapshot=gate.report
     if gate.handled and not gate.restart:
@@ -338,6 +377,27 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         if not dry_run: ref.set({"multiBbReport":report},merge=True)
         return report
 
+    if gate.restart:
+        raw_state=gate.raw_state; account=gate.account; positions=gate.positions; open_orders=gate.open_orders
+        order_budget=max(0,(15 if order_budget is None else int(order_budget))-gate.orders_sent)
+
+    profit_lock = run_profit_lock_ladder_gate(client=client,ref=ref,raw_state=raw_state,settings=settings,uid=uid,
+        account=account,positions=positions,open_orders=open_orders,timestamp_ms=timestamp_ms,dry_run=dry_run,
+        order_budget=order_budget,before_order=before_order)
+    if profit_lock.handled and not profit_lock.restart:
+        report={"engine":ENGINE,"configVersion":settings.version,"status":"simulated" if dry_run else "running",
+            "action":"PROFIT_LOCK_LADDER","entryStatus":str(profit_lock.report.get("status","ACTIVE")),
+            "entryReason":"Profit Lock Ladder heeft prioriteit op normale DCA/entry in deze scan",
+            "pairOverrideCount":len(settings.pair_overrides),"profitLockLadder":profit_lock.report,
+            "profitLockLadderEnabled":True,"takeProfitSuppressedByProfitLock":True,
+            "portfolioCycle":cycle_snapshot,"ordersSent":profit_lock.orders_sent,
+            "actions":profit_lock.report.get("actions",[])}
+        if not dry_run: ref.set({"multiBbReport":report,"profitLockLadderReport":profit_lock.report},merge=True)
+        return report
+    if profit_lock.restart:
+        raw_state=profit_lock.raw_state; account=profit_lock.account; positions=profit_lock.positions; open_orders=profit_lock.open_orders
+        order_budget=max(0,(15 if order_budget is None else int(order_budget))-profit_lock.orders_sent)
+
     def guarded_before_order(intent:Any)->Any:
         assert_order_allowed(ref,intent,client=client)
         if before_order is not None:
@@ -346,25 +406,38 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         return None
 
     blocked_side=str(kwargs.get("dynamic_hedge_blocked_side","")).upper()
+    if settings.profit_lock_ladder_enabled:
+        blocked_side="SHORT"
     blocked_count=sum(1 for row in positions if str(row.get("positionSide","")).upper()==blocked_side and abs(_finite(row.get("positionAmt",0)))>0) if blocked_side in {"LONG","SHORT"} else 0
     core_kwargs=dict(kwargs); core_kwargs.pop("dynamic_hedge_blocked_side",None); core_kwargs["before_order"]=guarded_before_order
-    if gate.restart:
-        core_kwargs.update({"raw_state":gate.raw_state,"account":gate.account,"positions":gate.positions,"open_orders":gate.open_orders,
-            "order_budget":max(0,(15 if order_budget is None else int(order_budget))-gate.orders_sent)})
+    core_kwargs.update({"raw_state":raw_state,"account":account,"positions":positions,"open_orders":open_orders,"order_budget":order_budget})
+    runtime_settings=replace(settings,take_profit_mode="OFF") if settings.profit_lock_ladder_enabled else settings
     extra={"pairOverrideCount":len(settings.pair_overrides),"takeProfitMode":settings.take_profit_mode,
         "dynamicHedgeBlockedSide":blocked_side or None,
         "entryMarginLongUsd":settings.entry_margin_long_usd,"entryMarginShortUsd":settings.entry_margin_short_usd,
         "longDcaDistance":settings.long_dca_distance,"shortDcaDistance":settings.short_dca_distance,
         "maxDcaLong":settings.max_dca_long,"maxDcaShort":settings.max_dca_short,
         "longTakeProfitValue":settings.long_take_profit_value,"shortTakeProfitValue":settings.short_take_profit_value,
-        "portfolioCycle":cycle_snapshot}
+        "portfolioCycle":cycle_snapshot,"profitLockLadderEnabled":settings.profit_lock_ladder_enabled,
+        "takeProfitSuppressedByProfitLock":settings.profit_lock_ladder_enabled,
+        "profitLockLadder":profit_lock.report}
     core_kwargs["ref"]=_CoreWriteProxy(ref,extra)
-    try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(settings,blocked_side,blocked_count),**core_kwargs)
+    try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(runtime_settings,blocked_side,blocked_count),**core_kwargs)
     except PortfolioCycleOrderBlocked as exc:
         report={"status":"waiting","action":"PORTFOLIO_CYCLE_GUARD","ordersSent":0,"entryStatus":"PORTFOLIO_CYCLE_BLOCKED","entryReason":str(exc),"actions":[]}
     report.update(extra)
     if gate.restart:
         report["portfolioRestart"]=True; report["previousPortfolioExitOrders"]=gate.orders_sent
+    if profit_lock.restart:
+        report["profitLockRestart"]=True; report["previousProfitLockExitOrders"]=profit_lock.orders_sent
+
+    if settings.profit_lock_ladder_enabled and not dry_run:
+        latest=ref.get().to_dict() or {}
+        latest_state=latest.get("multiBbPositions") if isinstance(latest.get("multiBbPositions"),dict) else {}
+        fresh_positions=client.position_risk() if int(_finite(report.get("ordersSent")))>0 else positions
+        summary=account_summary(positions=fresh_positions,state=latest_state,levels=settings.profit_lock_levels,enabled=True)
+        report["profitLockLadder"]=summary
+        ref.set({"profitLockLadderReport":summary,"multiBbReport":report},merge=True)
     return report
 
 
