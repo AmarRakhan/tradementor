@@ -1068,6 +1068,17 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailDcaCount = detailDcaPresentation.filledDcaCount;
   const detailNextDcaPrice = detailDcaPresentation.nextDcaPrice;
   const detailNextDcaNumber = detailDcaPresentation.nextDcaNumber;
+  const detailDcaTriggerCrossed = Boolean(
+    detailCurrentPrice !== null && detailCurrentPrice > 0 && detailNextDcaPrice !== null && detailNextDcaPrice > 0 &&
+    ((detailMainSide === "LONG" && detailCurrentPrice <= detailNextDcaPrice) || (detailMainSide === "SHORT" && detailCurrentPrice >= detailNextDcaPrice)),
+  );
+  const detailOppositeDcaTriggerCrossed = Boolean(
+    detailCurrentPrice !== null && detailCurrentPrice > 0 && detailOppositeNextDcaPrice !== null && detailOppositeNextDcaPrice > 0 &&
+    ((detailOppositeSide === "LONG" && detailCurrentPrice <= detailOppositeNextDcaPrice) || (detailOppositeSide === "SHORT" && detailCurrentPrice >= detailOppositeNextDcaPrice)),
+  );
+  const detailComputedDcaDistancePct = detailCurrentPrice !== null && detailCurrentPrice > 0 && detailNextDcaPrice !== null && detailNextDcaPrice > 0
+    ? Math.abs(detailNextDcaPrice - detailCurrentPrice) / detailCurrentPrice * 100
+    : detailNextDcaDistancePct;
   useEffect(() => {
     if (!detail || !detailDcaPresentation.mismatch) return;
     console.warn("DCA_PRESENTATION_MISMATCH", {
@@ -1089,12 +1100,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailExpectedPnlAtTp = finite(detailRuntime?.expectedPnlAtTp);
   const detailPortfolioAtTp = finite(detailRuntime?.portfolioValueAtTp) ?? (accountDisplay.equityNumber !== null && detailExpectedPnlAtTp !== null && detailPnl !== null ? accountDisplay.equityNumber + (detailExpectedPnlAtTp - detailPnl) : null);
   const signedDistance = (value: number | null) => (value === null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(2).replace(".", ",")}%`);
-  const detailDcaDistanceLabel = signedDistance(detailNextDcaDistancePct);
+  const detailDcaDistanceLabel = detailDcaTriggerCrossed ? "DCA bereikt · uitvoering wordt gecontroleerd" : signedDistance(detailComputedDcaDistancePct);
   const detailTpDistanceLabel = signedDistance(detailTpDistancePct);
   const detailFilledDca = detailDcaCount === null ? null : Math.max(0, Math.round(detailDcaCount));
   const detailFilledDcaLabel = detailFilledDca === null ? "—" : String(detailFilledDca);
   const detailChartDcaLevels =
-    detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null
+    detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null && !detailDcaTriggerCrossed
       ? [
           {
             number: detailNextDcaNumber,
@@ -1110,7 +1121,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     ...(detailOppositeBreakEvenPrice && detailOppositeBreakEvenPrice > 0
       ? [{ key: (detailOppositeSide === "SHORT" ? "be-short" : "be-long") as const, price: detailOppositeBreakEvenPrice, label: `${detailOppositeSide} BE`, color: detailOppositeSide === "SHORT" ? "#55e3ff" : "#ffd166" }]
       : []),
-    ...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null
+    ...(detailNextDcaPrice && detailNextDcaPrice > 0 && detailNextDcaNumber !== null && !detailDcaTriggerCrossed
       ? [
           {
             key: (detailMainSide === "SHORT" ? "dca-short" : "dca-long") as const,
@@ -1120,7 +1131,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
           },
         ]
       : []),
-    ...(detailOppositeNextDcaPrice && detailOppositeNextDcaPrice > 0 && detailOppositeNextDcaNumber !== null
+    ...(detailOppositeNextDcaPrice && detailOppositeNextDcaPrice > 0 && detailOppositeNextDcaNumber !== null && !detailOppositeDcaTriggerCrossed
       ? [
           {
             key: (detailOppositeSide === "SHORT" ? "dca-short" : "dca-long") as const,
@@ -1477,7 +1488,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 </div>
                 <div>
                   <span>Volgende {detailMainSide} DCA prijs</span>
-                  <strong>{detailNextDcaPrice && detailNextDcaNumber !== null ? `${money(detailNextDcaPrice)} · DCA ${Math.round(detailNextDcaNumber)}` : "Geen volgende DCA beschikbaar"}</strong>
+                  <strong>{detailNextDcaPrice && detailNextDcaNumber !== null ? `${money(detailNextDcaPrice)} · DCA ${Math.round(detailNextDcaNumber)}${detailDcaTriggerCrossed ? " · BEREIKT" : ""}` : "Geen volgende DCA beschikbaar"}</strong>
                 </div>
                 <div>
                   <span>Afstand tot volgende DCA</span>
@@ -1486,7 +1497,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 {detailOppositePosition && (
                   <div>
                     <span>Volgende {detailOppositeSide} DCA prijs</span>
-                    <strong>{detailOppositeNextDcaPrice && detailOppositeNextDcaNumber !== null ? `${money(detailOppositeNextDcaPrice)} · DCA ${Math.round(detailOppositeNextDcaNumber)}` : "Geen volgende DCA beschikbaar"}</strong>
+                    <strong>{detailOppositeNextDcaPrice && detailOppositeNextDcaNumber !== null ? `${money(detailOppositeNextDcaPrice)} · DCA ${Math.round(detailOppositeNextDcaNumber)}${detailOppositeDcaTriggerCrossed ? " · BEREIKT" : ""}` : "Geen volgende DCA beschikbaar"}</strong>
                   </div>
                 )}
                 <div>
