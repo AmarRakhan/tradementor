@@ -151,6 +151,7 @@ def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], setti
     next_dca_price = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance) if dca_allowed and anchor > 0 else None
     next_dca_distance_usd = abs(next_dca_price - mark) if next_dca_price else None
     next_dca_distance_pct = next_dca_distance_usd / mark * 100 if next_dca_distance_usd is not None else None
+    next_dca_due = _dca_due(mark, next_dca_price, side) if next_dca_price else False
     return {
         "takeProfitEnabled": settings.take_profit_enabled,
         "takeProfitPct": settings.take_profit * 100 if settings.take_profit_enabled else None,
@@ -162,6 +163,8 @@ def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], setti
         "nextDcaPrice": next_dca_price,
         "nextDcaDistanceUsd": next_dca_distance_usd,
         "nextDcaDistancePct": next_dca_distance_pct,
+        "nextDcaDue": next_dca_due,
+        "nextDcaStatus": "DUE" if next_dca_due else ("AHEAD" if next_dca_price else "NONE"),
         "nextDcaNumber": dca_count + 1 if next_dca_price else None,
         "unlimitedDca": settings.unlimited_dca,
     }
@@ -367,6 +370,13 @@ def _recovery_anchor(state: dict[str, Any], *, entry: float) -> float:
         if value > 0:
             return value
     return entry if _i(state.get("dcaCount")) == 0 and entry > 0 else 0.0
+
+
+def _dca_due(mark: float, trigger: float, side: str) -> bool:
+    """True once the active DCA trigger has been crossed in the position direction."""
+    if mark <= 0 or trigger <= 0:
+        return False
+    return mark <= trigger if side == "LONG" else mark >= trigger
 
 
 def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -657,7 +667,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         dca_count = _i(st0.get("dcaCount")); anchor = _recovery_anchor(st0, entry=entry)
         if (not settings.unlimited_dca and dca_count >= settings.max_dca) or anchor <= 0: continue
         trigger = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance)
-        due = mark <= trigger if side == "LONG" else mark >= trigger
+        due = _dca_due(mark, trigger, side)
         if not due: continue
         row_info = info_map.get(symbol); leverage = max(1, _i(row.get("leverage")))
         if row_info is None: continue
@@ -683,8 +693,17 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), mark); fill_qty = abs(_f(fill.get("executedQty"), float(plan.quantity)))
             new_qty = qty + fill_qty
             new_entry = ((entry * qty) + (fill_price * fill_qty)) / new_qty if new_qty > 0 else entry
-            st = dict(st0); st.update({"dcaCount": dca_count + 1, "lastBotFillPrice": fill_price, "lastDcaFillPrice": fill_price,
+            next_count = dca_count + 1
+            next_allowed = settings.unlimited_dca or next_count < settings.max_dca
+            next_trigger = fill_price * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance) if next_allowed and fill_price > 0 else None
+            next_due = _dca_due(mark, next_trigger, side) if next_trigger else False
+            next_distance_usd = abs(next_trigger - mark) if next_trigger else None
+            next_distance_pct = next_distance_usd / mark * 100.0 if next_distance_usd is not None and mark > 0 else None
+            st = dict(st0); st.update({"dcaCount": next_count, "lastBotFillPrice": fill_price, "lastDcaFillPrice": fill_price,
                 "lastKnownQty": new_qty, "lastKnownEntry": new_entry, "lastBotDcaAtMs": timestamp_ms, "updatedAtMs": timestamp_ms,
+                "nextDcaPrice": next_trigger, "nextDcaDistanceUsd": next_distance_usd, "nextDcaDistancePct": next_distance_pct,
+                "nextDcaDue": next_due, "nextDcaStatus": "DUE" if next_due else ("AHEAD" if next_trigger else "NONE"),
+                "nextDcaNumber": next_count + 1 if next_trigger else None,
                 "leverage": int(tier["leverage"]), "lastTierReductionAtMs": timestamp_ms if tier["tierReduction"] else st0.get("lastTierReductionAtMs")}); state[key] = st
             ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
                      "lastReason": f"Multi DCA actief; DCA {dca_count + 1} bevestigd op {symbol} @ {int(tier['leverage'])}x"}, merge=True)
