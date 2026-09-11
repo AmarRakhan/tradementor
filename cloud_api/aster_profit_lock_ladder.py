@@ -123,6 +123,16 @@ def ladder_decision(*, long_row: dict[str, Any], short_row: dict[str, Any] | Non
         return {**base, "action": "HOLD", "reason": "NO_LONG"}
     if short_notional > long_notional + max(0.01, long_notional * 1e-8):
         return {**base, "action": "BLOCK", "reason": "OVER_HEDGED"}
+
+    # Once the final ladder level has actually filled to effectively 100%, the
+    # ratchet is sealed. Exit stays armed even if fees or a tiny market move make
+    # current net profit dip below the trigger before the next reconciliation.
+    if previous_index >= len(levels) - 1 and current_hedge >= 99.5:
+        return {**base, "action": "EXIT", "reason": "FINAL_100_PERCENT_LEVEL_REACHED",
+                "reachedLevelIndex": previous_index, "profitLevelUsd": levels[-1][0],
+                "targetHedgePercent": 100.0, "targetShortNotional": long_notional,
+                "hedgeDeltaNotional": 0.0}
+
     reached = reached_level_index(net_profit, levels)
     if reached <= previous_index:
         next_index = previous_index + 1
@@ -130,13 +140,18 @@ def ladder_decision(*, long_row: dict[str, Any], short_row: dict[str, Any] | Non
                 "reachedLevelIndex": reached,
                 "nextLevel": (public_levels((levels[next_index],))[0] if next_index < len(levels) else None)}
     profit_usd, target_percent = levels[reached]
+    target_short = min(long_notional, long_notional * target_percent / 100.0)
+    delta = max(0.0, min(target_short - short_notional, long_notional - short_notional))
     if target_percent >= 100.0 - 1e-9:
+        if delta > max(0.01, long_notional * 1e-8):
+            return {**base, "action": "INCREASE", "reason": "FINAL_100_PERCENT_LEVEL_LOCKING",
+                    "reachedLevelIndex": reached, "profitLevelUsd": profit_usd,
+                    "targetHedgePercent": 100.0, "targetShortNotional": long_notional,
+                    "hedgeDeltaNotional": delta, "exitAfterFullHedge": True}
         return {**base, "action": "EXIT", "reason": "FINAL_100_PERCENT_LEVEL_REACHED",
                 "reachedLevelIndex": reached, "profitLevelUsd": profit_usd,
                 "targetHedgePercent": 100.0, "targetShortNotional": long_notional,
-                "hedgeDeltaNotional": max(0.0, long_notional - short_notional)}
-    target_short = min(long_notional, long_notional * target_percent / 100.0)
-    delta = max(0.0, min(target_short - short_notional, long_notional - short_notional))
+                "hedgeDeltaNotional": 0.0}
     return {**base, "action": "INCREASE" if delta > 1e-9 else "ADVANCE",
             "reason": "NEW_NET_PROFIT_LEVEL_REACHED", "reachedLevelIndex": reached,
             "profitLevelUsd": profit_usd, "targetHedgePercent": target_percent,
