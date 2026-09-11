@@ -131,12 +131,20 @@ def test_new_profit_level_adds_only_needed_short_and_never_overhedges():
     assert decision["targetShortNotional"] <= decision["longNotional"]
 
 
-def test_final_100_percent_level_is_exit_not_more_short_dca():
+def test_final_level_first_fills_to_100_then_exits_on_confirmed_full_hedge():
     long = pos("HYPEUSDT", "LONG", 10, 100, 30)
-    short = pos("HYPEUSDT", "SHORT", 8, 100, -2)
-    decision = ladder_decision(long_row=long, short_row=short, state={"profitLockLevelIndex": 3}, levels=DEFAULT_LEVELS)
-    assert decision["action"] == "EXIT"
-    assert decision["targetHedgePercent"] == 100
+    short_80 = pos("HYPEUSDT", "SHORT", 8, 100, -2)
+    locking = ladder_decision(long_row=long, short_row=short_80, state={"profitLockLevelIndex": 3}, levels=DEFAULT_LEVELS)
+    assert locking["action"] == "INCREASE"
+    assert locking["reason"] == "FINAL_100_PERCENT_LEVEL_LOCKING"
+    assert locking["targetHedgePercent"] == 100
+    assert locking["hedgeDeltaNotional"] == pytest.approx(200)
+    assert locking["exitAfterFullHedge"] is True
+
+    short_100 = pos("HYPEUSDT", "SHORT", 10, 100, -2)
+    exit_decision = ladder_decision(long_row=long, short_row=short_100, state={"profitLockLevelIndex": 4}, levels=DEFAULT_LEVELS)
+    assert exit_decision["action"] == "EXIT"
+    assert exit_decision["reason"] == "FINAL_100_PERCENT_LEVEL_REACHED"
 
 
 def test_existing_overhedge_blocks_risk_increase():
