@@ -10,8 +10,10 @@ def test_profit_lock_ladder_release_contract_is_additive_and_safe():
     dynamic = (ROOT / "aster_dynamic_hedge_sequence.py").read_text()
 
     assert 'profit_lock_ladder_enabled: bool = False' in facade
-    assert 'normalized["longSlots"] = total' in facade
-    assert 'normalized["shortSlots"] = 0' in facade
+    assert 'Keep stored legacy settings intact; LONG-only is a runtime projection.' in facade
+    assert 'if name=="long_slots": return base.maximum_positions' in facade
+    assert 'if name=="short_slots": return 0' in facade
+    assert 'if name=="manual_symbols": return tuple((symbol,"LONG")' in facade
     assert 'effective_tp_mode = "OFF" if settings.profit_lock_ladder_enabled' in facade
     assert 'blocked_side="SHORT"' in facade.replace(" ", "")
     assert 'short_notional > long_notional' in helper
