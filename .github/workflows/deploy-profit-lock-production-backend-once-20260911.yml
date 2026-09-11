@@ -1,4 +1,5 @@
 name: Deploy Profit Lock Production Backend Once 20260911
+# operational trigger: deploy canonical Profit Lock backend after stale production API was confirmed
 
 on:
   push:
