@@ -147,21 +147,13 @@ def _parse_pair_overrides(raw: Any) -> dict[str, dict[str, Any]]:
 
 
 def _profit_lock_source(source: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """Normalize runtime direction without changing legacy accounts when OFF."""
+    """Keep stored legacy settings intact; LONG-only is a runtime projection."""
     enabled = bool(source.get("profitLockLadderEnabled", False))
     if not enabled:
         return dict(source), False
     if bool(source.get("asymmetricHedgeModeEnabled", False)):
         raise ValueError("Profit Lock Ladder kan niet tegelijk met Asymmetrische Hedge actief zijn")
-    normalized = dict(source)
-    total = _integer(source.get("maximumPositions", source.get("maximumPairs", 30)), 30)
-    normalized["longSlots"] = total
-    normalized["shortSlots"] = 0
-    normalized["asymmetricHedgeModeEnabled"] = False
-    manual = source.get("manualSymbols") if isinstance(source.get("manualSymbols"), list) else []
-    if manual:
-        normalized["manualSymbols"] = [{**row, "side": "LONG"} for row in manual if isinstance(row, dict)]
-    return normalized, True
+    return dict(source), True
 
 
 @dataclass(frozen=True)
@@ -217,8 +209,6 @@ class MultiBbConfig(_core.MultiBbConfig):
         if any(not 0 <= x <= _MAX_PAIR_DCA for x in (self.max_dca_long,self.max_dca_short)): raise ValueError(f"LONG/SHORT max DCA moet tussen 0 en {_MAX_PAIR_DCA} liggen")
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_take_profit_value,self.short_take_profit_value)): raise ValueError("LONG/SHORT Take Profit moet positief zijn")
         if not math.isfinite(self.portfolio_tp_percent) or not 0 < self.portfolio_tp_percent <= 10000: raise ValueError("Portfolio TP percentage moet groter dan 0 zijn")
-        if self.profit_lock_ladder_enabled and (self.short_slots != 0 or self.long_slots != self.maximum_positions):
-            raise ValueError("Profit Lock Ladder is LONG-only: alle primaire slots moeten LONG zijn")
         return self
 
     def public_dict(self) -> dict[str, Any]:
@@ -296,14 +286,20 @@ class _PairAwareSettings:
     def __getattr__(self,name:str)->Any:
         base:MultiBbConfig=object.__getattribute__(self,"_base")
         blocked_side=object.__getattribute__(self,"_blocked_side");blocked_count=object.__getattribute__(self,"_blocked_side_count")
-        if name=="long_slots" and blocked_side=="LONG": return blocked_count
-        if name=="short_slots" and blocked_side=="SHORT": return blocked_count
+        # Profit Lock Ladder is LONG-only at execution time, but public/stored
+        # LONG/SHORT choices remain untouched so turning the mode OFF restores them.
+        if base.profit_lock_ladder_enabled:
+            if name=="long_slots": return base.maximum_positions
+            if name=="short_slots": return 0
+            if name=="manual_symbols": return tuple((symbol,"LONG") for symbol,_side in base.manual_symbols)
+        if blocked_side and name=="long_slots" and blocked_side=="LONG": return blocked_count
+        if blocked_side and name=="short_slots" and blocked_side=="SHORT": return blocked_count
         if name=="maximum_positions" and blocked_side=="SHORT" and base.profit_lock_ladder_enabled:
             # Profit Lock SHORT legs protect LONG seats; they do not consume a user seat.
             return base.maximum_positions + blocked_count
         symbol,side=_execution_context_from_stack(); override=base.pair_overrides.get(symbol,{}) if symbol else {}
-        if side==blocked_side and name=="take_profit_enabled": return False
-        if side==blocked_side and name=="max_dca": return -1
+        if blocked_side and side==blocked_side and name=="take_profit_enabled": return False
+        if blocked_side and side==blocked_side and name=="max_dca": return -1
         if name in {"entry_margin_usd","dca_distance","dca_margin_usd","max_dca","take_profit"}:
             legacy_key={"entry_margin_usd":"entryMarginUsd","dca_distance":"dcaDistance","dca_margin_usd":"dcaMarginUsd","max_dca":"maxDca","take_profit":"takeProfit"}[name]
             if legacy_key in override: return override[legacy_key]
