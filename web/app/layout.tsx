@@ -22,6 +22,7 @@ import "./markets-bridge.css";
 import "./portfolio-snapshot.css";
 import "./portfolio-hedge.css";
 import "./home-transfer.css";
+import "./tradecentrum-responsive.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
