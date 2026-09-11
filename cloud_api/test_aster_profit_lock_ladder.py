@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from aster_multi_bb import MultiBbConfig
+from aster_multi_bb import MultiBbConfig, _PairAwareSettings
 from aster_profit_lock_ladder import (
     DEFAULT_LEVELS,
     account_summary,
@@ -33,7 +33,7 @@ def test_default_is_opt_in_and_legacy_slot_mix_is_unchanged():
     assert cfg.public_dict()["profitLockLadderEnabled"] is False
 
 
-def test_enabled_mode_is_backend_enforced_long_only_for_auto_and_manual_selection():
+def test_enabled_mode_is_runtime_long_only_but_preserves_saved_user_choices():
     cfg = MultiBbConfig.from_mapping({
         "maximumPositions": 30,
         "longSlots": 15,
@@ -45,13 +45,21 @@ def test_enabled_mode_is_backend_enforced_long_only_for_auto_and_manual_selectio
         ],
         "profitLockLadderEnabled": True,
     })
-    assert cfg.long_slots == 30
-    assert cfg.short_slots == 0
-    assert cfg.maximum_positions == 30
-    assert cfg.manual_symbols == (("HYPEUSDT", "LONG"), ("BTCUSDT", "LONG"))
+    # Stored/public values remain intact so disabling Profit Lock restores them.
+    assert cfg.long_slots == 15
+    assert cfg.short_slots == 15
+    assert cfg.manual_symbols == (("HYPEUSDT", "SHORT"), ("BTCUSDT", "LONG"))
     saved = cfg.public_dict()
+    assert saved["longSlots"] == 15
+    assert saved["shortSlots"] == 15
+    assert saved["manualSymbols"][0]["side"] == "SHORT"
     assert saved["profitLockPrimarySide"] == "LONG"
-    assert all(row["side"] == "LONG" for row in saved["manualSymbols"])
+
+    # The execution proxy is the hard backend enforcement layer.
+    runtime = _PairAwareSettings(cfg)
+    assert runtime.long_slots == 30
+    assert runtime.short_slots == 0
+    assert runtime.manual_symbols == (("HYPEUSDT", "LONG"), ("BTCUSDT", "LONG"))
 
 
 def test_profit_lock_rejects_asymmetric_primary_hedge_mode():
