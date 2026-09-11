@@ -259,10 +259,17 @@ def _side_value(base: MultiBbConfig, override: dict[str,Any], side: str, kind: s
 
 
 class _PairAwareSettings:
-    def __init__(self,base:MultiBbConfig): object.__setattr__(self,"_base",base)
+    def __init__(self,base:MultiBbConfig,blocked_side:str="",blocked_side_count:int=0):
+        object.__setattr__(self,"_base",base);object.__setattr__(self,"_blocked_side",str(blocked_side).upper())
+        object.__setattr__(self,"_blocked_side_count",max(0,int(blocked_side_count)))
     def __getattr__(self,name:str)->Any:
         base:MultiBbConfig=object.__getattribute__(self,"_base")
+        blocked_side=object.__getattribute__(self,"_blocked_side");blocked_count=object.__getattribute__(self,"_blocked_side_count")
+        if name=="long_slots" and blocked_side=="LONG": return blocked_count
+        if name=="short_slots" and blocked_side=="SHORT": return blocked_count
         symbol,side=_execution_context_from_stack(); override=base.pair_overrides.get(symbol,{}) if symbol else {}
+        if side==blocked_side and name=="take_profit_enabled": return False
+        if side==blocked_side and name=="max_dca": return -1
         if name in {"entry_margin_usd","dca_distance","dca_margin_usd","max_dca","take_profit"}:
             legacy_key={"entry_margin_usd":"entryMarginUsd","dca_distance":"dcaDistance","dca_margin_usd":"dcaMarginUsd","max_dca":"maxDca","take_profit":"takeProfit"}[name]
             if legacy_key in override: return override[legacy_key]
@@ -338,18 +345,21 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
             except TypeError: return before_order(intent,None)
         return None
 
-    core_kwargs=dict(kwargs); core_kwargs["before_order"]=guarded_before_order
+    blocked_side=str(kwargs.get("dynamic_hedge_blocked_side","")).upper()
+    blocked_count=sum(1 for row in positions if str(row.get("positionSide","")).upper()==blocked_side and abs(_finite(row.get("positionAmt",0)))>0) if blocked_side in {"LONG","SHORT"} else 0
+    core_kwargs=dict(kwargs); core_kwargs.pop("dynamic_hedge_blocked_side",None); core_kwargs["before_order"]=guarded_before_order
     if gate.restart:
         core_kwargs.update({"raw_state":gate.raw_state,"account":gate.account,"positions":gate.positions,"open_orders":gate.open_orders,
             "order_budget":max(0,(15 if order_budget is None else int(order_budget))-gate.orders_sent)})
     extra={"pairOverrideCount":len(settings.pair_overrides),"takeProfitMode":settings.take_profit_mode,
+        "dynamicHedgeBlockedSide":blocked_side or None,
         "entryMarginLongUsd":settings.entry_margin_long_usd,"entryMarginShortUsd":settings.entry_margin_short_usd,
         "longDcaDistance":settings.long_dca_distance,"shortDcaDistance":settings.short_dca_distance,
         "maxDcaLong":settings.max_dca_long,"maxDcaShort":settings.max_dca_short,
         "longTakeProfitValue":settings.long_take_profit_value,"shortTakeProfitValue":settings.short_take_profit_value,
         "portfolioCycle":cycle_snapshot}
     core_kwargs["ref"]=_CoreWriteProxy(ref,extra)
-    try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(settings),**core_kwargs)
+    try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(settings,blocked_side,blocked_count),**core_kwargs)
     except PortfolioCycleOrderBlocked as exc:
         report={"status":"waiting","action":"PORTFOLIO_CYCLE_GUARD","ordersSent":0,"entryStatus":"PORTFOLIO_CYCLE_BLOCKED","entryReason":str(exc),"actions":[]}
     report.update(extra)

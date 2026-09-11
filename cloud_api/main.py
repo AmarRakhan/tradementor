@@ -116,6 +116,11 @@ from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings
+from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
+from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action
+from aster_dynamic_hedge_execution import dynamic_strategy_order_guard
+from aster_dynamic_hedge_sequence import run_dynamic_hedge_sequence
+from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_state import (
     account_values as aster_account_values, reconcile_aster_state,
     account_information_values as aster_account_information_values,
@@ -1398,7 +1403,36 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
-    # The legacy Focus/Strategy-2 planners are retired. The new engine owns all active decisions.
+    # The legacy Focus/Strategy-2 planners are retired. Multi BB remains the
+    # dominant-side strategy; Dynamic Hedge exclusively owns the smaller hedge
+    # side while its optional toggle is enabled.
+    dynamic_ref=user_reference({"uid":uid}).collection("asterDynamicHedge").document("control")
+    dynamic_stored=dynamic_ref.get().to_dict() or {}
+    if bool(dynamic_stored.get("enabled",False)):
+        dynamic=run_dynamic_hedge_sequence(client=client,control_ref=dynamic_ref,settings=settings,uid=uid,account=account,
+            positions=positions,open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
+        ref.set({"dynamicHedgeReport":dynamic,"dynamicHedgeUpdatedAt":now},merge=True)
+        if int(safe_float(dynamic.get("ordersSent")))>0 or str(dynamic.get("reason",""))!="HEDGE_STABLE" or str(dynamic.get("safetyStatus","VEILIG"))!="VEILIG":
+            return {"status":str(dynamic.get("status","waiting")),"action":"DYNAMIC_HEDGE","ordersSent":int(safe_float(dynamic.get("ordersSent"))),"dynamicHedge":dynamic}
+        long_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="LONG")
+        short_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="SHORT")
+        blocked_side="SHORT" if long_exposure>short_exposure else "LONG" if short_exposure>long_exposure else ""
+        runtime_settings=settings
+        if bool(getattr(runtime_settings,"asymmetric_hedge_enabled",False)):
+            runtime_settings=replace(runtime_settings,asymmetric_hedge_enabled=False)
+        if str(getattr(runtime_settings,"take_profit_mode",""))=="PORTFOLIO":
+            runtime_settings=replace(runtime_settings,take_profit_mode="OFF")
+        def dynamic_before_order(intent):
+            dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)
+            if before_order is not None:
+                try:return before_order(intent)
+                except TypeError:return before_order(intent,None)
+            return None
+        report=run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=runtime_settings,uid=uid,account=account,positions=positions,
+            open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=dynamic_before_order,
+            dynamic_hedge_blocked_side=blocked_side)
+        report["dynamicHedge"]={**dynamic,"blockedStrategySide":blocked_side or None,"portfolioTpSuppressed":str(getattr(settings,"take_profit_mode",""))=="PORTFOLIO"}
+        return report
     return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=positions,
         open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
     # Realtime Simple Mode must make DCA/release decisions from the exact websocket
@@ -4724,6 +4758,12 @@ def close_all_aster_strategy(
     status=reserve(transaction)
     if status!="RESERVED":return {"actionId":action_hash,"status":status,"duplicate":True}
     client=_portfolio_growth_client(user,live=True);submitted=[]
+    dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
+    manual_guard = None
+    try:
+        manual_guard = begin_manual_action(dynamic_hedge_ref, "ALL", client.position_risk())
+    except Exception as exc:
+        raise HTTPException(502, "Dynamic Hedge kon vóór Alles sluiten niet veilig worden vergrendeld") from exc
     try:
         open_orders=client.open_orders();unknown=[row for row in open_orders if is_exposure_order(row) is None]
         if unknown:raise RuntimeError("Open order(s) kunnen niet veilig als instap of bescherming worden geclassificeerd")
@@ -4766,9 +4806,11 @@ def close_all_aster_strategy(
                 "ordersSubmitted":len(submitted),"timestamp":finished_at}
             txn.set(growth.collection("audit").document(),audit);txn.set(action_ref,{"status":"COMPLETED","result":audit,"completedAt":finished_at},merge=True)
         complete(finish)
+        complete_manual_action(dynamic_hedge_ref, manual_guard, remaining)
         return {"actionId":action_hash,"status":"COMPLETED","closedPositions":len(submitted),"newBaseline":final_equity,
             "botPaused":True,"message":"Alle posities en orders zijn exchange-bevestigd weg; het account blijft bewust gepauzeerd."}
     except Exception as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE","submitted":len(submitted),
             "reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,f"Alles sluiten is fail-closed gestopt; account blijft gepauzeerd: {str(exc)[:300]}") from exc
@@ -4821,6 +4863,15 @@ def close_profitable_aster_positions(
     if not queue_token:
         action_ref.set({"status": "blocked", "reason": "strategy2_order_busy", "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise HTTPException(409, "Strategy 2 verwerkt nog een order; probeer het zo opnieuw")
+
+    dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
+    manual_guard = None
+    try:
+        before_manual_rows = _portfolio_growth_client(user, live=False).position_risk()
+        manual_guard = begin_manual_action(dynamic_hedge_ref, scope, before_manual_rows)
+    except Exception as exc:
+        _release_strategy2_queue_lease(strategy_ref, queue_token)
+        raise HTTPException(502, "Dynamic Hedge kon vóór de sluiting niet veilig worden vergrendeld") from exc
 
     closed: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -4887,10 +4938,14 @@ def close_profitable_aster_positions(
             "closedCount": len(closed), "skippedCount": len(skipped), "failedCount": len(failed),
             "profitAtSubmitUsd": result["profitAtSubmitUsd"], "timestamp": datetime.now(timezone.utc),
         })
+        after_manual_rows = client.position_risk()
+        complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
         return {**result, "duplicate": False}
-    except HTTPException:
+    except HTTPException as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc.detail))
         raise
     except Exception as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         action_ref.set({
             "status": "PARTIAL_FAIL_CLOSED" if closed else "FAILED_BEFORE_CLOSE",
             "reason": str(exc)[:500], "updatedAt": datetime.now(timezone.utc),
@@ -4927,8 +4982,11 @@ def close_one_aster_position(
         signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=True,
         before_order_submit=_block_order_during_close_all(uid),
     )
+    dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
+    manual_guard = None
     try:
         live_rows = client.position_risk()
+        manual_guard = begin_manual_action(dynamic_hedge_ref, request.side, live_rows)
         position = next((row for row in live_rows
             if str(row.get("symbol", "")).upper() == normalized_symbol
             and str(row.get("positionSide", "")).upper() == request.side
@@ -4957,12 +5015,16 @@ def close_one_aster_position(
             and abs(safe_float(row.get("positionAmt"))) > tolerance), None)
         if remaining is not None:
             raise HTTPException(502, "Aster heeft de volledige sluiting nog niet bevestigd; er wordt niet opnieuw besteld")
+        after_manual_rows = client.position_risk()
+        complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
         intent_ref.set({"status": "confirmed_closed", "result": result, "completedAt": datetime.now(timezone.utc)}, merge=True)
         return {"closed": True, "symbol": normalized_symbol, "side": request.side, "closedSize": live_quantity}
     except HTTPException as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc.detail))
         intent_ref.set({"status": "failed_closed", "detail": str(exc.detail), "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise
     except Exception as exc:
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         intent_ref.set({"status": "unknown_fail_closed", "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise HTTPException(502, "Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld") from exc
 
@@ -7712,4 +7774,22 @@ install_aster_hedge_recovery_routes(
     acquire_queue_lease=_acquire_strategy2_queue_lease,
     release_queue_lease=_release_strategy2_queue_lease,
     before_order_submit_factory=_block_order_during_close_all,
+)
+
+
+# DYNAMIC_HEDGE_LIQUIDATION_SAFETY_ROUTES_20260910
+def _dynamic_hedge_aster_client(user: dict[str, Any], live: bool = False) -> AsterV3Client:
+    secret = load_aster_secret(user)
+    return AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),
+        live_authorized=bool(live),
+    )
+
+
+install_aster_dynamic_hedge_routes(
+    app,
+    authenticated_user=authenticated_user,
+    user_reference=user_reference,
+    client_factory=_dynamic_hedge_aster_client,
 )
