@@ -191,6 +191,23 @@ def run_dynamic_hedge_sequence(
     execution gate, projected maintenance check, available-margin sizing,
     exchange confirmation, idempotency and side-isolation checks.
     """
+    # Profit Lock Ladder is the sole SHORT owner while its account mode is on.
+    # Returning a stable no-op lets Strategy 2 continue into the Profit Lock gate
+    # without mutating or automatically disabling the user's Dynamic Hedge toggle.
+    if bool(getattr(settings, "profit_lock_ladder_enabled", False)):
+        return {
+            "handled": True,
+            "status": "ok",
+            "action": "HOLD",
+            "reason": "HEDGE_STABLE",
+            "safetyStatus": "VEILIG",
+            "ordersSent": 0,
+            "sequenceOrdersSent": 0,
+            "sequenceActions": [],
+            "suppressedByProfitLockLadder": True,
+            "oneOrderPerTick": False,
+        }
+
     # A dry run has no exchange mutation to reconcile, so one planning decision
     # is the only truthful simulation at this layer.
     if dry_run:

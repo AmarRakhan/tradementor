@@ -20,6 +20,9 @@ const preserveKeys = [
   "shortTakeProfitValue",
   "takeProfitLong",
   "takeProfitShort",
+  "profitLockLadderEnabled",
+  "profitLockLevels",
+  "profitLockPrimarySide",
 ] as const;
 
 async function preserveExistingPairOverrides(request: Request) {
