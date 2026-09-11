@@ -4192,8 +4192,9 @@ def start_money_grabber(request:MoneyGrabberRoundStartRequest,user:dict[str,Any]
 
 @app.get("/v1/me/aster/strategy2/focus/markets")
 def strategy2_focus_markets(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
-    raw=aster_strategy2_reference(str(user["uid"])).get().to_dict() or {}
-    settings=Strategy2Config.from_mapping(raw.get("settings"))
+    # Market discovery is read-only and must not depend on whether the user's
+    # current Strategy-2 settings validate. Invalid/disabled TP values, for
+    # example, may never make the manual Aster market picker unavailable.
     secret=load_aster_secret(user)
     client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
     # Manual Multi-Focus must be able to select every currently tradable Aster
