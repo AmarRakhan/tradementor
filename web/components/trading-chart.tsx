@@ -50,6 +50,53 @@ const indicators: Array<[IndicatorId, string]> = [["ema9","EMA 9"],["ema21","EMA
 const colors = ["#43e5c4", "#55a7ff", "#9b7cff", "#ffb74d", "#f06292", "#26c6da", "#ffee58", "#ab47bc"];
 const PORTFOLIO_HISTORY_KEY = "tradementor.test.portfolioEquity.v1";
 const RISK_HISTORY_KEY = "tradementor.test.riskTimeline.v1";
+const AMSTERDAM_TIME_ZONE = "Europe/Amsterdam";
+
+// Lightweight Charts keeps numeric timestamps in UTC. Only localize labels here;
+// never shift exchange timestamps, so candle/fill matching remains exact and DST
+// follows Europe/Amsterdam automatically (CEST in summer, CET in winter).
+function chartTimeToDate(time: unknown): Date | null {
+  if (typeof time === "number" && Number.isFinite(time)) return new Date(time * 1000);
+  if (typeof time === "string") {
+    const parsed = new Date(`${time}T00:00:00Z`);
+    return Number.isFinite(parsed.getTime()) ? parsed : null;
+  }
+  if (time && typeof time === "object") {
+    const value = time as { year?: number; month?: number; day?: number };
+    if (Number.isFinite(value.year) && Number.isFinite(value.month) && Number.isFinite(value.day)) {
+      return new Date(Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day)));
+    }
+  }
+  return null;
+}
+
+const amsterdamCrosshairFormatter = new Intl.DateTimeFormat("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, day:"2-digit", month:"short", year:"2-digit", hour:"2-digit", minute:"2-digit", hourCycle:"h23" });
+const amsterdamYearFormatter = new Intl.DateTimeFormat("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, year:"numeric" });
+const amsterdamMonthFormatter = new Intl.DateTimeFormat("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, month:"short" });
+const amsterdamDayFormatter = new Intl.DateTimeFormat("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, day:"2-digit", month:"short" });
+const amsterdamMinuteFormatter = new Intl.DateTimeFormat("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, hour:"2-digit", minute:"2-digit", hourCycle:"h23" });
+const amsterdamSecondFormatter = new Intl.DateTimeFormat("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23" });
+
+function formatAmsterdamChartTime(time: unknown) {
+  const date = chartTimeToDate(time);
+  if (!date) return "";
+  const parts = Object.fromEntries(amsterdamCrosshairFormatter.formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.day} ${parts.month} '${parts.year} ${parts.hour}:${parts.minute}`;
+}
+
+function formatAmsterdamTickMark(time: unknown, tickMarkType: number) {
+  const date = chartTimeToDate(time);
+  if (!date) return "";
+  if (tickMarkType === 0) return amsterdamYearFormatter.format(date);
+  if (tickMarkType === 1) return amsterdamMonthFormatter.format(date);
+  if (tickMarkType === 2) return amsterdamDayFormatter.format(date);
+  if (tickMarkType === 4) return amsterdamSecondFormatter.format(date);
+  return amsterdamMinuteFormatter.format(date);
+}
+
+function formatAmsterdamDateTime(timestampMs: number) {
+  return new Date(timestampMs).toLocaleString("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, hourCycle:"h23" });
+}
 
 function portfolioCandles(timeframe: string): Candle[] {
   const seconds = ({"1m":60,"3m":180,"5m":300,"15m":900,"30m":1800,"1h":3600,"2h":7200,"4h":14400,"6h":21600,"12h":43200,"1D":86400,"1W":604800} as Record<string, number>)[timeframe] ?? 900;
@@ -209,7 +256,7 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
     if (!chartCandles.length || !containerRef.current) return;
     const container = containerRef.current;
     const heritage=skin==="suriname-heritage";
-    const chart = createChart(container, { width:container.clientWidth, height:Math.max(390,container.clientHeight), layout:{background:{type:ColorType.Solid,color:heritage?"#031008":"#061225"},textColor:heritage?"#d8c58e":"#8fa6c8",panes:{separatorColor:heritage?"#27351f":"#172c4a",separatorHoverColor:heritage?"#d9ad48":"#2dd4bf"}}, grid:{vertLines:{color:heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"},horzLines:{color:mode==="aster-detail"?"rgba(0,0,0,0)":heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"}}, crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"},horzLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"}}, rightPriceScale:{borderColor:heritage?"#4b4325":"#1c3858",minimumWidth:72}, timeScale:{borderColor:heritage?"#4b4325":"#1c3858",timeVisible:true,secondsVisible:false,rightOffset:focusV2?14:8}, handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true}, handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true} });
+    const chart = createChart(container, { width:container.clientWidth, height:Math.max(390,container.clientHeight), localization:{locale:"nl-NL",timeFormatter:formatAmsterdamChartTime}, layout:{background:{type:ColorType.Solid,color:heritage?"#031008":"#061225"},textColor:heritage?"#d8c58e":"#8fa6c8",panes:{separatorColor:heritage?"#27351f":"#172c4a",separatorHoverColor:heritage?"#d9ad48":"#2dd4bf"}}, grid:{vertLines:{color:heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"},horzLines:{color:mode==="aster-detail"?"rgba(0,0,0,0)":heritage?"rgba(71,104,61,.18)":"rgba(69,96,133,.16)"}}, crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"},horzLine:{color:heritage?"#d8ad4a":"#70a8dc",labelBackgroundColor:heritage?"#5b4318":"#133252"}}, rightPriceScale:{borderColor:heritage?"#4b4325":"#1c3858",minimumWidth:72}, timeScale:{borderColor:heritage?"#4b4325":"#1c3858",timeVisible:true,secondsVisible:false,tickMarkFormatter:formatAmsterdamTickMark,rightOffset:focusV2?14:8}, handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true}, handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true} });
     chartRef.current=chart;
     let priceSeries: ISeriesApi<any>;
     const common={priceLineVisible:focusV2?false:mode!=="aster-detail",lastValueVisible:mode!=="aster-detail"||focusV2,priceLineColor:focusV2?"#25df91":"#42d8ff"};
@@ -335,8 +382,8 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
       <div className="chart-toolbar"><div className="timeframe-strip">{timeframes.map(tf=><button key={tf} className={timeframe===tf?"active":""} onClick={()=>setTimeframe(tf)}>{tf}</button>)}</div><div className="chart-actions"><select aria-label="Grafiektype" value={chartType} onChange={e=>setChartType(e.target.value as ChartType)}><option value="candles">Candles</option><option value="line">Line</option><option value="area">Area</option><option value="bars">Bars</option></select><button className={indicatorOpen?"active":""} onClick={()=>setIndicatorOpen(v=>!v)}>Indicators · {activeIndicators.length}</button><button onClick={fullscreen} aria-label="Grafiek fullscreen">⛶</button></div></div>
       {indicatorOpen&&<div className="indicator-panel"><header><strong>Technische indicatoren</strong><button onClick={()=>setIndicatorOpen(false)}>Gereed</button></header><div>{indicators.map(([id,label])=>{const unavailable=selection.exchange==="portfolio"&&id==="volume";return <label key={id}><input type="checkbox" disabled={unavailable} checked={!unavailable&&activeIndicators.includes(id)} onChange={()=>toggleIndicator(id)}/><span>{unavailable?"Volume · niet van toepassing":label}</span></label>})}</div><small>{selection.exchange === "portfolio" ? "Indicatoren worden berekend uit jouw echte equitymetingen; handelsvolume is hier niet van toepassing." : "Indicatoren worden lokaal berekend uit de zichtbare exchange-candles."}</small></div>}
     </>}
-    <div className="chart-stage">{loading&&<div className="chart-state"><i/>Candles laden…</div>}{error&&<div className="chart-state error"><strong>Marktdata tijdelijk niet beschikbaar</strong><span>{error}</span><button onClick={load}>Opnieuw proberen</button></div>}<div ref={containerRef} className="chart-canvas" />{chartOverlayLevels.length>0&&<div className="focus-level-overlay" aria-hidden="true" data-focus-label-overlay="true">{chartOverlayLevels.map(level=>{const layout=focusLevelY[level.key];if(!layout||!Number.isFinite(layout.realY)||!Number.isFinite(layout.labelY))return null;const delta=layout.labelY-layout.realY;return <div key={level.key} className={`focus-level-segment ${level.key}`} data-focus-chart-label={level.key} style={{top:`${layout.realY}px`,color:level.color}}><i className="focus-price-line"/><b className="focus-label-leader" aria-hidden="true" style={{display:Math.abs(delta)>2?"block":"none",top:`${Math.min(0,delta)}px`,height:`${Math.abs(delta)}px`}}/><span className="focus-line-label" style={{top:`${delta}px`}}>{level.label}</span></div>})}</div>}{crosshair&&<div className="ohlc-readout"><span>{new Date(crosshair.time*1000).toLocaleString("nl-NL")}</span><b>O {crosshair.open}</b><b>H {crosshair.high}</b><b>L {crosshair.low}</b><b>C {crosshair.close}</b><b>V {crosshair.volume}</b></div>}</div>
-    {selectedMarkerEvents.length>0&&<aside className="trade-marker-details"><header><strong>{selectedMarkerEvents.length>1?`${selectedMarkerEvents.length} bevestigde fills`:"Bevestigde exchange-fill"}</strong><button onClick={()=>setSelectedMarkerEvents([])} aria-label="Filldetails sluiten">×</button></header>{selectedMarkerEvents.map(event=><dl key={event.id}><div><dt>Gebeurtenis</dt><dd>{event.kind==="dca"?`DCA${event.dcaNumber?` #${event.dcaNumber}`:""}`:event.kind}</dd></div><div><dt>Richting</dt><dd>{event.side}</dd></div><div><dt>Werkelijke prijs</dt><dd>{event.price.toLocaleString("nl-NL",{maximumFractionDigits:10})}</dd></div><div><dt>Tijd</dt><dd>{new Date(event.timestampMs).toLocaleString("nl-NL")}</dd></div><div><dt>Gevuld</dt><dd>{event.notional?`US$ ${event.notional.toFixed(2)}`:event.quantity??"—"}</dd></div><div><dt>Exchange</dt><dd>{event.exchange||selection.exchange}</dd></div></dl>)}</aside>}
+    <div className="chart-stage">{loading&&<div className="chart-state"><i/>Candles laden…</div>}{error&&<div className="chart-state error"><strong>Marktdata tijdelijk niet beschikbaar</strong><span>{error}</span><button onClick={load}>Opnieuw proberen</button></div>}<div ref={containerRef} className="chart-canvas" />{chartOverlayLevels.length>0&&<div className="focus-level-overlay" aria-hidden="true" data-focus-label-overlay="true">{chartOverlayLevels.map(level=>{const layout=focusLevelY[level.key];if(!layout||!Number.isFinite(layout.realY)||!Number.isFinite(layout.labelY))return null;const delta=layout.labelY-layout.realY;return <div key={level.key} className={`focus-level-segment ${level.key}`} data-focus-chart-label={level.key} style={{top:`${layout.realY}px`,color:level.color}}><i className="focus-price-line"/><b className="focus-label-leader" aria-hidden="true" style={{display:Math.abs(delta)>2?"block":"none",top:`${Math.min(0,delta)}px`,height:`${Math.abs(delta)}px`}}/><span className="focus-line-label" style={{top:`${delta}px`}}>{level.label}</span></div>})}</div>}{crosshair&&<div className="ohlc-readout"><span>{formatAmsterdamDateTime(crosshair.time*1000)}</span><b>O {crosshair.open}</b><b>H {crosshair.high}</b><b>L {crosshair.low}</b><b>C {crosshair.close}</b><b>V {crosshair.volume}</b></div>}</div>
+    {selectedMarkerEvents.length>0&&<aside className="trade-marker-details"><header><strong>{selectedMarkerEvents.length>1?`${selectedMarkerEvents.length} bevestigde fills`:"Bevestigde exchange-fill"}</strong><button onClick={()=>setSelectedMarkerEvents([])} aria-label="Filldetails sluiten">×</button></header>{selectedMarkerEvents.map(event=><dl key={event.id}><div><dt>Gebeurtenis</dt><dd>{event.kind==="dca"?`DCA${event.dcaNumber?` #${event.dcaNumber}`:""}`:event.kind}</dd></div><div><dt>Richting</dt><dd>{event.side}</dd></div><div><dt>Werkelijke prijs</dt><dd>{event.price.toLocaleString("nl-NL",{maximumFractionDigits:10})}</dd></div><div><dt>Tijd</dt><dd>{formatAmsterdamDateTime(event.timestampMs)}</dd></div><div><dt>Gevuld</dt><dd>{event.notional?`US$ ${event.notional.toFixed(2)}`:event.quantity??"—"}</dd></div><div><dt>Exchange</dt><dd>{event.exchange||selection.exchange}</dd></div></dl>)}</aside>}
     {mode !== "aster-detail" && <footer className="chart-footer"><span><i className={reconnecting?"reconnecting":""}/>{reconnecting?"Realtime opnieuw verbinden":"Realtime verbonden"}</span><span>Bron: {source||selection.exchange}</span><a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">Charts by TradingView</a></footer>}
   </section>;
 }

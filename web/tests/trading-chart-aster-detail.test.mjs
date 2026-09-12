@@ -148,3 +148,13 @@ test("trade detail shows the compact reference cockpit above the chart", () => {
   assert.match(recent, /DCA GEVULD/);
   assert.match(recent, /detailPnlPct/);
 });
+
+
+test("Aster chart renders all chart timestamps in Europe/Amsterdam", () => {
+  assert.match(chart, /AMSTERDAM_TIME_ZONE = "Europe\/Amsterdam"/);
+  assert.match(chart, /localization:\{locale:"nl-NL",timeFormatter:formatAmsterdamChartTime\}/);
+  assert.match(chart, /tickMarkFormatter:formatAmsterdamTickMark/);
+  assert.match(chart, /formatAmsterdamDateTime\(crosshair\.time\*1000\)/);
+  assert.match(chart, /formatAmsterdamDateTime\(event\.timestampMs\)/);
+  assert.doesNotMatch(chart, /UTC\+2/);
+});
