@@ -693,6 +693,27 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if queued_now>0 and catchup_target-dca_count>1: actions.append({"kind":"DCA_CATCHUP_QUEUED","symbol":symbol,"side":side,"fromDcaCount":dca_count,"targetDcaCount":catchup_target,"remaining":catchup_target-dca_count,"mark":mark,"anchor":catchup_base})
         level_offset=max(1,dca_count-catchup_start+1)
         trigger=catchup_base*((1-catchup_distance)**level_offset if side=="LONG" else (1+catchup_distance)**level_offset)
+        # A queued catch-up is only valid while the next originally missed level
+        # is still crossed. If price has recovered, never chase stale DCA levels.
+        # Clear the backlog and resume normal DCA spacing from the last confirmed fill.
+        if existing_target>dca_count and not _dca_due(mark,trigger,side):
+            cancelled=max(0,existing_target-dca_count)
+            st0=dict(st0)
+            for f in ("dcaCatchupTargetCount","dcaCatchupBaseAnchor","dcaCatchupStartCount","dcaCatchupDistance","dcaCatchupQueuedAtMs","dcaCatchupRemaining"):
+                st0.pop(f,None)
+            normal_anchor=_recovery_anchor(st0,entry=entry)
+            normal_allowed=settings.unlimited_dca or dca_count<settings.max_dca
+            normal_trigger=normal_anchor*(1-settings.dca_distance if side=="LONG" else 1+settings.dca_distance) if normal_allowed and normal_anchor>0 else None
+            normal_due=_dca_due(mark,normal_trigger,side) if normal_trigger else False
+            normal_distance_usd=abs(normal_trigger-mark) if normal_trigger else None
+            normal_distance_pct=normal_distance_usd/mark*100.0 if normal_distance_usd is not None and mark>0 else None
+            st0.update({"dcaCatchupCancelledAtMs":timestamp_ms,"dcaCatchupCancelledLevels":cancelled,"nextDcaPrice":normal_trigger,"nextDcaDistanceUsd":normal_distance_usd,"nextDcaDistancePct":normal_distance_pct,"nextDcaDue":normal_due,"nextDcaStatus":"DUE" if normal_due else ("AHEAD" if normal_trigger else "NONE"),"nextDcaNumber":dca_count+1 if normal_trigger else None,"updatedAtMs":timestamp_ms})
+            state[key]=st0
+            action={"kind":"DCA_CATCHUP_CANCELLED_ON_RECOVERY","symbol":symbol,"side":side,"dcaCount":dca_count,"cancelledLevels":cancelled,"oldTargetDcaCount":existing_target,"mark":mark,"nextMissedTrigger":trigger,"nextDcaPrice":normal_trigger}
+            actions.append(action)
+            if not dry_run:
+                ref.collection("audit").add({"event":"DCA_CATCHUP_CANCELLED_ON_RECOVERY","user":uid,**{k:v for k,v in action.items() if k!="kind"},"timestamp":datetime.now(timezone.utc)})
+            continue
         row_info=info_map.get(symbol); leverage=max(1,_i(row.get("leverage")))
         if row_info is None: continue
         try: plan,tier=_plan_add(client,row_info,mark,settings.dca_margin_usd,leverage,qty*mark,settings.minimum_leverage)
