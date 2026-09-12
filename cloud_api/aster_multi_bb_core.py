@@ -738,11 +738,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
         symbol = ranked_row["symbol"]
-        if (settings.asymmetric_hedge_enabled and symbol in active_symbols) or symbol not in info_map or prices.get(symbol, 0) <= 0: continue
+        if symbol == "HYPEUSDT":
+            print(f"HYPE_ENTRY_DIAG stage=candidate sent={sent} budget={budget} longNeed={long_need} shortNeed={short_need} accountRemaining={account_remaining_capacity} price={prices.get(symbol, 0)} minLeverage={settings.minimum_leverage} entryMargin={settings.entry_margin_usd}", flush=True)
+        if (settings.asymmetric_hedge_enabled and symbol in active_symbols) or symbol not in info_map or prices.get(symbol, 0) <= 0:
+            if symbol == "HYPEUSDT":
+                print(f"HYPE_ENTRY_DIAG stage=precheck_skip asymActive={settings.asymmetric_hedge_enabled and symbol in active_symbols} hasInfo={symbol in info_map} price={prices.get(symbol, 0)}", flush=True)
+            continue
         try:
             bracket_payload = client.leverage_brackets(symbol); maximum = max_contract_leverage(bracket_payload, symbol)
         except Exception as exc:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue
+        if symbol == "HYPEUSDT":
+            print(f"HYPE_ENTRY_DIAG stage=brackets maximum={maximum}", flush=True)
         if maximum <= 0:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue
         if maximum < settings.minimum_leverage:
@@ -789,6 +796,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 short_plan = None; short_tier = None
         except Exception as exc:
             reason = str(exc)
+            if symbol == "HYPEUSDT":
+                print(f"HYPE_ENTRY_DIAG stage=plan_skip reason={reason}", flush=True)
             required_margin = _minimum_entry_margin(info_map[symbol], prices[symbol], maximum)
             action = {"kind": "ENTRY_SKIP", "symbol": symbol, "reason": reason}
             if "minimale exchangeorder" in reason and required_margin is not None:
@@ -796,6 +805,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 minimum_margin_rejections.append(required_margin)
             actions.append(action); continue
         executable_candidates += 1
+        if symbol == "HYPEUSDT":
+            print(f"HYPE_ENTRY_DIAG stage=plan_ok side={side} leverage={plan.leverage} notional={float(plan.notional_per_leg)} quantity={plan.quantity}", flush=True)
         required = float(plan.notional_per_leg) / plan.leverage
         short_required = float(short_plan.notional_per_leg) / short_plan.leverage if short_plan is not None else 0.0
         total_required = required + short_required
@@ -812,6 +823,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
                                           new_position_leverage=plan.leverage, before_submit=before_order)
             except NewPositionLeverageBlocked as exc:
+                if symbol == "HYPEUSDT":
+                    print(f"HYPE_ENTRY_DIAG stage=execution_block reason={exc.reason_code}", flush=True)
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": exc.reason_code})
                 continue
             except Exception as exc:
@@ -819,6 +832,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)})
                 continue
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), prices[symbol]); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))
+            if symbol == "HYPEUSDT":
+                print(f"HYPE_ENTRY_DIAG stage=entry_filled side={side} leverage={plan.leverage} fillPrice={fill_price} fillQty={fill_qty}", flush=True)
             key = f"{symbol}|{side}"; cycle_id = hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16]
             state[key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": fill_price, "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,
                 "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True,
