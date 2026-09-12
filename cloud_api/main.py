@@ -1403,6 +1403,16 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
+    # Realtime Strategy-2 management must evaluate the triggering symbol with
+    # the exact websocket mark that caused this tick. Keep all exchange truth
+    # (qty, entry, leverage) unchanged and override only markPrice in a local
+    # decision copy. The minute scheduler has no event mark and remains unchanged.
+    decision_positions=positions
+    event_symbol_norm=str(event_symbol).upper().strip()
+    event_mark=safe_float(event_mark_price)
+    if event_symbol_norm and event_mark>0:
+        decision_positions=[({**row,"markPrice":event_mark} if str(row.get("symbol","")).upper()==event_symbol_norm else row)
+            for row in positions]
     # The legacy Focus/Strategy-2 planners are retired. Multi BB remains the
     # dominant-side strategy; Dynamic Hedge exclusively owns the smaller hedge
     # side while its optional toggle is enabled.
@@ -1428,23 +1438,15 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 try:return before_order(intent)
                 except TypeError:return before_order(intent,None)
             return None
-        report=run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=runtime_settings,uid=uid,account=account,positions=positions,
+        report=run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=runtime_settings,uid=uid,account=account,positions=decision_positions,
             open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=dynamic_before_order,
             dynamic_hedge_blocked_side=blocked_side)
         report["dynamicHedge"]={**dynamic,"blockedStrategySide":blocked_side or None,"portfolioTpSuppressed":str(getattr(settings,"take_profit_mode",""))=="PORTFOLIO"}
         return report
-    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=positions,
+    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=decision_positions,
         open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
-    # Realtime Simple Mode must make DCA/release decisions from the exact websocket
-    # mark event that triggered this evaluation. REST position_risk markPrice may lag
-    # the stream enough to leave LIVE below DCA without execution. Preserve all
-    # quantities/entries from Aster exchange truth; override only markPrice for the
-    # matching event symbol during this single decision tick.
-    event_symbol_norm=str(event_symbol).upper().strip()
-    event_mark=safe_float(event_mark_price)
-    if event_symbol_norm and event_mark>0:
-        positions=[({**row,"markPrice":event_mark} if str(row.get("symbol","")).upper()==event_symbol_norm else row)
-            for row in positions]
+    # Realtime Simple Mode legacy runtime below is intentionally unreachable;
+    # Multi BB is the only scheduler dispatch above this compatibility boundary.
     _run_focus_shadow_scheduler_step(uid,ref,raw,settings,now)
     owned=[]
     for item in raw.get("ownedLegs") if isinstance(raw.get("ownedLegs"),list) else []:
