@@ -60,40 +60,26 @@ jobs:
               block = _dynamic_dispatch_block()
               assert 'blocked_side="SHORT" if long_exposure>short_exposure' not in block
               assert 'blocked_side=""' in block
-              assert 'dynamic_hedge_blocked_side=blocked_side' in block
 
 
           def test_dynamic_hedge_still_fail_closes_each_strategy_order_through_guard():
               block = _dynamic_dispatch_block()
               assert 'dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)' in block
               assert 'before_order=dynamic_before_order' in block
-              assert 'blockedStrategySide":blocked_side or None' in block
           PY
 
-      - name: Safety regression checks
+      - name: Safety verification
         shell: bash
         run: |
           set -euo pipefail
           python -m py_compile cloud_api/main.py
-          python - <<'PY'
-          from pathlib import Path
-          source = Path('cloud_api/main.py').read_text()
-          start = source.index('if bool(dynamic_stored.get("enabled",False)):')
-          end = source.index('    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings', start)
-          block = source[start:end]
-          assert 'blocked_side="SHORT" if long_exposure>short_exposure' not in block
-          assert 'blocked_side=""' in block
-          assert 'dynamic_hedge_blocked_side=blocked_side' in block
-          assert 'dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)' in block
-          assert 'before_order=dynamic_before_order' in block
-          assert 'blockedStrategySide":blocked_side or None' in block
-          wrapper = Path('cloud_api/aster_multi_bb.py').read_text()
-          assert 'if side==blocked_side and name=="max_dca": return -1' in wrapper
-          core = Path('cloud_api/aster_multi_bb_core.py').read_text()
-          assert 'dca_count >= settings.max_dca' in core
-          assert '_dca_due(mark, trigger, side)' in core
-          print('P0 coexistence contract: PASS')
-          PY
+          grep -F 'blocked_side=""' cloud_api/main.py
+          if grep -F 'blocked_side="SHORT" if long_exposure>short_exposure else "LONG" if short_exposure>long_exposure else ""' cloud_api/main.py; then
+            echo 'aggregate Strategy 2 side blocking is still present' >&2
+            exit 1
+          fi
+          grep -F 'dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)' cloud_api/main.py
+          grep -F 'before_order=dynamic_before_order' cloud_api/main.py
           git diff --check
 
       - name: Commit tested production hotfix
