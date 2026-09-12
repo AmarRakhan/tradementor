@@ -29,9 +29,11 @@ test("manual entries still use server-authoritative minimum-order previews befor
   assert.match(maker, /suggestedEntryMarginUsd/);
 });
 
-test("automatic entries validate LONG and SHORT independently against common Aster minimum order", () => {
-  assert.match(maker, /settings\.entryMarginLongUsd \* settings\.minimumLeverage < 5/);
-  assert.match(maker, /settings\.entryMarginShortUsd \* settings\.minimumLeverage < 5/);
-  assert.match(maker, /Instap LONG te laag/);
-  assert.match(maker, /Instap SHORT te laag/);
+test("automatic entries do not size against the configured minimum leverage", () => {
+  assert.doesNotMatch(maker, /entryMarginLongUsd \* settings\.minimumLeverage < 5/);
+  assert.doesNotMatch(maker, /entryMarginShortUsd \* settings\.minimumLeverage < 5/);
+  assert.match(maker, /entryMarginLongUsd <= 0/);
+  assert.match(maker, /entryMarginShortUsd <= 0/);
+  assert.match(maker, /actual maximum valid leverage/);
+  assert.match(maker, /skips symbols whose Aster/);
 });

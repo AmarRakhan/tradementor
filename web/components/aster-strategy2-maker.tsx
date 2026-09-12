@@ -182,8 +182,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     setBusy(true); setMessage("");
     try {
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
-      if (settings.longSlots > 0 && settings.entryMarginLongUsd * settings.minimumLeverage < 5) throw new Error(`Instap LONG te laag: minimaal circa ${(5 / settings.minimumLeverage).toFixed(2)} USDT bij ${settings.minimumLeverage}x.`);
-      if (settings.shortSlots > 0 && settings.entryMarginShortUsd * settings.minimumLeverage < 5) throw new Error(`Instap SHORT te laag: minimaal circa ${(5 / settings.minimumLeverage).toFixed(2)} USDT bij ${settings.minimumLeverage}x.`);
+      // Minimum leverage is only a candidate floor. Automatic Top-N resolves every
+      // symbol at its actual maximum valid leverage and skips symbols whose Aster
+      // minimum order still exceeds the configured margin.
+      if (settings.longSlots > 0 && settings.entryMarginLongUsd <= 0) throw new Error("Instap LONG moet groter dan 0 USDT zijn.");
+      if (settings.shortSlots > 0 && settings.entryMarginShortUsd <= 0) throw new Error("Instap SHORT moet groter dan 0 USDT zijn.");
       if (settings.longDcaDistance <= 0 || settings.shortDcaDistance <= 0 || settings.longDcaDistance > .5 || settings.shortDcaDistance > .5) throw new Error("DCA-afstand moet tussen 0,01% en 50% liggen.");
       if (settings.longDcaMarginUsd <= 0 || settings.shortDcaMarginUsd <= 0) throw new Error("DCA-bedrag LONG/SHORT moet positief zijn.");
       if (settings.maxDcaLong > MAX_DCA || settings.maxDcaShort > MAX_DCA) throw new Error(`Max DCA mag maximaal ${MAX_DCA} zijn.`);
