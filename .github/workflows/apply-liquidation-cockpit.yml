@@ -1,0 +1,69 @@
+name: Apply Liquidation Cockpit Gauge
+
+on:
+  push:
+    branches:
+      - agent/liquidation-cockpit-20260913
+    paths:
+      - "tools/apply-liquidation-cockpit.py"
+      - ".github/workflows/apply-liquidation-cockpit.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out implementation branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/liquidation-cockpit-20260913
+          fetch-depth: 0
+
+      - name: Apply guarded UI patch
+        run: python tools/apply-liquidation-cockpit.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run focused liquidation cockpit tests
+        working-directory: web
+        run: node --test tests/liquidation-cockpit-gauge.test.mjs tests/aster-compact-portfolio-snapshot.test.mjs tests/aster-cross-liquidation-meter.test.mjs tests/liquidation-risk.test.mjs
+
+      - name: Build production web
+        working-directory: web
+        run: npm run build
+
+      - name: Run complete regression suite
+        working-directory: web
+        run: node --test tests/*.test.mjs
+
+      - name: Verify patch scope
+        shell: bash
+        run: |
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          printf '%s\n' "$changed"
+          test -n "$changed"
+          forbidden="$(printf '%s\n' "$changed" | grep -Ev '^(web/components/aster-portfolio-snapshot-enhancer\.tsx|web/app/portfolio-snapshot\.css|web/lib/liquidation-gauge\.(mjs|d\.ts)|web/tests/liquidation-cockpit-gauge\.test\.mjs)$' || true)"
+          test -z "$forbidden" || { echo "Unexpected changed files:"; echo "$forbidden"; exit 1; }
+
+      - name: Commit tested implementation
+        shell: bash
+        run: |
+          rm -f tools/apply-liquidation-cockpit.py .github/workflows/apply-liquidation-cockpit.yml
+          git config user.name "OpenAI Liquidation Gauge Agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Add live Aster liquidation cockpit gauge"
+          git push origin HEAD:agent/liquidation-cockpit-20260913
