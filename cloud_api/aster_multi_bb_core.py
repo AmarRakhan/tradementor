@@ -739,7 +739,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         scanned_candidates += 1
         symbol = ranked_row["symbol"]
         if symbol == "HYPEUSDT":
-            print(f"HYPE_ENTRY_DIAG stage=candidate sent={sent} budget={budget} longNeed={long_need} shortNeed={short_need} accountRemaining={account_remaining_capacity} price={prices.get(symbol, 0)} minLeverage={settings.minimum_leverage} entryMargin={settings.entry_margin_usd}", flush=True)
+            print(f"HYPE_ENTRY_DIAG stage=candidate sent={sent} budget={budget} slots={settings.long_slots}/{settings.short_slots} longNeed={long_need} shortNeed={short_need} accountRemaining={account_remaining_capacity} available={available} price={prices.get(symbol, 0)} minLeverage={settings.minimum_leverage} entryMargin={settings.entry_margin_usd} manual={settings.manual_symbol_selection_enabled} asym={settings.asymmetric_hedge_enabled} dryRun={dry_run}", flush=True)
         if (settings.asymmetric_hedge_enabled and symbol in active_symbols) or symbol not in info_map or prices.get(symbol, 0) <= 0:
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=precheck_skip asymActive={settings.asymmetric_hedge_enabled and symbol in active_symbols} hasInfo={symbol in info_map} price={prices.get(symbol, 0)}", flush=True)
@@ -811,6 +811,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         short_required = float(short_plan.notional_per_leg) / short_plan.leverage if short_plan is not None else 0.0
         total_required = required + short_required
         if available < total_required * 1.05:
+            if symbol == "HYPEUSDT":
+                print(f"HYPE_ENTRY_DIAG stage=margin_wait available={available} required={total_required}", flush=True)
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
         entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
@@ -828,6 +830,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": exc.reason_code})
                 continue
             except Exception as exc:
+                if symbol == "HYPEUSDT":
+                    print(f"HYPE_ENTRY_DIAG stage=execution_exception definite={is_definite_contract_rejection(exc)} reason={exc}", flush=True)
                 if not is_definite_contract_rejection(exc): raise
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)})
                 continue
