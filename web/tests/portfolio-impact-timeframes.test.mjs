@@ -24,41 +24,58 @@ test("legacy battle helper remains backward-compatible while market score can dr
   assert.equal(market.barLabel, "MARKTDRUK");
 });
 
-test("all six requested timeframes remain functional and Exposure stays absent", () => {
+test("all six requested timeframes remain functional and default stays 15m", () => {
   for (const token of ['id: "1m"', 'id: "5m"', 'id: "15m"', 'id: "1h"', 'id: "4h"', 'id: "24h"']) assert.match(component, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(component, /useState<Timeframe>\("15m"\)/);
   assert.match(component, /label: "1u"/);
   assert.match(component, /label: "4u"/);
   assert.doesNotMatch(component, />Exposure</);
   assert.match(component, /Open P&amp;L/);
   assert.match(component, /positionCount/);
+  assert.equal(timeframeToAsterInterval("1m"), "1m");
+  assert.equal(timeframeToAsterInterval("5m"), "5m");
+  assert.equal(timeframeToAsterInterval("15m"), "15m");
+  assert.equal(timeframeToAsterInterval("1h"), "1h");
+  assert.equal(timeframeToAsterInterval("4h"), "4h");
   assert.equal(timeframeToAsterInterval("24h"), "1d");
 });
 
-test("Bollinger 0 to 100 maps continuously onto the full master timeline", () => {
+test("live mark price moves inside whichever timeframe Bollinger bands are selected", () => {
   assert.equal(bollingerScore(100, 100, 200), 0);
   assert.equal(bollingerScore(150, 100, 200), 50);
   assert.equal(bollingerScore(200, 100, 200), 100);
-  assert.equal(scoreToTimelineTime(0, 12), 0);
-  assert.equal(scoreToTimelineTime(50, 12), 6);
-  assert.equal(scoreToTimelineTime(100, 12), 12);
-  assert.match(component, /scoreToTimelineTime\(score, video\.duration\)/);
-  assert.match(component, /data-bollinger-score=/);
+  assert.equal(bollingerScore(151, 100, 200), 51);
+  assert.equal(bollingerScore(151, 50, 250), 50.5);
+  assert.match(component, /ASTER_BTC_MARK_STREAM/);
+  assert.match(component, /btcusdt@markPrice@1s/);
+  assert.match(component, /const price = livePrice && livePrice > 0 \? livePrice : bollinger\.price/);
+  assert.match(component, /bollingerScore\(price, bollinger\.lower, bollinger\.upper\)/);
 });
 
-test("visual movement interpolates smoothly instead of stepping through image frames", () => {
+test("movie movement is continuous playback with smoothing and idle battle motion", () => {
+  assert.match(component, /SCORE_SMOOTHING_MS = 1_250/);
+  assert.match(component, /IDLE_SWAY_SCORE = 1\.8/);
   assert.match(component, /requestAnimationFrame\(tick\)/);
-  assert.match(component, /easeInOutCubic/);
-  assert.match(component, /transitionDurationMs\(from, targetScore\)/);
-  assert.match(component, /SEEK_EPSILON_SECONDS = 1 \/ 30/);
-  assert.doesNotMatch(component, /portfolio-impact-frames\/frame-|FRAME_COUNT|targetFrameIndex/);
+  assert.match(component, /Math\.sin\(\(now \/ IDLE_PERIOD_MS\)/);
+  assert.match(component, /playbackRateForGap/);
+  assert.match(component, /\.play\(\)\.catch/);
+  assert.match(component, /activeDirectionRef/);
+  assert.doesNotMatch(component, /currentTime = targetTime/);
 });
 
-test("pressure bar and visible percentages use the same interpolated Bollinger score", () => {
+test("timeframe changes and data failures preserve the last visual state instead of resetting to 50", () => {
+  assert.match(component, /lastValidTargetRef = useRef\(50\)/);
+  assert.match(component, /calculatedTargetScore \?\? lastValidTargetRef\.current/);
+  assert.match(component, /bollingerCache\.current\.get\(timeframe\)/);
+  assert.doesNotMatch(component, /setDisplayScore\(50\)/);
+});
+
+test("pressure bar uses the smoothed market score, not the idle movie sway", () => {
   assert.match(component, /const displayLongShare = clampBollingerScore\(displayScore\)/);
   assert.match(component, /const displayShortShare = 100 - displayLongShare/);
   assert.match(component, /"--long-share": `\$\{displayLongShare\}%`/);
-  assert.match(component, /formatShare\(displayLongShare\)/);
-  assert.match(component, /formatShare\(displayShortShare\)/);
+  assert.match(component, /setDisplayScore\(nextMarketScore\)/);
+  assert.match(component, /const desiredFilmScore = clampBollingerScore\(idleCenter \+ idleOffset\)/);
 });
 
 test("Aster page places Bulls after account metrics and directly before Tradecentrum component", () => {
