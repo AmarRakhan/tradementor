@@ -1,0 +1,93 @@
+name: P0 hotfix Dynamic Hedge DCA ownership 2026-09-12
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/hotfix-dynamic-hedge-dca-ownership-20260912.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hotfix-dynamic-hedge-dca-ownership-20260912
+  cancel-in-progress: false
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore Strategy 2 ownership of normal LONG and SHORT legs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('cloud_api/main.py')
+          text = path.read_text()
+          old = '        blocked_side="SHORT" if long_exposure>short_exposure else "LONG" if short_exposure>long_exposure else ""\n'
+          new = '''        # Dynamic Hedge protects account risk, but aggregate exposure does not transfer\n        # ownership of every Strategy 2 leg on the smaller side. Normal LONG/SHORT\n        # DCA and TP stay Strategy 2-owned; dynamic_strategy_order_guard remains the\n        # fail-closed per-order safety gate for any risk-adding order.\n        blocked_side=""\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one aggregate blocked_side assignment, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+          cat > cloud_api/test_dynamic_hedge_strategy_dca_coexistence.py <<'PY'
+          from pathlib import Path
+
+          SOURCE = Path(__file__).with_name('main.py').read_text()
+
+
+          def _dynamic_dispatch_block() -> str:
+              start = SOURCE.index('if bool(dynamic_stored.get("enabled",False)):')
+              end = SOURCE.index('    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings', start)
+              return SOURCE[start:end]
+
+
+          def test_dynamic_hedge_does_not_claim_every_position_on_smaller_side():
+              block = _dynamic_dispatch_block()
+              assert 'blocked_side="SHORT" if long_exposure>short_exposure' not in block
+              assert 'blocked_side=""' in block
+              assert 'dynamic_hedge_blocked_side=blocked_side' in block
+
+
+          def test_dynamic_hedge_still_fail_closes_each_strategy_order_through_guard():
+              block = _dynamic_dispatch_block()
+              assert 'dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)' in block
+              assert 'before_order=dynamic_before_order' in block
+              assert 'blockedStrategySide":blocked_side or None' in block
+          PY
+
+      - name: Safety regression checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile cloud_api/main.py
+          python -m pytest -q \
+            cloud_api/test_dynamic_hedge_strategy_dca_coexistence.py \
+            cloud_api/test_aster_realtime_integration.py \
+            cloud_api/test_aster_dynamic_hedge_sequence.py
+          git diff --check
+
+      - name: Commit tested production hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/hotfix-dynamic-hedge-dca-ownership-20260912.yml
+          git config user.name 'TradeMentor Safety Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A cloud_api/main.py cloud_api/test_dynamic_hedge_strategy_dca_coexistence.py .github/workflows/hotfix-dynamic-hedge-dca-ownership-20260912.yml
+          git commit -m 'Restore Strategy 2 DCA alongside Dynamic Hedge'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
