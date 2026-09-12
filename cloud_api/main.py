@@ -1426,7 +1426,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             return {"status":str(dynamic.get("status","waiting")),"action":"DYNAMIC_HEDGE","ordersSent":int(safe_float(dynamic.get("ordersSent"))),"dynamicHedge":dynamic}
         long_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="LONG")
         short_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="SHORT")
-        blocked_side="SHORT" if long_exposure>short_exposure else "LONG" if short_exposure>long_exposure else ""
+        # Dynamic Hedge protects account risk, but aggregate exposure does not transfer
+        # ownership of every Strategy 2 leg on the smaller side. Normal LONG/SHORT
+        # DCA and TP stay Strategy 2-owned; dynamic_strategy_order_guard remains the
+        # fail-closed per-order safety gate for any risk-adding order.
+        blocked_side=""
         runtime_settings=settings
         if bool(getattr(runtime_settings,"asymmetric_hedge_enabled",False)):
             runtime_settings=replace(runtime_settings,asymmetric_hedge_enabled=False)
