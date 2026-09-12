@@ -379,6 +379,19 @@ def _dca_due(mark: float, trigger: float, side: str) -> bool:
     return mark <= trigger if side == "LONG" else mark >= trigger
 
 
+def _missed_dca_levels(mark: float, anchor: float, side: str, distance: float) -> int:
+    if mark <= 0 or anchor <= 0 or distance <= 0 or side not in {"LONG", "SHORT"}: return 0
+    try:
+        if side == "LONG":
+            if distance >= 1 or mark > anchor * (1 - distance): return 0
+            raw = math.log(mark / anchor) / math.log1p(-distance)
+        else:
+            if mark < anchor * (1 + distance): return 0
+            raw = math.log(mark / anchor) / math.log1p(distance)
+    except (ValueError, ZeroDivisionError): return 0
+    return max(0, int(math.floor(raw + 1e-10))) if math.isfinite(raw) else 0
+
+
 def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     out = {}
     for row in positions:
@@ -666,51 +679,50 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             continue
         dca_count = _i(st0.get("dcaCount")); anchor = _recovery_anchor(st0, entry=entry)
         if (not settings.unlimited_dca and dca_count >= settings.max_dca) or anchor <= 0: continue
-        trigger = anchor * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance)
-        due = _dca_due(mark, trigger, side)
-        if not due: continue
-        row_info = info_map.get(symbol); leverage = max(1, _i(row.get("leverage")))
+        existing_target=max(dca_count,_i(st0.get("dcaCatchupTargetCount"),dca_count))
+        if existing_target>dca_count:
+            catchup_base=_f(st0.get("dcaCatchupBaseAnchor"),anchor); catchup_start=_i(st0.get("dcaCatchupStartCount"),dca_count); catchup_distance=_f(st0.get("dcaCatchupDistance"),settings.dca_distance)
+        else:
+            catchup_base=anchor; catchup_start=dca_count; catchup_distance=settings.dca_distance
+        crossed=_missed_dca_levels(mark,catchup_base,side,catchup_distance)
+        catchup_target=max(existing_target,catchup_start+crossed)
+        if not settings.unlimited_dca: catchup_target=min(catchup_target,settings.max_dca)
+        if catchup_target<=dca_count: continue
+        queued_before=max(0,existing_target-dca_count); queued_now=max(0,catchup_target-max(existing_target,dca_count))
+        st0=dict(st0); st0.update({"dcaCatchupTargetCount":catchup_target,"dcaCatchupBaseAnchor":catchup_base,"dcaCatchupStartCount":catchup_start,"dcaCatchupDistance":catchup_distance,"dcaCatchupQueuedAtMs":_i(st0.get("dcaCatchupQueuedAtMs"),timestamp_ms),"dcaCatchupRemaining":catchup_target-dca_count}); state[key]=st0
+        if queued_now>0 and catchup_target-dca_count>1: actions.append({"kind":"DCA_CATCHUP_QUEUED","symbol":symbol,"side":side,"fromDcaCount":dca_count,"targetDcaCount":catchup_target,"remaining":catchup_target-dca_count,"mark":mark,"anchor":catchup_base})
+        level_offset=max(1,dca_count-catchup_start+1)
+        trigger=catchup_base*((1-catchup_distance)**level_offset if side=="LONG" else (1+catchup_distance)**level_offset)
+        row_info=info_map.get(symbol); leverage=max(1,_i(row.get("leverage")))
         if row_info is None: continue
-        try: plan, tier = _plan_add(client, row_info, mark, settings.dca_margin_usd, leverage, qty * mark, settings.minimum_leverage)
-        except Exception as exc:
-            actions.append({"kind": "DCA_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)}); continue
-        required = float(tier["additionalMarginRequired"])
-        if available < required * 1.05:
-            actions.append({"kind": "DCA_MARGIN_WAIT", "symbol": symbol, "side": side,
-                "reason": "INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION" if tier["tierReduction"] else "INSUFFICIENT_AVAILABLE_MARGIN",
-                "requiredMargin": required, "targetLeverage": tier["leverage"]}); continue
-        actions.append({"kind": "DCA", "symbol": symbol, "side": side, "number": dca_count + 1, "trigger": trigger,
-            "leverage": tier["leverage"], "previousLeverage": tier["previousLeverage"], "tierReduction": tier["tierReduction"],
-            "projectedNotional": tier["projectedNotional"]})
+        try: plan,tier=_plan_add(client,row_info,mark,settings.dca_margin_usd,leverage,qty*mark,settings.minimum_leverage)
+        except Exception as exc: actions.append({"kind":"DCA_BLOCKED","symbol":symbol,"side":side,"reason":str(exc),"catchupRemaining":catchup_target-dca_count}); continue
+        required=float(tier["additionalMarginRequired"])
+        if available<required*1.05:
+            actions.append({"kind":"DCA_MARGIN_WAIT","symbol":symbol,"side":side,"reason":"INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION" if tier["tierReduction"] else "INSUFFICIENT_AVAILABLE_MARGIN","requiredMargin":required,"targetLeverage":tier["leverage"],"catchupRemaining":catchup_target-dca_count}); continue
+        actions.append({"kind":"DCA","symbol":symbol,"side":side,"number":dca_count+1,"trigger":trigger,"catchup":catchup_target>dca_count+1 or queued_before>0,"catchupTargetCount":catchup_target,"leverage":tier["leverage"],"previousLeverage":tier["previousLeverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"]})
         if not dry_run:
             try:
-                result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                          new_position_leverage=int(tier["leverage"]), allow_existing_contract_leverage_change=True, before_submit=before_order)
+                result=execute_leg_once(client,plan,side=PositionSide(side),action="OPEN",id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}",confirm=True,new_position_leverage=int(tier["leverage"]),allow_existing_contract_leverage_change=True,before_submit=before_order)
             except Exception as exc:
                 if not is_definite_contract_rejection(exc): raise
-                actions.append({"kind": "DCA_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
-                continue
-            fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), mark); fill_qty = abs(_f(fill.get("executedQty"), float(plan.quantity)))
-            new_qty = qty + fill_qty
-            new_entry = ((entry * qty) + (fill_price * fill_qty)) / new_qty if new_qty > 0 else entry
-            next_count = dca_count + 1
-            next_allowed = settings.unlimited_dca or next_count < settings.max_dca
-            next_trigger = fill_price * (1 - settings.dca_distance if side == "LONG" else 1 + settings.dca_distance) if next_allowed and fill_price > 0 else None
-            next_due = _dca_due(mark, next_trigger, side) if next_trigger else False
-            next_distance_usd = abs(next_trigger - mark) if next_trigger else None
-            next_distance_pct = next_distance_usd / mark * 100.0 if next_distance_usd is not None and mark > 0 else None
-            st = dict(st0); st.update({"dcaCount": next_count, "lastBotFillPrice": fill_price, "lastDcaFillPrice": fill_price,
-                "lastKnownQty": new_qty, "lastKnownEntry": new_entry, "lastBotDcaAtMs": timestamp_ms, "updatedAtMs": timestamp_ms,
-                "nextDcaPrice": next_trigger, "nextDcaDistanceUsd": next_distance_usd, "nextDcaDistancePct": next_distance_pct,
-                "nextDcaDue": next_due, "nextDcaStatus": "DUE" if next_due else ("AHEAD" if next_trigger else "NONE"),
-                "nextDcaNumber": next_count + 1 if next_trigger else None,
-                "leverage": int(tier["leverage"]), "lastTierReductionAtMs": timestamp_ms if tier["tierReduction"] else st0.get("lastTierReductionAtMs")}); state[key] = st
-            ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                     "lastReason": f"Multi DCA actief; DCA {dca_count + 1} bevestigd op {symbol} @ {int(tier['leverage'])}x"}, merge=True)
-            ref.collection("audit").add({"event": "MULTI_BB_DCA", "symbol": symbol, "side": side, "dcaNumber": dca_count + 1,
-                "previousLeverage": tier["previousLeverage"], "leverage": tier["leverage"], "tierReduction": tier["tierReduction"],
-                "projectedNotional": tier["projectedNotional"], "timestamp": datetime.now(timezone.utc)})
-        available -= required; sent += 1
+                actions.append({"kind":"DCA_BLOCKED","symbol":symbol,"side":side,"reason":str(exc),"catchupRemaining":catchup_target-dca_count}); continue
+            fill=result.get("result") or {}; fill_price=_f(fill.get("avgPrice"),mark); fill_qty=abs(_f(fill.get("executedQty"),float(plan.quantity)))
+            new_qty=qty+fill_qty; new_entry=((entry*qty)+(fill_price*fill_qty))/new_qty if new_qty>0 else entry; next_count=dca_count+1; catchup_remaining=max(0,catchup_target-next_count)
+            if catchup_remaining>0:
+                n=max(1,next_count-catchup_start+1); next_trigger=catchup_base*((1-catchup_distance)**n if side=="LONG" else (1+catchup_distance)**n); next_due=True; next_status="CATCH_UP"
+            else:
+                next_allowed=settings.unlimited_dca or next_count<settings.max_dca; next_trigger=fill_price*(1-settings.dca_distance if side=="LONG" else 1+settings.dca_distance) if next_allowed and fill_price>0 else None; next_due=_dca_due(mark,next_trigger,side) if next_trigger else False; next_status="DUE" if next_due else ("AHEAD" if next_trigger else "NONE")
+            next_distance_usd=abs(next_trigger-mark) if next_trigger else None; next_distance_pct=next_distance_usd/mark*100.0 if next_distance_usd is not None and mark>0 else None
+            st=dict(st0); st.update({"dcaCount":next_count,"lastBotFillPrice":fill_price,"lastDcaFillPrice":fill_price,"lastKnownQty":new_qty,"lastKnownEntry":new_entry,"lastBotDcaAtMs":timestamp_ms,"updatedAtMs":timestamp_ms,"nextDcaPrice":next_trigger,"nextDcaDistanceUsd":next_distance_usd,"nextDcaDistancePct":next_distance_pct,"nextDcaDue":next_due,"nextDcaStatus":next_status,"nextDcaNumber":next_count+1 if next_trigger else None,"leverage":int(tier["leverage"]),"lastTierReductionAtMs":timestamp_ms if tier["tierReduction"] else st0.get("lastTierReductionAtMs")})
+            if catchup_remaining>0: st.update({"dcaCatchupTargetCount":catchup_target,"dcaCatchupBaseAnchor":catchup_base,"dcaCatchupStartCount":catchup_start,"dcaCatchupDistance":catchup_distance,"dcaCatchupRemaining":catchup_remaining})
+            else:
+                for f in ("dcaCatchupTargetCount","dcaCatchupBaseAnchor","dcaCatchupStartCount","dcaCatchupDistance","dcaCatchupQueuedAtMs","dcaCatchupRemaining"): st.pop(f,None)
+                st["dcaCatchupCompletedAtMs"]=timestamp_ms
+            state[key]=st
+            ref.set({"multiBbPositions":state,"lastTickAt":datetime.now(timezone.utc),"phase":"RUNNING","lastReason":f"Gemiste DCA catch-up actief op {symbol}: nog {catchup_remaining}" if catchup_remaining>0 else f"Multi DCA actief; DCA {next_count} bevestigd op {symbol} @ {int(tier['leverage'])}x"},merge=True)
+            ref.collection("audit").add({"event":"MULTI_BB_DCA","symbol":symbol,"side":side,"dcaNumber":next_count,"catchup":catchup_target>next_count or queued_before>0,"catchupTargetCount":catchup_target,"catchupRemaining":catchup_remaining,"previousLeverage":tier["previousLeverage"],"leverage":tier["leverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"],"timestamp":datetime.now(timezone.utc)})
+        available-=required; sent+=1
 
     active = _position_map(client.position_risk()) if sent and not dry_run else pmap
     active_symbols = {k.split("|", 1)[0] for k in active}
