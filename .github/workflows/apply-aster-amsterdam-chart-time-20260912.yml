@@ -1,0 +1,80 @@
+name: Apply Aster Amsterdam chart time 2026-09-12
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/workflows/apply-aster-amsterdam-chart-time-20260912.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-aster-amsterdam-chart-time-20260912
+  cancel-in-progress: false
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Apply Europe Amsterdam chart timezone patch
+        run: python .github/scripts/apply_aster_amsterdam_chart_time_20260912.py
+
+      - name: Verify timezone contract and DST behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'AMSTERDAM_TIME_ZONE = "Europe/Amsterdam"' web/components/trading-chart.tsx
+          grep -q 'timeFormatter:formatAmsterdamChartTime' web/components/trading-chart.tsx
+          grep -q 'tickMarkFormatter:formatAmsterdamTickMark' web/components/trading-chart.tsx
+          node - <<'NODE'
+          const fmt = new Intl.DateTimeFormat('nl-NL', { timeZone:'Europe/Amsterdam', hour:'2-digit', minute:'2-digit', hourCycle:'h23' });
+          if (fmt.format(new Date('2026-09-12T19:33:00Z')) !== '21:33') throw new Error('CEST conversion failed');
+          if (fmt.format(new Date('2026-12-12T19:33:00Z')) !== '20:33') throw new Error('CET conversion failed');
+          NODE
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build webapp
+        working-directory: web
+        run: npm run build
+
+      - name: Run chart regressions
+        working-directory: web
+        run: node --experimental-strip-types --test tests/trading-chart-aster-detail.test.mjs tests/strategy2-chart-interaction.test.mjs tests/focus-v7-mobile-chart-labels.test.mjs
+
+      - name: Validate diff
+        run: git diff --check
+
+      - name: Commit validated timezone fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'OpenAI Aster UI Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add web/components/trading-chart.tsx web/tests/trading-chart-aster-detail.test.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m 'Fix Aster chart time to Europe Amsterdam'
+          git fetch origin amar-crypto-bot-2026-cloud
+          git rebase origin/amar-crypto-bot-2026-cloud
+          git push origin HEAD:amar-crypto-bot-2026-cloud
