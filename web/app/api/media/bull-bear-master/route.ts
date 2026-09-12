@@ -1,8 +1,14 @@
 import { open, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-const FILE_PATH = path.join(process.cwd(), "public", "portfolio-impact-bull-bear-master.mp4");
+const FORWARD_FILE_PATH = path.join(process.cwd(), "public", "portfolio-impact-bull-bear-master.mp4");
+const REVERSE_FILE_PATH = path.join(process.cwd(), "public", "portfolio-impact-bull-bear-master-reverse.mp4");
 const CACHE_CONTROL = "public, max-age=86400, stale-while-revalidate=604800";
+
+function filePathFor(request: Request) {
+  const url = new URL(request.url);
+  return url.searchParams.get("direction") === "reverse" ? REVERSE_FILE_PATH : FORWARD_FILE_PATH;
+}
 
 function commonHeaders(size: number) {
   return {
@@ -35,9 +41,10 @@ function parseRange(value: string, size: number) {
   return { start, end };
 }
 
-export async function HEAD() {
+export async function HEAD(request: Request) {
+  const filePath = filePathFor(request);
   try {
-    const info = await stat(FILE_PATH);
+    const info = await stat(filePath);
     return new Response(null, { status: 200, headers: commonHeaders(info.size) });
   } catch {
     return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
@@ -45,16 +52,17 @@ export async function HEAD() {
 }
 
 export async function GET(request: Request) {
+  const filePath = filePathFor(request);
   let info;
   try {
-    info = await stat(FILE_PATH);
+    info = await stat(filePath);
   } catch {
     return new Response("Bull vs Bear master media ontbreekt", { status: 404, headers: { "Cache-Control": "no-store" } });
   }
 
   const rangeHeader = request.headers.get("range");
   if (!rangeHeader) {
-    const file = await readFile(FILE_PATH);
+    const file = await readFile(filePath);
     return new Response(file, { status: 200, headers: commonHeaders(info.size) });
   }
 
@@ -73,7 +81,7 @@ export async function GET(request: Request) {
 
   const length = range.end - range.start + 1;
   const buffer = Buffer.allocUnsafe(length);
-  const handle = await open(FILE_PATH, "r");
+  const handle = await open(filePath, "r");
   try {
     await handle.read(buffer, 0, length, range.start);
   } finally {
