@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterHedgeManager } from "./aster-hedge-manager";
+import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
 
 type Tone = "positive" | "negative" | "neutral";
 type ProfitScope = "LONG" | "SHORT" | "ALL";
@@ -90,6 +91,18 @@ const REFERENCE = "file_000000002444821084b234da2ddec369";
 const HEDGE_DETAIL_REFERENCE = "file_00000000032881f495cdc99757a7d126";
 const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
 const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
+const LIQUIDATION_GAUGE_REFERENCE = "file_000000004e80820a80318a3de3ae5abd";
+
+type LiquidationDiagnostics = {
+  liquidationRiskPercent: number | null;
+  source: "ASTER_ACCOUNT_RATIO" | "SERVER_RECONSTRUCTED" | "UNKNOWN";
+  marginBalance: number | null;
+  equity: number | null;
+  maintenanceMarginUsd: number | null;
+  longExposureUsd: number | null;
+  shortExposureUsd: number | null;
+  netExposureUsd: number | null;
+};
 
 function directText(element: Element | null, selector: string) {
   return element?.querySelector<HTMLElement>(selector)?.textContent?.trim() || "—";
@@ -105,6 +118,58 @@ function percentageTone(value: string): Tone {
   if (value === "—") return "neutral";
   const parsed = Number(value.replace("%", "").replace("+", "").replace(",", ".").trim());
   return Number.isFinite(parsed) && parsed > 0 ? "positive" : Number.isFinite(parsed) && parsed < 0 ? "negative" : "neutral";
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function optionalNumber(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstNumber(records: Record<string, unknown>[], keys: string[]) {
+  for (const source of records) {
+    for (const key of keys) {
+      const value = optionalNumber(source[key]);
+      if (value !== null) return value;
+    }
+  }
+  return null;
+}
+
+function firstString(records: Record<string, unknown>[], keys: string[]) {
+  for (const source of records) {
+    for (const key of keys) {
+      const value = source[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return "";
+}
+
+function money(value: number | null, fallback = "—") {
+  if (value === null || !Number.isFinite(value)) return fallback;
+  return `US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+}
+
+async function loadLiquidationDiagnostics(): Promise<LiquidationDiagnostics> {
+  const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" });
+  const root = record(payload);
+  const records = [root, record(root.data), record(root.account), record(root.snapshot), record(root.accountRisk), record(root.crossRisk), record(root.portfolio)];
+  const sourceRaw = firstString(records, ["liquidationRiskSource"]);
+  const source = sourceRaw === "ASTER_ACCOUNT_RATIO" || sourceRaw === "SERVER_RECONSTRUCTED" ? sourceRaw : "UNKNOWN";
+  return {
+    liquidationRiskPercent: firstNumber(records, ["liquidationRiskPct"]),
+    source,
+    marginBalance: firstNumber(records, ["marginBalance", "totalMarginBalance"]),
+    equity: firstNumber(records, ["equity", "totalMarginBalance"]),
+    maintenanceMarginUsd: firstNumber(records, ["maintenanceMarginUsd", "totalMaintMargin"]),
+    longExposureUsd: firstNumber(records, ["longNotional", "longExposureUsd"]),
+    shortExposureUsd: firstNumber(records, ["shortNotional", "shortExposureUsd"]),
+    netExposureUsd: firstNumber(records, ["netExposure", "netExposureUsd"]),
+  };
 }
 
 function readSnapshot(): SnapshotValues {
@@ -169,6 +234,83 @@ function MetricCard({ icon, label, value, tone = "normal" }: { icon: Parameters<
 
 function GrowthCard({ icon, label, value, tone }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone }) {
   return <article className={`aps-growth-card aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong></div></article>;
+}
+
+
+function LiquidationGauge({ value, diagnostics, exposure, equity, available }: {
+  value: string;
+  diagnostics: LiquidationDiagnostics | null;
+  exposure: ExposureSnapshot | null | undefined;
+  equity: string;
+  available: string;
+}) {
+  const [flipped, setFlipped] = useState(false);
+  const risk = normalizeLiquidationRisk(value);
+  const degrees = liquidationNeedleDegrees(risk);
+  const remaining = liquidationRiskRemaining(risk);
+  const tone = liquidationRiskTone(risk);
+  const display = formatLiquidationRisk(risk);
+  const longExposure = exposure?.reliable ? exposure.longExposureUsd : diagnostics?.longExposureUsd ?? null;
+  const shortExposure = exposure?.reliable ? exposure.shortExposureUsd : diagnostics?.shortExposureUsd ?? null;
+  const netExposure = exposure?.reliable ? exposure.netExposureUsd : diagnostics?.netExposureUsd ?? null;
+  const source = diagnostics?.source === "ASTER_ACCOUNT_RATIO" ? "ASTER ACCOUNT RATIO" : diagnostics?.source === "SERVER_RECONSTRUCTED" ? "SERVER RECONSTRUCTED" : "ONBEKEND";
+  const marginLabel = diagnostics?.marginBalance !== null && diagnostics?.marginBalance !== undefined
+    ? money(diagnostics.marginBalance)
+    : diagnostics?.equity !== null && diagnostics?.equity !== undefined
+      ? money(diagnostics.equity)
+      : equity;
+
+  return <button
+    type="button"
+    className={`aps-liquidation-gauge aps-gauge-${tone}`}
+    data-reference={LIQUIDATION_GAUGE_REFERENCE}
+    data-risk-value={risk ?? "unknown"}
+    aria-label={`Liquidatierisico ${display}. Tik voor details.`}
+    aria-pressed={flipped}
+    onClick={() => setFlipped((current) => !current)}
+  >
+    <span className={`aps-gauge-flipper${flipped ? " is-flipped" : ""}`}>
+      <span className="aps-gauge-face aps-gauge-front">
+        <span className="aps-gauge-head"><b>LIQUIDATIERISICO</b><em><i />LIVE</em></span>
+        <span className="aps-gauge-dial" aria-hidden="true">
+          <svg viewBox="0 0 220 126" role="presentation">
+            <path className="aps-gauge-track" d="M20 105 A90 90 0 0 1 200 105" pathLength="100" />
+            <path className="aps-gauge-arc arc-green" d="M20 105 A90 90 0 0 1 200 105" pathLength="100" />
+            <path className="aps-gauge-arc arc-lime" d="M20 105 A90 90 0 0 1 200 105" pathLength="100" />
+            <path className="aps-gauge-arc arc-yellow" d="M20 105 A90 90 0 0 1 200 105" pathLength="100" />
+            <path className="aps-gauge-arc arc-orange" d="M20 105 A90 90 0 0 1 200 105" pathLength="100" />
+            <path className="aps-gauge-arc arc-red" d="M20 105 A90 90 0 0 1 200 105" pathLength="100" />
+            <text x="21" y="119">0%</text>
+            <text x="54" y="60">25%</text>
+            <text x="110" y="39" textAnchor="middle">50%</text>
+            <text x="166" y="60" textAnchor="middle">75%</text>
+            <text x="199" y="119" textAnchor="end" className="danger">100%</text>
+            <g className="aps-gauge-needle" style={{ transform: `rotate(${degrees}deg)`, transformOrigin: "110px 105px" }}>
+              <line x1="110" y1="105" x2="37" y2="105" />
+              <circle cx="110" cy="105" r="6" />
+            </g>
+            <circle className="aps-gauge-hub" cx="110" cy="105" r="3.2" />
+          </svg>
+        </span>
+        <strong className="aps-gauge-value">{display}</strong>
+        <small className="aps-gauge-caption">100% = liquidatie</small>
+      </span>
+      <span className="aps-gauge-face aps-gauge-back">
+        <span className="aps-gauge-back-head"><b>LIQUIDATIERISICO</b><em>{display}</em></span>
+        <span className="aps-gauge-details">
+          <span><small>Ruimte tot 100%</small><strong>{remaining === null ? "—" : `${new Intl.NumberFormat("nl-NL", { maximumFractionDigits: 2 }).format(remaining)}%`}</strong></span>
+          <span><small>Margin / equity</small><strong>{marginLabel}</strong></span>
+          <span><small>Maintenance</small><strong>{money(diagnostics?.maintenanceMarginUsd ?? null)}</strong></span>
+          <span><small>Available</small><strong>{available}</strong></span>
+          <span><small>Long exposure</small><strong>{money(longExposure)}</strong></span>
+          <span><small>Short exposure</small><strong>{money(shortExposure)}</strong></span>
+          <span><small>Netto exposure</small><strong>{money(netExposure)}</strong></span>
+          <span><small>Actuele ratio</small><strong>{diagnostics?.liquidationRiskPercent === null || diagnostics?.liquidationRiskPercent === undefined ? display : formatLiquidationRisk(diagnostics.liquidationRiskPercent)}</strong></span>
+        </span>
+        <small className="aps-gauge-source">BRON · {source}</small>
+      </span>
+    </span>
+  </button>;
 }
 
 function profitMoney(value: number | undefined) {
@@ -387,9 +529,10 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
   </div>;
 }
 
-function Snapshot({ values, profitPreview, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
+function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
+  liquidationDiagnostics: LiquidationDiagnostics | null;
   profitBusy: ProfitScope | null;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
@@ -413,14 +556,24 @@ function Snapshot({ values, profitPreview, profitBusy, onCloseAll, onCloseProfit
       <MetricCard icon="trades" label="TRADES GESLOTEN" value={values.tradesClosed} />
     </div>
     <HedgeSummary preview={profitPreview} onOpen={onOpenHedge} />
-    <div className="aps-status-row">
-      <div className="aps-status aps-balance"><Icon name="balance" /><strong><b>{values.longs}L</b><span>/</span><em>{values.shorts}S</em></strong></div>
-      <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
-      <div className={`aps-status aps-risk aps-risk-${values.riskTone}`}><Icon name="shield" /><span><small>LIQUIDATIERISICO</small><strong>{values.liquidation}</strong></span></div>
-    </div>
-    <div className="aps-growth-row">
-      <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} />
-      <GrowthCard icon="calendar" label="GEMIDDELD PER DAG" value={values.averageDailyGrowth} tone={values.averageDailyGrowthTone} />
+    <div className="aps-health-grid">
+      <div className="aps-health-left">
+        <div className="aps-status-row">
+          <div className="aps-status aps-balance"><Icon name="balance" /><strong><b>{values.longs}L</b><span>/</span><em>{values.shorts}S</em></strong></div>
+          <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
+        </div>
+        <div className="aps-growth-row">
+          <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} />
+          <GrowthCard icon="calendar" label="GEMIDDELD PER DAG" value={values.averageDailyGrowth} tone={values.averageDailyGrowthTone} />
+        </div>
+      </div>
+      <LiquidationGauge
+        value={values.liquidation}
+        diagnostics={liquidationDiagnostics}
+        exposure={profitPreview?.exposure}
+        equity={values.equity}
+        available={values.available}
+      />
     </div>
     <div className="aps-profit-row" aria-label="Winstposities sluiten">
       <ProfitAction scope="LONG" label="Close Long" bucket={profitPreview?.long ?? null} busy={profitBusy === "LONG"} onClick={onCloseProfit} />
@@ -464,6 +617,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
+  const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
@@ -530,6 +684,28 @@ export function AsterPortfolioSnapshotEnhancer() {
         if (alive) setProfitPreview(preview);
       } catch {
         if (alive) setProfitPreview(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [host]);
+
+  useEffect(() => {
+    if (!host) return;
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const diagnostics = await loadLiquidationDiagnostics();
+        if (alive) setLiquidationDiagnostics(diagnostics);
+      } catch {
+        if (alive) setLiquidationDiagnostics(null);
       }
     };
     void refresh();
@@ -625,6 +801,7 @@ export function AsterPortfolioSnapshotEnhancer() {
       <Snapshot
         values={values}
         profitPreview={profitPreview}
+        liquidationDiagnostics={liquidationDiagnostics}
         profitBusy={profitBusy}
         onCloseAll={closeAll}
         onCloseProfit={openProfitPreview}
