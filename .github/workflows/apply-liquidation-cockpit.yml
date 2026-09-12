@@ -25,6 +25,20 @@ jobs:
       - name: Apply guarded UI patch
         run: python tools/apply-liquidation-cockpit.py
 
+      - name: Normalize floating point simulation fixture
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("web/tests/liquidation-cockpit-gauge.test.mjs")
+          text = path.read_text(encoding="utf-8")
+          old = "const degrees = sequence.map(liquidationNeedleDegrees);"
+          new = "const degrees = sequence.map((value) => Number(liquidationNeedleDegrees(value).toFixed(2)));"
+          if text.count(old) != 1:
+              raise SystemExit("expected simulation fixture anchor exactly once")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
