@@ -14,8 +14,8 @@ test("direct settings support up to 100 total positions with independent LONG an
   assert.match(maker, /entrySizingMode: "margin"/);
   assert.match(maker, /entryMarginLongUsd/);
   assert.match(maker, /entryMarginShortUsd/);
-  assert.match(maker, /rawReport\.remainingLong/);
-  assert.match(maker, /rawReport\.remainingShort/);
+  assert.match(maker, /Math\.max\(0, n\(v\.longSlots\) - activeLong\)/);
+  assert.match(maker, /Math\.max\(0, n\(v\.shortSlots\) - activeShort\)/);
 });
 
 test("DCA remains percentage-gated with editable independent limits and clean restart", () => {

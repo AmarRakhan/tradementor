@@ -214,9 +214,13 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   }
 
   const enabled = status.enabled === true; const liveReady = status.liveReady === true || (!status.pending && readiness?.liveReady === true);
-  const activeLong = Number(rawReport.activeLong ?? state.longLegs ?? 0); const activeShort = Number(rawReport.activeShort ?? state.shortLegs ?? 0);
-  const remainingLong = Number(rawReport.remainingLong ?? Math.max(0, n(v.longSlots) - activeLong)); const remainingShort = Number(rawReport.remainingShort ?? Math.max(0, n(v.shortSlots) - activeShort));
-  const candidateCount = Number(rawReport.candidateCount ?? 0); const scannedCandidateCount = Number(rawReport.scannedCandidateCount ?? 0);
+  // Position counts come from the current persisted bot state. A scan report can
+  // belong to the previous settings version for up to one scheduler interval, so
+  // never let stale remainingLong/remainingShort override the slots shown above.
+  const activeLong = Number(state.longLegs ?? rawReport.activeLong ?? 0); const activeShort = Number(state.shortLegs ?? rawReport.activeShort ?? 0);
+  const remainingLong = Math.max(0, n(v.longSlots) - activeLong); const remainingShort = Math.max(0, n(v.shortSlots) - activeShort);
+  const reportCurrent = Number(rawReport.configVersion ?? 0) === Number(state.configVersion ?? persisted.version ?? 0);
+  const candidateCount = reportCurrent ? Number(rawReport.candidateCount ?? 0) : 0; const scannedCandidateCount = reportCurrent ? Number(rawReport.scannedCandidateCount ?? 0) : 0;
   const cycleStart = Number(cycle.cycleStartEquity || 0); const currentEquity = Number(cycle.currentEquity || 0); const target = cycleStart > 0 ? cycleStart * (1 + n(v.portfolioTp) / 100) : Number(cycle.targetEquity || 0);
   const portfolioWarning = v.tpMode === "PORTFOLIO" && target > 0 && currentEquity >= target;
   async function toggleLive() { if (status.pending || busy) return; if (dirty) { setMessage("Sla eerst de gewijzigde instellingen op; daarna kun je de bot direct aan- of uitzetten."); return; } if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(true); }
