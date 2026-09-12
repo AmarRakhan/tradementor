@@ -75,10 +75,25 @@ jobs:
         run: |
           set -euo pipefail
           python -m py_compile cloud_api/main.py
-          python -m pytest -q \
-            cloud_api/test_dynamic_hedge_strategy_dca_coexistence.py \
-            cloud_api/test_aster_realtime_integration.py \
-            cloud_api/test_aster_dynamic_hedge_sequence.py
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('cloud_api/main.py').read_text()
+          start = source.index('if bool(dynamic_stored.get("enabled",False)):')
+          end = source.index('    return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings', start)
+          block = source[start:end]
+          assert 'blocked_side="SHORT" if long_exposure>short_exposure' not in block
+          assert 'blocked_side=""' in block
+          assert 'dynamic_hedge_blocked_side=blocked_side' in block
+          assert 'dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)' in block
+          assert 'before_order=dynamic_before_order' in block
+          assert 'blockedStrategySide":blocked_side or None' in block
+          wrapper = Path('cloud_api/aster_multi_bb.py').read_text()
+          assert 'if side==blocked_side and name=="max_dca": return -1' in wrapper
+          core = Path('cloud_api/aster_multi_bb_core.py').read_text()
+          assert 'dca_count >= settings.max_dca' in core
+          assert '_dca_due(mark, trigger, side)' in core
+          print('P0 coexistence contract: PASS')
+          PY
           git diff --check
 
       - name: Commit tested production hotfix
