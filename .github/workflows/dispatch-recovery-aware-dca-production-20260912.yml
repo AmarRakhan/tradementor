@@ -1,0 +1,39 @@
+name: Dispatch recovery-aware DCA production 2026-09-12
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/dispatch-recovery-aware-dca-production-20260912.yml'
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  dispatch-and-clean:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - name: Verify tested hotfix is present
+        shell: bash
+        run: |
+          grep -F 'DCA_CATCHUP_CANCELLED_ON_RECOVERY' cloud_api/aster_multi_bb_core.py
+          grep -F 'never chase stale DCA levels' cloud_api/aster_multi_bb_core.py
+      - name: Dispatch production backend deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-cloud-production.yml --ref amar-crypto-bot-2026-cloud -f confirmation=DEPLOY_PRODUCTION_BACKEND
+      - name: Remove one-shot dispatcher
+        shell: bash
+        run: |
+          rm -f .github/workflows/dispatch-recovery-aware-dca-production-20260912.yml
+          git config user.name 'TradeMentor Safety Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add .github/workflows/dispatch-recovery-aware-dca-production-20260912.yml
+          git commit -m 'Remove recovery-aware DCA production dispatcher'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
