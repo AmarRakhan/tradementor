@@ -105,6 +105,38 @@ def test_filter_off_preserves_old_candidate_flow_and_skips_15m_calls(monkeypatch
     assert market.kline_calls == []
 
 
+def test_two_free_sides_are_scanned_independently_when_short_signal_arrives_first(monkeypatch):
+    setup(monkeypatch)
+    cfg = core.MultiBbConfig.from_mapping({
+        "universeTopN": 3, "maximumPositions": 2,
+        "longSlots": 1, "shortSlots": 1,
+        "minimumLeverage": 1, "entryMarginUsd": 1, "entryNotionalUsd": 10,
+        "dcaMarginUsd": 1, "bollingerEntryFilter15mEnabled": True,
+    })
+    # AAA is far above the upper band: it must be allowed to fill the free SHORT
+    # even though equal LONG/SHORT counts make LONG the allocator's preferred side.
+    # BBB is below the lower band and then fills the remaining LONG seat.
+    result = run(Market({"AAAUSDT": 120, "BBBUSDT": 60, "CCCUSDT": 90}), cfg)
+    entries = [(a["symbol"], a["side"]) for a in result["actions"] if a["kind"] == "ENTRY"]
+    assert entries == [("AAAUSDT", "SHORT"), ("BBBUSDT", "LONG")]
+    assert result["remainingLong"] == 0
+    assert result["remainingShort"] == 0
+
+
+def test_filter_off_keeps_legacy_preferred_side_allocator_with_two_free_sides(monkeypatch):
+    setup(monkeypatch)
+    cfg = core.MultiBbConfig.from_mapping({
+        "universeTopN": 3, "maximumPositions": 2,
+        "longSlots": 1, "shortSlots": 1,
+        "minimumLeverage": 1, "entryMarginUsd": 1, "entryNotionalUsd": 10,
+        "dcaMarginUsd": 1, "bollingerEntryFilter15mEnabled": False,
+    })
+    market = Market({"AAAUSDT": 120, "BBBUSDT": 60, "CCCUSDT": 90})
+    result = run(market, cfg)
+    entries = [(a["symbol"], a["side"]) for a in result["actions"] if a["kind"] == "ENTRY"]
+    assert entries == [("AAAUSDT", "LONG"), ("BBBUSDT", "SHORT")]
+    assert market.kline_calls == []
+
 def test_all_new_seat_entry_routes_share_one_core_gate_source_contract():
     source = (core.__file__ and open(core.__file__, encoding="utf8").read())
     assert source.count("stage=\"candidate\"") == 1

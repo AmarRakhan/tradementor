@@ -838,26 +838,57 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
 
         # In normal Multi-DCA mode LONG and SHORT are independent seats.
         # An open BTCUSDT|LONG must never block BTCUSDT|SHORT (or vice versa).
-        # Manual selection keeps its explicitly chosen side; automatic mode may
-        # fall back to the missing opposite side when the preferred side is
-        # already open on the same symbol.
-        if not settings.asymmetric_hedge_enabled:
-            selected_key = f"{symbol}|{side}"
-            if selected_key in active:
-                if settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"):
-                    continue
-                opposite = "SHORT" if side == "LONG" else "LONG"
-                opposite_need = short_need if opposite == "SHORT" else long_need
-                if opposite_need > 0 and f"{symbol}|{opposite}" not in active:
-                    side = opposite
-                else:
-                    continue
-        if settings.bollinger_entry_filter_15m_enabled:
+        # Manual selection keeps its explicitly chosen side. With the optional
+        # Bollinger filter enabled, automatic mode must evaluate BOTH still-free
+        # primary sides independently for every candidate. Otherwise an equal
+        # 25L/25S account with one free seat on each side would keep testing LONG
+        # first and could starve a valid SHORT-above-upper-band entry forever.
+        def candidate_bb_pass(candidate_side: str) -> bool:
             try:
-                require_bollinger_entry(client, symbol=symbol, side=side, enabled=True, live_price=prices[symbol],
+                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, live_price=prices[symbol],
                                         force_refresh=False, stage="candidate", now_ms=timestamp_ms)
             except BollingerEntryRejected as exc:
-                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
+                return False
+            return True
+
+        independent_bb_scan = (
+            settings.bollinger_entry_filter_15m_enabled
+            and not settings.asymmetric_hedge_enabled
+            and not (settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"))
+        )
+        if independent_bb_scan:
+            opposite = "SHORT" if side == "LONG" else "LONG"
+            side_candidates: list[str] = []
+            for candidate_side in (side, opposite):
+                need = long_need if candidate_side == "LONG" else short_need
+                if need <= 0 or f"{symbol}|{candidate_side}" in active or candidate_side in side_candidates:
+                    continue
+                side_candidates.append(candidate_side)
+            if not side_candidates:
+                continue
+            selected_side: str | None = None
+            for candidate_side in side_candidates:
+                if not candidate_bb_pass(candidate_side):
+                    continue
+                selected_side = candidate_side
+                break
+            if selected_side is None:
+                continue
+            side = selected_side
+        else:
+            if not settings.asymmetric_hedge_enabled:
+                selected_key = f"{symbol}|{side}"
+                if selected_key in active:
+                    if settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"):
+                        continue
+                    opposite = "SHORT" if side == "LONG" else "LONG"
+                    opposite_need = short_need if opposite == "SHORT" else long_need
+                    if opposite_need > 0 and f"{symbol}|{opposite}" not in active:
+                        side = opposite
+                    else:
+                        continue
+            if settings.bollinger_entry_filter_15m_enabled and not candidate_bb_pass(side):
                 continue
         paired = bool(settings.asymmetric_hedge_enabled)
         if paired and (short_need <= 0 or account_remaining_capacity < 2 or budget - sent < 2):
