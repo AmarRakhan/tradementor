@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const component = readFileSync(new URL("../components/portfolio-impact-battle.tsx", import.meta.url), "utf8");
+const videoCss = readFileSync(new URL("../components/portfolio-impact-bull-bear-video.module.css", import.meta.url), "utf8");
 const btcRoute = readFileSync(new URL("../app/api/markets/aster/btc-bollinger/route.ts", import.meta.url), "utf8");
 const mediaRoute = readFileSync(new URL("../app/api/media/bull-bear-master/route.ts", import.meta.url), "utf8");
 const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
@@ -49,4 +50,10 @@ test("primary visible motion is playback, not per-frame score scrubbing", () => 
   assert.match(component, /void activeVideo\.play\(\)\.catch/);
   assert.doesNotMatch(component, /video\.currentTime = targetTime/);
   assert.doesNotMatch(component, /seek\(nextMarketScore\)|seek\(targetScore\)/);
+});
+
+test("direction switches are atomic and never opacity-crossfade through the poster", () => {
+  assert.doesNotMatch(videoCss, /transition:\s*opacity/i);
+  assert.match(videoCss, /\.videoActive\s*\{[^}]*opacity:\s*1/s);
+  assert.match(videoCss, /\.videoInactive\s*\{[^}]*opacity:\s*0/s);
 });
