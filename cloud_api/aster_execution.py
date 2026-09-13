@@ -172,6 +172,34 @@ def require_exact_new_position_leverage(client: Any, plan: PairExecutionPlan,
     return requested
 
 
+def _require_openable_notional_capacity(client: Any, plan: PairExecutionPlan, leverage: int) -> float | None:
+    """Restore Aster's account-specific new-entry capacity preflight.
+
+    Strategy 2 historically checked ``remainingOpenableNotionalValue`` before
+    every brand-new OPEN.  Multi-BB must keep that exchange-truth guard so a
+    contract such as HYPE can be skipped locally instead of submitting an order
+    that Aster will reject with -5018.  Test/legacy adapters without the reader
+    keep their existing behavior; the production Aster client always exposes it.
+    """
+    reader = getattr(client, "remaining_openable_notional_value", None)
+    if not callable(reader):
+        return None
+    try:
+        remaining = float(reader(plan.symbol, int(leverage)))
+    except Exception as exc:
+        raise NewPositionLeverageBlocked("SYMBOL_OPENABLE_CAPACITY_UNAVAILABLE", plan.symbol) from exc
+    if not Decimal(str(remaining)).is_finite() or remaining < 0:
+        raise NewPositionLeverageBlocked("SYMBOL_OPENABLE_CAPACITY_UNAVAILABLE", plan.symbol)
+    planned = float(plan.notional_per_leg)
+    if remaining + 1e-9 < planned:
+        blocked = NewPositionLeverageBlocked("SYMBOL_OPENABLE_NOTIONAL_BELOW_PLANNED", plan.symbol)
+        blocked.remaining_openable_notional = remaining
+        blocked.planned_notional = planned
+        blocked.requested_leverage = int(leverage)
+        raise blocked
+    return remaining
+
+
 def _confirmed_fill(client: Any, intent_id: str, symbol: str, result: dict[str, Any], *,
                     poll_attempts: int = 1, poll_delay_seconds: float = 0.0) -> dict[str, Any]:
     """Confirm one submitted market order from exchange truth without resubmitting.
@@ -313,6 +341,11 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
     if action.upper() == "CLOSE" and not manual_loss_confirmation:
         require_profitable_automatic_close(close_evidence, audit=close_audit)
     if action.upper() == "OPEN":
+        # Restore the pre-Multi-BB account-capacity guard for brand-new exact-
+        # leverage entries.  Query before mutating margin/leverage so an
+        # insufficient HYPE 300x cap never reaches Aster as a doomed POST.
+        if new_position_leverage is not None and not allow_existing_contract_leverage_change:
+            _require_openable_notional_capacity(client, plan, int(new_position_leverage))
         client.change_margin_type(plan.symbol, "CROSSED")
         accepted_leverage = (require_exact_new_position_leverage(
                 client, plan, new_position_leverage,
