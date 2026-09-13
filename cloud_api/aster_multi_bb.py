@@ -342,6 +342,24 @@ def leverage_tier_preview(*,client:Any,symbol:str,settings:MultiBbConfig)->dict[
     return _core.leverage_tier_preview(client=client,symbol=symbol,settings=_PairAwareSettings(settings))
 
 
+class _ExactStateMapRef:
+    """Keep ``multiBbPositions`` as an exact snapshot, not a recursive map merge.
+
+    Firestore ``set(..., merge=True)`` recursively merges nested maps.  The
+    runtime treats ``multiBbPositions`` as a complete snapshot: removed legs
+    must disappear and fresh cycles must not inherit nested fields from an old
+    cycle.  Merging the explicit top-level field paths preserves the normal
+    sibling-field merge while replacing this map value atomically.
+    """
+    def __init__(self, ref: Any): self._ref = ref
+    def set(self, row: dict[str, Any], merge: Any = True):
+        payload = dict(row)
+        if merge is True and "multiBbPositions" in payload:
+            return self._ref.set(payload, merge=list(payload.keys()))
+        return self._ref.set(payload, merge=merge)
+    def __getattr__(self, name: str) -> Any: return getattr(self._ref, name)
+
+
 class _CoreWriteProxy:
     """Augment the core's existing atomic state write; never add a second write."""
     def __init__(self,ref:Any,extra_report:dict[str,Any]): self._ref=ref; self._extra_report=extra_report
@@ -354,14 +372,14 @@ class _CoreWriteProxy:
 
 def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     _sync_core_hooks()
-    client=kwargs["client"]; ref=kwargs["ref"]; raw_state=kwargs["raw_state"]; uid=kwargs["uid"]
+    client=kwargs["client"]; ref=kwargs["ref"]; runtime_ref=_ExactStateMapRef(ref); raw_state=kwargs["raw_state"]; uid=kwargs["uid"]
     account=kwargs["account"]; positions=kwargs["positions"]; open_orders=kwargs["open_orders"]
     timestamp_ms=kwargs["timestamp_ms"]; dry_run=bool(kwargs.get("dry_run",False)); order_budget=kwargs.get("order_budget"); before_order=kwargs.get("before_order")
 
     # Profit Lock Ladder owns the cycle exit while enabled. Existing TP settings
     # stay persisted but cannot close the LONG and accidentally leave its hedge naked.
     effective_tp_mode = "OFF" if settings.profit_lock_ladder_enabled else settings.take_profit_mode
-    gate=portfolio_cycle_gate(client=client,ref=ref,raw_state=raw_state,uid=uid,account=account,positions=positions,
+    gate=portfolio_cycle_gate(client=client,ref=runtime_ref,raw_state=raw_state,uid=uid,account=account,positions=positions,
         open_orders=open_orders,timestamp_ms=timestamp_ms,take_profit_mode=effective_tp_mode,
         portfolio_tp_percent=settings.portfolio_tp_percent,dry_run=dry_run,order_budget=order_budget,before_order=before_order)
     cycle_snapshot=gate.report
@@ -377,7 +395,7 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         raw_state=gate.raw_state; account=gate.account; positions=gate.positions; open_orders=gate.open_orders
         order_budget=max(0,(15 if order_budget is None else int(order_budget))-gate.orders_sent)
 
-    profit_lock = run_profit_lock_ladder_gate(client=client,ref=ref,raw_state=raw_state,settings=settings,uid=uid,
+    profit_lock = run_profit_lock_ladder_gate(client=client,ref=runtime_ref,raw_state=raw_state,settings=settings,uid=uid,
         account=account,positions=positions,open_orders=open_orders,timestamp_ms=timestamp_ms,dry_run=dry_run,
         order_budget=order_budget,before_order=before_order)
     if profit_lock.handled and not profit_lock.restart:
@@ -395,7 +413,7 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         order_budget=max(0,(15 if order_budget is None else int(order_budget))-profit_lock.orders_sent)
 
     def guarded_before_order(intent:Any)->Any:
-        assert_order_allowed(ref,intent,client=client)
+        assert_order_allowed(runtime_ref,intent,client=client)
         if before_order is not None:
             try: return before_order(intent)
             except TypeError: return before_order(intent,None)
@@ -417,7 +435,7 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         "portfolioCycle":cycle_snapshot,"profitLockLadderEnabled":settings.profit_lock_ladder_enabled,
         "takeProfitSuppressedByProfitLock":settings.profit_lock_ladder_enabled,
         "profitLockLadder":profit_lock.report}
-    core_kwargs["ref"]=_CoreWriteProxy(ref,extra)
+    core_kwargs["ref"]=_CoreWriteProxy(runtime_ref,extra)
     try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(runtime_settings,blocked_side,blocked_count),**core_kwargs)
     except PortfolioCycleOrderBlocked as exc:
         report={"status":"waiting","action":"PORTFOLIO_CYCLE_GUARD","ordersSent":0,"entryStatus":"PORTFOLIO_CYCLE_BLOCKED","entryReason":str(exc),"actions":[]}

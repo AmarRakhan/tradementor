@@ -363,13 +363,43 @@ def _infer_external_add_fill_price(*, previous_qty: float, previous_entry: float
     return fallback if fallback > 0 else previous_entry
 
 
+_ZERO_DCA_STALE_FIELDS = (
+    "lastDcaFillPrice", "lastManualFillPrice", "lastManualDcaQty",
+    "lastManualDcaAtMs", "manualDcaAdoptedAtMs", "lastBotDcaAtMs",
+    "dcaCatchupTargetCount", "dcaCatchupBaseAnchor", "dcaCatchupStartCount",
+    "dcaCatchupDistance", "dcaCatchupQueuedAtMs", "dcaCatchupRemaining",
+    "dcaCatchupCompletedAtMs", "dcaCatchupCancelledAtMs", "dcaCatchupCancelledLevels",
+)
+
+
+def _normalize_zero_dca_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Drop DCA-only residue when the current cycle has not executed a DCA.
+
+    Firestore recursive map merges can preserve nested fields from an older
+    cycle even after a fresh state row writes ``dcaCount=0``.  Those stale fill
+    prices must never become the anchor of the new cycle.
+    """
+    if _i(state.get("dcaCount")) > 0:
+        return state
+    cleaned = dict(state)
+    for field in _ZERO_DCA_STALE_FIELDS:
+        cleaned.pop(field, None)
+    return cleaned
+
+
 def _recovery_anchor(state: dict[str, Any], *, entry: float) -> float:
     """Deterministic DCA anchor priority used by reconciliation."""
+    if _i(state.get("dcaCount")) <= 0:
+        for field in ("lastBotFillPrice", "strategyAnchorPrice"):
+            value = _f(state.get(field))
+            if value > 0:
+                return value
+        return entry if entry > 0 else 0.0
     for field in ("lastDcaFillPrice", "lastManualFillPrice", "lastBotFillPrice", "strategyAnchorPrice"):
         value = _f(state.get(field))
         if value > 0:
             return value
-    return entry if _i(state.get("dcaCount")) == 0 and entry > 0 else 0.0
+    return 0.0
 
 
 def _dca_due(mark: float, trigger: float, side: str) -> bool:
@@ -528,7 +558,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         row = pmap.get(key)
         if row is None:
             reconciled_closed.append(key); state.pop(key, None); continue
-        st = dict(state[key]); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); leverage = max(1, _i(row.get("leverage"), st.get("leverage", 1)))
+        st = _normalize_zero_dca_state(dict(state[key])); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice")); leverage = max(1, _i(row.get("leverage"), st.get("leverage", 1)))
         symbol = str(row.get("symbol", "")).upper(); side = str(row.get("positionSide", "")).upper()
         previous_qty = abs(_f(st.get("lastKnownQty"))); previous_entry = _f(st.get("lastKnownEntry"))
         qty_delta = qty - previous_qty
