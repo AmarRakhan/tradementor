@@ -133,10 +133,14 @@ def test_all_new_seat_entry_routes_share_one_core_gate_source_contract():
     assert source.count("stage=\"candidate\"") == 1
     assert source.count("stage=\"pre_order\"") == 1
     assert "if settings.bollinger_entry_filter_15m_enabled" in source
-    # DCA and asymmetric hedge/recovery submit their existing before_order hook,
-    # proving the new guard is scoped to the primary ENTRY path only.
-    assert 'action="DCA"' in source
     assert 'before_submit=entry_before_submit' in source
+    # DCA stays on the existing OPEN execution path with its own mbb-dca id and
+    # the pre-existing before_order callback, so the Bollinger pre-order wrapper
+    # cannot intercept a DCA.
+    assert 'id_prefix=f"mbb-dca-' in source
+    assert 'allow_existing_contract_leverage_change=True,before_submit=before_order' in source
+    # Paired hedge/recovery legs likewise retain the existing callback rather
+    # than the primary-entry Bollinger wrapper.
     assert 'mbb-asym-short-' in source and 'before_submit=before_order' in source
 '''
 (ROOT / "cloud_api/test_aster_bollinger_entry_filter_seat_flow.py").write_text(test)
