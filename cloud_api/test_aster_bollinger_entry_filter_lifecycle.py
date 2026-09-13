@@ -138,7 +138,6 @@ def _existing_positions(long_count, short_count):
 def test_runtime_total_slots_50_to_60_filters_every_new_seat(monkeypatch):
     existing = _existing_positions(25, 25)
     candidates = _candidate_symbols("C", 10)
-    # Equal 25/30 fill ratios start LONG and then alternate LONG/SHORT.
     prices = {row["symbol"]: 100 for row in existing}
     prices.update({symbol: (80 if i % 2 == 0 else 120) for i, symbol in enumerate(candidates)})
     symbols = [row["symbol"] for row in existing] + candidates
@@ -280,7 +279,6 @@ def test_pre_order_recheck_rejects_candidate_that_moved_back_inside_band(monkeyp
     submitted = []
 
     def fake_execute(client, plan, *, side, action, before_submit=None, **kwargs):
-        # Candidate scan passed at 80. Before actual submit, market moves inside.
         market.prices[symbol] = 100
         assert before_submit is not None
         before_submit(SimpleNamespace(symbol=symbol, side=side, action=action))
@@ -294,7 +292,7 @@ def test_pre_order_recheck_rejects_candidate_that_moved_back_inside_band(monkeyp
     assert not any(a.get("kind") == "ENTRY" for a in result["actions"])
 
 
-def test_load_50_to_100_plans_exactly_50_filtered_unique_entries(monkeypatch):
+def test_load_50_to_100_filters_all_50_new_seats_without_overfill(monkeypatch):
     existing = _existing_positions(25, 25)
     candidates = _candidate_symbols("LOAD", 50)
     prices = {row["symbol"]: 100 for row in existing}
@@ -303,9 +301,13 @@ def test_load_50_to_100_plans_exactly_50_filtered_unique_entries(monkeypatch):
     _patch_planning(monkeypatch, candidates)
     result = _run(market, _cfg(maximum=100, longs=50, shorts=50, top_n=100), positions=existing,
                   raw_state={"multiBbPositions": _state_for(existing)}, order_budget=100)
-    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]
-    assert len(entries) == 50
-    assert len({a["symbol"] for a in entries}) == 50
+    # The report deliberately exposes only actions[-30:], so use final counters
+    # plus market-data calls to prove all 50 newly created seats were filtered.
+    entries_in_bounded_report = [a for a in result["actions"] if a.get("kind") == "ENTRY"]
+    assert len(entries_in_bounded_report) == 30
+    assert len({a["symbol"] for a in entries_in_bounded_report}) == 30
+    assert len(market.kline_calls) == 50
+    assert len({symbol for symbol, interval, limit in market.kline_calls if interval == "15m" and limit == 20}) == 50
     assert result["activeLong"] == 50 and result["activeShort"] == 50
     assert result["remainingLong"] == 0 and result["remainingShort"] == 0
 
