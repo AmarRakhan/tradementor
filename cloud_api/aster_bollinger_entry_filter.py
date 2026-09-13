@@ -10,6 +10,7 @@ PERIOD = 20
 STDDEV_MULTIPLIER = 2.0
 MAX_KLINE_AGE_MS = 20 * 60 * 1000
 CACHE_TTL_SECONDS = 5.0
+PREORDER_MARKET_TTL_SECONDS = 1
 
 
 @dataclass(frozen=True)
@@ -58,13 +59,51 @@ def _row_open_ms(row: Any) -> int:
     return 0
 
 
+def _guarded_public_read(client: Any, path: str, *, invalid_message: str) -> Any:
+    """Use AsterV3Client's guarded public transport for a near-submit read.
+
+    AsterV3Client intentionally caches normal dashboard/scanner market reads.
+    The primary-entry pre-submit guard needs a much tighter freshness bound, so
+    it uses a separate canonical query-key with a one-second TTL while retaining
+    the client's shared REST rate-limit guard and response validation.
+    """
+    reader = getattr(client, "_public_get", None)
+    if not callable(reader):
+        raise AttributeError("guarded public market reader unavailable")
+    return reader(
+        path,
+        ttl_seconds=PREORDER_MARKET_TTL_SECONDS,
+        invalid_message=invalid_message,
+    )
+
+
+def _read_klines(client: Any, symbol: str, *, force_refresh: bool) -> list[Any]:
+    symbol = str(symbol).upper()
+    if force_refresh and callable(getattr(client, "_public_get", None)):
+        # Query parameter order deliberately differs from AsterV3Client.klines,
+        # giving this pre-order path its own <=1s cache instead of inheriting the
+        # normal 15s scanner/dashboard cache entry.
+        payload = _guarded_public_read(
+            client,
+            f"/fapi/v1/klines?interval={TIMEFRAME}&symbol={symbol}&limit=25",
+            invalid_message="Aster 15m-candles konden niet betrouwbaar worden gelezen",
+        )
+        if not isinstance(payload, list):
+            raise ValueError("invalid 15m kline payload")
+        return [row for row in payload if isinstance(row, (list, tuple, dict))]
+    rows = client.klines(symbol=symbol, interval=TIMEFRAME, limit=25)
+    if not isinstance(rows, list):
+        raise ValueError("invalid 15m kline payload")
+    return rows
+
+
 def _current_bands(client: Any, symbol: str, *, now_ms: int, force_refresh: bool) -> tuple[float, float, int]:
     symbol = str(symbol).upper()
     cached = _BAND_CACHE.get(symbol)
     if not force_refresh and cached and time.monotonic() - cached[0] <= CACHE_TTL_SECONDS:
         return cached[1], cached[2], cached[3]
-    rows = client.klines(symbol=symbol, interval=TIMEFRAME, limit=25)
-    if not isinstance(rows, list) or len(rows) < PERIOD:
+    rows = _read_klines(client, symbol, force_refresh=force_refresh)
+    if len(rows) < PERIOD:
         raise ValueError("insufficient 15m klines")
     window = rows[-PERIOD:]
     closes = [_row_close(row) for row in window]
@@ -82,8 +121,25 @@ def _current_bands(client: Any, symbol: str, *, now_ms: int, force_refresh: bool
     return lower, upper, latest_open_ms
 
 
-def _latest_price(client: Any, symbol: str) -> float:
-    payload = client.ticker_price(symbol=str(symbol).upper())
+def _latest_price(client: Any, symbol: str, *, force_refresh: bool) -> float:
+    symbol = str(symbol).upper()
+    payload: Any = None
+    if force_refresh and callable(getattr(client, "_public_get", None)):
+        payload = _guarded_public_read(
+            client,
+            f"/fapi/v3/ticker/price?symbol={symbol}",
+            invalid_message="Aster-prijs kon niet betrouwbaar worden gelezen",
+        )
+    else:
+        single = getattr(client, "ticker_price", None)
+        if callable(single):
+            payload = single(symbol=symbol)
+        else:
+            rows = client.ticker_prices()
+            payload = next(
+                (row for row in rows if isinstance(row, dict) and str(row.get("symbol", "")).upper() == symbol),
+                None,
+            )
     if not isinstance(payload, dict):
         raise ValueError("invalid live ticker")
     price = _finite(payload.get("price"))
@@ -124,7 +180,7 @@ def require_bollinger_entry(client: Any, *, symbol: str, side: str, enabled: boo
     checked_at_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
     try:
         lower, upper, latest_open_ms = _current_bands(client, symbol, now_ms=checked_at_ms, force_refresh=force_refresh)
-        price = _latest_price(client, symbol) if live_price is None else _finite(live_price)
+        price = _latest_price(client, symbol, force_refresh=force_refresh) if live_price is None else _finite(live_price)
         if price <= 0:
             raise ValueError("invalid live price")
     except Exception as exc:
