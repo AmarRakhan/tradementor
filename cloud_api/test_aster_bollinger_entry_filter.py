@@ -26,6 +26,32 @@ class FakeMarket:
         return {"symbol": symbol, "price": str(self.price)}
 
 
+class FakeGuardedV3Market:
+    """Matches production AsterV3Client: no ticker_price(), guarded _public_get()."""
+
+    def __init__(self, closes, price):
+        self.closes = list(closes)
+        self.price = float(price)
+        self.open_ms = int(time.time() * 1000 // 900_000 * 900_000)
+        self.public_reads = []
+
+    def _public_get(self, path, *, ttl_seconds, invalid_message):
+        self.public_reads.append((path, ttl_seconds, invalid_message))
+        if "/klines?" in path:
+            start = self.open_ms - (len(self.closes) - 1) * 900_000
+            return [[start + i * 900_000, "0", "0", "0", str(close), "0"] for i, close in enumerate(self.closes)]
+        if "/ticker/price?" in path:
+            symbol = path.split("symbol=", 1)[1]
+            return {"symbol": symbol, "price": str(self.price)}
+        raise AssertionError(path)
+
+    def klines(self, *, symbol, interval, limit):
+        raise AssertionError("force_refresh must use guarded pre-order path")
+
+    def ticker_prices(self):
+        raise AssertionError("force_refresh must use guarded single-symbol pre-order price")
+
+
 def bands(closes):
     mean = sum(closes[-20:]) / 20
     sigma = (sum((x - mean) ** 2 for x in closes[-20:]) / 20) ** .5
@@ -75,6 +101,20 @@ def test_preorder_forces_fresh_live_price_and_rejects_stale_pass():
     market.price = (lower + upper) / 2
     with pytest.raises(BollingerEntryRejected): require_bollinger_entry(market, symbol="XRPUSDT", side="LONG", enabled=True, force_refresh=True, stage="pre_order")
     assert market.ticker_calls == 2
+
+
+def test_production_v3_shape_uses_guarded_one_second_preorder_reads():
+    closes = list(range(81, 101)); lower, _ = bands(closes)
+    market = FakeGuardedV3Market(closes, lower - 1)
+    result = require_bollinger_entry(
+        market, symbol="BTCUSDT", side="LONG", enabled=True,
+        force_refresh=True, stage="pre_order",
+    )
+    assert result is not None
+    assert len(market.public_reads) == 2
+    assert all(row[1] == 1 for row in market.public_reads)
+    assert market.public_reads[0][0] == "/fapi/v1/klines?interval=15m&symbol=BTCUSDT&limit=25"
+    assert market.public_reads[1][0] == "/fapi/v3/ticker/price?symbol=BTCUSDT"
 
 
 def test_stale_15m_data_fails_closed():
