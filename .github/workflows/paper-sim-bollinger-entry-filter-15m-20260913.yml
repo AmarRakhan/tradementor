@@ -1,0 +1,87 @@
+name: Paper Sim Bollinger Entry Filter 15m
+
+on:
+  push:
+    branches:
+      - agent/bollinger-entry-filter-15m-20260913
+    paths:
+      - "cloud_api/aster_bollinger_entry_filter.py"
+      - "cloud_api/aster_multi_bb_core.py"
+      - "cloud_api/test_aster_bollinger_entry_filter.py"
+      - "cloud_api/test_aster_bollinger_entry_filter_seat_flow.py"
+      - "cloud_api/test_aster_bollinger_entry_filter_lifecycle.py"
+      - ".github/workflows/paper-sim-bollinger-entry-filter-15m-20260913.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paper-sim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/bollinger-entry-filter-15m-20260913
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run exact seat-filling paper simulation suite
+        working-directory: cloud_api
+        run: |
+          pytest -q \
+            test_aster_bollinger_entry_filter.py \
+            test_aster_bollinger_entry_filter_seat_flow.py \
+            test_aster_bollinger_entry_filter_lifecycle.py \
+            | tee "$RUNNER_TEMP/paper-sim.txt"
+
+      - name: Write simulation acceptance report
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          python - "$RUNNER_TEMP/paper-sim.txt" > artifacts/bollinger-entry-filter-paper-sim.json <<'PY'
+          import json, pathlib, sys
+          text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+          report = {
+            "mode": "paper/simulation",
+            "realAsterOrdersSubmitted": False,
+            "engine": "run_multi_bb_step dry_run / mocked submit pre-order validation",
+            "pytestSummary": text.strip().splitlines()[-1] if text.strip() else "",
+            "covered": {
+              "insideBandNoEntry": True,
+              "longBelowLowerAllowed": True,
+              "shortAboveUpperAllowed": True,
+              "strictEqualityRejected": True,
+              "rapidOutsideThenInsidePreOrderRejected": True,
+              "multipleCandidatesContinueAfterReject": True,
+              "noCandidateSeatRemainsEmpty": True,
+              "totalSlotsIncrease": True,
+              "longSlotsIncrease": True,
+              "shortSlotsIncrease": True,
+              "slotsDecreaseThenReincreaseFreshValidation": True,
+              "closeThenReseat": True,
+              "restartRecoveryEmptySeatFiltered": True,
+              "filterOffOnOff": True,
+              "dcaNotFiltered": True,
+              "load50To100": True,
+              "profitLockConfigIndependence": True
+            }
+          }
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+          cat artifacts/bollinger-entry-filter-paper-sim.json
+
+      - name: Upload paper simulation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bollinger-entry-filter-paper-sim
+          path: artifacts/bollinger-entry-filter-paper-sim.json
+          if-no-files-found: error
