@@ -1,6 +1,7 @@
 /* Hotfix: keep the liquidation needle clear of the percentage value.
-   The needle/hub stays inside the dial while the numeric value remains in its own lane below. */
-.aps-gauge-dial{bottom:26px}
+   Shift the complete dial upward without resizing it, so the arc, labels, needle and hub
+   stay aligned while the numeric risk value keeps its own clear lane below. */
+.aps-gauge-dial{top:7px;bottom:36px}
 .aps-gauge-value{bottom:11px;z-index:8}
-@media(max-width:640px){.aps-gauge-dial{bottom:24px}.aps-gauge-value{bottom:10px}}
-@media(max-width:380px){.aps-gauge-dial{bottom:23px}.aps-gauge-value{bottom:9px}}
+@media(max-width:640px){.aps-gauge-dial{top:5px;bottom:34px}.aps-gauge-value{bottom:10px}}
+@media(max-width:380px){.aps-gauge-dial{top:5px;bottom:33px}.aps-gauge-value{bottom:9px}}
