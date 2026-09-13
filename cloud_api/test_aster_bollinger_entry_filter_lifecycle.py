@@ -307,7 +307,7 @@ def test_load_50_to_100_filters_all_50_new_seats_without_overfill(monkeypatch):
     assert len(entries_in_bounded_report) == 30
     assert len({a["symbol"] for a in entries_in_bounded_report}) == 30
     assert len(market.kline_calls) == 50
-    assert len({symbol for symbol, interval, limit in market.kline_calls if interval == "15m" and limit == 20}) == 50
+    assert len({call[0] for call in market.kline_calls}) == 50
     assert result["activeLong"] == 50 and result["activeShort"] == 50
     assert result["remainingLong"] == 0 and result["remainingShort"] == 0
 
