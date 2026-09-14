@@ -73,4 +73,4 @@ jobs:
           git commit -m "Integrate Smart Rescue active-cycle override"
           git push origin HEAD:agent/smart-rescue-override-20260914
 
-# Revalidated after adding direct active-cycle route integration coverage.
+# Revalidated with hermetic route contract tests; no ADC required.
