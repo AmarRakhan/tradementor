@@ -40,6 +40,17 @@ import aster_multi_bb_core as _core
 from aster_multi_bb_portfolio import PortfolioCycleOrderBlocked, assert_order_allowed, portfolio_cycle_gate
 from aster_profit_lock_ladder import DEFAULT_LEVELS, account_summary, normalize_levels, public_levels
 from aster_profit_lock_ladder_runtime import run_profit_lock_ladder_gate
+from aster_smart_rescue import (
+    SMART_RESCUE_VERSION, DEFAULT_RESCUE_RANGE_PERCENT, DEFAULT_DCA_COUNT,
+    DEFAULT_ORDER_GROWTH_MULTIPLIER, DEFAULT_TRAILING_RECOVERY_PERCENT,
+    advance_state as advance_smart_rescue_state,
+    apply_fill as apply_smart_rescue_fill,
+    apply_failure as apply_smart_rescue_failure,
+    build_position_state as build_smart_rescue_position_state,
+    preview_ladder as smart_rescue_preview_ladder,
+    validate_config as validate_smart_rescue_config,
+)
+from aster_smart_rescue_runtime import active_keys as smart_rescue_active_keys, run_gate as run_smart_rescue_gate
 
 ENGINE = _core.ENGINE
 max_contract_leverage = _core.max_contract_leverage
@@ -173,6 +184,12 @@ class MultiBbConfig(_core.MultiBbConfig):
     pair_overrides: dict[str, dict[str, Any]] = field(default_factory=dict, compare=False)
     profit_lock_ladder_enabled: bool = False
     profit_lock_levels: tuple[tuple[float, float], ...] = DEFAULT_LEVELS
+    smart_rescue_enabled: bool = False
+    smart_rescue_version: int = SMART_RESCUE_VERSION
+    smart_rescue_range_percent: float = DEFAULT_RESCUE_RANGE_PERCENT
+    smart_rescue_dca_count: int = DEFAULT_DCA_COUNT
+    smart_rescue_order_growth_multiplier: float = DEFAULT_ORDER_GROWTH_MULTIPLIER
+    smart_rescue_trailing_recovery_percent: float = DEFAULT_TRAILING_RECOVERY_PERCENT
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any] | None) -> "MultiBbConfig":
@@ -197,6 +214,12 @@ class MultiBbConfig(_core.MultiBbConfig):
             "pair_overrides": _parse_pair_overrides(source.get("pairOverrides")),
             "profit_lock_ladder_enabled": profit_lock_enabled,
             "profit_lock_levels": normalize_levels(source.get("profitLockLevels")),
+            "smart_rescue_enabled": bool(source.get("smartRescueEnabled", False)),
+            "smart_rescue_version": max(1, _integer(source.get("smartRescueVersion"), SMART_RESCUE_VERSION)),
+            "smart_rescue_range_percent": _finite(source.get("smartRescueRangePercent"), DEFAULT_RESCUE_RANGE_PERCENT),
+            "smart_rescue_dca_count": _integer(source.get("smartRescueDcaCount"), DEFAULT_DCA_COUNT),
+            "smart_rescue_order_growth_multiplier": _finite(source.get("smartRescueOrderGrowthMultiplier"), DEFAULT_ORDER_GROWTH_MULTIPLIER),
+            "smart_rescue_trailing_recovery_percent": _finite(source.get("smartRescueTrailingRecoveryPercent"), DEFAULT_TRAILING_RECOVERY_PERCENT),
         })
         return cls(**values).validated()
 
@@ -209,6 +232,17 @@ class MultiBbConfig(_core.MultiBbConfig):
         if any(not 0 <= x <= _MAX_PAIR_DCA for x in (self.max_dca_long,self.max_dca_short)): raise ValueError(f"LONG/SHORT max DCA moet tussen 0 en {_MAX_PAIR_DCA} liggen")
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_take_profit_value,self.short_take_profit_value)): raise ValueError("LONG/SHORT Take Profit moet positief zijn")
         if not math.isfinite(self.portfolio_tp_percent) or not 0 < self.portfolio_tp_percent <= 10000: raise ValueError("Portfolio TP percentage moet groter dan 0 zijn")
+        if self.smart_rescue_enabled:
+            validate_smart_rescue_config(
+                rescue_range_percent=self.smart_rescue_range_percent,
+                dca_count=self.smart_rescue_dca_count,
+                order_growth_multiplier=self.smart_rescue_order_growth_multiplier,
+                trailing_recovery_percent=self.smart_rescue_trailing_recovery_percent,
+            )
+        if self.smart_rescue_enabled and self.asymmetric_hedge_enabled:
+            raise ValueError("Smart Rescue DCA kan niet tegelijk met Asymmetrische Hedge actief zijn")
+        if self.smart_rescue_enabled and self.profit_lock_ladder_enabled:
+            raise ValueError("Smart Rescue DCA en Profit Lock Ladder zijn twee verschillende LONG-modi en kunnen niet tegelijk actief zijn")
         return self
 
     def public_dict(self) -> dict[str, Any]:
@@ -232,6 +266,13 @@ class MultiBbConfig(_core.MultiBbConfig):
             "profitLockLadderEnabled":self.profit_lock_ladder_enabled,
             "profitLockLevels":public_levels(self.profit_lock_levels),
             "profitLockPrimarySide":"LONG" if self.profit_lock_ladder_enabled else None,
+            "smartRescueEnabled":self.smart_rescue_enabled,
+            "smartRescueVersion":self.smart_rescue_version,
+            "smartRescueRangePercent":self.smart_rescue_range_percent,
+            "smartRescueDcaCount":self.smart_rescue_dca_count,
+            "smartRescueOrderGrowthMultiplier":self.smart_rescue_order_growth_multiplier,
+            "smartRescueTrailingRecoveryPercent":self.smart_rescue_trailing_recovery_percent,
+            "smartRescuePrimarySide":"LONG" if self.smart_rescue_enabled else None,
         })
         payload["pairOverrides"] = {s:{"enabled":True,**dict(v)} for s,v in sorted(self.pair_overrides.items())}
         return payload
@@ -280,15 +321,21 @@ def _side_value(base: MultiBbConfig, override: dict[str,Any], side: str, kind: s
 
 
 class _PairAwareSettings:
-    def __init__(self,base:MultiBbConfig,blocked_side:str="",blocked_side_count:int=0):
+    def __init__(self,base:MultiBbConfig,blocked_side:str="",blocked_side_count:int=0,smart_rescue_keys:set[str]|None=None):
         object.__setattr__(self,"_base",base);object.__setattr__(self,"_blocked_side",str(blocked_side).upper())
         object.__setattr__(self,"_blocked_side_count",max(0,int(blocked_side_count)))
+        object.__setattr__(self,"_smart_rescue_keys",set(smart_rescue_keys or set()))
     def __getattr__(self,name:str)->Any:
         base:MultiBbConfig=object.__getattribute__(self,"_base")
         blocked_side=object.__getattribute__(self,"_blocked_side");blocked_count=object.__getattribute__(self,"_blocked_side_count")
+        smart_keys:set[str]=object.__getattribute__(self,"_smart_rescue_keys")
         # Profit Lock Ladder is LONG-only at execution time, but public/stored
         # LONG/SHORT choices remain untouched so turning the mode OFF restores them.
         if base.profit_lock_ladder_enabled:
+            if name=="long_slots": return base.maximum_positions
+            if name=="short_slots": return 0
+            if name=="manual_symbols": return tuple((symbol,"LONG") for symbol,_side in base.manual_symbols)
+        if base.smart_rescue_enabled:
             if name=="long_slots": return base.maximum_positions
             if name=="short_slots": return 0
             if name=="manual_symbols": return tuple((symbol,"LONG") for symbol,_side in base.manual_symbols)
@@ -298,6 +345,9 @@ class _PairAwareSettings:
             # Profit Lock SHORT legs protect LONG seats; they do not consume a user seat.
             return base.maximum_positions + blocked_count
         symbol,side=_execution_context_from_stack(); override=base.pair_overrides.get(symbol,{}) if symbol else {}
+        active_key=f"{symbol}|{side}" if symbol and side else ""
+        if active_key in smart_keys and name=="max_dca": return 0
+        if active_key in smart_keys and name=="unlimited_dca": return False
         if blocked_side and side==blocked_side and name=="take_profit_enabled": return False
         if blocked_side and side==blocked_side and name=="max_dca": return -1
         if name in {"entry_margin_usd","dca_distance","dca_margin_usd","max_dca","take_profit"}:
@@ -361,10 +411,40 @@ class _ExactStateMapRef:
 
 
 class _CoreWriteProxy:
-    """Augment the core's existing atomic state write; never add a second write."""
-    def __init__(self,ref:Any,extra_report:dict[str,Any]): self._ref=ref; self._extra_report=extra_report
+    """Augment core writes and atomically stamp new Smart Rescue LONG cycles."""
+    def __init__(self,ref:Any,extra_report:dict[str,Any],settings:MultiBbConfig|None=None,timestamp_ms:int=0):
+        self._ref=ref; self._extra_report=extra_report; self._settings=settings; self._timestamp_ms=int(timestamp_ms)
+        self._smart_started_keys:set[str]=set()
+    def _stamp_smart_rescue(self,payload:dict[str,Any])->None:
+        settings=self._settings
+        if settings is None or not settings.smart_rescue_enabled or not isinstance(payload.get("multiBbPositions"),dict): return
+        state=dict(payload["multiBbPositions"]); changed=False
+        # Detect only genuinely new LONG cycles created in this execution tick.
+        # Existing/adopted/recovered positions must never be retrofitted merely
+        # because the user enabled Smart Rescue while they were already open.
+        for key,row in state.items():
+            if not str(key).endswith("|LONG") or not isinstance(row,dict): continue
+            if isinstance(row.get("smartRescue"),dict): continue
+            if _integer(row.get("cycleStartedAtMs")) != self._timestamp_ms: continue
+            if row.get("adoptedExisting") or row.get("recoveredFromSelectedOpenPosition"): continue
+            self._smart_started_keys.add(str(key))
+        for key in tuple(self._smart_started_keys):
+            row=state.get(key)
+            if not isinstance(row,dict) or isinstance(row.get("smartRescue"),dict): continue
+            entry=_finite(row.get("lastKnownEntry"),_finite(row.get("lastBotFillPrice")))
+            if entry<=0: continue
+            updated=dict(row)
+            updated["smartRescue"]=build_smart_rescue_position_state(
+                initial_entry_price=entry,start_margin_usd=settings.entry_margin_long_usd,
+                rescue_range_percent=settings.smart_rescue_range_percent,dca_count=settings.smart_rescue_dca_count,
+                order_growth_multiplier=settings.smart_rescue_order_growth_multiplier,
+                trailing_recovery_percent=settings.smart_rescue_trailing_recovery_percent,
+                config_version=settings.version)
+            updated["smartRescueStartedAtMs"]=self._timestamp_ms
+            state[key]=updated; changed=True
+        if changed: payload["multiBbPositions"]=state
     def set(self,row:dict[str,Any],merge:bool=True):
-        payload=dict(row)
+        payload=dict(row); self._stamp_smart_rescue(payload)
         if isinstance(payload.get("multiBbReport"),dict): payload["multiBbReport"]={**payload["multiBbReport"],**self._extra_report}
         return self._ref.set(payload,merge=merge)
     def __getattr__(self,name:str)->Any: return getattr(self._ref,name)
@@ -419,12 +499,27 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
             except TypeError: return before_order(intent,None)
         return None
 
+    smart_rescue=run_smart_rescue_gate(client=client,ref=runtime_ref,raw_state=raw_state,settings=settings,uid=uid,
+        account=account,positions=positions,open_orders=open_orders,timestamp_ms=timestamp_ms,dry_run=dry_run,
+        order_budget=order_budget,before_order=guarded_before_order)
+    if smart_rescue.get("stateChanged"):
+        raw_state={**raw_state,"multiBbPositions":smart_rescue.get("state",raw_state.get("multiBbPositions",{}))}
+    if smart_rescue.get("handled"):
+        report={"engine":ENGINE,"configVersion":settings.version,"status":"simulated" if dry_run else "running",
+            "action":"SMART_RESCUE_DCA","entryStatus":"SMART_RESCUE_EXECUTED" if not dry_run else "SMART_RESCUE_SIMULATED",
+            "entryReason":"Smart Rescue trailing-herstel activeerde maximaal één rescue per positie",
+            "ordersSent":int(smart_rescue.get("ordersSent",0)),"actions":smart_rescue.get("actions",[]),
+            "smartRescue":smart_rescue,"portfolioCycle":cycle_snapshot}
+        if not dry_run: ref.set({"multiBbReport":report},merge=True)
+        return report
+
     blocked_side=str(kwargs.get("dynamic_hedge_blocked_side","")).upper()
     if settings.profit_lock_ladder_enabled:
         blocked_side="SHORT"
     blocked_count=sum(1 for row in positions if str(row.get("positionSide","")).upper()==blocked_side and abs(_finite(row.get("positionAmt",0)))>0) if blocked_side in {"LONG","SHORT"} else 0
     core_kwargs=dict(kwargs); core_kwargs.pop("dynamic_hedge_blocked_side",None); core_kwargs["before_order"]=guarded_before_order
     core_kwargs.update({"raw_state":raw_state,"account":account,"positions":positions,"open_orders":open_orders,"order_budget":order_budget})
+    smart_keys=smart_rescue_active_keys(raw_state)
     runtime_settings=replace(settings,take_profit_mode="OFF") if settings.profit_lock_ladder_enabled else settings
     extra={"pairOverrideCount":len(settings.pair_overrides),"takeProfitMode":settings.take_profit_mode,
         "dynamicHedgeBlockedSide":blocked_side or None,
@@ -434,9 +529,14 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         "longTakeProfitValue":settings.long_take_profit_value,"shortTakeProfitValue":settings.short_take_profit_value,
         "portfolioCycle":cycle_snapshot,"profitLockLadderEnabled":settings.profit_lock_ladder_enabled,
         "takeProfitSuppressedByProfitLock":settings.profit_lock_ladder_enabled,
-        "profitLockLadder":profit_lock.report}
-    core_kwargs["ref"]=_CoreWriteProxy(runtime_ref,extra)
-    try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(runtime_settings,blocked_side,blocked_count),**core_kwargs)
+        "profitLockLadder":profit_lock.report,
+        "smartRescueEnabled":settings.smart_rescue_enabled,
+        "smartRescueRangePercent":settings.smart_rescue_range_percent,
+        "smartRescueDcaCount":settings.smart_rescue_dca_count,
+        "smartRescueOrderGrowthMultiplier":settings.smart_rescue_order_growth_multiplier,
+        "smartRescueTrailingRecoveryPercent":settings.smart_rescue_trailing_recovery_percent}
+    core_kwargs["ref"]=_CoreWriteProxy(runtime_ref,extra,settings=settings,timestamp_ms=timestamp_ms)
+    try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(runtime_settings,blocked_side,blocked_count,smart_keys),**core_kwargs)
     except PortfolioCycleOrderBlocked as exc:
         report={"status":"waiting","action":"PORTFOLIO_CYCLE_GUARD","ordersSent":0,"entryStatus":"PORTFOLIO_CYCLE_BLOCKED","entryReason":str(exc),"actions":[]}
     report.update(extra)

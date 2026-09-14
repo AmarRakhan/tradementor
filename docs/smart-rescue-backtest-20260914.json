@@ -1,0 +1,875 @@
+{
+  "generatedAt": "2026-09-14T17:18:37.813327+00:00",
+  "source": "https://fapi.asterdex.com",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "candleModel": "minute-close-only",
+  "candleCount": 43200,
+  "dataStart": "2026-08-15T17:18:00Z",
+  "dataEnd": "2026-09-14T17:17:00Z",
+  "note": "Behavioural/risk replay; no fees/funding, no claim of future profitability. Portfolio TP is covered separately by deterministic integration tests.",
+  "regimes": [
+    {
+      "name": "rising",
+      "start": "2026-08-19T12:18:00Z",
+      "end": "2026-08-20T00:17:00Z",
+      "returnPct": 8.120342977174676,
+      "maxDrawdownPct": 2.4284250636029903,
+      "travelPct": 53.050105724623364,
+      "rangePct": 8.449823596764228
+    },
+    {
+      "name": "choppy",
+      "start": "2026-09-11T18:18:00Z",
+      "end": "2026-09-12T06:17:00Z",
+      "returnPct": 0.0018135889630066515,
+      "maxDrawdownPct": 0.6408112724939241,
+      "travelPct": 14.50617576327562,
+      "rangePct": 0.673071548623505
+    },
+    {
+      "name": "normal_correction",
+      "start": "2026-08-25T02:18:00Z",
+      "end": "2026-08-25T14:17:00Z",
+      "returnPct": -2.3514367830306693,
+      "maxDrawdownPct": 3.600821523319242,
+      "travelPct": 38.86297029566824,
+      "rangePct": 3.735323869165841
+    },
+    {
+      "name": "strong_decline",
+      "start": "2026-08-28T08:18:00Z",
+      "end": "2026-08-28T20:17:00Z",
+      "returnPct": -2.941353413614334,
+      "maxDrawdownPct": 3.3854554977627016,
+      "travelPct": 33.95741241998016,
+      "rangePct": 3.504084726792156
+    },
+    {
+      "name": "crashlike_drawdown",
+      "start": "2026-08-21T02:18:00Z",
+      "end": "2026-08-21T14:17:00Z",
+      "returnPct": 2.802946666934303,
+      "maxDrawdownPct": 3.820187591516133,
+      "travelPct": 61.73057391485669,
+      "rangePct": 6.740502111539359
+    }
+  ],
+  "configs": {
+    "5pct-5dca-1.35x": {
+      "settings": {
+        "name": "5pct-5dca-1.35x",
+        "rescue_range": 5,
+        "dca_count": 5,
+        "growth": 1.35,
+        "recovery": 0.3,
+        "leverage": 50,
+        "start_margin": 0.15
+      },
+      "aggregate": {
+        "starts": 5,
+        "rescueOrders": 7,
+        "skippedLevels": 0,
+        "averageDcaCount": 1.4,
+        "maxDcaCount": 3,
+        "maxMarginUsedUsd": 0.9949312499999999,
+        "maxNotionalUsd": 49.746562499999996,
+        "largestPositionDrawdownPctOnMargin": 133.33364776862248,
+        "averageBreakEvenRecoveryPct": 0.46391302964390313,
+        "worstBreakEvenRecoveryPct": 1.422621982711858,
+        "rejectedOrders": 0,
+        "duplicateOrders": 0,
+        "tpEvents": 0
+      },
+      "perRegime": [
+        {
+          "regime": "rising",
+          "starts": 1,
+          "rescueOrders": 0,
+          "skippedLevels": 0,
+          "maxDcaCount": 0,
+          "maxMarginUsd": 0.15,
+          "maxNotionalUsd": 7.5,
+          "maxPositionDrawdownPctOnMargin": 0.3490585503055426,
+          "maxUnrealizedLossUsd": -0.0005235878254583138,
+          "averageBreakEvenRecoveryPct": 0.0,
+          "worstBreakEvenRecoveryPct": 0.0,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 64459.1,
+          "finalPrice": 69693.4,
+          "finalPnlUsd": 0.6090257232881,
+          "fills": []
+        },
+        {
+          "regime": "choppy",
+          "starts": 1,
+          "rescueOrders": 0,
+          "skippedLevels": 0,
+          "maxDcaCount": 0,
+          "maxMarginUsd": 0.15,
+          "maxNotionalUsd": 7.5,
+          "maxPositionDrawdownPctOnMargin": 17.106030183302405,
+          "maxUnrealizedLossUsd": -0.025659045274953607,
+          "averageBreakEvenRecoveryPct": 0.0,
+          "worstBreakEvenRecoveryPct": 0.0,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 77195.0,
+          "finalPrice": 77196.4,
+          "finalPnlUsd": 0.00013601917222561493,
+          "fills": []
+        },
+        {
+          "regime": "normal_correction",
+          "starts": 1,
+          "rescueOrders": 3,
+          "skippedLevels": 0,
+          "maxDcaCount": 3,
+          "maxMarginUsd": 0.9949312499999999,
+          "maxNotionalUsd": 49.746562499999996,
+          "maxPositionDrawdownPctOnMargin": 105.88574174366576,
+          "maxUnrealizedLossUsd": -1.0534903339020254,
+          "averageBreakEvenRecoveryPct": 0.584715605290446,
+          "worstBreakEvenRecoveryPct": 0.9590732741417529,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 79888.51084553527,
+          "finalPrice": 78959.8,
+          "finalPnlUsd": -0.5783080900228125,
+          "fills": [
+            {
+              "ts": 1787626980000,
+              "level": 1,
+              "price": 80779.4,
+              "marginUsd": 0.2025,
+              "averageEntry": 80814.18827338995,
+              "recoveryToBreakEvenPct": 0.043065773439709965
+            },
+            {
+              "ts": 1787644440000,
+              "level": 2,
+              "price": 79743.2,
+              "marginUsd": 0.273375,
+              "averageEntry": 80342.87505868293,
+              "recoveryToBreakEvenPct": 0.7520077682898751
+            },
+            {
+              "ts": 1787651700000,
+              "level": 3,
+              "price": 79129.6,
+              "marginUsd": 0.36905625,
+              "averageEntry": 79888.51084553527,
+              "recoveryToBreakEvenPct": 0.9590732741417529
+            }
+          ]
+        },
+        {
+          "regime": "strong_decline",
+          "starts": 1,
+          "rescueOrders": 3,
+          "skippedLevels": 0,
+          "maxDcaCount": 3,
+          "maxMarginUsd": 0.9949312499999999,
+          "maxNotionalUsd": 49.746562499999996,
+          "maxPositionDrawdownPctOnMargin": 133.33364776862248,
+          "maxUnrealizedLossUsd": -0.8403329975864953,
+          "averageBreakEvenRecoveryPct": 0.7125215658878655,
+          "worstBreakEvenRecoveryPct": 1.422621982711858,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 78552.22641609826,
+          "finalPrice": 77439.6,
+          "finalPnlUsd": -0.7046183421255601,
+          "fills": [
+            {
+              "ts": 1787912940000,
+              "level": 1,
+              "price": 79263.1,
+              "marginUsd": 0.2025,
+              "averageEntry": 79484.93948607176,
+              "recoveryToBreakEvenPct": 0.279877378088611
+            },
+            {
+              "ts": 1787926080000,
+              "level": 2,
+              "price": 78873.6,
+              "marginUsd": 0.273375,
+              "averageEntry": 79216.75169353608,
+              "recoveryToBreakEvenPct": 0.4350653368631274
+            },
+            {
+              "ts": 1787934420000,
+              "level": 3,
+              "price": 77450.4,
+              "marginUsd": 0.36905625,
+              "averageEntry": 78552.22641609826,
+              "recoveryToBreakEvenPct": 1.422621982711858
+            }
+          ]
+        },
+        {
+          "regime": "crashlike_drawdown",
+          "starts": 1,
+          "rescueOrders": 1,
+          "skippedLevels": 0,
+          "maxDcaCount": 1,
+          "maxMarginUsd": 0.35250000000000004,
+          "maxNotionalUsd": 17.625,
+          "maxPositionDrawdownPctOnMargin": 29.85474082846552,
+          "maxUnrealizedLossUsd": -0.04478211124269828,
+          "averageBreakEvenRecoveryPct": 0.09450191775339789,
+          "worstBreakEvenRecoveryPct": 0.09450191775339789,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 74633.16318142871,
+          "finalPrice": 76823.1,
+          "finalPnlUsd": 0.5171646863404484,
+          "fills": [
+            {
+              "ts": 1787282580000,
+              "level": 1,
+              "price": 74562.7,
+              "marginUsd": 0.2025,
+              "averageEntry": 74633.16318142871,
+              "recoveryToBreakEvenPct": 0.09450191775339789
+            }
+          ]
+        }
+      ]
+    },
+    "10pct-10dca-1.35x": {
+      "settings": {
+        "name": "10pct-10dca-1.35x",
+        "rescue_range": 10,
+        "dca_count": 10,
+        "growth": 1.35,
+        "recovery": 0.3,
+        "leverage": 50,
+        "start_margin": 0.15
+      },
+      "aggregate": {
+        "starts": 5,
+        "rescueOrders": 8,
+        "skippedLevels": 2,
+        "averageDcaCount": 1.6,
+        "maxDcaCount": 4,
+        "maxMarginUsedUsd": 1.4931571875,
+        "maxNotionalUsd": 74.657859375,
+        "largestPositionDrawdownPctOnMargin": 147.48164675631543,
+        "averageBreakEvenRecoveryPct": 0.3339921894513542,
+        "worstBreakEvenRecoveryPct": 1.1684027193668678,
+        "rejectedOrders": 0,
+        "duplicateOrders": 0,
+        "tpEvents": 0
+      },
+      "perRegime": [
+        {
+          "regime": "rising",
+          "starts": 1,
+          "rescueOrders": 0,
+          "skippedLevels": 0,
+          "maxDcaCount": 0,
+          "maxMarginUsd": 0.15,
+          "maxNotionalUsd": 7.5,
+          "maxPositionDrawdownPctOnMargin": 0.3490585503055426,
+          "maxUnrealizedLossUsd": -0.0005235878254583138,
+          "averageBreakEvenRecoveryPct": 0.0,
+          "worstBreakEvenRecoveryPct": 0.0,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 64459.1,
+          "finalPrice": 69693.4,
+          "finalPnlUsd": 0.6090257232881,
+          "fills": []
+        },
+        {
+          "regime": "choppy",
+          "starts": 1,
+          "rescueOrders": 1,
+          "skippedLevels": 0,
+          "maxDcaCount": 1,
+          "maxMarginUsd": 0.35250000000000004,
+          "maxNotionalUsd": 17.625,
+          "maxPositionDrawdownPctOnMargin": 17.106030183302405,
+          "maxUnrealizedLossUsd": -0.05269577028527566,
+          "averageBreakEvenRecoveryPct": 0.011356892269120955,
+          "worstBreakEvenRecoveryPct": 0.011356892269120955,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 77183.16461346734,
+          "finalPrice": 77196.4,
+          "finalPnlUsd": 0.0030223389881244237,
+          "fills": [
+            {
+              "ts": 1789153500000,
+              "level": 1,
+              "price": 77174.4,
+              "marginUsd": 0.2025,
+              "averageEntry": 77183.16461346734,
+              "recoveryToBreakEvenPct": 0.011356892269120955
+            }
+          ]
+        },
+        {
+          "regime": "normal_correction",
+          "starts": 1,
+          "rescueOrders": 4,
+          "skippedLevels": 0,
+          "maxDcaCount": 4,
+          "maxMarginUsd": 1.4931571875,
+          "maxNotionalUsd": 74.657859375,
+          "maxPositionDrawdownPctOnMargin": 104.2978585560165,
+          "maxUnrealizedLossUsd": -1.5573309714377441,
+          "averageBreakEvenRecoveryPct": 0.529450868643111,
+          "worstBreakEvenRecoveryPct": 1.083581254577548,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 79862.59962389781,
+          "finalPrice": 78959.8,
+          "finalPnlUsd": -0.8439631026560848,
+          "fills": [
+            {
+              "ts": 1787626980000,
+              "level": 1,
+              "price": 80779.4,
+              "marginUsd": 0.2025,
+              "averageEntry": 80814.18827338995,
+              "recoveryToBreakEvenPct": 0.043065773439709965
+            },
+            {
+              "ts": 1787634060000,
+              "level": 2,
+              "price": 80392.1,
+              "marginUsd": 0.273375,
+              "averageEntry": 80629.28104365205,
+              "recoveryToBreakEvenPct": 0.2950302873690802
+            },
+            {
+              "ts": 1787644440000,
+              "level": 3,
+              "price": 79743.2,
+              "marginUsd": 0.36905625,
+              "averageEntry": 80298.3132753721,
+              "recoveryToBreakEvenPct": 0.6961261591861057
+            },
+            {
+              "ts": 1787659860000,
+              "level": 4,
+              "price": 79006.5,
+              "marginUsd": 0.4982259375,
+              "averageEntry": 79862.59962389781,
+              "recoveryToBreakEvenPct": 1.083581254577548
+            }
+          ]
+        },
+        {
+          "regime": "strong_decline",
+          "starts": 1,
+          "rescueOrders": 2,
+          "skippedLevels": 2,
+          "maxDcaCount": 2,
+          "maxMarginUsd": 0.9216009374999999,
+          "maxNotionalUsd": 46.080046874999994,
+          "maxPositionDrawdownPctOnMargin": 147.48164675631543,
+          "maxUnrealizedLossUsd": -0.6645617156003442,
+          "averageBreakEvenRecoveryPct": 0.7006590791397871,
+          "worstBreakEvenRecoveryPct": 1.1684027193668678,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 78355.3325797605,
+          "finalPrice": 77439.6,
+          "finalPnlUsd": -0.5385338663118406,
+          "fills": [
+            {
+              "ts": 1787912940000,
+              "level": 2,
+              "price": 79263.1,
+              "marginUsd": 0.273375,
+              "averageEntry": 79447.71599726082,
+              "recoveryToBreakEvenPct": 0.23291543891270639
+            },
+            {
+              "ts": 1787934420000,
+              "level": 4,
+              "price": 77450.4,
+              "marginUsd": 0.4982259375,
+              "averageEntry": 78355.3325797605,
+              "recoveryToBreakEvenPct": 1.1684027193668678
+            }
+          ]
+        },
+        {
+          "regime": "crashlike_drawdown",
+          "starts": 1,
+          "rescueOrders": 1,
+          "skippedLevels": 0,
+          "maxDcaCount": 1,
+          "maxMarginUsd": 0.35250000000000004,
+          "maxNotionalUsd": 17.625,
+          "maxPositionDrawdownPctOnMargin": 29.85474082846552,
+          "maxUnrealizedLossUsd": -0.04478211124269828,
+          "averageBreakEvenRecoveryPct": 0.09450191775339789,
+          "worstBreakEvenRecoveryPct": 0.09450191775339789,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 74633.16318142871,
+          "finalPrice": 76823.1,
+          "finalPnlUsd": 0.5171646863404484,
+          "fills": [
+            {
+              "ts": 1787282580000,
+              "level": 1,
+              "price": 74562.7,
+              "marginUsd": 0.2025,
+              "averageEntry": 74633.16318142871,
+              "recoveryToBreakEvenPct": 0.09450191775339789
+            }
+          ]
+        }
+      ]
+    },
+    "20pct-25dca-1.20x": {
+      "settings": {
+        "name": "20pct-25dca-1.20x",
+        "rescue_range": 20,
+        "dca_count": 25,
+        "growth": 1.2,
+        "recovery": 0.3,
+        "leverage": 50,
+        "start_margin": 0.15
+      },
+      "aggregate": {
+        "starts": 5,
+        "rescueOrders": 11,
+        "skippedLevels": 6,
+        "averageDcaCount": 2.2,
+        "maxDcaCount": 6,
+        "maxMarginUsedUsd": 2.10161472,
+        "maxNotionalUsd": 105.080736,
+        "largestPositionDrawdownPctOnMargin": 132.45042188147355,
+        "averageBreakEvenRecoveryPct": 0.35181176159984295,
+        "worstBreakEvenRecoveryPct": 1.4519982561435718,
+        "rejectedOrders": 0,
+        "duplicateOrders": 0,
+        "tpEvents": 0
+      },
+      "perRegime": [
+        {
+          "regime": "rising",
+          "starts": 1,
+          "rescueOrders": 0,
+          "skippedLevels": 0,
+          "maxDcaCount": 0,
+          "maxMarginUsd": 0.15,
+          "maxNotionalUsd": 7.5,
+          "maxPositionDrawdownPctOnMargin": 0.3490585503055426,
+          "maxUnrealizedLossUsd": -0.0005235878254583138,
+          "averageBreakEvenRecoveryPct": 0.0,
+          "worstBreakEvenRecoveryPct": 0.0,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 64459.1,
+          "finalPrice": 69693.4,
+          "finalPnlUsd": 0.6090257232881,
+          "fills": []
+        },
+        {
+          "regime": "choppy",
+          "starts": 1,
+          "rescueOrders": 1,
+          "skippedLevels": 0,
+          "maxDcaCount": 1,
+          "maxMarginUsd": 0.32999999999999996,
+          "maxNotionalUsd": 16.499999999999996,
+          "maxPositionDrawdownPctOnMargin": 17.106030183302405,
+          "maxUnrealizedLossUsd": -0.049459593521997705,
+          "averageBreakEvenRecoveryPct": 0.012131319769803639,
+          "worstBreakEvenRecoveryPct": 0.012131319769803639,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 77183.76227324443,
+          "finalPrice": 77196.4,
+          "finalPnlUsd": 0.0027016367863569746,
+          "fills": [
+            {
+              "ts": 1789153500000,
+              "level": 1,
+              "price": 77174.4,
+              "marginUsd": 0.18,
+              "averageEntry": 77183.76227324443,
+              "recoveryToBreakEvenPct": 0.012131319769803639
+            }
+          ]
+        },
+        {
+          "regime": "normal_correction",
+          "starts": 1,
+          "rescueOrders": 6,
+          "skippedLevels": 1,
+          "maxDcaCount": 6,
+          "maxMarginUsd": 2.10161472,
+          "maxNotionalUsd": 105.080736,
+          "maxPositionDrawdownPctOnMargin": 116.36705904612363,
+          "maxUnrealizedLossUsd": -1.820140924554621,
+          "averageBreakEvenRecoveryPct": 0.6571600285204778,
+          "worstBreakEvenRecoveryPct": 1.4519982561435718,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 79660.51483871695,
+          "finalPrice": 78959.8,
+          "finalPnlUsd": -0.9243177894038789,
+          "fills": [
+            {
+              "ts": 1787624880000,
+              "level": 1,
+              "price": 80969.0,
+              "marginUsd": 0.18,
+              "averageEntry": 80919.96439015106,
+              "recoveryToBreakEvenPct": -0.060560967591227755
+            },
+            {
+              "ts": 1787626980000,
+              "level": 2,
+              "price": 80779.4,
+              "marginUsd": 0.216,
+              "averageEntry": 80864.29805640124,
+              "recoveryToBreakEvenPct": 0.10509864693379889
+            },
+            {
+              "ts": 1787634060000,
+              "level": 3,
+              "price": 80392.1,
+              "marginUsd": 0.2592,
+              "averageEntry": 80711.68963789847,
+              "recoveryToBreakEvenPct": 0.3975386112546664
+            },
+            {
+              "ts": 1787644440000,
+              "level": 4,
+              "price": 79743.2,
+              "marginUsd": 0.31104,
+              "averageEntry": 80439.46392191584,
+              "recoveryToBreakEvenPct": 0.8731326582277266
+            },
+            {
+              "ts": 1787651700000,
+              "level": 6,
+              "price": 79129.6,
+              "marginUsd": 0.4478976,
+              "averageEntry": 80059.96861910606,
+              "recoveryToBreakEvenPct": 1.175752966154331
+            },
+            {
+              "ts": 1787666160000,
+              "level": 7,
+              "price": 78520.4,
+              "marginUsd": 0.53747712,
+              "averageEntry": 79660.51483871695,
+              "recoveryToBreakEvenPct": 1.4519982561435718
+            }
+          ]
+        },
+        {
+          "regime": "strong_decline",
+          "starts": 1,
+          "rescueOrders": 3,
+          "skippedLevels": 4,
+          "maxDcaCount": 3,
+          "maxMarginUsd": 1.2577171200000001,
+          "maxNotionalUsd": 62.885856000000004,
+          "maxPositionDrawdownPctOnMargin": 132.45042188147355,
+          "maxUnrealizedLossUsd": -0.9770497726285438,
+          "averageBreakEvenRecoveryPct": 0.6469426792950669,
+          "worstBreakEvenRecoveryPct": 1.2829835773277454,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 78444.07591257464,
+          "finalPrice": 77439.6,
+          "finalPnlUsd": -0.8052530016930358,
+          "fills": [
+            {
+              "ts": 1787912940000,
+              "level": 3,
+              "price": 79263.1,
+              "marginUsd": 0.2592,
+              "averageEntry": 79454.12664890263,
+              "recoveryToBreakEvenPct": 0.2410032523363581
+            },
+            {
+              "ts": 1787926080000,
+              "level": 4,
+              "price": 78873.6,
+              "marginUsd": 0.31104,
+              "averageEntry": 79202.37766720749,
+              "recoveryToBreakEvenPct": 0.41684120822109705
+            },
+            {
+              "ts": 1787934420000,
+              "level": 7,
+              "price": 77450.4,
+              "marginUsd": 0.53747712,
+              "averageEntry": 78444.07591257464,
+              "recoveryToBreakEvenPct": 1.2829835773277454
+            }
+          ]
+        },
+        {
+          "regime": "crashlike_drawdown",
+          "starts": 1,
+          "rescueOrders": 1,
+          "skippedLevels": 1,
+          "maxDcaCount": 1,
+          "maxMarginUsd": 0.366,
+          "maxNotionalUsd": 18.3,
+          "maxPositionDrawdownPctOnMargin": 29.85474082846552,
+          "maxUnrealizedLossUsd": -0.045550243815953385,
+          "averageBreakEvenRecoveryPct": 0.09101301881402346,
+          "worstBreakEvenRecoveryPct": 0.09101301881402346,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 74630.56176417923,
+          "finalPrice": 76823.1,
+          "finalPnlUsd": 0.5376275987618032,
+          "fills": [
+            {
+              "ts": 1787282580000,
+              "level": 2,
+              "price": 74562.7,
+              "marginUsd": 0.216,
+              "averageEntry": 74630.56176417923,
+              "recoveryToBreakEvenPct": 0.09101301881402346
+            }
+          ]
+        }
+      ]
+    },
+    "custom-12pct-16dca-1.25x": {
+      "settings": {
+        "name": "custom-12pct-16dca-1.25x",
+        "rescue_range": 12,
+        "dca_count": 16,
+        "growth": 1.25,
+        "recovery": 0.3,
+        "leverage": 50,
+        "start_margin": 0.15
+      },
+      "aggregate": {
+        "starts": 5,
+        "rescueOrders": 10,
+        "skippedLevels": 5,
+        "averageDcaCount": 2,
+        "maxDcaCount": 5,
+        "maxMarginUsedUsd": 1.96805419921875,
+        "maxNotionalUsd": 98.4027099609375,
+        "largestPositionDrawdownPctOnMargin": 128.11920772602645,
+        "averageBreakEvenRecoveryPct": 0.33938693403853526,
+        "worstBreakEvenRecoveryPct": 1.2604687670399128,
+        "rejectedOrders": 0,
+        "duplicateOrders": 0,
+        "tpEvents": 0
+      },
+      "perRegime": [
+        {
+          "regime": "rising",
+          "starts": 1,
+          "rescueOrders": 0,
+          "skippedLevels": 0,
+          "maxDcaCount": 0,
+          "maxMarginUsd": 0.15,
+          "maxNotionalUsd": 7.5,
+          "maxPositionDrawdownPctOnMargin": 0.3490585503055426,
+          "maxUnrealizedLossUsd": -0.0005235878254583138,
+          "averageBreakEvenRecoveryPct": 0.0,
+          "worstBreakEvenRecoveryPct": 0.0,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 64459.1,
+          "finalPrice": 69693.4,
+          "finalPnlUsd": 0.6090257232881,
+          "fills": []
+        },
+        {
+          "regime": "choppy",
+          "starts": 1,
+          "rescueOrders": 1,
+          "skippedLevels": 0,
+          "maxDcaCount": 1,
+          "maxMarginUsd": 0.3375,
+          "maxNotionalUsd": 16.875,
+          "maxPositionDrawdownPctOnMargin": 17.106030183302405,
+          "maxUnrealizedLossUsd": -0.050538319109756424,
+          "averageBreakEvenRecoveryPct": 0.011861702908677607,
+          "worstBreakEvenRecoveryPct": 0.011861702908677607,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 77183.55419804955,
+          "finalPrice": 77196.4,
+          "finalPnlUsd": 0.0028085375202800593,
+          "fills": [
+            {
+              "ts": 1789153500000,
+              "level": 1,
+              "price": 77174.4,
+              "marginUsd": 0.1875,
+              "averageEntry": 77183.55419804955,
+              "recoveryToBreakEvenPct": 0.011861702908677607
+            }
+          ]
+        },
+        {
+          "regime": "normal_correction",
+          "starts": 1,
+          "rescueOrders": 5,
+          "skippedLevels": 1,
+          "maxDcaCount": 5,
+          "maxMarginUsd": 1.96805419921875,
+          "maxNotionalUsd": 98.4027099609375,
+          "maxPositionDrawdownPctOnMargin": 89.82386628953132,
+          "maxUnrealizedLossUsd": -1.747767678142167,
+          "averageBreakEvenRecoveryPct": 0.6085673919528856,
+          "worstBreakEvenRecoveryPct": 1.0109598328769565,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 79610.69561749784,
+          "finalPrice": 78959.8,
+          "finalPnlUsd": -0.8045387892504148,
+          "fills": [
+            {
+              "ts": 1787624880000,
+              "level": 1,
+              "price": 80969.0,
+              "marginUsd": 0.1875,
+              "averageEntry": 80921.05342510526,
+              "recoveryToBreakEvenPct": -0.05921596523946748
+            },
+            {
+              "ts": 1787634060000,
+              "level": 2,
+              "price": 80392.1,
+              "marginUsd": 0.234375,
+              "averageEntry": 80703.4297072388,
+              "recoveryToBreakEvenPct": 0.3872640560935725
+            },
+            {
+              "ts": 1787644440000,
+              "level": 4,
+              "price": 79743.2,
+              "marginUsd": 0.3662109375,
+              "averageEntry": 80325.83542007352,
+              "recoveryToBreakEvenPct": 0.7306396282987349
+            },
+            {
+              "ts": 1787651700000,
+              "level": 5,
+              "price": 79129.6,
+              "marginUsd": 0.457763671875,
+              "averageEntry": 79929.56847191621,
+              "recoveryToBreakEvenPct": 1.0109598328769565
+            },
+            {
+              "ts": 1787664780000,
+              "level": 6,
+              "price": 78843.4,
+              "marginUsd": 0.57220458984375,
+              "averageEntry": 79610.69561749784,
+              "recoveryToBreakEvenPct": 0.9731894077346315
+            }
+          ]
+        },
+        {
+          "regime": "strong_decline",
+          "starts": 1,
+          "rescueOrders": 3,
+          "skippedLevels": 3,
+          "maxDcaCount": 3,
+          "maxMarginUsd": 1.38138427734375,
+          "maxNotionalUsd": 69.0692138671875,
+          "maxPositionDrawdownPctOnMargin": 128.11920772602645,
+          "maxUnrealizedLossUsd": -1.058001213597232,
+          "averageBreakEvenRecoveryPct": 0.6504602591341335,
+          "worstBreakEvenRecoveryPct": 1.2604687670399128,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 78426.63810194748,
+          "finalPrice": 77439.6,
+          "finalPnlUsd": -0.8692702812257865,
+          "fills": [
+            {
+              "ts": 1787912940000,
+              "level": 3,
+              "price": 79263.1,
+              "marginUsd": 0.29296875,
+              "averageEntry": 79439.5317371107,
+              "recoveryToBreakEvenPct": 0.22259000355864256
+            },
+            {
+              "ts": 1787926680000,
+              "level": 4,
+              "price": 78763.1,
+              "marginUsd": 0.3662109375,
+              "averageEntry": 79131.96493054093,
+              "recoveryToBreakEvenPct": 0.46832200680384517
+            },
+            {
+              "ts": 1787934420000,
+              "level": 6,
+              "price": 77450.4,
+              "marginUsd": 0.57220458984375,
+              "averageEntry": 78426.63810194748,
+              "recoveryToBreakEvenPct": 1.2604687670399128
+            }
+          ]
+        },
+        {
+          "regime": "crashlike_drawdown",
+          "starts": 1,
+          "rescueOrders": 1,
+          "skippedLevels": 1,
+          "maxDcaCount": 1,
+          "maxMarginUsd": 0.384375,
+          "maxNotionalUsd": 19.21875,
+          "maxPositionDrawdownPctOnMargin": 29.85474082846552,
+          "maxUnrealizedLossUsd": -0.04700298929056675,
+          "averageBreakEvenRecoveryPct": 0.08665838215844435,
+          "worstBreakEvenRecoveryPct": 0.08665838215844435,
+          "rejectedOrders": 0,
+          "duplicateOrders": 0,
+          "tpEvents": 0,
+          "finalAverageEntry": 74627.31482951365,
+          "finalPrice": 76823.1,
+          "finalPnlUsd": 0.565479896224208,
+          "fills": [
+            {
+              "ts": 1787282580000,
+              "level": 2,
+              "price": 74562.7,
+              "marginUsd": 0.234375,
+              "averageEntry": 74627.31482951365,
+              "recoveryToBreakEvenPct": 0.08665838215844435
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
