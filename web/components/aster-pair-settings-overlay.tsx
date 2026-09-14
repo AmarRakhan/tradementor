@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { AsterSmartRescueOverride } from "@/components/aster-smart-rescue-override";
 
 type Settings = Record<string, unknown>;
 type Override = Record<string, unknown>;
@@ -65,7 +66,7 @@ function Input({ label, value, suffix, enabled, onToggle, onChange, muted }: { l
 }
 
 export function AsterPairSettingsOverlay() {
-  const [symbol, setSymbol] = useState(""); const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  const [symbol, setSymbol] = useState(""); const [open, setOpen] = useState(false); const [smartSymbol, setSmartSymbol] = useState(""); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [base, setBase] = useState<Settings>({}); const [draft, setDraft] = useState<Draft>(() => buildDraft({}, {}));
   const [customEnabled, setCustomEnabled] = useState(false); const [enabledFields, setEnabledFields] = useState<Set<FieldKey>>(new Set());
 
@@ -81,7 +82,22 @@ export function AsterPairSettingsOverlay() {
     } catch (error) { setMessage(error instanceof Error ? error.message : "Pair-instellingen konden niet worden geladen."); }
     finally { setBusy(false); }
   }, []);
-  const launch = useCallback(() => { const pair = currentPairFromDom(); if (!pair) return; setSymbol(pair); setOpen(true); void load(pair); }, [load]);
+  const launch = useCallback(async () => {
+    const pair = currentPairFromDom(); if (!pair) return;
+    setBusy(true); setMessage("");
+    try {
+      const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
+      const strategy2 = payload.strategy2 && typeof payload.strategy2 === "object" ? payload.strategy2 as Record<string, unknown> : {};
+      const positions = strategy2.multiBbPositions && typeof strategy2.multiBbPositions === "object" ? strategy2.multiBbPositions as Record<string, unknown> : {};
+      const managed = positions[`${pair}|LONG`];
+      const smart = managed && typeof managed === "object" ? (managed as Record<string, unknown>).smartRescue : null;
+      if (smart && typeof smart === "object") { setOpen(false); setSmartSymbol(pair); return; }
+      setSmartSymbol(""); setSymbol(pair); setOpen(true); await load(pair);
+    } catch (error) {
+      setSymbol(pair); setOpen(true); setSmartSymbol("");
+      setMessage(error instanceof Error ? error.message : "Actieve trade-strategie kon niet betrouwbaar worden vastgesteld.");
+    } finally { setBusy(false); }
+  }, [load]);
 
   useEffect(() => {
     let stopped = false;
@@ -135,6 +151,7 @@ export function AsterPairSettingsOverlay() {
     finally { setBusy(false); }
   }
 
+  if (smartSymbol) return <AsterSmartRescueOverride symbol={smartSymbol} onClose={() => setSmartSymbol("")} />;
   if (!open) return null;
   return <div style={{ position: "fixed", inset: 0, zIndex: 10030, background: "rgba(0,0,0,.80)", backdropFilter: "blur(8px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} role="dialog" aria-modal="true" aria-label={`${pairLabel} pair-instellingen`}>
     <section style={{ width: "min(100%,700px)", maxHeight: "92dvh", overflowY: "auto", borderRadius: "24px 24px 0 0", border: "1px solid rgba(88,240,174,.22)", background: "linear-gradient(180deg,#07100e,#020706)", color: "#f5f7f6", padding: "20px 17px calc(24px + env(safe-area-inset-bottom))" }}>
