@@ -36,7 +36,7 @@ jobs:
 
       - name: Run Smart Rescue override tests
         working-directory: cloud_api
-        run: pytest -q test_aster_smart_rescue_override.py test_aster_smart_rescue.py test_aster_smart_rescue_simulation.py
+        run: pytest -q test_aster_smart_rescue_override.py test_aster_smart_rescue_override_routes.py test_aster_smart_rescue.py test_aster_smart_rescue_simulation.py
 
       - name: Compile backend
         run: python -m py_compile cloud_api/main.py cloud_api/aster_smart_rescue_override.py
@@ -72,3 +72,5 @@ jobs:
           git add cloud_api/main.py web/components/aster-pair-settings-overlay.tsx
           git commit -m "Integrate Smart Rescue active-cycle override"
           git push origin HEAD:agent/smart-rescue-override-20260914
+
+# Revalidated after adding direct active-cycle route integration coverage.
