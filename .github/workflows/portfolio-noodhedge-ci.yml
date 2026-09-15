@@ -1,4 +1,3 @@
-# Re-run after exact Decimal hedge-quantity repair.
 name: Portfolio Noodhedge CI
 
 on:
@@ -21,9 +20,9 @@ jobs:
           cache: pip
           cache-dependency-path: cloud_api/requirements.txt
       - run: pip install -r cloud_api/requirements.txt pytest
-      - name: Emergency hedge and global guard tests
+      - name: Emergency hedge, reserve and global guard tests
         working-directory: cloud_api
-        run: pytest -q test_aster_portfolio_emergency_hedge.py test_aster_portfolio_emergency_guard.py
+        run: pytest -q test_aster_portfolio_emergency_hedge.py test_aster_portfolio_emergency_margin.py test_aster_portfolio_emergency_guard.py
       - name: Full backend regression suite
         working-directory: cloud_api
         run: pytest -q
@@ -43,7 +42,7 @@ jobs:
         run: npm ci
       - name: Focused Noodhedge lint
         working-directory: web
-        run: npx eslint components/aster-portfolio-emergency-hedge.tsx app/layout.tsx
+        run: npx eslint components/aster-portfolio-emergency-hedge.tsx components/aster-portfolio-emergency-reserve-note.tsx app/layout.tsx
       - name: Full production build
         working-directory: web
         run: npm run build
