@@ -94,7 +94,7 @@ export function AsterPortfolioEmergencyHedge() {
 
   useEffect(() => {
     if (!open) return;
-    const timer = window.setTimeout(() => { void refresh(true); }, 0);
+    const timer = window.setTimeout(() => { void refresh(false); }, 0);
     return () => window.clearTimeout(timer);
   }, [open, refresh]); // explicit open may propose current value only when no active saved config
 
