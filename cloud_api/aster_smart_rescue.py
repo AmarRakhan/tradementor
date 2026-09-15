@@ -5,6 +5,12 @@ from __future__ import annotations
 The actual Aster order submission remains in ``aster_multi_bb.py`` so the
 existing canonical execution, leverage-tier and portfolio guards remain the
 only live order path.  This module deliberately contains no exchange I/O.
+
+Smart Rescue is deliberately side-symmetric. LONG levels live below the cycle
+entry and trail a local low before buying on recovery. SHORT levels live above
+the cycle entry and trail a local high before selling on pullback. The default
+side remains LONG so persisted v1 LONG cycles and older callers remain fully
+backward compatible.
 """
 
 from copy import deepcopy
@@ -14,7 +20,7 @@ from typing import Any
 
 getcontext().prec = 64
 
-SMART_RESCUE_VERSION = 1
+SMART_RESCUE_VERSION = 2
 MAX_DCA_COUNT = 500
 MAX_DISPLAY_USD = Decimal("1000000000000000")
 
@@ -40,6 +46,13 @@ def _decimal(value: Any, default: str = "0") -> Decimal:
     return out if out.is_finite() else Decimal(default)
 
 
+def normalize_side(value: Any) -> str:
+    side = str(value or "LONG").strip().upper()
+    if side not in {"LONG", "SHORT"}:
+        raise ValueError("Smart Rescue side moet LONG of SHORT zijn")
+    return side
+
+
 def validate_config(*, rescue_range_percent: float, dca_count: int,
                     order_growth_multiplier: float,
                     trailing_recovery_percent: float) -> None:
@@ -53,13 +66,18 @@ def validate_config(*, rescue_range_percent: float, dca_count: int,
         raise ValueError("Smart Rescue herstelpercentage moet tussen 0% en 100% liggen")
 
 
-def level_drop_percent(rescue_range_percent: float, index: int, dca_count: int) -> float:
+def level_move_percent(rescue_range_percent: float, index: int, dca_count: int) -> float:
     """Progressive level curve; final level is forced exactly to the range."""
     if index < 1 or index > dca_count:
         raise ValueError("Smart Rescue level-index ligt buiten de ladder")
     if index == dca_count:
         return float(rescue_range_percent)
     return float(rescue_range_percent) * math.pow(index / dca_count, 1.5)
+
+
+def level_drop_percent(rescue_range_percent: float, index: int, dca_count: int) -> float:
+    """Backward-compatible LONG name for the side-neutral progressive curve."""
+    return level_move_percent(rescue_range_percent, index, dca_count)
 
 
 def order_margin_decimal(start_margin_usd: Any, multiplier: Any, index: int) -> Decimal:
@@ -80,16 +98,20 @@ def display_number(value: Decimal) -> tuple[float, bool]:
 
 def build_levels(*, initial_entry_price: float, rescue_range_percent: float,
                  dca_count: int, start_margin_usd: float,
-                 order_growth_multiplier: float) -> list[dict[str, Any]]:
+                 order_growth_multiplier: float, side: str = "LONG") -> list[dict[str, Any]]:
+    resolved_side = normalize_side(side)
     levels: list[dict[str, Any]] = []
     for index in range(1, dca_count + 1):
-        drop = level_drop_percent(rescue_range_percent, index, dca_count)
-        trigger = initial_entry_price * (1 - drop / 100.0)
+        move = level_move_percent(rescue_range_percent, index, dca_count)
+        trigger = initial_entry_price * (1 - move / 100.0) if resolved_side == "LONG" else initial_entry_price * (1 + move / 100.0)
         exact_margin = order_margin_decimal(start_margin_usd, order_growth_multiplier, index)
         margin, capped = display_number(exact_margin)
         levels.append({
             "index": index,
-            "dropPercent": drop,
+            "side": resolved_side,
+            "movePercent": move,
+            "dropPercent": move if resolved_side == "LONG" else None,
+            "risePercent": move if resolved_side == "SHORT" else None,
             "triggerPrice": trigger,
             "orderMarginUsd": margin,
             "orderMarginExact": format(exact_margin, "f") if capped else None,
@@ -103,7 +125,8 @@ def build_position_state(*, initial_entry_price: float, start_margin_usd: float,
                          rescue_range_percent: float, dca_count: int,
                          order_growth_multiplier: float,
                          trailing_recovery_percent: float,
-                         config_version: int) -> dict[str, Any]:
+                         config_version: int, side: str = "LONG") -> dict[str, Any]:
+    resolved_side = normalize_side(side)
     validate_config(
         rescue_range_percent=rescue_range_percent,
         dca_count=dca_count,
@@ -117,6 +140,7 @@ def build_position_state(*, initial_entry_price: float, start_margin_usd: float,
     return {
         "version": SMART_RESCUE_VERSION,
         "configVersion": int(config_version),
+        "side": resolved_side,
         "initialEntryPrice": float(initial_entry_price),
         "startMarginUsd": float(start_margin_usd),
         "rescueRangePercent": float(rescue_range_percent),
@@ -129,9 +153,11 @@ def build_position_state(*, initial_entry_price: float, start_margin_usd: float,
             dca_count=int(dca_count),
             start_margin_usd=float(start_margin_usd),
             order_growth_multiplier=float(order_growth_multiplier),
+            side=resolved_side,
         ),
         "armedIndex": None,
         "localLow": None,
+        "localHigh": None,
         "recoveryTriggerPrice": None,
         "filledCount": 0,
         "skippedCount": 0,
@@ -144,11 +170,20 @@ def _level_map(state: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return {int(row.get("index", 0)): row for row in state.get("levels", []) if isinstance(row, dict) and int(row.get("index", 0)) > 0}
 
 
-def advance_state(raw_state: dict[str, Any], *, mark_price: float) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Advance ARMED/local-low state and return at most one executable rescue.
+def _state_side(state: dict[str, Any]) -> str:
+    # Persisted v1 cycles did not carry a side and are LONG by definition.
+    try:
+        return normalize_side(state.get("side") or "LONG")
+    except ValueError:
+        return "LONG"
 
-    Deepest eligible level wins.  Crossing deeper levels before a recovery turns
-    shallower unfilled levels into SKIPPED and moves the single ARMED pointer.
+
+def advance_state(raw_state: dict[str, Any], *, mark_price: float) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Advance ARMED/extreme state and return at most one executable rescue.
+
+    LONG: deepest crossed lower level wins; local low trails downward; execute
+    only after recovery upward. SHORT: highest crossed upper level wins; local
+    high trails upward; execute only after pullback downward.
     """
     state = deepcopy(raw_state)
     if not math.isfinite(mark_price) or mark_price <= 0:
@@ -158,12 +193,20 @@ def advance_state(raw_state: dict[str, Any], *, mark_price: float) -> tuple[dict
     if not levels:
         return state, None
 
+    side = _state_side(state)
     armed_index = int(state.get("armedIndex") or 0)
-    pending_crossed = [
-        int(row.get("index", 0)) for row in levels
-        if str(row.get("status", "PENDING")) == "PENDING"
-        and mark_price <= _finite(row.get("triggerPrice"), -1)
-    ]
+    if side == "LONG":
+        pending_crossed = [
+            int(row.get("index", 0)) for row in levels
+            if str(row.get("status", "PENDING")) == "PENDING"
+            and mark_price <= _finite(row.get("triggerPrice"), -1)
+        ]
+    else:
+        pending_crossed = [
+            int(row.get("index", 0)) for row in levels
+            if str(row.get("status", "PENDING")) == "PENDING"
+            and mark_price >= _finite(row.get("triggerPrice"), math.inf)
+        ]
     deepest = max(pending_crossed, default=0)
 
     if deepest > armed_index:
@@ -175,7 +218,10 @@ def advance_state(raw_state: dict[str, Any], *, mark_price: float) -> tuple[dict
         if deepest in level_by_index:
             level_by_index[deepest]["status"] = "ARMED"
         state["armedIndex"] = deepest
-        state["localLow"] = mark_price
+        if side == "LONG":
+            state["localLow"] = mark_price
+        else:
+            state["localHigh"] = mark_price
         state["lastDecision"] = f"ARMED_{deepest}"
         armed_index = deepest
 
@@ -187,26 +233,49 @@ def advance_state(raw_state: dict[str, Any], *, mark_price: float) -> tuple[dict
     if armed.get("status") != "ARMED":
         state["armedIndex"] = None
         state["localLow"] = None
+        state["localHigh"] = None
         state["recoveryTriggerPrice"] = None
         return state, None
 
-    local_low = _finite(state.get("localLow"), mark_price)
-    local_low = min(local_low if local_low > 0 else mark_price, mark_price)
-    state["localLow"] = local_low
     recovery_percent = max(0.0, _finite(state.get("trailingRecoveryPercent")))
-    recovery_trigger = local_low * (1 + recovery_percent / 100.0)
-    state["recoveryTriggerPrice"] = recovery_trigger
     state["skippedCount"] = sum(1 for row in levels if row.get("status") == "SKIPPED")
+    epsilon = max(1e-12, mark_price * 1e-12)
 
-    if mark_price + max(1e-12, mark_price * 1e-12) < recovery_trigger:
+    if side == "LONG":
+        local_low = _finite(state.get("localLow"), mark_price)
+        local_low = min(local_low if local_low > 0 else mark_price, mark_price)
+        state["localLow"] = local_low
+        recovery_trigger = local_low * (1 + recovery_percent / 100.0)
+        state["recoveryTriggerPrice"] = recovery_trigger
+        if mark_price + epsilon < recovery_trigger:
+            state["lastDecision"] = f"TRAILING_{armed_index}"
+            return state, None
+        state["lastDecision"] = f"RECOVERY_READY_{armed_index}"
+        return state, {
+            "side": side,
+            "levelIndex": armed_index,
+            "triggerPrice": _finite(armed.get("triggerPrice")),
+            "localLow": local_low,
+            "recoveryTriggerPrice": recovery_trigger,
+            "orderMarginUsd": _finite(armed.get("orderMarginUsd")),
+            "orderMarginExact": armed.get("orderMarginExact"),
+            "amountDisplayCapped": bool(armed.get("amountDisplayCapped")),
+        }
+
+    local_high = _finite(state.get("localHigh"), mark_price)
+    local_high = max(local_high if local_high > 0 else mark_price, mark_price)
+    state["localHigh"] = local_high
+    recovery_trigger = local_high * (1 - recovery_percent / 100.0)
+    state["recoveryTriggerPrice"] = recovery_trigger
+    if mark_price - epsilon > recovery_trigger:
         state["lastDecision"] = f"TRAILING_{armed_index}"
         return state, None
-
     state["lastDecision"] = f"RECOVERY_READY_{armed_index}"
     return state, {
+        "side": side,
         "levelIndex": armed_index,
         "triggerPrice": _finite(armed.get("triggerPrice")),
-        "localLow": local_low,
+        "localHigh": local_high,
         "recoveryTriggerPrice": recovery_trigger,
         "orderMarginUsd": _finite(armed.get("orderMarginUsd")),
         "orderMarginExact": armed.get("orderMarginExact"),
@@ -232,6 +301,7 @@ def apply_fill(raw_state: dict[str, Any], *, level_index: int, fill_price: float
             break
     state["armedIndex"] = None
     state["localLow"] = None
+    state["localHigh"] = None
     state["recoveryTriggerPrice"] = None
     state["filledCount"] = sum(1 for row in levels if row.get("status") == "FILLED")
     state["skippedCount"] = sum(1 for row in levels if row.get("status") == "SKIPPED")
@@ -255,6 +325,7 @@ def apply_failure(raw_state: dict[str, Any], *, level_index: int, reason: str,
                 break
         state["armedIndex"] = None
         state["localLow"] = None
+        state["localHigh"] = None
         state["recoveryTriggerPrice"] = None
     state["lastFailureIndex"] = int(level_index)
     state["lastFailureReason"] = str(reason)[:500]
@@ -265,14 +336,16 @@ def apply_failure(raw_state: dict[str, Any], *, level_index: int, reason: str,
 
 def preview_ladder(*, initial_entry_price: float, start_margin_usd: float,
                    leverage: float, rescue_range_percent: float, dca_count: int,
-                   order_growth_multiplier: float) -> dict[str, Any]:
+                   order_growth_multiplier: float, side: str = "LONG") -> dict[str, Any]:
     """Deterministic trigger-fill preview used by tests/API/UI parity checks."""
+    resolved_side = normalize_side(side)
     levels = build_levels(
         initial_entry_price=initial_entry_price,
         rescue_range_percent=rescue_range_percent,
         dca_count=dca_count,
         start_margin_usd=start_margin_usd,
         order_growth_multiplier=order_growth_multiplier,
+        side=resolved_side,
     )
     leverage_d = _decimal(leverage, "1")
     start_margin_d = _decimal(start_margin_usd)
@@ -291,8 +364,12 @@ def preview_ladder(*, initial_entry_price: float, start_margin_usd: float,
         total_notional += notional_d
         total_qty += qty_d
         avg_d = total_notional / total_qty
-        pnl_d = total_qty * (price_d - avg_d)
-        recovery_d = (avg_d / price_d - Decimal(1)) * Decimal(100)
+        if resolved_side == "LONG":
+            pnl_d = total_qty * (price_d - avg_d)
+            recovery_d = (avg_d / price_d - Decimal(1)) * Decimal(100)
+        else:
+            pnl_d = total_qty * (avg_d - price_d)
+            recovery_d = (Decimal(1) - avg_d / price_d) * Decimal(100)
         margin_v, margin_cap = display_number(margin_d)
         total_margin_v, total_margin_cap = display_number(total_margin)
         total_notional_v, total_notional_cap = display_number(total_notional)
@@ -311,6 +388,7 @@ def preview_ladder(*, initial_entry_price: float, start_margin_usd: float,
     max_margin_v, max_margin_cap = display_number(total_margin)
     deepest = rows[-1] if rows else None
     return {
+        "side": resolved_side,
         "rows": rows,
         "maxMarginUsd": max_margin_v,
         "maxMarginExact": format(total_margin, "f") if max_margin_cap else None,
