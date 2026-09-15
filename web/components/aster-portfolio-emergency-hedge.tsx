@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 
@@ -87,12 +87,16 @@ export function AsterPortfolioEmergencyHedge() {
   }, [dirty]);
 
   useEffect(() => {
-    void refresh(false);
-    const timer = window.setInterval(() => void refresh(false), 5000);
-    return () => window.clearInterval(timer);
+    const first = window.setTimeout(() => { void refresh(false); }, 0);
+    const timer = window.setInterval(() => { void refresh(false); }, 5000);
+    return () => { window.clearTimeout(first); window.clearInterval(timer); };
   }, [refresh]);
 
-  useEffect(() => { if (open) void refresh(true); }, [open]); // explicit open may propose current value only when no active saved config
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(() => { void refresh(true); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [open, refresh]); // explicit open may propose current value only when no active saved config
 
   const triggerPercentage = draftStart > 0 ? draftTrigger / draftStart * 100 : 0;
   const maxLoss = Math.max(0, draftStart - draftTrigger);
@@ -151,7 +155,6 @@ export function AsterPortfolioEmergencyHedge() {
     finally { setBusy(false); }
   }
 
-  const summaryStart = armed || executing || locked ? Number(state.startPortfolioValue) : draftStart;
   const summaryTrigger = armed || executing || locked ? Number(state.triggerPortfolioValue) : draftTrigger;
   const summaryLoss = armed || executing || locked ? Number(state.maxAllowedLoss) : maxLoss;
   const current = Number(state.currentPortfolioValue) || 0;
@@ -180,7 +183,7 @@ export function AsterPortfolioEmergencyHedge() {
       <section className="pnh-summary"><header><span>SAMENVATTING</span><b><i/> LIVE</b></header><div><article><small>Huidige portfoliowaarde</small><strong>{money(current)}</strong></article><article><small>Noodhedge trigger</small><strong>{money(summaryTrigger)}</strong></article><article><small>Beschermd verlies</small><strong>{money(summaryLoss)}</strong></article></div></section>
       {state.lastError ? <div className="pnh-error">⚠ {state.lastError}</div> : null}
       {message ? <div className="pnh-message">{message}</div> : null}
-      {locked ? <button type="button" className="pnh-unlock" disabled={busy} onClick={() => void unlock()}>Portfolio Lock handmatig beëindigen</button> : <button type="button" className="pnh-save" disabled={!draftEnabled || busy || executing || !dirty && armed} onClick={() => void save()}>{busy ? "Bezig…" : armed && !dirty ? "Actief · opgeslagen" : "Opslaan & activeren"}</button>}
+      {locked ? <button type="button" className="pnh-unlock" disabled={busy} onClick={() => void unlock()}>Portfolio Lock handmatig beëindigen</button> : <button type="button" className="pnh-save" disabled={!draftEnabled || busy || executing || (!dirty && armed)} onClick={() => void save()}>{busy ? "Bezig…" : armed && !dirty ? "Actief · opgeslagen" : "Opslaan & activeren"}</button>}
     </div> : null}
     <style>{styles}</style>
   </section>;

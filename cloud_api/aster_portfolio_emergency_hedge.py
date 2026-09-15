@@ -102,18 +102,25 @@ def calculations(start: float, trigger: float) -> dict[str, float]:
     }
 
 
-def aggregate_positions(rows: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
-    result: dict[str, dict[str, float]] = {}
+def _quantity(value: Any) -> Decimal:
+    try:
+        result = Decimal(str(value))
+    except Exception:
+        return Decimal("0")
+    return abs(result) if result.is_finite() else Decimal("0")
+
+
+def aggregate_positions(rows: list[dict[str, Any]]) -> dict[str, dict[str, Decimal]]:
+    result: dict[str, dict[str, Decimal]] = {}
     for row in rows:
         symbol = str(row.get("symbol", "")).upper().strip()
         side = str(row.get("positionSide", "")).upper().strip()
-        qty = abs(_number(row.get("positionAmt")))
+        qty = _quantity(row.get("positionAmt"))
         if not symbol or side not in {"LONG", "SHORT"} or qty <= 0:
-            continue
-        bucket = result.setdefault(symbol, {"LONG": 0.0, "SHORT": 0.0})
+  continue
+        bucket = result.setdefault(symbol, {"LONG": Decimal("0"), "SHORT": Decimal("0")})
         bucket[side] += qty
     return result
-
 
 def missing_hedges(rows: list[dict[str, Any]], rules: dict[str, ContractRules] | None = None) -> list[HedgeNeed]:
     needs: list[HedgeNeed] = []
@@ -123,7 +130,7 @@ def missing_hedges(rows: list[dict[str, Any]], rules: dict[str, ContractRules] |
         step = rule.market_quantity_step if rule else Decimal("0.00000001")
         minimum = rule.market_min_quantity if rule else Decimal("0")
         tolerance = max(step, minimum, Decimal("0.00000001"))
-        quantity = Decimal(str(abs(delta)))
+        quantity = abs(delta)
         if quantity <= tolerance:
             continue
         needs.append(HedgeNeed(
