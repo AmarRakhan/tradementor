@@ -1,3 +1,4 @@
+# Re-run after exact Decimal hedge-quantity repair.
 name: Portfolio Noodhedge CI
 
 on:
