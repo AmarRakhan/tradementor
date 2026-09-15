@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Server-side execution gate for Smart Rescue DCA.
+"""Server-side execution gate for side-aware Smart Rescue DCA.
 
 This module reuses the existing Multi-BB execution path for leverage, exchange
 rules and idempotent order submission. It only decides *when* and *how large*
-a Smart Rescue LONG add may be.
+a Smart Rescue LONG/SHORT add may be. No deployment or settings save opens an
+order; only an already-persisted Smart Rescue cycle can reach this gate.
 """
 
 from copy import deepcopy
@@ -38,7 +39,7 @@ def active_keys(raw_state: dict[str, Any]) -> set[str]:
     return {
         str(key) for key, row in state.items()
         if isinstance(row, dict) and isinstance(row.get("smartRescue"), dict)
-        and str(key).endswith("|LONG")
+        and (str(key).endswith("|LONG") or str(key).endswith("|SHORT"))
     }
 
 
@@ -53,14 +54,27 @@ def _position_map(positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _tp_due(settings: Any, row: dict[str, Any]) -> bool:
+def _tp_due(settings: Any, row: dict[str, Any], side: str) -> bool:
     if str(getattr(settings, "take_profit_mode", "PER_TRADE")) != "PER_TRADE":
         return False
     if not bool(getattr(settings, "take_profit_enabled", True)):
         return False
     entry = _f(row.get("entryPrice")); mark = _f(row.get("markPrice"), entry)
-    target = entry * (1 + _f(getattr(settings, "long_take_profit_value", getattr(settings, "take_profit", 0.0))))
-    return entry > 0 and mark >= target
+    if entry <= 0:
+        return False
+    if side == "SHORT":
+        pct = _f(getattr(settings, "short_take_profit_value", getattr(settings, "take_profit", 0.0)))
+        return mark <= entry * (1 - pct)
+    pct = _f(getattr(settings, "long_take_profit_value", getattr(settings, "take_profit", 0.0)))
+    return mark >= entry * (1 + pct)
+
+
+def _side_enabled(settings: Any, side: str) -> bool:
+    if not bool(getattr(settings, "smart_rescue_enabled", False)):
+        return False
+    if side == "SHORT":
+        return bool(getattr(settings, "smart_rescue_short_enabled", False))
+    return bool(getattr(settings, "smart_rescue_long_enabled", True))
 
 
 def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
@@ -72,9 +86,8 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
     state = deepcopy(raw_state.get("multiBbPositions") or {})
     configured_enabled = bool(getattr(settings, "smart_rescue_enabled", False))
     existing_keys = active_keys({"multiBbPositions": state})
-    # Turning the global toggle OFF only affects new cycles. Existing Smart
-    # Rescue cycles keep using the config snapshot stored in their position
-    # state until they close, exactly like the normal strategy-cycle contract.
+    # Turning the global or per-side toggle OFF only affects new cycles. Existing
+    # Smart Rescue cycles continue from the config snapshot in their position.
     if not configured_enabled and not existing_keys:
         return {"enabled": False, "handled": False, "ordersSent": 0, "actions": [], "state": state}
 
@@ -93,7 +106,7 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
         if row is None or not isinstance(st, dict):
             continue
         symbol, side = key.rsplit("|", 1)
-        if side != "LONG" or _tp_due(settings, row):
+        if side not in {"LONG", "SHORT"} or _tp_due(settings, row, side):
             continue
         smart = st.get("smartRescue")
         if not isinstance(smart, dict):
@@ -104,10 +117,9 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
         if mark <= 0 or qty <= 0:
             continue
 
-        # Crash/restart reconciliation: if Aster already shows a larger LONG
-        # quantity while a rescue level is still ARMED, the order may have
-        # filled after submission but before our state write. Consume that
-        # armed level from exchange truth instead of ever submitting it twice.
+        # Restart reconciliation is side-neutral: an increase in absolute
+        # exchange quantity while a level is ARMED means the add likely filled
+        # after submit but before our state write.
         previous_qty = abs(_f(st.get("lastKnownQty")))
         previous_entry = _f(st.get("lastKnownEntry"))
         armed_index = _i(smart.get("armedIndex"))
@@ -148,7 +160,8 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
             actions.append({
                 "kind": "SMART_RESCUE_STATE", "symbol": symbol, "side": side,
                 "decision": smart.get("lastDecision"), "armedIndex": smart.get("armedIndex"),
-                "localLow": smart.get("localLow"), "recoveryTriggerPrice": smart.get("recoveryTriggerPrice"),
+                "localLow": smart.get("localLow"), "localHigh": smart.get("localHigh"),
+                "recoveryTriggerPrice": smart.get("recoveryTriggerPrice"),
             })
         if executable is None or sent >= budget or (symbol, side) in order_keys:
             continue
@@ -158,31 +171,31 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
         if level_index <= 0 or margin <= 0 or bool(executable.get("amountDisplayCapped")):
             failed = apply_failure(smart, level_index=max(1, level_index), reason="SMART_RESCUE_ORDER_AMOUNT_NOT_EXECUTABLE", timestamp_ms=timestamp_ms, terminal=True)
             st = dict(st); st["smartRescue"] = failed; state[key] = st; state_changed = True
-            actions.append({"kind": "SMART_RESCUE_BLOCKED", "symbol": symbol, "level": level_index, "reason": "ORDER_AMOUNT_NOT_EXECUTABLE"})
+            actions.append({"kind": "SMART_RESCUE_BLOCKED", "symbol": symbol, "side": side, "level": level_index, "reason": "ORDER_AMOUNT_NOT_EXECUTABLE"})
             continue
 
         row_info = info_map.get(symbol)
         if row_info is None:
-            actions.append({"kind": "SMART_RESCUE_BLOCKED", "symbol": symbol, "level": level_index, "reason": "MARKET_METADATA_UNAVAILABLE"})
+            actions.append({"kind": "SMART_RESCUE_BLOCKED", "symbol": symbol, "side": side, "level": level_index, "reason": "MARKET_METADATA_UNAVAILABLE"})
             continue
         try:
             plan, tier = _core._plan_add(client, row_info, mark, margin, leverage, qty * mark, settings.minimum_leverage)
         except Exception as exc:
             failed = apply_failure(smart, level_index=level_index, reason=str(exc), timestamp_ms=timestamp_ms)
             st = dict(st); st["smartRescue"] = failed; state[key] = st; state_changed = True
-            actions.append({"kind": "SMART_RESCUE_BLOCKED", "symbol": symbol, "level": level_index, "reason": str(exc)})
+            actions.append({"kind": "SMART_RESCUE_BLOCKED", "symbol": symbol, "side": side, "level": level_index, "reason": str(exc)})
             continue
 
         required = _f(tier.get("additionalMarginRequired"), margin)
         if available < required * 1.05:
             failed = apply_failure(smart, level_index=level_index, reason="INSUFFICIENT_AVAILABLE_MARGIN", timestamp_ms=timestamp_ms)
             st = dict(st); st["smartRescue"] = failed; state[key] = st; state_changed = True
-            actions.append({"kind": "SMART_RESCUE_MARGIN_WAIT", "symbol": symbol, "level": level_index, "requiredMargin": required})
+            actions.append({"kind": "SMART_RESCUE_MARGIN_WAIT", "symbol": symbol, "side": side, "level": level_index, "requiredMargin": required})
             continue
 
         action = {
-            "kind": "SMART_RESCUE_DCA", "symbol": symbol, "side": "LONG", "level": level_index,
-            "marginUsd": margin, "localLow": executable.get("localLow"),
+            "kind": "SMART_RESCUE_DCA", "symbol": symbol, "side": side, "level": level_index,
+            "marginUsd": margin, "localLow": executable.get("localLow"), "localHigh": executable.get("localHigh"),
             "recoveryTriggerPrice": executable.get("recoveryTriggerPrice"),
             "leverage": tier.get("leverage"), "projectedNotional": tier.get("projectedNotional"),
         }
@@ -192,10 +205,12 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
             continue
 
         cycle_id = str(st.get("cycleId") or "cycle")
+        position_side = PositionSide.SHORT if side == "SHORT" else PositionSide.LONG
+        prefix = f"mbb-smart-rescue-short-{cycle_id}-{level_index}" if side == "SHORT" else f"mbb-smart-rescue-{cycle_id}-{level_index}"
         try:
             result = execute_leg_once(
-                client, plan, side=PositionSide.LONG, action="OPEN",
-                id_prefix=f"mbb-smart-rescue-{cycle_id}-{level_index}", confirm=True,
+                client, plan, side=position_side, action="OPEN",
+                id_prefix=prefix, confirm=True,
                 new_position_leverage=int(tier["leverage"]),
                 allow_existing_contract_leverage_change=True,
                 before_submit=before_order,
@@ -204,7 +219,7 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
             failed = apply_failure(smart, level_index=level_index, reason=str(exc), timestamp_ms=timestamp_ms,
                                    terminal=is_definite_contract_rejection(exc))
             st = dict(st); st["smartRescue"] = failed; state[key] = st; state_changed = True
-            actions.append({"kind": "SMART_RESCUE_ORDER_FAILED", "symbol": symbol, "level": level_index, "reason": str(exc)})
+            actions.append({"kind": "SMART_RESCUE_ORDER_FAILED", "symbol": symbol, "side": side, "level": level_index, "reason": str(exc)})
             if not is_definite_contract_rejection(exc):
                 if state_changed:
                     ref.set({"multiBbPositions": state}, merge=True)
@@ -231,10 +246,10 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
         })
         state[key] = st; state_changed = True
         ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                 "lastReason": f"Smart Rescue DCA {level_index} bevestigd op {symbol}"}, merge=True)
+                 "lastReason": f"Smart Rescue {side} DCA {level_index} bevestigd op {symbol}"}, merge=True)
         try:
             ref.collection("audit").add({"event": "SMART_RESCUE_DCA", "user": uid, "symbol": symbol,
-                "level": level_index, "fillPrice": fill_price, "fillQty": fill_qty,
+                "side": side, "level": level_index, "fillPrice": fill_price, "fillQty": fill_qty,
                 "marginUsd": actual_margin, "timestamp": datetime.now(timezone.utc)})
         except Exception:
             pass
@@ -242,5 +257,9 @@ def run_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: Any,
 
     if state_changed and not dry_run and sent == 0:
         ref.set({"multiBbPositions": state}, merge=True)
-    return {"enabled": configured_enabled or bool(existing_keys), "configuredEnabled": configured_enabled, "handled": sent > 0, "ordersSent": 0 if dry_run else sent,
-            "simulatedOrders": sent if dry_run else 0, "actions": actions, "stateChanged": state_changed, "state": state}
+    return {"enabled": configured_enabled or bool(existing_keys), "configuredEnabled": configured_enabled,
+            "configuredLongEnabled": _side_enabled(settings, "LONG"),
+            "configuredShortEnabled": _side_enabled(settings, "SHORT"),
+            "handled": sent > 0, "ordersSent": 0 if dry_run else sent,
+            "simulatedOrders": sent if dry_run else 0, "actions": actions,
+            "stateChanged": state_changed, "state": state}
