@@ -22,19 +22,9 @@ jobs:
 
           backend = Path("cloud_api/aster_portfolio_emergency_hedge.py")
           text = backend.read_text(encoding="utf-8")
-          old = '''def aggregate_positions(rows: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
-              result: dict[str, dict[str, float]] = {}
-              for row in rows:
-                  symbol = str(row.get("symbol", "")).upper().strip()
-                  side = str(row.get("positionSide", "")).upper().strip()
-                  qty = abs(_number(row.get("positionAmt")))
-                  if not symbol or side not in {"LONG", "SHORT"} or qty <= 0:
-                      continue
-                  bucket = result.setdefault(symbol, {"LONG": 0.0, "SHORT": 0.0})
-                  bucket[side] += qty
-              return result
-          '''.replace("          ", "")
-          new = '''def _quantity(value: Any) -> Decimal:
+          start = text.index("def aggregate_positions(")
+          end = text.index("\n\ndef missing_hedges", start)
+          replacement = '''def _quantity(value: Any) -> Decimal:
               try:
                   result = Decimal(str(value))
               except Exception:
@@ -53,25 +43,20 @@ jobs:
                   bucket = result.setdefault(symbol, {"LONG": Decimal("0"), "SHORT": Decimal("0")})
                   bucket[side] += qty
               return result
-          '''.replace("          ", "")
-          if old not in text:
-              raise SystemExit("backend aggregate block not found")
-          text = text.replace(old, new, 1)
+          '''
+          # YAML block indentation is removed by the workflow parser before Python runs;
+          # normalize only the indentation intentionally carried inside the string.
+          replacement = "\n".join(line[10:] if line.startswith("          ") else line for line in replacement.splitlines())
+          text = text[:start] + replacement + text[end:]
           text = text.replace('        quantity = Decimal(str(abs(delta)))\n', '        quantity = abs(delta)\n', 1)
           backend.write_text(text, encoding="utf-8")
 
           component = Path("web/components/aster-portfolio-emergency-hedge.tsx")
           text = component.read_text(encoding="utf-8")
           text = text.replace('import { useCallback, useEffect, useMemo, useState } from "react";', 'import { useCallback, useEffect, useState } from "react";', 1)
-          old_effect = '''  useEffect(() => {
-              void refresh(false);
-              const timer = window.setInterval(() => void refresh(false), 5000);
-              return () => window.clearInterval(timer);
-            }, [refresh]);
-
-            useEffect(() => { if (open) void refresh(true); }, [open]); // explicit open may propose current value only when no active saved config
-          '''.replace("          ", "")
-          new_effect = '''  useEffect(() => {
+          effect_start = text.index("  useEffect(() => {\n    void refresh(false);")
+          effect_end = text.index("\n\n  const triggerPercentage", effect_start)
+          effects = '''  useEffect(() => {
               const first = window.setTimeout(() => { void refresh(false); }, 0);
               const timer = window.setInterval(() => { void refresh(false); }, 5000);
               return () => { window.clearTimeout(first); window.clearInterval(timer); };
@@ -82,10 +67,9 @@ jobs:
               const timer = window.setTimeout(() => { void refresh(true); }, 0);
               return () => window.clearTimeout(timer);
             }, [open, refresh]); // explicit open may propose current value only when no active saved config
-          '''.replace("          ", "")
-          if old_effect not in text:
-              raise SystemExit("component effect block not found")
-          text = text.replace(old_effect, new_effect, 1)
+          '''
+          effects = "\n".join(line[10:] if line.startswith("          ") else line for line in effects.splitlines())
+          text = text[:effect_start] + effects + text[effect_end:]
           text = text.replace('  const summaryStart = armed || executing || locked ? Number(state.startPortfolioValue) : draftStart;\n', '', 1)
           text = text.replace('disabled={!draftEnabled || busy || executing || !dirty && armed}', 'disabled={!draftEnabled || busy || executing || (!dirty && armed)}', 1)
           component.write_text(text, encoding="utf-8")
