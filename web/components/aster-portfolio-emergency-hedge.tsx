@@ -77,7 +77,7 @@ export function AsterPortfolioEmergencyHedge() {
           const current = Number(next.currentPortfolioValue) || 0;
           setDraftStart(current);
           const storedTrigger = Number(next.triggerPortfolioValue) || 0;
-          setDraftTrigger(storedTrigger > 0 && storedTrigger < current ? storedTrigger : current * 0.867);
+          setDraftTrigger(storedTrigger > 0 && storedTrigger < current ? storedTrigger : current * 0.333);
         }
         setDirty(false);
       }
@@ -111,7 +111,7 @@ export function AsterPortfolioEmergencyHedge() {
     setDraftTrigger(clamp(value, 0.01, Math.max(0.01, draftStart - 0.01)));
     setDirty(true); setMessage("");
   };
-  const sliderPercentage = clamp(triggerPercentage || 50, 50, 99.9);
+  const sliderPercentage = clamp(triggerPercentage || 33.3, 10, 95);
 
   async function toggle(next: boolean) {
     if (locked || executing) return;
@@ -171,8 +171,8 @@ export function AsterPortfolioEmergencyHedge() {
 
       <div className={`pnh-config ${(draftEnabled && !locked && !executing) ? "enabled" : "muted"}`}>
         <article className="pnh-value-card"><div><small>STARTWAARDE</small><strong>{money(draftStart)}</strong></div><span>automatisch opgehaald</span></article>
-        <div className="pnh-trigger-head"><div><small>ALLES HEDGEN ONDER</small><strong>{money(draftTrigger)}</strong></div><b>{pct(triggerPercentage)}</b></div>
-        <div className="pnh-slider-wrap"><input aria-label="Noodhedge trigger percentage" type="range" min="50" max="99.9" step="0.1" value={sliderPercentage} disabled={!draftEnabled || locked || executing} onChange={(event) => setTrigger(draftStart * Number(event.target.value) / 100)}/><div className="pnh-slider-labels"><span>50%</span><span>Startwaarde</span></div></div>
+        <div className="pnh-trigger-head"><div><small>ALLES HEDGEN ALS NOG OVER IS</small><strong>{money(draftTrigger)}</strong></div><b>{pct(triggerPercentage)}</b></div>
+        <div className="pnh-slider-wrap"><input aria-label="Noodhedge trigger percentage" type="range" min="10" max="95" step="0.1" value={sliderPercentage} disabled={!draftEnabled || locked || executing} onChange={(event) => setTrigger(draftStart * Number(event.target.value) / 100)}/><div className="pnh-slider-labels"><span>10% resterend</span><span>95% resterend</span></div></div>
         <label className="pnh-manual"><span>Trigger handmatig</span><div><i>US$</i><input inputMode="decimal" type="number" min="0.01" max={Math.max(.01, draftStart - .01)} step="0.01" value={Number.isFinite(draftTrigger) ? draftTrigger.toFixed(2) : ""} disabled={!draftEnabled || locked || executing} onChange={(event) => setTrigger(Number(event.target.value))}/></div></label>
         <article className="pnh-loss"><small>MAX TOEGESTAAN VERLIES VANAF NU</small><strong>{money(maxLoss)}</strong><p>{pct(100 - triggerPercentage)} onder de gekozen startwaarde</p></article>
       </div>
