@@ -6,6 +6,8 @@ import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { AsterPortfolioSnapshotEnhancer } from "@/components/aster-portfolio-snapshot-enhancer";
+import { AsterPortfolioEmergencyHedge } from "@/components/aster-portfolio-emergency-hedge";
+import { AsterPortfolioEmergencyReserveNote } from "@/components/aster-portfolio-emergency-reserve-note";
 import { AsterProfitLockLadderBridge } from "@/components/aster-profit-lock-ladder-bridge";
 import { MarketsNavigationBridge } from "@/components/markets-navigation-bridge";
 import { NewsNavigationBridge } from "@/components/news-navigation-bridge";
@@ -75,6 +77,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
         <AsterPortfolioSnapshotEnhancer />
+        <AsterPortfolioEmergencyHedge />
+        <AsterPortfolioEmergencyReserveNote />
         <AsterProfitLockLadderBridge />
         <AuthProvider>{children}</AuthProvider>
         <AsterSideTpSettings />
