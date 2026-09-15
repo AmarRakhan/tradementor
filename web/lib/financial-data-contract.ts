@@ -12,6 +12,7 @@ export type FinancialMetricDefinition = {
 export const ASTER_FINANCIAL_DATA_CONTRACT = {
   portfolioEquity: { label: "Portfoliowaarde", origin: "aster_direct", source: "totalMarginBalance", tradingDecision: true },
   availableBalance: { label: "Available to trade", origin: "aster_direct", source: "availableBalance", tradingDecision: true },
+  spotStablecoinBalance: { label: "Profit Pot / Spot", origin: "aster_aggregate", source: "Spot V3 balances[USDC,USDT]", formula: "sum(free + locked) for USDC and USDT", tradingDecision: false },
   unrealizedPnl: { label: "Open PnL", origin: "aster_direct", source: "totalUnrealizedProfit / unRealizedProfit", tradingDecision: true },
   maintenanceMargin: { label: "Maintenance margin", origin: "aster_direct", source: "totalMaintMargin", tradingDecision: true },
   activeTradeCapital: { label: "Active Trade Capital", origin: "aster_aggregate", source: "positionInitialMargin", formula: "sum(positionInitialMargin) for active Aster positions", tradingDecision: false },
