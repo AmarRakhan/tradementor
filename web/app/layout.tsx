@@ -6,6 +6,7 @@ import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { AsterPortfolioSnapshotEnhancer } from "@/components/aster-portfolio-snapshot-enhancer";
+import { AsterProfitPotSnapshotBridge } from "@/components/aster-profit-pot-snapshot-bridge";
 import { AsterPortfolioEmergencyHedge } from "@/components/aster-portfolio-emergency-hedge";
 import { AsterPortfolioEmergencyReserveNote } from "@/components/aster-portfolio-emergency-reserve-note";
 import { AsterProfitLockLadderBridge } from "@/components/aster-profit-lock-ladder-bridge";
@@ -23,6 +24,7 @@ import "./aster-tables.css";
 import "./strategy2-reference.css";
 import "./markets-bridge.css";
 import "./portfolio-snapshot.css";
+import "./profit-pot-snapshot.css";
 import "./liquidation-gauge-hotfix.css";
 import "./portfolio-hedge.css";
 import "./home-transfer.css";
@@ -77,6 +79,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
         <AsterPortfolioSnapshotEnhancer />
+        <AsterProfitPotSnapshotBridge />
         <AsterPortfolioEmergencyHedge />
         <AsterPortfolioEmergencyReserveNote />
         <AsterProfitLockLadderBridge />
