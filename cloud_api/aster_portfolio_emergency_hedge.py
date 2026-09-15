@@ -117,10 +117,11 @@ def aggregate_positions(rows: list[dict[str, Any]]) -> dict[str, dict[str, Decim
         side = str(row.get("positionSide", "")).upper().strip()
         qty = _quantity(row.get("positionAmt"))
         if not symbol or side not in {"LONG", "SHORT"} or qty <= 0:
-  continue
+            continue
         bucket = result.setdefault(symbol, {"LONG": Decimal("0"), "SHORT": Decimal("0")})
         bucket[side] += qty
     return result
+
 
 def missing_hedges(rows: list[dict[str, Any]], rules: dict[str, ContractRules] | None = None) -> list[HedgeNeed]:
     needs: list[HedgeNeed] = []
