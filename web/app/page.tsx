@@ -441,6 +441,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
       {!positionsOnly && <section className="metric-strip" aria-label="Portefeuilleoverzicht">
         <Metric label="PORTFOLIOWAARDE" value={view.equity} detail={view.metricDetail} />
         <Metric label="AVAILABLE TO TRADE" value={view.available} detail="Direct van de exchange" />
+        {destination === "aster" && <AsterSpotProfitPotMetric cloudReady={cloudReady} refreshKey={snapshot.updatedAt} />}
         <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
         <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
         {isHyperliquid && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail="Perps maintenance margin" />}
@@ -992,6 +993,35 @@ function LiquidationRiskOrbit({ display }: { display: AsterAccountDisplay | null
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return <article className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article>;
+}
+
+function AsterSpotProfitPotMetric({ cloudReady, refreshKey }: { cloudReady: boolean; refreshKey: unknown }) {
+  const [state, setState] = useState<{ total: number | null; usdc: number; usdt: number; loading: boolean; error: string }>({ total: null, usdc: 0, usdt: 0, loading: false, error: "" });
+  useEffect(() => {
+    let cancelled = false;
+    if (!cloudReady) { setState({ total: null, usdc: 0, usdt: 0, loading: false, error: "Cloudverbinding niet gereed" }); return; }
+    setState((previous) => ({ ...previous, loading: true, error: "" }));
+    Promise.all([
+      authenticatedRequest("/api/exchanges/aster/spot-balance?asset=USDC"),
+      authenticatedRequest("/api/exchanges/aster/spot-balance?asset=USDT"),
+    ]).then(([usdcRaw, usdtRaw]) => {
+      if (cancelled) return;
+      const usdc = asNumber(usdcRaw.total);
+      const usdt = asNumber(usdtRaw.total);
+      setState({ total: usdc + usdt, usdc, usdt, loading: false, error: "" });
+    }).catch((error) => {
+      if (cancelled) return;
+      setState((previous) => ({ ...previous, loading: false, error: error instanceof Error ? error.message : "Spot-saldo niet beschikbaar" }));
+    });
+    return () => { cancelled = true; };
+  }, [cloudReady, refreshKey]);
+  const value = state.total === null ? (state.loading ? "Laden…" : "—") : formatUsd(state.total);
+  const detail = state.error
+    ? `Aster Spot · ${state.error}`
+    : state.loading
+      ? "Aster Spot wordt vernieuwd…"
+      : `Alleen-lezen · USDC ${formatUsd(state.usdc)} · USDT ${formatUsd(state.usdt)}`;
+  return <Metric label="PROFIT POT / SPOT" value={value} detail={detail} />;
 }
 
 
