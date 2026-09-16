@@ -7,6 +7,7 @@ import { AppVersionControl } from "@/components/app-version-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { AsterPortfolioSnapshotEnhancer } from "@/components/aster-portfolio-snapshot-enhancer";
 import { AsterProfitPotSnapshotBridge } from "@/components/aster-profit-pot-snapshot-bridge";
+import { AsterProfitSweepSettingsBridge } from "@/components/aster-profit-sweep-settings-bridge";
 import { AsterPortfolioEmergencyHedge } from "@/components/aster-portfolio-emergency-hedge";
 import { AsterPortfolioEmergencyReserveNote } from "@/components/aster-portfolio-emergency-reserve-note";
 import { AsterProfitLockLadderBridge } from "@/components/aster-profit-lock-ladder-bridge";
@@ -80,6 +81,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <Strategy2ReferenceEnhancer />
         <AsterPortfolioSnapshotEnhancer />
         <AsterProfitPotSnapshotBridge />
+        <AsterProfitSweepSettingsBridge />
         <AsterPortfolioEmergencyHedge />
         <AsterPortfolioEmergencyReserveNote />
         <AsterProfitLockLadderBridge />
