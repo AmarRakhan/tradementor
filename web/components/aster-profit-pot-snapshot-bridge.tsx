@@ -80,6 +80,7 @@ export function AsterProfitPotSnapshotBridge() {
           <strong>{value}</strong>
         </div>
       </article>
+      <div id="aster-profit-sweep-settings-host" />
     </div>,
     host,
   );
