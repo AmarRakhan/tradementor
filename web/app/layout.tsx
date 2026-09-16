@@ -25,6 +25,7 @@ import "./aster-tables.css";
 import "./strategy2-reference.css";
 import "./markets-bridge.css";
 import "./portfolio-snapshot.css";
+import "./aster-compact-chrome.css";
 import "./profit-pot-snapshot.css";
 import "./liquidation-gauge-hotfix.css";
 import "./portfolio-hedge.css";
