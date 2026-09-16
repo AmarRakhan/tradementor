@@ -27,9 +27,11 @@ test("existing Profit Pot value tile stays strictly read-only and settings are i
   assert.match(layout, /AsterProfitSweepSettingsBridge/);
 });
 
-test("configuration is explicit that automatic money movement is not active yet", () => {
-  assert.match(settingsBridge, /automatische Futures → Spot-transfer is in deze build nog niet actief/i);
-  assert.match(settingsBridge, /alleen per gebruiker opgeslagen/i);
+test("settings surface server-confirmed automatic Futures to Spot status", () => {
+  assert.match(settingsBridge, /automaticTransferEnabled/);
+  assert.match(settingsBridge, /Automatisch actief/);
+  assert.match(settingsBridge, /Futures naar Spot verplaatst/);
+  assert.match(settingsBridge, /verlies, onvoldoende vrije margin of onzekere transfer/);
 });
 
 test("Profit Sweep settings proxy exposes only GET and PUT configuration calls", () => {
