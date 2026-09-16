@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
-import { AsterBollingerEntryFilter15mCard } from "./aster-bollinger-entry-filter-15m-card";
+import { AsterBollingerEntryFilter15mCard, type BollingerEntryTimeframe } from "./aster-bollinger-entry-filter-15m-card";
 import {
   AsterProfitLockLadderPanel,
   DEFAULT_PROFIT_LOCK_LEVELS,
@@ -43,6 +43,13 @@ const money = (value: unknown) => `US$ ${new Intl.NumberFormat("nl-NL", { minimu
 const signedMoney = (value: unknown) => `${Number(value) >= 0 ? "+" : "-"}${money(Math.abs(Number(value) || 0))}`;
 const percent = (value: unknown) => `${new Intl.NumberFormat("nl-NL", { maximumFractionDigits: 1 }).format(Number(value) || 0)}%`;
 
+function normalizeBollingerTimeframe(value: unknown): BollingerEntryTimeframe {
+  const raw = String(value || "15m").toLowerCase();
+  if (raw === "1u") return "1h";
+  if (raw === "4u") return "4h";
+  return (["1m", "5m", "15m", "1h", "4h", "1d"] as const).includes(raw as BollingerEntryTimeframe) ? raw as BollingerEntryTimeframe : "15m";
+}
+
 function extract(snapshot: Record<string, unknown>) {
   const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
   const settings = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
@@ -69,6 +76,7 @@ export function AsterProfitLockLadderBridge() {
   const [message, setMessage] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [bbEnabled, setBbEnabled] = useState(false);
+  const [bbTimeframe, setBbTimeframe] = useState<BollingerEntryTimeframe>("15m");
   const [bbBusy, setBbBusy] = useState(false);
   const [bbMessage, setBbMessage] = useState("");
 
@@ -78,7 +86,10 @@ export function AsterProfitLockLadderBridge() {
       const next = extract(snapshot);
       setSettings(next.settings);
       setSummary(next.summary);
-      if (!bbBusy) setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
+      if (!bbBusy) {
+        setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
+        setBbTimeframe(normalizeBollingerTimeframe(next.settings.bollingerEntryFilterTimeframe));
+      }
       if (!dirty) {
         setEnabled(next.settings.profitLockLadderEnabled === true);
         setLevels(parseProfitLockLevels(next.settings.profitLockLevels));
@@ -125,9 +136,12 @@ export function AsterProfitLockLadderBridge() {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    const initial = window.setTimeout(() => { void refresh(); }, 0);
     const timer = window.setInterval(() => void refresh(), 15000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
   }, [refresh]);
 
   const conflictCount = Array.isArray(summary.normalShortConflicts) ? summary.normalShortConflicts.length : 0;
@@ -148,7 +162,7 @@ export function AsterProfitLockLadderBridge() {
     try {
       const latestSnapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
       const latestSettings = extract(latestSnapshot).settings;
-      const nextSettings = { ...latestSettings, bollingerEntryFilter15mEnabled: next };
+      const nextSettings = { ...latestSettings, bollingerEntryFilter15mEnabled: next, bollingerEntryFilterTimeframe: bbTimeframe };
       const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {
         method: "PUT",
         body: JSON.stringify({ settings: nextSettings }),
@@ -162,6 +176,30 @@ export function AsterProfitLockLadderBridge() {
     } catch (error) {
       setBbEnabled(previous);
       setBbMessage(error instanceof Error ? error.message : "Bollinger instapfilter kon niet worden opgeslagen.");
+    } finally { setBbBusy(false); }
+  }
+
+  async function changeBollingerTimeframe(next: BollingerEntryTimeframe) {
+    if (bbBusy || next === bbTimeframe) return;
+    const previous = bbTimeframe;
+    setBbTimeframe(next); setBbBusy(true); setBbMessage("Timeframe opslaan…");
+    try {
+      const latestSnapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
+      const latestSettings = extract(latestSnapshot).settings;
+      const nextSettings = { ...latestSettings, bollingerEntryFilterTimeframe: next };
+      const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {
+        method: "PUT",
+        body: JSON.stringify({ settings: nextSettings }),
+      }) as Record<string, unknown>;
+      const strategy2 = response.strategy2 && typeof response.strategy2 === "object" ? response.strategy2 as Record<string, unknown> : {};
+      const saved = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : nextSettings;
+      const confirmed = normalizeBollingerTimeframe(saved.bollingerEntryFilterTimeframe);
+      setSettings(saved); setBbTimeframe(confirmed);
+      setBbMessage(`${confirmed === "1h" ? "1u" : confirmed === "4h" ? "4u" : confirmed} · actief voor volgende primaire entry-check.`);
+      window.dispatchEvent(new Event("aster-strategy2-settings-changed"));
+    } catch (error) {
+      setBbTimeframe(previous);
+      setBbMessage(error instanceof Error ? error.message : "Bollinger-timeframe kon niet worden opgeslagen.");
     } finally { setBbBusy(false); }
   }
 
@@ -201,7 +239,7 @@ export function AsterProfitLockLadderBridge() {
   }
 
   const settingsUi = settingsHost ? createPortal(<div className="pll-bridge-wrap" data-reference={REFERENCE}>
-    <AsterBollingerEntryFilter15mCard enabled={bbEnabled} busy={bbBusy} message={bbMessage} onToggle={(next) => void toggleBollingerEntryFilter(next)} />
+    <AsterBollingerEntryFilter15mCard enabled={bbEnabled} busy={bbBusy} timeframe={bbTimeframe} message={bbMessage} onToggle={(next) => void toggleBollingerEntryFilter(next)} onTimeframeChange={(next) => void changeBollingerTimeframe(next)} />
     <AsterProfitLockLadderPanel enabled={enabled} levels={levels} conflictCount={conflictCount} onEnabledChange={setMode} onLevelsChange={setLadder} />
     <div className="pll-save-row"><span>{message || (dirty ? "Wijzigingen nog niet opgeslagen." : enabled ? "Profit Lock Ladder actief in opgeslagen configuratie." : "Optioneel · huidige trading blijft ongewijzigd zolang dit uit staat.")}</span><button type="button" disabled={busy || !dirty} onClick={save}>{busy ? "Opslaan…" : "Profit Lock opslaan"}</button></div>
     <style>{`.pll-bridge-wrap{display:contents}.pll-save-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-1px;padding:6px 8px;border:1px solid rgba(33,214,154,.16);border-radius:9px;background:rgba(3,17,13,.72)}.pll-save-row span{color:#8fa39a;font-size:8px;line-height:1.3}.pll-save-row button{min-height:30px;padding:0 10px;border:1px solid rgba(33,214,154,.52);border-radius:8px;background:rgba(19,115,78,.25);color:#8ff4c6;font-size:8px;font-weight:900;white-space:nowrap}.pll-save-row button:disabled{opacity:.38}@media(max-width:430px){.pll-save-row{align-items:stretch;flex-direction:column}.pll-save-row button{width:100%}}`}</style>
