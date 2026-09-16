@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 
@@ -33,6 +33,7 @@ export function AsterProfitPotSnapshotBridge() {
   const [saving, setSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const settingsAttempted = useRef(false);
 
   const loadSettings = useCallback(async () => {
     setLoadingSettings(true);
@@ -96,15 +97,16 @@ export function AsterProfitPotSnapshotBridge() {
   }, []);
 
   useEffect(() => {
-    if (!host || percent !== null || loadingSettings) return;
+    if (!host || settingsAttempted.current) return;
+    settingsAttempted.current = true;
     void loadSettings();
-  }, [host, percent, loadingSettings, loadSettings]);
+  }, [host, loadSettings]);
 
   const openSettings = () => {
     setSavedMessage("");
     setSettingsError("");
     setOpen(true);
-    void loadSettings();
+    if (!loadingSettings) void loadSettings();
   };
 
   const save = async () => {
