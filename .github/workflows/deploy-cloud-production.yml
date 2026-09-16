@@ -109,7 +109,7 @@ jobs:
         run: |
           REVISION_SUFFIX="gh-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
           TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true"             --no-traffic             --tag "$TAG"
+          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-candidate.json"
           python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
           import json
@@ -126,7 +126,7 @@ jobs:
           before_env = {item["name"]: item.get("value") for item in before_spec["containers"][0].get("env", [])}
           after_env = {item["name"]: item.get("value") for item in after_spec["containers"][0].get("env", [])}
           expected_env = dict(before_env)
-          expected_env.update({"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true"})
+          expected_env.update({"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
           assert after_env == expected_env
           candidate = next(row for row in after["status"]["traffic"] if row.get("tag") == tag)
           print(f'CANDIDATE_URL={candidate["url"]}')
