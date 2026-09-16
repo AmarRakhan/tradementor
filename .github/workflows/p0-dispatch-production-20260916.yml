@@ -1,0 +1,26 @@
+name: P0 Dispatch Production Backend 2026-09-16
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/p0-dispatch-production-20260916.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch-production:
+    if: github.event.head_commit.message == 'P0 trigger production backend deploy for emergency hedge kill switch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch guarded production backend workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND
