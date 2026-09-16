@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+# V2 is the guarded patch entrypoint used by CI after validating the live branch shape.
 ROOT = Path(__file__).resolve().parents[1]
 BASE_PATH = ROOT / "tools" / "apply_bollinger_entry_timeframes_20260916.py"
 spec = importlib.util.spec_from_file_location("bb_tf_base", BASE_PATH)
