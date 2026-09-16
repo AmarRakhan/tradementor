@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from aster_gateway import AsterOrderIntent, PositionSide
-from aster_portfolio_emergency_guard import emergency_blocks
+from aster_portfolio_emergency_guard import FEATURE_ENABLED, emergency_blocks
 
 
 def intent(action="OPEN", intent_id="tm-normal-order"):
@@ -14,31 +14,35 @@ def intent(action="OPEN", intent_id="tm-normal-order"):
     )
 
 
+def test_p0_kill_switch_is_disabled():
+    assert FEATURE_ENABLED is False
+
+
 def test_off_does_not_block_normal_open():
     assert emergency_blocks({"enabled": False, "status": "OFF"}, intent()) is False
 
 
-def test_armed_does_not_block_normal_open_before_trigger():
+def test_armed_stale_state_does_not_block_while_feature_disabled():
     assert emergency_blocks({"enabled": True, "status": "ARMED"}, intent()) is False
 
 
-def test_executing_blocks_normal_open():
-    assert emergency_blocks({"enabled": True, "status": "EXECUTING"}, intent()) is True
+def test_executing_stale_state_does_not_block_normal_open_while_feature_disabled():
+    assert emergency_blocks({"enabled": True, "status": "EXECUTING"}, intent()) is False
 
 
-def test_executing_blocks_close_to_prevent_reconciliation_race():
-    assert emergency_blocks({"enabled": True, "status": "EXECUTING"}, intent("CLOSE")) is True
+def test_executing_never_blocks_manual_close():
+    assert emergency_blocks({"enabled": True, "status": "EXECUTING"}, intent("CLOSE")) is False
 
 
-def test_locked_blocks_new_exposure():
-    assert emergency_blocks({"enabled": True, "status": "LOCKED"}, intent()) is True
+def test_locked_stale_state_does_not_block_while_feature_disabled():
+    assert emergency_blocks({"enabled": True, "status": "LOCKED"}, intent()) is False
 
 
 def test_locked_allows_explicit_manual_close():
     assert emergency_blocks({"enabled": True, "status": "LOCKED"}, intent("CLOSE")) is False
 
 
-def test_emergency_order_is_never_blocked_by_its_own_gate():
+def test_emergency_order_is_not_blocked_by_gate():
     assert emergency_blocks(
         {"enabled": True, "status": "EXECUTING"},
         intent("OPEN", "tm-eh-3-deadbeef"),
