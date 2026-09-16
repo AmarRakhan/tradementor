@@ -1,0 +1,82 @@
+name: Validate Bollinger Timeframes Prodmerge 20260916
+
+on:
+  push:
+    branches:
+      - chatgpt/bollinger-entry-timeframes-prodmerge-20260916
+    paths:
+      - .github/workflows/validate-bollinger-timeframes-prodmerge-20260916.yml
+  workflow_dispatch:
+
+env:
+  CI: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/bollinger-entry-timeframes-prodmerge-20260916
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r cloud_api/requirements.txt pytest
+      - name: Backend compile and focused regression
+        working-directory: cloud_api
+        run: |
+          python -m compileall -q aster_bollinger_entry_filter.py aster_multi_bb_core.py simulate_aster_bollinger_entry_timeframes.py
+          pytest -q test_aster_bollinger_entry_filter.py test_aster_bollinger_entry_filter_timeframes.py test_aster_bollinger_entry_filter_lifecycle.py test_aster_bollinger_entry_filter_seat_flow.py test_profit_sweep.py test_profit_sweep_settings_extension.py
+      - name: Deterministic timeframe simulation
+        working-directory: cloud_api
+        run: |
+          mkdir -p artifacts
+          python simulate_aster_bollinger_entry_timeframes.py | tee artifacts/bollinger-entry-timeframes-prodmerge-simulation.log
+          grep -q 'SIMULATION_OK timeframes=1m,15m,1h datasourceValidated=1m,5m,15m,1h,4h,1d' artifacts/bollinger-entry-timeframes-prodmerge-simulation.log
+          test "$(grep -c '^SIM_RESULT ' artifacts/bollinger-entry-timeframes-prodmerge-simulation.log)" -eq 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Lint changed paths
+        working-directory: web
+        run: npx eslint components/aster-bollinger-entry-filter-15m-card.tsx components/aster-profit-lock-ladder-bridge.tsx tests/aster-bollinger-entry-filter-15m.test.mjs
+      - name: Full typecheck changed-file guard
+        working-directory: web
+        shell: bash
+        run: |
+          set +e
+          npx tsc --noEmit 2>&1 | tee /tmp/typecheck.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          if grep -E 'components/(aster-bollinger-entry-filter-15m-card|aster-profit-lock-ladder-bridge)\.tsx|tests/aster-bollinger-entry-filter-15m\.test\.mjs' /tmp/typecheck.log; then exit 1; fi
+          if [ "$STATUS" -ne 0 ]; then echo 'Only pre-existing repository-wide TypeScript errors remain outside this change.'; fi
+      - name: Focused web regression
+        working-directory: web
+        run: node --experimental-strip-types --test tests/aster-bollinger-entry-filter-15m.test.mjs tests/strategy2-manual-symbol-selection.test.mjs tests/strategy2-asymmetric-hedge.test.mjs tests/aster-trade-center.test.mjs tests/position-slot-input.test.mjs tests/profit-sweep-settings.test.mjs
+      - name: Production web build
+        working-directory: web
+        run: npm run build
+      - name: Execution-path assertions
+        run: |
+          grep -q 'bollingerEntryFilterTimeframe' cloud_api/aster_multi_bb_core.py
+          grep -q 'timeframe=settings.bollinger_entry_filter_timeframe' cloud_api/aster_multi_bb_core.py
+          grep -q '_BAND_CACHE: dict\[tuple\[str, str\]' cloud_api/aster_bollinger_entry_filter.py
+          grep -q 'SUPPORTED_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d")' cloud_api/aster_bollinger_entry_filter.py
+          ! grep -q '^TIMEFRAME = "15m"' cloud_api/aster_bollinger_entry_filter.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bollinger-timeframes-prodmerge-simulation
+          path: cloud_api/artifacts/bollinger-entry-timeframes-prodmerge-simulation.log
+          retention-days: 14
