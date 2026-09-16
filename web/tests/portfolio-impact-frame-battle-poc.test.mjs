@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const component = readFileSync(new URL("../components/portfolio-impact-battle.tsx", import.meta.url), "utf8");
+const component = readFileSync(new URL("../components/portfolio-impact-battle-legacy.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../components/portfolio-impact-battle.module.css", import.meta.url), "utf8");
 const videoCss = readFileSync(new URL("../components/portfolio-impact-bull-bear-video.module.css", import.meta.url), "utf8");
 const btcRoute = readFileSync(new URL("../app/api/markets/aster/btc-bollinger/route.ts", import.meta.url), "utf8");
