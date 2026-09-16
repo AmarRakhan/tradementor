@@ -1,0 +1,110 @@
+name: Apply Bollinger Entry Timeframes V3 20260916
+
+on:
+  push:
+    branches:
+      - chatgpt/bollinger-entry-timeframes-20260916
+    paths:
+      - .github/workflows/apply-bollinger-entry-timeframes-v3-20260916.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CI: true
+
+jobs:
+  implement-test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/bollinger-entry-timeframes-20260916
+          fetch-depth: 0
+
+      - name: Apply targeted timeframe implementation
+        run: python tools/apply_bollinger_entry_timeframes_v3_20260916.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r cloud_api/requirements.txt pytest
+
+      - name: Backend syntax and focused unit integration regression
+        working-directory: cloud_api
+        run: |
+          python -m compileall -q aster_bollinger_entry_filter.py aster_multi_bb_core.py simulate_aster_bollinger_entry_timeframes.py
+          pytest -q test_aster_bollinger_entry_filter.py test_aster_bollinger_entry_filter_timeframes.py test_aster_bollinger_entry_filter_lifecycle.py test_aster_bollinger_entry_filter_seat_flow.py
+
+      - name: Reproducible Bollinger entry simulation
+        working-directory: cloud_api
+        run: |
+          mkdir -p artifacts
+          python simulate_aster_bollinger_entry_timeframes.py | tee artifacts/bollinger-entry-timeframes-simulation.log
+          grep -q 'SIMULATION_OK timeframes=1m,15m,1h datasourceValidated=1m,5m,15m,1h,4h,1d' artifacts/bollinger-entry-timeframes-simulation.log
+          test "$(grep -c '^SIM_RESULT ' artifacts/bollinger-entry-timeframes-simulation.log)" -eq 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Lint changed frontend paths
+        working-directory: web
+        run: npx eslint components/aster-bollinger-entry-filter-15m-card.tsx components/aster-profit-lock-ladder-bridge.tsx tests/aster-bollinger-entry-filter-15m.test.mjs
+
+      - name: Typecheck frontend
+        working-directory: web
+        run: npx tsc --noEmit
+
+      - name: Frontend and protected trading regression tests
+        working-directory: web
+        run: |
+          node --experimental-strip-types --test tests/aster-bollinger-entry-filter-15m.test.mjs tests/strategy2-manual-symbol-selection.test.mjs tests/strategy2-asymmetric-hedge.test.mjs tests/aster-trade-center.test.mjs tests/position-slot-input.test.mjs
+
+      - name: Production frontend build
+        working-directory: web
+        run: npm run build
+
+      - name: Verify hardcoded-15m removal on execution path
+        shell: bash
+        run: |
+          grep -q 'bollingerEntryFilterTimeframe' cloud_api/aster_multi_bb_core.py
+          grep -q 'timeframe=settings.bollinger_entry_filter_timeframe' cloud_api/aster_multi_bb_core.py
+          grep -q '_BAND_CACHE: dict\[tuple\[str, str\]' cloud_api/aster_bollinger_entry_filter.py
+          grep -q 'SUPPORTED_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d")' cloud_api/aster_bollinger_entry_filter.py
+          ! grep -q '^TIMEFRAME = "15m"' cloud_api/aster_bollinger_entry_filter.py
+          ! grep -q 'optionele 15m Bollinger-instapfilter' cloud_api/aster_multi_bb_core.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bollinger-entry-timeframes-v3-20260916-test-output
+          path: cloud_api/artifacts/bollinger-entry-timeframes-simulation.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          git config user.name "ChatGPT Bollinger Timeframe Agent"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cloud_api/aster_bollinger_entry_filter.py cloud_api/aster_multi_bb_core.py cloud_api/test_aster_bollinger_entry_filter_timeframes.py cloud_api/simulate_aster_bollinger_entry_timeframes.py web/components/aster-bollinger-entry-filter-15m-card.tsx web/components/aster-profit-lock-ladder-bridge.tsx web/tests/aster-bollinger-entry-filter-15m.test.mjs
+          if git diff --cached --quiet; then
+            echo "No implementation changes to commit"
+          else
+            git commit -m "Add selectable Bollinger entry timeframes"
+            git push origin HEAD:chatgpt/bollinger-entry-timeframes-20260916
+          fi
