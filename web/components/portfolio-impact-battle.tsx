@@ -46,7 +46,8 @@ const BATTLE_BY_LABEL = new Map<string, BattleTimeframe>(Object.entries(BATTLE_L
 const CHART_TIMEFRAMES = new Set<ChartTimeframe>(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1D", "1W"]);
 const DOUBLE_TAP_MS = 380;
 const DOUBLE_TAP_DISTANCE_PX = 44;
-const TOGGLE_DEDUPE_MS = 520;
+const TOGGLE_DEDUPE_MS = 750;
+const INTERACTIVE_SELECTOR = "button, a, input, select, textarea, [role='button'], [data-no-quickview]";
 
 function recordFrom(value: unknown): BattlePosition | null {
   return value && typeof value === "object" ? value as BattlePosition : null;
@@ -98,14 +99,14 @@ function eventElement(target: EventTarget | null) {
 
 function isInteractiveTarget(target: EventTarget | null) {
   const element = eventElement(target);
-  return Boolean(element?.closest("button, a, input, select, textarea, [role='button']"));
+  return Boolean(element?.closest(INTERACTIVE_SELECTOR));
 }
 
 function isToggleSurface(target: EventTarget | null, chartOpen: boolean) {
   const element = eventElement(target);
   if (!element || isInteractiveTarget(target)) return false;
   return chartOpen
-    ? Boolean(element.closest(".chart-stage"))
+    ? Boolean(element.closest("[data-btc-quickview-surface], .chart-stage"))
     : Boolean(element.closest("section[data-bollinger-score]"));
 }
 
@@ -202,12 +203,13 @@ export function PortfolioImpactBattle(props: Props) {
     }
   };
 
-  const handleDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+  const handleDoubleClickCapture = (event: MouseEvent<HTMLDivElement>) => {
     if (!isToggleSurface(event.target, chartOpen)) return;
+    event.preventDefault();
     toggleView();
   };
 
-  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+  const handlePointerUpCapture = (event: PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
     if (!isToggleSurface(event.target, chartOpen)) {
       lastTapRef.current = null;
@@ -219,6 +221,8 @@ export function PortfolioImpactBattle(props: Props) {
       const age = now - previous.at;
       const distance = Math.hypot(event.clientX - previous.x, event.clientY - previous.y);
       if (age > 0 && age <= DOUBLE_TAP_MS && distance <= DOUBLE_TAP_DISTANCE_PX) {
+        event.preventDefault();
+        lastTapRef.current = null;
         toggleView();
         return;
       }
@@ -231,11 +235,15 @@ export function PortfolioImpactBattle(props: Props) {
       ref={slotRef}
       data-btc-quick-view={chartOpen ? "chart" : "bull-bear"}
       onClickCapture={handleClickCapture}
-      onDoubleClick={handleDoubleClick}
-      onPointerUp={handlePointerUp}
+      onDoubleClickCapture={handleDoubleClickCapture}
+      onPointerUpCapture={handlePointerUpCapture}
     >
       {chartOpen
-        ? <SafeTradingChart selection={selection} mode="aster-detail" />
+        ? (
+          <div data-btc-quickview-surface="true">
+            <SafeTradingChart selection={selection} mode="aster-detail" />
+          </div>
+        )
         : <PortfolioImpactBullBear {...props} />}
     </div>
   );
