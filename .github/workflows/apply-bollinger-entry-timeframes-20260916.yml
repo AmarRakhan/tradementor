@@ -6,6 +6,7 @@ on:
       - chatgpt/bollinger-entry-timeframes-20260916
     paths:
       - tools/apply_bollinger_entry_timeframes_20260916.py
+      - tools/apply_bollinger_entry_timeframes_v2_20260916.py
       - .github/workflows/apply-bollinger-entry-timeframes-20260916.yml
   workflow_dispatch:
 
@@ -26,7 +27,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply targeted timeframe implementation
-        run: python tools/apply_bollinger_entry_timeframes_20260916.py
+        run: python tools/apply_bollinger_entry_timeframes_v2_20260916.py
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -98,6 +99,7 @@ jobs:
           grep -q '_BAND_CACHE: dict\[tuple\[str, str\]' cloud_api/aster_bollinger_entry_filter.py
           grep -q 'SUPPORTED_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d")' cloud_api/aster_bollinger_entry_filter.py
           ! grep -q '^TIMEFRAME = "15m"' cloud_api/aster_bollinger_entry_filter.py
+          ! grep -q 'optionele 15m Bollinger-instapfilter' cloud_api/aster_multi_bb_core.py
 
       - uses: actions/upload-artifact@v4
         with:
