@@ -1,0 +1,10 @@
+/* ASTER-only compact chrome cleanup.
+   The portfolio snapshot enhancer sets data-aster-compact-snapshot only while the
+   ASTER dashboard is active. Keep shared header/settings functionality mounted,
+   but remove these three visual blocks from the ASTER view so the existing
+   Portfolio Snapshot and everything below it naturally shifts upward. */
+html[data-aster-compact-snapshot="true"] .app-shell .workspace > .topbar,
+html[data-aster-compact-snapshot="true"] .app-shell .workspace > .mobile-context,
+html[data-aster-compact-snapshot="true"] .bot-health-card.compact-health {
+  display: none !important;
+}
