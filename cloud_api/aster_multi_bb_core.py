@@ -7,7 +7,7 @@ from typing import Any
 import hashlib, math, time
 
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
-from aster_bollinger_entry_filter import BollingerEntryRejected, require_bollinger_entry
+from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
@@ -39,6 +39,7 @@ class MultiBbConfig:
     short_slots: int = 10
     minimum_leverage: int = 50
     bollinger_entry_filter_15m_enabled: bool = False
+    bollinger_entry_filter_timeframe: str = DEFAULT_TIMEFRAME
     entry_margin_usd: float = 5.0
     entry_notional_usd: float = 250.0
     entry_sizing_mode: str = "notional"
@@ -82,6 +83,7 @@ class MultiBbConfig:
             short_slots=_i(raw.get("shortSlots", raw.get("maximumShortPositions")), 10),
             minimum_leverage=minimum_leverage,
             bollinger_entry_filter_15m_enabled=bool(raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False))),
+            bollinger_entry_filter_timeframe=normalize_bollinger_timeframe(raw.get("bollingerEntryFilterTimeframe", raw.get("bollinger_entry_filter_timeframe", DEFAULT_TIMEFRAME))),
             entry_margin_usd=entry_margin_usd,
             entry_notional_usd=entry_notional_usd,
             entry_sizing_mode=entry_sizing_mode,
@@ -125,6 +127,7 @@ class MultiBbConfig:
             "universeTopN": self.universe_top_n, "maximumPositions": self.maximum_positions,
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
             "bollingerEntryFilter15mEnabled": self.bollinger_entry_filter_15m_enabled,
+            "bollingerEntryFilterTimeframe": self.bollinger_entry_filter_timeframe,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit, "takeProfitEnabled": self.take_profit_enabled,
             "asymmetricHedgeModeEnabled": self.asymmetric_hedge_enabled, "shortStartMultiplier": self.short_start_multiplier,
@@ -845,8 +848,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # first and could starve a valid SHORT-above-upper-band entry forever.
         def candidate_bb_pass(candidate_side: str) -> bool:
             try:
-                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, live_price=prices[symbol],
-                                        force_refresh=False, stage="candidate", now_ms=timestamp_ms)
+                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=settings.bollinger_entry_filter_timeframe,
+                                        live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
                 return False
@@ -928,7 +931,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             def entry_before_submit(intent: Any) -> None:
                 require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
-                                        live_price=None, force_refresh=True, stage="pre_order")
+                                        timeframe=settings.bollinger_entry_filter_timeframe, live_price=None, force_refresh=True, stage="pre_order")
                 if before_order is not None:
                     before_order(intent)
             try:
@@ -1028,7 +1031,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
     elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
     elif entry_wait and all(str(a.get("reason", "")).startswith(("PRICE_", "BB_")) for a in entry_wait):
-        entry_status = "WAITING_BOLLINGER_ENTRY"; entry_reason = "Geen kandidaat voldoet nu aan het optionele 15m Bollinger-instapfilter; vrije stoel blijft leeg en wordt opnieuw gescand"
+        entry_status = "WAITING_BOLLINGER_ENTRY"; entry_reason = f"Geen kandidaat voldoet nu aan het optionele {settings.bollinger_entry_filter_timeframe} Bollinger-instapfilter; vrije stoel blijft leeg en wordt opnieuw gescand"
     elif entry_wait: entry_status = "ORDER_REJECTED"; entry_reason = str(entry_wait[0].get("reason", "Aster ordercheck afgewezen"))
     else: entry_status = "READY_FOR_ENTRY"; entry_reason = "verse exchange snapshot; geselecteerde munt is opnieuw entry-kandidaat"
     report = {"engine": ENGINE, "configVersion": settings.version,
@@ -1036,7 +1039,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "entryStatus": entry_status, "entryReason": entry_reason,
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
-              "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled,
+              "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled, "bollingerEntryFilterTimeframe": settings.bollinger_entry_filter_timeframe,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
               "asymmetricHedgeActivePairs": active_pair_count, "remainingPairs": pair_need if settings.asymmetric_hedge_enabled else None,
               "legacyPositionsDuringAsymmetric": legacy_position_count,
