@@ -12,6 +12,7 @@ export function AsterProfitSweepSettingsBridge() {
   const [open, setOpen] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [percent, setPercent] = useState<number | null>(null);
+  const [automaticTransferEnabled, setAutomaticTransferEnabled] = useState(false);
   const [draft, setDraft] = useState("25");
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -29,6 +30,7 @@ export function AsterProfitSweepSettingsBridge() {
       setEnabled(result.enabled === true);
       setPercent(next);
       setDraft(String(next));
+      setAutomaticTransferEnabled(result.automaticTransferEnabled === true);
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : "Profit sparen kon niet worden geladen");
     } finally {
@@ -83,10 +85,18 @@ export function AsterProfitSweepSettingsBridge() {
       });
       const saved = Number(result.sweepPercent);
       if (!Number.isFinite(saved)) throw new Error("Opslaan is niet bevestigd");
+      const automatic = result.automaticTransferEnabled === true;
       setEnabled(result.enabled === true);
       setPercent(saved);
       setDraft(String(saved));
-      setSavedMessage(result.enabled === true ? `Opgeslagen · nieuwe winstboekingen gebruiken ${saved}%` : "Opgeslagen · Profit sparen staat uit");
+      setAutomaticTransferEnabled(automatic);
+      setSavedMessage(
+        result.enabled === true
+          ? automatic
+            ? `Opgeslagen · automatisch sparen actief op ${saved}%`
+            : `Opgeslagen · nieuwe winstboekingen gebruiken ${saved}%`
+          : "Opgeslagen · Profit sparen staat uit",
+      );
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : "Opslaan is mislukt");
     } finally {
@@ -98,7 +108,7 @@ export function AsterProfitSweepSettingsBridge() {
     <button className="aps-profit-save-card" type="button" onClick={openSettings} aria-label="Profit sparen instellen">
       <small>PROFIT SPAREN</small>
       <strong>{percent === null ? "—" : enabled ? `${percent}%` : "UIT"}</strong>
-      <em>instellen</em>
+      <em>{enabled && automaticTransferEnabled ? "automatisch" : "instellen"}</em>
     </button>,
     host,
   ) : null;
@@ -139,7 +149,11 @@ export function AsterProfitSweepSettingsBridge() {
         </div>
 
         <div className="aps-profit-pot-formula">Voorbeeld: bij US$10 nettowinst en {draft || "0"}% sparen wordt US${exampleAmount.toFixed(2)} gereserveerd voor de Profit Pot.</div>
-        <div className="aps-profit-pot-config-only">Veiligheidsfase: automatische Futures → Spot-transfer is in deze build nog niet actief. Deze instelling wordt nu alleen per gebruiker opgeslagen.</div>
+        {enabled && automaticTransferEnabled ? (
+          <div className="aps-profit-pot-config-only"><strong>Automatisch actief.</strong> Na een bevestigde winstgevende Aster-sluiting wordt het ingestelde percentage veilig van Futures naar Spot verplaatst. Bij verlies, onvoldoende vrije margin of onzekere transfer wordt niets opnieuw verstuurd.</div>
+        ) : (
+          <div className="aps-profit-pot-config-only">Automatische Futures → Spot-transfer is nog niet actief voor deze instelling. Opslaan bewaart wel jouw percentage voor toekomstige winstboekingen.</div>
+        )}
         {loadingSettings && <div className="aps-profit-pot-message">Instelling laden…</div>}
         {settingsError && <div className="aps-profit-pot-error" role="alert">{settingsError}</div>}
         {savedMessage && <div className="aps-profit-pot-success">{savedMessage}</div>}
