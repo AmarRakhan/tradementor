@@ -1,7 +1,8 @@
 """Per-user Profit Sweep configuration routes.
 
-Configuration only: this module never transfers, withdraws or trades funds.
-The real money-movement layer is intentionally separate and remains disabled.
+The user controls whether savings are armed and which percentage applies to
+future closes.  The production money-movement gate is independent and exposed
+read-only so the UI can distinguish configured from actually live automation.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field
 
 import main
 from profit_sweep import DEFAULT_SWEEP_ENABLED, DEFAULT_SWEEP_PERCENT, ProfitSweepError, normalize_sweep_percent
+from profit_sweep_live import live_enabled
 
 
 class ProfitSweepSettingsRequest(BaseModel):
@@ -21,7 +23,7 @@ class ProfitSweepSettingsRequest(BaseModel):
 
 
 def _settings_doc(user: dict[str, Any]):
-    # Reuse the existing per-user Aster execution-controls document. merge=True below
+    # Reuse the existing per-user Aster execution-controls document. merge=True
     # guarantees that unrelated Aster settings remain untouched.
     return main.user_reference(user).collection("executionControls").document("aster")
 
@@ -41,14 +43,16 @@ def _current(data: dict[str, Any] | None) -> tuple[bool, float]:
 
 
 def _public(enabled: bool, percent: float) -> dict[str, Any]:
+    automatic = bool(enabled) and percent > 0 and live_enabled()
     return {
         "enabled": bool(enabled),
         "sweepPercent": percent,
-        "automaticTransferEnabled": False,
-        "mode": "CONFIG_ONLY",
+        "automaticTransferEnabled": automatic,
+        "mode": "LIVE_AUTO_TRANSFER" if automatic else ("ARMED_WAITING_GLOBAL_GATE" if enabled else "OFF"),
         "formula": "max(0, netRealizedProfit) * sweepPercent / 100",
         "principalIncluded": False,
         "unrealizedPnlIncluded": False,
+        "transferDirection": "FUTURE_SPOT" if automatic else None,
     }
 
 
@@ -78,8 +82,6 @@ def put_profit_sweep_settings(
             "profitSweep": {
                 "enabled": bool(request.enabled),
                 "sweepPercent": percent,
-                # Hard safety gate: config can be armed now, money movement cannot.
-                "automaticTransferEnabled": False,
                 "updatedAt": datetime.now(timezone.utc),
             }
         },
