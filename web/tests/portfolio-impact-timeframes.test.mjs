@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dominancePresentation, deriveBattleMetrics } from "../lib/portfolio-impact-battle.mjs";
 import { bollingerScore, scoreToTimelineTime, timeframeToAsterInterval } from "../lib/bollinger-battle.mjs";
 
-const component = readFileSync(new URL("../components/portfolio-impact-battle.tsx", import.meta.url), "utf8");
+const component = readFileSync(new URL("../components/portfolio-impact-battle-legacy.tsx", import.meta.url), "utf8");
 const page = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/markets/aster/pressure/route.ts", import.meta.url), "utf8");
 
