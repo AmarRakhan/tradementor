@@ -1,4 +1,4 @@
-export const WEBAPP_VERSION = "46";
+export const WEBAPP_VERSION = "AAVANSH-1";
 export function webappVersionLabel(buildNumber: string) {
-  return `Webapp versie ${WEBAPP_VERSION} · build ${buildNumber}`;
+  return `Aavansh Trading v1 · build ${buildNumber}`;
 }
