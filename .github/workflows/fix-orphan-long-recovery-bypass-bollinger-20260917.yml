@@ -1,0 +1,182 @@
+name: Fix orphan LONG recovery across Bollinger gate 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/fix-orphan-long-recovery-bypass-bollinger-20260917.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Add exact orphan-recovery regressions
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/test_short_requires_long_pairing_20260917.py')
+          s=p.read_text(encoding='utf-8')
+          if 'import aster_multi_bb_core as core\n' not in s:
+              s=s.replace('import time\n\n', 'import time\n\nimport aster_multi_bb_core as core\n')
+          marker='def test_pairing_truth_refresh_failure_blocks_new_seat_allocation():'
+          assert marker in s
+          tests='''
+
+def test_orphan_long_recovery_bypasses_bollinger_filter_when_pairing_invariant_is_broken(monkeypatch):
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    client = Client(
+        positions=[short],
+        tickers=[],
+        prices={"ZECUSDT": 100}, leverage=100,
+    )
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("orphan LONG recovery may not be blocked by Bollinger entry gate")
+    monkeypatch.setattr(core, "require_bollinger_entry", must_not_run)
+    result = core.run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1,
+                     shortRequiresLongEnabled=True, minimumLeverage=50,
+                     bollingerEntryFilter15mEnabled=True,
+                     bollingerEntryFilterTimeframe="30m"),
+        uid="u", account={"availableBalance": "1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]
+    assert entries, result
+    assert entries[0]["symbol"] == "ZECUSDT"
+    assert entries[0]["side"] == "LONG"
+    assert entries[0]["leverage"] == 75
+    assert entries[0].get("orphanShortPriority") is True
+    assert result["orphanLongReservedSlots"] == 1
+    assert result["orphanLongReservedRemaining"] == 0
+
+
+def test_orphan_long_seat_stays_reserved_with_bollinger_enabled_if_recovery_temporarily_fails(monkeypatch):
+    class BrokenZecLeverageClient(Client):
+        def leverage_brackets(self, symbol=None):
+            sym = symbol or "AAAUSDT"
+            if sym == "ZECUSDT":
+                raise RuntimeError("temporary ZEC leverage data failure")
+            return super().leverage_brackets(sym)
+
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    client = BrokenZecLeverageClient(
+        positions=[short],
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],
+        prices={"ZECUSDT": 100, "AAAUSDT": 100}, leverage=100,
+    )
+    monkeypatch.setattr(core, "require_bollinger_entry", lambda *args, **kwargs: None)
+    result = core.run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1,
+                     shortRequiresLongEnabled=True, minimumLeverage=50,
+                     bollingerEntryFilter15mEnabled=True,
+                     bollingerEntryFilterTimeframe="30m"),
+        uid="u", account={"availableBalance": "1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    assert not [a for a in result["actions"] if a.get("kind") == "ENTRY"], result
+    assert any(a.get("symbol") == "AAAUSDT" and a.get("reason") == "ORPHAN_LONG_SEAT_RESERVED" for a in result["actions"])
+    assert result["orphanLongReservedSlots"] == 1
+    assert result["orphanLongReservedRemaining"] == 1
+
+
+def test_orphan_live_preorder_source_bypasses_only_bollinger_not_pairing_safety():
+    source = Path(__file__).with_name("aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert "enabled=settings.bollinger_entry_filter_15m_enabled and not orphan_priority" in source
+    assert 'if short_requires_long_gate and side == "SHORT"' in source
+    assert '"stage": "pre_order"' in source
+
+'''
+          if 'test_orphan_long_recovery_bypasses_bollinger_filter_when_pairing_invariant_is_broken' not in s:
+              s=s.replace('\n'+marker, tests+'\n'+marker)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Prove current code violates the recovery invariant
+        shell: bash
+        run: |
+          set +e
+          cd cloud_api
+          python -m pytest -q --tb=short test_short_requires_long_pairing_20260917.py -k 'orphan_long_recovery_bypasses_bollinger_filter_when_pairing_invariant_is_broken or orphan_long_seat_stays_reserved_with_bollinger_enabled_if_recovery_temporarily_fails or orphan_live_preorder_source_bypasses_only_bollinger_not_pairing_safety'
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          echo ORPHAN_BOLLINGER_BUG_REPRODUCED
+
+      - name: Apply orphan recovery invariant
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_multi_bb_core.py')
+          s=p.read_text(encoding='utf-8')
+
+          old='''    # Bollinger OFF: exchange-confirmed orphan SHORTs reserve free LONG seats.\n    # Reservation comes from exchange truth, not later candidate viability.\n    orphan_long_reserved_slots = (\n        min(long_need, len(orphan_short_symbols))\n        if settings.short_requires_long_enabled\n        and not settings.asymmetric_hedge_enabled\n        and not settings.bollinger_entry_filter_15m_enabled\n        and long_need > 0 else 0\n    )\n'''
+          new='''    # Pairing invariant recovery has priority over normal entry signals.\n    # Any exchange-confirmed SHORT without a same-symbol LONG reserves a free\n    # LONG seat regardless of the Bollinger filter. This is recovery of an\n    # already-open exposure, not a fresh scanner entry. Ordinary LONG entries\n    # remain subject to Bollinger when that filter is enabled.\n    orphan_long_reserved_slots = (\n        min(long_need, len(orphan_short_symbols))\n        if settings.short_requires_long_enabled\n        and not settings.asymmetric_hedge_enabled\n        and long_need > 0 else 0\n    )\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        independent_bb_scan = (\n            settings.bollinger_entry_filter_15m_enabled\n            and not settings.asymmetric_hedge_enabled\n            and not (settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"))\n        )\n'''
+          new='''        independent_bb_scan = (\n            settings.bollinger_entry_filter_15m_enabled\n            and not orphan_priority\n            and not settings.asymmetric_hedge_enabled\n            and not (settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"))\n        )\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''            if settings.bollinger_entry_filter_15m_enabled and not candidate_bb_pass(side):\n                continue\n'''
+          new='''            if settings.bollinger_entry_filter_15m_enabled and not orphan_priority and not candidate_bb_pass(side):\n                continue\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''                require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,\n                                        timeframe=settings.bollinger_entry_filter_timeframe, live_price=None, force_refresh=True, stage="pre_order")\n'''
+          new='''                require_bollinger_entry(client, symbol=symbol, side=side,\n                                        enabled=settings.bollinger_entry_filter_15m_enabled and not orphan_priority,\n                                        timeframe=settings.bollinger_entry_filter_timeframe, live_price=None, force_refresh=True, stage="pre_order")\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        if orphan_priority:\n            entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})\n'''
+          new='''        if orphan_priority:\n            entry_action.update({"orphanShortPriority": True, "orphanPairRecovery": True,\n                                 "bollingerBypassedForPairRecovery": bool(settings.bollinger_entry_filter_15m_enabled),\n                                 "pairedContractLeverage": plan.leverage})\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+      - name: Run exact orphan recovery regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py -k 'orphan or pairing_truth_refresh_failure or new_short_is_blocked or short_can_open_when_same_symbol_long_already_exists'
+      - name: Run focused pairing and Bollinger suites
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py test_aster_bollinger_entry_filter_seat_flow.py test_same_symbol_dual_side_20260906.py test_aster_multi_bb.py
+      - name: Run full backend suite
+        working-directory: cloud_api
+        run: python -m pytest -q
+      - name: Commit verified recovery fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb_core.py cloud_api/test_short_requires_long_pairing_20260917.py
+          git diff --cached --quiet && { echo 'No repair to commit'; exit 1; }
+          git commit -m 'Treat orphan LONG as pairing recovery over Bollinger'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
