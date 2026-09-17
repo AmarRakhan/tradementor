@@ -1,0 +1,152 @@
+name: Retry Aavansh public verify 2026-09-17
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/retry-aavansh-public-verify-20260917.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: retry-aavansh-public-verify-20260917
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  BASE_CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  CLOUD_RUN_SERVICE: aavansh-trading-v1
+  IMAGE: europe-west4-docker.pkg.dev/tradementor-production/tradementor/aavansh-trading-web@sha256:3e53b57fe9f712773348b02b82c8d41b636d530f39992b342b14801c6204d913
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  deploy-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Verify isolation scope
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$CLOUD_RUN_SERVICE" = "aavansh-trading-v1"
+          test "$BASE_CLOUD_RUN_SERVICE" = "amar-bot-v44-direct-install"
+          test "$CLOUD_RUN_SERVICE" != "$BASE_CLOUD_RUN_SERVICE"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture Build 371 and current Aavansh state
+        shell: bash
+        run: |
+          gcloud run services describe "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-before.json"
+          gcloud run services get-iam-policy "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-iam-before.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/aavansh-before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/aavansh-iam-before.json"
+          python - "$RUNNER_TEMP/base-before.json" "$RUNNER_TEMP/aavansh-before.json" "$RUNNER_TEMP/aavansh-iam-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          base=json.load(open(sys.argv[1],encoding='utf-8'))
+          av=json.load(open(sys.argv[2],encoding='utf-8'))
+          iam=json.load(open(sys.argv[3],encoding='utf-8'))
+          base_live=[x for x in base['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          av_live=[x for x in av['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(base_live)==1 and len(av_live)==1
+          spec=base['spec']['template']['spec']
+          print('BASE_URL='+str(base['status']['url']))
+          print('BASE_REVISION='+str(base_live[0]['revisionName']))
+          print('BASE_RUNTIME_SERVICE_ACCOUNT='+str(spec.get('serviceAccountName','')))
+          print('BASE_TIMEOUT='+str(spec.get('timeoutSeconds',300)))
+          print('BASE_CONCURRENCY='+str(spec.get('containerConcurrency',80)))
+          print('AAVANSH_BEFORE_REVISION='+str(av_live[0]['revisionName']))
+          public=any(b.get('role')=='roles/run.invoker' and 'allUsers' in b.get('members',[]) for b in iam.get('bindings',[]))
+          print('AAVANSH_PUBLIC_BINDING_BEFORE='+('1' if public else '0'))
+          PY
+          echo "AAVANSH_PUBLIC_BINDING_BEFORE=$AAVANSH_PUBLIC_BINDING_BEFORE"
+
+      - name: Deploy exact tested Aavansh image only
+        id: deploy
+        shell: bash
+        run: |
+          SUFFIX="a2-e31fbd8c-${GITHUB_RUN_ATTEMPT}"
+          args=(
+            gcloud run deploy "$CLOUD_RUN_SERVICE"
+            --project "$GCP_PROJECT_ID"
+            --region "$GCP_REGION"
+            --image "$IMAGE"
+            --set-env-vars "AAVANSH_TRADING=1"
+            --timeout "$BASE_TIMEOUT"
+            --concurrency "$BASE_CONCURRENCY"
+            --revision-suffix "$SUFFIX"
+            --allow-unauthenticated
+            --quiet
+          )
+          if [ -n "$BASE_RUNTIME_SERVICE_ACCOUNT" ]; then
+            args+=(--service-account "$BASE_RUNTIME_SERVICE_ACCOUNT")
+          fi
+          "${args[@]}"
+
+      - name: Verify public Aavansh URL and PWA identity
+        shell: bash
+        run: |
+          AAVANSH_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          test -n "$AAVANSH_URL"
+          test "$AAVANSH_URL" != "$BASE_URL"
+          echo "AAVANSH_URL=$AAVANSH_URL" >> "$GITHUB_ENV"
+          echo "AAVANSH_URL=$AAVANSH_URL"
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 "$AAVANSH_URL/" > "$RUNNER_TEMP/root.html"
+          grep -q 'AAVANSH TRADING' "$RUNNER_TEMP/root.html"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/manifest.webmanifest" > "$RUNNER_TEMP/manifest.json"
+          grep -q '"name": "Aavansh Trading"' "$RUNNER_TEMP/manifest.json"
+          grep -q '"id": "/aavansh-trading-v1"' "$RUNNER_TEMP/manifest.json"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/sw.js" > "$RUNNER_TEMP/sw.js"
+          grep -q 'aavansh-trading-shell-v1' "$RUNNER_TEMP/sw.js"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/offline.html" > /dev/null
+
+      - name: Verify Build 371 remained untouched
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$BASE_URL/" > /dev/null
+          gcloud run services describe "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-after.json"
+          gcloud run services get-iam-policy "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-iam-after.json"
+          python - "$RUNNER_TEMP/base-before.json" "$RUNNER_TEMP/base-after.json" "$RUNNER_TEMP/base-iam-before.json" "$RUNNER_TEMP/base-iam-after.json" "$BASE_REVISION" <<'PY'
+          import json, sys
+          before=json.load(open(sys.argv[1],encoding='utf-8'))
+          after=json.load(open(sys.argv[2],encoding='utf-8'))
+          ib=json.load(open(sys.argv[3],encoding='utf-8'))
+          ia=json.load(open(sys.argv[4],encoding='utf-8'))
+          expected=sys.argv[5]
+          live=[x for x in after['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1 and live[0].get('revisionName')==expected
+          assert before['spec']==after['spec']
+          assert ib==ia
+          PY
+
+      - name: Roll back Aavansh traffic if verification fails
+        if: failure() && steps.deploy.outcome == 'success'
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$AAVANSH_BEFORE_REVISION=100" --quiet
+
+      - name: Publish verified link
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Aavansh Trading v1 verified live"
+            echo ""
+            echo "- Install/open URL: $AAVANSH_URL"
+            echo "- Exact image digest: sha256:3e53b57fe9f712773348b02b82c8d41b636d530f39992b342b14801c6204d913"
+            echo "- Build 371 unchanged: $BASE_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
