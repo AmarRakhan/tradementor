@@ -10,9 +10,14 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
 env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
   PROD_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
@@ -20,7 +25,7 @@ env:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
@@ -29,13 +34,27 @@ jobs:
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build ephemeral sanitized diagnostic service
+      - name: Capture live production revision
         shell: bash
         run: |
           set -euo pipefail
-          RUNTIME_SA="$(gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
-          test -n "$RUNTIME_SA"
-          DIAG_SERVICE="tm-zec-diag-${GITHUB_RUN_ID}"
+          gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1, live
+          print('BASE_REVISION='+live[0]['revisionName'])
+          print('BASE_URL='+s['status']['url'])
+          PY
+          BASE_IMAGE="$(gcloud run revisions describe "$BASE_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          test -n "$BASE_IMAGE"
+          echo "BASE_IMAGE=$BASE_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Build zero-traffic sanitized diagnostic image
+        shell: bash
+        run: |
+          set -euo pipefail
           TOKEN="$(python - <<'PY'
           import secrets
           print(secrets.token_urlsafe(32))
@@ -55,13 +74,13 @@ jobs:
           COPY diag.py .
           CMD exec gunicorn --bind :$PORT --workers 1 --threads 4 --timeout 60 diag:app
           EOF
-          cat > "$RUNNER_TEMP/zecdiag/diag.py" <<'PY'
-          import os
+          cat > "$RUNNER_TEMP/zecdiag/diag.py" <<PY
           from datetime import datetime, timezone, timedelta
           from flask import Flask, jsonify, abort
           from google.cloud import firestore
 
           app=Flask(__name__)
+          TOKEN="TOKEN_PLACEHOLDER"
           SAFE_ACTION_KEYS={"kind","symbol","side","reason","stage","leverage","pairedContractLeverage",
                             "orphanShortPriority","requiredMargin","notionalUsd","marginUsd","entryMode",
                             "exchangeMaxLeverage","forcedBelowConfiguredMinimum","number","trigger",
@@ -76,9 +95,9 @@ jobs:
 
           @app.get("/diag/<token>")
           def diag(token):
-              if token != os.environ.get("DIAG_TOKEN"):
+              if token != TOKEN:
                   abort(404)
-              db=firestore.Client(project=os.environ["GCP_PROJECT_ID"])
+              db=firestore.Client(project="tradementor-production")
               scanned=0; rows=[]
               cutoff=datetime.now(timezone.utc)-timedelta(minutes=20)
               for snap in db.collection("asterStrategy2").stream():
@@ -109,7 +128,6 @@ jobs:
                   except Exception as exc:
                       audits=[{"event":"AUDIT_READ_FAILED","reason":type(exc).__name__}]
                   rows.append({
-                      "enabled":bool(raw.get("enabled")),
                       "lastTickAt":iso(raw.get("lastTickAt")),
                       "lastReason":str(raw.get("lastReason",""))[:300],
                       "settings":{k:settings.get(k) for k in [
@@ -130,31 +148,59 @@ jobs:
                       "actions":safe_actions[-80:],
                       "recentAudit":audits,
                   })
-              return jsonify({"scannedEnabledCollectionDocs":scanned,"matches":len(rows),"rows":rows})
+              return jsonify({"scannedCollectionDocs":scanned,"matches":len(rows),"rows":rows})
           PY
-
+          python - "$RUNNER_TEMP/zecdiag/diag.py" "$TOKEN" <<'PY'
+          import pathlib,sys
+          p=pathlib.Path(sys.argv[1]); token=sys.argv[2]
+          s=p.read_text()
+          s=s.replace('"TOKEN_PLACEHOLDER"',repr(token))
+          p.write_text(s)
+          PY
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/tradementor/zec-diag:${GITHUB_SHA}"
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/zec-diag:${GITHUB_SHA}"
           docker build -t "$IMAGE" "$RUNNER_TEMP/zecdiag"
           docker push "$IMAGE"
-          gcloud run deploy "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,DIAG_TOKEN=$TOKEN"             --min-instances 0 --max-instances 1 --memory 512Mi --timeout 60 --no-allow-unauthenticated --quiet
-          gcloud run services add-iam-policy-binding "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --member="serviceAccount:$DEPLOY_SERVICE_ACCOUNT" --role="roles/run.invoker" --quiet
-          URL="$(gcloud run services describe "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
-          echo "DIAG_SERVICE=$DIAG_SERVICE" >> "$GITHUB_ENV"
-          echo "DIAG_URL=$URL" >> "$GITHUB_ENV"
+          echo "DIAG_IMAGE=$IMAGE" >> "$GITHUB_ENV"
           echo "DIAG_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Deploy diagnostic revision with zero traffic on existing service
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="zd-${GITHUB_RUN_ID}"
+          SUFFIX="zd-${GITHUB_SHA:0:8}"
+          gcloud run services update "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$DIAG_IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/diag.json"
+          python - "$RUNNER_TEMP/diag.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,os,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); tag=sys.argv[2]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==os.environ['BASE_REVISION'], live
+          row=next(x for x in s['status']['traffic'] if x.get('tag')==tag)
+          assert int(row.get('percent',0) or 0)==0, row
+          print('DIAG_URL='+row['url'])
+          print('DIAG_REVISION='+row['revisionName'])
+          PY
 
       - name: Read sanitized live ZEC orphan report
         shell: bash
         run: |
           set -euo pipefail
-          ID_TOKEN="$(gcloud auth print-identity-token --audiences="$DIAG_URL")"
-          curl --fail --silent --show-error --retry 8 --retry-delay 3 -H "Authorization: Bearer $ID_TOKEN" "$DIAG_URL/diag/$DIAG_TOKEN" | python -m json.tool
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$DIAG_URL/diag/$DIAG_TOKEN" | python -m json.tool
 
-      - name: Delete ephemeral diagnostic service
+      - name: Restore production service template and traffic
         if: always()
         shell: bash
         run: |
-          if [ -n "${DIAG_SERVICE:-}" ]; then
-            gcloud run services delete "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          set -euo pipefail
+          if [ -n "${BASE_IMAGE:-}" ]; then
+            SUFFIX="zr-${GITHUB_RUN_ID: -8}"
+            gcloud run services update "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"               --image "$BASE_IMAGE" --revision-suffix "$SUFFIX" --no-traffic --quiet || true
+          fi
+          if [ -n "${BASE_REVISION:-}" ]; then
+            gcloud run services update-traffic "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"               --to-revisions "$BASE_REVISION=100" --quiet || true
+          fi
+          if [ -n "${BASE_URL:-}" ]; then
+            curl --fail --silent --show-error --retry 8 --retry-delay 3 "$BASE_URL/health" >/dev/null || true
           fi
