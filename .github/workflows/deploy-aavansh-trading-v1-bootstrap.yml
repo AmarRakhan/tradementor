@@ -1,0 +1,168 @@
+name: Bootstrap Aavansh Trading v1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/deploy-aavansh-trading-v1-bootstrap.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aavansh-trading-v1-bootstrap
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  BASE_CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  CLOUD_RUN_SERVICE: aavansh-trading-v1
+  ARTIFACT_REPOSITORY: tradementor
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  AAVANSH_BRANCH: aavansh-trading-v1
+
+jobs:
+  deploy-aavansh-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Verify authorized bootstrap scope
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$CLOUD_RUN_SERVICE" = "aavansh-trading-v1"
+          test "$BASE_CLOUD_RUN_SERVICE" = "amar-bot-v44-direct-install"
+          test "$CLOUD_RUN_SERVICE" != "$BASE_CLOUD_RUN_SERVICE"
+
+      - name: Check out isolated Aavansh source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.AAVANSH_BRANCH }}
+          fetch-depth: 1
+
+      - name: Verify checked-out Aavansh identity
+        shell: bash
+        run: |
+          test "$(git branch --show-current)" = "$AAVANSH_BRANCH"
+          grep -q '"name": "Aavansh Trading"' web/public/manifest.webmanifest
+          grep -q '"id": "/aavansh-trading-v1"' web/public/manifest.webmanifest
+          grep -q 'aavansh-trading-shell-v1' web/public/sw.js
+          grep -q 'data-aavansh-trading="v1"' web/app/layout.tsx
+          echo "AAVANSH_SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build Aavansh web app
+        working-directory: web
+        run: npm run build
+
+      - name: Run Build 371 functional regressions compatible with separate PWA identity
+        working-directory: web
+        shell: bash
+        run: |
+          mapfile -t TESTS < <(find tests -maxdepth 1 -name '*.test.mjs' \
+            ! -name 'pwa-installability.test.mjs' \
+            ! -name 'shared-v44-deployment-contract.test.mjs' \
+            | sort)
+          node --experimental-strip-types --test "${TESTS[@]}"
+
+      - name: Authenticate to Google Cloud from authorized canonical ref
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read Build 371 service settings read-only
+        shell: bash
+        run: |
+          gcloud run services describe "$BASE_CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json > "$RUNNER_TEMP/base-service.json"
+          python - "$RUNNER_TEMP/base-service.json" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          print('BASE_RUNTIME_SERVICE_ACCOUNT=' + str(spec.get('serviceAccountName','')))
+          print('BASE_TIMEOUT=' + str(spec.get('timeoutSeconds',300)))
+          print('BASE_CONCURRENCY=' + str(spec.get('containerConcurrency',80)))
+          print('BUILD371_URL=' + str(service['status']['url']))
+          PY
+
+      - name: Build and push Aavansh-only image
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/aavansh-trading-web:$AAVANSH_SOURCE_SHA"
+          docker build --tag "$IMAGE" web
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy separate Aavansh Cloud Run service only
+        shell: bash
+        run: |
+          args=(
+            gcloud run deploy "$CLOUD_RUN_SERVICE"
+            --project "$GCP_PROJECT_ID"
+            --region "$GCP_REGION"
+            --image "$IMAGE"
+            --set-env-vars "WEBAPP_BUILD_NUMBER=${GITHUB_RUN_NUMBER},AAVANSH_TRADING=1"
+            --timeout "$BASE_TIMEOUT"
+            --concurrency "$BASE_CONCURRENCY"
+            --allow-unauthenticated
+            --quiet
+          )
+          if [ -n "$BASE_RUNTIME_SERVICE_ACCOUNT" ]; then
+            args+=(--service-account "$BASE_RUNTIME_SERVICE_ACCOUNT")
+          fi
+          "${args[@]}"
+
+      - name: Verify Aavansh URL and untouched Build 371 service
+        shell: bash
+        run: |
+          AAVANSH_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          test -n "$AAVANSH_URL"
+          test "$AAVANSH_URL" != "$BUILD371_URL"
+          echo "AAVANSH_URL=$AAVANSH_URL" >> "$GITHUB_ENV"
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$AAVANSH_URL/" > "$RUNNER_TEMP/aavansh-root.html"
+          grep -q 'AAVANSH TRADING' "$RUNNER_TEMP/aavansh-root.html"
+          curl --fail --silent --show-error "$AAVANSH_URL/manifest.webmanifest" > "$RUNNER_TEMP/aavansh-manifest.json"
+          grep -q '"name": "Aavansh Trading"' "$RUNNER_TEMP/aavansh-manifest.json"
+          grep -q '"id": "/aavansh-trading-v1"' "$RUNNER_TEMP/aavansh-manifest.json"
+          curl --fail --silent --show-error "$AAVANSH_URL/sw.js" | grep -q 'aavansh-trading-shell-v1'
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$BUILD371_URL/" > /dev/null
+          echo "AAVANSH_URL=$AAVANSH_URL"
+          echo "BUILD371_URL=$BUILD371_URL"
+          echo "AAVANSH_SOURCE_SHA=$AAVANSH_SOURCE_SHA"
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## Aavansh Trading v1 bootstrap"
+            echo ""
+            echo "- Aavansh URL: $AAVANSH_URL"
+            echo "- Aavansh source branch: $AAVANSH_BRANCH"
+            echo "- Aavansh source commit: $AAVANSH_SOURCE_SHA"
+            echo "- Separate Cloud Run service: $CLOUD_RUN_SERVICE"
+            echo "- Build 371 service checked read-only: $BASE_CLOUD_RUN_SERVICE"
+            echo "- Build 371 URL still reachable: $BUILD371_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
