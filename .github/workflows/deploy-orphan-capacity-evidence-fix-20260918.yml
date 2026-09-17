@@ -39,14 +39,13 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
-          test "$(git rev-parse HEAD^)" = "$VERIFIED_CODE_SHA"
-          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/deploy-orphan-capacity-evidence-fix-20260918.yml"
-          grep -q '"event": "ORPHAN_LONG_BLOCKED"' cloud_api/aster_multi_bb_core.py
-          grep -q '"orphanLongBlocked": [' cloud_api/aster_multi_bb_core.py
-          grep -q '"event":"MULTI_BB_DCA_BLOCKED"' cloud_api/aster_multi_bb_core.py
-          grep -q 'test_zero_account_capacity_blocks_orphan_long_then_fills_same_free_long_seat_with_next_coin' cloud_api/test_short_requires_long_pairing_20260917.py
-          grep -q 'test_existing_contract_counterpart_is_blocked_when_account_openable_capacity_is_zero' cloud_api/test_aster_execution.py
-          ! grep -q 'existing_contract_counterpart_open=orphan_priority' cloud_api/aster_multi_bb_core.py
+          test "$(git diff --name-only "$VERIFIED_CODE_SHA" HEAD)" = ".github/workflows/deploy-orphan-capacity-evidence-fix-20260918.yml"
+          grep -Fq '"event": "ORPHAN_LONG_BLOCKED"' cloud_api/aster_multi_bb_core.py
+          grep -Fq '"orphanLongBlocked": [' cloud_api/aster_multi_bb_core.py
+          grep -Fq '"event":"MULTI_BB_DCA_BLOCKED"' cloud_api/aster_multi_bb_core.py
+          grep -Fq 'test_zero_account_capacity_blocks_orphan_long_then_fills_same_free_long_seat_with_next_coin' cloud_api/test_short_requires_long_pairing_20260917.py
+          grep -Fq 'test_existing_contract_counterpart_is_blocked_when_account_openable_capacity_is_zero' cloud_api/test_aster_execution.py
+          ! grep -Fq 'existing_contract_counterpart_open=orphan_priority' cloud_api/aster_multi_bb_core.py
 
       - uses: actions/setup-python@v5
         with:
