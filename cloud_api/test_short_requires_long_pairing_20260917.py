@@ -133,3 +133,34 @@ def test_paired_short_recovery_rechecks_exchange_long_before_live_submit():
     pre_order_guard = source.index('"stage": "pre_order"', recovery)
     submit = source.index('id_prefix=f"mbb-asym-short-', pre_order_guard)
     assert recovery < pre_order_guard < submit
+
+
+
+def test_orphan_outside_top_n_is_injected_and_forced_long_first():
+    short = pos("ZECUSDT", "SHORT")
+    result = run(
+        settings=cfg(maximumPositions=3, longSlots=2, shortSlots=1, shortRequiresLongEnabled=True, universeTopN=2),
+        positions=[short], raw_state=state_for("ZECUSDT", "SHORT"),
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],
+        prices={"AAAUSDT": 100, "ZECUSDT": 100},
+    )
+    entries = [row for row in result["actions"] if row.get("kind") == "ENTRY"]
+    assert entries, result
+    assert entries[0]["symbol"] == "ZECUSDT"
+    assert entries[0]["side"] == "LONG"
+    assert "ZECUSDT" in result["orphanShortSymbols"]
+
+
+def test_multiple_orphan_shorts_consume_free_long_seats_before_normal_candidates():
+    shorts = [pos("AAAUSDT", "SHORT"), pos("BBBUSDT", "SHORT")]
+    raw = {"multiBbPositions": {}}
+    raw["multiBbPositions"].update(state_for("AAAUSDT", "SHORT")["multiBbPositions"])
+    raw["multiBbPositions"].update(state_for("BBBUSDT", "SHORT")["multiBbPositions"])
+    result = run(
+        settings=cfg(maximumPositions=4, longSlots=2, shortSlots=2, shortRequiresLongEnabled=True, universeTopN=2),
+        positions=shorts, raw_state=raw,
+        tickers=[{"symbol": "CCCUSDT", "quoteVolume": "999999"}],
+        prices={"AAAUSDT": 100, "BBBUSDT": 100, "CCCUSDT": 100},
+    )
+    entries = [(row["symbol"], row["side"]) for row in result["actions"] if row.get("kind") == "ENTRY"]
+    assert entries[:2] == [("AAAUSDT", "LONG"), ("BBBUSDT", "LONG")]

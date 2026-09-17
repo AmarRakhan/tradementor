@@ -811,16 +811,28 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
         account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
 
-    if settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled and not settings.manual_symbol_selection_enabled:
-        orphan_short_symbols = {
+    orphan_short_symbols: list[str] = []
+    if settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled and long_need > 0:
+        # Exchange truth is authoritative. Every currently-open SHORT without a
+        # same-symbol LONG becomes an explicit LONG rescue candidate. Inject it
+        # even when that symbol is outside the configured Top-N volume list.
+        orphan_short_symbols = sorted({
             key.split("|", 1)[0] for key in active
             if key.endswith("|SHORT") and f"{key.split('|', 1)[0]}|LONG" not in active
-        }
-        if orphan_short_symbols:
-            candidates = sorted(
-                candidates,
-                key=lambda row: 0 if str(row.get("symbol", "")).upper() in orphan_short_symbols else 1,
-            )
+        })
+        existing_candidates = {str(row.get("symbol", "")).upper(): row for row in candidates}
+        rescue_rows: list[dict[str, Any]] = []
+        for orphan_symbol in orphan_short_symbols:
+            if orphan_symbol not in info_map or prices.get(orphan_symbol, 0) <= 0:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": orphan_symbol, "side": "LONG", "reason": "ORPHAN_LONG_MARKET_DATA_UNAVAILABLE"})
+                continue
+            base_row = dict(existing_candidates.get(orphan_symbol) or {"symbol": orphan_symbol, "quoteVolume": 0.0})
+            base_row["symbol"] = orphan_symbol
+            base_row["orphanShortPriority"] = True
+            rescue_rows.append(base_row)
+        if rescue_rows:
+            rescue_symbols = {str(row["symbol"]).upper() for row in rescue_rows}
+            candidates = rescue_rows + [row for row in candidates if str(row.get("symbol", "")).upper() not in rescue_symbols]
 
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
     scanned_candidates = 0
@@ -846,7 +858,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue
         if maximum < settings.minimum_leverage:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"MAX_LEVERAGE_BELOW_MINIMUM: {maximum}x < {settings.minimum_leverage}x"}); continue
-        if settings.asymmetric_hedge_enabled:
+        if ranked_row.get("orphanShortPriority") and long_need > 0:
+            # Hard priority: a free LONG seat is consumed by an orphan SHORT pair
+            # before the ordinary allocator is allowed to choose unrelated coins.
+            side = "LONG"
+        elif settings.asymmetric_hedge_enabled:
             # Exclusive paired mode: the old independent LONG/SHORT allocator is disabled.
             # Every new scanner candidate is exactly one same-symbol LONG+SHORT pair.
             if long_need <= 0 or short_need <= 0:
@@ -1094,6 +1110,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "entryStatus": entry_status, "entryReason": entry_reason,
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
+              "orphanShortSymbols": orphan_short_symbols,
+              "orphanLongPending": [symbol for symbol in orphan_short_symbols if f"{symbol}|LONG" not in active and f"{symbol}|LONG" not in state],
               "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled, "bollingerEntryFilterTimeframe": settings.bollinger_entry_filter_timeframe,
               "shortRequiresLongEnabled": settings.short_requires_long_enabled,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,

@@ -4,6 +4,21 @@ const MAX_INITIAL_CACHE_AGE_MS = 120_000;
 
 const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+export function countOpenAsterPositions(snapshot) {
+  if (!Array.isArray(snapshot?.positions)) return null;
+  return snapshot.positions.reduce((count, row) => {
+    if (!row || typeof row !== "object") return count;
+    const raw = row.positionAmt ?? row.quantity ?? row.qty ?? row.size;
+    const quantity = Number(raw);
+    return count + (Number.isFinite(quantity) && Math.abs(quantity) > 0 ? 1 : 0);
+  }, 0);
+}
+
+function canonicalizeAsterPositionCount(snapshot) {
+  const count = countOpenAsterPositions(snapshot);
+  return count === null ? snapshot : { ...snapshot, activePositions: count, positionCountIncluded: count };
+}
+
 export function asterSnapshotCacheKey(uid) {
   return `${KEY_PREFIX}:${encodeURIComponent(String(uid || ""))}:aster`;
 }
@@ -25,7 +40,7 @@ const PRESERVED_ACCOUNT_FIELDS = [
 
 export function preserveConfirmedAsterValues(previous, incoming) {
   if (!isRecord(incoming)) throw new Error("Onvolledige Aster-snapshot ontvangen.");
-  if (!isRecord(previous)) return incoming;
+  if (!isRecord(previous)) return canonicalizeAsterPositionCount(incoming);
   const merged = { ...previous, ...incoming };
   for (const key of PRESERVED_ACCOUNT_FIELDS) {
     if (!(key in incoming) || incoming[key] === null || incoming[key] === undefined) {
@@ -33,14 +48,14 @@ export function preserveConfirmedAsterValues(previous, incoming) {
     }
   }
   if (!isRecord(incoming.strategy2) && isRecord(previous.strategy2)) merged.strategy2 = previous.strategy2;
-  return merged;
+  return canonicalizeAsterPositionCount(merged);
 }
 
 export function mergeCompleteAsterSnapshot(account, history) {
   if (!isRecord(account) || !isRecord(history)) throw new Error("Onvolledige Aster-snapshot ontvangen.");
   const merged = { ...account, ...history };
   if (!isValidAsterSnapshotData(merged)) throw new Error("De nieuwe Aster-snapshot is niet volledig bevestigd.");
-  return merged;
+  return canonicalizeAsterPositionCount(merged);
 }
 
 export function mergeAsterSnapshotWithHistoryFallback(account, history, previous) {
@@ -68,7 +83,7 @@ export function loadAsterSnapshot(storage, uid) {
       || Date.now() - saved.updatedAt > MAX_INITIAL_CACHE_AGE_MS
       || saved.updatedAt > Date.now() + 30_000
       || !isValidAsterSnapshotData(saved?.data)) return null;
-    return { data: saved.data, updatedAt: saved.updatedAt };
+    return { data: canonicalizeAsterPositionCount(saved.data), updatedAt: saved.updatedAt };
   } catch {
     return null;
   }
