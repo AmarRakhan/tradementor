@@ -192,6 +192,13 @@ def test_orphan_priority_uses_exchange_truth_when_caller_snapshot_is_stale():
 
 
 
+def test_orphan_long_execution_marks_existing_contract_counterpart_for_capacity_preflight():
+    source = (Path(__file__).resolve().parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    orphan = source.index("orphan_priority = bool(ranked_row.get(\"orphanShortPriority\"))")
+    submit = source.index("existing_contract_counterpart_open=orphan_priority", orphan)
+    assert orphan < submit
+
+
 def test_orphan_long_inherits_existing_short_contract_leverage():
     # Aster leverage is contract-wide. A rescue LONG may not try to rewrite
     # the leverage of an already-open same-symbol SHORT. This reproduces ZEC:
