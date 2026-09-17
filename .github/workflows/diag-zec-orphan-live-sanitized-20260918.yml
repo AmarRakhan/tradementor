@@ -137,7 +137,8 @@ jobs:
           IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/tradementor/zec-diag:${GITHUB_SHA}"
           docker build -t "$IMAGE" "$RUNNER_TEMP/zecdiag"
           docker push "$IMAGE"
-          gcloud run deploy "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,DIAG_TOKEN=$TOKEN"             --min-instances 0 --max-instances 1 --memory 512Mi --timeout 60 --allow-unauthenticated --quiet
+          gcloud run deploy "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,DIAG_TOKEN=$TOKEN"             --min-instances 0 --max-instances 1 --memory 512Mi --timeout 60 --no-allow-unauthenticated --quiet
+          gcloud run services add-iam-policy-binding "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --member="serviceAccount:$DEPLOY_SERVICE_ACCOUNT" --role="roles/run.invoker" --quiet
           URL="$(gcloud run services describe "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
           echo "DIAG_SERVICE=$DIAG_SERVICE" >> "$GITHUB_ENV"
           echo "DIAG_URL=$URL" >> "$GITHUB_ENV"
@@ -147,7 +148,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$DIAG_URL/diag/$DIAG_TOKEN" | python -m json.tool
+          ID_TOKEN="$(gcloud auth print-identity-token --audiences="$DIAG_URL")"
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 -H "Authorization: Bearer $ID_TOKEN" "$DIAG_URL/diag/$DIAG_TOKEN" | python -m json.tool
 
       - name: Delete ephemeral diagnostic service
         if: always()
