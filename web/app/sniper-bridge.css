@@ -1,4 +1,18 @@
 .content[data-bridge-view="sniper"] > :not(.tm-sniper-portal){display:none!important}
 .content[data-bridge-view="sniper"] > .tm-sniper-portal{display:block;width:100%;min-width:0}
 .tm-sniper-portal{width:100%;min-width:0}
+.tm-sniper-portal .metric{min-width:0;padding:15px;border:1px solid rgba(255,255,255,.07);border-radius:16px;background:#0a120f}
+.tm-sniper-portal .metric span{display:block;font-size:9px;font-weight:800;letter-spacing:.12em;color:#70867a}
+.tm-sniper-portal .metric strong{display:block;margin-top:7px;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tm-sniper-portal .metric small{display:block;margin-top:5px;color:#63766b;line-height:1.25}
+.tm-sniper-portal .card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:16px}
+.tm-sniper-portal .card-head span{font-size:9px;font-weight:800;letter-spacing:.14em;color:#688175}
+.tm-sniper-portal .card-head h2{margin:4px 0 0;font-size:18px}
+.tm-sniper-portal .card-head b{padding:5px 8px;border-radius:8px;background:rgba(65,241,128,.09);color:#6bf49b;font-size:9px;letter-spacing:.1em}
+.tm-sniper-portal .field{display:grid;gap:6px}
+.tm-sniper-portal .field span{font-size:10px;font-weight:800;letter-spacing:.08em;color:#71857a}
+.tm-sniper-portal .field input{width:100%;box-sizing:border-box;height:42px;padding:0 11px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:#07100c;color:#dceee3;outline:none}
+.tm-sniper-portal .field input:focus{border-color:rgba(73,239,131,.35)}
+.tm-sniper-portal .field input:disabled{opacity:.65}
+.tm-sniper-portal .field input::placeholder{color:#47584e}
 @media(max-width:760px){.content[data-bridge-view="sniper"]{padding:10px 10px 94px!important}.bottom-nav .nav-button[data-destination="sniper"] span{font-size:0}.bottom-nav .nav-button[data-destination="sniper"] span:after{content:"S";font-size:16px;font-weight:900}}
