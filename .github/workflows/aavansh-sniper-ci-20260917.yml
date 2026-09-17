@@ -1,5 +1,6 @@
 name: Aavansh SNIPER CI
 
+# Retest after upstream forward-port through 36aeab88.
 on:
   workflow_dispatch:
   push:
