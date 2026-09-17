@@ -2,7 +2,7 @@ name: Apply SHORT requires LONG pairing 2026-09-17
 
 on:
   push:
-    branches: [agent/short-requires-long-20260917]
+    branches: [amar-crypto-bot-2026-cloud]
     paths:
       - '.github/short-requires-long-20260917.trigger'
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/short-requires-long-20260917
+          ref: amar-crypto-bot-2026-cloud
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -64,4 +64,4 @@ jobs:
             exit 0
           fi
           git commit -m 'Add optional SHORT requires LONG pairing gate'
-          git push origin HEAD:agent/short-requires-long-20260917
+          git push origin HEAD:amar-crypto-bot-2026-cloud
