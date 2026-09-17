@@ -1,0 +1,164 @@
+name: Deploy orphan priority-only fix 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/deploy-orphan-priority-no-reservation-20260917.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  VERIFIED_CODE_SHA: 64d6553053f26759c7632f1d50f67945cafd05b9
+
+jobs:
+  test-build-verify-promote:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Verify exact source and one-shot scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$(git rev-parse HEAD^)" = "$VERIFIED_CODE_SHA"
+          test "$(git diff --name-only HEAD^ HEAD)" = ".github/workflows/deploy-orphan-priority-no-reservation-20260917.yml"
+          grep -q 'Orphan SHORTs are PRIORITY candidates only' cloud_api/aster_multi_bb_core.py
+          grep -q 'ORPHAN_LONG_DIAG' cloud_api/aster_multi_bb_core.py
+          ! grep -q 'ORPHAN_LONG_SEAT_RESERVED' cloud_api/aster_multi_bb_core.py
+          grep -q 'test_failed_orphan_priority_does_not_reserve_free_long_seat' cloud_api/test_short_requires_long_pairing_20260917.py
+          grep -q 'test_fresh_account_opens_long_first_and_does_not_authorize_same_tick_short' cloud_api/test_short_requires_long_pairing_20260917.py
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+      - name: Run exact pairing regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py
+      - name: Run focused pairing and Bollinger suites
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py test_aster_bollinger_entry_filter_seat_flow.py test_same_symbol_dual_side_20260906.py test_aster_multi_bb.py
+      - name: Run full backend suite
+        working-directory: cloud_api
+        run: python -m pytest -q
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture production state and IAM
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          env={x['name']:x.get('value') for x in spec['containers'][0].get('env',[])}
+          assert env.get('ASTER_LIVE_EXECUTION_ENABLED') == 'true'
+          assert env.get('ASTER_STRATEGY2_LIVE_ENABLED') == 'true'
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1, live
+          print('BASE_REVISION='+live[0]['revisionName'])
+          print('BASE_URL='+s['status']['url'])
+          PY
+
+      - name: Build and push exact backend source
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:orphan-priority-${GITHUB_SHA}"
+          docker build --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy zero-traffic candidate preserving runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="opn-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          SUFFIX="opn-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/candidate.json"
+          python - "$RUNNER_TEMP/before.json" "$RUNNER_TEMP/candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,os,sys
+          before=json.load(open(sys.argv[1],encoding='utf-8')); after=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
+          bs=before['spec']['template']['spec']; a=after['spec']['template']['spec']
+          assert bs.get('serviceAccountName') == a.get('serviceAccountName')
+          assert bs.get('timeoutSeconds') == a.get('timeoutSeconds')
+          assert bs.get('containerConcurrency') == a.get('containerConcurrency')
+          benv={x['name']:x.get('value') for x in bs['containers'][0].get('env',[])}
+          aenv={x['name']:x.get('value') for x in a['containers'][0].get('env',[])}
+          assert benv == aenv
+          live=[x for x in after['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName') == os.environ['BASE_REVISION'], live
+          row=next(x for x in after['status']['traffic'] if x.get('tag')==tag)
+          assert int(row.get('percent',0) or 0)==0
+          print('CANDIDATE_URL='+row['url'])
+          print('CANDIDATE_REVISION='+row['revisionName'])
+          PY
+
+      - name: Verify candidate health
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 4 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready'; assert h['multiUser'] is True
+          PY
+
+      - name: Promote verified candidate to 100 percent
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100" --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/final.json"
+          python - "$RUNNER_TEMP/final.json" "$CANDIDATE_REVISION" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); rev=sys.argv[2]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==rev, live
+          PY
+          curl --fail --silent --show-error --retry 8 --retry-delay 4 "$BASE_URL/health" >/dev/null
+
+      - name: Verify IAM unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json,sys
+          assert json.load(open(sys.argv[1],encoding='utf-8')) == json.load(open(sys.argv[2],encoding='utf-8'))
+          PY
+          echo "ORPHAN_PRIORITY_ONLY_LIVE_REVISION=$CANDIDATE_REVISION" >> "$GITHUB_STEP_SUMMARY"
