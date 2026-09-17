@@ -1,0 +1,59 @@
+name: Diagnose ZEC public contract constraints v2 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-zec-public-contract-20260917-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Query public ZEC contract rules
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, urllib.request, urllib.error
+          from decimal import Decimal, ROUND_UP, ROUND_DOWN
+          base='https://fapi.asterdex.com'
+          def get(path):
+              req=urllib.request.Request(base+path,headers={'User-Agent':'TradeMentor-diagnostic/1.0'})
+              with urllib.request.urlopen(req,timeout=20) as r:
+                  return r.status,json.load(r)
+          status,info=get('/fapi/v3/exchangeInfo')
+          _,ticker=get('/fapi/v3/ticker/price?symbol=ZECUSDT')
+          row=next((x for x in info.get('symbols',[]) if x.get('symbol')=='ZECUSDT'),None)
+          if not row: raise SystemExit('ZECUSDT missing from exchangeInfo')
+          price=Decimal(str(ticker['price']))
+          filters={f.get('filterType'):f for f in row.get('filters',[]) if isinstance(f,dict)}
+          lot=filters.get('MARKET_LOT_SIZE') or filters.get('LOT_SIZE') or {}
+          step=Decimal(str(lot.get('stepSize','0')))
+          minqty=Decimal(str(lot.get('minQty','0')))
+          minnot=Decimal(str((filters.get('MIN_NOTIONAL') or {}).get('notional',(filters.get('MIN_NOTIONAL') or {}).get('minNotional','0'))))
+          need=minqty
+          if step>0:
+              need=(need/step).to_integral_value(rounding=ROUND_UP)*step
+              if minnot>0:
+                  need=max(need,(minnot/price/step).to_integral_value(rounding=ROUND_UP)*step)
+          print('symbol',row.get('symbol'),'status',row.get('status'),'price',price)
+          print('marketMinQty',minqty,'stepSize',step,'minNotional',minnot,'minimumExecutableNotional',need*price)
+          print('quantityPrecision',row.get('quantityPrecision'),'pricePrecision',row.get('pricePrecision'))
+          for notion in (Decimal('5'),Decimal('10'),Decimal('15'),Decimal('20'),Decimal('25'),Decimal('50'),Decimal('75')):
+              qty=notion/price
+              if step>0: qty=(qty/step).to_integral_value(rounding=ROUND_DOWN)*step
+              print('notional_target',notion,'roundedQty',qty,'roundedNotional',qty*price,'valid',qty>=need and qty*price>=minnot)
+          for path in ('/fapi/v3/leverageBracket?symbol=ZECUSDT','/fapi/v1/remainingOpenableNotionalValue?symbol=ZECUSDT&leverage=75'):
+              try:
+                  st,p=get(path); print('unsigned_probe',path,'status',st,'payloadType',type(p).__name__)
+              except urllib.error.HTTPError as e:
+                  body=e.read().decode('utf-8','replace')[:300]
+                  print('unsigned_probe',path,'status',e.code,'body',body)
+          PY
