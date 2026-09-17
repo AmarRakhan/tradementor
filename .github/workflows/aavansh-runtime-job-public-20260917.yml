@@ -1,0 +1,231 @@
+name: Aavansh runtime job public 2026-09-17
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/aavansh-runtime-job-public-20260917.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aavansh-runtime-job-public-20260917
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  BASE_CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  CLOUD_RUN_SERVICE: aavansh-trading-v1
+  AAVANSH_IMAGE: europe-west4-docker.pkg.dev/tradementor-production/tradementor/aavansh-trading-web@sha256:3e53b57fe9f712773348b02b82c8d41b636d530f39992b342b14801c6204d913
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  RUNTIME_SERVICE_ACCOUNT: 604335232956-compute@developer.gserviceaccount.com
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Verify strict isolation scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$CLOUD_RUN_SERVICE" = "aavansh-trading-v1"
+          test "$BASE_CLOUD_RUN_SERVICE" = "amar-bot-v44-direct-install"
+          test "$CLOUD_RUN_SERVICE" != "$BASE_CLOUD_RUN_SERVICE"
+
+      - name: Authenticate canonical production deploy identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture Build 371 and Aavansh pre-state
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-before.json"
+          gcloud run services get-iam-policy "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-iam-before.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/aavansh-before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/aavansh-iam-before.json"
+          python - "$RUNNER_TEMP/base-before.json" "$RUNNER_TEMP/aavansh-before.json" "$RUNNER_TEMP/aavansh-iam-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          base=json.load(open(sys.argv[1],encoding='utf-8'))
+          av=json.load(open(sys.argv[2],encoding='utf-8'))
+          iam=json.load(open(sys.argv[3],encoding='utf-8'))
+          bl=[x for x in base['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          al=[x for x in av['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(bl)==1 and len(al)==1
+          print('BASE_URL='+str(base['status']['url']))
+          print('BASE_REVISION='+str(bl[0]['revisionName']))
+          print('AAVANSH_URL='+str(av['status']['url']))
+          print('AAVANSH_BEFORE_REVISION='+str(al[0]['revisionName']))
+          public=any(b.get('role')=='roles/run.invoker' and 'allUsers' in b.get('members',[]) for b in iam.get('bindings',[]))
+          print('AAVANSH_PUBLIC_BEFORE='+('1' if public else '0'))
+          PY
+
+      - name: Create isolated IAM helper job under existing runtime identity
+        id: helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="aavansh-iam-${GITHUB_RUN_ID: -7}"
+          echo "HELPER_JOB=$JOB" >> "$GITHUB_ENV"
+          SCRIPT_B64="$(base64 -w0 <<'SH'
+          set -euo pipefail
+          PROJECT="tradementor-production"
+          REGION="europe-west4"
+          SERVICE="aavansh-trading-v1"
+          TOKEN="$(gcloud auth print-access-token)"
+          RESP="$(curl --fail --silent --show-error -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data '{"permissions":["run.services.get","run.services.setIamPolicy"]}' "https://run.googleapis.com/v1/projects/$PROJECT/locations/$REGION/services/$SERVICE:testIamPermissions")"
+          unset TOKEN
+          echo "AAVANSH_IAM_HELPER_PERMISSIONS=$RESP"
+          if ! printf '%s' "$RESP" | grep -q 'run.services.setIamPolicy'; then
+            echo 'AAVANSH_IAM_HELPER_CAN_SET_IAM=0'
+            exit 41
+          fi
+          echo 'AAVANSH_IAM_HELPER_CAN_SET_IAM=1'
+          gcloud run services add-iam-policy-binding "$SERVICE" --project "$PROJECT" --region "$REGION" --member='allUsers' --role='roles/run.invoker' --quiet
+          echo 'AAVANSH_IAM_HELPER_PUBLIC_BINDING_APPLIED=1'
+          SH
+          )"
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command bash \
+            --args=-c,"echo '$SCRIPT_B64' | base64 -d | bash" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s \
+            --quiet
+
+      - name: Execute IAM helper and require proven public binding
+        id: helper_exec
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          gcloud run jobs execute "$HELPER_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait > "$RUNNER_TEMP/helper-exec.out" 2> "$RUNNER_TEMP/helper-exec.err"
+          RC=$?
+          set -e
+          cat "$RUNNER_TEMP/helper-exec.out" || true
+          cat "$RUNNER_TEMP/helper-exec.err" >&2 || true
+          sleep 3
+          LOGS="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$HELPER_JOB\" AND textPayload:\"AAVANSH_IAM_HELPER\"" --project "$GCP_PROJECT_ID" --freshness 10m --limit 20 --order asc --format='value(textPayload)' || true)"
+          printf '%s\n' "$LOGS"
+          if [ "$RC" -ne 0 ]; then
+            echo "IAM_HELPER_EXECUTION_FAILED=$RC" >&2
+            exit "$RC"
+          fi
+          grep -q 'AAVANSH_IAM_HELPER_CAN_SET_IAM=1' <<<"$LOGS"
+          grep -q 'AAVANSH_IAM_HELPER_PUBLIC_BINDING_APPLIED=1' <<<"$LOGS"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/aavansh-iam-after-helper.json"
+          python - "$RUNNER_TEMP/aavansh-iam-after-helper.json" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert any(b.get('role')=='roles/run.invoker' and 'allUsers' in b.get('members',[]) for b in p.get('bindings',[])), p
+          PY
+
+      - name: Deploy exact tested Aavansh image
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          SUFFIX="a4-e31fbd8c-${GITHUB_RUN_ATTEMPT}"
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$AAVANSH_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --set-env-vars "AAVANSH_TRADING=1" \
+            --timeout 300 --concurrency 80 \
+            --revision-suffix "$SUFFIX" --quiet
+
+      - name: Verify public Aavansh PWA end to end
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFIED_AAVANSH_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          test -n "$VERIFIED_AAVANSH_URL"
+          test "$VERIFIED_AAVANSH_URL" != "$BASE_URL"
+          echo "VERIFIED_AAVANSH_URL=$VERIFIED_AAVANSH_URL" >> "$GITHUB_ENV"
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 "$VERIFIED_AAVANSH_URL/" > "$RUNNER_TEMP/root.html"
+          grep -q 'AAVANSH TRADING' "$RUNNER_TEMP/root.html"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$VERIFIED_AAVANSH_URL/manifest.webmanifest" > "$RUNNER_TEMP/manifest.json"
+          grep -q '"name": "Aavansh Trading"' "$RUNNER_TEMP/manifest.json"
+          grep -q '"id": "/aavansh-trading-v1"' "$RUNNER_TEMP/manifest.json"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$VERIFIED_AAVANSH_URL/sw.js" > "$RUNNER_TEMP/sw.js"
+          grep -q 'aavansh-trading-shell-v1' "$RUNNER_TEMP/sw.js"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$VERIFIED_AAVANSH_URL/offline.html" > /dev/null
+          echo "AAVANSH_PUBLIC_PWA_VERIFIED=$VERIFIED_AAVANSH_URL"
+
+      - name: Prove Build 371 stayed untouched
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-after.json"
+          gcloud run services get-iam-policy "$BASE_CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/base-iam-after.json"
+          python - "$RUNNER_TEMP/base-before.json" "$RUNNER_TEMP/base-after.json" "$RUNNER_TEMP/base-iam-before.json" "$RUNNER_TEMP/base-iam-after.json" "$BASE_REVISION" <<'PY'
+          import json,sys
+          before=json.load(open(sys.argv[1],encoding='utf-8'))
+          after=json.load(open(sys.argv[2],encoding='utf-8'))
+          ib=json.load(open(sys.argv[3],encoding='utf-8'))
+          ia=json.load(open(sys.argv[4],encoding='utf-8'))
+          expected=sys.argv[5]
+          live=[x for x in after['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1 and live[0].get('revisionName')==expected, live
+          assert before['spec']==after['spec']
+          assert ib==ia
+          print('BUILD371_UNCHANGED=1')
+          PY
+
+      - name: Restore Aavansh if post-binding publication failed
+        if: failure() && steps.helper_exec.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${AAVANSH_BEFORE_REVISION:-}" ]; then
+            gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$AAVANSH_BEFORE_REVISION=100" --quiet || true
+          fi
+          if [ "${AAVANSH_PUBLIC_BEFORE:-0}" = "0" ]; then
+            CLEANUP_JOB="${HELPER_JOB}-cleanup"
+            CLEANUP_B64="$(base64 -w0 <<'SH'
+          set -euo pipefail
+          gcloud run services remove-iam-policy-binding aavansh-trading-v1 --project tradementor-production --region europe-west4 --member='allUsers' --role='roles/run.invoker' --quiet || true
+          SH
+            )"
+            gcloud run jobs deploy "$CLEANUP_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "gcr.io/google.com/cloudsdktool/google-cloud-cli:slim" --service-account "$RUNTIME_SERVICE_ACCOUNT" --command bash --args=-c,"echo '$CLEANUP_B64' | base64 -d | bash" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet || true
+            gcloud run jobs execute "$CLEANUP_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait || true
+            gcloud run jobs delete "$CLEANUP_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
+
+      - name: Delete helper job
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${HELPER_JOB:-}" ]; then
+            gcloud run jobs delete "$HELPER_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
+
+      - name: Publish verified install link
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Aavansh Trading v1 publicly verified"
+            echo ""
+            echo "- Install/open URL: $VERIFIED_AAVANSH_URL"
+            echo "- Exact image digest: sha256:3e53b57fe9f712773348b02b82c8d41b636d530f39992b342b14801c6204d913"
+            echo "- Build 371 untouched: $BASE_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
