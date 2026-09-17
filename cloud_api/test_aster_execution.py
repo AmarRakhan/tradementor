@@ -131,7 +131,7 @@ def test_existing_exact_contract_leverage_is_verified_without_rewriting_it():
     assert not any(call[0]=="leverage" for call in client.calls)
 
 
-def test_existing_contract_counterpart_bypasses_new_entry_capacity_zero_but_keeps_exact_leverage_check():
+def test_existing_contract_counterpart_is_blocked_when_account_openable_capacity_is_zero():
     class ZeroCapacity(ExactLeverageFake):
         def remaining_openable_notional_value(self, symbol, leverage):
             self.calls.append(("remaining", symbol, leverage))
@@ -140,13 +140,14 @@ def test_existing_contract_counterpart_bypasses_new_entry_capacity_zero_but_keep
     existing={"symbol":"BTCUSDT","positionSide":"SHORT","positionAmt":"1","leverage":"50"}
     client=ZeroCapacity(maximum=100,positions=[existing])
     plan=replace(plan_pair(SYMBOL,BRACKETS,65000,10),leverage=50)
-    result=execute_leg_once(
-        client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="counterpart",confirm=True,
-        new_position_leverage=50,existing_contract_counterpart_open=True,
-    )
-    assert result["leverage"]==50
-    assert any(call[0]=="OPEN" for call in client.calls)
-    assert not any(call[0]=="remaining" for call in client.calls)
+    with pytest.raises(NewPositionLeverageBlocked) as error:
+        execute_leg_once(
+            client,plan,side=PositionSide.LONG,action="OPEN",id_prefix="counterpart",confirm=True,
+            new_position_leverage=50,
+        )
+    assert error.value.reason_code=="SYMBOL_OPENABLE_NOTIONAL_BELOW_PLANNED"
+    assert any(call[0]=="remaining" for call in client.calls)
+    assert not any(call[0]=="OPEN" for call in client.calls)
     assert not any(call[0]=="leverage" for call in client.calls)
 
 
