@@ -474,6 +474,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                       before_order: Any = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
+    # Pairing mode must make every seat/orphan decision from Aster exchange truth,
+    # never from a caller/UI/cache snapshot that may be one reconciliation tick old.
+    # Refresh before state reconciliation so an actually-open orphan SHORT cannot
+    # be mistaken for a closed leg and removed before LONG rescue priority runs.
+    position_truth_refresh_error: str | None = None
+    if settings.short_requires_long_enabled:
+        try:
+            pmap = _position_map(client.position_risk())
+        except Exception as exc:
+            position_truth_refresh_error = str(exc)
     selected_keys = {f"{symbol}|{side}" for symbol, side in settings.manual_symbols} if settings.manual_symbol_selection_enabled else set()
     reconciled_closed: list[str] = []
     # Explicit user start may adopt already-open exchange positions once. Deployment/config save alone never does this.
@@ -515,6 +525,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
+    if position_truth_refresh_error:
+        actions.append({
+            "kind": "ENTRY_SCAN_BLOCKED", "reason": "PAIRING_POSITION_TRUTH_UNAVAILABLE",
+            "detail": position_truth_refresh_error,
+        })
 
     # P0 recovery: selected manual-mode positions must never exist on Aster
     # without a managed state row. Such a missing row makes the DCA management
@@ -793,6 +808,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             ref.collection("audit").add({"event":"MULTI_BB_DCA","symbol":symbol,"side":side,"dcaNumber":next_count,"catchup":catchup_target>next_count or queued_before>0,"catchupTargetCount":catchup_target,"catchupRemaining":catchup_remaining,"previousLeverage":tier["previousLeverage"],"leverage":tier["leverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"],"timestamp":datetime.now(timezone.utc)})
         available-=required; sent+=1
 
+    # pmap was already refreshed from Aster at the start whenever pairing mode is
+    # enabled. If management submitted an order, refresh once more so seat counts
+    # reflect that confirmed change too.
     active = _position_map(client.position_risk()) if sent and not dry_run else pmap
     active_symbols = {k.split("|", 1)[0] for k in active}
     account_position_count = len(active)
@@ -810,6 +828,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         pair_need = 0
         long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
         account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
+
+    # If exchange truth could not be refreshed while the pairing toggle is on,
+    # do not allocate any new seat from a potentially stale snapshot. Existing
+    # position management above remains available; the next tick retries truth.
+    if settings.short_requires_long_enabled and position_truth_refresh_error:
+        account_remaining_capacity = 0
 
     orphan_short_symbols: list[str] = []
     if settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled and long_need > 0:

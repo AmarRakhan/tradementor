@@ -164,3 +164,50 @@ def test_multiple_orphan_shorts_consume_free_long_seats_before_normal_candidates
     )
     entries = [(row["symbol"], row["side"]) for row in result["actions"] if row.get("kind") == "ENTRY"]
     assert entries[:2] == [("AAAUSDT", "LONG"), ("BBBUSDT", "LONG")]
+
+
+
+def test_orphan_priority_uses_exchange_truth_when_caller_snapshot_is_stale():
+    # Reproduces the live 2026-09-17 failure: Aster has ZEC SHORT, while the
+    # caller-provided snapshot is one tick stale and contains no positions.
+    short = pos("ZECUSDT", "SHORT")
+    client = Client(
+        positions=[short],
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],
+        prices={"AAAUSDT": 100, "ZECUSDT": 100},
+        leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(maximumPositions=3, longSlots=2, shortSlots=1,
+                     shortRequiresLongEnabled=True, universeTopN=2),
+        uid="u", account={"availableBalance": "1000"},
+        positions=[], open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    entries = [row for row in result["actions"] if row.get("kind") == "ENTRY"]
+    assert entries, result
+    assert entries[0]["symbol"] == "ZECUSDT"
+    assert entries[0]["side"] == "LONG"
+    assert "ZECUSDT" in result["orphanShortSymbols"]
+
+
+def test_pairing_truth_refresh_failure_blocks_new_seat_allocation():
+    class BrokenTruthClient(Client):
+        def position_risk(self, symbol=None):
+            raise RuntimeError("exchange position truth unavailable")
+
+    client = BrokenTruthClient(
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],
+        prices={"AAAUSDT": 100}, leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state={},
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1,
+                     shortRequiresLongEnabled=True, universeTopN=1),
+        uid="u", account={"availableBalance": "1000"},
+        positions=[], open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    assert not [row for row in result["actions"] if row.get("kind") == "ENTRY"]
+    assert any(row.get("kind") == "ENTRY_SCAN_BLOCKED" and
+               row.get("reason") == "PAIRING_POSITION_TRUTH_UNAVAILABLE"
+               for row in result["actions"])
