@@ -1,0 +1,84 @@
+name: Fix orphan LONG contract leverage 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/fix-orphan-long-contract-leverage-20260917.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+      - name: Add failing regression for existing SHORT contract leverage
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/test_short_requires_long_pairing_20260917.py')
+          s=p.read_text()
+          marker='def test_pairing_truth_refresh_failure_blocks_new_seat_allocation():'
+          assert marker in s
+          test='''\n\ndef test_orphan_long_inherits_existing_short_contract_leverage():\n    # Aster leverage is contract-wide. A rescue LONG may not try to rewrite\n    # the leverage of an already-open same-symbol SHORT. This reproduces ZEC:\n    # existing SHORT at 75x while a tiny fresh leg would otherwise resolve 100x.\n    short = pos("ZECUSDT", "SHORT")\n    short["leverage"] = "75"\n    client = Client(\n        positions=[short],\n        tickers=[{"symbol":"AAAUSDT","quoteVolume":"999999"}],\n        prices={"AAAUSDT":100,"ZECUSDT":100}, leverage=100,\n    )\n    result = run_multi_bb_step(\n        client=client, ref=Ref(), raw_state=state_for("ZECUSDT","SHORT"),\n        settings=cfg(maximumPositions=3,longSlots=2,shortSlots=1,\n                     shortRequiresLongEnabled=True, universeTopN=2, minimumLeverage=50),\n        uid="u", account={"availableBalance":"1000"}, positions=[short],\n        open_orders=[], timestamp_ms=int(time.time()*1000), dry_run=True,\n    )\n    entry = next(row for row in result["actions"] if row.get("kind")=="ENTRY")\n    assert entry["symbol"] == "ZECUSDT"\n    assert entry["side"] == "LONG"\n    assert entry["leverage"] == 75\n    assert entry.get("orphanShortPriority") is True\n    assert entry.get("pairedContractLeverage") == 75\n\n'''
+          s=s.replace('\n'+marker, test+'\n'+marker)
+          p.write_text(s)
+          PY
+      - name: Prove regression fails before repair
+        shell: bash
+        run: |
+          set +e
+          cd cloud_api
+          python -m pytest -q test_short_requires_long_pairing_20260917.py -k orphan_long_inherits_existing_short_contract_leverage
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          echo "REGRESSION_REPRODUCED"
+      - name: Apply orphan LONG existing-contract leverage repair
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_multi_bb_core.py')
+          s=p.read_text()
+          old='''            if paired:\n                plan, short_plan, tier, short_tier = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)\n            else:\n                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)\n                short_plan = None; short_tier = None\n'''
+          new='''            if paired:\n                plan, short_plan, tier, short_tier = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)\n            elif ranked_row.get("orphanShortPriority"):\n                # Same-symbol LONG rescue must inherit the already-open SHORT's\n                # contract leverage. Aster leverage is contract-wide; planning a\n                # tiny opposite leg as a brand-new contract can choose a higher\n                # leverage and then fail the execution guard even though the LONG\n                # itself is otherwise perfectly openable.\n                orphan_short = active.get(f"{symbol}|SHORT")\n                if orphan_short is None:\n                    raise ValueError(f"{symbol}: orphan SHORT verdween vóór LONG rescue")\n                existing_leverage = max(1, _i(orphan_short.get("leverage")))\n                if existing_leverage < settings.minimum_leverage:\n                    raise ValueError(f"{symbol}: bestaande SHORT leverage {existing_leverage}x < minimum {settings.minimum_leverage}x")\n                rows = tier_bracket_rows(bracket_payload, symbol)\n                rescue_notional = (float(settings.entry_margin_usd) * existing_leverage\n                                   if settings.entry_sizing_mode == "margin"\n                                   else float(settings.entry_notional_usd))\n                existing_notional = abs(_f(orphan_short.get("positionAmt"))) * prices[symbol]\n                plan = plan_pair(info_map[symbol], rows, prices[symbol], rescue_notional,\n                                 accepted_leverage=existing_leverage,\n                                 existing_contract_notional=existing_notional)\n                tier = {"exchangeMaxLeverage": maximum,\n                        "forcedBelowConfiguredMinimum": False,\n                        "configuredMinimum": settings.minimum_leverage,\n                        "orphanContractLeverage": existing_leverage}\n                short_plan = None; short_tier = None\n            else:\n                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)\n                short_plan = None; short_tier = None\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+          old2='''        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",\n            "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}\n'''
+          new2='''        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",\n            "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}\n        if ranked_row.get("orphanShortPriority"):\n            entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})\n'''
+          assert old2 in s
+          s=s.replace(old2,new2,1)
+          p.write_text(s)
+          PY
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+      - name: Run focused pairing regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py test_aster_bollinger_entry_filter_seat_flow.py test_same_symbol_dual_side_20260906.py test_aster_multi_bb.py
+      - name: Run full backend suite
+        working-directory: cloud_api
+        run: python -m pytest -q
+      - name: Commit verified repair only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb_core.py cloud_api/test_short_requires_long_pairing_20260917.py
+          git diff --cached --quiet && { echo 'No repair to commit'; exit 1; }
+          git commit -m 'Use existing SHORT leverage for orphan LONG rescue'
+          git push origin HEAD:amar-crypto-bot-2026-cloud

@@ -1,0 +1,55 @@
+name: Diagnose ZEC public contract constraints 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-zec-orphan-runtime-20260917.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Query current public Aster ZEC contract constraints
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, urllib.request
+          from decimal import Decimal, ROUND_UP, ROUND_DOWN
+
+          base='https://fapi.asterdex.com'
+          def get(path):
+              with urllib.request.urlopen(base+path, timeout=20) as r:
+                  return json.load(r)
+          info=get('/fapi/v1/exchangeInfo')
+          ticker=get('/fapi/v1/ticker/price?symbol=ZECUSDT')
+          row=next((x for x in info.get('symbols',[]) if x.get('symbol')=='ZECUSDT'), None)
+          print('ticker', json.dumps(ticker, sort_keys=True))
+          print('zec_exchange_info', json.dumps(row, sort_keys=True))
+          if not row:
+              raise SystemExit('ZECUSDT missing')
+          price=Decimal(str(ticker['price']))
+          filters={f.get('filterType'):f for f in row.get('filters',[])}
+          lot=filters.get('MARKET_LOT_SIZE') or filters.get('LOT_SIZE') or {}
+          step=Decimal(str(lot.get('stepSize','0')))
+          minqty=Decimal(str(lot.get('minQty','0')))
+          minnot=Decimal(str((filters.get('MIN_NOTIONAL') or {}).get('notional','0')))
+          if step>0:
+              minqty=(minqty/step).to_integral_value(rounding=ROUND_UP)*step
+              if minnot>0:
+                  minqty=max(minqty,(minnot/price/step).to_integral_value(rounding=ROUND_UP)*step)
+          print('price',price,'step',step,'minQty',minqty,'minNotionalFilter',minnot,'minimumExecutableNotional',minqty*price)
+          for lev in (50,75,100,300):
+              configured=Decimal('0.2')*Decimal(lev)
+              requested=configured/price
+              if step>0:
+                  requested=(requested/step).to_integral_value(rounding=ROUND_DOWN)*step
+              print('at_leverage',lev,'configuredNotional',configured,'roundedQty',requested,'roundedNotional',requested*price,'meetsMin',requested>=minqty and requested*price>=minnot)
+          PY

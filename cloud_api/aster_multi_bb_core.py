@@ -474,6 +474,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                       before_order: Any = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
+    # Pairing mode must make every seat/orphan decision from Aster exchange truth,
+    # never from a caller/UI/cache snapshot that may be one reconciliation tick old.
+    # Refresh before state reconciliation so an actually-open orphan SHORT cannot
+    # be mistaken for a closed leg and removed before LONG rescue priority runs.
+    position_truth_refresh_error: str | None = None
+    if settings.short_requires_long_enabled:
+        try:
+            pmap = _position_map(client.position_risk())
+        except Exception as exc:
+            position_truth_refresh_error = str(exc)
     selected_keys = {f"{symbol}|{side}" for symbol, side in settings.manual_symbols} if settings.manual_symbol_selection_enabled else set()
     reconciled_closed: list[str] = []
     # Explicit user start may adopt already-open exchange positions once. Deployment/config save alone never does this.
@@ -515,6 +525,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
+    if position_truth_refresh_error:
+        actions.append({
+            "kind": "ENTRY_SCAN_BLOCKED", "reason": "PAIRING_POSITION_TRUTH_UNAVAILABLE",
+            "detail": position_truth_refresh_error,
+        })
 
     # P0 recovery: selected manual-mode positions must never exist on Aster
     # without a managed state row. Such a missing row makes the DCA management
@@ -793,6 +808,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             ref.collection("audit").add({"event":"MULTI_BB_DCA","symbol":symbol,"side":side,"dcaNumber":next_count,"catchup":catchup_target>next_count or queued_before>0,"catchupTargetCount":catchup_target,"catchupRemaining":catchup_remaining,"previousLeverage":tier["previousLeverage"],"leverage":tier["leverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"],"timestamp":datetime.now(timezone.utc)})
         available-=required; sent+=1
 
+    # pmap was already refreshed from Aster at the start whenever pairing mode is
+    # enabled. If management submitted an order, refresh once more so seat counts
+    # reflect that confirmed change too.
     active = _position_map(client.position_risk()) if sent and not dry_run else pmap
     active_symbols = {k.split("|", 1)[0] for k in active}
     account_position_count = len(active)
@@ -810,6 +828,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         pair_need = 0
         long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
         account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
+
+    # If exchange truth could not be refreshed while the pairing toggle is on,
+    # do not allocate any new seat from a potentially stale snapshot. Existing
+    # position management above remains available; the next tick retries truth.
+    if settings.short_requires_long_enabled and position_truth_refresh_error:
+        account_remaining_capacity = 0
 
     orphan_short_symbols: list[str] = []
     if settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled and long_need > 0:
@@ -958,6 +982,31 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         try:
             if paired:
                 plan, short_plan, tier, short_tier = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)
+            elif ranked_row.get("orphanShortPriority"):
+                # Same-symbol LONG rescue must inherit the already-open SHORT's
+                # contract leverage. Aster leverage is contract-wide; planning a
+                # tiny opposite leg as a brand-new contract can choose a higher
+                # leverage and then fail the execution guard even though the LONG
+                # itself is otherwise perfectly openable.
+                orphan_short = active.get(f"{symbol}|SHORT")
+                if orphan_short is None:
+                    raise ValueError(f"{symbol}: orphan SHORT verdween vóór LONG rescue")
+                existing_leverage = max(1, _i(orphan_short.get("leverage")))
+                if existing_leverage < settings.minimum_leverage:
+                    raise ValueError(f"{symbol}: bestaande SHORT leverage {existing_leverage}x < minimum {settings.minimum_leverage}x")
+                rows = tier_bracket_rows(bracket_payload, symbol)
+                rescue_notional = (float(settings.entry_margin_usd) * existing_leverage
+                                   if settings.entry_sizing_mode == "margin"
+                                   else float(settings.entry_notional_usd))
+                existing_notional = abs(_f(orphan_short.get("positionAmt"))) * prices[symbol]
+                plan = plan_pair(info_map[symbol], rows, prices[symbol], rescue_notional,
+                                 accepted_leverage=existing_leverage,
+                                 existing_contract_notional=existing_notional)
+                tier = {"exchangeMaxLeverage": maximum,
+                        "forcedBelowConfiguredMinimum": False,
+                        "configuredMinimum": settings.minimum_leverage,
+                        "orphanContractLeverage": existing_leverage}
+                short_plan = None; short_tier = None
             else:
                 plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
                 short_plan = None; short_tier = None
@@ -983,6 +1032,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
         entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
+        if ranked_row.get("orphanShortPriority"):
+            entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
         if not dry_run and short_requires_long_gate and side == "SHORT":
             fresh_pair_positions = _position_map(client.position_risk(symbol))
