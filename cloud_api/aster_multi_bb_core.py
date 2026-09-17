@@ -858,6 +858,17 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             rescue_symbols = {str(row["symbol"]).upper() for row in rescue_rows}
             candidates = rescue_rows + [row for row in candidates if str(row.get("symbol", "")).upper() not in rescue_symbols]
 
+    # Bollinger OFF: exchange-confirmed orphan SHORTs reserve free LONG seats.
+    # Reservation comes from exchange truth, not later candidate viability.
+    orphan_long_reserved_slots = (
+        min(long_need, len(orphan_short_symbols))
+        if settings.short_requires_long_enabled
+        and not settings.asymmetric_hedge_enabled
+        and not settings.bollinger_entry_filter_15m_enabled
+        and long_need > 0 else 0
+    )
+    orphan_long_rescue_filled = 0
+
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
     scanned_candidates = 0
     executable_candidates = 0
@@ -866,6 +877,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
         symbol = ranked_row["symbol"]
+        orphan_priority = bool(ranked_row.get("orphanShortPriority"))
         if symbol == "HYPEUSDT":
             print(f"HYPE_ENTRY_DIAG stage=candidate sent={sent} budget={budget} slots={settings.long_slots}/{settings.short_slots} longNeed={long_need} shortNeed={short_need} accountRemaining={account_remaining_capacity} available={available} price={prices.get(symbol, 0)} minLeverage={settings.minimum_leverage} entryMargin={settings.entry_margin_usd} manual={settings.manual_symbol_selection_enabled} asym={settings.asymmetric_hedge_enabled} dryRun={dry_run}", flush=True)
         if (settings.asymmetric_hedge_enabled and symbol in active_symbols) or symbol not in info_map or prices.get(symbol, 0) <= 0:
@@ -880,9 +892,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             print(f"HYPE_ENTRY_DIAG stage=brackets maximum={maximum}", flush=True)
         if maximum <= 0:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue
-        if maximum < settings.minimum_leverage:
+        if maximum < settings.minimum_leverage and not orphan_priority:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"MAX_LEVERAGE_BELOW_MINIMUM: {maximum}x < {settings.minimum_leverage}x"}); continue
-        if ranked_row.get("orphanShortPriority") and long_need > 0:
+        if orphan_priority and long_need > 0:
             # Hard priority: a free LONG seat is consumed by an orphan SHORT pair
             # before the ordinary allocator is allowed to choose unrelated coins.
             side = "LONG"
@@ -972,6 +984,13 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "final_side"})
             continue
 
+        orphan_reserved_remaining = max(0, orphan_long_reserved_slots - orphan_long_rescue_filled)
+        if (not orphan_priority and side == "LONG" and orphan_reserved_remaining > 0
+                and long_need <= orphan_reserved_remaining):
+            actions.append({"kind":"ENTRY_SKIP","symbol":symbol,"side":"LONG",
+                            "reason":"ORPHAN_LONG_SEAT_RESERVED","reservedRemaining":orphan_reserved_remaining})
+            continue
+
         paired = bool(settings.asymmetric_hedge_enabled)
         # In paired mode the toggle means the LONG must already exist in the
         # exchange snapshot that started this reconciliation tick.  A LONG that
@@ -992,8 +1011,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 if orphan_short is None:
                     raise ValueError(f"{symbol}: orphan SHORT verdween vóór LONG rescue")
                 existing_leverage = max(1, _i(orphan_short.get("leverage")))
-                if existing_leverage < settings.minimum_leverage:
-                    raise ValueError(f"{symbol}: bestaande SHORT leverage {existing_leverage}x < minimum {settings.minimum_leverage}x")
+                # Counterpart recovery inherits the already-live contract leverage.
                 rows = tier_bracket_rows(bracket_payload, symbol)
                 rescue_notional = (float(settings.entry_margin_usd) * existing_leverage
                                    if settings.entry_sizing_mode == "margin"
@@ -1003,7 +1021,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                                  accepted_leverage=existing_leverage,
                                  existing_contract_notional=existing_notional)
                 tier = {"exchangeMaxLeverage": maximum,
-                        "forcedBelowConfiguredMinimum": False,
+                        "forcedBelowConfiguredMinimum": existing_leverage < settings.minimum_leverage,
                         "configuredMinimum": settings.minimum_leverage,
                         "orphanContractLeverage": existing_leverage}
                 short_plan = None; short_tier = None
@@ -1032,7 +1050,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
         entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
-        if ranked_row.get("orphanShortPriority"):
+        if orphan_priority:
             entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
         if not dry_run and short_requires_long_gate and side == "SHORT":
@@ -1116,6 +1134,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             else:
                 short_count += 1; short_need = max(0, settings.short_slots - short_count)
         available -= total_required if consumed == 2 else required; sent += consumed
+        if orphan_priority and side == "LONG": orphan_long_rescue_filled += 1
 
     managed_long = sum(1 for key in state if key.endswith("|LONG") and key in active)
     managed_short = sum(1 for key in state if key.endswith("|SHORT") and key in active)
@@ -1163,6 +1182,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "orphanShortSymbols": orphan_short_symbols,
               "orphanLongPending": [symbol for symbol in orphan_short_symbols if f"{symbol}|LONG" not in active and f"{symbol}|LONG" not in state],
+              "orphanLongReservedSlots": orphan_long_reserved_slots,
+              "orphanLongRescueFilled": orphan_long_rescue_filled,
+              "orphanLongReservedRemaining": max(0, orphan_long_reserved_slots - orphan_long_rescue_filled),
               "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled, "bollingerEntryFilterTimeframe": settings.bollinger_entry_filter_timeframe,
               "shortRequiresLongEnabled": settings.short_requires_long_enabled,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
