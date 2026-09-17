@@ -1,0 +1,177 @@
+name: Deploy Aavansh public tag v2 2026-09-17
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/deploy-aavansh-public-tag-v2-20260917.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-web
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  PUBLIC_HOST_SERVICE: amar-bot-v44-direct-install
+  AAVANSH_TAG: aavansh-v1
+  AAVANSH_IMAGE: europe-west4-docker.pkg.dev/tradementor-production/tradementor/aavansh-trading-web@sha256:3e53b57fe9f712773348b02b82c8d41b636d530f39992b342b14801c6204d913
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  deploy-tagged-aavansh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify canonical scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$GCP_REGION" = "europe-west4"
+          test "$PUBLIC_HOST_SERVICE" = "amar-bot-v44-direct-install"
+          test "$AAVANSH_TAG" = "aavansh-v1"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture current production serving state and IAM
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1, live
+          spec=s['spec']['template']['spec']
+          print('BASE_REVISION='+str(live[0]['revisionName']))
+          print('BASE_URL='+str(s['status']['url']))
+          print('RUNTIME_SERVICE_ACCOUNT='+str(spec.get('serviceAccountName','')))
+          print('BASE_TIMEOUT='+str(spec.get('timeoutSeconds',300)))
+          print('BASE_CONCURRENCY='+str(spec.get('containerConcurrency',80)))
+          prior=next((x for x in s['status'].get('traffic',[]) if x.get('tag')=='aavansh-v1'),None)
+          print('PRIOR_AAVANSH_TAG_REVISION='+(str(prior.get('revisionName','')) if prior else ''))
+          PY
+
+      - name: Deploy exact tested Aavansh image as zero-traffic tagged revision
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          SUFFIX="av2-e31fbd8c-${GITHUB_RUN_ATTEMPT}"
+          args=(
+            gcloud run deploy "$PUBLIC_HOST_SERVICE"
+            --project "$GCP_PROJECT_ID"
+            --region "$GCP_REGION"
+            --image "$AAVANSH_IMAGE"
+            --no-traffic
+            --tag "$AAVANSH_TAG"
+            --update-env-vars "AAVANSH_TRADING=1"
+            --timeout "$BASE_TIMEOUT"
+            --concurrency "$BASE_CONCURRENCY"
+            --revision-suffix "$SUFFIX"
+            --quiet
+          )
+          if [ -n "$RUNTIME_SERVICE_ACCOUNT" ]; then
+            args+=(--service-account "$RUNTIME_SERVICE_ACCOUNT")
+          fi
+          "${args[@]}"
+
+      - name: Resolve tagged URL and prove production traffic did not move
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after-deploy.json"
+          python - "$RUNNER_TEMP/after-deploy.json" "$BASE_REVISION" "$AAVANSH_TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); base=sys.argv[2]; tag=sys.argv[3]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base, live
+          row=next((x for x in s['status'].get('traffic',[]) if x.get('tag')==tag),None)
+          assert row and row.get('url') and row.get('revisionName') != base, row
+          assert int(row.get('percent',0) or 0)==0, row
+          print('AAVANSH_REVISION='+str(row['revisionName']))
+          print('AAVANSH_URL='+str(row['url']))
+          PY
+          echo "Production 100% revision preserved: $BASE_REVISION"
+
+      - name: Verify Aavansh public PWA end to end
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AAVANSH_URL"
+          test "$AAVANSH_URL" != "$BASE_URL"
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 "$AAVANSH_URL/" > "$RUNNER_TEMP/aavansh-root.html"
+          grep -q 'AAVANSH TRADING' "$RUNNER_TEMP/aavansh-root.html"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/manifest.webmanifest" > "$RUNNER_TEMP/aavansh-manifest.json"
+          grep -q '"name": "Aavansh Trading"' "$RUNNER_TEMP/aavansh-manifest.json"
+          grep -q '"id": "/aavansh-trading-v1"' "$RUNNER_TEMP/aavansh-manifest.json"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/sw.js" > "$RUNNER_TEMP/aavansh-sw.js"
+          grep -q 'aavansh-trading-shell-v1' "$RUNNER_TEMP/aavansh-sw.js"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/offline.html" > /dev/null
+          echo "AAVANSH_PUBLIC_PWA_VERIFIED=$AAVANSH_URL"
+
+      - name: Verify production serving revision, canonical URL and IAM remain unchanged
+        id: production_guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$BASE_URL/" > /dev/null
+          gcloud run services describe "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/final.json"
+          gcloud run services get-iam-policy "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-final.json"
+          python - "$RUNNER_TEMP/final.json" "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-final.json" "$BASE_REVISION" "$BASE_URL" "$AAVANSH_TAG" "$AAVANSH_REVISION" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          ib=json.load(open(sys.argv[2],encoding='utf-8')); ia=json.load(open(sys.argv[3],encoding='utf-8'))
+          base=sys.argv[4]; url=sys.argv[5]; tag=sys.argv[6]; avrev=sys.argv[7]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base, live
+          assert s['status']['url']==url
+          assert ib==ia
+          row=next((x for x in s['status'].get('traffic',[]) if x.get('tag')==tag),None)
+          assert row and row.get('revisionName')==avrev, row
+          assert int(row.get('percent',0) or 0)==0, row
+          print('PRODUCTION_SERVING_STATE_UNCHANGED=1')
+          print('PRODUCTION_IAM_UNCHANGED=1')
+          print('AAVANSH_TRAFFIC_PERCENT=0')
+          PY
+
+      - name: Remove new Aavansh tag if verification fails
+        if: failure() && steps.deploy.outcome == 'success' && env.PRIOR_AAVANSH_TAG_REVISION == ''
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --remove-tags "$AAVANSH_TAG" --quiet || true
+
+      - name: Publish verified install link
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Aavansh Trading v1 publicly verified"
+            echo ""
+            echo "- Install/open URL: $AAVANSH_URL"
+            echo "- Aavansh revision: $AAVANSH_REVISION"
+            echo "- Aavansh production traffic: 0%"
+            echo "- Existing production revision remains at 100%: $BASE_REVISION"
+            echo "- Exact tested image digest: sha256:3e53b57fe9f712773348b02b82c8d41b636d530f39992b342b14801c6204d913"
+          } >> "$GITHUB_STEP_SUMMARY"
