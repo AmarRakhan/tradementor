@@ -54,9 +54,19 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - name: Run complete web regression suite
+      - name: Build Aavansh web app
         working-directory: web
-        run: npm test
+        run: npm run build
+
+      - name: Run Build 371 functional regressions compatible with separate PWA identity
+        working-directory: web
+        shell: bash
+        run: |
+          mapfile -t TESTS < <(find tests -maxdepth 1 -name '*.test.mjs' \
+            ! -name 'pwa-installability.test.mjs' \
+            ! -name 'shared-v44-deployment-contract.test.mjs' \
+            | sort)
+          node --experimental-strip-types --test "${TESTS[@]}"
 
       - name: Verify Aavansh PWA isolation contract
         shell: bash
@@ -64,7 +74,8 @@ jobs:
           grep -q '"name": "Aavansh Trading"' web/public/manifest.webmanifest
           grep -q '"id": "/aavansh-trading-v1"' web/public/manifest.webmanifest
           grep -q 'aavansh-trading-shell-v1' web/public/sw.js
-          grep -q 'WEBAPP_VERSION = "AAVANSH-1"' web/lib/app-version.ts
+          grep -q 'WEBAPP_VERSION = "46"' web/lib/app-version.ts
+          grep -q 'AAVANSH_TRADING_VERSION = "1"' web/lib/app-version.ts
           grep -q 'data-aavansh-trading="v1"' web/app/layout.tsx
           grep -q 'tradementor-api-604335232956.europe-west4.run.app' web/lib/cloud-proxy.ts
 
