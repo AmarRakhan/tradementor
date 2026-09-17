@@ -192,13 +192,6 @@ def test_orphan_priority_uses_exchange_truth_when_caller_snapshot_is_stale():
 
 
 
-def test_orphan_long_execution_marks_existing_contract_counterpart_for_capacity_preflight():
-    source = (Path(__file__).resolve().parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
-    orphan = source.index("orphan_priority = bool(ranked_row.get(\"orphanShortPriority\"))")
-    submit = source.index("existing_contract_counterpart_open=orphan_priority", orphan)
-    assert orphan < submit
-
-
 def test_orphan_long_inherits_existing_short_contract_leverage():
     # Aster leverage is contract-wide. A rescue LONG may not try to rewrite
     # the leverage of an already-open same-symbol SHORT. This reproduces ZEC:
@@ -224,6 +217,65 @@ def test_orphan_long_inherits_existing_short_contract_leverage():
     assert entry.get("orphanShortPriority") is True
     assert entry.get("pairedContractLeverage") == 75
 
+
+
+def test_zero_account_capacity_blocks_orphan_long_then_fills_same_free_long_seat_with_next_coin():
+    class CapacityClient(Client):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.submitted = []
+        def remaining_openable_notional_value(self, symbol, leverage):
+            return 0.0 if symbol == "ZECUSDT" else 1_000_000.0
+        def change_margin_type(self, symbol, margin_type="CROSSED"):
+            return {"symbol": symbol, "marginType": margin_type}
+        def change_leverage(self, symbol, leverage):
+            return {"symbol": symbol, "leverage": leverage}
+        def submit_order_once(self, intent, **_kwargs):
+            self.submitted.append((intent.symbol, intent.position_side.value, intent.action))
+            return {
+                "orderId": len(self.submitted),
+                "status": "FILLED",
+                "avgPrice": "100",
+                "executedQty": str(intent.quantity),
+                "clientOrderId": intent.intent_id,
+            }, False
+
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    client = CapacityClient(
+        positions=[short],
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],
+        prices={"ZECUSDT": 100, "AAAUSDT": 100},
+        leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(
+            maximumPositions=2, longSlots=1, shortSlots=1,
+            shortRequiresLongEnabled=True, minimumLeverage=50,
+            bollingerEntryFilter15mEnabled=False,
+        ),
+        uid="u", account={"availableBalance": "1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=False,
+    )
+    blocked = next(
+        a for a in result["actions"]
+        if a.get("symbol") == "ZECUSDT" and a.get("reason") == "SYMBOL_OPENABLE_NOTIONAL_BELOW_PLANNED"
+    )
+    assert blocked["orphanShortPriority"] is True
+    assert blocked["remainingOpenableNotional"] == 0.0
+    assert blocked["plannedNotional"] > 0
+    assert client.submitted == [("AAAUSDT", "LONG", "OPEN")]
+    assert any(a.get("kind") == "ENTRY" and a.get("symbol") == "AAAUSDT" and a.get("side") == "LONG" for a in result["actions"])
+    assert result["orphanLongReservedSlots"] == 0
+    assert result["orphanLongBlocked"][0]["symbol"] == "ZECUSDT"
+
+
+def test_orphan_long_block_is_persisted_for_backlog_diagnostics():
+    source = (Path(__file__).resolve().parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert '"event": "ORPHAN_LONG_BLOCKED"' in source
+    assert '"remainingOpenableNotional": remaining_openable' in source
+    assert '"orphanLongBlocked": [' in source
 
 
 def test_failed_orphan_priority_does_not_reserve_free_long_seat():
