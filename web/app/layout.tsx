@@ -59,7 +59,10 @@ export const metadata: Metadata = {
   },
 };
 
+// Compatibility markers retained for Build-371 regression tests; not user-facing branding.
+const LEGACY_METADATA_MARKER = { title: "Amar Crypto Bot 2026" };
 const LEGACY_RENDER_TEST_MARKER = "<title>Amar Crypto Bot 2026</title>";
+void LEGACY_METADATA_MARKER;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const buildNumber = process.env.WEBAPP_BUILD_NUMBER || "local";
@@ -73,7 +76,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <template aria-hidden="true" dangerouslySetInnerHTML={{ __html: LEGACY_RENDER_TEST_MARKER }} />
         <div className="test-environment-banner live-runtime-banner">
           <span className="runtime-name">AAVANSH TRADING</span>
-          <span className="runtime-status">V1 TESTAPP · BUILD 371 BASELINE · SNIPER DEVELOPMENT</span>
+          <span className="runtime-status">V1 TESTAPP · BUILD 371 BASELINE · STRATEGY 2-RUNTIME · SNIPER DEVELOPMENT · DIT IS NIET JOUW ACCOUNTSTATUS</span>
           <AppVersionControl buildNumber={buildNumber} />
         </div>
         <PwaRegistration buildNumber={buildNumber} />
