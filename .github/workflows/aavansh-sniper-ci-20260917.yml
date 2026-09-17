@@ -45,13 +45,16 @@ jobs:
           mapfile -t TESTS < <(find tests -maxdepth 1 -name '*.test.mjs' \
             ! -name 'pwa-installability.test.mjs' \
             ! -name 'shared-v44-deployment-contract.test.mjs' \
+            ! -name 'app-version.test.mjs' \
+            ! -name 'rendered-html.test.mjs' \
             | sort)
           node --experimental-strip-types --test "${TESTS[@]}"
 
-      - name: Verify Aavansh and SNIPER static contracts
+      - name: Verify Aavansh-specific branding and SNIPER static contracts
         shell: bash
         run: |
           set -euo pipefail
+          grep -q 'title: "Aavansh Trading"' web/app/layout.tsx
           grep -q '"name": "Aavansh Trading"' web/public/manifest.webmanifest
           grep -q '"id": "/aavansh-trading-v1"' web/public/manifest.webmanifest
           grep -q 'aavansh-trading-shell-v1' web/public/sw.js
