@@ -654,6 +654,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 required_short = float(short_plan.notional_per_leg) / short_plan.leverage
                 if available < required_short * 1.05:
                     actions.append({"kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol, "reason": "INSUFFICIENT_AVAILABLE_MARGIN"}); continue
+                # Recovery is the only paired route that may create the delayed
+                # SHORT while the toggle is on.  Re-read exchange truth directly
+                # before submission so a stale/closed LONG can never authorize it.
+                if not dry_run and settings.short_requires_long_enabled:
+                    fresh_pair_positions = _position_map(client.position_risk(symbol))
+                    if key not in fresh_pair_positions:
+                        actions.append({"kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol, "reason": "SHORT_REQUIRES_LONG", "stage": "pre_order"})
+                        continue
                 actions.append({"kind": "ASYM_SHORT_RECOVERY", "symbol": symbol, "multiplier": settings.short_start_multiplier})
                 if not dry_run:
                     recovered = execute_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{st0.get('cycleId')}", confirm=True, new_position_leverage=current_lev, before_submit=before_order)
@@ -853,14 +861,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
 
-        short_requires_long_gate = settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled
-        manual_reserved = settings.manual_symbol_selection_enabled and bool(ranked_row.get("manualReserved"))
+        # Strict entry-only pairing gate.  It applies to every NEW initial SHORT
+        # route, including manual selection and asymmetric hedge mode.  A blocked
+        # SHORT is never silently converted into a LONG; LONG allocation remains
+        # independent and is evaluated through its normal scanner path.
+        short_requires_long_gate = settings.short_requires_long_enabled
         if short_requires_long_gate and side == "SHORT" and f"{symbol}|LONG" not in active:
-            if not manual_reserved and long_need > 0:
-                side = "LONG"
-            else:
-                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG"})
-                continue
+            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "candidate"})
+            continue
 
         # In normal Multi-DCA mode LONG and SHORT are independent seats.
         # An open BTCUSDT|LONG must never block BTCUSDT|SHORT (or vice versa).
@@ -916,7 +924,19 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         continue
             if settings.bollinger_entry_filter_15m_enabled and not candidate_bb_pass(side):
                 continue
+
+        # The final side can change after the allocator gate above (notably in
+        # the independent Bollinger scan or opposite-seat fallback).  Re-apply
+        # the same-pair rule here so no later side selection can leak a SHORT.
+        if short_requires_long_gate and side == "SHORT" and f"{symbol}|LONG" not in active:
+            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "final_side"})
+            continue
+
         paired = bool(settings.asymmetric_hedge_enabled)
+        # In paired mode the toggle means the LONG must already exist in the
+        # exchange snapshot that started this reconciliation tick.  A LONG that
+        # is only being opened in this same tick does not authorize its SHORT.
+        defer_paired_short = bool(paired and settings.short_requires_long_enabled and f"{symbol}|LONG" not in active)
         if paired and (short_need <= 0 or account_remaining_capacity < 2 or budget - sent < 2):
             actions.append({"kind": "ASYM_PAIR_WAIT", "symbol": symbol, "reason": "SHORT_SLOT_OR_ACCOUNT_CAPACITY_REQUIRED"}); continue
         try:
@@ -940,7 +960,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             print(f"HYPE_ENTRY_DIAG stage=plan_ok side={side} leverage={plan.leverage} notional={float(plan.notional_per_leg)} quantity={plan.quantity}", flush=True)
         required = float(plan.notional_per_leg) / plan.leverage
         short_required = float(short_plan.notional_per_leg) / short_plan.leverage if short_plan is not None else 0.0
-        total_required = required + short_required
+        total_required = required + (0.0 if defer_paired_short else short_required)
         if available < total_required * 1.05:
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=margin_wait available={available} required={total_required}", flush=True)
@@ -955,7 +975,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 continue
         if dry_run:
             actions.append(entry_action)
-            if short_action is not None: actions.append(short_action)
+            if short_action is not None and not defer_paired_short:
+                actions.append(short_action)
+            elif short_action is not None and defer_paired_short:
+                actions.append({"kind": "ASYM_SHORT_ENTRY_PENDING", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_PREEXISTING_LONG"})
         else:
             def entry_before_submit(intent: Any) -> None:
                 require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
@@ -989,7 +1012,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING", "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}, merge=True)
             ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "cycleId": cycle_id, "timestamp": datetime.now(timezone.utc)})
             actions.append(entry_action)
-            if paired and short_plan is not None and short_action is not None:
+            if paired and short_plan is not None and short_action is not None and defer_paired_short:
+                pending = dict(state[key]); pending.update({"pairedShortPending": True, "pairedShortLastError": "SHORT_REQUIRES_PREEXISTING_LONG", "updatedAtMs": timestamp_ms}); state[key] = pending
+                ref.set({"multiBbPositions": state, "phase": "RUNNING", "lastReason": f"Asymmetrische hedge: LONG {symbol} bevestigd; initiële SHORT wacht tot een volgende exchange-snapshot"}, merge=True)
+                actions.append({"kind": "ASYM_SHORT_ENTRY_PENDING", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_PREEXISTING_LONG"})
+            if paired and short_plan is not None and short_action is not None and not defer_paired_short:
                 try:
                     short_result = execute_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{cycle_id}", confirm=True, new_position_leverage=short_plan.leverage, before_submit=before_order)
                 except Exception as exc:
@@ -1006,7 +1033,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     ref.collection("audit").add({"event": "MULTI_BB_ASYM_SHORT_ENTRY", "symbol": symbol, "cycleId": cycle_id, "multiplier": settings.short_start_multiplier, "leverage": short_plan.leverage, "timestamp": datetime.now(timezone.utc)})
                     actions.append(short_action)
         active_symbols.add(symbol)
-        consumed = 2 if paired and (dry_run or f"{symbol}|SHORT" in state) else 1
+        consumed = 2 if paired and ((dry_run and not defer_paired_short) or f"{symbol}|SHORT" in state) else 1
         account_position_count += consumed
         if settings.asymmetric_hedge_enabled:
             account_remaining_capacity = max(0, 50 - account_position_count)

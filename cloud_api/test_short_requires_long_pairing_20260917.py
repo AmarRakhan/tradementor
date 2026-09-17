@@ -85,3 +85,51 @@ def test_frontend_toggle_is_loaded_saved_and_rendered_next_to_seat_controls():
     assert "shortRequiresLongEnabled: v.shortRequiresLongEnabled" in source
     assert "SHORT alleen met LONG" in source
     assert "LONG mag altijd zelfstandig openen" in source
+
+
+
+def test_different_symbol_long_does_not_authorize_short():
+    other_long = pos("BBBUSDT", "LONG")
+    result = run(
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1, shortRequiresLongEnabled=True),
+        positions=[other_long], raw_state=state_for("BBBUSDT", "LONG"),
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "1000"}], prices={"AAAUSDT": 100, "BBBUSDT": 100},
+    )
+    assert not [row for row in result["actions"] if row.get("kind") == "ENTRY" and row.get("side") == "SHORT"]
+    assert any(row.get("symbol") == "AAAUSDT" and row.get("reason") == "SHORT_REQUIRES_LONG" for row in result["actions"])
+
+
+def test_manual_selected_short_cannot_bypass_same_pair_long_gate():
+    result = run(settings=cfg(
+        maximumPositions=1, longSlots=0, shortSlots=1, shortRequiresLongEnabled=True,
+        manualSymbolSelectionEnabled=True, manualSymbols=[{"symbol": "AAAUSDT", "side": "SHORT"}],
+    ))
+    assert not [row for row in result["actions"] if row.get("kind") == "ENTRY" and row.get("side") == "SHORT"]
+    assert any(row.get("reason") == "SHORT_REQUIRES_LONG" for row in result["actions"])
+
+
+def test_asymmetric_mode_defers_same_tick_short_until_long_preexists():
+    result = run(settings=cfg(
+        maximumPositions=2, longSlots=1, shortSlots=1, shortRequiresLongEnabled=True,
+        asymmetricHedgeModeEnabled=True, shortStartMultiplier=2,
+    ))
+    assert any(row.get("kind") == "ENTRY" and row.get("side") == "LONG" for row in result["actions"])
+    assert not any(row.get("kind") == "ASYM_SHORT_ENTRY" for row in result["actions"])
+    assert any(row.get("kind") == "ASYM_SHORT_ENTRY_PENDING" and row.get("reason") == "SHORT_REQUIRES_PREEXISTING_LONG" for row in result["actions"])
+
+
+def test_source_reapplies_gate_after_final_bollinger_side_selection():
+    source = (Path(__file__).resolve().parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    selected = source.index("side = selected_side")
+    final_gate = source.index('"stage": "final_side"')
+    planning = source.index("paired = bool(settings.asymmetric_hedge_enabled)", final_gate)
+    assert selected < final_gate < planning
+    assert "short_requires_long_gate = settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled" not in source
+
+
+def test_paired_short_recovery_rechecks_exchange_long_before_live_submit():
+    source = (Path(__file__).resolve().parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    recovery = source.index("# Recover an initial paired SHORT idempotently")
+    pre_order_guard = source.index('"stage": "pre_order"', recovery)
+    submit = source.index('id_prefix=f"mbb-asym-short-', pre_order_guard)
+    assert recovery < pre_order_guard < submit
