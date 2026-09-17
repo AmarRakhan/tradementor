@@ -240,8 +240,28 @@ def test_zero_account_capacity_blocks_orphan_long_then_fills_same_free_long_seat
                 "clientOrderId": intent.intent_id,
             }, False
 
+    class Snapshot:
+        def __init__(self, value):
+            self.value = value
+        def to_dict(self):
+            return dict(self.value)
+
+    class LiveRef(Ref):
+        def __init__(self, value):
+            super().__init__()
+            self.value = dict(value)
+        def get(self):
+            return Snapshot(self.value)
+        def set(self, row, merge=True):
+            super().set(row, merge=merge)
+            if merge:
+                self.value.update(dict(row))
+            else:
+                self.value = dict(row)
+
     short = pos("ZECUSDT", "SHORT")
     short["leverage"] = "75"
+    raw = state_for("ZECUSDT", "SHORT")
     client = CapacityClient(
         positions=[short],
         tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],
@@ -249,7 +269,7 @@ def test_zero_account_capacity_blocks_orphan_long_then_fills_same_free_long_seat
         leverage=100,
     )
     result = run_multi_bb_step(
-        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        client=client, ref=LiveRef(raw), raw_state=raw,
         settings=cfg(
             maximumPositions=2, longSlots=1, shortSlots=1,
             shortRequiresLongEnabled=True, minimumLeverage=50,
