@@ -31,6 +31,7 @@ import "./liquidation-gauge-hotfix.css";
 import "./portfolio-hedge.css";
 import "./home-transfer.css";
 import "./tradecentrum-responsive.css";
+import "./sniper-bridge.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
