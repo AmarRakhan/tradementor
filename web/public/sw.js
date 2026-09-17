@@ -1,4 +1,5 @@
-const CACHE_NAME = "amar-bot-shell-v46-auto-update-1";
+const CACHE_NAME = "aavansh-trading-shell-v1-auto-update-2";
+const CACHE_PREFIX = "aavansh-trading-shell-";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.add("/offline.html")));
@@ -6,7 +7,7 @@ self.addEventListener("install", (event) => {
 });
 self.addEventListener("activate", (event) => event.waitUntil(
   caches.keys()
-    .then((names) => Promise.all(names.filter((name) => name.startsWith("amar-bot-shell-") && name !== CACHE_NAME).map((name) => caches.delete(name))))
+    .then((names) => Promise.all(names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME).map((name) => caches.delete(name))))
     .then(() => self.clients.claim())
 ));
 self.addEventListener("message", (event) => {
