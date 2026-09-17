@@ -1,0 +1,39 @@
+name: Read live ZEC orphan diagnostics 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/read-zec-orphan-live-diag-20260917.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: tradementor-production
+      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+      DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate diagnostic session
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read ZEC orphan diagnostics from current production
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- live revision ---'
+          gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region europe-west4 --format='value(status.traffic[0].revisionName,status.traffic[0].percent)' || true
+          echo '--- ZEC orphan diagnostics last 20m ---'
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ORPHAN_LONG_DIAG symbol=ZECUSDT"' --project "$GCP_PROJECT_ID" --freshness=20m --limit=100 --order=asc --format='value(timestamp,resource.labels.revision_name,textPayload)' || true
+          echo '--- ZEC-related errors last 20m ---'
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND severity>=ERROR AND (textPayload:"ZEC" OR jsonPayload.message:"ZEC")' --project "$GCP_PROJECT_ID" --freshness=20m --limit=50 --order=asc --format='table(timestamp,resource.labels.revision_name,severity,textPayload,jsonPayload.message)' || true
