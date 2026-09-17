@@ -1,0 +1,136 @@
+name: Integrate Aavansh SNIPER tab
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - aavansh-sniper-build372
+    paths:
+      - ".github/workflows/aavansh-sniper-integrate-20260917.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: aavansh-sniper-build372
+          fetch-depth: 0
+
+      - name: Integrate SNIPER into main navigation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('web/app/page.tsx')
+          s = p.read_text()
+          replacements = [
+            (
+              'import { HomeNavigationBridge } from "@/components/home-navigation-bridge";\n',
+              'import { HomeNavigationBridge } from "@/components/home-navigation-bridge";\nimport { SniperDashboard } from "@/components/sniper-dashboard";\n'
+            ),
+            (
+              'type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";',
+              'type Destination = "hyperliquid" | "aster" | "sniper" | "journey" | "positions" | "risk" | "wallet" | "admin";'
+            ),
+            (
+              'const destinationIds = new Set<Destination>(["hyperliquid", "aster", "journey", "positions", "risk", "wallet", "admin"]);',
+              'const destinationIds = new Set<Destination>(["hyperliquid", "aster", "sniper", "journey", "positions", "risk", "wallet", "admin"]);'
+            ),
+            (
+              '  { id: "aster", label: "ASTER", glyph: "AS" },\n',
+              '  { id: "aster", label: "ASTER", glyph: "AS" },\n  { id: "sniper", label: "SNIPER", glyph: "S" },\n'
+            ),
+            (
+              '{active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "journey" ? <JourneyView snapshots={snapshots} /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} showHyperliquidTab={showHyperliquidTab} onShowHyperliquidTabChange={changeHyperliquidTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} onStrategy2Confirmed={confirmAsterStrategy2} />}',
+              '{active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "sniper" ? <SniperDashboard snapshots={snapshots} cloudReady={cloudReady} /> : active === "journey" ? <JourneyView snapshots={snapshots} /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} showHyperliquidTab={showHyperliquidTab} onShowHyperliquidTabChange={changeHyperliquidTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} onStrategy2Confirmed={confirmAsterStrategy2} />}'
+            ),
+          ]
+          for old, new in replacements:
+            count = s.count(old)
+            if count != 1:
+              raise SystemExit(f'Expected exactly one match, got {count}: {old[:100]!r}')
+            s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
+      - name: Add SNIPER regression tests
+        shell: bash
+        run: |
+          cat > web/tests/sniper-isolation.test.mjs <<'EOF'
+          import test from 'node:test';
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+
+          const page = fs.readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+          const sniper = fs.readFileSync(new URL('../components/sniper-dashboard.tsx', import.meta.url), 'utf8');
+          const manifest = JSON.parse(fs.readFileSync(new URL('../public/manifest.webmanifest', import.meta.url), 'utf8'));
+          const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+
+          test('SNIPER is a first-class main destination', () => {
+            assert.match(page, /type Destination = .*"sniper"/);
+            assert.match(page, /id: "sniper", label: "SNIPER"/);
+            assert.match(page, /<SniperDashboard snapshots=\{snapshots\} cloudReady=\{cloudReady\}/);
+          });
+
+          test('SNIPER exposes exactly the five agreed sections', () => {
+            for (const label of ['Overzicht', 'Trades', 'Signalen', 'Prestaties', 'Instellingen']) assert.match(sniper, new RegExp(label));
+          });
+
+          test('SNIPER keeps the agreed hard strategy constraints', () => {
+            assert.match(sniper, /maxTradeSeconds: 180/);
+            assert.match(sniper, /tpMinPercent: 0\.18/);
+            assert.match(sniper, /tpMaxPercent: 0\.45/);
+            assert.match(sniper, /maxLossUsd: 0\.10/);
+            assert.match(sniper, /maxConcurrent: 3/);
+            assert.match(sniper, /15s/);
+            assert.match(sniper, /1m/);
+            assert.match(sniper, /3m/);
+            assert.match(sniper, /5m/);
+          });
+
+          test('SNIPER contains all twelve entry checks', () => {
+            const checks = ['Bollinger Band locatie','Momentum','Trendfilter','Volume bevestiging','Orderflow','Orderboek','Liquiditeit','Spread check','Volatiliteit','Kosten check','Liquidatiebuffer','Historische edge'];
+            for (const name of checks) assert.match(sniper, new RegExp(name));
+          });
+
+          test('SNIPER is safe-by-default and does not call Aster execution endpoints', () => {
+            assert.match(sniper, /enabled: false/);
+            assert.match(sniper, /simulation: true/);
+            assert.doesNotMatch(sniper, /authenticatedRequest/);
+            assert.doesNotMatch(sniper, /PositionCloseControl/);
+            assert.doesNotMatch(sniper, /\/api\/exchanges\/aster\//);
+          });
+
+          test('Aavansh keeps an independent PWA identity', () => {
+            assert.equal(manifest.name, 'Aavansh Trading');
+            assert.equal(manifest.id, '/aavansh-trading-v1');
+            assert.match(sw, /aavansh-trading-shell-v1/);
+          });
+          EOF
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build and run web tests
+        working-directory: web
+        run: npm test
+
+      - name: Commit tested integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Aavansh Trading Agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add web/app/page.tsx web/tests/sniper-isolation.test.mjs
+          if git diff --cached --quiet; then
+            echo "No integration changes to commit."
+            exit 0
+          fi
+          git commit -m "Integrate isolated SNIPER tab into Aavansh Trading"
+          git push origin HEAD:aavansh-sniper-build372
