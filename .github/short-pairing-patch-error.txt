@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/home/runner/work/tradementor/tradementor/tools/apply_short_requires_long_pairing_20260917.py", line 16, in <module>
+    replace_once(
+  File "/home/runner/work/tradementor/tradementor/tools/apply_short_requires_long_pairing_20260917.py", line 11, in replace_once
+    raise RuntimeError(f"{path}: expected exactly one match, found {count}: {old[:120]!r}")
+RuntimeError: cloud_api/aster_multi_bb_core.py: expected exactly one match, found 0: '    long_slots: int = 20\n    short_slots: int = 10\n    minimum_leverage: int = 50\n'
