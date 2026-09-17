@@ -1,0 +1,59 @@
+name: Aavansh SNIPER CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - aavansh-sniper-build372
+    paths:
+      - "web/**"
+      - ".github/workflows/aavansh-sniper-ci-20260917.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: aavansh-sniper-build372
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Full web regression suite
+        working-directory: web
+        run: npm test
+
+      - name: Record successful Aavansh SNIPER CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, datetime
+          payload = {
+            "tested_sha": os.environ["GITHUB_SHA"],
+            "workflow": "Aavansh SNIPER CI",
+            "result": "success",
+            "tested_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "mode": "simulation-only",
+            "live_execution": False,
+          }
+          open('.aavansh-sniper-ci.json','w').write(json.dumps(payload,indent=2,sort_keys=True)+'\n')
+          PY
+          git config user.name "Aavansh Trading CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add .aavansh-sniper-ci.json
+          git commit -m "Record successful Aavansh SNIPER CI" || exit 0
+          git push origin HEAD:aavansh-sniper-build372
