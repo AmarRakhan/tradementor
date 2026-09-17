@@ -1,0 +1,158 @@
+name: Diagnose ZEC orphan live sanitized 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diag-zec-orphan-live-sanitized-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  PROD_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build ephemeral sanitized diagnostic service
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_SA="$(gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$RUNTIME_SA"
+          DIAG_SERVICE="tm-zec-diag-${GITHUB_RUN_ID}"
+          TOKEN="$(python - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(32))
+          PY
+          )"
+          mkdir -p "$RUNNER_TEMP/zecdiag"
+          cat > "$RUNNER_TEMP/zecdiag/requirements.txt" <<'EOF'
+          Flask==3.0.3
+          gunicorn==23.0.0
+          google-cloud-firestore==2.21.0
+          EOF
+          cat > "$RUNNER_TEMP/zecdiag/Dockerfile" <<'EOF'
+          FROM python:3.12-slim
+          WORKDIR /app
+          COPY requirements.txt .
+          RUN pip install --no-cache-dir -r requirements.txt
+          COPY diag.py .
+          CMD exec gunicorn --bind :$PORT --workers 1 --threads 4 --timeout 60 diag:app
+          EOF
+          cat > "$RUNNER_TEMP/zecdiag/diag.py" <<'PY'
+          import os
+          from datetime import datetime, timezone, timedelta
+          from flask import Flask, jsonify, abort
+          from google.cloud import firestore
+
+          app=Flask(__name__)
+          SAFE_ACTION_KEYS={"kind","symbol","side","reason","stage","leverage","pairedContractLeverage",
+                            "orphanShortPriority","requiredMargin","notionalUsd","marginUsd","entryMode",
+                            "exchangeMaxLeverage","forcedBelowConfiguredMinimum","number","trigger",
+                            "projectedNotional","targetLeverage","catchupRemaining"}
+          SAFE_AUDIT_KEYS={"event","symbol","side","reason","dcaNumber","leverage","projectedNotional","timestamp"}
+
+          def iso(v):
+              if isinstance(v,datetime):
+                  if v.tzinfo is None: v=v.replace(tzinfo=timezone.utc)
+                  return v.astimezone(timezone.utc).isoformat()
+              return v
+
+          @app.get("/diag/<token>")
+          def diag(token):
+              if token != os.environ.get("DIAG_TOKEN"):
+                  abort(404)
+              db=firestore.Client(project=os.environ["GCP_PROJECT_ID"])
+              scanned=0; rows=[]
+              cutoff=datetime.now(timezone.utc)-timedelta(minutes=20)
+              for snap in db.collection("asterStrategy2").stream():
+                  scanned+=1
+                  raw=snap.to_dict() or {}
+                  if not raw.get("enabled"): continue
+                  settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+                  report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
+                  positions=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
+                  actions=[a for a in list(report.get("actions") or []) if isinstance(a,dict)]
+                  zec_action=any(str(a.get("symbol","")).upper()=="ZECUSDT" for a in actions)
+                  orphan="ZECUSDT" in list(report.get("orphanShortSymbols") or [])
+                  state_orphan=("ZECUSDT|SHORT" in positions and "ZECUSDT|LONG" not in positions)
+                  if not (zec_action or orphan or state_orphan): continue
+                  zec=positions.get("ZECUSDT|SHORT") if isinstance(positions.get("ZECUSDT|SHORT"),dict) else {}
+                  safe_actions=[]
+                  for a in actions:
+                      if str(a.get("symbol","")).upper()=="ZECUSDT" or a.get("kind") in {"ENTRY","ENTRY_SKIP","ENTRY_MARGIN_WAIT"}:
+                          safe_actions.append({k:iso(v) for k,v in a.items() if k in SAFE_ACTION_KEYS})
+                  audits=[]
+                  try:
+                      for q in snap.reference.collection("audit").order_by("timestamp",direction=firestore.Query.DESCENDING).limit(40).stream():
+                          d=q.to_dict() or {}; ts=d.get("timestamp")
+                          if isinstance(ts,datetime) and ts.tzinfo is None: ts=ts.replace(tzinfo=timezone.utc)
+                          if isinstance(ts,datetime) and ts < cutoff: break
+                          if str(d.get("symbol","")).upper()=="ZECUSDT" or str(d.get("event","")).startswith("MULTI_BB_ENTRY"):
+                              audits.append({k:iso(v) for k,v in d.items() if k in SAFE_AUDIT_KEYS})
+                  except Exception as exc:
+                      audits=[{"event":"AUDIT_READ_FAILED","reason":type(exc).__name__}]
+                  rows.append({
+                      "enabled":bool(raw.get("enabled")),
+                      "lastTickAt":iso(raw.get("lastTickAt")),
+                      "lastReason":str(raw.get("lastReason",""))[:300],
+                      "settings":{k:settings.get(k) for k in [
+                          "maximumPositions","longSlots","shortSlots","shortRequiresLongEnabled",
+                          "bollingerEntryFilter15mEnabled","bollingerEntryFilterTimeframe","minimumLeverage",
+                          "entryMarginLongUsd","entryMarginShortUsd","entryMarginUsd","entryNotionalUsd","entrySizingMode"
+                      ]},
+                      "report":{k:report.get(k) for k in [
+                          "updatedAtMs","entryStatus","entryReason","activeLong","activeShort","remainingLong",
+                          "remainingShort","accountPositionCount","accountRemainingCapacity","orphanShortSymbols",
+                          "orphanLongPending","orphanLongReservedSlots","entrySkipReasons","candidateCount",
+                          "scannedCandidateCount","executableCandidateCount"
+                      ]},
+                      "zecShort":{k:zec.get(k) for k in [
+                          "dcaCount","leverage","lastKnownQty","lastKnownEntry","lastBotFillPrice",
+                          "lastDcaFillPrice","nextDcaPrice","nextDcaDue","nextDcaStatus"
+                      ]},
+                      "actions":safe_actions[-80:],
+                      "recentAudit":audits,
+                  })
+              return jsonify({"scannedEnabledCollectionDocs":scanned,"matches":len(rows),"rows":rows})
+          PY
+
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/tradementor/zec-diag:${GITHUB_SHA}"
+          docker build -t "$IMAGE" "$RUNNER_TEMP/zecdiag"
+          docker push "$IMAGE"
+          gcloud run deploy "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "GCP_PROJECT_ID=$GCP_PROJECT_ID,DIAG_TOKEN=$TOKEN"             --min-instances 0 --max-instances 1 --memory 512Mi --timeout 60 --allow-unauthenticated --quiet
+          URL="$(gcloud run services describe "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          echo "DIAG_SERVICE=$DIAG_SERVICE" >> "$GITHUB_ENV"
+          echo "DIAG_URL=$URL" >> "$GITHUB_ENV"
+          echo "DIAG_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Read sanitized live ZEC orphan report
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$DIAG_URL/diag/$DIAG_TOKEN" | python -m json.tool
+
+      - name: Delete ephemeral diagnostic service
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_SERVICE:-}" ]; then
+            gcloud run services delete "$DIAG_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
