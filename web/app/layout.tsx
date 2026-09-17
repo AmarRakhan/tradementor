@@ -45,27 +45,26 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Crypto Bot 2026",
-  description: "Eén veilige trade floor voor Hyperliquid, Aster en je totale portfolio.",
-  icons: { icon: "/tradementor-logo.png?v=redgreen-1", shortcut: "/tradementor-logo.png?v=redgreen-1" },
-  applicationName: "Crypto Bot 2026",
+  title: "Aavansh Trading",
+  description: "Aavansh Trading v1 — aparte testwebapp met gedeelde accountconnecties en een onafhankelijke Sniper-strategie.",
+  icons: { icon: "/tradementor-logo.png?v=aavansh-shell-1", shortcut: "/tradementor-logo.png?v=aavansh-shell-1" },
+  applicationName: "Aavansh Trading",
   other: { "application-version": WEBAPP_VERSION },
-  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Crypto Bot 2026" },
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Aavansh Trading" },
   openGraph: {
-    title: "TradeMentor Web",
-    description: "Persoonlijke multi-exchange portfolio-intelligentie met bewuste handelsactivering.",
+    title: "Aavansh Trading",
+    description: "Aparte Aavansh Trading testomgeving gebaseerd op TradeMentor Build 371.",
     type: "website",
-    images: [{ url: "/tradementor-social.png", width: 1672, height: 941, alt: "TradeMentor portfolio control room" }],
+    images: [{ url: "/tradementor-social.png", width: 1672, height: 941, alt: "Aavansh Trading" }],
   },
 };
 
-// Legacy test marker only; not rendered as branding: title: "Amar Crypto Bot 2026"
 const LEGACY_RENDER_TEST_MARKER = "<title>Amar Crypto Bot 2026</title>";
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const buildNumber = process.env.WEBAPP_BUILD_NUMBER || "local";
   return (
-    <html lang="nl" data-webapp-version={WEBAPP_VERSION} data-webapp-build={buildNumber}>
+    <html lang="nl" data-webapp-version={WEBAPP_VERSION} data-webapp-build={buildNumber} data-aavansh-trading="v1">
       <head>
         <link rel="manifest" href={`/manifest.webmanifest?v=${WEBAPP_VERSION}`} crossOrigin="use-credentials" />
         <link rel="apple-touch-icon" href="/tradementor-icon-192.png" />
@@ -73,8 +72,8 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <template aria-hidden="true" dangerouslySetInnerHTML={{ __html: LEGACY_RENDER_TEST_MARKER }} />
         <div className="test-environment-banner live-runtime-banner">
-          <span className="runtime-name">CRYPTO BOT 2026</span>
-          <span className="runtime-status">PLATFORMSTATUS · STRATEGY 2-RUNTIME · DIT IS NIET JOUW ACCOUNTSTATUS</span>
+          <span className="runtime-name">AAVANSH TRADING</span>
+          <span className="runtime-status">V1 TESTAPP · BUILD 371 BASELINE · SNIPER DEVELOPMENT</span>
           <AppVersionControl buildNumber={buildNumber} />
         </div>
         <PwaRegistration buildNumber={buildNumber} />
