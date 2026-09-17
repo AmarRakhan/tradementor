@@ -191,6 +191,33 @@ def test_orphan_priority_uses_exchange_truth_when_caller_snapshot_is_stale():
     assert "ZECUSDT" in result["orphanShortSymbols"]
 
 
+
+def test_orphan_long_inherits_existing_short_contract_leverage():
+    # Aster leverage is contract-wide. A rescue LONG may not try to rewrite
+    # the leverage of an already-open same-symbol SHORT. This reproduces ZEC:
+    # existing SHORT at 75x while a tiny fresh leg would otherwise resolve 100x.
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    client = Client(
+        positions=[short],
+        tickers=[{"symbol":"AAAUSDT","quoteVolume":"999999"}],
+        prices={"AAAUSDT":100,"ZECUSDT":100}, leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT","SHORT"),
+        settings=cfg(maximumPositions=3,longSlots=2,shortSlots=1,
+                     shortRequiresLongEnabled=True, universeTopN=2, minimumLeverage=50),
+        uid="u", account={"availableBalance":"1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time()*1000), dry_run=True,
+    )
+    entry = next(row for row in result["actions"] if row.get("kind")=="ENTRY")
+    assert entry["symbol"] == "ZECUSDT"
+    assert entry["side"] == "LONG"
+    assert entry["leverage"] == 75
+    assert entry.get("orphanShortPriority") is True
+    assert entry.get("pairedContractLeverage") == 75
+
+
 def test_pairing_truth_refresh_failure_blocks_new_seat_allocation():
     class BrokenTruthClient(Client):
         def position_risk(self, symbol=None):

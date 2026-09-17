@@ -982,6 +982,31 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         try:
             if paired:
                 plan, short_plan, tier, short_tier = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)
+            elif ranked_row.get("orphanShortPriority"):
+                # Same-symbol LONG rescue must inherit the already-open SHORT's
+                # contract leverage. Aster leverage is contract-wide; planning a
+                # tiny opposite leg as a brand-new contract can choose a higher
+                # leverage and then fail the execution guard even though the LONG
+                # itself is otherwise perfectly openable.
+                orphan_short = active.get(f"{symbol}|SHORT")
+                if orphan_short is None:
+                    raise ValueError(f"{symbol}: orphan SHORT verdween vóór LONG rescue")
+                existing_leverage = max(1, _i(orphan_short.get("leverage")))
+                if existing_leverage < settings.minimum_leverage:
+                    raise ValueError(f"{symbol}: bestaande SHORT leverage {existing_leverage}x < minimum {settings.minimum_leverage}x")
+                rows = tier_bracket_rows(bracket_payload, symbol)
+                rescue_notional = (float(settings.entry_margin_usd) * existing_leverage
+                                   if settings.entry_sizing_mode == "margin"
+                                   else float(settings.entry_notional_usd))
+                existing_notional = abs(_f(orphan_short.get("positionAmt"))) * prices[symbol]
+                plan = plan_pair(info_map[symbol], rows, prices[symbol], rescue_notional,
+                                 accepted_leverage=existing_leverage,
+                                 existing_contract_notional=existing_notional)
+                tier = {"exchangeMaxLeverage": maximum,
+                        "forcedBelowConfiguredMinimum": False,
+                        "configuredMinimum": settings.minimum_leverage,
+                        "orphanContractLeverage": existing_leverage}
+                short_plan = None; short_tier = None
             else:
                 plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
                 short_plan = None; short_tier = None
@@ -1007,6 +1032,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
         entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
+        if ranked_row.get("orphanShortPriority"):
+            entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
         if not dry_run and short_requires_long_gate and side == "SHORT":
             fresh_pair_positions = _position_map(client.position_risk(symbol))
