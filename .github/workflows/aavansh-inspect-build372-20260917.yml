@@ -1,0 +1,90 @@
+name: Inspect live Build 372 for Aavansh Sniper
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - aavansh-sniper-build372
+    paths:
+      - ".github/workflows/aavansh-inspect-build372-20260917.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  SERVICE: amar-bot-v44-direct-install
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: aavansh-sniper-build372
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Inspect exact 100 percent production revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > service.json
+          LIVE_REVISION="$(python - <<'PY'
+          import json
+          s=json.load(open('service.json'))
+          rows=[x for x in s.get('status',{}).get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(rows)==1, rows
+          print(rows[0]['revisionName'])
+          PY
+          )"
+          gcloud run revisions describe "$LIVE_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > revision.json
+          python - "$LIVE_REVISION" "$GITHUB_SHA" > .aavansh-build372-inspect.json <<'PY'
+          import json,re,sys
+          revision=json.load(open('revision.json'))
+          live=sys.argv[1]
+          branch_sha=sys.argv[2]
+          spec=revision.get('spec',{}).get('containers',[{}])[0]
+          env={e.get('name'): e.get('value','') for e in spec.get('env',[]) if e.get('name')}
+          m=re.search(r'-v46-([0-9a-f]{8})-', live)
+          prefix=m.group(1) if m else ''
+          out={
+            'live_revision': live,
+            'live_build_number': env.get('WEBAPP_BUILD_NUMBER',''),
+            'live_commit_prefix_from_revision': prefix,
+            'inspection_branch_sha': branch_sha,
+            'image': spec.get('image',''),
+            'labels': revision.get('metadata',{}).get('labels',{}),
+            'annotations': revision.get('metadata',{}).get('annotations',{}),
+          }
+          print(json.dumps(out,indent=2,sort_keys=True))
+          PY
+          cat .aavansh-build372-inspect.json
+          BUILD="$(python -c "import json; print(json.load(open('.aavansh-build372-inspect.json'))['live_build_number'])")"
+          if [ "$BUILD" != "372" ]; then
+            echo "Expected live WEBAPP_BUILD_NUMBER=372, got '$BUILD'" >&2
+            exit 42
+          fi
+
+      - name: Persist verified Build 372 evidence
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "TradeMentor Agent"
+          git config user.email "actions@users.noreply.github.com"
+          git add .aavansh-build372-inspect.json
+          git commit -m "Record verified live Build 372 source evidence" || exit 0
+          git push origin HEAD:aavansh-sniper-build372
