@@ -1,0 +1,156 @@
+name: Repair orphan SHORT rescue and Aster snapshot 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: ['.github/orphan-short-rescue-snapshot-20260917.trigger']
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: orphan-short-rescue-snapshot-20260917
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  ARTIFACT_REPOSITORY: tradementor
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  repair-test-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply repair
+        run: python tools/apply_orphan_short_rescue_and_snapshot_20260917.py
+
+      - name: Install backend dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+
+      - name: Run focused pairing regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py test_aster_bollinger_entry_filter_seat_flow.py test_same_symbol_dual_side_20260906.py test_aster_multi_bb.py
+
+      - name: Run full backend suite
+        working-directory: cloud_api
+        run: python -m pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund
+
+      - name: Run complete web suite
+        working-directory: web
+        run: npm test
+
+      - name: Commit verified implementation
+        id: commit
+        shell: bash
+        run: |
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb_core.py cloud_api/test_short_requires_long_pairing_20260917.py web/lib/aster-snapshot-cache.mjs web/tests/aster-snapshot-position-count.test.mjs
+          git commit -m 'Prioritize orphan SHORT rescue LONGs and sync Aster position count'
+          IMPLEMENTATION_SHA="$(git rev-parse HEAD)"
+          echo "implementation_sha=$IMPLEMENTATION_SHA" >> "$GITHUB_OUTPUT"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture production backend state and IAM
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/service-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1, live
+          print('BEFORE_REVISION='+live[0]['revisionName'])
+          print('SERVICE_URL='+s['status']['url'])
+          PY
+
+      - name: Build and push repaired backend
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:${{ steps.commit.outputs.implementation_sha }}"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy zero-traffic backend candidate
+        shell: bash
+        run: |
+          TAG="orphan-rescue-${GITHUB_RUN_ID}"
+          SUFFIX="orphan-${GITHUB_RUN_ID: -8}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-candidate.json"
+          python - "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); tag=sys.argv[2]
+          row=next(x for x in s['status']['traffic'] if x.get('tag')==tag)
+          print('CANDIDATE_REVISION='+row['revisionName']); print('CANDIDATE_URL='+row['url'])
+          PY
+
+      - name: Verify backend candidate health
+        shell: bash
+        run: |
+          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h['status']=='ready'; assert h['multiUser'] is True
+          PY
+
+      - name: Promote repaired backend to 100 percent
+        id: promote
+        shell: bash
+        run: gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Verify backend production and IAM unchanged
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$SERVICE_URL/health" > /dev/null
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/service-after.json" "$CANDIDATE_REVISION" "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); rev=sys.argv[2]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0))==100]
+          assert len(live)==1 and live[0].get('revisionName')==rev, live
+          assert json.load(open(sys.argv[3],encoding='utf-8'))==json.load(open(sys.argv[4],encoding='utf-8'))
+          PY
+
+      - name: Roll back backend on failed post-promotion verification
+        if: failure() && steps.promote.outcome == 'success'
+        run: gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$BEFORE_REVISION=100"
