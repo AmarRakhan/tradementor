@@ -1,0 +1,218 @@
+name: Fix hard orphan LONG seat priority v2 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/fix-hard-orphan-long-seat-priority-v2-20260917.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Add exact hard-reservation regressions
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/test_short_requires_long_pairing_20260917.py')
+          s=p.read_text()
+          marker='def test_pairing_truth_refresh_failure_blocks_new_seat_allocation():'
+          assert marker in s
+          tests='''
+
+def test_bollinger_off_orphan_long_inherits_existing_contract_leverage_even_if_minimum_was_raised():
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    client = Client(
+        positions=[short],
+        tickers=[{"symbol": "XCUUSDT", "quoteVolume": "999999"}],
+        prices={"XCUUSDT": 100, "ZECUSDT": 100}, leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1,
+                     shortRequiresLongEnabled=True, minimumLeverage=100, universeTopN=1,
+                     bollingerEntryFilter15mEnabled=False),
+        uid="u", account={"availableBalance": "1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]
+    assert entries, result
+    assert entries[0]["symbol"] == "ZECUSDT"
+    assert entries[0]["side"] == "LONG"
+    assert entries[0]["leverage"] == 75
+    assert entries[0].get("orphanShortPriority") is True
+    assert not any(a.get("symbol") == "XCUUSDT" and a.get("kind") == "ENTRY" for a in result["actions"])
+
+
+def test_bollinger_off_failed_orphan_rescue_reserves_last_free_long_seat():
+    class BrokenZecLeverageClient(Client):
+        def leverage_brackets(self, symbol=None):
+            sym = symbol or "XCUUSDT"
+            if sym == "ZECUSDT":
+                raise RuntimeError("temporary ZEC leverage data failure")
+            return super().leverage_brackets(sym)
+
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    client = BrokenZecLeverageClient(
+        positions=[short],
+        tickers=[{"symbol": "XCUUSDT", "quoteVolume": "999999"}],
+        prices={"XCUUSDT": 100, "ZECUSDT": 100}, leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1,
+                     shortRequiresLongEnabled=True, minimumLeverage=50, universeTopN=1,
+                     bollingerEntryFilter15mEnabled=False),
+        uid="u", account={"availableBalance": "1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    assert not [a for a in result["actions"] if a.get("kind") == "ENTRY"], result
+    assert any(a.get("symbol") == "XCUUSDT" and a.get("reason") == "ORPHAN_LONG_SEAT_RESERVED" for a in result["actions"])
+    assert result["orphanLongReservedSlots"] == 1
+    assert result["orphanLongReservedRemaining"] == 1
+
+
+def test_bollinger_off_only_unreserved_long_seats_may_go_to_normal_candidates():
+    class BrokenZecLeverageClient(Client):
+        def leverage_brackets(self, symbol=None):
+            sym = symbol or "XCUUSDT"
+            if sym == "ZECUSDT":
+                raise RuntimeError("temporary ZEC leverage data failure")
+            return super().leverage_brackets(sym)
+
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    tickers = [
+        {"symbol": "XCUUSDT", "quoteVolume": "3000"},
+        {"symbol": "AAAUSDT", "quoteVolume": "2000"},
+        {"symbol": "BBBUSDT", "quoteVolume": "1000"},
+    ]
+    client = BrokenZecLeverageClient(
+        positions=[short], tickers=tickers,
+        prices={"ZECUSDT": 100, "XCUUSDT": 100, "AAAUSDT": 100, "BBBUSDT": 100},
+        leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(maximumPositions=4, longSlots=3, shortSlots=1,
+                     shortRequiresLongEnabled=True, minimumLeverage=50, universeTopN=3,
+                     bollingerEntryFilter15mEnabled=False),
+        uid="u", account={"availableBalance": "1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY" and a.get("side") == "LONG"]
+    assert len(entries) == 2, result
+    assert all(a["symbol"] != "ZECUSDT" for a in entries)
+    assert result["remainingLong"] == 1
+    assert result["orphanLongReservedSlots"] == 1
+    assert result["orphanLongReservedRemaining"] == 1
+    assert any(a.get("reason") == "ORPHAN_LONG_SEAT_RESERVED" for a in result["actions"])
+
+'''
+          s=s.replace('\n'+marker, tests+'\n'+marker)
+          p.write_text(s)
+          PY
+
+      - name: Prove current production logic violates the rule
+        shell: bash
+        run: |
+          set +e
+          cd cloud_api
+          python -m pytest -q --tb=short test_short_requires_long_pairing_20260917.py -k 'bollinger_off_orphan_long_inherits_existing_contract_leverage_even_if_minimum_was_raised or bollinger_off_failed_orphan_rescue_reserves_last_free_long_seat or bollinger_off_only_unreserved_long_seats_may_go_to_normal_candidates'
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          echo HARD_ORPHAN_RULE_REPRODUCED
+
+      - name: Apply hard orphan seat reservation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('cloud_api/aster_multi_bb_core.py')
+          s=p.read_text()
+
+          old='''    # New seats: fill immediately from Top-N volume after leverage/order/margin checks.\n    scanned_candidates = 0\n    executable_candidates = 0\n    minimum_margin_rejections: list[float] = []\n    for ranked_row in candidates:\n'''
+          new='''    # With Bollinger OFF, exchange-confirmed SHORTs that have no same-symbol\n    # LONG reserve the corresponding free LONG seats before ordinary candidates.\n    # Reserve from exchange truth itself, not from a later candidate list: a\n    # temporary market/leverage-data failure must not let an unrelated LONG steal\n    # the counterpart seat. With Bollinger ON, the existing signal gate remains.\n    orphan_long_reserved_slots = (\n        min(long_need, len(orphan_short_symbols))\n        if settings.short_requires_long_enabled\n        and not settings.asymmetric_hedge_enabled\n        and not settings.bollinger_entry_filter_15m_enabled\n        and long_need > 0\n        else 0\n    )\n    orphan_long_rescue_filled = 0\n\n    # New seats: fill immediately from Top-N volume after leverage/order/margin checks.\n    scanned_candidates = 0\n    executable_candidates = 0\n    minimum_margin_rejections: list[float] = []\n    for ranked_row in candidates:\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        symbol = ranked_row["symbol"]\n        if symbol == "HYPEUSDT":\n'''
+          new='''        symbol = ranked_row["symbol"]\n        orphan_priority = bool(ranked_row.get("orphanShortPriority"))\n        if symbol == "HYPEUSDT":\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        if maximum < settings.minimum_leverage:\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"MAX_LEVERAGE_BELOW_MINIMUM: {maximum}x < {settings.minimum_leverage}x"}); continue\n        if ranked_row.get("orphanShortPriority") and long_need > 0:\n'''
+          new='''        if maximum < settings.minimum_leverage and not orphan_priority:\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"MAX_LEVERAGE_BELOW_MINIMUM: {maximum}x < {settings.minimum_leverage}x"}); continue\n        if orphan_priority and long_need > 0:\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        if short_requires_long_gate and side == "SHORT" and f"{symbol}|LONG" not in active:\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "final_side"})\n            continue\n\n        paired = bool(settings.asymmetric_hedge_enabled)\n'''
+          new='''        if short_requires_long_gate and side == "SHORT" and f"{symbol}|LONG" not in active:\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "final_side"})\n            continue\n\n        orphan_reserved_remaining = max(0, orphan_long_reserved_slots - orphan_long_rescue_filled)\n        if (not orphan_priority and side == "LONG" and orphan_reserved_remaining > 0\n                and long_need <= orphan_reserved_remaining):\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "LONG",\n                            "reason": "ORPHAN_LONG_SEAT_RESERVED",\n                            "reservedRemaining": orphan_reserved_remaining})\n            continue\n\n        paired = bool(settings.asymmetric_hedge_enabled)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''                existing_leverage = max(1, _i(orphan_short.get("leverage")))\n                if existing_leverage < settings.minimum_leverage:\n                    raise ValueError(f"{symbol}: bestaande SHORT leverage {existing_leverage}x < minimum {settings.minimum_leverage}x")\n                rows = tier_bracket_rows(bracket_payload, symbol)\n'''
+          new='''                existing_leverage = max(1, _i(orphan_short.get("leverage")))\n                # This is recovery of an already-live contract, not brand-new\n                # exposure. Inherit that contract's leverage even if the user\n                # raised the configured minimum after the SHORT was opened.\n                rows = tier_bracket_rows(bracket_payload, symbol)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''                tier = {"exchangeMaxLeverage": maximum,\n                        "forcedBelowConfiguredMinimum": False,\n                        "configuredMinimum": settings.minimum_leverage,\n                        "orphanContractLeverage": existing_leverage}\n'''
+          new='''                tier = {"exchangeMaxLeverage": maximum,\n                        "forcedBelowConfiguredMinimum": existing_leverage < settings.minimum_leverage,\n                        "configuredMinimum": settings.minimum_leverage,\n                        "orphanContractLeverage": existing_leverage}\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        if ranked_row.get("orphanShortPriority"):\n            entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})\n'''
+          new='''        if orphan_priority:\n            entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        available -= total_required if consumed == 2 else required; sent += consumed\n\n    managed_long = sum(1 for key in state if key.endswith("|LONG") and key in active)\n'''
+          new='''        available -= total_required if consumed == 2 else required; sent += consumed\n        if orphan_priority and side == "LONG":\n            orphan_long_rescue_filled += 1\n\n    managed_long = sum(1 for key in state if key.endswith("|LONG") and key in active)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''              "orphanShortSymbols": orphan_short_symbols,\n              "orphanLongPending": [symbol for symbol in orphan_short_symbols if f"{symbol}|LONG" not in active and f"{symbol}|LONG" not in state],\n'''
+          new='''              "orphanShortSymbols": orphan_short_symbols,\n              "orphanLongPending": [symbol for symbol in orphan_short_symbols if f"{symbol}|LONG" not in active and f"{symbol}|LONG" not in state],\n              "orphanLongReservedSlots": orphan_long_reserved_slots,\n              "orphanLongRescueFilled": orphan_long_rescue_filled,\n              "orphanLongReservedRemaining": max(0, orphan_long_reserved_slots - orphan_long_rescue_filled),\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          p.write_text(s)
+          PY
+
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+      - name: Run focused pairing regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py test_aster_bollinger_entry_filter_seat_flow.py test_same_symbol_dual_side_20260906.py test_aster_multi_bb.py
+      - name: Run full backend suite
+        working-directory: cloud_api
+        run: python -m pytest -q
+      - name: Commit verified repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb_core.py cloud_api/test_short_requires_long_pairing_20260917.py
+          git diff --cached --quiet && { echo 'No repair to commit'; exit 1; }
+          git commit -m 'Reserve free LONG seats for orphan SHORT pairs'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
