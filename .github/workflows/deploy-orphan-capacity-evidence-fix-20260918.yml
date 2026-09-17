@@ -21,7 +21,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  VERIFIED_CODE_SHA: 7182e88e0c2e65f68d9c822f245ad73809582729
+  VERIFIED_CODE_SHA: 745d3d610acba2a0e651e0c1c64d79d13a8afffd
 
 jobs:
   test-build-verify-promote:
