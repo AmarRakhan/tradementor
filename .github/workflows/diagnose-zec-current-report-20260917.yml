@@ -1,0 +1,79 @@
+name: Diagnose current ZEC orphan entry report 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-zec-current-report-20260917.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      GCP_PROJECT_ID: tradementor-production
+      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+      DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Firestore client
+        run: python -m pip install -q google-cloud-firestore
+      - name: Authenticate read-only diagnostic session
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - name: Read only matching Multi-BB report
+        shell: bash
+        run: |
+          python - <<'PY'
+          from google.cloud import firestore
+          from google.cloud.firestore_v1.base_query import FieldFilter
+          import json, os
+
+          db=firestore.Client(project=os.environ['GCP_PROJECT_ID'])
+          q=(db.collection('asterStrategy2')
+             .where(filter=FieldFilter('settings.longSlots','==',32))
+             .where(filter=FieldFilter('settings.shortSlots','==',13))
+             .where(filter=FieldFilter('enabled','==',True)))
+          matches=[]
+          for snap in q.stream():
+              raw=snap.to_dict() or {}
+              report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+              if int(report.get('activeLong') or -1)!=31 or int(report.get('activeShort') or -1)!=13:
+                  continue
+              if 'ZECUSDT' not in list(report.get('orphanShortSymbols') or []):
+                  continue
+              matches.append(raw)
+          print('matching_accounts',len(matches))
+          if len(matches)!=1:
+              raise SystemExit('Expected exactly one matching current account; refusing to print cross-account data')
+          raw=matches[0]
+          settings=raw.get('settings') or {}
+          report=raw.get('multiBbReport') or {}
+          positions=raw.get('multiBbPositions') or {}
+          zec_state=positions.get('ZECUSDT|SHORT') if isinstance(positions.get('ZECUSDT|SHORT'),dict) else {}
+          safe={
+              'settings':{k:settings.get(k) for k in (
+                  'maximumPositions','longSlots','shortSlots','shortRequiresLongEnabled',
+                  'bollingerEntryFilter15mEnabled','bollingerEntryFilterTimeframe',
+                  'minimumLeverage','entryMarginUsd','entryNotionalUsd','entrySizingMode')},
+              'report':{k:report.get(k) for k in (
+                  'updatedAtMs','entryStatus','entryReason','activeLong','activeShort',
+                  'remainingLong','remainingShort','accountPositionCount','accountRemainingCapacity',
+                  'orphanShortSymbols','orphanLongPending','orphanLongReservedSlots',
+                  'orphanLongRescueFilled','orphanLongReservedRemaining','entrySkipReasons',
+                  'candidateCount','scannedCandidateCount','executableCandidateCount')},
+              'zecShortState':{k:zec_state.get(k) for k in ('dcaCount','leverage')},
+              'zecActions':[a for a in list(report.get('actions') or []) if str(a.get('symbol','')).upper()=='ZECUSDT' or a.get('kind')=='ENTRY_SCAN_BLOCKED'],
+          }
+          print(json.dumps(safe,indent=2,sort_keys=True,default=str))
+          PY
