@@ -1,4 +1,4 @@
-name: Diagnose ZEC orphan runtime report 2026-09-17
+name: Diagnose ZEC public contract constraints 2026-09-17
 
 on:
   push:
@@ -8,91 +8,48 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    env:
-      GCP_PROJECT_ID: tradementor-production
-      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
-      DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
-      - name: Install Firestore client
-        run: python -m pip install -q google-cloud-firestore
-      - name: Read only matching Strategy 2 runtime report
+      - name: Query current public Aster ZEC contract constraints
         shell: bash
         run: |
           python - <<'PY'
-          from google.cloud import firestore
-          import json, math
+          import json, urllib.request
+          from decimal import Decimal, ROUND_UP, ROUND_DOWN
 
-          db = firestore.Client(project='tradementor-production')
-          # Narrow server-side to the distinctive current entry amount first.
-          query = db.collection('asterStrategy2').where('settings.entryMarginLongUsd', '==', 0.2)
-          matches = []
-          def num(v):
-              try: return float(v)
-              except Exception: return None
-          def close(v, target, eps=1e-9):
-              x=num(v); return x is not None and abs(x-target) <= eps
-          for snap in query.stream():
-              raw = snap.to_dict() or {}
-              s = raw.get('settings') if isinstance(raw.get('settings'), dict) else {}
-              # Match only the configuration visible in the user's 22:24 screenshot.
-              if not (
-                  close(s.get('entryMarginShortUsd', s.get('entryMarginShort')), 0.2)
-                  and close(s.get('longDcaDistance'), 0.10)
-                  and close(s.get('shortDcaDistance'), 0.25)
-                  and close(s.get('longDcaMarginUsd', s.get('longDcaAmount')), 0.2)
-                  and close(s.get('shortDcaMarginUsd', s.get('shortDcaAmount')), 0.2)
-                  and int(num(s.get('maxDcaLong', s.get('longMaxDca'))) or -1) == 10
-                  and int(num(s.get('maxDcaShort', s.get('shortMaxDca'))) or -1) == 15
-                  and close(s.get('longTakeProfitValue', s.get('takeProfitLong')), 0.25)
-                  and close(s.get('shortTakeProfitValue', s.get('takeProfitShort')), 0.25)
-              ):
-                  continue
-              report = raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'), dict) else {}
-              actions = report.get('actions') if isinstance(report.get('actions'), list) else []
-              zec_actions = [a for a in actions if isinstance(a, dict) and (str(a.get('symbol','')).upper() == 'ZECUSDT' or a.get('kind') in {'ENTRY_SCAN_BLOCKED'})]
-              matches.append({
-                  'enabled': bool(raw.get('enabled')),
-                  'phase': raw.get('phase'),
-                  'settings': {
-                      'shortRequiresLongEnabled': s.get('shortRequiresLongEnabled'),
-                      'bollingerEntryFilter15mEnabled': s.get('bollingerEntryFilter15mEnabled'),
-                      'bollingerEntryFilterTimeframe': s.get('bollingerEntryFilterTimeframe'),
-                      'minimumLeverage': s.get('minimumLeverage'),
-                      'longSlots': s.get('longSlots'),
-                      'shortSlots': s.get('shortSlots'),
-                      'maximumPositions': s.get('maximumPositions'),
-                      'entryMarginLongUsd': s.get('entryMarginLongUsd'),
-                  },
-                  'report': {
-                      'shortRequiresLongEnabled': report.get('shortRequiresLongEnabled'),
-                      'bollingerEntryFilter15mEnabled': report.get('bollingerEntryFilter15mEnabled'),
-                      'orphanShortSymbols': report.get('orphanShortSymbols'),
-                      'orphanLongPending': report.get('orphanLongPending'),
-                      'entryStatus': report.get('entryStatus'),
-                      'entryReason': report.get('entryReason'),
-                      'entrySkipReasons': report.get('entrySkipReasons'),
-                      'activeLong': report.get('activeLong'),
-                      'activeShort': report.get('activeShort'),
-                      'remainingLong': report.get('remainingLong'),
-                      'remainingShort': report.get('remainingShort'),
-                      'accountPositionCount': report.get('accountPositionCount'),
-                      'updatedAtMs': report.get('updatedAtMs'),
-                      'zecActions': zec_actions,
-                  }
-              })
-          print('MATCH_COUNT', len(matches))
-          print(json.dumps(matches, indent=2, default=str))
+          base='https://fapi.asterdex.com'
+          def get(path):
+              with urllib.request.urlopen(base+path, timeout=20) as r:
+                  return json.load(r)
+          info=get('/fapi/v1/exchangeInfo')
+          ticker=get('/fapi/v1/ticker/price?symbol=ZECUSDT')
+          row=next((x for x in info.get('symbols',[]) if x.get('symbol')=='ZECUSDT'), None)
+          print('ticker', json.dumps(ticker, sort_keys=True))
+          print('zec_exchange_info', json.dumps(row, sort_keys=True))
+          if not row:
+              raise SystemExit('ZECUSDT missing')
+          price=Decimal(str(ticker['price']))
+          filters={f.get('filterType'):f for f in row.get('filters',[])}
+          lot=filters.get('MARKET_LOT_SIZE') or filters.get('LOT_SIZE') or {}
+          step=Decimal(str(lot.get('stepSize','0')))
+          minqty=Decimal(str(lot.get('minQty','0')))
+          minnot=Decimal(str((filters.get('MIN_NOTIONAL') or {}).get('notional','0')))
+          if step>0:
+              minqty=(minqty/step).to_integral_value(rounding=ROUND_UP)*step
+              if minnot>0:
+                  minqty=max(minqty,(minnot/price/step).to_integral_value(rounding=ROUND_UP)*step)
+          print('price',price,'step',step,'minQty',minqty,'minNotionalFilter',minnot,'minimumExecutableNotional',minqty*price)
+          for lev in (50,75,100,300):
+              configured=Decimal('0.2')*Decimal(lev)
+              requested=configured/price
+              if step>0:
+                  requested=(requested/step).to_integral_value(rounding=ROUND_DOWN)*step
+              print('at_leverage',lev,'configuredNotional',configured,'roundedQty',requested,'roundedNotional',requested*price,'meetsMin',requested>=minqty and requested*price>=minnot)
           PY
