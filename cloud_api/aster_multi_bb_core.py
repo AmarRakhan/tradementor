@@ -790,7 +790,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 result=execute_leg_once(client,plan,side=PositionSide(side),action="OPEN",id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}",confirm=True,new_position_leverage=int(tier["leverage"]),allow_existing_contract_leverage_change=True,before_submit=before_order)
             except Exception as exc:
                 if not is_definite_contract_rejection(exc): raise
-                actions.append({"kind":"DCA_BLOCKED","symbol":symbol,"side":side,"reason":str(exc),"catchupRemaining":catchup_target-dca_count}); continue
+                blocked={"kind":"DCA_BLOCKED","symbol":symbol,"side":side,"reason":str(exc),"catchupRemaining":catchup_target-dca_count}
+                actions.append(blocked)
+                if not dry_run:
+                    ref.collection("audit").add({
+                        "event":"MULTI_BB_DCA_BLOCKED","symbol":symbol,"side":side,
+                        "reason":str(exc),"dcaNumber":dca_count+1,
+                        "catchupRemaining":catchup_target-dca_count,
+                        "timestamp":datetime.now(timezone.utc),
+                    })
+                continue
             fill=result.get("result") or {}; fill_price=_f(fill.get("avgPrice"),mark); fill_qty=abs(_f(fill.get("executedQty"),float(plan.quantity)))
             new_qty=qty+fill_qty; new_entry=((entry*qty)+(fill_price*fill_qty))/new_qty if new_qty>0 else entry; next_count=dca_count+1; catchup_remaining=max(0,catchup_target-next_count)
             if catchup_remaining>0:
@@ -1073,7 +1082,6 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             try:
                 result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
                                           new_position_leverage=plan.leverage,
-                                          existing_contract_counterpart_open=orphan_priority,
                                           before_submit=entry_before_submit)
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True, "stage": "pre_order"})
@@ -1083,7 +1091,30 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=execution_block reason={exc.reason_code}", flush=True)
                 if symbol == "HYPEUSDT":
                     print(f"HYPE_ENTRY_DIAG stage=execution_block reason={exc.reason_code}", flush=True)
-                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": exc.reason_code})
+                blocked_action = {"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code}
+                remaining_openable = getattr(exc, "remaining_openable_notional", None)
+                planned_notional = getattr(exc, "planned_notional", None)
+                requested_leverage = getattr(exc, "requested_leverage", None)
+                if remaining_openable is not None:
+                    blocked_action["remainingOpenableNotional"] = remaining_openable
+                if planned_notional is not None:
+                    blocked_action["plannedNotional"] = planned_notional
+                if requested_leverage is not None:
+                    blocked_action["requestedLeverage"] = requested_leverage
+                if orphan_priority:
+                    blocked_action["orphanShortPriority"] = True
+                    if not dry_run:
+                        ref.collection("audit").add({
+                            "event": "ORPHAN_LONG_BLOCKED",
+                            "symbol": symbol,
+                            "side": side,
+                            "reason": exc.reason_code,
+                            "remainingOpenableNotional": remaining_openable,
+                            "plannedNotional": planned_notional,
+                            "requestedLeverage": requested_leverage,
+                            "timestamp": datetime.now(timezone.utc),
+                        })
+                actions.append(blocked_action)
                 continue
             except Exception as exc:
                 if orphan_priority:
@@ -1193,6 +1224,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "orphanLongReservedSlots": orphan_long_reserved_slots,
               "orphanLongRescueFilled": orphan_long_rescue_filled,
               "orphanLongReservedRemaining": max(0, orphan_long_reserved_slots - orphan_long_rescue_filled),
+              "orphanLongBlocked": [
+                  {k: a.get(k) for k in ("symbol","reason","remainingOpenableNotional","plannedNotional","requestedLeverage")}
+                  for a in actions
+                  if a.get("kind") == "ENTRY_SKIP" and a.get("orphanShortPriority") is True
+              ][-10:],
               "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled, "bollingerEntryFilterTimeframe": settings.bollinger_entry_filter_timeframe,
               "shortRequiresLongEnabled": settings.short_requires_long_enabled,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
