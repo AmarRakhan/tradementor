@@ -48,9 +48,12 @@ jobs:
           for snap in q.stream():
               raw=snap.to_dict() or {}
               report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-              if int(report.get('activeLong') or -1)!=31 or int(report.get('activeShort') or -1)!=13:
-                  continue
-              if 'ZECUSDT' not in list(report.get('orphanShortSymbols') or []):
+              positions=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+              zec_action=any(str(a.get('symbol','')).upper()=='ZECUSDT' for a in list(report.get('actions') or []) if isinstance(a,dict))
+              zec_orphan=('ZECUSDT' in list(report.get('orphanShortSymbols') or []))
+              zec_short=('ZECUSDT|SHORT' in positions)
+              zec_long=('ZECUSDT|LONG' in positions)
+              if not ((zec_short and not zec_long) or zec_orphan or zec_action):
                   continue
               matches.append(raw)
           print('matching_accounts',len(matches))
@@ -73,7 +76,7 @@ jobs:
                   'orphanLongRescueFilled','orphanLongReservedRemaining','entrySkipReasons',
                   'candidateCount','scannedCandidateCount','executableCandidateCount')},
               'zecShortState':{k:zec_state.get(k) for k in ('dcaCount','leverage')},
-              'zecActions':[a for a in list(report.get('actions') or []) if str(a.get('symbol','')).upper()=='ZECUSDT' or a.get('kind')=='ENTRY_SCAN_BLOCKED'],
+              'zecActions':[a for a in list(report.get('actions') or []) if isinstance(a,dict) and (str(a.get('symbol','')).upper()=='ZECUSDT' or a.get('kind')=='ENTRY_SCAN_BLOCKED')],
           }
           print(json.dumps(safe,indent=2,sort_keys=True,default=str))
           PY
