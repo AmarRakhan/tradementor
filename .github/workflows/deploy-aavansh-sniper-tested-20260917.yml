@@ -1,0 +1,206 @@
+name: Deploy tested Aavansh SNIPER
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/deploy-aavansh-sniper-tested-20260917.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-web
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  PUBLIC_HOST_SERVICE: amar-bot-v44-direct-install
+  AAVANSH_TAG: aavansh-v1
+  AAVANSH_SOURCE_BRANCH: aavansh-sniper-build372
+  ARTIFACT_REPOSITORY: tradementor
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  deploy-tested-sniper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve exact successful Aavansh SNIPER test commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          git fetch origin "$AAVANSH_SOURCE_BRANCH"
+          git show "origin/$AAVANSH_SOURCE_BRANCH:.aavansh-sniper-ci.json" > "$RUNNER_TEMP/sniper-ci.json"
+          TESTED_SHA="$(python - "$RUNNER_TEMP/sniper-ci.json" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1],encoding='utf-8'))
+          assert p.get('result') == 'success', p
+          assert p.get('mode') == 'simulation-only', p
+          assert p.get('live_execution') is False, p
+          print(p['tested_sha'])
+          PY
+          )"
+          git cat-file -e "$TESTED_SHA^{commit}"
+          git diff --quiet "$TESTED_SHA".."origin/$AAVANSH_SOURCE_BRANCH" -- web || {
+            echo "Aavansh web source changed after the successful CI commit; refusing untested deploy." >&2
+            exit 31
+          }
+          git show "$TESTED_SHA:web/public/manifest.webmanifest" | grep -q '"name": "Aavansh Trading"'
+          git show "$TESTED_SHA:web/components/home-navigation-bridge.tsx" | grep -q 'SNIPER'
+          git show "$TESTED_SHA:web/components/sniper-dashboard.tsx" | grep -q 'enabled: false'
+          git show "$TESTED_SHA:web/components/sniper-dashboard.tsx" | grep -q 'simulation: true'
+          echo "TESTED_SHA=$TESTED_SHA" >> "$GITHUB_ENV"
+          git checkout --detach "$TESTED_SHA"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture current production serving state and IAM
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          gcloud run services get-iam-policy "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1, live
+          spec=s['spec']['template']['spec']
+          env={e.get('name'):e.get('value','') for e in spec.get('containers',[{}])[0].get('env',[]) if e.get('name')}
+          print('BASE_REVISION='+str(live[0]['revisionName']))
+          print('BASE_URL='+str(s['status']['url']))
+          print('BASE_BUILD='+str(env.get('WEBAPP_BUILD_NUMBER','upstream')))
+          print('RUNTIME_SERVICE_ACCOUNT='+str(spec.get('serviceAccountName','')))
+          print('BASE_TIMEOUT='+str(spec.get('timeoutSeconds',300)))
+          print('BASE_CONCURRENCY='+str(spec.get('containerConcurrency',80)))
+          prior=next((x for x in s['status'].get('traffic',[]) if x.get('tag')=='aavansh-v1'),None)
+          print('PRIOR_AAVANSH_TAG_REVISION='+(str(prior.get('revisionName','')) if prior else ''))
+          PY
+
+      - name: Build and push exact tested Aavansh SNIPER image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/aavansh-trading-web:sniper-${TESTED_SHA}"
+          docker build --tag "$IMAGE" web
+          docker push "$IMAGE"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)"
+          echo "AAVANSH_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "AAVANSH_IMAGE_DIGEST=$DIGEST" >> "$GITHUB_ENV"
+
+      - name: Deploy as zero-traffic Aavansh tagged revision
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT="${TESTED_SHA:0:8}"
+          SUFFIX="avs-${SHORT}-${GITHUB_RUN_ATTEMPT}"
+          args=(
+            gcloud run deploy "$PUBLIC_HOST_SERVICE"
+            --project "$GCP_PROJECT_ID"
+            --region "$GCP_REGION"
+            --image "$AAVANSH_IMAGE"
+            --no-traffic
+            --tag "$AAVANSH_TAG"
+            --update-env-vars "AAVANSH_TRADING=1,WEBAPP_BUILD_NUMBER=${BASE_BUILD}"
+            --timeout "$BASE_TIMEOUT"
+            --concurrency "$BASE_CONCURRENCY"
+            --revision-suffix "$SUFFIX"
+            --quiet
+          )
+          if [ -n "$RUNTIME_SERVICE_ACCOUNT" ]; then args+=(--service-account "$RUNTIME_SERVICE_ACCOUNT"); fi
+          "${args[@]}"
+
+      - name: Resolve tagged URL and prove production traffic did not move
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after-deploy.json"
+          python - "$RUNNER_TEMP/after-deploy.json" "$BASE_REVISION" "$AAVANSH_TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); base=sys.argv[2]; tag=sys.argv[3]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base, live
+          row=next((x for x in s['status'].get('traffic',[]) if x.get('tag')==tag),None)
+          assert row and row.get('url') and row.get('revisionName') != base, row
+          assert int(row.get('percent',0) or 0)==0, row
+          print('AAVANSH_REVISION='+str(row['revisionName']))
+          print('AAVANSH_URL='+str(row['url']))
+          PY
+
+      - name: Verify public Aavansh SNIPER PWA end to end
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AAVANSH_URL"
+          test "$AAVANSH_URL" != "$BASE_URL"
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 "$AAVANSH_URL/" > "$RUNNER_TEMP/root.html"
+          grep -q 'AAVANSH TRADING' "$RUNNER_TEMP/root.html"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/manifest.webmanifest" > "$RUNNER_TEMP/manifest.json"
+          grep -q '"name": "Aavansh Trading"' "$RUNNER_TEMP/manifest.json"
+          grep -q '"id": "/aavansh-trading-v1"' "$RUNNER_TEMP/manifest.json"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/sw.js" > "$RUNNER_TEMP/sw.js"
+          grep -q 'aavansh-trading-shell-v1' "$RUNNER_TEMP/sw.js"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$AAVANSH_URL/offline.html" > /dev/null
+          echo "AAVANSH_SNIPER_PUBLIC_PWA_VERIFIED=$AAVANSH_URL"
+
+      - name: Verify production revision, canonical URL and IAM remain unchanged
+        id: production_guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/final.json"
+          gcloud run services get-iam-policy "$PUBLIC_HOST_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-final.json"
+          python - "$RUNNER_TEMP/final.json" "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-final.json" "$BASE_REVISION" "$BASE_URL" "$AAVANSH_TAG" "$AAVANSH_REVISION" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          ib=json.load(open(sys.argv[2],encoding='utf-8')); ia=json.load(open(sys.argv[3],encoding='utf-8'))
+          base=sys.argv[4]; url=sys.argv[5]; tag=sys.argv[6]; avrev=sys.argv[7]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base, live
+          assert s['status']['url']==url
+          assert ib==ia
+          row=next((x for x in s['status'].get('traffic',[]) if x.get('tag')==tag),None)
+          assert row and row.get('revisionName')==avrev and int(row.get('percent',0) or 0)==0, row
+          print('PRODUCTION_SERVING_STATE_UNCHANGED=1')
+          print('PRODUCTION_IAM_UNCHANGED=1')
+          print('AAVANSH_TRAFFIC_PERCENT=0')
+          PY
+
+      - name: Publish verified Aavansh SNIPER link
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Aavansh Trading · SNIPER testbuild verified"
+            echo ""
+            echo "- URL: $AAVANSH_URL"
+            echo "- Revision: $AAVANSH_REVISION"
+            echo "- Tested source: $TESTED_SHA"
+            echo "- Upstream build label: $BASE_BUILD"
+            echo "- Aavansh canonical traffic: 0%"
+            echo "- Existing production revision remains at 100%: $BASE_REVISION"
+          } >> "$GITHUB_STEP_SUMMARY"
