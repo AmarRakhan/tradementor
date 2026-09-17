@@ -1072,7 +1072,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     before_order(intent)
             try:
                 result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                          new_position_leverage=plan.leverage, before_submit=entry_before_submit)
+                                          new_position_leverage=plan.leverage,
+                                          existing_contract_counterpart_open=orphan_priority,
+                                          before_submit=entry_before_submit)
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True, "stage": "pre_order"})
                 continue
