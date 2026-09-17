@@ -127,7 +127,7 @@ jobs:
             --set-env-vars "WEBAPP_BUILD_NUMBER=${GITHUB_RUN_NUMBER},AAVANSH_TRADING=1"
             --timeout "$BASE_TIMEOUT"
             --concurrency "$BASE_CONCURRENCY"
-            --allow-unauthenticated
+            --no-invoker-iam-check
             --quiet
           )
           if [ -n "$BASE_RUNTIME_SERVICE_ACCOUNT" ]; then
