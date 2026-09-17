@@ -22,7 +22,7 @@ type Values = {
   entryMarginLong: string; entryMarginShort: string;
   longDcaDistance: string; shortDcaDistance: string; longDcaAmount: string; shortDcaAmount: string;
   maxDcaLong: string; maxDcaShort: string; longTp: string; shortTp: string; tpMode: TpMode; portfolioTp: string;
-  mode: "paper" | "live"; manualEnabled: boolean; manualSymbols: ManualSymbol[];
+  mode: "paper" | "live"; manualEnabled: boolean; manualSymbols: ManualSymbol[]; shortRequiresLongEnabled: boolean;
   smartRescueEnabled: boolean; smartRescueRange: string; smartRescueCount: string; smartRescueGrowth: string; smartRescueRecovery: string;
 };
 
@@ -30,7 +30,7 @@ const initial: Values = {
   name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10", minLeverage: "50",
   entryMarginLong: "5", entryMarginShort: "5", longDcaDistance: "0.30", shortDcaDistance: "0.30",
   longDcaAmount: "2", shortDcaAmount: "2", maxDcaLong: "3", maxDcaShort: "3", longTp: "1.5", shortTp: "1.5",
-  tpMode: "PER_TRADE", portfolioTp: "20", mode: "live", manualEnabled: false, manualSymbols: [],
+  tpMode: "PER_TRADE", portfolioTp: "20", mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
   smartRescueEnabled: false, smartRescueRange: "10", smartRescueCount: "10", smartRescueGrowth: "1.35", smartRescueRecovery: "0.30",
 };
 const MAX_DCA = 500;
@@ -117,6 +117,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       longTp: pct(x.longTakeProfitValue ?? x.takeProfitLong ?? legacyTp, legacyTp), shortTp: pct(x.shortTakeProfitValue ?? x.takeProfitShort ?? legacyTp, legacyTp),
       tpMode: tpModeFrom(x), portfolioTp: txt(x.portfolioTpPercent, 20), mode: x.mode === "paper" ? "paper" : "live",
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
+      shortRequiresLongEnabled: x.shortRequiresLongEnabled === true,
       smartRescueEnabled: x.smartRescueEnabled === true, smartRescueRange: txt(x.smartRescueRangePercent, 10),
       smartRescueCount: txt(x.smartRescueDcaCount, 10), smartRescueGrowth: txt(x.smartRescueOrderGrowthMultiplier, 1.35),
       smartRescueRecovery: txt(x.smartRescueTrailingRecoveryPercent, .30),
@@ -146,6 +147,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       takeProfitMode: v.tpMode, portfolioTpPercent: n(v.portfolioTp), takeProfitEnabled: v.tpMode === "PER_TRADE",
       entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualEnabled ? v.manualSymbols : [],
+      shortRequiresLongEnabled: v.shortRequiresLongEnabled,
       smartRescueEnabled: v.smartRescueEnabled, smartRescueVersion: 1, smartRescueRangePercent: n(v.smartRescueRange),
       smartRescueDcaCount: Math.round(n(v.smartRescueCount)), smartRescueOrderGrowthMultiplier: n(v.smartRescueGrowth),
       smartRescueTrailingRecoveryPercent: n(v.smartRescueRecovery), smartRescuePrimarySide: v.smartRescueEnabled ? "LONG" : null,
@@ -309,6 +311,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
       <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
       <div className="position-settings-grid"><Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} /><Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} /><Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} /></div>
+      <div className={`strategy-power-control short-pair-control ${v.shortRequiresLongEnabled ? "enabled" : "ready"}`}><span><b>SHORT alleen met LONG</b><small>LONG mag altijd zelfstandig openen · ontbrekende LONG krijgt scanner-prioriteit</small></span><button type="button" role="switch" aria-checked={v.shortRequiresLongEnabled} onClick={() => change({ ...v, shortRequiresLongEnabled: !v.shortRequiresLongEnabled })}><i />{v.shortRequiresLongEnabled ? "Aan" : "Uit"}</button></div>
       <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
 
       <section className="side-settings-block">

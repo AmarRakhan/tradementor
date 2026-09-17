@@ -37,6 +37,7 @@ class MultiBbConfig:
     maximum_positions: int = 30
     long_slots: int = 20
     short_slots: int = 10
+    short_requires_long_enabled: bool = False
     minimum_leverage: int = 50
     bollinger_entry_filter_15m_enabled: bool = False
     bollinger_entry_filter_timeframe: str = DEFAULT_TIMEFRAME
@@ -81,6 +82,7 @@ class MultiBbConfig:
             maximum_positions=_i(raw.get("maximumPositions", raw.get("maximumPairs")), 30),
             long_slots=_i(raw.get("longSlots", raw.get("maximumLongPositions")), 20),
             short_slots=_i(raw.get("shortSlots", raw.get("maximumShortPositions")), 10),
+            short_requires_long_enabled=bool(raw.get("shortRequiresLongEnabled", raw.get("short_requires_long_enabled", False))),
             minimum_leverage=minimum_leverage,
             bollinger_entry_filter_15m_enabled=bool(raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False))),
             bollinger_entry_filter_timeframe=normalize_bollinger_timeframe(raw.get("bollingerEntryFilterTimeframe", raw.get("bollinger_entry_filter_timeframe", DEFAULT_TIMEFRAME))),
@@ -126,6 +128,7 @@ class MultiBbConfig:
             "engine": ENGINE, "strategyKind": ENGINE, "name": self.name, "version": self.version, "mode": self.mode,
             "universeTopN": self.universe_top_n, "maximumPositions": self.maximum_positions,
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
+            "shortRequiresLongEnabled": self.short_requires_long_enabled,
             "bollingerEntryFilter15mEnabled": self.bollinger_entry_filter_15m_enabled,
             "bollingerEntryFilterTimeframe": self.bollinger_entry_filter_timeframe,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
@@ -800,6 +803,17 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
         account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
 
+    if settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled and not settings.manual_symbol_selection_enabled:
+        orphan_short_symbols = {
+            key.split("|", 1)[0] for key in active
+            if key.endswith("|SHORT") and f"{key.split('|', 1)[0]}|LONG" not in active
+        }
+        if orphan_short_symbols:
+            candidates = sorted(
+                candidates,
+                key=lambda row: 0 if str(row.get("symbol", "")).upper() in orphan_short_symbols else 1,
+            )
+
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
     scanned_candidates = 0
     executable_candidates = 0
@@ -838,6 +852,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
+
+        short_requires_long_gate = settings.short_requires_long_enabled and not settings.asymmetric_hedge_enabled
+        manual_reserved = settings.manual_symbol_selection_enabled and bool(ranked_row.get("manualReserved"))
+        if short_requires_long_gate and side == "SHORT" and f"{symbol}|LONG" not in active:
+            if not manual_reserved and long_need > 0:
+                side = "LONG"
+            else:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG"})
+                continue
 
         # In normal Multi-DCA mode LONG and SHORT are independent seats.
         # An open BTCUSDT|LONG must never block BTCUSDT|SHORT (or vice versa).
@@ -925,6 +948,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
+        if not dry_run and short_requires_long_gate and side == "SHORT":
+            fresh_pair_positions = _position_map(client.position_risk(symbol))
+            if f"{symbol}|LONG" not in fresh_pair_positions:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "pre_order"})
+                continue
         if dry_run:
             actions.append(entry_action)
             if short_action is not None: actions.append(short_action)
@@ -1040,6 +1068,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled, "bollingerEntryFilterTimeframe": settings.bollinger_entry_filter_timeframe,
+              "shortRequiresLongEnabled": settings.short_requires_long_enabled,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
               "asymmetricHedgeActivePairs": active_pair_count, "remainingPairs": pair_need if settings.asymmetric_hedge_enabled else None,
               "legacyPositionsDuringAsymmetric": legacy_position_count,
