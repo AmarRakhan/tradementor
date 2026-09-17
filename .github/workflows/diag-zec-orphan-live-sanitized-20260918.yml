@@ -39,16 +39,26 @@ jobs:
         run: |
           set -euo pipefail
           gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
-          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          BASE_REVISION="$(python - "$RUNNER_TEMP/before.json" <<'PY'
           import json,sys
           s=json.load(open(sys.argv[1],encoding='utf-8'))
           live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
           assert len(live)==1, live
-          print('BASE_REVISION='+live[0]['revisionName'])
-          print('BASE_URL='+s['status']['url'])
+          print(live[0]['revisionName'])
           PY
+          )"
+          BASE_URL="$(python - "$RUNNER_TEMP/before.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          print(s['status']['url'])
+          PY
+          )"
           BASE_IMAGE="$(gcloud run revisions describe "$BASE_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          test -n "$BASE_REVISION"
+          test -n "$BASE_URL"
           test -n "$BASE_IMAGE"
+          echo "BASE_REVISION=$BASE_REVISION" >> "$GITHUB_ENV"
+          echo "BASE_URL=$BASE_URL" >> "$GITHUB_ENV"
           echo "BASE_IMAGE=$BASE_IMAGE" >> "$GITHUB_ENV"
 
       - name: Build zero-traffic sanitized diagnostic image
