@@ -858,15 +858,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             rescue_symbols = {str(row["symbol"]).upper() for row in rescue_rows}
             candidates = rescue_rows + [row for row in candidates if str(row.get("symbol", "")).upper() not in rescue_symbols]
 
-    # Bollinger OFF: exchange-confirmed orphan SHORTs reserve free LONG seats.
-    # Reservation comes from exchange truth, not later candidate viability.
-    orphan_long_reserved_slots = (
-        min(long_need, len(orphan_short_symbols))
-        if settings.short_requires_long_enabled
-        and not settings.asymmetric_hedge_enabled
-        and not settings.bollinger_entry_filter_15m_enabled
-        and long_need > 0 else 0
-    )
+    # Orphan SHORTs are PRIORITY candidates only; they never reserve capacity.
+    # If an orphan LONG cannot be opened for any technical reason, the scanner
+    # must continue in this same tick so another valid LONG can use the seat.
+    # Keep the legacy report fields at zero for backward-compatible consumers.
+    orphan_long_reserved_slots = 0
     orphan_long_rescue_filled = 0
 
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
@@ -887,17 +883,22 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         try:
             bracket_payload = client.leverage_brackets(symbol); maximum = max_contract_leverage(bracket_payload, symbol)
         except Exception as exc:
+            if orphan_priority:
+                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=leverage_data reason={exc}", flush=True)
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue
         if symbol == "HYPEUSDT":
             print(f"HYPE_ENTRY_DIAG stage=brackets maximum={maximum}", flush=True)
         if maximum <= 0:
+            if orphan_priority:
+                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=leverage_unavailable maximum={maximum}", flush=True)
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue
         if maximum < settings.minimum_leverage and not orphan_priority:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"MAX_LEVERAGE_BELOW_MINIMUM: {maximum}x < {settings.minimum_leverage}x"}); continue
         if orphan_priority and long_need > 0:
-            # Hard priority: a free LONG seat is consumed by an orphan SHORT pair
-            # before the ordinary allocator is allowed to choose unrelated coins.
+            # Ordering priority only: try orphan counterpart LONGs first. A failed
+            # attempt never blocks this seat from later ordinary LONG candidates.
             side = "LONG"
+            print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=candidate longNeed={long_need}", flush=True)
         elif settings.asymmetric_hedge_enabled:
             # Exclusive paired mode: the old independent LONG/SHORT allocator is disabled.
             # Every new scanner candidate is exactly one same-symbol LONG+SHORT pair.
@@ -984,13 +985,6 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "final_side"})
             continue
 
-        orphan_reserved_remaining = max(0, orphan_long_reserved_slots - orphan_long_rescue_filled)
-        if (not orphan_priority and side == "LONG" and orphan_reserved_remaining > 0
-                and long_need <= orphan_reserved_remaining):
-            actions.append({"kind":"ENTRY_SKIP","symbol":symbol,"side":"LONG",
-                            "reason":"ORPHAN_LONG_SEAT_RESERVED","reservedRemaining":orphan_reserved_remaining})
-            continue
-
         paired = bool(settings.asymmetric_hedge_enabled)
         # In paired mode the toggle means the LONG must already exist in the
         # exchange snapshot that started this reconciliation tick.  A LONG that
@@ -1030,6 +1024,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 short_plan = None; short_tier = None
         except Exception as exc:
             reason = str(exc)
+            if orphan_priority:
+                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=plan_skip reason={reason}", flush=True)
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=plan_skip reason={reason}", flush=True)
             required_margin = _minimum_entry_margin(info_map[symbol], prices[symbol], maximum)
@@ -1039,12 +1035,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 minimum_margin_rejections.append(required_margin)
             actions.append(action); continue
         executable_candidates += 1
+        if orphan_priority:
+            print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=plan_ok leverage={plan.leverage} notional={float(plan.notional_per_leg)} quantity={plan.quantity}", flush=True)
         if symbol == "HYPEUSDT":
             print(f"HYPE_ENTRY_DIAG stage=plan_ok side={side} leverage={plan.leverage} notional={float(plan.notional_per_leg)} quantity={plan.quantity}", flush=True)
         required = float(plan.notional_per_leg) / plan.leverage
         short_required = float(short_plan.notional_per_leg) / short_plan.leverage if short_plan is not None else 0.0
         total_required = required + (0.0 if defer_paired_short else short_required)
         if available < total_required * 1.05:
+            if orphan_priority:
+                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=margin_wait required={total_required}", flush=True)
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=margin_wait available={available} required={total_required}", flush=True)
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
@@ -1077,17 +1077,23 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True, "stage": "pre_order"})
                 continue
             except NewPositionLeverageBlocked as exc:
+                if orphan_priority:
+                    print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=execution_block reason={exc.reason_code}", flush=True)
                 if symbol == "HYPEUSDT":
                     print(f"HYPE_ENTRY_DIAG stage=execution_block reason={exc.reason_code}", flush=True)
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": exc.reason_code})
                 continue
             except Exception as exc:
+                if orphan_priority:
+                    print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=execution_exception definite={is_definite_contract_rejection(exc)} reason={exc}", flush=True)
                 if symbol == "HYPEUSDT":
                     print(f"HYPE_ENTRY_DIAG stage=execution_exception definite={is_definite_contract_rejection(exc)} reason={exc}", flush=True)
                 if not is_definite_contract_rejection(exc): raise
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": str(exc)})
                 continue
             fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), prices[symbol]); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))
+            if orphan_priority:
+                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=entry_filled leverage={plan.leverage} fillPrice={fill_price} fillQty={fill_qty}", flush=True)
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=entry_filled side={side} leverage={plan.leverage} fillPrice={fill_price} fillQty={fill_qty}", flush=True)
             key = f"{symbol}|{side}"; cycle_id = hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16]

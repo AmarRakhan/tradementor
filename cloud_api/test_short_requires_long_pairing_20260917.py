@@ -218,6 +218,53 @@ def test_orphan_long_inherits_existing_short_contract_leverage():
     assert entry.get("pairedContractLeverage") == 75
 
 
+
+def test_failed_orphan_priority_does_not_reserve_free_long_seat():
+    class BrokenZecLeverageClient(Client):
+        def leverage_brackets(self, symbol=None):
+            sym = symbol or "AAAUSDT"
+            if sym == "ZECUSDT":
+                raise RuntimeError("temporary ZEC leverage data failure")
+            return super().leverage_brackets(sym)
+
+    short = pos("ZECUSDT", "SHORT")
+    short["leverage"] = "75"
+    client = BrokenZecLeverageClient(
+        positions=[short],
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],
+        prices={"ZECUSDT": 100, "AAAUSDT": 100}, leverage=100,
+    )
+    result = run_multi_bb_step(
+        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1,
+                     shortRequiresLongEnabled=True, minimumLeverage=50,
+                     bollingerEntryFilter15mEnabled=False),
+        uid="u", account={"availableBalance": "1000"}, positions=[short],
+        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,
+    )
+    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]
+    assert entries, result
+    assert entries[0]["symbol"] == "AAAUSDT"
+    assert entries[0]["side"] == "LONG"
+    assert any(a.get("symbol") == "ZECUSDT" and "leverage-data" in str(a.get("reason", "")) for a in result["actions"])
+    assert not any(a.get("reason") == "ORPHAN_LONG_SEAT_RESERVED" for a in result["actions"])
+    assert result["orphanLongReservedSlots"] == 0
+    assert result["orphanLongReservedRemaining"] == 0
+
+
+def test_fresh_account_opens_long_first_and_does_not_authorize_same_tick_short():
+    result = run(
+        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1, shortRequiresLongEnabled=True),
+        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "2000"}, {"symbol": "BBBUSDT", "quoteVolume": "1000"}],
+        prices={"AAAUSDT": 100, "BBBUSDT": 100},
+    )
+    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]
+    assert entries
+    assert entries[0]["side"] == "LONG"
+    assert not any(a.get("side") == "SHORT" and a.get("kind") == "ENTRY" for a in result["actions"])
+    assert any(a.get("reason") == "SHORT_REQUIRES_LONG" for a in result["actions"])
+
+
 def test_pairing_truth_refresh_failure_blocks_new_seat_allocation():
     class BrokenTruthClient(Client):
         def position_risk(self, symbol=None):
