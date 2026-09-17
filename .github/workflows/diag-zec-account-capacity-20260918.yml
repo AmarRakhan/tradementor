@@ -1,0 +1,185 @@
+name: Diagnose ZEC account capacity 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diag-zec-account-capacity-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  PROD_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture live revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          BASE_REVISION="$(python - "$RUNNER_TEMP/before.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1]))
+          live=[x for x in s['status']['traffic'] if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1, live
+          print(live[0]['revisionName'])
+          PY
+          )"
+          BASE_URL="$(python - "$RUNNER_TEMP/before.json" <<'PY'
+          import json,sys
+          print(json.load(open(sys.argv[1]))['status']['url'])
+          PY
+          )"
+          BASE_IMAGE="$(gcloud run revisions describe "$BASE_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          echo "BASE_REVISION=$BASE_REVISION" >> "$GITHUB_ENV"
+          echo "BASE_URL=$BASE_URL" >> "$GITHUB_ENV"
+          echo "BASE_IMAGE=$BASE_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Build production-source diagnostic image
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(32))
+          PY
+          )"
+          cp -R cloud_api "$RUNNER_TEMP/capdiag"
+          cat >> "$RUNNER_TEMP/capdiag/main.py" <<PY
+
+          @app.get("/__diag_zec_capacity/$TOKEN")
+          def __diag_zec_capacity():
+              rows=[]
+              for snap in db.collection("asterStrategy2").stream():
+                  raw=snap.to_dict() or {}
+                  if not raw.get("enabled"):
+                      continue
+                  settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+                  positions=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
+                  if not (
+                      settings.get("shortRequiresLongEnabled") is True
+                      and int(safe_float(settings.get("longSlots"))) == 32
+                      and int(safe_float(settings.get("shortSlots"))) == 13
+                      and int(safe_float(settings.get("maximumPositions"))) == 45
+                      and "ZECUSDT|SHORT" in positions
+                      and "ZECUSDT|LONG" not in positions
+                  ):
+                      continue
+                  try:
+                      secret=load_aster_secret({"uid":snap.id})
+                      client=AsterV3Client(
+                          signer_address=secret.signer_address,
+                          sign_message=local_eip712_signer(secret),
+                          live_authorized=False,
+                      )
+                      zpos=client.position_risk("ZECUSDT")
+                      active=[p for p in zpos if abs(safe_float(p.get("positionAmt")))>0]
+                      caps={}
+                      for lev in [75,70,60,50,40,30,25,20,10]:
+                          try:
+                              caps[str(lev)]=client.remaining_openable_notional_value("ZECUSDT",lev)
+                          except Exception as exc:
+                              caps[str(lev)]={"error":str(exc)[:220]}
+                      brackets=client.leverage_brackets("ZECUSDT")
+                      safe_brackets=[]
+                      for group in brackets:
+                          for b in list(group.get("brackets") or []):
+                              safe_brackets.append({
+                                  "initialLeverage":b.get("initialLeverage"),
+                                  "notionalFloor":b.get("notionalFloor"),
+                                  "notionalCap":b.get("notionalCap"),
+                                  "maintMarginRatio":b.get("maintMarginRatio"),
+                              })
+                      account=client.account_information()
+                      rows.append({
+                          "settings":{
+                              "minimumLeverage":settings.get("minimumLeverage"),
+                              "entryMarginLongUsd":settings.get("entryMarginLongUsd"),
+                              "entryMarginUsd":settings.get("entryMarginUsd"),
+                              "entrySizingMode":settings.get("entrySizingMode"),
+                          },
+                          "position":[{
+                              "side":p.get("positionSide"),
+                              "qty":p.get("positionAmt"),
+                              "entryPrice":p.get("entryPrice"),
+                              "markPrice":p.get("markPrice"),
+                              "leverage":p.get("leverage"),
+                              "notional":abs(safe_float(p.get("positionAmt")))*safe_float(p.get("markPrice")),
+                          } for p in active],
+                          "remainingOpenable":caps,
+                          "brackets":safe_brackets,
+                          "availableBalance":account.get("availableBalance"),
+                          "totalWalletBalance":account.get("totalWalletBalance"),
+                      })
+                  except Exception as exc:
+                      rows.append({"error":str(exc)[:500]})
+              return {"matches":len(rows),"rows":rows}
+          PY
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/zec-capdiag:${GITHUB_SHA}"
+          docker build --build-arg SOURCE_COMMIT="$GITHUB_SHA" -t "$IMAGE" "$RUNNER_TEMP/capdiag"
+          docker push "$IMAGE"
+          echo "DIAG_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "DIAG_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Deploy zero-traffic diagnostic revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="zc-${GITHUB_RUN_ID}"
+          SUFFIX="zc-${GITHUB_SHA:0:8}"
+          gcloud run services update "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$DIAG_IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/diag.json"
+          python - "$RUNNER_TEMP/diag.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,os,sys
+          s=json.load(open(sys.argv[1])); tag=sys.argv[2]
+          live=[x for x in s['status']['traffic'] if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0]['revisionName']==os.environ['BASE_REVISION'], live
+          row=next(x for x in s['status']['traffic'] if x.get('tag')==tag)
+          assert int(row.get('percent',0) or 0)==0
+          print('DIAG_URL='+row['url'])
+          PY
+
+      - name: Query live account-specific ZEC capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$DIAG_URL/__diag_zec_capacity/$DIAG_TOKEN" | python -m json.tool
+
+      - name: Restore service template and traffic
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${BASE_IMAGE:-}" ]; then
+            SUFFIX="zc-r-${GITHUB_RUN_ID: -7}"
+            gcloud run services update "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"               --image "$BASE_IMAGE" --revision-suffix "$SUFFIX" --no-traffic --quiet || true
+          fi
+          if [ -n "${BASE_REVISION:-}" ]; then
+            gcloud run services update-traffic "$PROD_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"               --to-revisions "$BASE_REVISION=100" --quiet || true
+          fi
+          if [ -n "${BASE_URL:-}" ]; then
+            curl --fail --silent --show-error --retry 8 --retry-delay 3 "$BASE_URL/health" >/dev/null || true
+          fi
