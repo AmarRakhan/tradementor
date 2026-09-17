@@ -1,0 +1,134 @@
+name: Fix orphan priority without seat reservation 2026-09-17
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/fix-orphan-priority-no-reservation-20260917.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -q -r cloud_api/requirements.txt pytest
+
+      - name: Apply priority-only orphan flow and diagnostics
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('cloud_api/aster_multi_bb_core.py')
+          s=p.read_text(encoding='utf-8')
+
+          old='''    # Bollinger OFF: exchange-confirmed orphan SHORTs reserve free LONG seats.\n    # Reservation comes from exchange truth, not later candidate viability.\n    orphan_long_reserved_slots = (\n        min(long_need, len(orphan_short_symbols))\n        if settings.short_requires_long_enabled\n        and not settings.asymmetric_hedge_enabled\n        and not settings.bollinger_entry_filter_15m_enabled\n        and long_need > 0 else 0\n    )\n    orphan_long_rescue_filled = 0\n'''
+          new='''    # Orphan SHORTs are PRIORITY candidates only; they never reserve capacity.\n    # If an orphan LONG cannot be opened for any technical reason, the scanner\n    # must continue in this same tick so another valid LONG can use the seat.\n    # Keep the legacy report fields at zero for backward-compatible consumers.\n    orphan_long_reserved_slots = 0\n    orphan_long_rescue_filled = 0\n'''
+          assert old in s, 'reservation declaration block changed unexpectedly'
+          s=s.replace(old,new,1)
+
+          old='''        orphan_reserved_remaining = max(0, orphan_long_reserved_slots - orphan_long_rescue_filled)\n        if (not orphan_priority and side == "LONG" and orphan_reserved_remaining > 0\n                and long_need <= orphan_reserved_remaining):\n            actions.append({"kind":"ENTRY_SKIP","symbol":symbol,"side":"LONG",\n                            "reason":"ORPHAN_LONG_SEAT_RESERVED","reservedRemaining":orphan_reserved_remaining})\n            continue\n\n'''
+          assert old in s, 'reservation skip block changed unexpectedly'
+          s=s.replace(old,'',1)
+
+          old='''        if orphan_priority and long_need > 0:\n            # Hard priority: a free LONG seat is consumed by an orphan SHORT pair\n            # before the ordinary allocator is allowed to choose unrelated coins.\n            side = "LONG"\n'''
+          new='''        if orphan_priority and long_need > 0:\n            # Ordering priority only: try orphan counterpart LONGs first. A failed\n            # attempt never blocks this seat from later ordinary LONG candidates.\n            side = "LONG"\n            print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=candidate longNeed={long_need}", flush=True)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        try:\n            bracket_payload = client.leverage_brackets(symbol); maximum = max_contract_leverage(bracket_payload, symbol)\n        except Exception as exc:\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue\n'''
+          new='''        try:\n            bracket_payload = client.leverage_brackets(symbol); maximum = max_contract_leverage(bracket_payload, symbol)\n        except Exception as exc:\n            if orphan_priority:\n                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=leverage_data reason={exc}", flush=True)\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"leverage-data: {exc}"}); continue\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        if maximum <= 0:\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue\n'''
+          new='''        if maximum <= 0:\n            if orphan_priority:\n                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=leverage_unavailable maximum={maximum}", flush=True)\n            actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        except Exception as exc:\n            reason = str(exc)\n            if symbol == "HYPEUSDT":\n                print(f"HYPE_ENTRY_DIAG stage=plan_skip reason={reason}", flush=True)\n'''
+          new='''        except Exception as exc:\n            reason = str(exc)\n            if orphan_priority:\n                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=plan_skip reason={reason}", flush=True)\n            if symbol == "HYPEUSDT":\n                print(f"HYPE_ENTRY_DIAG stage=plan_skip reason={reason}", flush=True)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        executable_candidates += 1\n        if symbol == "HYPEUSDT":\n'''
+          new='''        executable_candidates += 1\n        if orphan_priority:\n            print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=plan_ok leverage={plan.leverage} notional={float(plan.notional_per_leg)} quantity={plan.quantity}", flush=True)\n        if symbol == "HYPEUSDT":\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''        if available < total_required * 1.05:\n            if symbol == "HYPEUSDT":\n'''
+          new='''        if available < total_required * 1.05:\n            if orphan_priority:\n                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=margin_wait required={total_required}", flush=True)\n            if symbol == "HYPEUSDT":\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''            except NewPositionLeverageBlocked as exc:\n                if symbol == "HYPEUSDT":\n                    print(f"HYPE_ENTRY_DIAG stage=execution_block reason={exc.reason_code}", flush=True)\n'''
+          new='''            except NewPositionLeverageBlocked as exc:\n                if orphan_priority:\n                    print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=execution_block reason={exc.reason_code}", flush=True)\n                if symbol == "HYPEUSDT":\n                    print(f"HYPE_ENTRY_DIAG stage=execution_block reason={exc.reason_code}", flush=True)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''            except Exception as exc:\n                if symbol == "HYPEUSDT":\n                    print(f"HYPE_ENTRY_DIAG stage=execution_exception definite={is_definite_contract_rejection(exc)} reason={exc}", flush=True)\n'''
+          new='''            except Exception as exc:\n                if orphan_priority:\n                    print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=execution_exception definite={is_definite_contract_rejection(exc)} reason={exc}", flush=True)\n                if symbol == "HYPEUSDT":\n                    print(f"HYPE_ENTRY_DIAG stage=execution_exception definite={is_definite_contract_rejection(exc)} reason={exc}", flush=True)\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          old='''            fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), prices[symbol]); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))\n            if symbol == "HYPEUSDT":\n'''
+          new='''            fill = result.get("result") or {}; fill_price = _f(fill.get("avgPrice"), prices[symbol]); fill_qty = _f(fill.get("executedQty"), float(plan.quantity))\n            if orphan_priority:\n                print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=entry_filled leverage={plan.leverage} fillPrice={fill_price} fillQty={fill_qty}", flush=True)\n            if symbol == "HYPEUSDT":\n'''
+          assert old in s
+          s=s.replace(old,new,1)
+
+          p.write_text(s,encoding='utf-8')
+
+          t=Path('cloud_api/test_short_requires_long_pairing_20260917.py')
+          ts=t.read_text(encoding='utf-8')
+          marker='def test_pairing_truth_refresh_failure_blocks_new_seat_allocation():'
+          assert marker in ts
+          tests='''\n\ndef test_failed_orphan_priority_does_not_reserve_free_long_seat():\n    class BrokenZecLeverageClient(Client):\n        def leverage_brackets(self, symbol=None):\n            sym = symbol or "AAAUSDT"\n            if sym == "ZECUSDT":\n                raise RuntimeError("temporary ZEC leverage data failure")\n            return super().leverage_brackets(sym)\n\n    short = pos("ZECUSDT", "SHORT")\n    short["leverage"] = "75"\n    client = BrokenZecLeverageClient(\n        positions=[short],\n        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "999999"}],\n        prices={"ZECUSDT": 100, "AAAUSDT": 100}, leverage=100,\n    )\n    result = run_multi_bb_step(\n        client=client, ref=Ref(), raw_state=state_for("ZECUSDT", "SHORT"),\n        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1,\n                     shortRequiresLongEnabled=True, minimumLeverage=50,\n                     bollingerEntryFilter15mEnabled=False),\n        uid="u", account={"availableBalance": "1000"}, positions=[short],\n        open_orders=[], timestamp_ms=int(time.time() * 1000), dry_run=True,\n    )\n    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]\n    assert entries, result\n    assert entries[0]["symbol"] == "AAAUSDT"\n    assert entries[0]["side"] == "LONG"\n    assert any(a.get("symbol") == "ZECUSDT" and "leverage-data" in str(a.get("reason", "")) for a in result["actions"])\n    assert not any(a.get("reason") == "ORPHAN_LONG_SEAT_RESERVED" for a in result["actions"])\n    assert result["orphanLongReservedSlots"] == 0\n    assert result["orphanLongReservedRemaining"] == 0\n\n\ndef test_fresh_account_opens_long_first_and_does_not_authorize_same_tick_short():\n    result = run(\n        settings=cfg(maximumPositions=2, longSlots=1, shortSlots=1, shortRequiresLongEnabled=True),\n        tickers=[{"symbol": "AAAUSDT", "quoteVolume": "2000"}, {"symbol": "BBBUSDT", "quoteVolume": "1000"}],\n        prices={"AAAUSDT": 100, "BBBUSDT": 100},\n    )\n    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]\n    assert entries\n    assert entries[0]["side"] == "LONG"\n    assert not any(a.get("side") == "SHORT" and a.get("kind") == "ENTRY" for a in result["actions"])\n    assert any(a.get("reason") == "SHORT_REQUIRES_LONG" for a in result["actions"])\n\n'''
+          if 'test_failed_orphan_priority_does_not_reserve_free_long_seat' not in ts:
+              ts=ts.replace('\n'+marker,tests+'\n'+marker)
+          t.write_text(ts,encoding='utf-8')
+          PY
+
+      - name: Remove obsolete failed Bollinger experiment workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/fix-orphan-long-recovery-bypass-bollinger-20260917.yml
+
+      - name: Compile backend
+        run: python -m compileall -q cloud_api
+      - name: Run exact pairing regressions
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py
+      - name: Run focused pairing and Bollinger suites
+        working-directory: cloud_api
+        run: python -m pytest -q test_short_requires_long_pairing_20260917.py test_aster_bollinger_entry_filter_seat_flow.py test_same_symbol_dual_side_20260906.py test_aster_multi_bb.py
+      - name: Run full backend suite
+        working-directory: cloud_api
+        run: python -m pytest -q
+      - name: Commit verified priority-only fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'TradeMentor Agent'
+          git config user.email 'actions@users.noreply.github.com'
+          git add cloud_api/aster_multi_bb_core.py cloud_api/test_short_requires_long_pairing_20260917.py
+          if [ -e .github/workflows/fix-orphan-long-recovery-bypass-bollinger-20260917.yml ]; then
+            git add .github/workflows/fix-orphan-long-recovery-bypass-bollinger-20260917.yml
+          else
+            git add -u .github/workflows/fix-orphan-long-recovery-bypass-bollinger-20260917.yml || true
+          fi
+          git diff --cached --quiet && { echo 'No priority-only repair to commit'; exit 1; }
+          git commit -m 'Make orphan LONG recovery priority-only'
+          git push origin HEAD:amar-crypto-bot-2026-cloud
