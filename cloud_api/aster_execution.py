@@ -330,7 +330,6 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
                      before_submit: Callable[[AsterOrderIntent], None] | None = None,
                      new_position_leverage: int | None = None,
                      allow_existing_contract_leverage_change: bool = False,
-                     existing_contract_counterpart_open: bool = False,
                      fill_poll_attempts: int = 1,
                      fill_poll_delay_seconds: float = 0.0) -> dict[str, Any]:
     if not confirm: raise ValueError("Persoonlijke bevestiging ontbreekt")
@@ -345,15 +344,11 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
         # Restore the pre-Multi-BB account-capacity guard for brand-new exact-
         # leverage entries.  Query before mutating margin/leverage so an
         # insufficient HYPE 300x cap never reaches Aster as a doomed POST.
-        # The remainingOpenableNotionalValue endpoint is a new-entry guard.
-        # Do not use it for a same-contract counterpart leg when exchange truth
-        # already proves the opposite side is open. In hedge mode Aster can
-        # report zero "new-position" capacity for an already-active contract;
-        # exact contract leverage is still verified below and the actual order
-        # remains subject to Aster's authoritative risk checks.
-        if (new_position_leverage is not None
-                and not allow_existing_contract_leverage_change
-                and not existing_contract_counterpart_open):
+        # Brand-new exact-leverage entries use Aster's account-specific
+        # remaining-openable guard. A same-contract opposite-side leg is still
+        # risk-increasing gross exposure in hedge mode; live ZEC evidence showed
+        # that Aster rejects it with -5018 when this capacity is zero.
+        if new_position_leverage is not None and not allow_existing_contract_leverage_change:
             _require_openable_notional_capacity(client, plan, int(new_position_leverage))
         client.change_margin_type(plan.symbol, "CROSSED")
         accepted_leverage = (require_exact_new_position_leverage(
