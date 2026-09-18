@@ -1,0 +1,82 @@
+name: Diagnose ZEC DCA direct Firestore read-only 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-zec-dca-firestore-direct-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 8
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -q google-cloud-firestore firebase-admin
+      - name: Read safe ZEC strategy state
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from datetime import datetime,timezone
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+
+          project='tradementor-production'
+          digest='b4dfb7301bb40602e4b2225367437495652a360f6d4a071b8851c6324a82556d'
+          if not firebase_admin._apps: firebase_admin.initialize_app(options={'projectId':project})
+          db=firestore.Client(project=project)
+          uid=None; page=auth.list_users()
+          while page and uid is None:
+              for u in page.users:
+                  email=str(u.email or '').strip().lower()
+                  if email and hashlib.sha256(email.encode()).hexdigest()==digest:
+                      uid=u.uid; break
+              if uid is None: page=page.get_next_page()
+          if not uid: raise SystemExit('TARGET_NOT_FOUND')
+          ref=db.collection('asterStrategy2').document(uid)
+          raw=ref.get().to_dict() or {}
+          settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+          z=state.get('ZECUSDT|SHORT') if isinstance(state.get('ZECUSDT|SHORT'),dict) else {}
+          audits=[]
+          for a in ref.collection('audit').stream():
+              row=a.to_dict() or {}
+              if str(row.get('symbol','')).upper()!='ZECUSDT' or str(row.get('side','')).upper()!='SHORT': continue
+              if str(row.get('event','')) not in {'MULTI_BB_DCA','MANUAL_DCA_DETECTED','MULTI_BB_ENTRY'}: continue
+              ts=row.get('timestamp')
+              if isinstance(ts,datetime): ts=(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+              audits.append({'event':row.get('event'),'timestamp':str(ts or ''),'dcaNumber':row.get('dcaNumber'),'catchup':row.get('catchup'),'catchupTargetCount':row.get('catchupTargetCount'),'leverage':row.get('leverage')})
+          hist=[]
+          for h in ref.collection('configHistory').stream():
+              row=h.to_dict() or {}; old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}; new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+              keys=('maxDca','unlimitedDca','dcaDistance','dcaMarginUsd','shortSlots','maximumPositions')
+              if any(old.get(k)!=new.get(k) for k in keys):
+                  ts=row.get('timestamp')
+                  if isinstance(ts,datetime): ts=(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+                  hist.append({'timestamp':str(ts or ''),'old':{k:old.get(k) for k in keys},'new':{k:new.get(k) for k in keys}})
+          safe={
+            'settings':{k:settings.get(k) for k in ('maxDca','unlimitedDca','dcaDistance','dcaMarginUsd','takeProfit','takeProfitEnabled','asymmetricHedgeModeEnabled','shortRequiresLongEnabled','longSlots','shortSlots','maximumPositions','minimumLeverage')},
+            'zecState':{k:z.get(k) for k in ('dcaCount','lastBotFillPrice','lastDcaFillPrice','nextDcaPrice','nextDcaStatus','cycleStartedAtMs','lastBotDcaAtMs','manualDcaAdoptedAtMs','adoptedExisting','botManaged','asymmetricHedge','pairedLongKey','dcaCatchupTargetCount','dcaCatchupRemaining')},
+            'recentAudit':audits[-30:],
+            'recentConfigChanges':hist[-12:],
+          }
+          print('SAFE_ZEC_DIAG='+json.dumps(safe,sort_keys=True,separators=(',',':')))
+          PY
