@@ -1065,7 +1065,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # untracked/manual positions may not consume refill seats, but they do
         # count toward the configured per-side hard ceiling.
         if not dry_run:
-            fresh_account_positions = _position_map(client.position_risk())
+            # Production Aster clients expose position_risk(); lightweight
+            # test/adapter clients may not. In that compatibility case retain
+            # the already-reconciled exchange snapshot rather than bypassing
+            # the side-cap logic or crashing before other pre-order guards.
+            position_risk_reader = getattr(client, "position_risk", None)
+            fresh_account_positions = (
+                _position_map(position_risk_reader())
+                if callable(position_risk_reader)
+                else active
+            )
             fresh_long_count = sum(1 for active_key in fresh_account_positions if active_key.endswith("|LONG"))
             fresh_short_count = sum(1 for active_key in fresh_account_positions if active_key.endswith("|SHORT"))
             exchange_long_count = fresh_long_count
