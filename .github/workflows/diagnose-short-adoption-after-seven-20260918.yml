@@ -1,0 +1,107 @@
+name: Diagnose SHORT adoption after 7-slot cap read-only 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-short-adoption-after-seven-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-short-adoption-seven-readonly
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Compare post-cap cycle timestamps with adoption flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'));spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image']);print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-shadopt-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,os
+          from datetime import datetime,timezone
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+
+          project='tradementor-production'
+          digest='b4dfb7301bb40602e4b2225367437495652a360f6d4a071b8851c6324a82556d'
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
+          if not firebase_admin._apps: firebase_admin.initialize_app(options={'projectId':project})
+          db=firestore.Client(project=project)
+          uid=None;page=auth.list_users()
+          while page and uid is None:
+              for u in page.users:
+                  e=str(u.email or '').strip().lower()
+                  if e and hashlib.sha256(e.encode()).hexdigest()==digest: uid=u.uid;break
+              if uid is None: page=page.get_next_page()
+          if not uid: raise SystemExit(1)
+
+          ref=db.collection('asterStrategy2').document(uid);raw=ref.get().to_dict() or {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+          seven_at=None
+          for h in ref.collection('configHistory').stream():
+              row=h.to_dict() or {};new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {};ts=row.get('timestamp')
+              try: hit=int(new.get('longSlots',-1))==7 and int(new.get('shortSlots',-1))==7 and int(new.get('maximumPositions',-1))==14
+              except Exception: hit=False
+              if hit and isinstance(ts,datetime):
+                  ts=ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
+                  if seven_at is None or ts>seven_at: seven_at=ts
+
+          after_adopted=after_native=total_adopted=total_native=0
+          for key,row in state.items():
+              if not str(key).endswith('|SHORT') or not isinstance(row,dict): continue
+              adopted=bool(row.get('adoptedExisting'))
+              if adopted: total_adopted+=1
+              else: total_native+=1
+              try:ms=int(float(row.get('cycleStartedAtMs') or 0))
+              except Exception:ms=0
+              if seven_at and ms>0 and datetime.fromtimestamp(ms/1000,tz=timezone.utc)>seven_at:
+                  if adopted: after_adopted+=1
+                  else: after_native+=1
+
+          metrics={1:after_adopted,2:after_native,3:total_adopted,4:total_native}
+          raise SystemExit(min(max(int(metrics.get(idx,0)),0),249)+1)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 5 --parallelism 5 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          STATUS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
+          printf 'SHORT_ADOPTION_AFTER_SEVEN_STATUS %s\n' "$STATUS"
+          cleanup
+          trap - EXIT
