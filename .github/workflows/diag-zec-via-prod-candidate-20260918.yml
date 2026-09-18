@@ -1,0 +1,202 @@
+name: Diagnose ZEC via prod candidate 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diag-zec-via-prod-candidate-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture current production config
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1,live
+          print("BASE_REVISION="+live[0]["revisionName"])
+          PY
+
+      - name: Inject temporary token-gated sanitized diagnostic endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(48))
+          PY
+          )"
+          HASH="$(python - "$TOKEN" <<'PY'
+          import hashlib,sys
+          print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+          PY
+          )"
+          echo "DIAG_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          cat >> cloud_api/main.py <<PY
+
+          # Temporary build-only diagnostic endpoint. Never committed into application source.
+          @app.get("/__diag/zec-orphan-${HASH}")
+          def __diag_zec_orphan_${HASH:0:8}():
+              from datetime import datetime, timezone, timedelta
+              cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
+              rows = []
+              scanned = 0
+              def iso(v):
+                  if isinstance(v, datetime):
+                      if v.tzinfo is None:
+                          v = v.replace(tzinfo=timezone.utc)
+                      return v.astimezone(timezone.utc).isoformat()
+                  return v
+              def num(v):
+                  try: return float(v)
+                  except Exception: return None
+              for snap in db.collection("asterStrategy2").stream():
+                  scanned += 1
+                  raw = snap.to_dict() or {}
+                  if not bool(raw.get("enabled")):
+                      continue
+                  settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+                  positions = raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"), dict) else {}
+                  report = raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"), dict) else {}
+                  # Narrow to the user's current distinctive setup plus the live ZEC orphan.
+                  state_orphan = "ZECUSDT|SHORT" in positions and "ZECUSDT|LONG" not in positions
+                  report_orphan = "ZECUSDT" in list(report.get("orphanShortSymbols") or [])
+                  if not (state_orphan or report_orphan):
+                      continue
+                  # Avoid returning unrelated accounts: require the known current short DCA/max-DCA signature.
+                  sd = num(settings.get("shortDcaDistance"))
+                  ms = int(num(settings.get("maxDcaShort", settings.get("shortMaxDca"))) or -1)
+                  if sd is not None and sd > 0.01:
+                      # Some historical documents stored UI percentage instead of ratio; accept both 0.0025 and 0.25.
+                      short_distance_match = abs(sd-0.25) < 1e-9
+                  else:
+                      short_distance_match = sd is not None and abs(sd-0.0025) < 1e-9
+                  if not short_distance_match or ms < 9:
+                      continue
+                  actions=[]
+                  for a in list(report.get("actions") or []):
+                      if not isinstance(a,dict): continue
+                      sym=str(a.get("symbol","")).upper()
+                      if sym=="ZECUSDT" or a.get("kind") in {"ENTRY","ENTRY_SKIP","ENTRY_MARGIN_WAIT"}:
+                          actions.append({k:iso(a.get(k)) for k in [
+                              "kind","symbol","side","reason","stage","leverage","pairedContractLeverage",
+                              "orphanShortPriority","requiredMargin","notionalUsd","marginUsd","entryMode",
+                              "exchangeMaxLeverage","forcedBelowConfiguredMinimum","number","trigger",
+                              "projectedNotional","targetLeverage","catchupRemaining"
+                          ] if k in a})
+                  audits=[]
+                  try:
+                      for q in snap.reference.collection("audit").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(80).stream():
+                          d=q.to_dict() or {}; ts=d.get("timestamp")
+                          if isinstance(ts,datetime) and ts.tzinfo is None: ts=ts.replace(tzinfo=timezone.utc)
+                          if isinstance(ts,datetime) and ts < cutoff: break
+                          if str(d.get("symbol","")).upper()=="ZECUSDT" or str(d.get("event","")).startswith("MULTI_BB_ENTRY"):
+                              audits.append({k:iso(d.get(k)) for k in [
+                                  "event","symbol","side","reason","dcaNumber","leverage","projectedNotional","timestamp"
+                              ] if k in d})
+                  except Exception as exc:
+                      audits=[{"event":"AUDIT_READ_FAILED","reason":type(exc).__name__}]
+                  z=positions.get("ZECUSDT|SHORT") if isinstance(positions.get("ZECUSDT|SHORT"),dict) else {}
+                  rows.append({
+                      "lastTickAt":iso(raw.get("lastTickAt")),
+                      "lastReason":str(raw.get("lastReason",""))[:300],
+                      "settings":{k:settings.get(k) for k in [
+                          "maximumPositions","longSlots","shortSlots","shortRequiresLongEnabled",
+                          "bollingerEntryFilter15mEnabled","bollingerEntryFilterTimeframe","minimumLeverage",
+                          "entryMarginLongUsd","entryMarginShortUsd","entryMarginUsd","entryNotionalUsd","entrySizingMode",
+                          "shortDcaDistance","maxDcaShort"
+                      ]},
+                      "report":{k:report.get(k) for k in [
+                          "updatedAtMs","entryStatus","entryReason","activeLong","activeShort","remainingLong",
+                          "remainingShort","accountPositionCount","accountRemainingCapacity","orphanShortSymbols",
+                          "orphanLongPending","orphanLongReservedSlots","entrySkipReasons","candidateCount",
+                          "scannedCandidateCount","executableCandidateCount"
+                      ]},
+                      "zecShort":{k:z.get(k) for k in [
+                          "dcaCount","leverage","lastKnownQty","lastKnownEntry","lastBotFillPrice",
+                          "lastDcaFillPrice","nextDcaPrice","nextDcaDue","nextDcaStatus"
+                      ]},
+                      "actions":actions[-120:],
+                      "recentAudit":audits,
+                  })
+              return {"scannedDocs":scanned,"matches":len(rows),"rows":rows}
+          PY
+
+      - name: Build and deploy zero-traffic diagnostic revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:zecdiag-${GITHUB_SHA}"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          TAG="zecdiag-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          SUFFIX="zd-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
+          python - "$RUNNER_TEMP/after.json" "$TAG" "$BASE_REVISION" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); tag=sys.argv[2]; base=sys.argv[3]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base,live
+          row=next(x for x in s['status']['traffic'] if x.get('tag')==tag)
+          assert int(row.get('percent',0) or 0)==0,row
+          print("DIAG_URL="+row["url"])
+          print("DIAG_REVISION="+row["revisionName"])
+          PY
+
+      - name: Read live sanitized decision trail
+        shell: bash
+        run: |
+          set -euo pipefail
+          HASH="$(python - "$DIAG_TOKEN" <<'PY'
+          import hashlib,sys
+          print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+          PY
+          )"
+          curl --fail --silent --show-error --retry 10 --retry-delay 2 "$DIAG_URL/__diag/zec-orphan-$HASH" | tee "$RUNNER_TEMP/zec.json" | python -m json.tool
+
+      - name: Confirm production traffic never moved
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOW="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          python - "$BASE_REVISION" "$NOW" <<'PY'
+          import json,sys
+          base=sys.argv[1]; s=json.loads(sys.argv[2])
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base,live
+          PY
