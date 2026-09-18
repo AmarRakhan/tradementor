@@ -21,7 +21,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  VERIFIED_CODE_SHA: 98a545a56bc9c744032b26ce621cdb6fd5bac0c5
+  VERIFIED_CODE_SHA: 9e675fa5ae1c2974f33a155369f4e8a63d7597be
 
 jobs:
   test-build-verify-promote:
@@ -41,7 +41,7 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
           test "$(git diff --name-only "$VERIFIED_CODE_SHA" HEAD)" = ".github/workflows/deploy-exchange-side-slot-cap-20260918.yml"
           grep -Fq 'exchange_short_spare = max(0, settings.short_slots - exchange_short_count)' cloud_api/aster_multi_bb_core.py
-          grep -Fq 'fresh_account_positions = _position_map(client.position_risk())' cloud_api/aster_multi_bb_core.py
+          grep -Fq 'position_risk_reader = getattr(client, "position_risk", None)' cloud_api/aster_multi_bb_core.py
           grep -Fq '"reason": f"{side}_SLOT_CAP_REACHED"' cloud_api/aster_multi_bb_core.py
           grep -Fq 'test_untracked_shorts_above_cap_block_new_short_but_still_allow_valid_long_refill' cloud_api/test_strategy2_untracked_seat_refill_20260918.py
           grep -Fq 'test_pre_order_exchange_refresh_blocks_short_when_side_reaches_cap_after_scan' cloud_api/test_strategy2_untracked_seat_refill_20260918.py
