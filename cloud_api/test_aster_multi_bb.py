@@ -127,6 +127,62 @@ def test_max_three_dcas_is_hard_cap():
     assert not [x for x in r["actions"] if x["kind"]=="DCA"]
 
 
+def test_max_dca_zero_is_absolute_off_and_purges_legacy_queue_state():
+    pos={"symbol":"ZECUSDT","positionSide":"SHORT","positionAmt":"1","entryPrice":"100","markPrice":"1000","leverage":"75"}
+    raw={"multiBbPositions":{"ZECUSDT|SHORT":{
+        "cycleId":"zec-short","dcaCount":8,"lastBotFillPrice":100,
+        "lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,
+        "dcaCatchupTargetCount":15,"dcaCatchupBaseAnchor":100,
+        "dcaCatchupStartCount":8,"dcaCatchupDistance":.003,"dcaCatchupRemaining":7,
+        "nextDcaPrice":100.3,"nextDcaStatus":"DUE","nextDcaNumber":9,
+    }}}
+    ref=Ref()
+    result=run_multi_bb_step(
+        client=Client(positions=[pos],prices={"ZECUSDT":1000},leverage=75),
+        ref=ref,raw_state=raw,
+        settings=cfg(maxDca=0,maxDcaShort=0,unlimitedDca=True,maximumPositions=1,longSlots=0,shortSlots=1,shortDcaDistance=.25),
+        uid="u",account={"availableBalance":"1000"},positions=[pos],open_orders=[],
+        timestamp_ms=int(time.time()*1000),dry_run=False,
+    )
+    assert not any(a.get("kind")=="DCA" for a in result["actions"])
+    persisted=next(update["multiBbPositions"]["ZECUSDT|SHORT"] for update in ref.updates if "multiBbPositions" in update)
+    assert "dcaCatchupTargetCount" not in persisted
+    assert "dcaCatchupRemaining" not in persisted
+    assert "nextDcaPrice" not in persisted
+    assert "nextDcaNumber" not in persisted
+
+
+def test_short_uses_current_25_percent_distance_not_legacy_shared_distance():
+    pos={"symbol":"ZECUSDT","positionSide":"SHORT","positionAmt":"1","entryPrice":"100","markPrice":"100.4","leverage":"75"}
+    raw={"multiBbPositions":{"ZECUSDT|SHORT":{
+        "cycleId":"zec-short","dcaCount":8,"lastBotFillPrice":100,
+        "lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,
+    }}}
+    settings=cfg(
+        dcaDistance=.003,shortDcaDistance=.25,maxDca=15,maxDcaShort=15,
+        maximumPositions=1,longSlots=0,shortSlots=1,takeProfitEnabled=False,
+    )
+    early=run_multi_bb_step(
+        client=Client(positions=[pos],prices={"ZECUSDT":100.4},leverage=75),
+        ref=Ref(),raw_state=raw,settings=settings,uid="u",
+        account={"availableBalance":"1000"},positions=[pos],open_orders=[],
+        timestamp_ms=int(time.time()*1000),dry_run=True,
+    )
+    assert not any(a.get("kind")=="DCA" for a in early["actions"])
+
+    crossed={**pos,"markPrice":"125.1"}
+    due=run_multi_bb_step(
+        client=Client(positions=[crossed],prices={"ZECUSDT":125.1},leverage=75),
+        ref=Ref(),raw_state=raw,settings=settings,uid="u",
+        account={"availableBalance":"1000"},positions=[crossed],open_orders=[],
+        timestamp_ms=int(time.time()*1000),dry_run=True,
+    )
+    dcas=[a for a in due["actions"] if a.get("kind")=="DCA"]
+    assert len(dcas)==1
+    assert dcas[0]["trigger"]==pytest.approx(125.0)
+    assert dcas[0]["catchup"] is False
+
+
 def test_exchange_weighted_entry_drives_tp_after_manual_add():
     # Persisted entry was 100, but Aster says manual averaging changed the true weighted entry to 90.
     pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"8","entryPrice":"90","markPrice":"91.35","leverage":"100"}
@@ -612,5 +668,4 @@ def test_short_dca_large_gap_executes_only_one_fill_and_never_replays_missed_lev
     assert dcas[0]["number"]==9
     assert dcas[0]["trigger"]==pytest.approx(125.0)
     assert dcas[0]["catchup"] is False
-    assert dcas[0]["catchupTargetCount"]==9
     assert not any(x.get("kind")=="DCA_CATCHUP_QUEUED" for x in r["actions"])
