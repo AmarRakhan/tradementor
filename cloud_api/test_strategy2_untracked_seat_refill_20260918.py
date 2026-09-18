@@ -42,11 +42,11 @@ def test_two_free_strategy_seats_refill_even_when_untracked_positions_make_accou
     positions = [
         _pos("AAUSDT", "LONG"),
         _pos("BBUSDT", "LONG"),
-        _pos("CCUSDT", "SHORT"),
+        _pos("CCUSDT", "LONG"),
         _pos("MAN1USDT", "LONG"),
-        _pos("MAN2USDT", "SHORT"),
+        _pos("MAN2USDT", "LONG"),
     ]
-    raw = _state("AAUSDT|LONG", "BBUSDT|LONG", "CCUSDT|SHORT")
+    raw = _state("AAUSDT|LONG", "BBUSDT|LONG", "CCUSDT|LONG")
     tickers = [
         {"symbol": "NEW1USDT", "quoteVolume": "2000"},
         {"symbol": "NEW2USDT", "quoteVolume": "1000"},
@@ -62,8 +62,8 @@ def test_two_free_strategy_seats_refill_even_when_untracked_positions_make_accou
         settings=cfg(
             universeTopN=3,
             maximumPositions=5,
-            longSlots=4,
-            shortSlots=1,
+            longSlots=5,
+            shortSlots=0,
             shortRequiresLongEnabled=True,
             bollingerEntryFilter15mEnabled=False,
         ),
