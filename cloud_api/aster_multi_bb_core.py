@@ -104,7 +104,7 @@ class MultiBbConfig:
 
     def validated(self) -> "MultiBbConfig":
         if self.engine != ENGINE: raise ValueError("Alleen de nieuwe Multi BB-strategie is toegestaan")
-        if not 1 <= self.universe_top_n <= 200: raise ValueError("Top-N moet tussen 1 en 200 liggen")
+        if not 1 <= self.universe_top_n <= 800: raise ValueError("Top-N moet tussen 1 en 800 liggen")
         maximum_capacity = 200 if self.manual_symbol_selection_enabled else self.universe_top_n * 2
         if not 1 <= self.maximum_positions <= maximum_capacity: raise ValueError("Max posities overschrijdt de beschikbare marktcapaciteit")
         if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
