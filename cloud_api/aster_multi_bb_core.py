@@ -828,13 +828,6 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     # that happens to be open in the same Aster account. Manual/untracked Aster
     # positions remain visible in diagnostics but must not consume bot seats.
     strategy_position_count = len(strategy_active_keys)
-    # Hard side caps are exchange-truth based.  Ownership determines which
-    # positions Strategy 2 manages, but it must never let the bot open a new
-    # LONG/SHORT when the Aster account already has the configured number of
-    # positions on that side.  This prevents lost/legacy ownership metadata from
-    # turning e.g. 7 configured SHORT slots into 12 exchange SHORT positions.
-    exchange_long_count = sum(1 for key in active if key.endswith("|LONG"))
-    exchange_short_count = sum(1 for key in active if key.endswith("|SHORT"))
     # If ownership state is completely missing while Aster already has open
     # positions, stay conservative: those positions still consume seats until
     # ownership can be reconstructed. Once Strategy-2 ownership state exists,
@@ -852,16 +845,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         account_remaining_capacity = max(0, 50 - account_position_count)
     else:
         pair_need = 0
-        # Strategy ownership still controls management, but NEW exposure is
-        # bounded by the actual exchange-side counts as a fail-closed invariant.
-        long_need = min(
-            max(0, settings.long_slots - long_count),
-            max(0, settings.long_slots - exchange_long_count),
-        )
-        short_need = min(
-            max(0, settings.short_slots - short_count),
-            max(0, settings.short_slots - exchange_short_count),
-        )
+        long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
         # Capacity follows Strategy-2 ownership. Untracked/manual account legs
         # outside this strategy do not occupy configured LONG/SHORT seats.
         account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
@@ -1090,27 +1074,6 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if orphan_priority:
             entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
-        # Final live safety check against fresh Aster truth.  This closes the
-        # small window between the tick snapshot and order submission (for
-        # example when a manual/external order lands meanwhile).  Never submit
-        # a new independent leg once that actual side is at its configured cap.
-        if not dry_run and not paired:
-            fresh_side_positions = _position_map(client.position_risk())
-            fresh_side_count = sum(1 for key in fresh_side_positions if key.endswith(f"|{side}"))
-            side_limit = settings.long_slots if side == "LONG" else settings.short_slots
-            if fresh_side_count >= side_limit:
-                actions.append({
-                    "kind": "ENTRY_SKIP", "symbol": symbol, "side": side,
-                    "reason": "SIDE_SLOT_CAP_REACHED", "stage": "pre_order",
-                    "exchangeSideCount": fresh_side_count, "sideLimit": side_limit,
-                })
-                if side == "LONG":
-                    exchange_long_count = fresh_side_count
-                    long_need = 0
-                else:
-                    exchange_short_count = fresh_side_count
-                    short_need = 0
-                continue
         if not dry_run and short_requires_long_gate and side == "SHORT":
             fresh_pair_positions = _position_map(client.position_risk(symbol))
             if f"{symbol}|LONG" not in fresh_pair_positions:
@@ -1220,19 +1183,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             seat_capacity_position_count += consumed
             account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
             if side == "LONG":
-                long_count += 1
-                exchange_long_count += 1
-                long_need = min(
-                    max(0, settings.long_slots - long_count),
-                    max(0, settings.long_slots - exchange_long_count),
-                )
+                long_count += 1; long_need = max(0, settings.long_slots - long_count)
             else:
-                short_count += 1
-                exchange_short_count += 1
-                short_need = min(
-                    max(0, settings.short_slots - short_count),
-                    max(0, settings.short_slots - exchange_short_count),
-                )
+                short_count += 1; short_need = max(0, settings.short_slots - short_count)
         available -= total_required if consumed == 2 else required; sent += consumed
         if orphan_priority and side == "LONG": orphan_long_rescue_filled += 1
 
@@ -1296,9 +1249,6 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "asymmetricHedgeActivePairs": active_pair_count, "remainingPairs": pair_need if settings.asymmetric_hedge_enabled else None,
               "legacyPositionsDuringAsymmetric": legacy_position_count,
               "activeLong": long_count, "activeShort": short_count,
-              "exchangeActiveLong": exchange_long_count, "exchangeActiveShort": exchange_short_count,
-              "longSideHardCapReached": exchange_long_count >= settings.long_slots,
-              "shortSideHardCapReached": exchange_short_count >= settings.short_slots,
               "remainingLong": long_need, "remainingShort": short_need,
               "accountPositionCount": account_position_count, "accountRemainingCapacity": account_remaining_capacity,
               "strategyPositionCount": strategy_position_count,
