@@ -661,6 +661,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 linked = dict(st0); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "updatedAtMs": timestamp_ms}); state[key] = linked
                 actions.append({"kind": "ASYM_SHORT_RECOVERED_FROM_EXCHANGE", "symbol": symbol}); continue
             if long_row is None or symbol not in info_map or prices.get(symbol, 0) <= 0 or len(pmap) >= settings.maximum_positions: continue
+            # A delayed paired SHORT is still NEW SHORT exposure.  Lowering the
+            # configured SHORT cap must therefore freeze recovery opens until
+            # the live managed SHORT count is below that cap; never auto-close
+            # existing excess positions.
+            managed_short_count = sum(
+                1 for active_key in pmap
+                if active_key.endswith("|SHORT") and active_key in state
+            )
+            if managed_short_count >= settings.short_slots:
+                actions.append({
+                    "kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol,
+                    "reason": "SHORT_SLOT_CAP_REACHED",
+                    "activeShort": managed_short_count, "shortSlots": settings.short_slots,
+                })
+                continue
             try:
                 _, short_plan, _, _ = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)
                 current_lev = max(1, _i(long_row.get("leverage"), short_plan.leverage))
@@ -838,11 +853,17 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     active_pair_count = sum(1 for key, row in state.items() if key.endswith("|LONG") and row.get("asymmetricHedge") and key in active)
     legacy_position_count = max(0, len(strategy_active_keys) - active_pair_count * 2) if settings.asymmetric_hedge_enabled else 0
     if settings.asymmetric_hedge_enabled:
-        # Gekoppelde-parencapaciteit geldt uitsluitend voor NIEUWE asymmetrische cycli.
-        # Bestaande Strategy-2 posities blijven intact en mogen de nieuwe pair allocator niet blokkeren.
-        pair_need = max(0, settings.long_slots - active_pair_count)
+        # Existing asymmetric LONG cycles keep occupying their pair slot even
+        # after their paired SHORT has been released.  However, configured
+        # LONG/SHORT slots are absolute side caps for NEW exposure: legacy
+        # Strategy-2 legs may remain open, but they must never be ignored when
+        # deciding whether another paired cycle may start.
+        pair_cycle_need = max(0, settings.long_slots - active_pair_count)
+        long_side_spare = max(0, settings.long_slots - long_count)
+        short_side_spare = max(0, settings.short_slots - short_count)
+        pair_need = min(pair_cycle_need, long_side_spare, short_side_spare)
         long_need = pair_need; short_need = pair_need
-        account_remaining_capacity = max(0, 50 - account_position_count)
+        account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
     else:
         pair_need = 0
         long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
@@ -1172,12 +1193,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         consumed = 2 if paired and ((dry_run and not defer_paired_short) or f"{symbol}|SHORT" in state) else 1
         account_position_count += consumed
         if settings.asymmetric_hedge_enabled:
-            account_remaining_capacity = max(0, 50 - account_position_count)
+            account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
             active_pair_count += 1
-            pair_need = max(0, settings.long_slots - active_pair_count)
-            long_need = pair_need; short_need = pair_need
             long_count += 1
             if consumed == 2: short_count += 1
+            pair_cycle_need = max(0, settings.long_slots - active_pair_count)
+            long_side_spare = max(0, settings.long_slots - long_count)
+            short_side_spare = max(0, settings.short_slots - short_count)
+            pair_need = min(pair_cycle_need, long_side_spare, short_side_spare)
+            long_need = pair_need; short_need = pair_need
         else:
             strategy_position_count += consumed
             seat_capacity_position_count += consumed
