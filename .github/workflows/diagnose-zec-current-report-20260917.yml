@@ -72,10 +72,12 @@ jobs:
               'report':{k:report.get(k) for k in (
                   'updatedAtMs','entryStatus','entryReason','activeLong','activeShort',
                   'remainingLong','remainingShort','accountPositionCount','accountRemainingCapacity',
-                  'orphanShortSymbols','orphanLongPending','orphanLongReservedSlots',
+                  'strategyPositionCount','seatCapacityPositionCount','capacityOwnershipFallback',
+                  'untrackedAccountPositionCount','orphanShortSymbols','orphanLongPending','orphanLongReservedSlots',
                   'orphanLongRescueFilled','orphanLongReservedRemaining','entrySkipReasons',
-                  'candidateCount','scannedCandidateCount','executableCandidateCount')},
+                  'candidateCount','scannedCandidateCount','executableCandidateCount','nextEntrySide')},
               'zecShortState':{k:zec_state.get(k) for k in ('dcaCount','leverage')},
+              'pairOverrideZec':(settings.get('pairOverrides') or {}).get('ZECUSDT') if isinstance(settings.get('pairOverrides'),dict) else None,
               'zecActions':[a for a in list(report.get('actions') or []) if isinstance(a,dict) and (str(a.get('symbol','')).upper()=='ZECUSDT' or a.get('kind')=='ENTRY_SCAN_BLOCKED')],
           }
           print(json.dumps(safe,indent=2,sort_keys=True,default=str))
