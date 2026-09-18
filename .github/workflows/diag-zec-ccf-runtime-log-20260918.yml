@@ -1,0 +1,129 @@
+name: Diagnose ZEC CCF runtime log 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diag-zec-ccf-runtime-log-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build zero-traffic log-reader candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(python - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(48))
+          PY
+          )"
+          HASH="$(python - "$TOKEN" <<'PY'
+          import hashlib,sys
+          print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+          PY
+          )"
+          echo "DIAG_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          cat >> cloud_api/main.py <<PY
+
+          @app.get("/__diag/zec-ccf-log-${HASH}")
+          def __diag_zec_ccf_log_${HASH:0:8}():
+              import google.auth
+              from google.auth.transport.requests import AuthorizedSession
+              try:
+                  creds,_=google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                  session=AuthorizedSession(creds)
+                  flt='resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND resource.labels.revision_name="tradementor-api-ccf-0945d5c4-1" AND timestamp>="2026-09-17T23:15:00Z" AND timestamp<="2026-09-17T23:46:30Z"'
+                  resp=session.post(
+                      "https://logging.googleapis.com/v2/entries:list",
+                      json={"resourceNames":["projects/tradementor-production"],"filter":flt,"orderBy":"timestamp asc","pageSize":1000},
+                      timeout=30,
+                  )
+                  if resp.status_code != 200:
+                      return {"ok":False,"status":resp.status_code,"error":resp.text[:500]}
+                  payload=resp.json() if resp.content else {}
+                  rows=[]
+                  for e in payload.get("entries",[]):
+                      text=e.get("textPayload")
+                      if text is None and "jsonPayload" in e:
+                          text=str(e.get("jsonPayload"))
+                      text=str(text or "")
+                      if "ZECUSDT" in text and ("ORPHAN_LONG_DIAG" in text or "-5018" in text or "OPENABLE" in text):
+                          rows.append({"timestamp":e.get("timestamp"),"text":text[:1200]})
+                  return {"ok":True,"matches":len(rows),"rows":rows[-200:]}
+              except Exception as exc:
+                  return {"ok":False,"error":type(exc).__name__+":"+str(exc)[:500]}
+          PY
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json"
+          python - "$RUNNER_TEMP/before.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1]))
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1
+          print("BASE_REVISION="+live[0]["revisionName"])
+          PY
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/tradementor/tradementor-api:zcclog-${GITHUB_SHA}"
+          docker build -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          TAG="zcclog-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          SUFFIX="zl-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --revision-suffix "$SUFFIX" --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
+          python - "$RUNNER_TEMP/after.json" "$TAG" "$BASE_REVISION" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1])); tag=sys.argv[2]; base=sys.argv[3]
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base,live
+          row=next(x for x in s['status']['traffic'] if x.get('tag')==tag)
+          assert int(row.get('percent',0) or 0)==0,row
+          print("DIAG_URL="+row["url"])
+          PY
+
+      - name: Read CCF runtime evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          HASH="$(python - "$DIAG_TOKEN" <<'PY'
+          import hashlib,sys
+          print(hashlib.sha256(sys.argv[1].encode()).hexdigest())
+          PY
+          )"
+          curl --fail --silent --show-error --retry 8 --retry-delay 2 "$DIAG_URL/__diag/zec-ccf-log-$HASH" | python -m json.tool
+
+      - name: Confirm production traffic unchanged
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          NOW="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          python - "$BASE_REVISION" "$NOW" <<'PY'
+          import json,sys
+          base=sys.argv[1]; s=json.loads(sys.argv[2])
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          assert len(live)==1 and live[0].get('revisionName')==base,live
+          PY
