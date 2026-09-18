@@ -661,19 +661,19 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 linked = dict(st0); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "updatedAtMs": timestamp_ms}); state[key] = linked
                 actions.append({"kind": "ASYM_SHORT_RECOVERED_FROM_EXCHANGE", "symbol": symbol}); continue
             if long_row is None or symbol not in info_map or prices.get(symbol, 0) <= 0 or len(pmap) >= settings.maximum_positions: continue
-            # A delayed paired SHORT is still NEW SHORT exposure.  Lowering the
-            # configured SHORT cap must therefore freeze recovery opens until
-            # the live managed SHORT count is below that cap; never auto-close
-            # existing excess positions.
-            managed_short_count = sum(
-                1 for active_key in pmap
-                if active_key.endswith("|SHORT") and active_key in state
+            # A delayed paired SHORT is still NEW SHORT exposure. The configured
+            # side limit is an account-level hard ceiling for NEW exposure, so
+            # every currently-open Aster SHORT counts here, including positions
+            # that are not present in Strategy-2 ownership state. Existing excess
+            # positions are never auto-closed by this guard.
+            exchange_short_count = sum(
+                1 for active_key in pmap if active_key.endswith("|SHORT")
             )
-            if managed_short_count >= settings.short_slots:
+            if exchange_short_count >= settings.short_slots:
                 actions.append({
                     "kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol,
                     "reason": "SHORT_SLOT_CAP_REACHED",
-                    "activeShort": managed_short_count, "shortSlots": settings.short_slots,
+                    "activeShort": exchange_short_count, "shortSlots": settings.short_slots,
                 })
                 continue
             try:
@@ -691,6 +691,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     fresh_pair_positions = _position_map(client.position_risk(symbol))
                     if key not in fresh_pair_positions:
                         actions.append({"kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol, "reason": "SHORT_REQUIRES_LONG", "stage": "pre_order"})
+                        continue
+                if not dry_run:
+                    fresh_account_positions = _position_map(client.position_risk())
+                    fresh_short_count = sum(1 for active_key in fresh_account_positions if active_key.endswith("|SHORT"))
+                    if fresh_short_count >= settings.short_slots:
+                        actions.append({
+                            "kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol,
+                            "reason": "SHORT_SLOT_CAP_REACHED", "stage": "pre_order",
+                            "activeShort": fresh_short_count, "shortSlots": settings.short_slots,
+                        })
                         continue
                 actions.append({"kind": "ASYM_SHORT_RECOVERY", "symbol": symbol, "multiplier": settings.short_start_multiplier})
                 if not dry_run:
@@ -843,6 +853,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     # that happens to be open in the same Aster account. Manual/untracked Aster
     # positions remain visible in diagnostics but must not consume bot seats.
     strategy_position_count = len(strategy_active_keys)
+    # Strategy ownership controls refill capacity, but configured LONG/SHORT
+    # slots are also absolute account-level ceilings for NEW exposure. Keep
+    # both views: tracked counts decide which bot seats are missing, while the
+    # full Aster snapshot prevents untracked/manual legs from being exceeded.
+    exchange_long_count = sum(1 for key in active if key.endswith("|LONG"))
+    exchange_short_count = sum(1 for key in active if key.endswith("|SHORT"))
     # If ownership state is completely missing while Aster already has open
     # positions, stay conservative: those positions still consume seats until
     # ownership can be reconstructed. Once Strategy-2 ownership state exists,
@@ -861,14 +877,22 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         pair_cycle_need = max(0, settings.long_slots - active_pair_count)
         long_side_spare = max(0, settings.long_slots - long_count)
         short_side_spare = max(0, settings.short_slots - short_count)
-        pair_need = min(pair_cycle_need, long_side_spare, short_side_spare)
+        exchange_long_spare = max(0, settings.long_slots - exchange_long_count)
+        exchange_short_spare = max(0, settings.short_slots - exchange_short_count)
+        pair_need = min(pair_cycle_need, long_side_spare, short_side_spare, exchange_long_spare, exchange_short_spare)
         long_need = pair_need; short_need = pair_need
         account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
     else:
         pair_need = 0
-        long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
+        strategy_long_need = max(0, settings.long_slots - long_count)
+        strategy_short_need = max(0, settings.short_slots - short_count)
+        exchange_long_spare = max(0, settings.long_slots - exchange_long_count)
+        exchange_short_spare = max(0, settings.short_slots - exchange_short_count)
+        long_need = min(strategy_long_need, exchange_long_spare)
+        short_need = min(strategy_short_need, exchange_short_spare)
         # Capacity follows Strategy-2 ownership. Untracked/manual account legs
-        # outside this strategy do not occupy configured LONG/SHORT seats.
+        # outside this strategy do not occupy general bot-seat capacity, while
+        # the side-specific Aster hard caps above still apply.
         account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
 
     # If exchange truth could not be refreshed while the pairing toggle is on,
@@ -1028,6 +1052,40 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             continue
 
         paired = bool(settings.asymmetric_hedge_enabled)
+        # Re-read full Aster truth immediately before any NEW initial exposure.
+        # This is deliberately separate from Strategy-2 ownership accounting:
+        # untracked/manual positions may not consume refill seats, but they do
+        # count toward the configured per-side hard ceiling.
+        if not dry_run:
+            fresh_account_positions = _position_map(client.position_risk())
+            fresh_long_count = sum(1 for active_key in fresh_account_positions if active_key.endswith("|LONG"))
+            fresh_short_count = sum(1 for active_key in fresh_account_positions if active_key.endswith("|SHORT"))
+            exchange_long_count = fresh_long_count
+            exchange_short_count = fresh_short_count
+            if paired and (fresh_long_count >= settings.long_slots or fresh_short_count >= settings.short_slots):
+                pair_need = 0; long_need = 0; short_need = 0
+                actions.append({
+                    "kind": "ASYM_PAIR_WAIT", "symbol": symbol,
+                    "reason": "SIDE_SLOT_CAP_REACHED", "stage": "pre_order",
+                    "activeLong": fresh_long_count, "longSlots": settings.long_slots,
+                    "activeShort": fresh_short_count, "shortSlots": settings.short_slots,
+                })
+                continue
+            if not paired:
+                fresh_side_count = fresh_long_count if side == "LONG" else fresh_short_count
+                side_slots = settings.long_slots if side == "LONG" else settings.short_slots
+                if fresh_side_count >= side_slots:
+                    if side == "LONG":
+                        long_need = 0
+                    else:
+                        short_need = 0
+                    actions.append({
+                        "kind": "ENTRY_SKIP", "symbol": symbol, "side": side,
+                        "reason": f"{side}_SLOT_CAP_REACHED", "stage": "pre_order",
+                        "activeSide": fresh_side_count, "sideSlots": side_slots,
+                    })
+                    continue
+
         # In paired mode the toggle means the LONG must already exist in the
         # exchange snapshot that started this reconciliation tick.  A LONG that
         # is only being opened in this same tick does not authorize its SHORT.
@@ -1196,20 +1254,33 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
             active_pair_count += 1
             long_count += 1
-            if consumed == 2: short_count += 1
+            exchange_long_count += 1
+            if consumed == 2:
+                short_count += 1
+                exchange_short_count += 1
             pair_cycle_need = max(0, settings.long_slots - active_pair_count)
             long_side_spare = max(0, settings.long_slots - long_count)
             short_side_spare = max(0, settings.short_slots - short_count)
-            pair_need = min(pair_cycle_need, long_side_spare, short_side_spare)
+            exchange_long_spare = max(0, settings.long_slots - exchange_long_count)
+            exchange_short_spare = max(0, settings.short_slots - exchange_short_count)
+            pair_need = min(pair_cycle_need, long_side_spare, short_side_spare, exchange_long_spare, exchange_short_spare)
             long_need = pair_need; short_need = pair_need
         else:
             strategy_position_count += consumed
             seat_capacity_position_count += consumed
             account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
             if side == "LONG":
-                long_count += 1; long_need = max(0, settings.long_slots - long_count)
+                long_count += 1
+                exchange_long_count += 1
             else:
-                short_count += 1; short_need = max(0, settings.short_slots - short_count)
+                short_count += 1
+                exchange_short_count += 1
+            strategy_long_need = max(0, settings.long_slots - long_count)
+            strategy_short_need = max(0, settings.short_slots - short_count)
+            exchange_long_spare = max(0, settings.long_slots - exchange_long_count)
+            exchange_short_spare = max(0, settings.short_slots - exchange_short_count)
+            long_need = min(strategy_long_need, exchange_long_spare)
+            short_need = min(strategy_short_need, exchange_short_spare)
         available -= total_required if consumed == 2 else required; sent += consumed
         if orphan_priority and side == "LONG": orphan_long_rescue_filled += 1
 
