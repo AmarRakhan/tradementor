@@ -587,3 +587,30 @@ def test_manual_selection_allows_same_symbol_long_and_short_as_independent_sides
         {"symbol":"BTCUSDT","side":"SHORT"},
     ],maximumPositions=2,longSlots=1,shortSlots=1)
     assert settings.manual_symbols == (("BTCUSDT","LONG"),("BTCUSDT","SHORT"))
+
+
+def test_short_dca_large_gap_executes_only_one_fill_and_never_replays_missed_levels():
+    pos={"symbol":"ZECUSDT","positionSide":"SHORT","positionAmt":"1","entryPrice":"100","markPrice":"1000","leverage":"75"}
+    raw={"multiBbPositions":{"ZECUSDT|SHORT":{
+        "cycleId":"zec-short","dcaCount":8,"lastBotFillPrice":100,
+        "lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True,
+    }}}
+    r=run_multi_bb_step(
+        client=Client(positions=[pos],prices={"ZECUSDT":1000},leverage=75),
+        ref=Ref(),raw_state=raw,
+        settings=cfg(
+            maximumPositions=1,longSlots=0,shortSlots=1,
+            minimumLeverage=75,maxDca=15,maxDcaShort=15,
+            shortDcaDistance=.25,takeProfitEnabled=False,
+        ),
+        uid="u",account={"availableBalance":"1000"},positions=[pos],open_orders=[],
+        timestamp_ms=int(time.time()*1000),dry_run=True,order_budget=5,
+    )
+    dcas=[x for x in r["actions"] if x.get("kind")=="DCA" and x.get("symbol")=="ZECUSDT"]
+    assert len(dcas)==1
+    assert dcas[0]["side"]=="SHORT"
+    assert dcas[0]["number"]==9
+    assert dcas[0]["trigger"]==pytest.approx(125.0)
+    assert dcas[0]["catchup"] is False
+    assert dcas[0]["catchupTargetCount"]==9
+    assert not any(x.get("kind")=="DCA_CATCHUP_QUEUED" for x in r["actions"])
