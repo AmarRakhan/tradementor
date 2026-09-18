@@ -92,27 +92,69 @@ def test_asymmetric_entry_allocator_only_plans_same_symbol_pairs():
         assert short["marginUsd"]==pytest.approx(long["marginUsd"]*5)
 
 
-def test_legacy_positions_do_not_consume_new_pair_capacity():
+def test_legacy_positions_above_side_or_total_caps_block_new_pairs_without_closing_existing():
     from test_aster_multi_bb import Client, Ref
     import time
     from aster_multi_bb import run_multi_bb_step
     positions=[]; state={}
-    for i in range(7):
+    for i in range(5):
         symbol=f"OLDL{i}USDT"; positions.append({"symbol":symbol,"positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"100","leverage":"100"})
         state[f"{symbol}|LONG"]={"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}
-    for i in range(4):
+    for i in range(10):
         symbol=f"OLDS{i}USDT"; positions.append({"symbol":symbol,"positionSide":"SHORT","positionAmt":"-1","entryPrice":"100","markPrice":"100","leverage":"100"})
         state[f"{symbol}|SHORT"]={"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}
-    tickers=[{"symbol":"NEWUSDT","quoteVolume":"999999"}]
-    prices={"NEWUSDT":100, **{p["symbol"]:100 for p in positions}}
-    c=Client(positions=positions,tickers=tickers,prices=prices,leverage=100)
+    c=Client(positions=positions,tickers=[{"symbol":"NEWUSDT","quoteVolume":"999999"}],
+        prices={"NEWUSDT":100, **{p["symbol"]:100 for p in positions}},leverage=100)
     settings=cfg(maximumPositions=14,longSlots=7,shortSlots=7,universeTopN=50,entryMarginUsd=.1,shortStartMultiplier=5)
-    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={"multiBbPositions":state},settings=settings,uid="u",account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={"multiBbPositions":state},settings=settings,uid="u",
+        account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert not any(x["kind"] in {"ENTRY","ASYM_SHORT_ENTRY"} for x in r["actions"])
+    assert r["remainingPairs"] == 0
+    assert r["activeLong"] == 5 and r["activeShort"] == 10
+    assert r["accountRemainingCapacity"] == 0
+
+
+def test_legacy_positions_leave_pair_room_only_when_both_sides_and_total_are_below_caps():
+    from test_aster_multi_bb import Client, Ref
+    import time
+    from aster_multi_bb import run_multi_bb_step
+    positions=[]; state={}
+    for i in range(2):
+        symbol=f"OLDL{i}USDT"; positions.append({"symbol":symbol,"positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"100","leverage":"100"})
+        state[f"{symbol}|LONG"]={"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}
+    for i in range(2):
+        symbol=f"OLDS{i}USDT"; positions.append({"symbol":symbol,"positionSide":"SHORT","positionAmt":"-1","entryPrice":"100","markPrice":"100","leverage":"100"})
+        state[f"{symbol}|SHORT"]={"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}
+    c=Client(positions=positions,tickers=[{"symbol":"NEWUSDT","quoteVolume":"999999"}],
+        prices={"NEWUSDT":100, **{p["symbol"]:100 for p in positions}},leverage=100)
+    settings=cfg(maximumPositions=14,longSlots=7,shortSlots=7,universeTopN=50,entryMarginUsd=.1,shortStartMultiplier=5)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={"multiBbPositions":state},settings=settings,uid="u",
+        account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
     entries=[x for x in r["actions"] if x["kind"] in {"ENTRY","ASYM_SHORT_ENTRY"}]
     assert {(x["symbol"],x["side"]) for x in entries} == {("NEWUSDT","LONG"),("NEWUSDT","SHORT")}
-    assert r["asymmetricHedgeActivePairs"] == 1
-    assert r["remainingPairs"] == 6
-    assert r["legacyPositionsDuringAsymmetric"] == 11
+    assert r["activeLong"] == 3 and r["activeShort"] == 3
+    assert r["remainingPairs"] == 4
+
+
+def test_short_side_at_cap_blocks_new_asymmetric_pair_even_with_total_capacity_left():
+    from test_aster_multi_bb import Client, Ref
+    import time
+    from aster_multi_bb import run_multi_bb_step
+    positions=[]; state={}
+    for i in range(2):
+        symbol=f"OLDL{i}USDT"; positions.append({"symbol":symbol,"positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"100","leverage":"100"})
+        state[f"{symbol}|LONG"]={"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}
+    for i in range(7):
+        symbol=f"OLDS{i}USDT"; positions.append({"symbol":symbol,"positionSide":"SHORT","positionAmt":"-1","entryPrice":"100","markPrice":"100","leverage":"100"})
+        state[f"{symbol}|SHORT"]={"dcaCount":0,"lastBotFillPrice":100,"lastKnownQty":1,"lastKnownEntry":100,"cycleStartedAtMs":1,"botManaged":True}
+    c=Client(positions=positions,tickers=[{"symbol":"NEWUSDT","quoteVolume":"999999"}],
+        prices={"NEWUSDT":100, **{p["symbol"]:100 for p in positions}},leverage=100)
+    settings=cfg(maximumPositions=14,longSlots=7,shortSlots=7,universeTopN=50,entryMarginUsd=.1)
+    r=run_multi_bb_step(client=c,ref=Ref(),raw_state={"multiBbPositions":state},settings=settings,uid="u",
+        account={"availableBalance":"100"},positions=positions,open_orders=[],timestamp_ms=int(time.time()*1000),dry_run=True)
+    assert not any(x["kind"] in {"ENTRY","ASYM_SHORT_ENTRY"} for x in r["actions"])
+    assert r["remainingPairs"] == 0
+    assert r["accountRemainingCapacity"] == 5
 
 
 def test_existing_asymmetric_pairs_do_consume_pair_capacity():
