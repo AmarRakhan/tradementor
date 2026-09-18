@@ -21,7 +21,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  VERIFIED_CODE_SHA: 6e60859317867744720a505bce529ce062296db7
+  VERIFIED_CODE_SHA: 98a545a56bc9c744032b26ce621cdb6fd5bac0c5
 
 jobs:
   test-build-verify-promote:
@@ -170,24 +170,6 @@ jobs:
           assert json.load(open(sys.argv[1],encoding='utf-8')) == json.load(open(sys.argv[2],encoding='utf-8'))
           PY
 
-      - name: Publish production-success marker
+      - name: Record live revision
         shell: bash
-        run: |
-          set -euo pipefail
-          MARKER="prod-exchange-sidecap-ok-${VERIFIED_CODE_SHA:0:12}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "$MARKER" "$VERIFIED_CODE_SHA"
-          git push origin "refs/tags/$MARKER" --force
-          echo "EXCHANGE_SIDE_CAP_FIX_LIVE_REVISION=$CANDIDATE_REVISION" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Publish failure marker
-        if: failure()
-        continue-on-error: true
-        shell: bash
-        run: |
-          MARKER="prod-exchange-sidecap-fail-${VERIFIED_CODE_SHA:0:12}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f "$MARKER" "$VERIFIED_CODE_SHA"
-          git push origin "refs/tags/$MARKER" --force
+        run: echo "EXCHANGE_SIDE_CAP_FIX_LIVE_REVISION=$CANDIDATE_REVISION" >> "$GITHUB_STEP_SUMMARY"
