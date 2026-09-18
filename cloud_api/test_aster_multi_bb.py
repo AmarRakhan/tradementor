@@ -74,6 +74,13 @@ def test_config_requires_slot_sum_and_topn_capacity():
     with pytest.raises(ValueError): cfg(universeTopN=1,maximumPositions=3,longSlots=2,shortSlots=1)
 
 
+def test_automatic_top_n_allows_up_to_800_and_rejects_801():
+    accepted = cfg(universeTopN=800, maximumPositions=1, longSlots=1, shortSlots=0)
+    assert accepted.universe_top_n == 800
+    with pytest.raises(ValueError, match="tussen 1 en 800"):
+        cfg(universeTopN=801, maximumPositions=1, longSlots=1, shortSlots=0)
+
+
 def test_top_volume_is_dynamic_and_usdt_only():
     info={"symbols":[symbol_row("AAAUSDT"),symbol_row("BBBUSDT"),symbol_row("CCCUSDT"),symbol_row("NOPEUSDC")|{"quoteAsset":"USDC"}]}
     rows=rank_top_volume([
