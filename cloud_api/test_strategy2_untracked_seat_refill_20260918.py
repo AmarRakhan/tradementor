@@ -44,8 +44,10 @@ def test_two_free_strategy_seats_refill_even_when_untracked_positions_make_accou
         _pos("AAUSDT", "LONG"),
         _pos("BBUSDT", "LONG"),
         _pos("CCUSDT", "LONG"),
-        _pos("MAN1USDT", "LONG"),
-        _pos("MAN2USDT", "LONG"),
+        # Unrelated opposite-side Aster positions must not consume Strategy-2
+        # LONG refill seats or the general bot-seat capacity.
+        _pos("MAN1USDT", "SHORT"),
+        _pos("MAN2USDT", "SHORT"),
     ]
     raw = _state("AAUSDT|LONG", "BBUSDT|LONG", "CCUSDT|LONG")
     tickers = [
