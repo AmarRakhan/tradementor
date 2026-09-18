@@ -1090,6 +1090,27 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if orphan_priority:
             entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
+        # Final live safety check against fresh Aster truth.  This closes the
+        # small window between the tick snapshot and order submission (for
+        # example when a manual/external order lands meanwhile).  Never submit
+        # a new independent leg once that actual side is at its configured cap.
+        if not dry_run and not paired:
+            fresh_side_positions = _position_map(client.position_risk())
+            fresh_side_count = sum(1 for key in fresh_side_positions if key.endswith(f"|{side}"))
+            side_limit = settings.long_slots if side == "LONG" else settings.short_slots
+            if fresh_side_count >= side_limit:
+                actions.append({
+                    "kind": "ENTRY_SKIP", "symbol": symbol, "side": side,
+                    "reason": "SIDE_SLOT_CAP_REACHED", "stage": "pre_order",
+                    "exchangeSideCount": fresh_side_count, "sideLimit": side_limit,
+                })
+                if side == "LONG":
+                    exchange_long_count = fresh_side_count
+                    long_need = 0
+                else:
+                    exchange_short_count = fresh_side_count
+                    short_need = 0
+                continue
         if not dry_run and short_requires_long_gate and side == "SHORT":
             fresh_pair_positions = _position_map(client.position_risk(symbol))
             if f"{symbol}|LONG" not in fresh_pair_positions:
