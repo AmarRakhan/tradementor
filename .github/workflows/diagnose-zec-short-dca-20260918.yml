@@ -1,0 +1,127 @@
+name: Diagnose ZEC SHORT DCA read-only 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-zec-short-dca-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run isolated read-only ZEC DCA diagnosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'));spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image']);print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-zecdca-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json
+          from datetime import datetime,timezone
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore,secretmanager
+          from aster_signing import AsterSecret,local_eip712_signer
+          from aster_gateway import AsterV3Client
+
+          project='tradementor-production'
+          digest='b4dfb7301bb40602e4b2225367437495652a360f6d4a071b8851c6324a82556d'
+          if not firebase_admin._apps: firebase_admin.initialize_app(options={'projectId':project})
+          db=firestore.Client(project=project)
+          uid=None; page=auth.list_users()
+          while page and uid is None:
+              for u in page.users:
+                  e=str(u.email or '').strip().lower()
+                  if e and hashlib.sha256(e.encode()).hexdigest()==digest:
+                      uid=u.uid; break
+              if uid is None: page=page.get_next_page()
+          if not uid: raise SystemExit('TARGET_NOT_FOUND')
+
+          ref=db.collection('asterStrategy2').document(uid)
+          raw=ref.get().to_dict() or {}
+          settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+          z=state.get('ZECUSDT|SHORT') if isinstance(state.get('ZECUSDT|SHORT'),dict) else {}
+
+          sm=secretmanager.SecretManagerServiceClient()
+          payload=json.loads(sm.access_secret_version(request={'name':f'projects/{project}/secrets/tradementor-aster-{uid}/versions/latest'}).payload.data.decode())
+          secret=AsterSecret.create(str(payload['signerAddress']),str(payload['privateKey']))
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+          pos=[r for r in client.position_risk('ZECUSDT') if str(r.get('positionSide','')).upper()=='SHORT' and abs(float(r.get('positionAmt') or 0))>0]
+          p=pos[0] if pos else {}
+
+          audits=[]
+          for a in ref.collection('audit').stream():
+              row=a.to_dict() or {}
+              if str(row.get('symbol','')).upper()!='ZECUSDT' or str(row.get('side','')).upper()!='SHORT': continue
+              if str(row.get('event','')) not in {'MULTI_BB_DCA','MANUAL_DCA_DETECTED','MULTI_BB_ENTRY'}: continue
+              ts=row.get('timestamp')
+              if isinstance(ts,datetime):
+                  ts=(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+              audits.append({
+                  'event':row.get('event'),'timestamp':str(ts or ''),
+                  'dcaNumber':row.get('dcaNumber'),'catchup':row.get('catchup'),
+                  'catchupTargetCount':row.get('catchupTargetCount'),
+                  'leverage':row.get('leverage'),'reason':row.get('reason')
+              })
+          audits=audits[-30:]
+
+          hist=[]
+          for h in ref.collection('configHistory').stream():
+              row=h.to_dict() or {}; ts=row.get('timestamp')
+              old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}
+              new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+              keys=('maxDca','unlimitedDca','dcaDistance','dcaMarginUsd','shortSlots','maximumPositions')
+              if any(old.get(k)!=new.get(k) for k in keys):
+                  if isinstance(ts,datetime): ts=(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+                  hist.append({'timestamp':str(ts or ''),'old':{k:old.get(k) for k in keys},'new':{k:new.get(k) for k in keys}})
+          hist=hist[-12:]
+
+          safe={
+              'settings':{k:settings.get(k) for k in (
+                  'maxDca','unlimitedDca','dcaDistance','dcaMarginUsd','takeProfit',
+                  'takeProfitEnabled','asymmetricHedgeModeEnabled','shortRequiresLongEnabled',
+                  'longSlots','shortSlots','maximumPositions','minimumLeverage')},
+              'zecState':{k:z.get(k) for k in (
+                  'dcaCount','lastBotFillPrice','lastDcaFillPrice','nextDcaPrice','nextDcaStatus',
+                  'cycleStartedAtMs','lastBotDcaAtMs','manualDcaAdoptedAtMs','adoptedExisting',
+                  'botManaged','asymmetricHedge','pairedLongKey','dcaCatchupTargetCount','dcaCatchupRemaining')},
+              'zecExchange':{k:p.get(k) for k in ('positionAmt','entryPrice','markPrice','leverage','unRealizedProfit','liquidationPrice')},
+              'recentAudit':audits,
+              'recentConfigChanges':hist,
+          }
+          print('ZEC_DCA_DIAG '+json.dumps(safe,sort_keys=True,separators=(',',':')))
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" --project "$GCP_PROJECT_ID" --limit 100 --freshness=10m --format='value(textPayload)' | grep 'ZEC_DCA_DIAG' | tail -1
+          cleanup
+          trap - EXIT
