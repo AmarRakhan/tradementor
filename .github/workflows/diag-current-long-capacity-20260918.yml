@@ -1,0 +1,212 @@
+name: Diagnose current LONG capacity 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diag-current-long-capacity-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-long-capacity-readonly
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run isolated read-only Aster capacity diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t SERVICE_VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${SERVICE_VALUES[0]}"
+          RUNTIME_SA="${SERVICE_VALUES[1]}"
+          JOB="tm-longcap-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,time
+          from google.cloud import firestore, secretmanager
+          from aster_signing import AsterSecret, local_eip712_signer
+          from aster_gateway import AsterV3Client
+          from aster_multi_bb_core import MultiBbConfig, rank_top_volume
+          from aster_leverage_tiers import resolve_entry, bracket_rows
+          from aster_execution import plan_pair
+
+          PROJECT='tradementor-production'
+          db=firestore.Client(project=PROJECT)
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}
+              settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+              try:
+                  long_slots=int(settings.get('longSlots',-1))
+                  short_slots=int(settings.get('shortSlots',-1))
+                  min_lev=int(settings.get('minimumLeverage',-1))
+                  entry_margin=float(settings.get('entryMarginUsd',-1))
+              except Exception:
+                  continue
+              if not bool(raw.get('enabled') or raw.get('monitor')): continue
+              if str(settings.get('engine',settings.get('strategyKind','')))!='multi_bb_v1': continue
+              if long_slots!=36 or short_slots!=13 or min_lev!=50: continue
+              if abs(entry_margin-0.2)>1e-9: continue
+              if not bool(settings.get('shortRequiresLongEnabled',False)): continue
+              if int(report.get('activeShort',-1) or -1)!=13: continue
+              matches.append((snap.id,raw,settings,report))
+          if len(matches)!=1:
+              print('LONG_CAPACITY_DIAG '+json.dumps({'readOnly':True,'matchCount':len(matches),'error':'account match not unique'},sort_keys=True))
+              raise SystemExit(0)
+
+          uid,raw,settings_raw,report=matches[0]
+          settings=MultiBbConfig.from_mapping(settings_raw)
+          sm=secretmanager.SecretManagerServiceClient()
+          secret_name=f'projects/{PROJECT}/secrets/tradementor-aster-{uid}/versions/latest'
+          payload=json.loads(sm.access_secret_version(request={'name':secret_name}).payload.data.decode('utf-8'))
+          secret=AsterSecret.create(str(payload['signerAddress']),str(payload['privateKey']))
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+
+          exchange_info=client.public_exchange_info()
+          tickers=client.ticker_24h()
+          prices={str(x.get('symbol','')).upper():float(x.get('price') or 0) for x in client.ticker_prices() if isinstance(x,dict)}
+          positions=client.position_risk()
+          bulk=client.leverage_brackets()
+          ranked=rank_top_volume(tickers,exchange_info,settings.universe_top_n)
+          info_map={str(x.get('symbol','')).upper():x for x in exchange_info.get('symbols',[]) if isinstance(x,dict)}
+          active_long=set()
+          active_short=set()
+          contract_notional={}
+          for row in positions:
+              try:
+                  qty=abs(float(row.get('positionAmt') or 0)); mark=float(row.get('markPrice') or row.get('entryPrice') or 0)
+              except Exception:
+                  continue
+              if qty<=0: continue
+              symbol=str(row.get('symbol','')).upper(); side=str(row.get('positionSide','')).upper()
+              if side=='LONG': active_long.add(symbol)
+              if side=='SHORT': active_short.add(symbol)
+              contract_notional[symbol]=contract_notional.get(symbol,0.0)+qty*mark
+
+          leverage_ge=[]
+          plan_errors=[]
+          capacity=[]
+          bulk_missing=[]
+          for index,row in enumerate(ranked,1):
+              symbol=str(row.get('symbol','')).upper()
+              rows=bracket_rows(bulk,symbol)
+              source='bulk'
+              if not rows:
+                  try:
+                      one=client.leverage_brackets(symbol)
+                      rows=bracket_rows(one,symbol)
+                      source='single'
+                  except Exception as exc:
+                      plan_errors.append({'rank':index,'symbol':symbol,'reason':'LEVERAGE_DATA_UNAVAILABLE','detail':str(exc)[:180]})
+                      continue
+              max_lev=max([int(float(x.get('initialLeverage') or 0)) for x in rows] or [0])
+              if max_lev<settings.minimum_leverage:
+                  continue
+              leverage_ge.append(symbol)
+              if symbol in active_long:
+                  continue
+              payload_for_symbol=[{'symbol':symbol,'brackets':rows}]
+              try:
+                  resolved=resolve_entry(payload_for_symbol,symbol,
+                      configured_minimum=settings.minimum_leverage,
+                      entry_margin_usd=settings.entry_margin_usd,
+                      entry_notional_usd=settings.entry_notional_usd,
+                      entry_sizing_mode=settings.entry_sizing_mode)
+                  price=float(prices.get(symbol,0) or 0)
+                  plan=plan_pair(info_map[symbol],rows,price,float(resolved['orderNotional']),accepted_leverage=int(resolved['leverage']),
+                      existing_contract_notional=0)
+              except Exception as exc:
+                  plan_errors.append({'rank':index,'symbol':symbol,'maxLeverage':max_lev,'reason':'PLAN_ERROR','detail':str(exc)[:220],
+                                      'hasOpenShort':symbol in active_short,'currentContractNotional':round(contract_notional.get(symbol,0.0),8)})
+                  continue
+              try:
+                  remaining=float(client.remaining_openable_notional_value(symbol,int(plan.leverage)))
+              except Exception as exc:
+                  capacity.append({'rank':index,'symbol':symbol,'maxLeverage':max_lev,'plannedLeverage':int(plan.leverage),
+                      'plannedNotional':round(float(plan.notional_per_leg),8),'remainingOpenableNotional':None,
+                      'capacityPass':False,'capacityReadError':str(exc)[:180],'hasOpenShort':symbol in active_short,
+                      'currentContractNotional':round(contract_notional.get(symbol,0.0),8)})
+                  time.sleep(0.12)
+                  continue
+              capacity.append({'rank':index,'symbol':symbol,'maxLeverage':max_lev,'plannedLeverage':int(plan.leverage),
+                  'plannedNotional':round(float(plan.notional_per_leg),8),'remainingOpenableNotional':round(remaining,8),
+                  'capacityPass':remaining+1e-9>=float(plan.notional_per_leg),'hasOpenShort':symbol in active_short,
+                  'currentContractNotional':round(contract_notional.get(symbol,0.0),8)})
+              time.sleep(0.12)
+
+          blocked=[x for x in capacity if not x.get('capacityPass')]
+          openable=[x for x in capacity if x.get('capacityPass')]
+          trading_usdt=sum(1 for x in exchange_info.get('symbols',[]) if isinstance(x,dict)
+              and str(x.get('quoteAsset','USDT')).upper()=='USDT'
+              and str(x.get('status','TRADING')).upper()=='TRADING'
+              and str(x.get('symbol','')).upper().endswith('USDT'))
+          result={
+              'readOnly':True,
+              'ordersSent':0,
+              'requestedTopN':settings.universe_top_n,
+              'rankedCandidateCount':len(ranked),
+              'tradingUsdtPerpetualCount':trading_usdt,
+              'minimumLeverage':settings.minimum_leverage,
+              'activeLongCount':len(active_long),
+              'activeShortCount':len(active_short),
+              'reportActiveLong':report.get('activeLong'),
+              'reportRemainingLong':report.get('remainingLong'),
+              'leverageAtLeastMinimumCount':len(leverage_ge),
+              'leverageAtLeastMinimumSymbols':leverage_ge,
+              'freeMinLeverageCandidateCount':len([s for s in leverage_ge if s not in active_long]),
+              'planErrorCount':len(plan_errors),
+              'planErrors':plan_errors,
+              'capacityCheckedCount':len(capacity),
+              'capacityBlockedCount':len(blocked),
+              'capacityBlocked':blocked,
+              'capacityOpenableCount':len(openable),
+              'capacityOpenable':openable,
+          }
+          print('LONG_CAPACITY_DIAG '+json.dumps(result,sort_keys=True,separators=(',',':')))
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait > "$RUNNER_TEMP/execute.out" 2>&1
+          RC=$?
+          set -e
+          sleep 5
+          RESULT="$(gcloud logging read             "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"LONG_CAPACITY_DIAG\""             --project "$GCP_PROJECT_ID" --freshness 15m --limit 1 --order desc --format='value(textPayload)')"
+          test -n "$RESULT"
+          printf '%s\n' "$RESULT"
+          cleanup
+          trap - EXIT
+          test "$RC" -eq 0
