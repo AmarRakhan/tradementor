@@ -1,0 +1,79 @@
+name: Diagnose ZEC DCA fingerprint read-only 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-zec-dca-fingerprint-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: production
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -q google-cloud-firestore
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - name: Read matching safe DCA state
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,os
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          from google.cloud.firestore_v1.base_query import FieldFilter
+
+          db=firestore.Client(project=os.environ['GCP_PROJECT_ID'])
+          q=(db.collection('asterStrategy2')
+             .where(filter=FieldFilter('settings.maximumPositions','==',14))
+             .where(filter=FieldFilter('settings.longSlots','==',7))
+             .where(filter=FieldFilter('settings.shortSlots','==',7))
+             .where(filter=FieldFilter('settings.universeTopN','==',50))
+             .where(filter=FieldFilter('settings.minimumLeverage','==',75)))
+          matches=[]
+          for snap in q.stream():
+              raw=snap.to_dict() or {}
+              if not bool(raw.get('enabled') or raw.get('monitor')): continue
+              state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+              z=state.get('ZECUSDT|SHORT') if isinstance(state.get('ZECUSDT|SHORT'),dict) else {}
+              if z: matches.append((snap,raw,z))
+          print('MATCH_COUNT='+str(len(matches)))
+          if len(matches)!=1: raise SystemExit(2)
+          snap,raw,z=matches[0]
+          settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          audits=[]
+          for a in snap.reference.collection('audit').stream():
+              row=a.to_dict() or {}
+              if str(row.get('symbol','')).upper()!='ZECUSDT' or str(row.get('side','')).upper()!='SHORT': continue
+              if str(row.get('event','')) not in {'MULTI_BB_DCA','MANUAL_DCA_DETECTED','MULTI_BB_ENTRY'}: continue
+              ts=row.get('timestamp')
+              if isinstance(ts,datetime): ts=(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+              audits.append({'event':row.get('event'),'timestamp':str(ts or ''),'dcaNumber':row.get('dcaNumber'),'catchup':row.get('catchup'),'catchupTargetCount':row.get('catchupTargetCount'),'leverage':row.get('leverage')})
+          safe={
+            'settings':{k:settings.get(k) for k in (
+              'dcaDistance','longDcaDistance','shortDcaDistance','dcaMarginUsd','longDcaMarginUsd','shortDcaMarginUsd',
+              'maxDca','maxDcaLong','maxDcaShort','longMaxDca','shortMaxDca','unlimitedDca',
+              'takeProfit','shortTakeProfitValue','shortSlots','maximumPositions','minimumLeverage')},
+            'zecState':{k:z.get(k) for k in (
+              'dcaCount','lastBotFillPrice','lastDcaFillPrice','nextDcaPrice','nextDcaStatus','cycleStartedAtMs',
+              'lastBotDcaAtMs','manualDcaAdoptedAtMs','adoptedExisting','botManaged','asymmetricHedge','pairedLongKey',
+              'dcaCatchupTargetCount','dcaCatchupRemaining','leverage')},
+            'recentAudit':audits[-30:],
+          }
+          print('SAFE_ZEC_DIAG='+json.dumps(safe,sort_keys=True,separators=(',',':')))
+          PY
