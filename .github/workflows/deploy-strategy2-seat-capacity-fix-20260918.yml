@@ -1,4 +1,4 @@
-name: Deploy Strategy 2 seat capacity fix 2026-09-18
+name: Deploy Strategy 2 seat capacity + Top-N 800 fix 2026-09-18
 
 on:
   push:
@@ -21,7 +21,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  VERIFIED_CODE_SHA: bd26220b5de03857c561258f77c6a735dffb8b92
+  VERIFIED_CODE_SHA: 1d2b84d362db87c329068bea1bd43ce179f699e2
 
 jobs:
   test-build-verify-promote:
@@ -45,6 +45,9 @@ jobs:
           grep -Fq 'settings.maximum_positions - seat_capacity_position_count' cloud_api/aster_multi_bb_core.py
           grep -Fq '"strategyPositionCount": strategy_position_count' cloud_api/aster_multi_bb_core.py
           grep -Fq 'test_two_free_strategy_seats_refill_even_when_untracked_positions_make_account_count_equal_maximum_positions' cloud_api/test_strategy2_untracked_seat_refill_20260918.py
+          grep -Fq 'self.universe_top_n <= 800' cloud_api/aster_multi_bb_core.py
+          grep -Fq 'Top-N moet tussen 1 en 800 liggen' cloud_api/aster_multi_bb_core.py
+          grep -Fq 'test_automatic_top_n_allows_up_to_800_and_rejects_801' cloud_api/test_aster_multi_bb.py
 
       - uses: actions/setup-python@v5
         with:
@@ -168,4 +171,4 @@ jobs:
           import json,sys
           assert json.load(open(sys.argv[1],encoding='utf-8')) == json.load(open(sys.argv[2],encoding='utf-8'))
           PY
-          echo "STRATEGY2_SEAT_CAPACITY_FIX_LIVE_REVISION=$CANDIDATE_REVISION" >> "$GITHUB_STEP_SUMMARY"
+          echo "STRATEGY2_TOPN800_FIX_LIVE_REVISION=$CANDIDATE_REVISION" >> "$GITHUB_STEP_SUMMARY"
