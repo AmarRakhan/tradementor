@@ -1,0 +1,142 @@
+name: Diagnose Strategy 2 side-slot overcap v2 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-side-slot-overcap-v2-20260918.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-side-slot-overcap-v2-readonly
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Encode read-only side-slot evidence in task statuses
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'));spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image']);print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-sidecap2-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+
+          project='tradementor-production'; db=firestore.Client(project=project)
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX']); floor=datetime.min.replace(tzinfo=timezone.utc)
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}; s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+              try:
+                  ok=(int(s.get('maximumPositions',-1))==14 and int(s.get('longSlots',-1))==7 and
+                      int(s.get('shortSlots',-1))==7 and int(s.get('universeTopN',-1))==50 and
+                      int(s.get('minimumLeverage',-1))==75 and int(report.get('accountPositionCount',-1))==19)
+              except Exception: ok=False
+              if ok and bool(raw.get('enabled') or raw.get('monitor')): matches.append((snap,raw,s,report))
+
+          if len(matches)!=1:
+              metric=min(len(matches),249) if idx==15 else 0
+              raise SystemExit(metric+1)
+
+          snap,raw,settings,report=matches[0];uid=snap.id
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+
+          history=[]
+          for h in snap.reference.collection('configHistory').stream():
+              row=h.to_dict() or {}; old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}; new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+              history.append({'timestamp':row.get('timestamp'),
+                  'oldLong':int(old.get('longSlots') or 0),'oldShort':int(old.get('shortSlots') or 0),
+                  'newLong':int(new.get('longSlots') or 0),'newShort':int(new.get('shortSlots') or 0),
+                  'oldMax':int(old.get('maximumPositions') or 0),'newMax':int(new.get('maximumPositions') or 0)})
+          history.sort(key=lambda x:x['timestamp'] if isinstance(x['timestamp'],datetime) else floor,reverse=True)
+          transitions=[x for x in history if (x['oldLong'],x['oldShort'],x['oldMax'])!=(x['newLong'],x['newShort'],x['newMax'])]
+          latest=transitions[0] if transitions else {'oldLong':0,'oldShort':0,'newLong':0,'newShort':0,'oldMax':0,'newMax':0,'timestamp':None}
+          cap_since=next((x['timestamp'] for x in history if x['newLong']==7 and x['newShort']==7 and x['newMax']==14),None)
+
+          short_total=0;short_after=0
+          for a in snap.reference.collection('audit').stream():
+              row=a.to_dict() or {}
+              if str(row.get('event',''))!='MULTI_BB_ENTRY' or str(row.get('side','')).upper()!='SHORT': continue
+              short_total+=1;ts=row.get('timestamp')
+              if isinstance(cap_since,datetime) and isinstance(ts,datetime) and ts>cap_since: short_after+=1
+
+          def pack(a,b):
+              return min(max(int(a or 0),0),14)*15+min(max(int(b or 0),0),14)
+
+          metrics={
+              4:pack(latest['oldLong'],latest['oldShort']),
+              5:pack(latest['newLong'],latest['newShort']),
+              6:min(max(latest['oldMax'],0),249),7:min(max(latest['newMax'],0),249),
+              8:pack(report.get('activeLong'),report.get('activeShort')),
+              9:pack(report.get('remainingLong'),report.get('remainingShort')),
+              10:min(short_after,249),
+              11:min(max(int((datetime.now(timezone.utc)-cap_since.astimezone(timezone.utc)).total_seconds()/60),0),249) if isinstance(cap_since,datetime) else 249,
+              12:min(len(state),249),13:min(short_total,249),14:min(len(history),249),15:1,
+          }
+
+          if idx in {1,2,3}:
+              from google.cloud import secretmanager
+              from aster_signing import AsterSecret,local_eip712_signer
+              from aster_gateway import AsterV3Client
+              sm=secretmanager.SecretManagerServiceClient()
+              payload=json.loads(sm.access_secret_version(request={'name':f'projects/{project}/secrets/tradementor-aster-{uid}/versions/latest'}).payload.data.decode())
+              secret=AsterSecret.create(str(payload['signerAddress']),str(payload['privateKey']))
+              client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+              active={}
+              for row in client.position_risk():
+                  try:q=abs(float(row.get('positionAmt') or 0))
+                  except Exception:q=0
+                  if q<=0:continue
+                  symbol=str(row.get('symbol','')).upper();side=str(row.get('positionSide','')).upper()
+                  if symbol and side in {'LONG','SHORT'}:active[f'{symbol}|{side}']=row
+              managed=set(active).intersection(state);untracked=set(active)-set(state)
+              count=lambda keys,side:sum(k.endswith('|'+side) for k in keys)
+              metrics[1]=pack(count(active,'LONG'),count(active,'SHORT'))
+              metrics[2]=pack(count(managed,'LONG'),count(managed,'SHORT'))
+              metrics[3]=pack(count(untracked,'LONG'),count(untracked,'SHORT'))
+
+          raise SystemExit(min(max(int(metrics.get(idx,0)),0),249)+1)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 16 --parallelism 4 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          STATUS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
+          printf 'SIDE_SLOT_V2_STATUS %s\n' "$STATUS"
+          cleanup
+          trap - EXIT
