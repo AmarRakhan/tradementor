@@ -114,7 +114,8 @@ jobs:
                               "kind","symbol","side","reason","stage","leverage","pairedContractLeverage",
                               "orphanShortPriority","requiredMargin","notionalUsd","marginUsd","entryMode",
                               "exchangeMaxLeverage","forcedBelowConfiguredMinimum","number","trigger",
-                              "projectedNotional","targetLeverage","catchupRemaining"
+                              "projectedNotional","targetLeverage","catchupRemaining",
+                              "remainingOpenableNotional","plannedNotional","requestedLeverage"
                           ] if k in a})
                   audits=[]
                   try:
@@ -204,3 +205,5 @@ jobs:
           live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
           assert len(live)==1 and live[0].get('revisionName')==base,live
           PY
+
+# diagnostic refresh 2026-09-18T01:06Z
