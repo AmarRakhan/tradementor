@@ -828,6 +828,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     # that happens to be open in the same Aster account. Manual/untracked Aster
     # positions remain visible in diagnostics but must not consume bot seats.
     strategy_position_count = len(strategy_active_keys)
+    # If ownership state is completely missing while Aster already has open
+    # positions, stay conservative: those positions still consume seats until
+    # ownership can be reconstructed. Once Strategy-2 ownership state exists,
+    # unrelated/manual Aster positions no longer consume bot seats.
+    capacity_ownership_fallback = bool(account_position_count > 0 and not state and not settings.manual_symbol_selection_enabled)
+    seat_capacity_position_count = account_position_count if capacity_ownership_fallback else strategy_position_count
     long_count = sum(1 for k in strategy_active_keys if k.endswith("|LONG")); short_count = sum(1 for k in strategy_active_keys if k.endswith("|SHORT"))
     active_pair_count = sum(1 for key, row in state.items() if key.endswith("|LONG") and row.get("asymmetricHedge") and key in active)
     legacy_position_count = max(0, len(strategy_active_keys) - active_pair_count * 2) if settings.asymmetric_hedge_enabled else 0
@@ -842,7 +848,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         long_need = max(0, settings.long_slots - long_count); short_need = max(0, settings.short_slots - short_count)
         # Capacity follows Strategy-2 ownership. Untracked/manual account legs
         # outside this strategy do not occupy configured LONG/SHORT seats.
-        account_remaining_capacity = max(0, settings.maximum_positions - strategy_position_count)
+        account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
 
     # If exchange truth could not be refreshed while the pairing toggle is on,
     # do not allocate any new seat from a potentially stale snapshot. Existing
@@ -1174,7 +1180,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if consumed == 2: short_count += 1
         else:
             strategy_position_count += consumed
-            account_remaining_capacity = max(0, settings.maximum_positions - strategy_position_count)
+            seat_capacity_position_count += consumed
+            account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
             if side == "LONG":
                 long_count += 1; long_need = max(0, settings.long_slots - long_count)
             else:
@@ -1245,6 +1252,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "remainingLong": long_need, "remainingShort": short_need,
               "accountPositionCount": account_position_count, "accountRemainingCapacity": account_remaining_capacity,
               "strategyPositionCount": strategy_position_count,
+              "seatCapacityPositionCount": seat_capacity_position_count,
+              "capacityOwnershipFallback": capacity_ownership_fallback,
               "untrackedAccountPositionCount": max(0, account_position_count - strategy_position_count),
               "managedLong": managed_long, "managedShort": managed_short, "manualLong": manual_long, "manualShort": manual_short,
               "nextEntrySide": _next_entry_side(long_count=long_count, short_count=short_count, long_slots=settings.long_slots, short_slots=settings.short_slots),
