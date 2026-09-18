@@ -140,14 +140,18 @@ jobs:
                       ]},
                       "report":{k:report.get(k) for k in [
                           "updatedAtMs","entryStatus","entryReason","activeLong","activeShort","remainingLong",
-                          "remainingShort","accountPositionCount","accountRemainingCapacity","orphanShortSymbols",
-                          "orphanLongPending","orphanLongReservedSlots","entrySkipReasons","candidateCount",
-                          "scannedCandidateCount","executableCandidateCount"
+                          "remainingShort","accountPositionCount","accountRemainingCapacity","strategyPositionCount",
+                          "seatCapacityPositionCount","capacityOwnershipFallback","untrackedAccountPositionCount",
+                          "orphanShortSymbols","orphanLongPending","orphanLongReservedSlots","orphanLongRescueFilled",
+                          "orphanLongReservedRemaining","entrySkipReasons","candidateCount",
+                          "scannedCandidateCount","executableCandidateCount","nextEntrySide"
                       ]},
                       "zecShort":{k:z.get(k) for k in [
                           "dcaCount","leverage","lastKnownQty","lastKnownEntry","lastBotFillPrice",
                           "lastDcaFillPrice","nextDcaPrice","nextDcaDue","nextDcaStatus"
                       ]},
+                      "pairOverrideZec":((settings.get("pairOverrides") or {}).get("ZECUSDT")
+                          if isinstance(settings.get("pairOverrides"),dict) else None),
                       "actions":actions[-120:],
                       "recentAudit":audits,
                   })
