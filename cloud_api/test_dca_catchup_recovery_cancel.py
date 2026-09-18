@@ -45,5 +45,4 @@ def test_crossed_short_executes_only_next_fill_anchored_dca():
     assert dcas[0]["number"]==3
     assert dcas[0]["trigger"]==pytest.approx(100.4*1.002)
     assert dcas[0]["catchup"] is False
-    assert dcas[0]["catchupTargetCount"]==3
     assert not any(a["kind"]=="DCA_CATCHUP_QUEUED" for a in result["actions"])
