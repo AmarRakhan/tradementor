@@ -977,7 +977,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if side == "SHORT" and short_need <= 0: continue
             if side not in {"LONG", "SHORT"}: continue
         else:
-            side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
+            # Respect the effective needs after exchange-truth side-cap clamping.
+            # _next_entry_side() balances tracked Strategy-2 ownership and must
+            # never resurrect a side whose real Aster count already hit its cap.
+            if long_need <= 0:
+                side = "SHORT" if short_need > 0 else ""
+            elif short_need <= 0:
+                side = "LONG"
+            else:
+                side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
 
         # Strict entry-only pairing gate.  It applies to every NEW initial SHORT
@@ -1312,6 +1320,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             entry_reason += f"; volgende minimumorder vraagt circa {next_required_margin:.2f} USDT startmargin"
     elif entry_rows: entry_status = "ENTRY_PLANNED" if dry_run else "ENTRY_SUBMITTED"; entry_reason = "verse Strategy 2 entry verwerkt"
     elif selected_open: entry_status = "POSITION_ALREADY_OPEN"; entry_reason = "geselecteerde munt heeft al een open Aster-positie"
+    elif capacity_ownership_fallback and account_remaining_capacity < (2 if settings.asymmetric_hedge_enabled else 1):
+        entry_status = "WAITING_ACCOUNT_CAP"
+        entry_reason = (f"account heeft {account_position_count} actieve Aster-posities; er zijn twee vrije posities nodig voor één volledig LONG+SHORT-paar" if settings.asymmetric_hedge_enabled else f"account heeft {account_position_count} actieve Aster-posities; ingestelde limiet is {settings.maximum_positions}")
     elif long_need <= 0 and short_need <= 0:
         entry_status = "WAITING_CAPACITY"; entry_reason = "Gekoppelde-parencapaciteit is gevuld" if settings.asymmetric_hedge_enabled else "Strategy 2 slots zijn gevuld"
     elif account_remaining_capacity < (2 if settings.asymmetric_hedge_enabled else 1):
