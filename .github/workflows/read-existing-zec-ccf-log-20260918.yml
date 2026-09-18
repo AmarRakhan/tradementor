@@ -1,0 +1,23 @@
+name: Read existing ZEC CCF log diagnostic 2026-09-18
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/read-existing-zec-ccf-log-20260918.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read existing zero-traffic diagnostic revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 8 --retry-delay 2 \
+            "https://zcclog-35291043382-1---tradementor-api-cyyaq5otyq-ez.a.run.app/__diag/zec-ccf-log-61de51d3fb4f22a366c3c219a049f69452731f55004e7765b6923caba6fe9e0d" \
+            | python -m json.tool
