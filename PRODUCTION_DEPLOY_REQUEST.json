@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "requestId": "infra-24x7-20260919-01",
+  "requestedAt": "2026-09-19T09:20:00Z",
+  "targetBranch": "amar-crypto-bot-2026-cloud",
+  "deployCurrentHead": true,
+  "approvedForProduction": true,
+  "reason": "Deploy validated 24/7 infrastructure hardening after PR #106 and green Cloud Backend CI."
+}
