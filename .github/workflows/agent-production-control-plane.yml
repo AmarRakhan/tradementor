@@ -1,0 +1,175 @@
+name: Agent Production Control Plane
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      diagnostic_note:
+        description: "Optional diagnostic note"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: agent-production-control-plane
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  ASTER_SCHEDULER_JOB: tradementor-aster-automation
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.issue.title, '[AGENT-CONTROL] diagnose production')
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Authenticate read-only diagnostic session
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAGNOSTIC_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        if: steps.auth.outcome == 'success'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Collect sanitized production diagnostics
+        id: collect
+        shell: bash
+        env:
+          AUTH_OUTCOME: ${{ steps.auth.outcome }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          DIAGNOSTIC_NOTE: ${{ inputs.diagnostic_note }}
+        run: |
+          set +e
+          mkdir -p control-plane-report
+          REPORT="control-plane-report/report.md"
+          STATUS="HEALTHY"
+          {
+            echo "## Agent production diagnosis"
+            echo
+            echo "- Checked: `$(date -u +%Y-%m-%dT%H:%M:%SZ)`"
+            echo "- Project: `$GCP_PROJECT_ID`"
+            echo "- Region: `$GCP_REGION`"
+            echo "- Mode: **READ ONLY**"
+            echo "- GitHub run: `$GITHUB_RUN_ID`"
+            [ -n "$DIAGNOSTIC_NOTE" ] && echo "- Note: $DIAGNOSTIC_NOTE"
+            echo
+          } > "$REPORT"
+
+          if [ "$AUTH_OUTCOME" != "success" ]; then
+            {
+              echo "### Authentication"
+              echo "❌ Workload Identity Federation authentication failed."
+            } >> "$REPORT"
+            echo "UNAVAILABLE" > control-plane-report/status.txt
+            exit 0
+          fi
+
+          BILLING="$(gcloud beta billing projects describe "$GCP_PROJECT_ID" --format='value(billingEnabled)' 2>/dev/null)"
+          if [ "$BILLING" = "True" ]; then
+            BILLING_LINE="✅ enabled"
+          else
+            BILLING_LINE="❌ not enabled or unreadable"
+            STATUS="DEGRADED"
+          fi
+
+          SERVICE_JSON="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json 2>/dev/null)"
+          SERVICE_URL="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status",{}).get("url",""))' <<<"$SERVICE_JSON" 2>/dev/null)"
+          READY_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status",{}).get("latestReadyRevisionName",""))' <<<"$SERVICE_JSON" 2>/dev/null)"
+          LIVE_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d.get("status",{}).get("traffic",[]); print(next((r.get("revisionName","") for r in rows if int(r.get("percent",0) or 0)==100),""))' <<<"$SERVICE_JSON" 2>/dev/null)"
+
+          HEALTH="$(curl --fail --silent --show-error --max-time 20 "$SERVICE_URL/health" 2>/dev/null)"
+          HEALTH_OK="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print("yes" if d.get("status")=="ready" and d.get("multiUser") is True else "no")' "$HEALTH" 2>/dev/null)"
+          SOURCE_COMMIT="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("sourceCommit") or d.get("imageSourceCommit") or "")' "$HEALTH" 2>/dev/null)"
+          if [ "$HEALTH_OK" != "yes" ]; then STATUS="DEGRADED"; fi
+
+          FIRESTORE="$(gcloud firestore databases describe --database='(default)' --project "$GCP_PROJECT_ID" --format='value(name)' 2>/dev/null)"
+          [ -z "$FIRESTORE" ] && STATUS="DEGRADED"
+
+          SCHEDULER_STATE="$(gcloud scheduler jobs describe "$ASTER_SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)' 2>/dev/null)"
+          [ "$SCHEDULER_STATE" != "ENABLED" ] && STATUS="DEGRADED"
+
+          LAST_TICK="$(gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.requestUrl:"/internal/aster-automation/tick"' --project "$GCP_PROJECT_ID" --freshness=30m --limit=1 --order=desc --format='csv[no-heading](timestamp,httpRequest.status)' 2>/dev/null)"
+          LAST_TICK_STATUS="${LAST_TICK##*,}"
+          [ "$LAST_TICK_STATUS" != "200" ] && STATUS="DEGRADED"
+
+          ERROR_COUNT="$(gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status>=500' --project "$GCP_PROJECT_ID" --freshness=30m --limit=100 --format='value(timestamp)' 2>/dev/null | wc -l | tr -d ' ')"
+          [ "${ERROR_COUNT:-0}" -ge 10 ] 2>/dev/null && STATUS="DEGRADED"
+
+          ASTER_HTTP="$(curl -sS -o control-plane-report/aster-exchange-info.json -w '%{http_code}' --max-time 20 'https://fapi.asterdex.com/fapi/v3/exchangeInfo' 2>/dev/null)"
+          ASTER_OK="no"
+          if [ "$ASTER_HTTP" = "200" ]; then
+            ASTER_OK="$(python - <<'PY'
+          import json
+          try:
+              with open("control-plane-report/aster-exchange-info.json", encoding="utf-8") as f:
+                  payload=json.load(f)
+              symbols=payload.get("symbols", [])
+              print("yes" if symbols and any(str(x.get("status","")).upper()=="TRADING" for x in symbols if isinstance(x,dict)) else "no")
+          except Exception:
+              print("no")
+          PY
+          )"
+          fi
+          [ "$ASTER_OK" != "yes" ] && STATUS="DEGRADED"
+
+          {
+            echo "### Current state"
+            echo "- Billing: $BILLING_LINE"
+            echo "- Cloud Run health: $([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
+            echo "- Live revision: `${LIVE_REVISION:-unknown}`"
+            echo "- Latest ready revision: `${READY_REVISION:-unknown}`"
+            echo "- Source commit: `${SOURCE_COMMIT:-unknown}`"
+            echo "- Firestore: $([ -n "$FIRESTORE" ] && echo '✅ reachable' || echo '❌ unavailable')"
+            echo "- Aster scheduler: `${SCHEDULER_STATE:-unknown}`"
+            echo "- Latest Aster tick: `${LAST_TICK:-none in last 30m}`"
+            echo "- Backend HTTP 5xx in last 30m: `${ERROR_COUNT:-unknown}`"
+            echo "- Aster public market API: $([ "$ASTER_OK" = yes ] && echo '✅ reachable' || echo '❌ unavailable')"
+            echo
+            echo "### Overall"
+            echo "**$STATUS**"
+            echo
+            echo "_No secrets, wallet keys, private exchange credentials, order payloads, or account data were collected._"
+          } >> "$REPORT"
+
+          rm -f control-plane-report/aster-exchange-info.json
+          echo "$STATUS" > control-plane-report/status.txt
+
+      - name: Publish diagnosis back to GitHub issue
+        if: github.event_name == 'issues'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file control-plane-report/report.md
+
+      - name: Upload sanitized diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-production-diagnostic-${{ github.run_id }}
+          path: control-plane-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Mark unhealthy diagnosis as failed
+        if: always()
+        shell: bash
+        run: |
+          STATUS="$(cat control-plane-report/status.txt 2>/dev/null || echo UNAVAILABLE)"
+          test "$STATUS" = "HEALTHY"
