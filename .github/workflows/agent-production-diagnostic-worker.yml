@@ -28,7 +28,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   ASTER_SCHEDULER_JOB: tradementor-aster-automation
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
-  DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
 
 jobs:
   diagnose:
