@@ -121,6 +121,18 @@ jobs:
                     'traffic=',traffic)
           PY
 
+      - name: Probe max-5 backend candidate directly
+        shell: bash
+        run: |
+          set -u
+          URL="https://capfix-api-35422507387-1---tradementor-api-cyyaq5otyq-ez.a.run.app/health"
+          echo "=== MAX5 CANDIDATE ==="
+          for i in 1 2 3; do
+            CODE="$(curl -sS -o /tmp/max5-body -w '%{http_code}' --max-time 20 "$URL" || true)"
+            echo "attempt=$i code=$CODE body=$(head -c 300 /tmp/max5-body || true)"
+            sleep 2
+          done
+
       - name: Read costly legacy inventory
         shell: bash
         run: |
