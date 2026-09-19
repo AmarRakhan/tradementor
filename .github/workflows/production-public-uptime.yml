@@ -1,0 +1,54 @@
+name: Production Public Uptime
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tradementor-production-public-uptime
+  cancel-in-progress: true
+
+jobs:
+  public-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check production backend health
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEALTH="$(curl --fail --silent --show-error --max-time 20 --retry 3 --retry-delay 3             "https://tradementor-api-cyyaq5otyq-ez.a.run.app/health")"
+          python - "$HEALTH" <<'PY'
+          import json
+          import sys
+          health = json.loads(sys.argv[1])
+          assert health.get("status") == "ready"
+          assert health.get("multiUser") is True
+          assert health.get("sourceCommit") or health.get("imageSourceCommit")
+          PY
+
+      - name: Check Aster public market connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          INFO="$(curl --fail --silent --show-error --max-time 20 --retry 3 --retry-delay 3             "https://fapi.asterdex.com/fapi/v3/exchangeInfo")"
+          python - "$INFO" <<'PY'
+          import json
+          import sys
+          payload = json.loads(sys.argv[1])
+          symbols = payload.get("symbols", [])
+          assert isinstance(symbols, list) and symbols
+          assert any(
+              str(row.get("status", "")).upper() == "TRADING"
+              for row in symbols
+              if isinstance(row, dict)
+          )
+          PY
+
+      - name: Record successful check
+        run: |
+          echo "Production backend and Aster public connectivity are healthy at $(date -u +%Y-%m-%dT%H:%M:%SZ)." >> "$GITHUB_STEP_SUMMARY"
