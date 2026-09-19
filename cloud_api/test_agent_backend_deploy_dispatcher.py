@@ -27,11 +27,13 @@ def test_backend_dispatcher_only_allows_exact_current_cloud_branch_head():
     assert "commit:" in text
 
 
-def test_backend_dispatcher_requires_green_backend_ci_before_dispatch():
+def test_backend_dispatcher_ensures_exact_head_backend_ci_before_dispatch():
     text = source()
     assert "cloud-backend-ci.yml/runs" in text
     assert 'select(.head_sha == \"$COMMIT\")' in text
-    assert 'test "$SUCCESS_COUNT" -ge 1' in text
+    assert "gh workflow run cloud-backend-ci.yml" in text
+    assert 'test "$CI_RESULT" = "success"' in text
+    assert 'test "$CURRENT_HEAD" = "$COMMIT"' in text
 
 
 def test_backend_dispatcher_reuses_existing_hardened_deploy_workflow_only():
