@@ -13,8 +13,12 @@ test("strategy maker reports current bot counts and never reuses stale slot bala
   assert.doesNotMatch(maker, /rawReport\.remainingShort \?\?/);
   assert.match(maker, /reportCurrent/);
   assert.match(maker, /rawReport\.scannedCandidateCount/);
-  assert.match(maker, /<b>Botposities<\/b>/);
-  assert.match(maker, /<b>Vrije botslots<\/b>/);
+  assert.match(maker, /className="slot-overview"/);
+  assert.match(maker, /\{activeLong\} \/ \{longCapacity\}/);
+  assert.match(maker, /\{displayRemainingLong\} vrij/);
+  assert.match(maker, /\{activeShort\} \/ \{shortCapacity\}/);
+  assert.match(maker, /\{displayRemainingShort\} vrij/);
+  assert.match(maker, /\{totalActive\} \/ \{totalCapacity\}/);
 });
 
 test("live toggle remains server/readiness gated", () => {
