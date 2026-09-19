@@ -1,0 +1,216 @@
+name: Repair hidden asymmetric LONG refill block 2026-09-19
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/repair-rrmk18-long-refill-20260919.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-rrmk18-long-refill-repair
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  REPAIR_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  repair-and-verify:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - name: Verify immutable repair scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-api"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.REPAIR_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Repair exact account setting and verify next scheduler state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service.json"
+
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          print(live[0]['revisionName'] if len(live)==1 else '')
+          PY
+          )
+          IMAGE="${VALUES[0]}"
+          RUNTIME_SA="${VALUES[1]}"
+          LIVE_REVISION="${VALUES[2]}"
+
+          test -n "$IMAGE"
+          test -n "$RUNTIME_SA"
+          test -n "$LIVE_REVISION"
+
+          JOB="tm-longfix-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json,time
+          from datetime import datetime,timezone
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+
+          project='tradementor-production'
+          target_digest='b4dfb7301bb40602e4b2225367437495652a360f6d4a071b8851c6324a82556d'
+
+          if not firebase_admin._apps:
+              firebase_admin.initialize_app(options={'projectId':project})
+          db=firestore.Client(project=project)
+
+          uid=None
+          page=auth.list_users()
+          while page and uid is None:
+              for u in page.users:
+                  normalized=str(u.email or '').strip().lower()
+                  if normalized and hashlib.sha256(normalized.encode()).hexdigest()==target_digest:
+                      uid=u.uid
+                      break
+              if uid is None:
+                  page=page.get_next_page()
+          if not uid:
+              raise SystemExit('target account not found')
+
+          ref=db.collection('asterStrategy2').document(uid)
+          snap=ref.get()
+          if not snap.exists:
+              raise SystemExit('strategy document not found')
+          raw=snap.to_dict() or {}
+          settings=dict(raw.get('settings') or {})
+          report=dict(raw.get('multiBbReport') or {})
+
+          before={
+              'enabled':raw.get('enabled') is True,
+              'monitor':raw.get('monitor') is True,
+              'engine':settings.get('engine') or settings.get('strategyKind'),
+              'longSlots':settings.get('longSlots'),
+              'shortSlots':settings.get('shortSlots'),
+              'topN':settings.get('universeTopN'),
+              'minimumLeverage':settings.get('minimumLeverage'),
+              'entryMarginUsd':settings.get('entryMarginUsd'),
+              'shortRequiresLongEnabled':settings.get('shortRequiresLongEnabled') is True,
+              'bollingerEntryFilter15mEnabled':settings.get('bollingerEntryFilter15mEnabled') is True,
+              'asymmetricHedgeModeEnabled':settings.get('asymmetricHedgeModeEnabled') is True,
+              'activeLong':report.get('activeLong'),
+              'activeShort':report.get('activeShort'),
+              'remainingLong':report.get('remainingLong'),
+              'remainingShort':report.get('remainingShort'),
+              'entryStatus':report.get('entryStatus'),
+              'scannedCandidateCount':report.get('scannedCandidateCount'),
+          }
+          print('LONG_REFILL_REPAIR_BEFORE '+json.dumps(before,sort_keys=True),flush=True)
+
+          # Fail closed unless this is exactly the diagnosed account state.
+          if before['engine']!='multi_bb_v1':
+              raise SystemExit('unexpected engine')
+          if not before['enabled'] or not before['monitor']:
+              raise SystemExit('bot is not active')
+          if int(before['longSlots'] or 0)!=7 or int(before['shortSlots'] or 0)!=7:
+              raise SystemExit('slot configuration changed since diagnosis')
+          if int(before['topN'] or 0)!=50:
+              raise SystemExit('Top-N changed since diagnosis')
+          if before['shortRequiresLongEnabled']:
+              raise SystemExit('SHORT requires LONG is enabled; refusing unrelated repair')
+          if before['bollingerEntryFilter15mEnabled']:
+              raise SystemExit('Bollinger entry filter is enabled; refusing unrelated repair')
+          if not before['asymmetricHedgeModeEnabled']:
+              print('LONG_REFILL_REPAIR_NOOP already_false',flush=True)
+          else:
+              settings['asymmetricHedgeModeEnabled']=False
+              ref.set({
+                  'settings':settings,
+                  'updatedAt':firestore.SERVER_TIMESTAMP,
+              },merge=True)
+              ref.collection('audit').add({
+                  'event':'ACCOUNT_SETTING_REPAIR',
+                  'field':'asymmetricHedgeModeEnabled',
+                  'oldValue':True,
+                  'newValue':False,
+                  'reason':'HIDDEN_ASYMMETRIC_MODE_BLOCKED_FREE_LONG_SLOTS',
+                  'source':'github-controlled-repair-20260919',
+                  'timestamp':datetime.now(timezone.utc),
+              })
+              check=(ref.get().to_dict() or {}).get('settings') or {}
+              if check.get('asymmetricHedgeModeEnabled') is not False:
+                  raise SystemExit('repair write did not persist')
+              print('LONG_REFILL_REPAIR_WRITE asymmetricHedgeModeEnabled=false',flush=True)
+
+          # Wait for the normal scheduler to consume the repaired setting.
+          deadline=time.time()+150
+          observed=None
+          while time.time()<deadline:
+              time.sleep(15)
+              now=ref.get().to_dict() or {}
+              now_settings=now.get('settings') if isinstance(now.get('settings'),dict) else {}
+              now_report=now.get('multiBbReport') if isinstance(now.get('multiBbReport'),dict) else {}
+              observed={
+                  'asymmetricHedgeModeEnabled':now_settings.get('asymmetricHedgeModeEnabled') is True,
+                  'activeLong':now_report.get('activeLong'),
+                  'activeShort':now_report.get('activeShort'),
+                  'remainingLong':now_report.get('remainingLong'),
+                  'remainingShort':now_report.get('remainingShort'),
+                  'entryStatus':now_report.get('entryStatus'),
+                  'entryReason':now_report.get('entryReason'),
+                  'candidateCount':now_report.get('candidateCount'),
+                  'scannedCandidateCount':now_report.get('scannedCandidateCount'),
+                  'executableCandidateCount':now_report.get('executableCandidateCount'),
+                  'entrySkipReasons':now_report.get('entrySkipReasons'),
+              }
+              # The old pair-cap bug is gone once the repaired setting is false and
+              # either LONGs were filled or the scanner actually evaluates candidates.
+              active_long=int(now_report.get('activeLong') or 0)
+              scanned=int(now_report.get('scannedCandidateCount') or 0)
+              status=str(now_report.get('entryStatus') or '')
+              if now_settings.get('asymmetricHedgeModeEnabled') is False and (active_long>int(before['activeLong'] or 0) or scanned>0 or status!='WAITING_CAPACITY'):
+                  break
+
+          print('LONG_REFILL_REPAIR_AFTER '+json.dumps(observed or {},sort_keys=True,default=str),flush=True)
+          if not observed:
+              raise SystemExit('no post-repair state observed')
+          if observed.get('asymmetricHedgeModeEnabled') is True:
+              raise SystemExit('asymmetric setting unexpectedly re-enabled')
+          if int(observed.get('activeLong') or 0)<=int(before['activeLong'] or 0) and int(observed.get('scannedCandidateCount') or 0)<=0 and str(observed.get('entryStatus') or '')=='WAITING_CAPACITY':
+              raise SystemExit('LONG refill remains blocked after repair')
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SA"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1             --parallelism 1             --max-retries 0             --task-timeout 240s             --quiet
+
+          gcloud run jobs execute "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --wait
+
+          EXECUTION="$(gcloud run jobs executions list             --job "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --limit 1             --sort-by='~metadata.creationTimestamp'             --format='value(metadata.name)')"
+
+          gcloud logging read             "resource.type=cloud_run_job AND resource.labels.job_name=$JOB"             --project "$GCP_PROJECT_ID"             --freshness=15m             --limit=100             --order=asc             --format='value(textPayload)'             | grep -E 'LONG_REFILL_REPAIR_(BEFORE|WRITE|NOOP|AFTER)'
+
+          echo "Repair verified on live revision: $LIVE_REVISION" >> "$GITHUB_STEP_SUMMARY"
+
+          cleanup
+          trap - EXIT
