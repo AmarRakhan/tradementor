@@ -19,10 +19,14 @@ def test_production_deploy_keeps_wif_and_no_stored_key_authentication():
 
 def test_production_deploy_verifies_exact_source_commit_before_promotion():
     text = workflow()
-    assert '--build-arg "SOURCE_COMMIT=$GITHUB_SHA"' in text
-    assert "TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA" in text
-    assert 'health["sourceCommit"] == os.environ["GITHUB_SHA"]' in text
-    assert 'health["imageSourceCommit"] == os.environ["GITHUB_SHA"]' in text
+    assert "source_commit:" in text
+    assert "ref: ${{ inputs.source_commit }}" in text
+    assert 'test "$(git rev-parse HEAD)" = "$REQUESTED_SOURCE_COMMIT"' in text
+    assert 'git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"' in text
+    assert '--build-arg "SOURCE_COMMIT=$SOURCE_COMMIT"' in text
+    assert "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT" in text
+    assert 'health["sourceCommit"] == os.environ["SOURCE_COMMIT"]' in text
+    assert 'health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]' in text
     assert '--no-traffic' in text
 
 
@@ -59,3 +63,11 @@ def test_production_deploy_can_report_result_back_to_agent_issue():
     assert 'gh issue close "$REQUEST_ISSUE"' in text
     assert "Publish failed deployment to agent issue" in text
     assert "issue is intentionally left open for investigation" in text
+
+
+def test_production_deploy_does_not_implicitly_ship_cloud_branch_head():
+    text = workflow()
+    assert 'required: true' in text[text.index("source_commit:"):text.index("request_issue:")]
+    assert 'IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$SOURCE_COMMIT"' in text
+    assert 'REVISION_SUFFIX="src-${SOURCE_COMMIT:0:8}-$RUN_SUFFIX"' in text
+    assert 'echo "- Source commit: $SOURCE_COMMIT"' in text
