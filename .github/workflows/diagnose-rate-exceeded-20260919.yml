@@ -133,6 +133,39 @@ jobs:
             sleep 2
           done
 
+      - name: Verify exact live revision images and scheduler
+        shell: bash
+        run: |
+          set -u
+          for SERVICE in tradementor-api amar-bot-v44-direct-install; do
+            REV="$(gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json | python -c 'import json,sys; s=json.load(sys.stdin); print(next(x["revisionName"] for x in s["status"]["traffic"] if int(x.get("percent",0) or 0)==100))')"
+            echo "=== LIVE REVISION $SERVICE $REV ==="
+            gcloud run revisions describe "$REV" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "/tmp/$SERVICE-live-rev.json"
+            python - "/tmp/$SERVICE-live-rev.json" <<'PY'
+          import json,sys
+          r=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=r.get('spec',{})
+          c=(spec.get('containers') or [{}])[0]
+          env={x.get('name'):x.get('value') for x in c.get('env',[]) if x.get('name') in {'TRADEMENTOR_SOURCE_COMMIT','TRADEMENTOR_IMAGE_SOURCE_COMMIT','ASTER_LIVE_EXECUTION_ENABLED','ASTER_STRATEGY2_LIVE_ENABLED','ASTER_REALTIME_WORKER','ASTER_REALTIME_EXECUTION_ENABLED'}}
+          print('image=',c.get('image'))
+          print('env=',env)
+          print('concurrency=',spec.get('containerConcurrency'))
+          print('serviceAccount=',spec.get('serviceAccountName'))
+          PY
+          done
+          echo '=== SCHEDULER ==='
+          gcloud scheduler jobs describe tradementor-aster-automation-tick --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > /tmp/scheduler.json || true
+          python - /tmp/scheduler.json <<'PY'
+          import json,sys
+          try:s=json.load(open(sys.argv[1],encoding='utf-8'))
+          except Exception:s={}
+          print('state=',s.get('state'))
+          print('schedule=',s.get('schedule'))
+          print('lastAttemptTime=',s.get('lastAttemptTime'))
+          print('status=',s.get('status'))
+          print('uri=',(s.get('httpTarget') or {}).get('uri'))
+          PY
+
       - name: Read costly legacy inventory
         shell: bash
         run: |
@@ -168,3 +201,5 @@ jobs:
 
 
 # diagnostic pass 3 marker
+
+# live revision verification
