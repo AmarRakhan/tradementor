@@ -4,7 +4,7 @@ Last updated: 2026-09-19
 Active task: 24/7 infrastructure, GitHub Actions deployment hardening, monitoring, billing protection, and chat handoff.
 
 ## Current status
-- Audit in progress; no trading logic changed.
+- Audit complete; infrastructure hardening is being implemented on feature branch `agent/infra-24x7-20260919`. No trading logic changed.
 - Production project: `tradementor-production`, region `europe-west4`.
 - Active deployment source branch: `amar-crypto-bot-2026-cloud`.
 - Branch head at audit checkpoint: `c47ecdf8ee7bdb69df7155800f3ebae416afd489`.
@@ -53,9 +53,17 @@ Active task: 24/7 infrastructure, GitHub Actions deployment hardening, monitorin
 - Backend revision: `tradementor-api-dca-e1f8132f-1`.
 - Source commit reported by production: `ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853`.
 
+## Implementation checkpoint
+- Feature branch: `agent/infra-24x7-20260919`.
+- Production deploy workflow hardened with exact-commit verification, Firestore/Aster prechecks, saved rollback revision, post-promotion verification, and automatic rollback.
+- New GitHub-hosted 15-minute read-only production monitor added for billing, Cloud Run health, Firestore, scheduler state, recent successful Aster ticks, backend 5xx rate, and Aster public connectivity.
+- Safety-contract tests added for both workflows.
+- Production has NOT been redeployed yet.
+
 ## Exact next step
-1. Harden the existing production workflow rather than creating a parallel deployment system.
-2. Add automatic rollback to the previously captured production revision if post-promotion checks fail.
-3. Add safe dependency/market checks and scheduled infrastructure diagnostics.
-4. Configure Monitoring notification channel + alert policies and improve billing warning coverage.
-5. Run tests, candidate deployment, production verification, and update this handoff after each checkpoint.
+1. Run/verify CI on the feature branch/PR.
+2. Fix any CI failures without touching trading logic.
+3. Merge the validated infra changes into `amar-crypto-bot-2026-cloud`.
+4. Dispatch the hardened production workflow and verify candidate, promotion, and rollback path.
+5. Configure GCP notification channel / alert policies and improve billing thresholds.
+6. Re-audit Workstation costs and only then decide whether it can be stopped.
