@@ -1,0 +1,71 @@
+name: Diagnose production rate exceeded 2026-09-19
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-rate-exceeded-20260919.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read Cloud Run service and live revision
+        shell: bash
+        run: |
+          set -u
+          echo '=== SERVICE ==='
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json
+          echo '=== REVISIONS ==='
+          gcloud run revisions list --service "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit=12 --format='table(metadata.name,status.conditions[0].status,spec.containerConcurrency,metadata.annotations.autoscaling.knative.dev/minScale,metadata.annotations.autoscaling.knative.dev/maxScale,status.serviceName)'
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          echo "SERVICE_URL=$SERVICE_URL"
+          echo '=== HEALTH RESPONSE ==='
+          curl -sS -D - -o /tmp/health-body.txt --max-time 20 "$SERVICE_URL/health" || true
+          echo '--- BODY ---'
+          cat /tmp/health-body.txt || true
+
+      - name: Read recent 429 and warning logs
+        shell: bash
+        run: |
+          set -u
+          echo '=== 429 REQUEST LOGS (2h) ==='
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status=429' --project "$GCP_PROJECT_ID" --freshness=2h --limit=100 --format=json || true
+          echo '=== RATE EXCEEDED TEXT LOGS (2h) ==='
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND ("Rate exceeded" OR "rate exceeded")' --project "$GCP_PROJECT_ID" --freshness=2h --limit=100 --format=json || true
+          echo '=== RECENT WARNING+ LOGS (30m) ==='
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND severity>=WARNING' --project "$GCP_PROJECT_ID" --freshness=30m --limit=100 --format=json || true
+
+      - name: Read App Engine and Workstations inventory
+        shell: bash
+        run: |
+          set -u
+          echo '=== APP ENGINE SERVICES ==='
+          gcloud app services list --project "$GCP_PROJECT_ID" --format='table(id,split.allocations)' || true
+          echo '=== APP ENGINE VERSIONS ==='
+          gcloud app versions list --project "$GCP_PROJECT_ID" --format='table(service,version.id,traffic_split,version.instance_class,version.serving_status,last_deployed_time)' || true
+          echo '=== WORKSTATION CLUSTERS ==='
+          gcloud workstations clusters list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='table(name,state,createTime)' || true
+          echo '=== WORKSTATION CONFIGS ==='
+          for c in $(gcloud workstations clusters list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(name)' 2>/dev/null); do
+            gcloud workstations configs list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --cluster "$c" --format='table(name,idleTimeout,runningTimeout,host.gceInstance.machineType,host.gceInstance.poolSize)' || true
+          done
