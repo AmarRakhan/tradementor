@@ -7,6 +7,10 @@ on:
         description: "Type DEPLOY_PRODUCTION_BACKEND"
         required: true
         type: string
+      source_commit:
+        description: "Exact 40-character repository commit to build, test and deploy"
+        required: true
+        type: string
       request_issue:
         description: "Optional GitHub issue number for agent feedback"
         required: false
@@ -36,15 +40,23 @@ jobs:
     environment: production
     timeout-minutes: 35
     steps:
-      - name: Check out exact branch source
+      - name: Check out exact requested source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
 
-      - name: Authorize manual production deployment
+      - name: Authorize exact-source production deployment
         shell: bash
+        env:
+          REQUESTED_SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
           test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
+          [[ "$REQUESTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SOURCE_COMMIT"
+          echo "SOURCE_COMMIT=$REQUESTED_SOURCE_COMMIT" >> "$GITHUB_ENV"
 
       - name: Verify immutable repository scope
         shell: bash
@@ -55,6 +67,8 @@ jobs:
           test "$GCP_PROJECT_ID" = "tradementor-production"
           test "$GCP_REGION" = "europe-west4"
           test "$CLOUD_RUN_SERVICE" = "tradementor-api"
+          git fetch origin amar-crypto-bot-2026-cloud --quiet
+          git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -138,8 +152,8 @@ jobs:
         run: |
           set -euo pipefail
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$GITHUB_SHA"
-          docker build --build-arg "SOURCE_COMMIT=$GITHUB_SHA" --tag "$IMAGE" cloud_api
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$SOURCE_COMMIT"
+          docker build --build-arg "SOURCE_COMMIT=$SOURCE_COMMIT" --tag "$IMAGE" cloud_api
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
@@ -147,9 +161,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REVISION_SUFFIX="gh-${GITHUB_SHA:0:8}-$GITHUB_RUN_ATTEMPT"
+          RUN_SUFFIX="${GITHUB_RUN_ID: -6}"
+          REVISION_SUFFIX="src-${SOURCE_COMMIT:0:8}-$RUN_SUFFIX"
           TAG="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
+          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-candidate.json"
           python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
           import json
@@ -167,7 +182,7 @@ jobs:
           before_env = {item["name"]: item.get("value") for item in before_spec["containers"][0].get("env", [])}
           after_env = {item["name"]: item.get("value") for item in after_spec["containers"][0].get("env", [])}
           expected_env = dict(before_env)
-          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["GITHUB_SHA"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
+          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
           assert after_env == expected_env
           candidate = next(row for row in after["status"]["traffic"] if row.get("tag") == tag)
           print(f'CANDIDATE_URL={candidate["url"]}')
@@ -189,8 +204,8 @@ jobs:
           openapi = json.loads(sys.argv[2])
           assert health["status"] == "ready"
           assert health["multiUser"] is True
-          assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
-          assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
+          assert health["sourceCommit"] == os.environ["SOURCE_COMMIT"]
+          assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           paths = openapi.get("paths", {})
           assert "/health" in paths
           PY
@@ -217,8 +232,8 @@ jobs:
           health = json.loads(sys.argv[1])
           assert health["status"] == "ready"
           assert health["multiUser"] is True
-          assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
-          assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
+          assert health["sourceCommit"] == os.environ["SOURCE_COMMIT"]
+          assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           PY
 
       - name: Verify Cloud Run IAM is unchanged
@@ -247,11 +262,11 @@ jobs:
             echo "## Production backend deployment complete"
             echo
             echo "- Status: **SUCCESS**"
-            echo "- Source commit: `$GITHUB_SHA`"
-            echo "- Live revision: `$CANDIDATE_REVISION`"
-            echo "- Previous revision: `$PREVIOUS_REVISION`"
+            echo "- Source commit: $SOURCE_COMMIT"
+            echo "- Live revision: $CANDIDATE_REVISION"
+            echo "- Previous revision: $PREVIOUS_REVISION"
             echo "- Health: **ready**"
-            echo "- Rollback point retained: `$PREVIOUS_REVISION`"
+            echo "- Rollback point retained: $PREVIOUS_REVISION"
           } > "$RUNNER_TEMP/deploy-result.md"
           gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/deploy-result.md"
           gh issue close "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --reason completed
@@ -288,10 +303,10 @@ jobs:
             echo "## Production backend deployment failed"
             echo
             echo "- Status: **FAILED**"
-            echo "- Source commit: `$GITHUB_SHA`"
-            echo "- Candidate revision: `${CANDIDATE_REVISION:-not-created}`"
-            echo "- Previous production revision: `${PREVIOUS_REVISION:-unknown}`"
-            echo "- Promotion attempted: `${PROMOTION_ATTEMPTED:-false}`"
+            echo "- Source commit: $SOURCE_COMMIT"
+            echo "- Candidate revision: ${CANDIDATE_REVISION:-not-created}"
+            echo "- Previous production revision: ${PREVIOUS_REVISION:-unknown}"
+            echo "- Promotion attempted: ${PROMOTION_ATTEMPTED:-false}"
             echo
             echo "The issue is intentionally left open for investigation. If promotion had already occurred, the rollback step was attempted automatically."
           } > "$RUNNER_TEMP/deploy-failure.md"
