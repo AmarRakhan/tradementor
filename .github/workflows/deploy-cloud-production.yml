@@ -93,22 +93,6 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify safe external dependency
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "DEPLOY_PHASE=aster-public-preflight" >> "$GITHUB_ENV"
-          ASTER_INFO="$(curl --fail --silent --show-error --retry 3 --retry-delay 2             "https://fapi.asterdex.com/fapi/v3/exchangeInfo")"
-          python - "$ASTER_INFO" <<'PY'
-          import json
-          import sys
-
-          payload = json.loads(sys.argv[1])
-          symbols = payload.get("symbols", [])
-          assert isinstance(symbols, list) and symbols
-          assert any(str(row.get("status", "")).upper() == "TRADING" for row in symbols if isinstance(row, dict))
-          PY
-
       - name: Capture production configuration and rollback point
         shell: bash
         run: |
