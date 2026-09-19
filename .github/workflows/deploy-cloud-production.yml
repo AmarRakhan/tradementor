@@ -121,6 +121,8 @@ jobs:
           print(f"PREVIOUS_REVISION={live['revisionName']}")
           PY
           echo "DEPLOY_PHASE=capture-current-health" >> "$GITHUB_ENV"
+          SERVICE_URL="$(python -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d["status"]["url"])' "$RUNNER_TEMP/service-before.json")"
+          test -n "$SERVICE_URL"
           PREVIOUS_HEALTH_FILE="$RUNNER_TEMP/previous-health.json"
           PREVIOUS_HEALTH_HTTP="$(curl --silent --show-error --retry 8 --retry-delay 3 --retry-all-errors --connect-timeout 10 --max-time 30 -o "$PREVIOUS_HEALTH_FILE" -w '%{http_code}' "$SERVICE_URL/health" || true)"
           test "$PREVIOUS_HEALTH_HTTP" = "200"

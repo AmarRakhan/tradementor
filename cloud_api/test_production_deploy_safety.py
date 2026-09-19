@@ -106,3 +106,11 @@ def test_current_production_health_capture_is_retryable_and_http_verified():
     assert '--max-time 30' in text
     assert 'test "$PREVIOUS_HEALTH_HTTP" = "200"' in text
     assert 'json.load(open(sys.argv[1], encoding="utf-8"))' in text
+
+
+def test_current_health_uses_same_step_service_url_not_future_github_env():
+    text = workflow()
+    local_url = 'SERVICE_URL="$(python -c \'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d["status"]["url"])\' "$RUNNER_TEMP/service-before.json")"'
+    assert local_url in text
+    assert 'test -n "$SERVICE_URL"' in text
+    assert text.index(local_url) < text.index('PREVIOUS_HEALTH_HTTP=')
