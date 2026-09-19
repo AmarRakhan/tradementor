@@ -59,8 +59,11 @@ def test_every_production_aster_close_is_forced_through_shared_executor():
             direct.append(path.name)
     assert direct==[]
     executor=(root/"aster_execution.py").read_text(encoding="utf-8")
-    assert 'if action.upper() == "CLOSE" and not manual_loss_confirmation:' in executor
+    assert 'if action.upper() == "CLOSE" and not manual_loss_confirmation and not automatic_loss_exit_authorized:' in executor
+    assert "automatic_loss_exit_authorized: bool = False" in executor
     assert "require_profitable_automatic_close(close_evidence" in executor
+    stoploss=(root/"aster_stop_loss.py").read_text(encoding="utf-8")
+    assert "automatic_loss_exit_authorized=True" in stoploss
 
 
 def test_all_strategy_close_decisions_use_the_same_close_guard():

@@ -8,6 +8,8 @@ import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, s
 type ManualSide = "LONG" | "SHORT";
 type ManualSymbol = { symbol: string; side: ManualSide };
 type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
+type StopLossMode = "USD" | "PERCENT";
+const BOT_SETTINGS_REFERENCE = "file_00000000d2ec81f4b0c6fe6b9befe97c";
 type TierPreview = {
   symbol: string;
   entryPlan?: { leverage: number } | null;
@@ -18,7 +20,8 @@ type TierPreview = {
   entryOrderValid?: boolean;
 };
 type Values = {
-  name: string; universe: string; positions: string; longSlots: string; shortSlots: string; minLeverage: string;
+  name: string; universe: string; positions: string; longSlots: string; shortSlots: string; minLeverage: string; maxLeverage: string;
+  stopLossEnabled: boolean; stopLossMode: StopLossMode; stopLossLong: string; stopLossShort: string;
   entryMarginLong: string; entryMarginShort: string;
   longDcaDistance: string; shortDcaDistance: string; longDcaAmount: string; shortDcaAmount: string;
   maxDcaLong: string; maxDcaShort: string; longTp: string; shortTp: string; tpMode: TpMode; portfolioTp: string;
@@ -27,7 +30,8 @@ type Values = {
 };
 
 const initial: Values = {
-  name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10", minLeverage: "50",
+  name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10", minLeverage: "50", maxLeverage: "",
+  stopLossEnabled: false, stopLossMode: "PERCENT", stopLossLong: "5", stopLossShort: "5",
   entryMarginLong: "5", entryMarginShort: "5", longDcaDistance: "0.30", shortDcaDistance: "0.30",
   longDcaAmount: "2", shortDcaAmount: "2", maxDcaLong: "3", maxDcaShort: "3", longTp: "1.5", shortTp: "1.5",
   tpMode: "PER_TRADE", portfolioTp: "20", mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
@@ -109,7 +113,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     const legacyEntry = Number(x.entryMarginUsd ?? 5);
     const legacyDcaDistance = Number(x.dcaDistance ?? .003); const legacyDcaAmount = Number(x.dcaMarginUsd ?? 2); const legacyMax = Number(x.maxDca ?? 3); const legacyTp = Number(x.takeProfit ?? .015);
     setV({
-      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50),
+      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
+      stopLossEnabled: x.stopLossEnabled === true, stopLossMode: String(x.stopLossMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT", stopLossLong: txt(x.stopLossLong, 5), stopLossShort: txt(x.stopLossShort, 5),
       entryMarginLong: txt(x.entryMarginLongUsd ?? x.entryMarginLong ?? legacyEntry, legacyEntry), entryMarginShort: txt(x.entryMarginShortUsd ?? x.entryMarginShort ?? legacyEntry, legacyEntry),
       longDcaDistance: pct(x.longDcaDistance ?? legacyDcaDistance, legacyDcaDistance), shortDcaDistance: pct(x.shortDcaDistance ?? legacyDcaDistance, legacyDcaDistance),
       longDcaAmount: txt(x.longDcaMarginUsd ?? x.longDcaAmount ?? legacyDcaAmount, legacyDcaAmount), shortDcaAmount: txt(x.shortDcaMarginUsd ?? x.shortDcaAmount ?? legacyDcaAmount, legacyDcaAmount),
@@ -130,6 +135,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const change = (next: Values) => { setV(next); setDirty(true); setMessage(""); };
   const settings = (() => {
     const longSlots = clampInt(n(v.longSlots), 0, MAX_SIDE_SLOTS); const shortSlots = clampInt(n(v.shortSlots), 0, MAX_SIDE_SLOTS); const minLeverage = Math.max(1, Math.round(n(v.minLeverage)));
+    const maxLeverageText = v.maxLeverage.trim(); const maxLeverage = maxLeverageText ? Math.max(1, Math.round(n(maxLeverageText))) : null;
     const longEntry = n(v.entryMarginLong); const shortEntry = n(v.entryMarginShort);
     const longDistance = n(v.longDcaDistance) / 100; const shortDistance = n(v.shortDcaDistance) / 100;
     const longAmount = n(v.longDcaAmount); const shortAmount = n(v.shortDcaAmount); const maxLong = clampInt(n(v.maxDcaLong), 0, MAX_DCA); const maxShort = clampInt(n(v.maxDcaShort), 0, MAX_DCA);
@@ -137,7 +143,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
-      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, entrySizingMode: "margin",
+      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage, entrySizingMode: "margin",
       entryMarginUsd: longEntry, entryMarginLongUsd: longEntry, entryMarginShortUsd: shortEntry, entryMarginLong: longEntry, entryMarginShort: shortEntry,
       entryNotionalUsd: longEntry * minLeverage,
       dcaDistance: longDistance, longDcaDistance: longDistance, shortDcaDistance: shortDistance,
@@ -145,6 +151,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       maxDca: maxLong, maxDcaLong: maxLong, maxDcaShort: maxShort, longMaxDca: maxLong, shortMaxDca: maxShort, unlimitedDca: false,
       takeProfit: longTp, longTakeProfitValue: longTp, shortTakeProfitValue: shortTp, takeProfitLong: longTp, takeProfitShort: shortTp,
       takeProfitMode: v.tpMode, portfolioTpPercent: n(v.portfolioTp), takeProfitEnabled: v.tpMode === "PER_TRADE",
+      stopLossEnabled: v.stopLossEnabled, stopLossMode: v.stopLossMode, stopLossLong: n(v.stopLossLong), stopLossShort: n(v.stopLossShort),
       entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualEnabled ? v.manualSymbols : [],
       shortRequiresLongEnabled: v.shortRequiresLongEnabled,
@@ -192,11 +199,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     let cancelled = false; setTierBusy(true);
     void Promise.all(v.manualSymbols.map(async (row) => {
       const entry = row.side === "SHORT" ? v.entryMarginShort : v.entryMarginLong; const dca = row.side === "SHORT" ? v.shortDcaAmount : v.longDcaAmount;
-      const q = new URLSearchParams({ symbol: row.symbol, minimumLeverage: String(Math.max(1, Math.round(n(v.minLeverage)))), entryMarginUsd: String(Math.max(.01, n(entry))), dcaMarginUsd: String(Math.max(.01, n(dca))) });
+      const query: Record<string, string> = { symbol: row.symbol, minimumLeverage: String(Math.max(1, Math.round(n(v.minLeverage)))), entryMarginUsd: String(Math.max(.01, n(entry))), dcaMarginUsd: String(Math.max(.01, n(dca))) }; if (v.maxLeverage.trim()) query.maximumLeverage = String(Math.max(1, Math.round(n(v.maxLeverage)))); const q = new URLSearchParams(query);
       const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/leverage-tiers?${q.toString()}`) as TierPreview; return [row.symbol, result] as const;
     })).then((rows) => { if (!cancelled) setTierPreviews(Object.fromEntries(rows)); }).catch((error) => { if (!cancelled) setMessage(error instanceof Error ? error.message : "Leverage tiers konden niet worden geladen."); }).finally(() => { if (!cancelled) setTierBusy(false); });
     return () => { cancelled = true; };
-  }, [v.manualEnabled, v.manualSymbols, v.minLeverage, v.entryMarginLong, v.entryMarginShort, v.longDcaAmount, v.shortDcaAmount]);
+  }, [v.manualEnabled, v.manualSymbols, v.minLeverage, v.maxLeverage, v.entryMarginLong, v.entryMarginShort, v.longDcaAmount, v.shortDcaAmount]);
 
   const selected = new Set(v.manualSymbols.map((row) => row.symbol));
   const marketQuery = marketSearch.trim().toUpperCase();
@@ -224,9 +231,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     setBusy(true); setMessage("");
     try {
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
-      // Minimum leverage is only a candidate floor. Automatic Top-N resolves every
-      // symbol at its actual maximum valid leverage and skips symbols whose Aster
-      // minimum order still exceeds the configured margin.
+      // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
+      // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
+      // optional cap, and skips symbols whose Aster maximum cannot satisfy the minimum.
+      // Null Maximum leverage deliberately preserves the established pair-maximum behavior.
+      if (settings.maximumLeverage !== null && settings.maximumLeverage < settings.minimumLeverage) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage.");
+      if (settings.stopLossEnabled && (settings.stopLossLong <= 0 || settings.stopLossShort <= 0)) throw new Error("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat.");
       if (settings.longSlots > 0 && settings.entryMarginLongUsd <= 0) throw new Error("Instap LONG moet groter dan 0 USDT zijn.");
       if (settings.shortSlots > 0 && settings.entryMarginShortUsd <= 0) throw new Error("Instap SHORT moet groter dan 0 USDT zijn.");
       if (settings.longDcaDistance <= 0 || settings.shortDcaDistance <= 0 || settings.longDcaDistance > .5 || settings.shortDcaDistance > .5) throw new Error("DCA-afstand moet tussen 0,01% en 50% liggen.");
@@ -303,20 +313,40 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       total: Math.round(finiteOr(smart.dcaCountConfigured, levels.length)), armedIndex, nextTrigger: finiteOr(next?.triggerPrice, 0),
       localLow: finiteOr(smart.localLow, 0), recoveryTrigger: finiteOr(smart.recoveryTriggerPrice, 0), margin: finiteOr(smart.cumulativeActualMarginUsd, 0) }];
   });
+  const longCapacity = Math.max(0, n(v.longSlots)); const shortCapacity = Math.max(0, n(v.shortSlots)); const totalCapacity = Math.max(0, longCapacity + shortCapacity);
+  const totalActive = activeLong + activeShort;
+  const longFill = longCapacity > 0 ? Math.min(100, activeLong / longCapacity * 100) : 0;
+  const shortFill = shortCapacity > 0 ? Math.min(100, activeShort / shortCapacity * 100) : 0;
+  const totalFill = totalCapacity > 0 ? Math.min(100, totalActive / totalCapacity * 100) : 0;
   async function toggleLive() { if (status.pending || busy) return; if (dirty) { setMessage("Sla eerst de gewijzigde instellingen op; daarna kun je de bot direct aan- of uitzetten."); return; } if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(true); }
 
-  return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref">
+  return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref" data-reference={BOT_SETTINGS_REFERENCE}>
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
-    <div className="strategy-facts"><span>{v.smartRescueEnabled ? `${v.positions} LONG runtime` : `${v.longSlots} LONG slots`}</span><span>{v.smartRescueEnabled ? "Smart Rescue LONG-only" : `${v.shortSlots} SHORT slots`}</span><span>{Number(v.longSlots) + Number(v.shortSlots)} totaal</span><span>CROSS</span></div>
-    <div className="strategy-message compact-scan"><b>Botposities</b><span>{activeLong}L · {activeShort}S</span><b>Vrije botslots</b><span>{displayRemainingLong}L · {displayRemainingShort}S</span><small>{candidateCount} kandidaten{scannedCandidateCount ? ` · ${scannedCandidateCount} onderzocht` : ""}</small>{dirty && <em>Niet opgeslagen</em>}</div>
-    <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
+
+    <section className="slot-overview" aria-label="Slot-overzicht">
+      <header><span className="slot-icon">◇</span><div><b>Slot-overzicht</b><small>Bezetting van beschikbare botslots</small></div><span className="slot-cross">⇄ <b>CROSS</b></span><span className="slot-candidates">♙ <b>{candidateCount}</b> kandidaten</span></header>
+      <div className="slot-row long"><strong>LONG</strong><i><u style={{ width: `${longFill}%` }} /></i><b>{activeLong} / {longCapacity}</b><em>{displayRemainingLong} vrij</em></div>
+      <div className="slot-row short"><strong>SHORT</strong><i><u style={{ width: `${shortFill}%` }} /></i><b>{activeShort} / {shortCapacity}</b><em>{displayRemainingShort} vrij</em></div>
+      <div className="slot-row total"><strong>Totaal</strong><i><u style={{ width: `${totalFill}%` }} /></i><b>{totalActive} / {totalCapacity}</b><em>{Math.max(0, totalCapacity - totalActive)} vrij</em></div>
+      {dirty && <small className="slot-dirty">Niet opgeslagen</small>}
+    </section>
+
+    <section className="live-settings-card">
+      <div className={`strategy-power-control live-power ${enabled ? "enabled" : "ready"}`}><span><b><i className="live-dot" />Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
+      <div className="live-config-grid">
+        <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
+        <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
+        <Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} />
+        <Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} />
+        <Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} />
+        <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
+        <Field label="Maximum leverage" value={v.maxLeverage} set={(value) => change({ ...v, maxLeverage: value })} />
+      </div>
+      <small className="leverage-caption">{v.maxLeverage.trim() ? `Leverage wordt begrensd op ${Math.max(1, Math.round(n(v.maxLeverage)))}x.` : "Maximum leverage leeg = bestaande pair-maximumlogica."}</small>
+    </section>
 
     <div className="maker-input compact-settings-grid">
-      <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
-      <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
-      <div className="position-settings-grid"><Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} /><Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} /><Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} /></div>
-      <div className={`strategy-power-control short-pair-control ${v.shortRequiresLongEnabled ? "enabled" : "ready"}`}><span><b>SHORT alleen met LONG</b><small>LONG mag altijd zelfstandig openen · ontbrekende LONG krijgt scanner-prioriteit</small></span><button type="button" role="switch" aria-checked={v.shortRequiresLongEnabled} onClick={() => change({ ...v, shortRequiresLongEnabled: !v.shortRequiresLongEnabled })}><i />{v.shortRequiresLongEnabled ? "Aan" : "Uit"}</button></div>
-      <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
+      <div className={`strategy-power-control short-pair-control ${v.shortRequiresLongEnabled ? "enabled" : "ready"}`}><span className="pair-icon">↗</span><span><b>SHORT alleen met LONG</b><small>LONG mag altijd zelfstandig openen · ontbrekende LONG krijgt scanner-prioriteit.</small></span><button type="button" role="switch" aria-checked={v.shortRequiresLongEnabled} onClick={() => change({ ...v, shortRequiresLongEnabled: !v.shortRequiresLongEnabled })}><i />{v.shortRequiresLongEnabled ? "Aan" : "Uit"}</button></div>
 
       <section className="side-settings-block">
         <div className="side-settings-head"><div><small>GEÏNTEGREERD</small><b>LONG / SHORT · DCA & Take Profit</b></div><div className="tp-tabs">{(["PER_TRADE", "PORTFOLIO", "OFF"] as TpMode[]).map((mode) => <button key={mode} type="button" className={v.tpMode === mode ? "active" : ""} onClick={() => change({ ...v, tpMode: mode })}>{mode === "PER_TRADE" ? "Per trade" : mode === "PORTFOLIO" ? "Portfolio" : "Uit"}</button>)}</div></div>
@@ -328,7 +358,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         </div>
       </section>
 
-      {/* Visual reference: https://chatgpt.com/s/m_6aa7bba43bd88191ac5083522a344b64 */}
+      <section className={`stop-loss-card ${v.stopLossEnabled ? "enabled" : ""}`} aria-label="Stoploss">
+        <div className="stop-loss-head"><span className="stop-loss-icon">♢</span><span><b>Stoploss</b><small>Sluit trade automatisch bij maximaal verlies.</small></span><button type="button" className={v.stopLossEnabled ? "on" : ""} role="switch" aria-checked={v.stopLossEnabled} onClick={() => change({ ...v, stopLossEnabled: !v.stopLossEnabled })}><i />{v.stopLossEnabled ? "Aan" : "Uit"}</button><span className="stop-loss-type"><small>Type:</small><button type="button" className={v.stopLossMode === "USD" ? "active" : ""} onClick={() => change({ ...v, stopLossMode: "USD" })}>$</button><button type="button" className={v.stopLossMode === "PERCENT" ? "active" : ""} onClick={() => change({ ...v, stopLossMode: "PERCENT" })}>%</button></span></div>
+        <div className="stop-loss-fields"><Field label="Stoploss LONG" value={v.stopLossLong} set={(value) => change({ ...v, stopLossLong: value })} suffix={v.stopLossMode === "USD" ? "USDT" : "%"} /><Field label="Stoploss SHORT" value={v.stopLossShort} set={(value) => change({ ...v, stopLossShort: value })} suffix={v.stopLossMode === "USD" ? "USDT" : "%"} /></div>
+      </section>
+
+      {/* Smart Rescue keeps its existing behavior; only the collapsed card is visually compact. */}
       <section className={`smart-rescue-card ${v.smartRescueEnabled ? "enabled" : ""}`}>
         <label className="smart-rescue-toggle"><span><small>NIEUW · OPTIONELE DCA-MODUS</small><b>Smart Rescue DCA</b><em>Progressieve LONG-rescues · pas kopen na herstel</em></span><input type="checkbox" checked={v.smartRescueEnabled} onChange={(event) => change({ ...v, smartRescueEnabled: event.target.checked })} /></label>
         {v.smartRescueEnabled && <div className="smart-rescue-body">
@@ -350,7 +385,21 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     {readiness && <p className="strategy-message">Readiness: {Boolean(state.liveReady) || Boolean(readiness.liveReady) ? "LIVE READY" : "nog niet live ready"}</p>}{message && <p className="strategy-message">{message}</p>}
 
     <style>{`
-      #strategy-2-maker.botsettings-ref{--gold:#d6b55a;--green:#21d69a;--pink:#ff7892;background:radial-gradient(circle at 82% 4%,rgba(18,188,124,.13),transparent 34%),linear-gradient(180deg,#07110e,#030706);border:1px solid rgba(214,181,90,.54);border-radius:17px;padding:11px;box-shadow:0 18px 48px rgba(0,0,0,.36);overflow:hidden}
+      #strategy-2-maker.botsettings-ref{--gold:#d6b55a;--green:#21d69a;--pink:#ff5f78;background:radial-gradient(circle at 82% 4%,rgba(18,188,124,.13),transparent 34%),linear-gradient(180deg,#07110e,#030706);border:1px solid rgba(214,181,90,.54);border-radius:17px;padding:9px;box-shadow:0 18px 48px rgba(0,0,0,.36);overflow:hidden}
+      #strategy-2-maker.botsettings-ref .slot-overview{display:grid;gap:3px;margin:0 0 6px;padding:6px 7px 7px;border:1px solid rgba(214,181,90,.62);border-radius:11px;background:linear-gradient(180deg,rgba(2,18,13,.96),rgba(2,11,8,.98));box-shadow:inset 0 1px rgba(255,255,255,.02)}
+      #strategy-2-maker.botsettings-ref .slot-overview header{display:grid;grid-template-columns:22px minmax(0,1fr) auto auto;align-items:center;gap:6px;padding:0 1px 3px;border-bottom:1px solid rgba(255,255,255,.045)}
+      #strategy-2-maker.botsettings-ref .slot-overview header>div{display:grid;gap:0}#strategy-2-maker.botsettings-ref .slot-overview header b{font-size:9px}#strategy-2-maker.botsettings-ref .slot-overview header small{font-size:6.5px;color:#7e8d86}
+      #strategy-2-maker.botsettings-ref .slot-icon{display:grid;place-items:center;width:20px;height:20px;color:#31edaa;font-size:16px}#strategy-2-maker.botsettings-ref .slot-cross,#strategy-2-maker.botsettings-ref .slot-candidates{display:flex;align-items:center;gap:4px;min-height:22px;padding:0 7px;border:1px solid rgba(214,181,90,.28);border-radius:7px;color:#a8b3ad;font-size:6.5px;white-space:nowrap}#strategy-2-maker.botsettings-ref .slot-cross{color:#d7bd69}#strategy-2-maker.botsettings-ref .slot-cross b,#strategy-2-maker.botsettings-ref .slot-candidates b{font-size:7px;color:#d8e0dc}
+      #strategy-2-maker.botsettings-ref .slot-row{display:grid;grid-template-columns:48px minmax(70px,1fr) 58px 48px;align-items:center;gap:6px;min-height:18px;font-size:8px}#strategy-2-maker.botsettings-ref .slot-row strong{font-size:8.5px}#strategy-2-maker.botsettings-ref .slot-row>i{display:block;height:9px;padding:1px;border:1px solid currentColor;border-radius:999px;background:rgba(255,255,255,.025);overflow:hidden}#strategy-2-maker.botsettings-ref .slot-row>i u{display:block;height:100%;border-radius:999px;background:currentColor;box-shadow:0 0 7px currentColor;text-decoration:none}#strategy-2-maker.botsettings-ref .slot-row>b{text-align:right;color:#eaf2ee;font-size:8px}#strategy-2-maker.botsettings-ref .slot-row>em{text-align:right;font-style:normal;font-size:7.5px;font-weight:900}.slot-row.long{color:#53efaf}.slot-row.short{color:#ff6b82}.slot-row.total{color:#e4bb4d}.slot-dirty{grid-column:1/-1;color:#f0bd55!important;text-align:right}
+      #strategy-2-maker.botsettings-ref .live-settings-card{display:grid;gap:5px;margin-bottom:6px;padding:6px;border:1px solid rgba(214,181,90,.50);border-radius:11px;background:linear-gradient(180deg,rgba(5,24,17,.96),rgba(2,11,8,.97))}
+      #strategy-2-maker.botsettings-ref .live-power{margin:0!important;padding:0 2px 3px!important;min-height:29px!important;border:0!important;border-radius:0!important;background:transparent!important}#strategy-2-maker.botsettings-ref .live-power>span b{display:flex;align-items:center;gap:5px;font-size:10px}#strategy-2-maker.botsettings-ref .live-dot{width:9px;height:9px;border-radius:50%;background:#49e47f;box-shadow:0 0 8px rgba(73,228,127,.55)}#strategy-2-maker.botsettings-ref .live-power button{min-width:110px!important}
+      #strategy-2-maker.botsettings-ref .live-config-grid{display:grid;grid-template-columns:2fr 1fr .9fr .75fr .75fr .95fr .95fr;gap:3px;align-items:end}#strategy-2-maker.botsettings-ref .live-config-grid label{min-width:0;margin:0;gap:2px;font-size:6.5px;color:#b7c3bd}#strategy-2-maker.botsettings-ref .live-config-grid .field-wrap{border-radius:6px!important}#strategy-2-maker.botsettings-ref .live-config-grid input{height:28px!important;min-width:0!important;padding:0 6px!important;border:0!important;background:rgba(255,255,255,.035)!important;font-size:9px!important}#strategy-2-maker.botsettings-ref .leverage-caption{justify-self:end;margin-top:-2px;color:#73827b;font-size:6px}
+      #strategy-2-maker.botsettings-ref .short-pair-control{grid-column:1/-1;display:grid!important;grid-template-columns:26px minmax(0,1fr) auto;align-items:center!important;gap:7px!important;margin:0!important;padding:6px 8px!important;min-height:43px!important}#strategy-2-maker.botsettings-ref .short-pair-control .pair-icon{display:grid;place-items:center;width:24px;height:24px;color:#38eca8;font-size:18px}#strategy-2-maker.botsettings-ref .short-pair-control>span:nth-child(2){display:grid;gap:1px}#strategy-2-maker.botsettings-ref .short-pair-control button{min-width:78px}
+      #strategy-2-maker.botsettings-ref .stop-loss-card{grid-column:1/-1;display:grid;gap:5px;padding:6px 7px;border:1px solid rgba(214,181,90,.38);border-radius:11px;background:linear-gradient(180deg,rgba(3,20,14,.97),rgba(2,10,8,.98))}#strategy-2-maker.botsettings-ref .stop-loss-card.enabled{border-color:rgba(33,214,154,.52)}
+      #strategy-2-maker.botsettings-ref .stop-loss-head{display:grid;grid-template-columns:26px minmax(0,1fr) auto auto;align-items:center;gap:6px}#strategy-2-maker.botsettings-ref .stop-loss-icon{display:grid;place-items:center;width:23px;height:23px;border:1px solid rgba(47,237,169,.46);border-radius:8px;color:#4ef0b0;font-size:15px}#strategy-2-maker.botsettings-ref .stop-loss-head>span:nth-child(2){display:grid;gap:0}#strategy-2-maker.botsettings-ref .stop-loss-head b{font-size:10px}#strategy-2-maker.botsettings-ref .stop-loss-head small{font-size:6.5px;color:#87978f}
+      #strategy-2-maker.botsettings-ref .stop-loss-head>button{display:flex;align-items:center;gap:5px;min-width:65px;height:27px;padding:0 7px;border:1px solid rgba(93,116,105,.45);border-radius:999px;background:#111c18;color:#8c9a93;font-size:7px;font-weight:900}#strategy-2-maker.botsettings-ref .stop-loss-head>button i{width:15px;height:15px;border-radius:50%;background:#73817b}#strategy-2-maker.botsettings-ref .stop-loss-head>button.on{border-color:#22df9c;background:linear-gradient(90deg,#0b704e,#14c987);color:#fff}#strategy-2-maker.botsettings-ref .stop-loss-head>button.on i{background:#fff}
+      #strategy-2-maker.botsettings-ref .stop-loss-type{display:flex!important;align-items:center;gap:3px}#strategy-2-maker.botsettings-ref .stop-loss-type small{margin-right:2px}#strategy-2-maker.botsettings-ref .stop-loss-type button{width:27px;height:24px;border:1px solid rgba(72,110,93,.48);border-radius:6px;background:#0a1511;color:#96a49d;font-size:8px;font-weight:900}#strategy-2-maker.botsettings-ref .stop-loss-type button.active{border-color:#29e6a3;background:rgba(32,201,138,.35);color:#dcfff1}
+      #strategy-2-maker.botsettings-ref .stop-loss-fields{display:grid;grid-template-columns:1fr 1fr;gap:5px}#strategy-2-maker.botsettings-ref .stop-loss-fields label{margin:0;gap:2px;font-size:7px}#strategy-2-maker.botsettings-ref .stop-loss-fields input{height:27px!important;font-size:9px!important}
       #strategy-2-maker.botsettings-ref .strategy-title-row{margin-bottom:5px;align-items:center} #strategy-2-maker.botsettings-ref .strategy-title-row h2{margin:1px 0 0;font-size:21px;line-height:1} #strategy-2-maker.botsettings-ref .kicker{color:var(--gold);font-size:9px;letter-spacing:.16em}
       #strategy-2-maker.botsettings-ref .strategy-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:0 0 6px} #strategy-2-maker.botsettings-ref .strategy-facts span{padding:4px 3px;border:1px solid rgba(214,181,90,.22);border-radius:8px;background:rgba(255,255,255,.02);font-size:8.5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       #strategy-2-maker.botsettings-ref .compact-scan{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:3px 6px;padding:5px 7px;margin:0 0 6px;border:1px solid rgba(33,214,154,.18);border-radius:10px;background:rgba(3,17,13,.82);font-size:9px;align-items:center} #strategy-2-maker.botsettings-ref .compact-scan small,#strategy-2-maker.botsettings-ref .compact-scan em{grid-column:1/-1;font-size:8px;opacity:.72}

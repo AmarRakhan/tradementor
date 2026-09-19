@@ -51,6 +51,7 @@ from aster_smart_rescue import (
     validate_config as validate_smart_rescue_config,
 )
 from aster_smart_rescue_runtime import active_keys as smart_rescue_active_keys, run_gate as run_smart_rescue_gate
+from aster_stop_loss import run_stop_loss_gate
 
 ENGINE = _core.ENGINE
 max_contract_leverage = _core.max_contract_leverage
@@ -181,6 +182,10 @@ class MultiBbConfig(_core.MultiBbConfig):
     long_take_profit_value: float = .015
     short_take_profit_value: float = .015
     portfolio_tp_percent: float = 20.0
+    stop_loss_enabled: bool = False
+    stop_loss_mode: str = "PERCENT"
+    stop_loss_long: float = 0.0
+    stop_loss_short: float = 0.0
     pair_overrides: dict[str, dict[str, Any]] = field(default_factory=dict, compare=False)
     profit_lock_ladder_enabled: bool = False
     profit_lock_levels: tuple[tuple[float, float], ...] = DEFAULT_LEVELS
@@ -211,6 +216,10 @@ class MultiBbConfig(_core.MultiBbConfig):
             "long_take_profit_value": _positive_ratio(source,("longTakeProfitValue","takeProfitLong"),base.take_profit),
             "short_take_profit_value": _positive_ratio(source,("shortTakeProfitValue","takeProfitShort"),base.take_profit),
             "portfolio_tp_percent": _finite(source.get("portfolioTpPercent"),20.0),
+            "stop_loss_enabled": bool(source.get("stopLossEnabled", False)),
+            "stop_loss_mode": str(source.get("stopLossMode", "PERCENT")).strip().upper().replace("%", "PERCENT").replace("$", "USD"),
+            "stop_loss_long": _finite(source.get("stopLossLong"), 0.0),
+            "stop_loss_short": _finite(source.get("stopLossShort"), 0.0),
             "pair_overrides": _parse_pair_overrides(source.get("pairOverrides")),
             "profit_lock_ladder_enabled": profit_lock_enabled,
             "profit_lock_levels": normalize_levels(source.get("profitLockLevels")),
@@ -232,6 +241,8 @@ class MultiBbConfig(_core.MultiBbConfig):
         if any(not 0 <= x <= _MAX_PAIR_DCA for x in (self.max_dca_long,self.max_dca_short)): raise ValueError(f"LONG/SHORT max DCA moet tussen 0 en {_MAX_PAIR_DCA} liggen")
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_take_profit_value,self.short_take_profit_value)): raise ValueError("LONG/SHORT Take Profit moet positief zijn")
         if not math.isfinite(self.portfolio_tp_percent) or not 0 < self.portfolio_tp_percent <= 10000: raise ValueError("Portfolio TP percentage moet groter dan 0 zijn")
+        if self.stop_loss_mode not in {"USD","PERCENT"}: raise ValueError("Stoploss type moet USD of PERCENT zijn")
+        if self.stop_loss_enabled and (not math.isfinite(self.stop_loss_long) or self.stop_loss_long <= 0 or not math.isfinite(self.stop_loss_short) or self.stop_loss_short <= 0): raise ValueError("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat")
         if self.smart_rescue_enabled:
             validate_smart_rescue_config(
                 rescue_range_percent=self.smart_rescue_range_percent,
@@ -263,6 +274,10 @@ class MultiBbConfig(_core.MultiBbConfig):
             "longTakeProfitValue":self.long_take_profit_value, "shortTakeProfitValue":self.short_take_profit_value,
             "takeProfitLong":self.long_take_profit_value, "takeProfitShort":self.short_take_profit_value,
             "portfolioTpPercent":self.portfolio_tp_percent,
+            "stopLossEnabled":self.stop_loss_enabled,
+            "stopLossMode":self.stop_loss_mode,
+            "stopLossLong":self.stop_loss_long,
+            "stopLossShort":self.stop_loss_short,
             "profitLockLadderEnabled":self.profit_lock_ladder_enabled,
             "profitLockLevels":public_levels(self.profit_lock_levels),
             "profitLockPrimarySide":"LONG" if self.profit_lock_ladder_enabled else None,
@@ -456,6 +471,29 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     account=kwargs["account"]; positions=kwargs["positions"]; open_orders=kwargs["open_orders"]
     timestamp_ms=kwargs["timestamp_ms"]; dry_run=bool(kwargs.get("dry_run",False)); order_budget=kwargs.get("order_budget"); before_order=kwargs.get("before_order")
 
+    def guarded_before_order(intent:Any)->Any:
+        assert_order_allowed(runtime_ref,intent,client=client)
+        if before_order is not None:
+            try: return before_order(intent)
+            except TypeError: return before_order(intent,None)
+        return None
+
+    # User-configured Stoploss is the safety exit and therefore evaluates before
+    # Portfolio TP, Profit Lock, Smart Rescue, normal TP, DCA and refill.
+    stop_loss = run_stop_loss_gate(
+        client=client, ref=runtime_ref, raw_state=raw_state, settings=settings, uid=uid,
+        account=account, positions=positions, open_orders=open_orders, timestamp_ms=timestamp_ms,
+        dry_run=dry_run, order_budget=order_budget, before_order=guarded_before_order,
+    )
+    if stop_loss.handled:
+        report={"engine":ENGINE,"configVersion":settings.version,"status":"simulated" if dry_run else "running",
+            "action":"STOP_LOSS","entryStatus":str(stop_loss.report.get("status","WAITING")),
+            "entryReason":"Stoploss heeft absolute safety-prioriteit op TP, DCA en nieuwe entries",
+            "ordersSent":stop_loss.orders_sent,"actions":stop_loss.report.get("actions",[]),
+            "stopLoss":stop_loss.report,"stopLossEnabled":True}
+        if not dry_run: ref.set({"multiBbReport":report,"stopLossReport":stop_loss.report},merge=True)
+        return report
+
     # Profit Lock Ladder owns the cycle exit while enabled. Existing TP settings
     # stay persisted but cannot close the LONG and accidentally leave its hedge naked.
     effective_tp_mode = "OFF" if settings.profit_lock_ladder_enabled else settings.take_profit_mode
@@ -492,13 +530,6 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         raw_state=profit_lock.raw_state; account=profit_lock.account; positions=profit_lock.positions; open_orders=profit_lock.open_orders
         order_budget=max(0,(15 if order_budget is None else int(order_budget))-profit_lock.orders_sent)
 
-    def guarded_before_order(intent:Any)->Any:
-        assert_order_allowed(runtime_ref,intent,client=client)
-        if before_order is not None:
-            try: return before_order(intent)
-            except TypeError: return before_order(intent,None)
-        return None
-
     smart_rescue=run_smart_rescue_gate(client=client,ref=runtime_ref,raw_state=raw_state,settings=settings,uid=uid,
         account=account,positions=positions,open_orders=open_orders,timestamp_ms=timestamp_ms,dry_run=dry_run,
         order_budget=order_budget,before_order=guarded_before_order)
@@ -534,7 +565,10 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         "smartRescueRangePercent":settings.smart_rescue_range_percent,
         "smartRescueDcaCount":settings.smart_rescue_dca_count,
         "smartRescueOrderGrowthMultiplier":settings.smart_rescue_order_growth_multiplier,
-        "smartRescueTrailingRecoveryPercent":settings.smart_rescue_trailing_recovery_percent}
+        "smartRescueTrailingRecoveryPercent":settings.smart_rescue_trailing_recovery_percent,
+        "stopLossEnabled":settings.stop_loss_enabled,"stopLossMode":settings.stop_loss_mode,
+        "stopLossLong":settings.stop_loss_long,"stopLossShort":settings.stop_loss_short,
+        "maximumLeverage":settings.maximum_leverage}
     core_kwargs["ref"]=_CoreWriteProxy(runtime_ref,extra,settings=settings,timestamp_ms=timestamp_ms)
     try: report=_core.run_multi_bb_step(settings=_PairAwareSettings(runtime_settings,blocked_side,blocked_count,smart_keys),**core_kwargs)
     except PortfolioCycleOrderBlocked as exc:

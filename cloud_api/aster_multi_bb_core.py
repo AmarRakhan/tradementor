@@ -39,6 +39,7 @@ class MultiBbConfig:
     short_slots: int = 10
     short_requires_long_enabled: bool = False
     minimum_leverage: int = 50
+    maximum_leverage: int | None = None
     bollinger_entry_filter_15m_enabled: bool = False
     bollinger_entry_filter_timeframe: str = DEFAULT_TIMEFRAME
     entry_margin_usd: float = 5.0
@@ -59,6 +60,8 @@ class MultiBbConfig:
     def from_mapping(cls, raw: dict[str, Any] | None) -> "MultiBbConfig":
         raw = raw or {}
         minimum_leverage=_i(raw.get("minimumLeverage", raw.get("leverage")), 50)
+        maximum_raw=raw.get("maximumLeverage")
+        maximum_leverage=None if maximum_raw is None or str(maximum_raw).strip() == "" else _i(maximum_raw)
         entry_margin_usd=_f(raw.get("entryMarginUsd", raw.get("baseMarginUsd")), 5.0)
         entry_notional_usd=_f(raw.get("entryNotionalUsd", raw.get("baseNotional")), entry_margin_usd * max(1, minimum_leverage))
         asymmetric_enabled=bool(raw.get("asymmetricHedgeModeEnabled", False))
@@ -84,6 +87,7 @@ class MultiBbConfig:
             short_slots=_i(raw.get("shortSlots", raw.get("maximumShortPositions")), 10),
             short_requires_long_enabled=bool(raw.get("shortRequiresLongEnabled", raw.get("short_requires_long_enabled", False))),
             minimum_leverage=minimum_leverage,
+            maximum_leverage=maximum_leverage,
             bollinger_entry_filter_15m_enabled=bool(raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False))),
             bollinger_entry_filter_timeframe=normalize_bollinger_timeframe(raw.get("bollingerEntryFilterTimeframe", raw.get("bollinger_entry_filter_timeframe", DEFAULT_TIMEFRAME))),
             entry_margin_usd=entry_margin_usd,
@@ -110,6 +114,8 @@ class MultiBbConfig:
         if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
         if not 1 <= self.minimum_leverage <= 300: raise ValueError("Minimum leverage moet tussen 1x en 300x liggen")
+        if self.maximum_leverage is not None and not 1 <= self.maximum_leverage <= 300: raise ValueError("Maximum leverage moet tussen 1x en 300x liggen")
+        if self.maximum_leverage is not None and self.maximum_leverage < self.minimum_leverage: raise ValueError("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage")
         if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-bedrag en DCA-margin moeten positief zijn")
         if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
@@ -124,7 +130,7 @@ class MultiBbConfig:
         return self
 
     def public_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "engine": ENGINE, "strategyKind": ENGINE, "name": self.name, "version": self.version, "mode": self.mode,
             "universeTopN": self.universe_top_n, "maximumPositions": self.maximum_positions,
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
@@ -138,7 +144,11 @@ class MultiBbConfig:
             "manualSymbolSelectionEnabled": self.manual_symbol_selection_enabled,
             "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in self.manual_symbols],
         }
-
+        # Absence means legacy behavior: use the pair maximum. Never invent a cap
+        # for accounts that have not explicitly saved Maximum leverage.
+        if self.maximum_leverage is not None:
+            result["maximumLeverage"] = self.maximum_leverage
+        return result
 
 
 def position_action_preview(*, row: dict[str, Any], state: dict[str, Any], settings: MultiBbConfig, account_equity: float = 0.0) -> dict[str, Any]:
@@ -205,9 +215,9 @@ def rank_top_volume(tickers: list[dict[str, Any]], exchange_info: dict[str, Any]
     return ranked[:top_n]
 
 
-def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str, minimum_leverage: int) -> tuple[PairExecutionPlan, dict[str, Any]]:
+def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str, minimum_leverage: int, maximum_leverage: int | None = None) -> tuple[PairExecutionPlan, dict[str, Any]]:
     symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
-    resolved = resolve_entry(payload, symbol, configured_minimum=minimum_leverage,
+    resolved = resolve_entry(payload, symbol, configured_minimum=minimum_leverage, configured_maximum=maximum_leverage,
         entry_margin_usd=entry_margin_usd, entry_notional_usd=entry_notional_usd, entry_sizing_mode=entry_sizing_mode)
     plan = plan_pair(row, rows, price, resolved["orderNotional"], accepted_leverage=int(resolved["leverage"]))
     return plan, resolved
@@ -220,12 +230,13 @@ def _plan_asymmetric_entries(client: Any, row: dict[str, Any], price: float, set
     LONG start margin. Brand-new pairs never fall below the configured minimum.
     """
     symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
-    levels = sorted({_i(x.get("initialLeverage")) for x in rows if _i(x.get("initialLeverage")) >= settings.minimum_leverage}, reverse=True)
-    if not levels:
-        maximum=max((_i(x.get("initialLeverage")) for x in rows),default=0)
-        raise ValueError(f"{symbol}: max {maximum}x < minimum {settings.minimum_leverage}x")
+    exchange_maximum=max((_i(x.get("initialLeverage")) for x in rows),default=0)
+    configured_maximum=getattr(settings, "maximum_leverage", None)
+    maximum=exchange_maximum if configured_maximum is None else min(exchange_maximum, int(configured_maximum))
+    if maximum < settings.minimum_leverage:
+        raise ValueError(f"{symbol}: max {exchange_maximum}x < minimum {settings.minimum_leverage}x")
     last_error: Exception | None = None
-    for leverage in levels:
+    for leverage in range(maximum, settings.minimum_leverage - 1, -1):
         if settings.entry_sizing_mode == "margin":
             long_notional=settings.entry_margin_usd * leverage
             short_notional=settings.entry_margin_usd * settings.short_start_multiplier * leverage
@@ -236,9 +247,9 @@ def _plan_asymmetric_entries(client: Any, row: dict[str, Any], price: float, set
             long_plan = plan_pair(row, rows, price, long_notional, accepted_leverage=leverage)
             short_plan = plan_pair(row, rows, price, short_notional, accepted_leverage=leverage, existing_contract_notional=long_plan.notional_per_leg)
             long_resolved={"leverage":leverage,"orderNotional":float(long_plan.notional_per_leg),"projectedNotional":float(long_plan.notional_per_leg),
-                "exchangeMaxLeverage":leverage,"configuredMinimum":settings.minimum_leverage,"forcedBelowConfiguredMinimum":False}
+                "exchangeMaxLeverage":exchange_maximum,"configuredMinimum":settings.minimum_leverage,"configuredMaximum":configured_maximum,"forcedBelowConfiguredMinimum":False}
             short_resolved={"leverage":leverage,"orderNotional":float(short_plan.notional_per_leg),"projectedNotional":float(long_plan.notional_per_leg+short_plan.notional_per_leg),
-                "exchangeMaxLeverage":leverage,"configuredMinimum":settings.minimum_leverage,"forcedBelowConfiguredMinimum":False}
+                "exchangeMaxLeverage":exchange_maximum,"configuredMinimum":settings.minimum_leverage,"configuredMaximum":configured_maximum,"forcedBelowConfiguredMinimum":False}
             return long_plan, short_plan, long_resolved, short_resolved
         except Exception as exc:
             last_error = exc
@@ -276,7 +287,7 @@ def leverage_tier_preview(*, client: Any, symbol: str, settings: MultiBbConfig) 
     mark = _f((current or {}).get("markPrice"), _f((current or {}).get("entryPrice")))
     qty = abs(_f((current or {}).get("positionAmt"))); current_notional = qty * mark if qty > 0 and mark > 0 else 0.0
     current_leverage = max(0, _i((current or {}).get("leverage")))
-    preview = tier_preview(payload, symbol, configured_minimum=settings.minimum_leverage,
+    preview = tier_preview(payload, symbol, configured_minimum=settings.minimum_leverage, configured_maximum=settings.maximum_leverage,
         entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd,
         entry_sizing_mode=settings.entry_sizing_mode, dca_margin_usd=settings.dca_margin_usd,
         current_notional=current_notional, current_leverage=current_leverage)
@@ -441,7 +452,7 @@ def _next_entry_side(*, long_count: int, short_count: int, long_slots: int, shor
     return "LONG" if long_fill<=short_fill else "SHORT"
 
 
-def _close_evidence(client: Any, uid: str, state: dict[str, Any], row: dict[str, Any], side: str, mark: float) -> CloseEvidence:
+def _close_evidence(client: Any, uid: str, state: dict[str, Any], row: dict[str, Any], side: str, mark: float, reason: str = "POSITION_TP") -> CloseEvidence:
     symbol = str(row.get("symbol", "")).upper(); qty = abs(_f(row.get("positionAmt"))); entry = _f(row.get("entryPrice"))
     start = _i(state.get("cycleStartedAtMs"), int(time.time() * 1000) - 7 * 86400_000)
     fills = client.user_trades(symbol, start_time=start, limit=1000)
@@ -450,7 +461,7 @@ def _close_evidence(client: Any, uid: str, state: dict[str, Any], row: dict[str,
     funding = sum(_f(x.get("income")) for x in income if str(x.get("incomeType", "")).upper() == "FUNDING_FEE")
     gross = (mark - entry) * qty if side == "LONG" else (entry - mark) * qty
     notional = mark * qty
-    return CloseEvidence(uid, symbol, side, "multi_bb_v1", "POSITION_TP", qty, entry, mark, gross,
+    return CloseEvidence(uid, symbol, side, "multi_bb_v1", reason, qty, entry, mark, gross,
                          entry_fees, notional * .0005, funding, notional * .0005,
                          ownership_reliable=True, fills_reliable=True, prices_reliable=True, costs_reliable=True)
 
@@ -1122,7 +1133,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         "orphanContractLeverage": existing_leverage}
                 short_plan = None; short_tier = None
             else:
-                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage)
+                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage, maximum_leverage=settings.maximum_leverage)
                 short_plan = None; short_tier = None
         except Exception as exc:
             reason = str(exc)
@@ -1130,7 +1141,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=plan_skip reason={reason}", flush=True)
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=plan_skip reason={reason}", flush=True)
-            required_margin = _minimum_entry_margin(info_map[symbol], prices[symbol], maximum)
+            effective_entry_leverage = min(maximum, settings.maximum_leverage) if settings.maximum_leverage is not None else maximum
+            required_margin = _minimum_entry_margin(info_map[symbol], prices[symbol], effective_entry_leverage)
             action = {"kind": "ENTRY_SKIP", "symbol": symbol, "reason": reason}
             if "minimale exchangeorder" in reason and required_margin is not None:
                 action["minimumEntryMarginUsd"] = required_margin

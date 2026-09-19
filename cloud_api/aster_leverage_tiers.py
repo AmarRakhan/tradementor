@@ -74,43 +74,46 @@ def _levels(payload: list[dict[str, Any]], symbol: str) -> list[int]:
 
 
 def resolve_entry(payload: list[dict[str, Any]], symbol: str, *, configured_minimum: int,
+                  configured_maximum: int | None = None,
                   entry_margin_usd: float, entry_notional_usd: float,
                   entry_sizing_mode: str) -> dict[str, Any]:
     """Choose the highest self-consistent Aster leverage for a brand-new leg.
 
-    In margin sizing, notional depends on leverage, so every Aster tier maximum
-    is tested against the notional it would create. ``configured_minimum`` is a
-    hard entry filter: a brand-new position is never opened below it.
+    configured_minimum remains the eligibility floor. configured_maximum is an
+    optional user cap for new entries only. A missing cap deliberately preserves
+    the established behavior: use the highest valid Aster leverage.
     """
     mode = str(entry_sizing_mode).lower().strip()
     if mode not in {"margin", "notional"}:
         raise ValueError("entry sizing mode is ongeldig")
     levels = _levels(payload, symbol)
     minimum = max(1, int(configured_minimum))
+    exchange_maximum = max(levels)
+    maximum = exchange_maximum if configured_maximum is None else min(exchange_maximum, int(configured_maximum))
+    if maximum < minimum:
+        raise AsterValidationError(f"{str(symbol).upper()}: max {exchange_maximum}x < minimum {minimum}x")
     if mode == "notional":
         planned = _d(entry_notional_usd)
         allowed = maximum_for_notional(payload, symbol, planned)
-        chosen = min(max(levels), allowed)
+        chosen = min(maximum, allowed)
         if chosen < minimum:
             raise AsterValidationError(f"{str(symbol).upper()}: max {chosen}x < minimum {minimum}x")
         return {"leverage": chosen, "orderNotional": float(planned), "projectedNotional": float(planned),
                 "exchangeMaxLeverage": allowed, "configuredMinimum": minimum,
-                "forcedBelowConfiguredMinimum": False}
+                "configuredMaximum": configured_maximum, "forcedBelowConfiguredMinimum": False}
     margin = _d(entry_margin_usd)
     if margin <= 0:
         raise ValueError("entry margin moet positief zijn")
-    for chosen in levels:
-        if chosen < minimum:
-            continue
+    # Aster accepts integer leverage values. Try the configured cap downward;
+    # margin sizing changes notional and can therefore change the active tier.
+    for chosen in range(maximum, minimum - 1, -1):
         planned = margin * chosen
         allowed = maximum_for_notional(payload, symbol, planned)
         if chosen <= allowed:
             return {"leverage": chosen, "orderNotional": float(planned), "projectedNotional": float(planned),
                     "exchangeMaxLeverage": allowed, "configuredMinimum": minimum,
-                    "forcedBelowConfiguredMinimum": False}
-    maximum = max(levels)
-    raise AsterValidationError(f"{str(symbol).upper()}: max {maximum}x < minimum {minimum}x of geen zelf-consistente tier")
-
+                    "configuredMaximum": configured_maximum, "forcedBelowConfiguredMinimum": False}
+    raise AsterValidationError(f"{str(symbol).upper()}: max {exchange_maximum}x < minimum {minimum}x of geen zelf-consistente tier")
 
 def resolve_dca(payload: list[dict[str, Any]], symbol: str, *, current_notional: float,
                 current_leverage: int, dca_margin_usd: float, configured_minimum: int) -> dict[str, Any]:
@@ -147,6 +150,7 @@ def resolve_dca(payload: list[dict[str, Any]], symbol: str, *, current_notional:
 
 
 def tier_preview(payload: list[dict[str, Any]], symbol: str, *, configured_minimum: int,
+                 configured_maximum: int | None = None,
                  entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str,
                  dca_margin_usd: float, current_notional: float = 0.0,
                  current_leverage: int = 0) -> dict[str, Any]:
@@ -155,7 +159,7 @@ def tier_preview(payload: list[dict[str, Any]], symbol: str, *, configured_minim
         base_notional = float(current_notional); base_leverage = int(current_leverage)
         entry = None
     else:
-        entry = resolve_entry(payload, symbol, configured_minimum=configured_minimum,
+        entry = resolve_entry(payload, symbol, configured_minimum=configured_minimum, configured_maximum=configured_maximum,
                               entry_margin_usd=entry_margin_usd, entry_notional_usd=entry_notional_usd,
                               entry_sizing_mode=entry_sizing_mode)
         base_notional = float(entry["projectedNotional"]); base_leverage = int(entry["leverage"])
@@ -174,4 +178,4 @@ def tier_preview(payload: list[dict[str, Any]], symbol: str, *, configured_minim
     return {"symbol": str(symbol).upper(), "source": "/fapi/v3/leverageBracket", "tiers": tiers,
             "currentNotional": float(current_notional), "currentLeverage": int(current_leverage),
             "entryPlan": entry, "nextTier": next_tier, "estimatedDcasToNextTier": estimated,
-            "configuredMinimum": int(configured_minimum)}
+            "configuredMinimum": int(configured_minimum), "configuredMaximum": configured_maximum}
