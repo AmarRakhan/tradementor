@@ -2,17 +2,14 @@
    A file_00000000a7bc82438e4e1d5f076b47c9
    B file_00000000d9bc81f49ce775b27ff69a7f
    C file_000000006ef082468c8b3f46e9a0057b
-   D file_000000009fec821084026a5551398488 */
+   D file_000000009fec821084026a5551398488
+   E file_00000000aa6c8210baf1b0ac8f94d18e (Hedge Dekking summary card) */
 
 .aps-hedge-row{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1.75fr);gap:7px;margin-top:7px}
-.aps-hedge-card{min-width:0;min-height:69px;display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:7px;margin:0;padding:8px 10px;border:1px solid rgba(37,239,145,.74);border-radius:11px;color:#f7f7f1;background:radial-gradient(circle at 8% 45%,rgba(35,239,148,.13),transparent 42%),linear-gradient(145deg,rgba(2,49,29,.9),rgba(1,24,15,.94));box-shadow:inset 0 1px 0 rgba(107,255,183,.05),0 0 16px rgba(37,239,145,.07);font-family:inherit;text-align:left;cursor:pointer}
+.aps-hedge-card{min-width:0;min-height:69px;display:grid;grid-template-columns:34px minmax(0,1fr);align-items:center;gap:8px;margin:0;padding:8px 11px;border:1px solid rgba(216,174,65,.42);border-radius:11px;color:#f7f7f1;background:linear-gradient(145deg,rgba(4,35,23,.88),rgba(1,22,14,.95));box-shadow:inset 0 1px 0 rgba(105,224,158,.045);font-family:inherit;text-align:left;cursor:pointer}
 .aps-hedge-card:active{transform:translateY(1px)}
-.aps-hedge-shield{display:grid;place-items:center;color:#2df39a}.aps-hedge-shield svg{width:31px;height:31px;filter:drop-shadow(0 0 6px rgba(37,239,145,.22))}
-.aps-hedge-copy{min-width:0;display:grid;align-content:center}.aps-hedge-copy small{display:flex;align-items:center;gap:4px;color:#ddd8cc;font-size:7px;font-weight:900;letter-spacing:.035em;white-space:nowrap}.aps-hedge-copy small i{display:grid;place-items:center;width:11px;height:11px;border:1px solid rgba(221,216,204,.6);border-radius:50%;font-size:7px;font-style:normal}.aps-hedge-copy strong{margin-top:2px;color:#2df39a;font-size:24px;line-height:1;font-weight:950;letter-spacing:-.035em}
-.aps-hedge-goal{display:grid;justify-items:start;gap:4px}.aps-hedge-goal small{color:#b6bbb4;font-size:7px;font-weight:750;white-space:nowrap}.aps-hedge-goal b{padding:4px 7px;border:1px solid rgba(37,239,145,.22);border-radius:999px;color:#38ef9a;background:rgba(11,121,69,.19);font-size:7px;line-height:1;font-weight:900;white-space:nowrap}
-.aps-hedge-above_target{border-color:rgba(232,184,61,.82)}.aps-hedge-above_target .aps-hedge-copy strong,.aps-hedge-above_target .aps-hedge-shield{color:#efbd49}.aps-hedge-above_target .aps-hedge-goal b{color:#efbd49;border-color:rgba(232,184,61,.28);background:rgba(114,78,9,.18)}
-.aps-hedge-below_target{border-color:rgba(255,91,122,.8)}.aps-hedge-below_target .aps-hedge-copy strong,.aps-hedge-below_target .aps-hedge-shield{color:#ff6683}.aps-hedge-below_target .aps-hedge-goal b{color:#ff7b94;border-color:rgba(255,91,122,.3);background:rgba(114,16,42,.2)}
-.aps-hedge-unavailable{border-color:rgba(145,154,147,.34);filter:saturate(.5)}
+.aps-hedge-shield{display:grid;place-items:center;color:#d8b044}.aps-hedge-shield svg{width:30px;height:30px;filter:none}
+.aps-hedge-copy{min-width:0;display:grid;align-content:center}.aps-hedge-copy small{display:block;overflow:hidden;text-overflow:ellipsis;color:#c8c4b7;font-size:7px;font-weight:850;letter-spacing:.035em;white-space:nowrap}.aps-hedge-copy strong{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;color:#e3b84d;font-size:22px;line-height:1;font-weight:900;letter-spacing:-.025em;white-space:nowrap}
 
 .aps-exposure-strip{min-width:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid rgba(58,180,111,.25);border-radius:11px;background:rgba(1,25,15,.74);overflow:hidden}
 .aps-exposure{min-width:0;display:grid;align-content:center;gap:2px;padding:8px 8px;border-right:1px solid rgba(225,185,72,.15)}.aps-exposure:last-child{border-right:0}.aps-exposure small{overflow:hidden;text-overflow:ellipsis;color:#d6d5ce;font-size:6.2px;font-weight:850;letter-spacing:.035em;white-space:nowrap}.aps-exposure strong{overflow:hidden;text-overflow:ellipsis;color:#f2f1eb;font-size:10.2px;line-height:1.08;font-weight:900;white-space:nowrap}.aps-exposure span{font-size:6.2px;font-weight:900;letter-spacing:.055em}.aps-exposure-long span{color:#2cec98}.aps-exposure-short span{color:#ff6783}.aps-exposure-net span{color:#edbd49}.aps-net-long strong,.aps-net-long span{color:#35ed99}.aps-net-short strong,.aps-net-short span{color:#ff6783}.aps-net-flat strong{color:#e8bd52}
@@ -43,7 +40,7 @@
 
 @media(max-width:640px){
   .aps-hedge-row{gap:5px;margin-top:6px;grid-template-columns:minmax(0,1.08fr) minmax(0,1.72fr)}
-  .aps-hedge-card{min-height:60px;grid-template-columns:27px minmax(0,1fr) auto;gap:5px;padding:6px 7px;border-radius:9px}.aps-hedge-shield svg{width:25px;height:25px}.aps-hedge-copy small{font-size:5.7px}.aps-hedge-copy small i{width:9px;height:9px;font-size:5px}.aps-hedge-copy strong{font-size:19px}.aps-hedge-goal{gap:3px}.aps-hedge-goal small{font-size:5.8px}.aps-hedge-goal b{padding:3px 5px;font-size:5.8px}
+  .aps-hedge-card{min-height:60px;grid-template-columns:27px minmax(0,1fr);gap:6px;padding:6px 8px;border-radius:9px}.aps-hedge-shield svg{width:25px;height:25px}.aps-hedge-copy small{font-size:5.7px}.aps-hedge-copy strong{font-size:19px}
   .aps-exposure{padding:6px 5px}.aps-exposure small{font-size:5px}.aps-exposure strong{font-size:8.5px}.aps-exposure span{font-size:5.2px}
   .aps-profit-copy em{font-size:5.8px}
   .aps-sheet-backdrop{padding:18px 7px max(7px,env(safe-area-inset-bottom))}.aps-sheet{max-height:91dvh;padding:14px;border-radius:21px 21px 15px 15px}.aps-sheet-title h3,.aps-close-heading h3{font-size:21px}.aps-sheet-title p{font-size:10px}.aps-big-shield{width:45px;height:45px}.aps-big-shield svg{width:41px;height:41px}
@@ -54,6 +51,6 @@
 }
 
 @media(max-width:380px){
-  .aps-hedge-row{grid-template-columns:1fr;gap:4px}.aps-hedge-card{grid-template-columns:26px minmax(0,1fr) auto;min-height:52px}.aps-exposure-strip{min-height:45px}.aps-exposure strong{font-size:8px}
+  .aps-hedge-row{grid-template-columns:1fr;gap:4px}.aps-hedge-card{grid-template-columns:26px minmax(0,1fr);min-height:52px}.aps-exposure-strip{min-height:45px}.aps-exposure strong{font-size:8px}
   .aps-sheet{padding:12px}.aps-hedge-overview{grid-template-columns:112px minmax(0,1fr);gap:8px}.aps-coverage-ring{width:108px}.aps-coverage-ring>div{width:84px}.aps-coverage-ring strong{font-size:25px}.aps-hedge-target-card p strong{font-size:16px}.aps-close-buttons{gap:6px}.aps-close-buttons button{font-size:12px}
 }
