@@ -147,7 +147,26 @@ jobs:
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
+      - name: Select exact image strategy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE_COMMIT" = "$PREVIOUS_SOURCE_COMMIT" ]; then
+            PREVIOUS_IMAGE="$(gcloud run revisions describe "$PREVIOUS_REVISION" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --format='value(spec.containers[0].image)')"
+            test -n "$PREVIOUS_IMAGE"
+            echo "REUSE_LIVE_IMAGE=true" >> "$GITHUB_ENV"
+            echo "IMAGE=$PREVIOUS_IMAGE" >> "$GITHUB_ENV"
+            echo "DEPLOYMENT_PROOF_MODE=existing-live-image" >> "$GITHUB_ENV"
+          else
+            echo "REUSE_LIVE_IMAGE=false" >> "$GITHUB_ENV"
+            echo "DEPLOYMENT_PROOF_MODE=new-image" >> "$GITHUB_ENV"
+          fi
+
       - name: Build and push backend image
+        if: env.REUSE_LIVE_IMAGE != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -266,6 +285,7 @@ jobs:
             echo "- Live revision: $CANDIDATE_REVISION"
             echo "- Previous revision: $PREVIOUS_REVISION"
             echo "- Health: **ready**"
+            echo "- Image mode: $DEPLOYMENT_PROOF_MODE"
             echo "- Rollback point retained: $PREVIOUS_REVISION"
           } > "$RUNNER_TEMP/deploy-result.md"
           gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/deploy-result.md"
