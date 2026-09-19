@@ -66,13 +66,14 @@ jobs:
           trap cleanup EXIT
 
           SCRIPT_B64="$(base64 -w0 <<'PY'
-          import hashlib,json
+          import hashlib,os
           import firebase_admin
           from firebase_admin import auth
           from google.cloud import firestore
 
           project='tradementor-production'
           target_digest='b4dfb7301bb40602e4b2225367437495652a360f6d4a071b8851c6324a82556d'
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
           if not firebase_admin._apps:
               firebase_admin.initialize_app(options={'projectId':project})
           db=firestore.Client(project=project)
@@ -88,57 +89,72 @@ jobs:
               if uid is None:
                   page=page.get_next_page()
           if not uid:
-              print('LONG_REFILL_ACCOUNT '+json.dumps({"match":False},sort_keys=True),flush=True)
-              raise SystemExit(0)
+              raise SystemExit(1)
 
-          snap=db.collection('asterStrategy2').document(uid).get()
-          raw=(snap.to_dict() or {}) if snap.exists else {}
+          raw=(db.collection('asterStrategy2').document(uid).get().to_dict() or {})
           settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
           report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
           state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
 
-          safe_reasons=report.get('entrySkipReasons') if isinstance(report.get('entrySkipReasons'),dict) else {}
-          result={
-              "match":True,
-              "enabled":bool(raw.get('enabled')),
-              "monitor":bool(raw.get('monitor')),
-              "phase":str(raw.get('phase') or ''),
-              "engine":str(settings.get('engine',settings.get('strategyKind',''))),
-              "maximumPositions":settings.get('maximumPositions'),
-              "longSlots":settings.get('longSlots'),
-              "shortSlots":settings.get('shortSlots'),
-              "universeTopN":settings.get('universeTopN'),
-              "minimumLeverage":settings.get('minimumLeverage'),
-              "entryMarginUsd":settings.get('entryMarginUsd'),
-              "shortRequiresLongEnabled":bool(settings.get('shortRequiresLongEnabled',False)),
-              "bollingerEntryFilter15mEnabled":bool(settings.get('bollingerEntryFilter15mEnabled',False)),
-              "asymmetricHedgeModeEnabled":bool(settings.get('asymmetricHedgeModeEnabled',False)),
-              "reportActiveLong":report.get('activeLong'),
-              "reportActiveShort":report.get('activeShort'),
-              "reportRemainingLong":report.get('remainingLong'),
-              "reportRemainingShort":report.get('remainingShort'),
-              "entryStatus":report.get('entryStatus'),
-              "entryReason":report.get('entryReason'),
-              "candidateCount":report.get('candidateCount'),
-              "scannedCandidateCount":report.get('scannedCandidateCount'),
-              "executableCandidateCount":report.get('executableCandidateCount'),
-              "accountPositionCount":report.get('accountPositionCount'),
-              "accountRemainingCapacity":report.get('accountRemainingCapacity'),
-              "strategyPositionCount":report.get('strategyPositionCount'),
-              "entrySkipReasons":safe_reasons,
-              "stateCount":len(state),
+          def b(v): return 1 if v is True else 0
+          def i(v,default=0):
+              try:return int(round(float(v)))
+              except Exception:return default
+          def pack(a,bv):
+              return min(max(i(a),0),14)*15+min(max(i(bv),0),14)
+
+          flags=(b(settings.get('asymmetricHedgeModeEnabled'))
+                 | (b(settings.get('shortRequiresLongEnabled'))<<1)
+                 | (b(settings.get('bollingerEntryFilter15mEnabled'))<<2)
+                 | (b(raw.get('enabled'))<<3)
+                 | (b(raw.get('monitor'))<<4))
+          status_map={
+              'WAITING_CAPACITY':1,'WAITING_ACCOUNT_CAP':2,'WAITING_BOLLINGER_ENTRY':3,
+              'ORDER_REJECTED':4,'READY_FOR_ENTRY':5,'PARTIAL_FILL_SUBMITTED':6,
+              'ENTRY_SUBMITTED':7,'POSITION_ALREADY_OPEN':8,'WAITING_BUDGET':9,
+              'WAITING_EXCHANGE':10,'PARTIAL_FILL_PLANNED':11,'ENTRY_PLANNED':12,
           }
-          print('LONG_REFILL_ACCOUNT '+json.dumps(result,sort_keys=True,separators=(',',':')),flush=True)
+          reasons=report.get('entrySkipReasons') if isinstance(report.get('entrySkipReasons'),dict) else {}
+          reason_mask=0
+          for key in reasons:
+              s=str(key).upper()
+              if 'LEVERAGE' in s: reason_mask|=1
+              if 'MARGIN' in s or 'BUDGET' in s: reason_mask|=2
+              if 'SHORT_REQUIRES_LONG' in s: reason_mask|=4
+              if 'SLOT_CAP' in s or 'CAPACITY' in s: reason_mask|=8
+              if 'NOTIONAL' in s or '5018' in s: reason_mask|=16
+              if 'BB_' in s or 'BOLLINGER' in s or 'PRICE_' in s: reason_mask|=32
+
+          metrics={
+              0:1,
+              1:flags,
+              2:min(max(i(settings.get('minimumLeverage')),0),249),
+              3:min(max(i(float(settings.get('entryMarginUsd') or 0)*100),0),249),
+              4:min(max(i(settings.get('universeTopN')),0),249),
+              5:pack(settings.get('longSlots'),settings.get('shortSlots')),
+              6:pack(report.get('activeLong'),report.get('activeShort')),
+              7:pack(report.get('remainingLong'),report.get('remainingShort')),
+              8:status_map.get(str(report.get('entryStatus') or ''),0),
+              9:min(max(i(report.get('accountPositionCount')),0),249),
+              10:min(max(i(report.get('accountRemainingCapacity')),0),249),
+              11:min(max(i(report.get('candidateCount')),0),249),
+              12:min(max(i(report.get('scannedCandidateCount')),0),249),
+              13:min(max(i(report.get('executableCandidateCount')),0),249),
+              14:min(max(len(state),0),249),
+              15:min(max(reason_mask,0),249),
+          }
+          raise SystemExit(metrics.get(idx,0)+1)
           PY
           )"
 
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
-
-          sleep 3
-          gcloud logging read \
-            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"LONG_REFILL_ACCOUNT\"" \
-            --project "$GCP_PROJECT_ID" --freshness=15m --limit=10 --order=desc --format='value(textPayload)' | head -n 1
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 16 --parallelism 4 --max-retries 0 --task-timeout 180s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          STATUS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
+          printf 'LONG_REFILL_ACCOUNT_STATUS %s\n' "$STATUS"
 
           cleanup
           trap - EXIT
