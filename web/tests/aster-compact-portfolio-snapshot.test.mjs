@@ -16,7 +16,7 @@ test("Aster compact Portfolio Snapshot follows the approved reference and preser
   assert.match(component, /file_000000002444821084b234da2ddec369/);
   assert.match(component, /AsterHedgeManager/);
   assert.match(component, /file_00000000aa6c8210baf1b0ac8f94d18e/);
-  const hedgeSummary = component.match(/function HedgeSummary[\\s\\S]*?function HedgeDetail/)?.[0] || "";
+  const hedgeSummary = component.match(/function HedgeSummary[\s\S]*?function HedgeDetail/)?.[0] || "";
   assert.match(hedgeSummary, /className="aps-hedge-card"/);
   assert.match(hedgeSummary, /HEDGE DEKKING/);
   assert.doesNotMatch(hedgeSummary, /aps-hedge-goal/);
@@ -25,8 +25,8 @@ test("Aster compact Portfolio Snapshot follows the approved reference and preser
   assert.match(hedgeCss, /file_00000000aa6c8210baf1b0ac8f94d18e/);
   assert.match(hedgeCss, /\.aps-hedge-card\{[^}]*grid-template-columns:34px minmax\(0,1fr\)/);
   assert.doesNotMatch(hedgeCss, /\.aps-hedge-goal/);
-  assert.match(hedgeCss, /@media\(max-width:640px\)[\\s\\S]*\.aps-hedge-card\{[^}]*grid-template-columns:27px minmax\(0,1fr\)/);
-  assert.match(hedgeCss, /@media\(max-width:380px\)[\\s\\S]*\.aps-hedge-card\{[^}]*grid-template-columns:26px minmax\(0,1fr\)/);
+  assert.match(hedgeCss, /@media\(max-width:640px\)[\s\S]*\.aps-hedge-card\{[^}]*grid-template-columns:27px minmax\(0,1fr\)/);
+  assert.match(hedgeCss, /@media\(max-width:380px\)[\s\S]*\.aps-hedge-card\{[^}]*grid-template-columns:26px minmax\(0,1fr\)/);
   assert.match(hedgeManager, /file_00000000032881f495cdc99757a7d126/);
   for (const label of ["PORTFOLIO SNAPSHOT", "PORTFOLIOWAARDE", "AVAILABLE TO TRADE", "ACTIEF TRADE CAPITAL", "ACTIEVE POSITIES", "GESLOTEN RESULTAAT", "TRADES GESLOTEN", "LIQUIDATIERISICO", "RENDEMENT VANDAAG", "GEMIDDELD PER DAG", "ALLES SLUITEN"]) assert.match(component, new RegExp(label));
   assert.match(component, /portfolio-close-all/);
