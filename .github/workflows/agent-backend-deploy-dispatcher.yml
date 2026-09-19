@@ -20,15 +20,18 @@ jobs:
       REQUEST_BODY: ${{ github.event.issue.body }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Validate exact production branch head
+      - name: Validate requested production source
         id: validate
         shell: bash
         run: |
           set -euo pipefail
           COMMIT="$(printf '%s\n' "$REQUEST_BODY" | sed -nE 's/^[[:space:]]*commit:[[:space:]]*([0-9a-fA-F]{40})[[:space:]]*$/\1/p' | head -1 | tr 'A-F' 'a-f')"
           test "${#COMMIT}" -eq 40
-          BRANCH_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_BRANCH" --jq '.sha')"
-          test "$COMMIT" = "$BRANCH_HEAD"
+          git init -q /tmp/source-check
+          cd /tmp/source-check
+          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          git fetch --quiet --filter=blob:none origin "$TARGET_BRANCH" "$COMMIT"
+          git merge-base --is-ancestor "$COMMIT" "FETCH_HEAD"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
 
       - name: Check out exact production commit
@@ -56,9 +59,12 @@ jobs:
           COMMIT: ${{ steps.validate.outputs.commit }}
         run: |
           set -euo pipefail
-          CURRENT_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_BRANCH" --jq '.sha')"
-          test "$CURRENT_HEAD" = "$COMMIT"
-          gh workflow run deploy-cloud-production.yml             --repo "$GITHUB_REPOSITORY"             --ref "$TARGET_BRANCH"             -f confirmation=DEPLOY_PRODUCTION_BACKEND             -f request_issue="$ISSUE_NUMBER"
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$COMMIT" \
+            -f request_issue="$ISSUE_NUMBER"
 
       - name: Confirm dispatch in request issue
         shell: bash
@@ -71,4 +77,4 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment request was **rejected before deployment**. Required conditions: requester must be AmarRakhan, the body must contain `commit: <40-char SHA>`, that SHA must still be the exact head of `amar-crypto-bot-2026-cloud`, and the dispatcher must successfully run the full backend test suite on that exact SHA before dispatch."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment request was **rejected before deployment**. Required conditions: requester must be AmarRakhan, the body must contain `commit: <40-char SHA>`, that SHA must be an ancestor of amar-crypto-bot-2026-cloud, and the dispatcher must successfully run the full backend test suite on that exact SHA before dispatch."
