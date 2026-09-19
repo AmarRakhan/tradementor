@@ -4,7 +4,7 @@ Last updated: 2026-09-19
 Active task: 24/7 infrastructure, GitHub Actions deployment hardening, monitoring, billing protection, and chat handoff.
 
 ## Current status
-- Audit complete; infrastructure hardening is being implemented on feature branch `agent/infra-24x7-20260919`. No trading logic changed.
+- Audit complete; infrastructure hardening PR #106 passed Cloud Backend CI and was merged into the active cloud branch. No trading logic changed.
 - Production project: `tradementor-production`, region `europe-west4`.
 - Active deployment source branch: `amar-crypto-bot-2026-cloud`.
 - Branch head at audit checkpoint: `c47ecdf8ee7bdb69df7155800f3ebae416afd489`.
@@ -54,16 +54,18 @@ Active task: 24/7 infrastructure, GitHub Actions deployment hardening, monitorin
 - Source commit reported by production: `ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853`.
 
 ## Implementation checkpoint
-- Feature branch: `agent/infra-24x7-20260919`.
-- Production deploy workflow hardened with exact-commit verification, Firestore/Aster prechecks, saved rollback revision, post-promotion verification, and automatic rollback.
-- New GitHub-hosted 15-minute read-only production monitor added for billing, Cloud Run health, Firestore, scheduler state, recent successful Aster ticks, backend 5xx rate, and Aster public connectivity.
-- Safety-contract tests added for both workflows.
-- Production has NOT been redeployed yet.
+- PR #106 merged into `amar-crypto-bot-2026-cloud`.
+- Merge commit: `397fe7144325aefca6c8d08155ec69c27a835e64`.
+- Cloud Backend CI run 378: SUCCESS (1427 tests after the workflow contract fix).
+- Existing Botsettings reference check: SUCCESS.
+- Production deploy workflow now has exact-commit verification, Firestore/Aster prechecks, saved rollback revision, post-promotion verification, and automatic rollback.
+- GitHub-hosted 15-minute read-only production monitor is merged.
+- Independent hourly ChatGPT/Gmail Cloud Billing Watch is active.
+- Production has NOT yet been redeployed with merge commit `397fe714...`; existing known-good revision remains live.
 
 ## Exact next step
-1. Run/verify CI on the feature branch/PR.
-2. Fix any CI failures without touching trading logic.
-3. Merge the validated infra changes into `amar-crypto-bot-2026-cloud`.
-4. Dispatch the hardened production workflow and verify candidate, promotion, and rollback path.
-5. Configure GCP notification channel / alert policies and improve billing thresholds.
-6. Re-audit Workstation costs and only then decide whether it can be stopped.
+1. Dispatch `deploy-cloud-production.yml` on `amar-crypto-bot-2026-cloud` with the required confirmation.
+2. Verify candidate revision receives no traffic until health/commit checks pass.
+3. Verify promotion and final 100% traffic revision; if post-promotion verification fails, confirm automatic rollback.
+4. Configure GCP notification channel / alert policies and earlier billing-budget thresholds once Cloud command execution is available.
+5. Re-audit costs and keep Workstation as emergency-only until the GitHub-only route is proven end-to-end.
