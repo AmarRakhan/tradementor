@@ -3,7 +3,6 @@
   "updatedAt": "2026-09-19T14:23:27Z",
   "task": "GitHub-first 24/7 control plane and no-Workstation normal development",
   "status": "COMPLETE_GITHUB_FIRST_PROVEN",
-  "operatingModel": "ChatGPT/agent -> GitHub -> tests/build -> GitHub Actions -> WIF -> Google Cloud -> candidate -> verification -> production",
   "workstationRequiredForNormalChanges": false,
   "production": {
     "project": "tradementor-production",
@@ -23,8 +22,8 @@
     "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853"
   },
   "proofs": {
-    "backendDeploymentIssue": 154,
-    "backendDeploymentResult": "SUCCESS",
+    "deploymentIssue": 154,
+    "deploymentResult": "SUCCESS",
     "postDeployDiagnosisIssue": 155,
     "postDeployRuntimeHealth": "HEALTHY",
     "imageMode": "existing-live-image"
@@ -35,18 +34,6 @@
     "billingControl": "UNVERIFIED_DIRECT_API_403",
     "billingAlertFallback": "Gmail Cloud Billing Watch"
   },
-  "uiDeployment": {
-    "githubFirst": true,
-    "candidateNoTraffic": true,
-    "prePromotionVerification": true,
-    "automaticRollback": true
-  },
-  "directGoogleAccessOnlyFor": [
-    "billing/payment",
-    "IAM/bootstrap",
-    "sensitive secrets",
-    "GitHub-to-Google control-path incident"
-  ],
-  "blockers": [],
-  "nextStep": "Handle the next user-requested app change directly through GitHub; do not require Workstation for normal work."
+  "nextStep": "Handle the next requested app change directly through GitHub; do not require Workstation for normal work.",
+  "blockers": []
 }
