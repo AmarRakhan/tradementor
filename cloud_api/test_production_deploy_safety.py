@@ -30,11 +30,12 @@ def test_production_deploy_verifies_exact_source_commit_before_promotion():
     assert '--no-traffic' in text
 
 
-def test_production_deploy_checks_firestore_and_aster_before_build():
+def test_production_deploy_checks_only_safe_external_dependency_before_build():
     text = workflow()
-    assert 'gcloud firestore databases describe --database="(default)"' in text
+    assert 'gcloud firestore databases describe --database="(default)"' not in text
     assert "https://fapi.asterdex.com/fapi/v3/exchangeInfo" in text
     assert 'row.get("status", "")' in text
+    assert 'DEPLOY_PHASE=aster-public-preflight' in text
 
 
 def test_production_deploy_captures_rollback_point_and_restores_it_on_failure():
@@ -82,3 +83,14 @@ def test_exact_current_source_reuses_existing_live_image_for_noop_proof():
     assert 'echo "IMAGE=$PREVIOUS_IMAGE"' in text
     assert "if: env.REUSE_LIVE_IMAGE != 'true'" in text
     assert 'echo "- Image mode: $DEPLOYMENT_PROOF_MODE"' in text
+
+
+def test_production_deploy_reports_failure_phase_without_expanding_deploy_identity():
+    text = workflow()
+    assert 'Failed phase: ${DEPLOY_PHASE:-unknown}' in text
+    assert "DEPLOY_PHASE=capture-production" in text
+    assert "DEPLOY_PHASE=select-image" in text
+    assert "DEPLOY_PHASE=deploy-candidate" in text
+    assert "DEPLOY_PHASE=verify-candidate" in text
+    assert "DEPLOY_PHASE=promote" in text
+    assert "DEPLOY_PHASE=verify-production" in text
