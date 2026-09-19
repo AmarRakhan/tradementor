@@ -41,3 +41,73 @@ jobs:
         shell: bash
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Production diagnostic dispatch failed before Google Cloud access. No production mutation was attempted."
+
+  diagnose-web-deploy:
+    if: startsWith(github.event.issue.title, '[AGENT-CONTROL] diagnose web deploy') && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Read latest canonical V46 deployment
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-shared-v44-testapp.yml/runs?branch=$TARGET_BRANCH&per_page=10"             --jq '.workflow_runs | sort_by(.created_at) | reverse | .[0]')"
+          test "$RUN_JSON" != "null"
+          RUN_ID="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$RUN_JSON")"
+          RUN_NUMBER="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["run_number"])' "$RUN_JSON")"
+          RUN_STATUS="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["status"])' "$RUN_JSON")"
+          RUN_CONCLUSION="$(python -c 'import json,sys; print(json.loads(sys.argv[1]).get("conclusion") or "")' "$RUN_JSON")"
+          HEAD_SHA="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["head_sha"])' "$RUN_JSON")"
+          EVENT="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["event"])' "$RUN_JSON")"
+          CREATED_AT="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["created_at"])' "$RUN_JSON")"
+          UPDATED_AT="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["updated_at"])' "$RUN_JSON")"
+
+          JOBS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
+          JOB_SUMMARY="$(python - "$JOBS_JSON" <<'PY'
+          import json,sys
+          payload=json.loads(sys.argv[1])
+          rows=[]
+          for job in payload.get("jobs",[]):
+              status=job.get("status") or "unknown"
+              conclusion=job.get("conclusion") or ""
+              rows.append(f"- {job.get('name','job')}: {status}{(' / '+conclusion) if conclusion else ''}")
+              for step in job.get("steps",[]):
+                  if step.get("conclusion") == "failure":
+                      rows.append(f"  - FAILED STEP: {step.get('name','unknown')}")
+                  elif status != "completed" and step.get("status") == "in_progress":
+                      rows.append(f"  - CURRENT STEP: {step.get('name','unknown')}")
+          print("\n".join(rows) if rows else "- no jobs returned")
+          PY
+          )"
+
+          {
+            echo "## V46 web deployment status"
+            echo
+            echo "- Workflow run: $RUN_NUMBER"
+            echo "- Run ID: $RUN_ID"
+            echo "- Event: $EVENT"
+            echo "- Head SHA: $HEAD_SHA"
+            echo "- Status: **$RUN_STATUS**"
+            echo "- Conclusion: **${RUN_CONCLUSION:-pending}**"
+            echo "- Created: $CREATED_AT"
+            echo "- Updated: $UPDATED_AT"
+            echo
+            echo "### Jobs"
+            printf '%s\n' "$JOB_SUMMARY"
+          } > "$RUNNER_TEMP/web-deploy-status.md"
+
+      - name: Publish web deployment status
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "$RUNNER_TEMP/web-deploy-status.md" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/web-deploy-status.md"
+          else
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Could not read the canonical V46 GitHub Actions deployment. No production mutation was attempted."
+          fi
