@@ -1,0 +1,92 @@
+name: Hotfix Cloud Run warm capacity 2026-09-19
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/hotfix-cloud-run-warm-capacity-20260919.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-capacity-hotfix
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture exact live state
+        shell: bash
+        run: |
+          set -euo pipefail
+          for SERVICE in tradementor-api amar-bot-v44-direct-install; do
+            gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "/tmp/$SERVICE.before.json"
+          done
+
+      - name: Keep one warm instance without deploying new code
+        shell: bash
+        run: |
+          set -euo pipefail
+          for SERVICE in tradementor-api amar-bot-v44-direct-install; do
+            gcloud run services update "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --min 1 --quiet
+          done
+
+      - name: Prove revision and traffic unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          for SERVICE in tradementor-api amar-bot-v44-direct-install; do
+            gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "/tmp/$SERVICE.after.json"
+            python - "/tmp/$SERVICE.before.json" "/tmp/$SERVICE.after.json" "$SERVICE" <<'PY'
+          import json,sys
+          before=json.load(open(sys.argv[1],encoding='utf-8'))
+          after=json.load(open(sys.argv[2],encoding='utf-8'))
+          service=sys.argv[3]
+          bstatus=before.get('status',{})
+          astatus=after.get('status',{})
+          assert bstatus.get('latestReadyRevisionName') == astatus.get('latestReadyRevisionName'), (service,'revision changed')
+          btraffic=[(x.get('revisionName'),int(x.get('percent',0) or 0)) for x in bstatus.get('traffic',[]) if int(x.get('percent',0) or 0)>0]
+          atraffic=[(x.get('revisionName'),int(x.get('percent',0) or 0)) for x in astatus.get('traffic',[]) if int(x.get('percent',0) or 0)>0]
+          assert btraffic == atraffic, (service,btraffic,atraffic)
+          sann=(after.get('metadata',{}).get('annotations',{}) or {})
+          print(service,'latestReady=',astatus.get('latestReadyRevisionName'),'traffic=',atraffic,'serviceMin=',sann.get('run.googleapis.com/minScale'))
+          PY
+          done
+
+      - name: Verify production is serving
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_URL="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          WEB_URL="$(gcloud run services describe amar-bot-v44-direct-install --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          for i in 1 2 3 4 5 6 7 8; do
+            CODE="$(curl -sS -o /tmp/api-body -w '%{http_code}' --max-time 30 "$API_URL/health" || true)"
+            echo "API attempt $i -> $CODE $(head -c 120 /tmp/api-body || true)"
+            if [ "$CODE" = "200" ]; then break; fi
+            sleep 5
+          done
+          test "$CODE" = "200"
+          for i in 1 2 3 4 5 6 7 8; do
+            WCODE="$(curl -sS -o /tmp/web-body -w '%{http_code}' --max-time 30 "$WEB_URL/" || true)"
+            echo "WEB attempt $i -> $WCODE $(head -c 120 /tmp/web-body || true)"
+            if [ "$WCODE" = "200" ]; then break; fi
+            sleep 5
+          done
+          test "$WCODE" = "200"
