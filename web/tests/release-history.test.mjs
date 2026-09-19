@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("release history is mobile-first, persistent and tied to canonical build 373", async () => {
+test("release history is mobile-first, persistent and tied to canonical build 374", async () => {
   const [version, history, control, layout, css, workflow] = await Promise.all([
     readFile(new URL("../lib/app-version.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/release-history.ts", import.meta.url), "utf8"),
@@ -13,7 +13,7 @@ test("release history is mobile-first, persistent and tied to canonical build 37
   ]);
 
   assert.match(version, /WEBAPP_VERSION = "46"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "373"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "374"/);
   assert.match(history, /build: WEBAPP_BUILD_NUMBER/);
   assert.match(history, /version: WEBAPP_VERSION/);
   assert.match(history, /v\$\{WEBAPP_VERSION\}-build-\$\{WEBAPP_BUILD_NUMBER\}-release-history/);

@@ -24,40 +24,73 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-19",
-  title: "Versiegeschiedenis en app-ontwikkellogboek",
+  title: "Hedge Dekking-kaart visueel vereenvoudigd",
   newItems: [
-    "Mobiele versiegeschiedenis met nieuwste release bovenaan.",
-    "Ongelezen badge bij de knop linksboven.",
-    "Zoeken in oude releases, problemen en oplossingen.",
+    "De Hedge Dekking-kaart sluit visueel rustiger aan op de overige Portfolio Snapshot-kaarten.",
   ],
   problems: [
-    "Gebruikers konden niet centraal terugvinden wat tussen appreleases veranderde en waarom.",
+    "De Hedge Dekking-kaart sprong te sterk uit en oude doelinformatie nam onnodig ruimte in.",
   ],
   causes: [
-    "De bestaande versieknop controleerde alleen op updates; release-uitleg stond verspreid over commits, chats en technische notities.",
+    "De compacte kaart toonde naast het actuele percentage ook een doelpercentage en statusbadge, met extra statuskleuren en glow.",
   ],
   fixes: [
-    "Eén centrale releasebron toegevoegd met probleem, oorzaak, oplossing, voor/na en technische context per release.",
-    "De linkerbovenhoek opent nu het mobiele ontwikkellogboek zonder de huidige pagina te verlaten.",
-    "Buildnummer en releasehistorie zijn aan één releasecontract gekoppeld.",
+    "Doelpercentage en doelstatusbadge zijn uit de compacte Hedge Dekking-kaart verwijderd.",
+    "De kaart gebruikt nu een rustige donkere basis met subtiele goud/groene accenten zonder overdreven glow.",
+    "De bestaande realtime hedge-dekkingberekening en het openen van de detailweergave zijn ongewijzigd gebleven.",
   ],
   now: [
-    "Nieuwe releases zijn direct herkenbaar en blijven later terugleesbaar.",
-    "De gebruiker ziet hoeveel nieuwe builds nog niet zijn gelezen.",
-    "Iedere volgende live webupdate moet een nieuw buildnummer én release-entry krijgen.",
+    "De compacte kaart toont alleen het schild, HEDGE DEKKING en het actuele percentage.",
+    "Waarden boven 100% blijven op mobiel en desktop binnen de kaart zonder overlap.",
   ],
-  before: "De tekst CRYPTO BOT 2026 was statisch en de releasehistorie was niet vanuit de app bereikbaar.",
-  after: "De linkerbovenhoek is een knop Versiegeschiedenis met een ongelezen teller en een volledig mobiel logboek.",
+  before: "De kaart toonde onder meer Doel 80% en een status zoals Boven doel en kreeg daardoor een opvallende alarmkaart-uitstraling.",
+  after: "De kaart toont rustig het actuele hedgepercentage in dezelfde visuele hiërarchie als de omliggende Portfolio Snapshot-kaarten.",
   technicalDetails: [
-    "Alleen web-UI, versieadministratie en deploymentcontract gewijzigd.",
-    "Leesstatus wordt lokaal en persistent in de PWA/browser opgeslagen; tradingstate wordt niet aangeraakt.",
-    "Centrale bron: web/lib/release-history.ts.",
-    "CI/deployment controleert buildnummer en release-entry vóór promotie.",
+    "Alleen webpresentatie, CSS, versieadministratie en regressietests gewijzigd; geen trading-, DCA-, order-, API-, WebSocket- of accountlogica.",
+    "Visuele doelreferentie: file_00000000aa6c8210baf1b0ac8f94d18e.",
+    "Responsive gedrag gecontroleerd via bestaande 640px- en 380px-layoutcontracten.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-373-release-history",
+    version: "46",
+    build: "373",
+    releasedAt: "2026-09-19",
+    title: "Versiegeschiedenis en app-ontwikkellogboek",
+    newItems: [
+      "Mobiele versiegeschiedenis met nieuwste release bovenaan.",
+      "Ongelezen badge bij de knop linksboven.",
+      "Zoeken in oude releases, problemen en oplossingen.",
+    ],
+    problems: [
+      "Gebruikers konden niet centraal terugvinden wat tussen appreleases veranderde en waarom.",
+    ],
+    causes: [
+      "De bestaande versieknop controleerde alleen op updates; release-uitleg stond verspreid over commits, chats en technische notities.",
+    ],
+    fixes: [
+      "Eén centrale releasebron toegevoegd met probleem, oorzaak, oplossing, voor/na en technische context per release.",
+      "De linkerbovenhoek opent nu het mobiele ontwikkellogboek zonder de huidige pagina te verlaten.",
+      "Buildnummer en releasehistorie zijn aan één releasecontract gekoppeld.",
+    ],
+    now: [
+      "Nieuwe releases zijn direct herkenbaar en blijven later terugleesbaar.",
+      "De gebruiker ziet hoeveel nieuwe builds nog niet zijn gelezen.",
+      "Iedere volgende live webupdate moet een nieuw buildnummer én release-entry krijgen.",
+    ],
+    before: "De tekst CRYPTO BOT 2026 was statisch en de releasehistorie was niet vanuit de app bereikbaar.",
+    after: "De linkerbovenhoek is een knop Versiegeschiedenis met een ongelezen teller en een volledig mobiel logboek.",
+    technicalDetails: [
+      "Alleen web-UI, versieadministratie en deploymentcontract gewijzigd.",
+      "Leesstatus wordt lokaal en persistent in de PWA/browser opgeslagen; tradingstate wordt niet aangeraakt.",
+      "Centrale bron: web/lib/release-history.ts.",
+      "CI/deployment controleert buildnummer en release-entry vóór promotie.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-372-baseline",
     version: "46",

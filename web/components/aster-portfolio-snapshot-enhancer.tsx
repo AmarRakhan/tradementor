@@ -89,6 +89,7 @@ const EMPTY: SnapshotValues = {
 
 const REFERENCE = "file_000000002444821084b234da2ddec369";
 const HEDGE_DETAIL_REFERENCE = "file_00000000032881f495cdc99757a7d126";
+const HEDGE_CARD_REFERENCE = "file_00000000aa6c8210baf1b0ac8f94d18e";
 const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
 const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
 const LIQUIDATION_GAUGE_REFERENCE = "file_000000004e80820a80318a3de3ae5abd";
@@ -380,19 +381,19 @@ function ProfitAction({ scope, label, bucket, busy, onClick }: {
 
 function HedgeSummary({ preview, onOpen }: { preview: ProfitPreview | null; onOpen: () => void }) {
   const exposure = preview?.exposure;
-  const config = preview?.hedgeConfig;
   const coverage = exposure?.reliable ? exposure.hedgeCoveragePercent : null;
-  const status = exposure?.reliable ? exposure.status : "unavailable";
   return <div className="aps-hedge-row" data-reference={REFERENCE}>
-    <button type="button" className={`aps-hedge-card aps-hedge-${status}`} onClick={onOpen} aria-label={`Hedge dekking ${hedgePercent(coverage)}, doel ${hedgePercent(config?.targetPercent)}`}>
+    <button
+      type="button"
+      className="aps-hedge-card"
+      data-reference={HEDGE_CARD_REFERENCE}
+      onClick={onOpen}
+      aria-label={`Hedge dekking ${hedgePercent(coverage)}. Open details.`}
+    >
       <span className="aps-hedge-shield"><Icon name="shield" /></span>
       <span className="aps-hedge-copy">
-        <small>HEDGE DEKKING <i aria-hidden="true">i</i></small>
+        <small>HEDGE DEKKING</small>
         <strong>{hedgePercent(coverage)}</strong>
-      </span>
-      <span className="aps-hedge-goal">
-        <small>Doel {hedgePercent(config?.targetPercent)}</small>
-        <b>{hedgeStatusLabel(status)}</b>
       </span>
     </button>
     <div className="aps-exposure-strip" aria-label="Portfolio exposure">
