@@ -1,0 +1,126 @@
+name: Raise production Cloud Run capacity 2026-09-19
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/raise-production-cloudrun-capacity-20260919.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-capacity-fix
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  capacity-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Raise backend capacity with zero-traffic candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE=tradementor-api
+          TAG="capfix-api-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/api-before.json
+          IMAGE="$(python - /tmp/api-before.json <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          print(s['spec']['template']['spec']['containers'][0]['image'])
+          PY
+          )"
+          gcloud run services update "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --max-instances 5 --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/api-after.json
+          python - /tmp/api-before.json /tmp/api-after.json "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          b=json.load(open(sys.argv[1],encoding='utf-8')); a=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
+          bs=b['spec']['template']['spec']; ass=a['spec']['template']['spec']
+          bc=bs['containers'][0]; ac=ass['containers'][0]
+          assert bc['image']==ac['image']
+          assert bs.get('serviceAccountName')==ass.get('serviceAccountName')
+          assert bs.get('timeoutSeconds')==ass.get('timeoutSeconds')
+          assert bs.get('containerConcurrency')==ass.get('containerConcurrency')
+          assert bc.get('env',[])==ac.get('env',[])
+          assert bc.get('resources')==ac.get('resources')
+          row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          assert int(row.get('percent',0) or 0)==0
+          print('API_CANDIDATE_URL='+row['url'])
+          print('API_CANDIDATE_REVISION='+row['revisionName'])
+          PY
+          BODY="$(curl --fail --silent --show-error --retry 8 --retry-delay 3 "$API_CANDIDATE_URL/health")"
+          python - "$BODY" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1])
+          assert h.get('status')=='ready', h
+          PY
+          gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --to-revisions "$API_CANDIDATE_REVISION=100" --quiet
+
+      - name: Raise web capacity with zero-traffic candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE=amar-bot-v44-direct-install
+          TAG="capfix-web-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/web-before.json
+          IMAGE="$(python - /tmp/web-before.json <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          print(s['spec']['template']['spec']['containers'][0]['image'])
+          PY
+          )"
+          gcloud run services update "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --max-instances 5 --no-traffic --tag "$TAG" --quiet
+          gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/web-after.json
+          python - /tmp/web-before.json /tmp/web-after.json "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          b=json.load(open(sys.argv[1],encoding='utf-8')); a=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
+          bs=b['spec']['template']['spec']; ass=a['spec']['template']['spec']
+          bc=bs['containers'][0]; ac=ass['containers'][0]
+          assert bc['image']==ac['image']
+          assert bs.get('serviceAccountName')==ass.get('serviceAccountName')
+          assert bs.get('timeoutSeconds')==ass.get('timeoutSeconds')
+          assert bs.get('containerConcurrency')==ass.get('containerConcurrency')
+          assert bc.get('env',[])==ac.get('env',[])
+          assert bc.get('resources')==ac.get('resources')
+          row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          assert int(row.get('percent',0) or 0)==0
+          print('WEB_CANDIDATE_URL='+row['url'])
+          print('WEB_CANDIDATE_REVISION='+row['revisionName'])
+          PY
+          HTML="$(curl --fail --silent --show-error --retry 8 --retry-delay 3 "$WEB_CANDIDATE_URL/")"
+          test -n "$HTML"
+          ! grep -Fq 'Rate exceeded.' <<<"$HTML"
+          gcloud run services update-traffic "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --to-revisions "$WEB_CANDIDATE_REVISION=100" --quiet
+
+      - name: Verify production after capacity change
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_URL="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          WEB_URL="$(gcloud run services describe amar-bot-v44-direct-install --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          API_BODY="$(curl --fail --silent --show-error --retry 8 --retry-delay 3 "$API_URL/health")"
+          WEB_BODY="$(curl --fail --silent --show-error --retry 8 --retry-delay 3 "$WEB_URL/")"
+          python - "$API_BODY" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1]); assert h.get('status')=='ready', h
+          PY
+          test -n "$WEB_BODY"
+          ! grep -Fq 'Rate exceeded.' <<<"$WEB_BODY"
+          echo "Production backend and web both healthy after max-instances=5." >> "$GITHUB_STEP_SUMMARY"
