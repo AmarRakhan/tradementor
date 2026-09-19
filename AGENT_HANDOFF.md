@@ -55,17 +55,22 @@ Active task: 24/7 infrastructure, GitHub Actions deployment hardening, monitorin
 
 ## Implementation checkpoint
 - PR #106 merged into `amar-crypto-bot-2026-cloud`.
-- Merge commit: `397fe7144325aefca6c8d08155ec69c27a835e64`.
-- Cloud Backend CI run 378: SUCCESS (1427 tests after the workflow contract fix).
+- Infrastructure merge commit: `397fe7144325aefca6c8d08155ec69c27a835e64`.
+- Latest handoff-only cloud-branch commit at this checkpoint: `1d18655febe951b041bfe0912dc2f808159fad64`.
+- Cloud Backend CI run 378: SUCCESS (all backend tests passed after preserving existing safety contracts).
 - Existing Botsettings reference check: SUCCESS.
-- Production deploy workflow now has exact-commit verification, Firestore/Aster prechecks, saved rollback revision, post-promotion verification, and automatic rollback.
-- GitHub-hosted 15-minute read-only production monitor is merged.
+- Production deploy workflow has exact-commit verification, Firestore/Aster prechecks, saved rollback revision, post-promotion verification, and automatic rollback.
+- Attempted GitHub push-trigger design was rejected by existing manual-only deployment tests; PR #107 was CLOSED and NOT merged. Manual-only production safety remains intact.
+- Independent public GitHub uptime workflow was merged to default branch `main` in commit `990f17120cfb193d3b5e25ce3b044b637749a3ff`; it is scheduled every 15 minutes and checks public backend health plus Aster public connectivity.
 - Independent hourly ChatGPT/Gmail Cloud Billing Watch is active.
-- Production has NOT yet been redeployed with merge commit `397fe714...`; existing known-good revision remains live.
+- Independent hourly ChatGPT Bot Health Watch is active.
+- Production has NOT yet been redeployed with the infrastructure hardening.
+- Cloud Workstation/Remote Commander is currently offline, so production workflow dispatch and GCP Monitoring/Budget mutations are blocked until it reconnects.
 
 ## Exact next step
-1. Dispatch `deploy-cloud-production.yml` on `amar-crypto-bot-2026-cloud` with the required confirmation.
-2. Verify candidate revision receives no traffic until health/commit checks pass.
-3. Verify promotion and final 100% traffic revision; if post-promotion verification fails, confirm automatic rollback.
-4. Configure GCP notification channel / alert policies and earlier billing-budget thresholds once Cloud command execution is available.
-5. Re-audit costs and keep Workstation as emergency-only until the GitHub-only route is proven end-to-end.
+1. Reconnect/start Cloud Workstation.
+2. Dispatch `deploy-cloud-production.yml` on `amar-crypto-bot-2026-cloud` with the required confirmation.
+3. Verify no-traffic candidate, exact commit, health, promotion, final 100% traffic revision, and rollback readiness.
+4. Enable/inspect Cloud Billing Budget API; add earlier warning thresholds without changing payment instruments.
+5. Create Cloud Monitoring notification channel and alerts for Cloud Run/backend failures, recent Aster-tick absence, scheduler failures, and high 5xx rates.
+6. Re-audit costs and keep Workstation emergency-only until GitHub-only deployment/log/rollback operations are proven.
