@@ -23,6 +23,11 @@ const preserveKeys = [
   "profitLockLadderEnabled",
   "profitLockLevels",
   "profitLockPrimarySide",
+  "maximumLeverage",
+  "stopLossEnabled",
+  "stopLossMode",
+  "stopLossLong",
+  "stopLossShort",
 ] as const;
 
 async function preserveExistingPairOverrides(request: Request) {
