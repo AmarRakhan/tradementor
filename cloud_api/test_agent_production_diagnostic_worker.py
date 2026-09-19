@@ -60,7 +60,7 @@ def test_billing_diagnostics_publish_only_sanitized_http_and_error_status():
     assert '(error or {}).get("status")' in text
     assert 'billing-project.json' in text
     assert 'billing-account.json' in text
-    assert 'rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json' in text
+    assert 'rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/web-root.html' in text
     assert 'getPaymentInfo' not in text
 
 
@@ -72,3 +72,15 @@ def test_unreadable_billing_is_separate_from_runtime_health():
     assert '### Overall runtime health' in text
     unreadable = text[text.index('else\n            BILLING_LINE="⚠️ direct Billing API unavailable'):text.index('          fi\n\n          SERVICE_JSON=')]
     assert 'STATUS="DEGRADED"' not in unreadable
+
+
+def test_diagnostic_worker_checks_live_v46_webapp_without_mutation():
+    text = source()
+    assert "WEB_CLOUD_RUN_SERVICE: amar-bot-v44-direct-install" in text
+    assert 'gcloud run services describe "$WEB_CLOUD_RUN_SERVICE"' in text
+    assert 'data-webapp-version="([^"]+)"' in text
+    assert 'data-webapp-build="([^"]+)"' in text
+    assert 'Webapp live revision: %s' in text
+    assert 'Webapp visible version/build: v%s · build %s' in text
+    assert 'gcloud run services update "$WEB_CLOUD_RUN_SERVICE"' not in text
+    assert 'gcloud run deploy "$WEB_CLOUD_RUN_SERVICE"' not in text
