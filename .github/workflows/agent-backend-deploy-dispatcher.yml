@@ -13,7 +13,7 @@ jobs:
   dispatch:
     if: startsWith(github.event.issue.title, '[AGENT-CONTROL] deploy backend') && github.event.issue.user.login == 'AmarRakhan'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     env:
       TARGET_BRANCH: amar-crypto-bot-2026-cloud
       ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -31,9 +31,32 @@ jobs:
           BRANCH_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_BRANCH" --jq '.sha')"
           test "$COMMIT" = "$BRANCH_HEAD"
 
-          SUCCESS_COUNT="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloud-backend-ci.yml/runs?branch=$TARGET_BRANCH&status=success&per_page=30"             --jq "[.workflow_runs[] | select(.head_sha == \"$COMMIT\")] | length")"
-          test "$SUCCESS_COUNT" -ge 1
+          SUCCESS_COUNT="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloud-backend-ci.yml/runs?branch=$TARGET_BRANCH&status=success&per_page=30" \
+            --jq "[.workflow_runs[] | select(.head_sha == \"$COMMIT\")] | length")"
 
+          if [ "$SUCCESS_COUNT" -lt 1 ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "No successful Cloud Backend CI exists yet for exact head `$COMMIT`. Starting exact-head validation now."
+            gh workflow run cloud-backend-ci.yml --repo "$GITHUB_REPOSITORY" --ref "$TARGET_BRANCH"
+
+            CI_RESULT=""
+            for _ in $(seq 1 40); do
+              RUN_ROW="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/cloud-backend-ci.yml/runs?branch=$TARGET_BRANCH&per_page=30" \
+                --jq "[.workflow_runs[] | select(.head_sha == \"$COMMIT\")] | sort_by(.created_at) | reverse | .[0] | if . == null then \"\" else [.id,.status,(.conclusion // \"\")] | @tsv end")"
+              if [ -n "$RUN_ROW" ]; then
+                RUN_STATUS="$(printf '%s' "$RUN_ROW" | cut -f2)"
+                RUN_CONCLUSION="$(printf '%s' "$RUN_ROW" | cut -f3)"
+                if [ "$RUN_STATUS" = "completed" ]; then
+                  CI_RESULT="$RUN_CONCLUSION"
+                  break
+                fi
+              fi
+              sleep 10
+            done
+            test "$CI_RESULT" = "success"
+          fi
+
+          CURRENT_HEAD="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_BRANCH" --jq '.sha')"
+          test "$CURRENT_HEAD" = "$COMMIT"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch hardened production backend workflow
@@ -57,4 +80,4 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment request was **rejected before deployment**. Required conditions: requester must be AmarRakhan, the body must contain `commit: <40-char SHA>`, that SHA must still be the exact head of `amar-crypto-bot-2026-cloud`, and Cloud Backend CI for that SHA must already be successful."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment request was **rejected before deployment**. Required conditions: requester must be AmarRakhan, the body must contain `commit: <40-char SHA>`, that SHA must still be the exact head of `amar-crypto-bot-2026-cloud`, and Cloud Backend CI for that SHA must succeed (the dispatcher will start exact-head CI automatically when needed)."
