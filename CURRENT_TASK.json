@@ -1,36 +1,67 @@
 {
-  "schemaVersion": 1,
-  "updatedAt": "2026-09-19T09:35:00Z",
-  "task": "24/7 infrastructure, GitHub Actions deployment hardening, monitoring, billing protection, chat handoff",
-  "status": "GITHUB_CONTROL_PLANE_IMPLEMENTATION_IN_PROGRESS",
-  "activeBranch": "amar-crypto-bot-2026-cloud",
-  "branchHead": "c47ecdf8ee7bdb69df7155800f3ebae416afd489",
-  "defaultBranchHead": "b02013861d5d1047b3e10f51f5ccf2f6fd4f0785",
+  "schemaVersion": 2,
+  "updatedAt": "2026-09-19T14:21:30Z",
+  "task": "24/7 infrastructure and GitHub-first agent control plane",
+  "status": "COMPLETE_GITHUB_FIRST_CONTROL_PLANE_PROVEN",
+  "normalDevelopment": {
+    "path": "ChatGPT/agent -> GitHub -> CI/build -> GitHub Actions -> WIF -> Google Cloud",
+    "workstationRequired": false,
+    "workstationRole": "break-glass only"
+  },
   "production": {
     "project": "tradementor-production",
     "region": "europe-west4",
-    "service": "tradementor-api",
-    "revision": "tradementor-api-dca-e1f8132f-1",
+    "backendService": "tradementor-api",
+    "liveRevision": "tradementor-api-src-ef3a5ecd-341284",
     "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853",
     "health": "ready",
-    "healthHttp": 200
+    "finalDiagnosticIssue": 155,
+    "firestoreMetadataReachable": true,
+    "asterScheduler": "ENABLED",
+    "latestAsterTickHttp": 200,
+    "backend5xxLast30m": 0,
+    "asterPublicConnectivity": true
   },
-  "incident": {
-    "cause": "Google Cloud billing account suspension after payment failure",
-    "lastHealthyTickUtc": "2026-09-18T23:28:00Z",
-    "firstFailureUtc": "2026-09-18T23:29:00Z",
-    "billingReinstatedApproxUtc": "2026-09-19T04:39:00Z",
-    "firstRecoveredTickUtc": "2026-09-19T05:09:00Z",
-    "fullInterruptionMinutes": 340
+  "deploymentProof": {
+    "issue": 154,
+    "result": "SUCCESS",
+    "imageMode": "existing-live-image",
+    "previousRevision": "tradementor-api-dca-e1f8132f-1",
+    "candidatePromoted": true,
+    "postPromotionHealth": "ready",
+    "laterTradingCommitsDeployed": false
   },
-  "existing": {
-    "workloadIdentityFederation": true,
-    "candidateNoTrafficDeploy": true,
-    "prePromotionHealthcheck": true,
-    "backendTests": true,
-    "monitoringAlertPolicies": false,
-    "monitoringNotificationChannels": false,
-    "billingBudgetApiEnabled": false
+  "diagnostics": {
+    "issueCommand": "[AGENT-CONTROL] diagnose production",
+    "deployCommand": "[AGENT-CONTROL] deploy backend",
+    "googleAuthBranch": "amar-crypto-bot-2026-cloud",
+    "observerServiceAccount": "github-tradementor-observer@tradementor-production.iam.gserviceaccount.com",
+    "runtimeHealthProvenWithoutWorkstation": true
+  },
+  "webDeployment": {
+    "workflow": "deploy-shared-v44-testapp.yml",
+    "cloudRunService": "amar-bot-v44-direct-install",
+    "automaticOnWebChanges": true,
+    "candidateNoTraffic": true,
+    "verification": true,
+    "rollback": true
+  },
+  "rollback": {
+    "retainedRevision": "tradementor-api-dca-e1f8132f-1",
+    "automaticAfterFailedPostPromotionCheck": true
+  },
+  "billing": {
+    "incidentCause": "billing account suspension after payment failure",
+    "interruptionMinutes": 340,
+    "directObserverApi": "HTTP 403 PERMISSION_DENIED",
+    "runtimeHealthIndependentOfBillingApi": true,
+    "externalBillingWatch": "active-hourly",
+    "budgetAlertExists": true
+  },
+  "monitoring": {
+    "githubPublicUptimeMonitorMinutes": 15,
+    "botHealthWatch": "active-hourly",
+    "billingMailWatch": "active-hourly"
   },
   "protectedAreas": [
     "trading logic",
@@ -40,69 +71,7 @@
     "secrets",
     "account data"
   ],
-  "rollback": {
-    "revision": "tradementor-api-dca-e1f8132f-1",
-    "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853"
-  },
-  "nextStep": "Finish CI/merge PRs 109-111; prove issue-triggered production diagnosis and backend deployment without Workstation; then update handoff with proof.",
-  "implementation": {
-    "featureBranch": "agent/infra-24x7-20260919",
-    "commits": [
-      "8eb3aca90736f32c226dd67e9308d0ff6c442296",
-      "85790e810c13e20f6f48fe8ef6d7e6becc66cd55",
-      "b1e79e83453e402ee3693cee01d157d9f88cc88b",
-      "6f3c83fe9fa885e44c8d5c270d05d7e95b567314"
-    ],
-    "changes": [
-      "production deploy exact-commit verification",
-      "pre-deploy Firestore and Aster checks",
-      "saved previous revision and automatic rollback after failed promotion",
-      "15-minute external GitHub health monitor",
-      "workflow safety contract tests"
-    ],
-    "productionChanged": false,
-    "mergeCommit": "397fe7144325aefca6c8d08155ec69c27a835e64",
-    "pullRequest": 106,
-    "cloudBackendCI": {
-      "run": 378,
-      "status": "success"
-    },
-    "billingWatch": "active-hourly",
-    "cloudBranchLatestHandoffCommit": "1d18655febe951b041bfe0912dc2f808159fad64",
-    "rejectedPushDeployPR": 107,
-    "rejectedPushDeployReason": "Existing CI enforces manual-only cloud production deployments; PR closed, not merged.",
-    "publicUptimeMonitor": {
-      "defaultBranch": "main",
-      "mergeCommit": "990f17120cfb193d3b5e25ce3b044b637749a3ff",
-      "intervalMinutes": 15
-    },
-    "botHealthWatch": "active-hourly"
-  },
-  "blockers": [
-    "PRs #109, #110 and #111 must pass CI and be merged before end-to-end GitHub-only diagnostic/deploy proof."
-  ],
-  "activeBranchHead": "3b3de93afda0e66d5425d0bdad9a089006fbece8",
-  "dailyOperatingModel": {
-    "normalDevelopment": "ChatGPT/agent -> GitHub -> CI/build -> GitHub Actions -> WIF -> Google Cloud",
-    "workstationRequiredForNormalChanges": false,
-    "uiDeployment": {
-      "workflow": "deploy-shared-v44-testapp.yml",
-      "trigger": "push web/** to amar-crypto-bot-2026-cloud",
-      "candidateNoTraffic": true,
-      "prePromotionChecks": true,
-      "rollback": true,
-      "cloudRunService": "amar-bot-v44-direct-install"
-    },
-    "backendControlPlane": {
-      "diagnosticsPR": 109,
-      "deployFeedbackPR": 110,
-      "dispatcherPR": 111
-    },
-    "directGoogleAccessOnlyFor": [
-      "billing/payment",
-      "IAM/bootstrap",
-      "sensitive secrets",
-      "GitHub-to-Google control-path incident"
-    ]
-  }
+  "lastControlPlaneCodeCommitBeforeFinalHandoff": "05cc44e13874e12c87b04070819e0b9a9ea26359",
+  "blockersForNormalDevelopment": [],
+  "nextStep": "For future normal tasks, read AGENT_HANDOFF.md and CURRENT_TASK.json, work through GitHub, deploy only the intended exact source commit, and use Workstation only for break-glass billing/IAM/secrets/control-path incidents."
 }
