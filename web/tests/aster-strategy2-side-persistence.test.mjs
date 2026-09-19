@@ -7,7 +7,7 @@ assert.match(source, /const persisted = \(state\.settings && typeof state\.setti
 assert.match(source, /return \{\s*\.\.\.persisted,/);
 assert.match(source, /entryMarginLongUsd:\s*longEntry/);
 assert.match(source, /entryMarginShortUsd:\s*shortEntry/);
-assert.doesNotMatch(source, /asymmetricHedgeModeEnabled:\s*false/);
+assert.match(source, /asymmetricHedgeModeEnabled:\s*false/);
 assert.doesNotMatch(source, /shortStartMultiplier:\s*0/);
 
-console.log("Strategy 2 side persistence contract OK");
+console.log("Strategy 2 side persistence contract OK; hidden asymmetric mode is cleared by normal Botinstellingen");
