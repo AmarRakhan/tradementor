@@ -36,10 +36,18 @@ Active task: 24/7 infrastructure, GitHub Actions deployment hardening, monitorin
 - Cloud Billing Budget API is currently disabled for the project, although a console-created monthly budget alert exists.
 - Existing monthly budget alert observed: EUR 100, with an 80% threshold notification.
 
+## Daily operating model — REQUIRED
+- Normal development MUST be GitHub-first: ChatGPT/agent → GitHub → tests/build → GitHub Actions → Workload Identity Federation → Google Cloud.
+- Normal UI work (tabs, buttons, copy, layout, mobile fixes, settings fields, charts) must NOT require a Workstation connection.
+- Normal backend debugging/fixes/deployments must NOT require a Workstation connection once the GitHub control-plane PRs below are validated.
+- Direct Google Cloud / Workstation access is break-glass only for billing/payment, IAM/bootstrap, highly sensitive secrets, or failure of the GitHub→Google control path itself.
+- A new chat must read AGENT_HANDOFF.md and CURRENT_TASK.json before modifying code or assuming deployment state.
+- The Workstation remains an emergency option only; do not make it part of the normal workflow.
+
 ## Workstation
-- Cloud Workstation remains available as emergency access.
+- Cloud Workstation remains available as emergency/break-glass access.
 - Current config uses e2-standard-4 with 2h idle timeout and 6h running timeout.
-- Do not disable Workstation until GitHub-only deploy, diagnostics, rollback, and production verification are proven.
+- Do not disable it until GitHub-only diagnosis, backend deploy, rollback, and production verification are proven end-to-end.
 
 ## Must not change
 - Trading strategies or order logic.
@@ -65,12 +73,16 @@ Active task: 24/7 infrastructure, GitHub Actions deployment hardening, monitorin
 - Independent hourly ChatGPT/Gmail Cloud Billing Watch is active.
 - Independent hourly ChatGPT Bot Health Watch is active.
 - Production has NOT yet been redeployed with the infrastructure hardening.
-- Cloud Workstation/Remote Commander is currently offline, so production workflow dispatch and GCP Monitoring/Budget mutations are blocked until it reconnects.
+- Canonical V46 web deployment is already GitHub-native: changes under `web/**` trigger tests, no-traffic candidate deployment to `amar-bot-v44-direct-install`, candidate verification, promotion, post-promotion verification, and rollback on failure via WIF.
+- PR #109 (target `main`): GitHub-native issue-triggered read-only production diagnostics; CI permission fix included for existing Android workflow.
+- PR #110 (target active cloud branch): backend deployment can report success/failure/rollback details back to an agent GitHub issue.
+- PR #111 (target `main`): owner-only backend deploy dispatcher; only exact active-branch head with successful Cloud Backend CI can trigger the hardened deploy.
+- Workstation is NOT a normal blocker anymore. GitHub control-plane completion is the current path.
 
 ## Exact next step
-1. Reconnect/start Cloud Workstation.
-2. Dispatch `deploy-cloud-production.yml` on `amar-crypto-bot-2026-cloud` with the required confirmation.
-3. Verify no-traffic candidate, exact commit, health, promotion, final 100% traffic revision, and rollback readiness.
-4. Enable/inspect Cloud Billing Budget API; add earlier warning thresholds without changing payment instruments.
-5. Create Cloud Monitoring notification channel and alerts for Cloud Run/backend failures, recent Aster-tick absence, scheduler failures, and high 5xx rates.
-6. Re-audit costs and keep Workstation emergency-only until GitHub-only deployment/log/rollback operations are proven.
+1. Finish CI for PRs #109, #110 and #111; merge only green changes.
+2. Trigger a real `[AGENT-CONTROL] diagnose production` issue and verify the result returns to GitHub without Workstation access.
+3. Trigger a safe backend deploy request through GitHub and verify candidate → promotion → production health → issue feedback; verify rollback capability without Workstation.
+4. Keep the existing automatic V46 web path as the standard for UI changes.
+5. After GitHub control-plane proof, handle Cloud Monitoring / budget IAM as a one-time infrastructure task, not part of normal development.
+6. Re-audit costs and keep Workstation emergency-only.
