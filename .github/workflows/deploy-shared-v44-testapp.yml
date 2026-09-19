@@ -54,7 +54,7 @@ jobs:
           test "$VERSION" = "46"
           grep -q 'build: WEBAPP_BUILD_NUMBER' web/lib/release-history.ts
           grep -q 'version: WEBAPP_VERSION' web/lib/release-history.ts
-          grep -q 'id: "v46-build-373-release-history"' web/lib/release-history.ts
+          grep -q 'id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`' web/lib/release-history.ts
           echo "WEBAPP_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "WEBAPP_BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
 
