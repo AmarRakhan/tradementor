@@ -97,6 +97,30 @@ jobs:
           PY
           done
 
+      - name: Read all Cloud Run service capacity
+        shell: bash
+        run: |
+          set -u
+          gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/all-run-services.json
+          python - /tmp/all-run-services.json <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          print('serviceCount=',len(rows))
+          for s in rows:
+              spec=s.get('spec',{}).get('template',{}).get('spec',{})
+              meta=s.get('spec',{}).get('template',{}).get('metadata',{})
+              ann=meta.get('annotations',{}) or {}
+              c=(spec.get('containers') or [{}])[0]
+              limits=(c.get('resources') or {}).get('limits',{})
+              traffic=[(x.get('revisionName'),x.get('percent')) for x in s.get('status',{}).get('traffic',[]) if x.get('percent')]
+              print(s.get('metadata',{}).get('name'),
+                    'conc=',spec.get('containerConcurrency'),
+                    'min=',ann.get('autoscaling.knative.dev/minScale'),
+                    'max=',ann.get('autoscaling.knative.dev/maxScale'),
+                    'cpu=',limits.get('cpu'),'mem=',limits.get('memory'),
+                    'traffic=',traffic)
+          PY
+
       - name: Read costly legacy inventory
         shell: bash
         run: |
@@ -129,3 +153,6 @@ jobs:
           print('count=',len(rows))
           for x in rows: print(x.get('name'),x.get('state'),x.get('createTime'))
           PY
+
+
+# diagnostic pass 3 marker
