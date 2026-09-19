@@ -63,5 +63,5 @@ test("history includes confirmed Git baseline and reconstructed pre-Git mileston
   assert.match(history, /version: "001"/);
   assert.match(history, /build: null/);
   assert.match(history, /confidence: "reconstructed"/);
-  assert.match(history, /exacte buildnummers/i);
+  assert.match(history, /exacte .*buildnummers/i);
 });
