@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T09:20:00Z",
+  "updatedAt": "2026-09-19T09:15:00Z",
   "task": "24/7 infrastructure, GitHub Actions deployment hardening, monitoring, billing protection, chat handoff",
-  "status": "IMPLEMENTATION_CODED_AWAITING_CI",
+  "status": "MERGED_NOT_DEPLOYED",
   "activeBranch": "amar-crypto-bot-2026-cloud",
   "branchHead": "c47ecdf8ee7bdb69df7155800f3ebae416afd489",
   "defaultBranchHead": "b02013861d5d1047b3e10f51f5ccf2f6fd4f0785",
@@ -44,7 +44,7 @@
     "revision": "tradementor-api-dca-e1f8132f-1",
     "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853"
   },
-  "nextStep": "Run CI via pull request for agent/infra-24x7-20260919, then merge only if green and deploy through hardened workflow.",
+  "nextStep": "Dispatch deploy-cloud-production.yml on amar-crypto-bot-2026-cloud, verify candidate/no-traffic, promotion, exact commit, and rollback behavior; then configure GCP alert policies/budget thresholds.",
   "implementation": {
     "featureBranch": "agent/infra-24x7-20260919",
     "commits": [
@@ -60,6 +60,13 @@
       "15-minute external GitHub health monitor",
       "workflow safety contract tests"
     ],
-    "productionChanged": false
+    "productionChanged": false,
+    "mergeCommit": "397fe7144325aefca6c8d08155ec69c27a835e64",
+    "pullRequest": 106,
+    "cloudBackendCI": {
+      "run": 378,
+      "status": "success"
+    },
+    "billingWatch": "active-hourly"
   }
 }
