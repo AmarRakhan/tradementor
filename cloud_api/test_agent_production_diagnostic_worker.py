@@ -84,3 +84,13 @@ def test_diagnostic_worker_checks_live_v46_webapp_without_mutation():
     assert 'Webapp visible version/build: v%s · build %s' in text
     assert 'gcloud run services update "$WEB_CLOUD_RUN_SERVICE"' not in text
     assert 'gcloud run deploy "$WEB_CLOUD_RUN_SERVICE"' not in text
+
+
+def test_web_diagnostics_report_only_env_names_for_live_and_latest_revisions():
+    text = source()
+    assert "WEB_LIVE_ENV_NAMES" in text
+    assert "WEB_LATEST_ENV_NAMES" in text
+    assert 'Webapp live env names: %s' in text
+    assert 'Webapp latest env names: %s' in text
+    assert 'x.get("name","")' in text
+    assert 'x.get("value")' not in text[text.index("WEB_LIVE_ENV_NAMES"):text.index('WEB_HTML_FILE=')]
