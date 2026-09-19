@@ -102,6 +102,8 @@ jobs:
               except Exception:return default
           def pack(a,bv):
               return min(max(i(a),0),14)*15+min(max(i(bv),0),14)
+          def pack10(a,bv):
+              return min(max(i(a),0),9)*10+min(max(i(bv),0),9)
 
           flags=(b(settings.get('asymmetricHedgeModeEnabled'))
                  | (b(settings.get('shortRequiresLongEnabled'))<<1)
@@ -142,12 +144,19 @@ jobs:
               13:min(max(i(report.get('executableCandidateCount')),0),249),
               14:min(max(len(state),0),249),
               15:min(max(reason_mask,0),249),
+              16:pack10(settings.get('longSlots'),settings.get('shortSlots')),
+              17:pack10(report.get('activeLong'),report.get('activeShort')),
+              18:pack10(report.get('remainingLong'),report.get('remainingShort')),
+              19:min(max(i(report.get('entryStatus')=='WAITING_CAPACITY'),0),249),
+              20:min(max(i(settings.get('asymmetricHedgeModeEnabled') is True),0),249),
+              21:min(max(i(settings.get('shortRequiresLongEnabled') is True),0),249),
+              22:min(max(i(settings.get('bollingerEntryFilter15mEnabled') is True),0),249),
           }
           raise SystemExit(metrics.get(idx,0)+1)
           PY
           )"
 
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 16 --parallelism 4 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 23 --parallelism 4 --max-retries 0 --task-timeout 180s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
