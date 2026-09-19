@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 import aster_stop_loss
+import aster_multi_bb
+from aster_stop_loss import StopLossGateResult
 from aster_leverage_tiers import resolve_entry
 from aster_multi_bb import ENGINE, MultiBbConfig, run_multi_bb_step
 from aster_stop_loss import run_stop_loss_gate
@@ -344,3 +346,29 @@ def test_dry_run_simulates_trigger_without_sending_order(monkeypatch):
     kinds = [a["kind"] for a in result.report["actions"]]
     assert "STOP_LOSS_TRIGGERED" in kinds
     assert "STOP_LOSS_WOULD_CLOSE" in kinds
+
+
+def test_stoploss_gate_preempts_portfolio_tp_profit_lock_dca_and_entry(monkeypatch):
+    settings = config(stopLossEnabled=True, stopLossMode="PERCENT", stopLossLong=5, stopLossShort=5)
+    sentinel = StopLossGateResult(
+        True,
+        {"status": "EXECUTED", "ordersSent": 1, "actions": [{"kind": "STOP_LOSS_CLOSED"}]},
+        {"multiBbPositions": {}}, {"availableBalance": "100"}, [], [], 1,
+    )
+
+    monkeypatch.setattr(aster_multi_bb, "run_stop_loss_gate", lambda **_kwargs: sentinel)
+
+    def forbidden(**_kwargs):
+        raise AssertionError("later strategy gate must not run after Stoploss handled the tick")
+
+    monkeypatch.setattr(aster_multi_bb, "portfolio_cycle_gate", forbidden)
+    monkeypatch.setattr(aster_multi_bb, "run_profit_lock_ladder_gate", forbidden)
+    monkeypatch.setattr(aster_multi_bb, "run_smart_rescue_gate", forbidden)
+
+    result = aster_multi_bb.run_multi_bb_step(
+        client=object(), ref=_Ref(), raw_state={}, settings=settings, uid="u",
+        account={"availableBalance": "100"}, positions=[], open_orders=[],
+        timestamp_ms=1_700_000_000_000, dry_run=False, order_budget=5,
+    )
+    assert result["action"] == "STOP_LOSS"
+    assert result["ordersSent"] == 1
