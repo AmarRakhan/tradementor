@@ -28,7 +28,7 @@ jobs:
   test-and-deploy:
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Check out exact branch source
         uses: actions/checkout@v4
@@ -36,12 +36,14 @@ jobs:
       - name: Authorize manual production deployment
         shell: bash
         run: |
+          set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
           test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
 
       - name: Verify immutable repository scope
         shell: bash
         run: |
+          set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
           test "$GCP_PROJECT_ID" = "tradementor-production"
@@ -71,9 +73,26 @@ jobs:
       - name: Set up Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Capture production configuration
+      - name: Verify control-plane dependencies
         shell: bash
         run: |
+          set -euo pipefail
+          gcloud firestore databases describe --database="(default)"             --project "$GCP_PROJECT_ID"             --format='value(name)' >/dev/null
+          ASTER_INFO="$(curl --fail --silent --show-error --retry 3 --retry-delay 2             "https://fapi.asterdex.com/fapi/v3/exchangeInfo")"
+          python - "$ASTER_INFO" <<'PY'
+          import json
+          import sys
+
+          payload = json.loads(sys.argv[1])
+          symbols = payload.get("symbols", [])
+          assert isinstance(symbols, list) and symbols
+          assert any(str(row.get("status", "")).upper() == "TRADING" for row in symbols if isinstance(row, dict))
+          PY
+
+      - name: Capture production configuration and rollback point
+        shell: bash
+        run: |
+          set -euo pipefail
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-before.json"
           gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/iam-before.json"
           python - "$RUNNER_TEMP/service-before.json" >> "$GITHUB_ENV" <<'PY'
@@ -85,34 +104,50 @@ jobs:
           variables = {item["name"]: item.get("value") for item in spec["containers"][0].get("env", [])}
           assert variables.get("ASTER_LIVE_EXECUTION_ENABLED") == "true"
           assert variables.get("ASTER_STRATEGY2_LIVE_ENABLED") == "true"
-          # Preserve the existing production environment exactly. Historical
-          # Strategy-3 flags are harmless here because the generic production
-          # endpoint is source-locked to Strategies 1 and 2 below.
           runtime_service_account = spec.get("serviceAccountName")
           service_url = service["status"]["url"]
           assert runtime_service_account and service_url.startswith("https://")
+          traffic = service["status"].get("traffic", [])
+          live = next((row for row in traffic if int(row.get("percent", 0)) == 100), None)
+          assert live and live.get("revisionName")
           print(f"RUNTIME_SERVICE_ACCOUNT={runtime_service_account}")
           print(f"SERVICE_URL={service_url}")
+          print(f"PREVIOUS_REVISION={live['revisionName']}")
+          PY
+          PREVIOUS_HEALTH="$(curl --fail --silent --show-error --retry 4 --retry-delay 3 "$SERVICE_URL/health")"
+          python - "$PREVIOUS_HEALTH" >> "$GITHUB_ENV" <<'PY'
+          import json
+          import sys
+
+          health = json.loads(sys.argv[1])
+          assert health["status"] == "ready"
+          assert health["multiUser"] is True
+          previous = health.get("sourceCommit") or health.get("imageSourceCommit") or ""
+          assert previous
+          print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
       - name: Build and push backend image
         shell: bash
         run: |
+          set -euo pipefail
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
           IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$GITHUB_SHA"
-          docker build --tag "$IMAGE" cloud_api
+          docker build --build-arg "SOURCE_COMMIT=$GITHUB_SHA" --tag "$IMAGE" cloud_api
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       - name: Deploy candidate without production traffic
         shell: bash
         run: |
-          REVISION_SUFFIX="gh-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
-          TAG="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
+          set -euo pipefail
+          REVISION_SUFFIX="gh-${GITHUB_SHA:0:8}-$GITHUB_RUN_ATTEMPT"
+          TAG="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$GITHUB_SHA,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-candidate.json"
           python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
           import json
+          import os
           import sys
 
           before = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -126,45 +161,71 @@ jobs:
           before_env = {item["name"]: item.get("value") for item in before_spec["containers"][0].get("env", [])}
           after_env = {item["name"]: item.get("value") for item in after_spec["containers"][0].get("env", [])}
           expected_env = dict(before_env)
-          expected_env.update({"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
+          expected_env.update({
+              "TRADEMENTOR_SOURCE_COMMIT": os.environ["GITHUB_SHA"],
+              "ASTER_REALTIME_WORKER": "true",
+              "ASTER_REALTIME_EXECUTION_ENABLED": "true",
+              "ASTER_PROFIT_SWEEP_LIVE_ENABLED": "true",
+              "ASTER_EMERGENCY_HEDGE_WORKER": "false",
+          })
           assert after_env == expected_env
           candidate = next(row for row in after["status"]["traffic"] if row.get("tag") == tag)
           print(f'CANDIDATE_URL={candidate["url"]}')
           print(f'CANDIDATE_REVISION={candidate["revisionName"]}')
           PY
 
-      - name: Verify candidate health
+      - name: Verify candidate health and route contract
         shell: bash
         run: |
+          set -euo pipefail
           HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/health")"
-          python - "$HEALTH" <<'PY'
+          OPENAPI="$(curl --fail --silent --show-error --retry 4 --retry-delay 3 "$CANDIDATE_URL/openapi.json")"
+          python - "$HEALTH" "$OPENAPI" <<'PY'
           import json
+          import os
           import sys
 
           health = json.loads(sys.argv[1])
+          openapi = json.loads(sys.argv[2])
           assert health["status"] == "ready"
           assert health["multiUser"] is True
+          assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
+          assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
+          paths = openapi.get("paths", {})
+          assert "/health" in paths
+          assert "/internal/aster-automation/tick" in paths
           PY
 
       - name: Promote verified revision
         shell: bash
         run: |
+          set -euo pipefail
+          echo "PROMOTION_ATTEMPTED=true" >> "$GITHUB_ENV"
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Verify production after promotion
+        shell: bash
+        run: |
+          set -euo pipefail
           SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format='value(status.url)')"
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
-          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$SERVICE_URL/health")"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$SERVICE_URL/health")"
           python - "$HEALTH" <<'PY'
           import json
+          import os
           import sys
 
           health = json.loads(sys.argv[1])
           assert health["status"] == "ready"
           assert health["multiUser"] is True
+          assert health["sourceCommit"] == os.environ["GITHUB_SHA"]
+          assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
           PY
 
       - name: Verify Cloud Run IAM is unchanged
         shell: bash
         run: |
+          set -euo pipefail
           gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/iam-after.json"
           python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
           import json
@@ -174,3 +235,36 @@ jobs:
           after = json.load(open(sys.argv[2], encoding="utf-8"))
           assert before == after
           PY
+
+      - name: Roll back failed promotion
+        if: ${{ failure() && env.PROMOTION_ATTEMPTED == 'true' && env.PREVIOUS_REVISION != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Production verification failed; restoring $PREVIOUS_REVISION"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --to-revisions "$PREVIOUS_REVISION=100"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format='value(status.url)')"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json
+          import os
+          import sys
+
+          health = json.loads(sys.argv[1])
+          assert health["status"] == "ready"
+          assert health["multiUser"] is True
+          assert (health.get("sourceCommit") or health.get("imageSourceCommit")) == os.environ["PREVIOUS_SOURCE_COMMIT"]
+          PY
+
+      - name: Upload deployment diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/service-before.json
+            ${{ runner.temp }}/service-candidate.json
+            ${{ runner.temp }}/iam-before.json
+            ${{ runner.temp }}/iam-after.json
+          if-no-files-found: ignore
+          retention-days: 14
