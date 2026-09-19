@@ -19,27 +19,27 @@ def test_backend_dispatcher_is_owner_only_and_issue_triggered():
     assert "issues: write" in text
 
 
-def test_backend_dispatcher_only_allows_exact_current_cloud_branch_head():
+def test_backend_dispatcher_only_allows_commit_from_trusted_cloud_branch_history():
     text = source()
     assert "TARGET_BRANCH: amar-crypto-bot-2026-cloud" in text
-    assert 'test "$COMMIT" = "$BRANCH_HEAD"' in text
-    assert 'test "$CURRENT_HEAD" = "$COMMIT"' in text
+    assert 'git fetch --quiet --filter=blob:none origin "$TARGET_BRANCH" "$COMMIT"' in text
+    assert 'git merge-base --is-ancestor "$COMMIT" "FETCH_HEAD"' in text
     assert "commit:" in text
 
 
-def test_backend_dispatcher_tests_exact_branch_head_before_dispatch():
+def test_backend_dispatcher_tests_exact_requested_source_before_dispatch():
     text = source()
     assert "Check out exact production commit" in text
     assert "ref: ${{ steps.validate.outputs.commit }}" in text
     assert "pip install -r cloud_api/requirements.txt pytest" in text
     assert "Run full backend tests on exact production commit" in text
     assert "pytest -q" in text
-    assert 'test "$CURRENT_HEAD" = "$COMMIT"' in text
 
 
 def test_backend_dispatcher_reuses_existing_hardened_deploy_workflow_only():
     text = source()
     assert "gh workflow run deploy-cloud-production.yml" in text
     assert "-f confirmation=DEPLOY_PRODUCTION_BACKEND" in text
+    assert '-f source_commit="$COMMIT"' in text
     assert '-f request_issue="$ISSUE_NUMBER"' in text
     assert "gcloud " not in text
