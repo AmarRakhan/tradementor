@@ -71,3 +71,14 @@ def test_production_deploy_does_not_implicitly_ship_cloud_branch_head():
     assert 'IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$SOURCE_COMMIT"' in text
     assert 'REVISION_SUFFIX="src-${SOURCE_COMMIT:0:8}-$RUN_SUFFIX"' in text
     assert 'echo "- Source commit: $SOURCE_COMMIT"' in text
+
+
+def test_exact_current_source_reuses_existing_live_image_for_noop_proof():
+    text = workflow()
+    assert "Select exact image strategy" in text
+    assert 'if [ "$SOURCE_COMMIT" = "$PREVIOUS_SOURCE_COMMIT" ]; then' in text
+    assert 'gcloud run revisions describe "$PREVIOUS_REVISION"' in text
+    assert 'echo "REUSE_LIVE_IMAGE=true"' in text
+    assert 'echo "IMAGE=$PREVIOUS_IMAGE"' in text
+    assert "if: env.REUSE_LIVE_IMAGE != 'true'" in text
+    assert 'echo "- Image mode: $DEPLOYMENT_PROOF_MODE"' in text
