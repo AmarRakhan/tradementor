@@ -166,6 +166,43 @@ jobs:
           print('uri=',(s.get('httpTarget') or {}).get('uri'))
           PY
 
+      - name: Read cost-relevant resource configuration
+        shell: bash
+        run: |
+          set -u
+          echo '=== CLOUD RUN SERVICE COST CONFIG ==='
+          gcloud run services list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/cost-run-services.json
+          python - /tmp/cost-run-services.json <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          for s in rows:
+              name=s.get('metadata',{}).get('name')
+              smeta=s.get('metadata',{})
+              sann=smeta.get('annotations',{}) or {}
+              tmpl=s.get('spec',{}).get('template',{})
+              tann=(tmpl.get('metadata',{}).get('annotations',{}) or {})
+              spec=tmpl.get('spec',{})
+              c=(spec.get('containers') or [{}])[0]
+              limits=(c.get('resources') or {}).get('limits',{})
+              traffic=[(x.get('revisionName'),x.get('percent'),x.get('tag')) for x in s.get('status',{}).get('traffic',[]) if x.get('percent') or x.get('tag')]
+              print(name,
+                    'serviceMin=',sann.get('run.googleapis.com/minScale'),
+                    'templateMin=',tann.get('autoscaling.knative.dev/minScale'),
+                    'templateMax=',tann.get('autoscaling.knative.dev/maxScale'),
+                    'cpu=',limits.get('cpu'),'mem=',limits.get('memory'),
+                    'conc=',spec.get('containerConcurrency'),
+                    'latestReady=',s.get('status',{}).get('latestReadyRevisionName'),
+                    'trafficRows=',len(traffic))
+          PY
+          echo '=== COMPUTE INSTANCES ==='
+          gcloud compute instances list --project "$GCP_PROJECT_ID" --format='table(name,zone,status,machineType.basename(),creationTimestamp)' || true
+          echo '=== CLOUD RUN JOBS ==='
+          gcloud run jobs list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='table(name,latestCreatedExecution.name,template.template.containers[0].resources.limits.cpu,template.template.containers[0].resources.limits.memory)' || true
+          echo '=== ARTIFACT REGISTRY REPOSITORIES ==='
+          gcloud artifacts repositories list --project "$GCP_PROJECT_ID" --location="$GCP_REGION" --format='table(name,format,createTime,updateTime,sizeBytes)' || true
+          echo '=== ARTIFACT IMAGE COUNT ==='
+          gcloud artifacts docker images list "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/tradementor" --include-tags --format='value(package)' 2>/dev/null | sort -u | wc -l || true
+
       - name: Read costly legacy inventory
         shell: bash
         run: |
@@ -203,3 +240,5 @@ jobs:
 # diagnostic pass 3 marker
 
 # live revision verification
+
+# cost-read-only pass
