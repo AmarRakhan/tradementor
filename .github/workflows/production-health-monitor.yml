@@ -1,0 +1,113 @@
+name: 24x7 Production Health Monitor
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-health-monitor
+  cancel-in-progress: true
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  ASTER_SCHEDULER_JOB: tradementor-aster-automation
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  MONITOR_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate with Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.MONITOR_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify billing remains enabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENABLED="$(gcloud beta billing projects describe "$GCP_PROJECT_ID" --format='value(billingEnabled)')"
+          test "$ENABLED" = "True"
+
+      - name: Verify Cloud Run backend health
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format='value(status.url)')"
+          test -n "$SERVICE_URL"
+          HEALTH="$(curl --fail --silent --show-error --retry 4 --retry-delay 3 "$SERVICE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json
+          import sys
+          health = json.loads(sys.argv[1])
+          assert health["status"] == "ready"
+          assert health["multiUser"] is True
+          assert health.get("sourceCommit") or health.get("imageSourceCommit")
+          PY
+
+      - name: Verify Firestore control plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud firestore databases describe --database="(default)"             --project "$GCP_PROJECT_ID"             --format='value(name)' | grep -q .
+
+      - name: Verify Aster scheduler is enabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATE="$(gcloud scheduler jobs describe "$ASTER_SCHEDULER_JOB"             --project "$GCP_PROJECT_ID"             --location "$GCP_REGION"             --format='value(state)')"
+          test "$STATE" = "ENABLED"
+
+      - name: Verify Aster automation is actually processing
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECENT_OK="$(gcloud logging read             'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.requestUrl:"/internal/aster-automation/tick" AND httpRequest.status=200'             --project "$GCP_PROJECT_ID"             --freshness=10m             --limit=1             --format='value(timestamp)')"
+          test -n "$RECENT_OK"
+
+      - name: Verify critical backend error rate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ERROR_COUNT="$(gcloud logging read             'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status>=500'             --project "$GCP_PROJECT_ID"             --freshness=15m             --limit=25             --format='value(timestamp)' | wc -l | tr -d ' ')"
+          test "$ERROR_COUNT" -lt 10
+
+      - name: Verify Aster public connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASTER_INFO="$(curl --fail --silent --show-error --retry 3 --retry-delay 2             "https://fapi.asterdex.com/fapi/v3/exchangeInfo")"
+          python - "$ASTER_INFO" <<'PY'
+          import json
+          import sys
+          payload = json.loads(sys.argv[1])
+          symbols = payload.get("symbols", [])
+          assert isinstance(symbols, list) and symbols
+          assert any(str(row.get("status", "")).upper() == "TRADING" for row in symbols if isinstance(row, dict))
+          PY
+
+      - name: Write monitor summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### 24/7 production monitor"
+            echo "- Checked: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Project: $GCP_PROJECT_ID"
+            echo "- Service: $CLOUD_RUN_SERVICE"
+            echo "- This workflow is read-only and never submits exchange orders."
+          } >> "$GITHUB_STEP_SUMMARY"
