@@ -233,7 +233,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
       // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
       // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
-      // optional cap; null deliberately preserves the established pair-maximum behavior.
+      // optional cap, and skips symbols whose Aster maximum cannot satisfy the minimum.
+      // Null Maximum leverage deliberately preserves the established pair-maximum behavior.
       if (settings.maximumLeverage !== null && settings.maximumLeverage < settings.minimumLeverage) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage.");
       if (settings.stopLossEnabled && (settings.stopLossLong <= 0 || settings.stopLossShort <= 0)) throw new Error("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat.");
       if (settings.longSlots > 0 && settings.entryMarginLongUsd <= 0) throw new Error("Instap LONG moet groter dan 0 USDT zijn.");
@@ -331,7 +332,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     </section>
 
     <section className="live-settings-card">
-      <div className={`strategy-power-control live-power ${enabled ? "enabled" : "ready"}`}><span><b><i className="live-dot" />Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : enabled ? "Server bevestigd · actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
+      <div className={`strategy-power-control live-power ${enabled ? "enabled" : "ready"}`}><span><b><i className="live-dot" />Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
       <div className="live-config-grid">
         <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
         <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
