@@ -30,12 +30,11 @@ def test_production_deploy_verifies_exact_source_commit_before_promotion():
     assert '--no-traffic' in text
 
 
-def test_production_deploy_checks_only_safe_external_dependency_before_build():
+def test_production_deploy_does_not_depend_on_database_or_exchange_availability_before_candidate():
     text = workflow()
     assert 'gcloud firestore databases describe --database="(default)"' not in text
-    assert "https://fapi.asterdex.com/fapi/v3/exchangeInfo" in text
-    assert 'row.get("status", "")' in text
-    assert 'DEPLOY_PHASE=aster-public-preflight' in text
+    assert "https://fapi.asterdex.com/fapi/v3/exchangeInfo" not in text
+    assert "DEPLOY_PHASE=aster-public-preflight" not in text
 
 
 def test_production_deploy_captures_rollback_point_and_restores_it_on_failure():
