@@ -49,3 +49,13 @@ def test_failed_candidate_never_receives_production_traffic():
     verify_index = text.index("Verify candidate health and route contract")
     promote_index = text.index("Promote verified revision")
     assert candidate_index < verify_index < promote_index
+
+
+def test_production_deploy_can_report_result_back_to_agent_issue():
+    text = workflow()
+    assert "request_issue:" in text
+    assert "issues: write" in text
+    assert 'gh issue comment "$REQUEST_ISSUE"' in text
+    assert 'gh issue close "$REQUEST_ISSUE"' in text
+    assert "Publish failed deployment to agent issue" in text
+    assert "issue is intentionally left open for investigation" in text
