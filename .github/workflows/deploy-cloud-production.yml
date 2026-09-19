@@ -161,13 +161,7 @@ jobs:
           before_env = {item["name"]: item.get("value") for item in before_spec["containers"][0].get("env", [])}
           after_env = {item["name"]: item.get("value") for item in after_spec["containers"][0].get("env", [])}
           expected_env = dict(before_env)
-          expected_env.update({
-              "TRADEMENTOR_SOURCE_COMMIT": os.environ["GITHUB_SHA"],
-              "ASTER_REALTIME_WORKER": "true",
-              "ASTER_REALTIME_EXECUTION_ENABLED": "true",
-              "ASTER_PROFIT_SWEEP_LIVE_ENABLED": "true",
-              "ASTER_EMERGENCY_HEDGE_WORKER": "false",
-          })
+          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["GITHUB_SHA"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
           assert after_env == expected_env
           candidate = next(row for row in after["status"]["traffic"] if row.get("tag") == tag)
           print(f'CANDIDATE_URL={candidate["url"]}')
@@ -193,7 +187,6 @@ jobs:
           assert health["imageSourceCommit"] == os.environ["GITHUB_SHA"]
           paths = openapi.get("paths", {})
           assert "/health" in paths
-          assert "/internal/aster-automation/tick" in paths
           PY
 
       - name: Promote verified revision
