@@ -7,10 +7,16 @@ on:
         description: "Type DEPLOY_PRODUCTION_BACKEND"
         required: true
         type: string
+      request_issue:
+        description: "Optional GitHub issue number for agent feedback"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
   id-token: write
+  issues: write
 
 concurrency:
   group: tradementor-production-backend
@@ -229,6 +235,27 @@ jobs:
           assert before == after
           PY
 
+      - name: Publish successful deployment to agent issue
+        if: ${{ success() && inputs.request_issue != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Production backend deployment complete"
+            echo
+            echo "- Status: **SUCCESS**"
+            echo "- Source commit: `$GITHUB_SHA`"
+            echo "- Live revision: `$CANDIDATE_REVISION`"
+            echo "- Previous revision: `$PREVIOUS_REVISION`"
+            echo "- Health: **ready**"
+            echo "- Rollback point retained: `$PREVIOUS_REVISION`"
+          } > "$RUNNER_TEMP/deploy-result.md"
+          gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/deploy-result.md"
+          gh issue close "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --reason completed
+
       - name: Roll back failed promotion
         if: ${{ failure() && env.PROMOTION_ATTEMPTED == 'true' && env.PREVIOUS_REVISION != '' }}
         shell: bash
@@ -248,6 +275,27 @@ jobs:
           assert health["multiUser"] is True
           assert (health.get("sourceCommit") or health.get("imageSourceCommit")) == os.environ["PREVIOUS_SOURCE_COMMIT"]
           PY
+
+      - name: Publish failed deployment to agent issue
+        if: ${{ failure() && inputs.request_issue != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Production backend deployment failed"
+            echo
+            echo "- Status: **FAILED**"
+            echo "- Source commit: `$GITHUB_SHA`"
+            echo "- Candidate revision: `${CANDIDATE_REVISION:-not-created}`"
+            echo "- Previous production revision: `${PREVIOUS_REVISION:-unknown}`"
+            echo "- Promotion attempted: `${PROMOTION_ATTEMPTED:-false}`"
+            echo
+            echo "The issue is intentionally left open for investigation. If promotion had already occurred, the rollback step was attempted automatically."
+          } > "$RUNNER_TEMP/deploy-failure.md"
+          gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/deploy-failure.md"
 
       - name: Upload deployment diagnostics
         if: always()
