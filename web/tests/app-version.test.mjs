@@ -12,7 +12,7 @@ test("webapp version 46 and the current canonical build stay visible throughout 
   ]);
 
   assert.match(versionSource, /WEBAPP_VERSION = "46"/);
-  assert.match(versionSource, /WEBAPP_BUILD_NUMBER = "\\d+"/);
+  assert.match(versionSource, /WEBAPP_BUILD_NUMBER = "\d+"/);
   assert.match(versionSource, /webappVersionLabel/);
   assert.match(versionSource, /Webapp versie/);
 

@@ -13,7 +13,7 @@ test("release history is mobile-first, persistent and tied to the current canoni
   ]);
 
   assert.match(version, /WEBAPP_VERSION = "46"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "\\d+"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "\d+"/);
   assert.match(history, /build: WEBAPP_BUILD_NUMBER/);
   assert.match(history, /version: WEBAPP_VERSION/);
   assert.match(history, /v\$\{WEBAPP_VERSION\}-build-\$\{WEBAPP_BUILD_NUMBER\}-release-history/);

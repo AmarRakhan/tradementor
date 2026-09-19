@@ -50,7 +50,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De bestaande backendformule voor dagelijkse groei is niet gewijzigd; alleen de frontend-refreshkoppeling is gerepareerd.",
     "Geen tradingstrategie, DCA-, TP-, order-, wallet-, exchange- of gebruikersinstelling gewijzigd.",
     "Regressietest toegevoegd voor serverUpdatedAt -> PortfolioGrowthCard refreshKey -> /portfolio-growth/daily.",
-    "Build 376 werd door CI geblokkeerd door twee oude tests met hardcoded build 375; build 377 maakt die versiechecks toekomstvast zonder de functionele fix te wijzigen.",
+    "Builds 376 en 377 bereikten productie niet: CI blokkeerde eerst oude hardcoded buildchecks en daarna een te letterlijk ge-escapete numerieke regex. Build 378 bevat dezelfde functionele fix met gecorrigeerde toekomstvaste tests.",
   ],
   confidence: "confirmed",
 };
