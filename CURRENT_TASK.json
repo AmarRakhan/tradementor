@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T09:05:00Z",
+  "updatedAt": "2026-09-19T09:20:00Z",
   "task": "24/7 infrastructure, GitHub Actions deployment hardening, monitoring, billing protection, chat handoff",
-  "status": "AUDIT_COMPLETE_IMPLEMENTATION_STARTING",
+  "status": "IMPLEMENTATION_CODED_AWAITING_CI",
   "activeBranch": "amar-crypto-bot-2026-cloud",
   "branchHead": "c47ecdf8ee7bdb69df7155800f3ebae416afd489",
   "defaultBranchHead": "b02013861d5d1047b3e10f51f5ccf2f6fd4f0785",
@@ -44,5 +44,22 @@
     "revision": "tradementor-api-dca-e1f8132f-1",
     "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853"
   },
-  "nextStep": "Harden existing production workflow with rollback and dependency probes, then add monitoring/billing alerts and validate GitHub-only deployment."
+  "nextStep": "Run CI via pull request for agent/infra-24x7-20260919, then merge only if green and deploy through hardened workflow.",
+  "implementation": {
+    "featureBranch": "agent/infra-24x7-20260919",
+    "commits": [
+      "8eb3aca90736f32c226dd67e9308d0ff6c442296",
+      "85790e810c13e20f6f48fe8ef6d7e6becc66cd55",
+      "b1e79e83453e402ee3693cee01d157d9f88cc88b",
+      "6f3c83fe9fa885e44c8d5c270d05d7e95b567314"
+    ],
+    "changes": [
+      "production deploy exact-commit verification",
+      "pre-deploy Firestore and Aster checks",
+      "saved previous revision and automatic rollback after failed promotion",
+      "15-minute external GitHub health monitor",
+      "workflow safety contract tests"
+    ],
+    "productionChanged": false
+  }
 }
