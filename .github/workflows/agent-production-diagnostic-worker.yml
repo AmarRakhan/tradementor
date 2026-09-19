@@ -97,26 +97,63 @@ jobs:
           fi
 
           ACCESS_TOKEN="$(gcloud auth print-access-token 2>/dev/null)"
-          BILLING_JSON="$(curl --fail --silent --show-error --max-time 20 \
+          BILLING_PROJECT_FILE="control-plane-report/billing-project.json"
+          BILLING_PROJECT_HTTP="$(curl --silent --show-error --max-time 20 \
+            -o "$BILLING_PROJECT_FILE" -w '%{http_code}' \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
-            "https://cloudbilling.googleapis.com/v1/projects/$GCP_PROJECT_ID/billingInfo" 2>/dev/null)"
-          BILLING="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print("True" if d.get("billingEnabled") is True else "False" if d.get("billingEnabled") is False else "")' "$BILLING_JSON" 2>/dev/null)"
-          BILLING_ACCOUNT="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print((d.get("billingAccountName") or "").split("/")[-1])' "$BILLING_JSON" 2>/dev/null)"
-          BILLING_ACCOUNT_JSON=""
+            "https://cloudbilling.googleapis.com/v1/projects/$GCP_PROJECT_ID/billingInfo" 2>/dev/null || true)"
+          BILLING_PROJECT_ERROR="$(python - "$BILLING_PROJECT_FILE" <<'PY'
+          import json,sys
+          try:
+              payload=json.load(open(sys.argv[1],encoding="utf-8"))
+              error=payload.get("error") if isinstance(payload,dict) else None
+              print(str((error or {}).get("status") or ""))
+          except Exception:
+              print("")
+          PY
+          )"
+          BILLING=""
+          BILLING_ACCOUNT=""
+          if [ "$BILLING_PROJECT_HTTP" = "200" ]; then
+            BILLING="$(python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("True" if d.get("billingEnabled") is True else "False" if d.get("billingEnabled") is False else "")' "$BILLING_PROJECT_FILE" 2>/dev/null)"
+            BILLING_ACCOUNT="$(python -c 'import json,sys; d=json.load(open(sys.argv[1])); print((d.get("billingAccountName") or "").split("/")[-1])' "$BILLING_PROJECT_FILE" 2>/dev/null)"
+          fi
+
+          BILLING_ACCOUNT_HTTP="not-requested"
+          BILLING_ACCOUNT_ERROR=""
           BILLING_ACCOUNT_OPEN=""
           if [ -n "$BILLING_ACCOUNT" ]; then
-            BILLING_ACCOUNT_JSON="$(curl --fail --silent --show-error --max-time 20 \
+            BILLING_ACCOUNT_FILE="control-plane-report/billing-account.json"
+            BILLING_ACCOUNT_HTTP="$(curl --silent --show-error --max-time 20 \
+              -o "$BILLING_ACCOUNT_FILE" -w '%{http_code}' \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
-              "https://cloudbilling.googleapis.com/v1/billingAccounts/$BILLING_ACCOUNT" 2>/dev/null)"
-            BILLING_ACCOUNT_OPEN="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print("True" if d.get("open") is True else "False" if d.get("open") is False else "")' "$BILLING_ACCOUNT_JSON" 2>/dev/null)"
+              "https://cloudbilling.googleapis.com/v1/billingAccounts/$BILLING_ACCOUNT" 2>/dev/null || true)"
+            BILLING_ACCOUNT_ERROR="$(python - "$BILLING_ACCOUNT_FILE" <<'PY'
+          import json,sys
+          try:
+              payload=json.load(open(sys.argv[1],encoding="utf-8"))
+              error=payload.get("error") if isinstance(payload,dict) else None
+              print(str((error or {}).get("status") or ""))
+          except Exception:
+              print("")
+          PY
+          )"
+            if [ "$BILLING_ACCOUNT_HTTP" = "200" ]; then
+              BILLING_ACCOUNT_OPEN="$(python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("True" if d.get("open") is True else "False" if d.get("open") is False else "")' "$BILLING_ACCOUNT_FILE" 2>/dev/null)"
+            fi
           fi
-          if [ "$BILLING" = "True" ] && [ "$BILLING_ACCOUNT_OPEN" = "True" ]; then
-            BILLING_LINE="✅ project enabled · account open"
-          elif [ "$BILLING" = "False" ] || [ "$BILLING_ACCOUNT_OPEN" = "False" ]; then
-            BILLING_LINE="❌ disabled or billing account closed"
+
+          if [ "$BILLING" = "True" ]; then
+            if [ "$BILLING_ACCOUNT_OPEN" = "True" ]; then
+              BILLING_LINE="✅ project enabled · account open"
+            else
+              BILLING_LINE="✅ project enabled · account-state metadata unavailable"
+            fi
+          elif [ "$BILLING" = "False" ]; then
+            BILLING_LINE="❌ project billing disabled"
             STATUS="DEGRADED"
           else
-            BILLING_LINE="⚠️ billing state unreadable"
+            BILLING_LINE="⚠️ project billing state unreadable"
             STATUS="DEGRADED"
           fi
 
@@ -163,6 +200,8 @@ jobs:
           {
             echo "### Current state"
             printf -- "- Billing: %s\n" "$BILLING_LINE"
+            printf -- "- Billing project API: HTTP %s%s\n" "${BILLING_PROJECT_HTTP:-none}" "${BILLING_PROJECT_ERROR:+ · $BILLING_PROJECT_ERROR}"
+            printf -- "- Billing account API: HTTP %s%s\n" "${BILLING_ACCOUNT_HTTP:-none}" "${BILLING_ACCOUNT_ERROR:+ · $BILLING_ACCOUNT_ERROR}"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
@@ -179,7 +218,7 @@ jobs:
             echo "_No secrets, wallet keys, private exchange credentials, order payloads, or account data were collected._"
           } >> "$REPORT"
 
-          rm -f control-plane-report/aster-exchange-info.json
+          rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json
           echo "$STATUS" > control-plane-report/status.txt
 
       - name: Publish diagnosis back to GitHub issue
