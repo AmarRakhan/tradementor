@@ -71,10 +71,10 @@ jobs:
         env:
           COMMIT: ${{ steps.validate.outputs.commit }}
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Validated backend production deployment requested for `$COMMIT`. The hardened deployment workflow will post the final production revision or failure/rollback result back to this issue."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Validated backend production deployment requested for $COMMIT. The hardened deployment workflow will post the final production revision or failure/rollback result back to this issue."
 
       - name: Report rejected deployment request
         if: failure()
         shell: bash
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment request was **rejected before deployment**. Required conditions: requester must be AmarRakhan, the body must contain `commit: <40-char SHA>`, that SHA must be an ancestor of amar-crypto-bot-2026-cloud, and the dispatcher must successfully run the full backend test suite on that exact SHA before dispatch."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment request was **rejected before deployment**. Required conditions: requester must be AmarRakhan, the body must contain commit: <40-char SHA>, that SHA must be an ancestor of amar-crypto-bot-2026-cloud, and the dispatcher must successfully run the full backend test suite on that exact SHA before dispatch."
