@@ -32,3 +32,14 @@ def test_main_control_plane_dispatches_trusted_branch_worker():
     assert "gh workflow run agent-production-diagnostic-worker.yml" in text
     assert '--ref "$TARGET_BRANCH"' in text
     assert '-f request_issue="$ISSUE_NUMBER"' in text
+
+
+def test_main_control_plane_can_report_v46_deploy_status_without_google_access():
+    text = source()
+    assert "[AGENT-CONTROL] diagnose web deploy" in text
+    assert "deploy-shared-v44-testapp.yml/runs" in text
+    assert "actions/runs/$RUN_ID/jobs" in text
+    assert "FAILED STEP:" in text
+    assert "CURRENT STEP:" in text
+    assert "V46 web deployment status" in text
+    assert "gcloud " not in text
