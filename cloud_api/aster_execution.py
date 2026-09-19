@@ -327,6 +327,7 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
                      close_evidence: CloseEvidence | None = None,
                      close_audit: Callable[[dict[str, Any]], None] | None = None,
                      manual_loss_confirmation: bool = False,
+                     automatic_loss_exit_authorized: bool = False,
                      before_submit: Callable[[AsterOrderIntent], None] | None = None,
                      new_position_leverage: int | None = None,
                      allow_existing_contract_leverage_change: bool = False,
@@ -338,7 +339,7 @@ def execute_leg_once(client: Any, plan: PairExecutionPlan, *, side: PositionSide
     # every risk-increasing OPEN; a contract-specific rejection is safely
     # stepped down instead of stopping the complete Strategy-2 batch.
     accepted_leverage = plan.leverage
-    if action.upper() == "CLOSE" and not manual_loss_confirmation:
+    if action.upper() == "CLOSE" and not manual_loss_confirmation and not automatic_loss_exit_authorized:
         require_profitable_automatic_close(close_evidence, audit=close_audit)
     if action.upper() == "OPEN":
         # Restore the pre-Multi-BB account-capacity guard for brand-new exact-
