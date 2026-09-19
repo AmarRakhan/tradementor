@@ -311,20 +311,40 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       total: Math.round(finiteOr(smart.dcaCountConfigured, levels.length)), armedIndex, nextTrigger: finiteOr(next?.triggerPrice, 0),
       localLow: finiteOr(smart.localLow, 0), recoveryTrigger: finiteOr(smart.recoveryTriggerPrice, 0), margin: finiteOr(smart.cumulativeActualMarginUsd, 0) }];
   });
+  const longCapacity = Math.max(0, n(v.longSlots)); const shortCapacity = Math.max(0, n(v.shortSlots)); const totalCapacity = Math.max(0, longCapacity + shortCapacity);
+  const totalActive = activeLong + activeShort;
+  const longFill = longCapacity > 0 ? Math.min(100, activeLong / longCapacity * 100) : 0;
+  const shortFill = shortCapacity > 0 ? Math.min(100, activeShort / shortCapacity * 100) : 0;
+  const totalFill = totalCapacity > 0 ? Math.min(100, totalActive / totalCapacity * 100) : 0;
   async function toggleLive() { if (status.pending || busy) return; if (dirty) { setMessage("Sla eerst de gewijzigde instellingen op; daarna kun je de bot direct aan- of uitzetten."); return; } if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(true); }
 
-  return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref">
+  return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref" data-reference={BOT_SETTINGS_REFERENCE}>
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
-    <div className="strategy-facts"><span>{v.smartRescueEnabled ? `${v.positions} LONG runtime` : `${v.longSlots} LONG slots`}</span><span>{v.smartRescueEnabled ? "Smart Rescue LONG-only" : `${v.shortSlots} SHORT slots`}</span><span>{Number(v.longSlots) + Number(v.shortSlots)} totaal</span><span>CROSS</span></div>
-    <div className="strategy-message compact-scan"><b>Botposities</b><span>{activeLong}L · {activeShort}S</span><b>Vrije botslots</b><span>{displayRemainingLong}L · {displayRemainingShort}S</span><small>{candidateCount} kandidaten{scannedCandidateCount ? ` · ${scannedCandidateCount} onderzocht` : ""}</small>{dirty && <em>Niet opgeslagen</em>}</div>
-    <div className={`strategy-power-control ${enabled ? "enabled" : "ready"}`}><span><b>Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
+
+    <section className="slot-overview" aria-label="Slot-overzicht">
+      <header><span className="slot-icon">◇</span><div><b>Slot-overzicht</b><small>Bezetting van beschikbare botslots</small></div><span className="slot-cross">⇄ <b>CROSS</b></span><span className="slot-candidates">♙ <b>{candidateCount}</b> kandidaten</span></header>
+      <div className="slot-row long"><strong>LONG</strong><i><u style={{ width: `${longFill}%` }} /></i><b>{activeLong} / {longCapacity}</b><em>{displayRemainingLong} vrij</em></div>
+      <div className="slot-row short"><strong>SHORT</strong><i><u style={{ width: `${shortFill}%` }} /></i><b>{activeShort} / {shortCapacity}</b><em>{displayRemainingShort} vrij</em></div>
+      <div className="slot-row total"><strong>Totaal</strong><i><u style={{ width: `${totalFill}%` }} /></i><b>{totalActive} / {totalCapacity}</b><em>{Math.max(0, totalCapacity - totalActive)} vrij</em></div>
+      {dirty && <small className="slot-dirty">Niet opgeslagen</small>}
+    </section>
+
+    <section className="live-settings-card">
+      <div className={`strategy-power-control live-power ${enabled ? "enabled" : "ready"}`}><span><b><i className="live-dot" />Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : enabled ? "Server bevestigd · actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy || status.pending} onClick={toggleLive}><i />{busy ? "Bezig…" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
+      <div className="live-config-grid">
+        <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
+        <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
+        <Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} />
+        <Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} />
+        <Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} />
+        <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
+        <Field label="Maximum leverage" value={v.maxLeverage} set={(value) => change({ ...v, maxLeverage: value })} />
+      </div>
+      <small className="leverage-caption">{v.maxLeverage.trim() ? `Leverage wordt begrensd op ${Math.max(1, Math.round(n(v.maxLeverage)))}x.` : "Maximum leverage leeg = bestaande pair-maximumlogica."}</small>
+    </section>
 
     <div className="maker-input compact-settings-grid">
-      <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
-      <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
-      <div className="position-settings-grid"><Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} /><Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} /><Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} /></div>
-      <div className={`strategy-power-control short-pair-control ${v.shortRequiresLongEnabled ? "enabled" : "ready"}`}><span><b>SHORT alleen met LONG</b><small>LONG mag altijd zelfstandig openen · ontbrekende LONG krijgt scanner-prioriteit</small></span><button type="button" role="switch" aria-checked={v.shortRequiresLongEnabled} onClick={() => change({ ...v, shortRequiresLongEnabled: !v.shortRequiresLongEnabled })}><i />{v.shortRequiresLongEnabled ? "Aan" : "Uit"}</button></div>
-      <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
+      <div className={`strategy-power-control short-pair-control ${v.shortRequiresLongEnabled ? "enabled" : "ready"}`}><span className="pair-icon">↗</span><span><b>SHORT alleen met LONG</b><small>LONG mag altijd zelfstandig openen · ontbrekende LONG krijgt scanner-prioriteit.</small></span><button type="button" role="switch" aria-checked={v.shortRequiresLongEnabled} onClick={() => change({ ...v, shortRequiresLongEnabled: !v.shortRequiresLongEnabled })}><i />{v.shortRequiresLongEnabled ? "Aan" : "Uit"}</button></div>
 
       <section className="side-settings-block">
         <div className="side-settings-head"><div><small>GEÏNTEGREERD</small><b>LONG / SHORT · DCA & Take Profit</b></div><div className="tp-tabs">{(["PER_TRADE", "PORTFOLIO", "OFF"] as TpMode[]).map((mode) => <button key={mode} type="button" className={v.tpMode === mode ? "active" : ""} onClick={() => change({ ...v, tpMode: mode })}>{mode === "PER_TRADE" ? "Per trade" : mode === "PORTFOLIO" ? "Portfolio" : "Uit"}</button>)}</div></div>
@@ -336,7 +356,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         </div>
       </section>
 
-      {/* Visual reference: https://chatgpt.com/s/m_6aa7bba43bd88191ac5083522a344b64 */}
+      <section className={`stop-loss-card ${v.stopLossEnabled ? "enabled" : ""}`} aria-label="Stoploss">
+        <div className="stop-loss-head"><span className="stop-loss-icon">♢</span><span><b>Stoploss</b><small>Sluit trade automatisch bij maximaal verlies.</small></span><button type="button" className={v.stopLossEnabled ? "on" : ""} role="switch" aria-checked={v.stopLossEnabled} onClick={() => change({ ...v, stopLossEnabled: !v.stopLossEnabled })}><i />{v.stopLossEnabled ? "Aan" : "Uit"}</button><span className="stop-loss-type"><small>Type:</small><button type="button" className={v.stopLossMode === "USD" ? "active" : ""} onClick={() => change({ ...v, stopLossMode: "USD" })}>$</button><button type="button" className={v.stopLossMode === "PERCENT" ? "active" : ""} onClick={() => change({ ...v, stopLossMode: "PERCENT" })}>%</button></span></div>
+        <div className="stop-loss-fields"><Field label="Stoploss LONG" value={v.stopLossLong} set={(value) => change({ ...v, stopLossLong: value })} suffix={v.stopLossMode === "USD" ? "USDT" : "%"} /><Field label="Stoploss SHORT" value={v.stopLossShort} set={(value) => change({ ...v, stopLossShort: value })} suffix={v.stopLossMode === "USD" ? "USDT" : "%"} /></div>
+      </section>
+
+      {/* Smart Rescue keeps its existing behavior; only the collapsed card is visually compact. */}
       <section className={`smart-rescue-card ${v.smartRescueEnabled ? "enabled" : ""}`}>
         <label className="smart-rescue-toggle"><span><small>NIEUW · OPTIONELE DCA-MODUS</small><b>Smart Rescue DCA</b><em>Progressieve LONG-rescues · pas kopen na herstel</em></span><input type="checkbox" checked={v.smartRescueEnabled} onChange={(event) => change({ ...v, smartRescueEnabled: event.target.checked })} /></label>
         {v.smartRescueEnabled && <div className="smart-rescue-body">
