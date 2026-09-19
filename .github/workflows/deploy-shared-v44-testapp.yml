@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Check out canonical branch
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Verify canonical repository scope
         shell: bash
@@ -40,6 +42,32 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
           test "$CLOUD_RUN_SERVICE" = "amar-bot-v44-direct-install"
           test "$GCP_PROJECT_ID" = "tradementor-production"
+
+      - name: Verify canonical release-history contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^export const WEBAPP_VERSION = "\([0-9][0-9]*\)";/\1/p' web/lib/app-version.ts)"
+          BUILD="$(sed -n 's/^export const WEBAPP_BUILD_NUMBER = "\([0-9][0-9]*\)";/\1/p' web/lib/app-version.ts)"
+          test -n "$VERSION"
+          test -n "$BUILD"
+          test "$VERSION" = "46"
+          grep -q 'build: WEBAPP_BUILD_NUMBER' web/lib/release-history.ts
+          grep -q 'version: WEBAPP_VERSION' web/lib/release-history.ts
+          grep -q 'id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`' web/lib/release-history.ts
+          echo "WEBAPP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "WEBAPP_BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
+
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            BEFORE="${{ github.event.before }}"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              CHANGED="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+              if printf '%s\n' "$CHANGED" | grep -q '^web/'; then
+                printf '%s\n' "$CHANGED" | grep -qx 'web/lib/app-version.ts'
+                printf '%s\n' "$CHANGED" | grep -qx 'web/lib/release-history.ts'
+              fi
+            fi
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -87,6 +115,29 @@ jobs:
           print(f'CANONICAL_URL={service["status"]["url"]}')
           PY
 
+      - name: Verify build number advances production
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$CANONICAL_URL/?versionCheck=$GITHUB_RUN_ID" > "$RUNNER_TEMP/current-live.html"
+          CURRENT_BUILD="$(python - "$RUNNER_TEMP/current-live.html" <<'PY'
+          import re, sys
+          html=open(sys.argv[1],encoding="utf-8").read()
+          match=re.search(r'data-webapp-build="([0-9]+)"', html)
+          print(match.group(1) if match else "")
+          PY
+          )"
+          test -n "$CURRENT_BUILD"
+          echo "CURRENT_LIVE_BUILD=$CURRENT_BUILD" >> "$GITHUB_ENV"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            python - "$CURRENT_BUILD" "$WEBAPP_BUILD_NUMBER" <<'PY'
+          import sys
+          current=int(sys.argv[1]); candidate=int(sys.argv[2])
+          if candidate <= current:
+              raise SystemExit(f"release build must advance production: current={current}, candidate={candidate}")
+          PY
+          fi
+
       - name: Build and push V46 web image
         shell: bash
         run: |
@@ -105,7 +156,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE" \
-            --set-env-vars "WEBAPP_BUILD_NUMBER=${GITHUB_RUN_NUMBER}" \
+            --set-env-vars "WEBAPP_BUILD_NUMBER=${WEBAPP_BUILD_NUMBER}" \
             --revision-suffix "$SUFFIX" \
             --no-traffic \
             --tag "$TAG" \
@@ -130,7 +181,7 @@ jobs:
         shell: bash
         run: |
           curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/" > "$RUNNER_TEMP/root.html"
-          grep -q "Webapp versie 46 · build ${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/root.html"
+          grep -q "Webapp versie 46 · build ${WEBAPP_BUILD_NUMBER}" "$RUNNER_TEMP/root.html"
           curl --fail --silent --show-error "$CANDIDATE_URL/offline.html" > /dev/null
           curl --fail --silent --show-error "$CANDIDATE_URL/manifest.webmanifest" > /dev/null
           curl --fail --silent --show-error "$CANDIDATE_URL/sw.js" | grep -q 'amar-bot-shell-v46'
@@ -148,7 +199,7 @@ jobs:
         shell: bash
         run: |
           curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANONICAL_URL/" > "$RUNNER_TEMP/canonical.html"
-          grep -q "Webapp versie 46 · build ${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/canonical.html"
+          grep -q "Webapp versie 46 · build ${WEBAPP_BUILD_NUMBER}" "$RUNNER_TEMP/canonical.html"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
           python - "$RUNNER_TEMP/service-after.json" "$CANDIDATE_REVISION" <<'PY'
           import json, sys

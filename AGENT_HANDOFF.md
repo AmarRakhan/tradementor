@@ -81,3 +81,12 @@ Cloud Workstation is now emergency/break-glass access only and is not required f
 
 ## Next normal task
 Start directly in GitHub. Do not request a Workstation connection unless the task is specifically billing, IAM/bootstrap, sensitive secrets, or the GitHub→Google control path is broken.
+
+
+## Web release history contract
+- Vanaf V46 build 373 krijgt iedere echte live webapp-update een nieuw hoger buildnummer.
+- Iedere live webwijziging moet dezelfde release vastleggen in `web/lib/release-history.ts`.
+- `WEBAPP_VERSION` en `WEBAPP_BUILD_NUMBER` in `web/lib/app-version.ts` zijn de centrale productiebron voor versie/build.
+- De deploymentworkflow blokkeert een push-release als buildnummer of release-history niet is aangepast, of als de kandidaat-build niet hoger is dan de live build.
+- Pre-GitHub historie mag alleen als `reconstructed` worden opgenomen; geen verzonnen buildnummers.
+- Deze regel geldt voor toekomstige agents en normale GitHub-first ontwikkeling.

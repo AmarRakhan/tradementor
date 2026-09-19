@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { WEBAPP_VERSION } from "@/lib/app-version";
+import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-export function PwaRegistration({ buildNumber }: { buildNumber: string }) {
+export function PwaRegistration() {
+  const buildNumber = WEBAPP_BUILD_NUMBER;
+
   useEffect(() => {
     const standalone = window.matchMedia("(display-mode: standalone)").matches;
     const params = new URLSearchParams(window.location.search);
@@ -44,6 +46,6 @@ export function PwaRegistration({ buildNumber }: { buildNumber: string }) {
       .catch(() => undefined);
     const timer = window.setInterval(() => void loadCanonicalBuild(), 60_000);
     return () => { disposed = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange); };
-  }, []);
+  }, [buildNumber]);
   return null;
 }

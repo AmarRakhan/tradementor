@@ -4,6 +4,7 @@ import { AuthProvider } from "@/components/auth-provider";
 import { PwaRegistration } from "@/components/pwa-registration";
 import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
+import { ReleaseHistoryControl } from "@/components/release-history-control";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { AsterPortfolioSnapshotEnhancer } from "@/components/aster-portfolio-snapshot-enhancer";
 import { AsterProfitPotSnapshotBridge } from "@/components/aster-profit-pot-snapshot-bridge";
@@ -16,7 +17,7 @@ import { NewsNavigationBridge } from "@/components/news-navigation-bridge";
 import { AsterPairSettingsOverlay } from "@/components/aster-pair-settings-overlay";
 import { AsterSideTpSettings } from "@/components/aster-side-tp-settings";
 import { AsterShortDcaSaveGuard } from "@/components/aster-short-dca-save-guard";
-import { WEBAPP_VERSION } from "@/lib/app-version";
+import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 import "./globals.css";
 import "./premium.css";
 import "./premium-next.css";
@@ -31,6 +32,7 @@ import "./liquidation-gauge-hotfix.css";
 import "./portfolio-hedge.css";
 import "./home-transfer.css";
 import "./tradecentrum-responsive.css";
+import "./release-history.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -63,21 +65,20 @@ export const metadata: Metadata = {
 const LEGACY_RENDER_TEST_MARKER = "<title>Amar Crypto Bot 2026</title>";
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  const buildNumber = process.env.WEBAPP_BUILD_NUMBER || "local";
   return (
-    <html lang="nl" data-webapp-version={WEBAPP_VERSION} data-webapp-build={buildNumber}>
+    <html lang="nl" data-webapp-version={WEBAPP_VERSION} data-webapp-build={WEBAPP_BUILD_NUMBER}>
       <head>
-        <link rel="manifest" href={`/manifest.webmanifest?v=${WEBAPP_VERSION}`} crossOrigin="use-credentials" />
+        <link rel="manifest" href={`/manifest.webmanifest?v=${WEBAPP_VERSION}&build=${WEBAPP_BUILD_NUMBER}`} crossOrigin="use-credentials" />
         <link rel="apple-touch-icon" href="/tradementor-icon-192.png" />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <template aria-hidden="true" dangerouslySetInnerHTML={{ __html: LEGACY_RENDER_TEST_MARKER }} />
         <div className="test-environment-banner live-runtime-banner">
-          <span className="runtime-name">CRYPTO BOT 2026</span>
+          <ReleaseHistoryControl />
           <span className="runtime-status">PLATFORMSTATUS · STRATEGY 2-RUNTIME · DIT IS NIET JOUW ACCOUNTSTATUS</span>
-          <AppVersionControl buildNumber={buildNumber} />
+          <AppVersionControl />
         </div>
-        <PwaRegistration buildNumber={buildNumber} />
+        <PwaRegistration />
         <ZoomGuard />
         <Strategy2ReferenceEnhancer />
         <AsterPortfolioSnapshotEnhancer />

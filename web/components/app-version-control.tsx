@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { WEBAPP_VERSION, webappVersionLabel } from "@/lib/app-version";
+import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION, webappVersionLabel } from "@/lib/app-version";
 
-export function AppVersionControl({ buildNumber }: { buildNumber: string }) {
-  const versionLabel = webappVersionLabel(buildNumber);
+export function AppVersionControl() {
+  const buildNumber = WEBAPP_BUILD_NUMBER;
+  const versionLabel = webappVersionLabel();
   const [label, setLabel] = useState(versionLabel);
   const [checking, setChecking] = useState(false);
 
