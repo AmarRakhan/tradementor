@@ -34,7 +34,7 @@ jobs:
       - name: Confirm diagnostic dispatch
         shell: bash
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Production diagnosis dispatched to the trusted `amar-crypto-bot-2026-cloud` worker. Google authentication remains restricted to that branch; the worker will post the sanitized result back here."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Production diagnosis dispatched to the trusted amar-crypto-bot-2026-cloud worker. Google authentication remains restricted to that branch; the worker will post the sanitized result back here."
 
       - name: Report dispatch failure
         if: failure()
