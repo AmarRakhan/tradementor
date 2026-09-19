@@ -8,6 +8,8 @@ import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, s
 type ManualSide = "LONG" | "SHORT";
 type ManualSymbol = { symbol: string; side: ManualSide };
 type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
+type StopLossMode = "USD" | "PERCENT";
+const BOT_SETTINGS_REFERENCE = "file_00000000d2ec81f4b0c6fe6b9befe97c";
 type TierPreview = {
   symbol: string;
   entryPlan?: { leverage: number } | null;
@@ -18,7 +20,8 @@ type TierPreview = {
   entryOrderValid?: boolean;
 };
 type Values = {
-  name: string; universe: string; positions: string; longSlots: string; shortSlots: string; minLeverage: string;
+  name: string; universe: string; positions: string; longSlots: string; shortSlots: string; minLeverage: string; maxLeverage: string;
+  stopLossEnabled: boolean; stopLossMode: StopLossMode; stopLossLong: string; stopLossShort: string;
   entryMarginLong: string; entryMarginShort: string;
   longDcaDistance: string; shortDcaDistance: string; longDcaAmount: string; shortDcaAmount: string;
   maxDcaLong: string; maxDcaShort: string; longTp: string; shortTp: string; tpMode: TpMode; portfolioTp: string;
@@ -27,7 +30,8 @@ type Values = {
 };
 
 const initial: Values = {
-  name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10", minLeverage: "50",
+  name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10", minLeverage: "50", maxLeverage: "",
+  stopLossEnabled: false, stopLossMode: "PERCENT", stopLossLong: "5", stopLossShort: "5",
   entryMarginLong: "5", entryMarginShort: "5", longDcaDistance: "0.30", shortDcaDistance: "0.30",
   longDcaAmount: "2", shortDcaAmount: "2", maxDcaLong: "3", maxDcaShort: "3", longTp: "1.5", shortTp: "1.5",
   tpMode: "PER_TRADE", portfolioTp: "20", mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
@@ -109,7 +113,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     const legacyEntry = Number(x.entryMarginUsd ?? 5);
     const legacyDcaDistance = Number(x.dcaDistance ?? .003); const legacyDcaAmount = Number(x.dcaMarginUsd ?? 2); const legacyMax = Number(x.maxDca ?? 3); const legacyTp = Number(x.takeProfit ?? .015);
     setV({
-      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50),
+      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
+      stopLossEnabled: x.stopLossEnabled === true, stopLossMode: String(x.stopLossMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT", stopLossLong: txt(x.stopLossLong, 5), stopLossShort: txt(x.stopLossShort, 5),
       entryMarginLong: txt(x.entryMarginLongUsd ?? x.entryMarginLong ?? legacyEntry, legacyEntry), entryMarginShort: txt(x.entryMarginShortUsd ?? x.entryMarginShort ?? legacyEntry, legacyEntry),
       longDcaDistance: pct(x.longDcaDistance ?? legacyDcaDistance, legacyDcaDistance), shortDcaDistance: pct(x.shortDcaDistance ?? legacyDcaDistance, legacyDcaDistance),
       longDcaAmount: txt(x.longDcaMarginUsd ?? x.longDcaAmount ?? legacyDcaAmount, legacyDcaAmount), shortDcaAmount: txt(x.shortDcaMarginUsd ?? x.shortDcaAmount ?? legacyDcaAmount, legacyDcaAmount),
@@ -130,6 +135,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const change = (next: Values) => { setV(next); setDirty(true); setMessage(""); };
   const settings = (() => {
     const longSlots = clampInt(n(v.longSlots), 0, MAX_SIDE_SLOTS); const shortSlots = clampInt(n(v.shortSlots), 0, MAX_SIDE_SLOTS); const minLeverage = Math.max(1, Math.round(n(v.minLeverage)));
+    const maxLeverageText = v.maxLeverage.trim(); const maxLeverage = maxLeverageText ? Math.max(1, Math.round(n(maxLeverageText))) : null;
     const longEntry = n(v.entryMarginLong); const shortEntry = n(v.entryMarginShort);
     const longDistance = n(v.longDcaDistance) / 100; const shortDistance = n(v.shortDcaDistance) / 100;
     const longAmount = n(v.longDcaAmount); const shortAmount = n(v.shortDcaAmount); const maxLong = clampInt(n(v.maxDcaLong), 0, MAX_DCA); const maxShort = clampInt(n(v.maxDcaShort), 0, MAX_DCA);
@@ -137,7 +143,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
-      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, entrySizingMode: "margin",
+      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage, entrySizingMode: "margin",
       entryMarginUsd: longEntry, entryMarginLongUsd: longEntry, entryMarginShortUsd: shortEntry, entryMarginLong: longEntry, entryMarginShort: shortEntry,
       entryNotionalUsd: longEntry * minLeverage,
       dcaDistance: longDistance, longDcaDistance: longDistance, shortDcaDistance: shortDistance,
@@ -145,6 +151,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       maxDca: maxLong, maxDcaLong: maxLong, maxDcaShort: maxShort, longMaxDca: maxLong, shortMaxDca: maxShort, unlimitedDca: false,
       takeProfit: longTp, longTakeProfitValue: longTp, shortTakeProfitValue: shortTp, takeProfitLong: longTp, takeProfitShort: shortTp,
       takeProfitMode: v.tpMode, portfolioTpPercent: n(v.portfolioTp), takeProfitEnabled: v.tpMode === "PER_TRADE",
+      stopLossEnabled: v.stopLossEnabled, stopLossMode: v.stopLossMode, stopLossLong: n(v.stopLossLong), stopLossShort: n(v.stopLossShort),
       entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualEnabled ? v.manualSymbols : [],
       shortRequiresLongEnabled: v.shortRequiresLongEnabled,
@@ -192,11 +199,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     let cancelled = false; setTierBusy(true);
     void Promise.all(v.manualSymbols.map(async (row) => {
       const entry = row.side === "SHORT" ? v.entryMarginShort : v.entryMarginLong; const dca = row.side === "SHORT" ? v.shortDcaAmount : v.longDcaAmount;
-      const q = new URLSearchParams({ symbol: row.symbol, minimumLeverage: String(Math.max(1, Math.round(n(v.minLeverage)))), entryMarginUsd: String(Math.max(.01, n(entry))), dcaMarginUsd: String(Math.max(.01, n(dca))) });
+      const query: Record<string, string> = { symbol: row.symbol, minimumLeverage: String(Math.max(1, Math.round(n(v.minLeverage)))), entryMarginUsd: String(Math.max(.01, n(entry))), dcaMarginUsd: String(Math.max(.01, n(dca))) }; if (v.maxLeverage.trim()) query.maximumLeverage = String(Math.max(1, Math.round(n(v.maxLeverage)))); const q = new URLSearchParams(query);
       const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/leverage-tiers?${q.toString()}`) as TierPreview; return [row.symbol, result] as const;
     })).then((rows) => { if (!cancelled) setTierPreviews(Object.fromEntries(rows)); }).catch((error) => { if (!cancelled) setMessage(error instanceof Error ? error.message : "Leverage tiers konden niet worden geladen."); }).finally(() => { if (!cancelled) setTierBusy(false); });
     return () => { cancelled = true; };
-  }, [v.manualEnabled, v.manualSymbols, v.minLeverage, v.entryMarginLong, v.entryMarginShort, v.longDcaAmount, v.shortDcaAmount]);
+  }, [v.manualEnabled, v.manualSymbols, v.minLeverage, v.maxLeverage, v.entryMarginLong, v.entryMarginShort, v.longDcaAmount, v.shortDcaAmount]);
 
   const selected = new Set(v.manualSymbols.map((row) => row.symbol));
   const marketQuery = marketSearch.trim().toUpperCase();
@@ -224,9 +231,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     setBusy(true); setMessage("");
     try {
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
-      // Minimum leverage is only a candidate floor. Automatic Top-N resolves every
-      // symbol at its actual maximum valid leverage and skips symbols whose Aster
-      // minimum order still exceeds the configured margin.
+      // Minimum leverage remains the eligibility floor. Maximum leverage is an
+      // optional cap; null deliberately preserves the established pair-maximum behavior.
+      if (settings.maximumLeverage !== null && settings.maximumLeverage < settings.minimumLeverage) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage.");
+      if (settings.stopLossEnabled && (settings.stopLossLong <= 0 || settings.stopLossShort <= 0)) throw new Error("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat.");
       if (settings.longSlots > 0 && settings.entryMarginLongUsd <= 0) throw new Error("Instap LONG moet groter dan 0 USDT zijn.");
       if (settings.shortSlots > 0 && settings.entryMarginShortUsd <= 0) throw new Error("Instap SHORT moet groter dan 0 USDT zijn.");
       if (settings.longDcaDistance <= 0 || settings.shortDcaDistance <= 0 || settings.longDcaDistance > .5 || settings.shortDcaDistance > .5) throw new Error("DCA-afstand moet tussen 0,01% en 50% liggen.");
