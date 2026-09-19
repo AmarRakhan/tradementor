@@ -1,77 +1,52 @@
 {
   "schemaVersion": 2,
-  "updatedAt": "2026-09-19T14:21:30Z",
-  "task": "24/7 infrastructure and GitHub-first agent control plane",
-  "status": "COMPLETE_GITHUB_FIRST_CONTROL_PLANE_PROVEN",
-  "normalDevelopment": {
-    "path": "ChatGPT/agent -> GitHub -> CI/build -> GitHub Actions -> WIF -> Google Cloud",
-    "workstationRequired": false,
-    "workstationRole": "break-glass only"
-  },
+  "updatedAt": "2026-09-19T14:23:27Z",
+  "task": "GitHub-first 24/7 control plane and no-Workstation normal development",
+  "status": "COMPLETE_GITHUB_FIRST_PROVEN",
+  "operatingModel": "ChatGPT/agent -> GitHub -> tests/build -> GitHub Actions -> WIF -> Google Cloud -> candidate -> verification -> production",
+  "workstationRequiredForNormalChanges": false,
   "production": {
     "project": "tradementor-production",
     "region": "europe-west4",
-    "backendService": "tradementor-api",
+    "service": "tradementor-api",
     "liveRevision": "tradementor-api-src-ef3a5ecd-341284",
     "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853",
-    "health": "ready",
-    "finalDiagnosticIssue": 155,
-    "firestoreMetadataReachable": true,
+    "health": "HEALTHY",
+    "firestoreMetadata": "reachable",
     "asterScheduler": "ENABLED",
-    "latestAsterTickHttp": 200,
+    "recentAsterTickHttp": 200,
     "backend5xxLast30m": 0,
-    "asterPublicConnectivity": true
-  },
-  "deploymentProof": {
-    "issue": 154,
-    "result": "SUCCESS",
-    "imageMode": "existing-live-image",
-    "previousRevision": "tradementor-api-dca-e1f8132f-1",
-    "candidatePromoted": true,
-    "postPromotionHealth": "ready",
-    "laterTradingCommitsDeployed": false
-  },
-  "diagnostics": {
-    "issueCommand": "[AGENT-CONTROL] diagnose production",
-    "deployCommand": "[AGENT-CONTROL] deploy backend",
-    "googleAuthBranch": "amar-crypto-bot-2026-cloud",
-    "observerServiceAccount": "github-tradementor-observer@tradementor-production.iam.gserviceaccount.com",
-    "runtimeHealthProvenWithoutWorkstation": true
-  },
-  "webDeployment": {
-    "workflow": "deploy-shared-v44-testapp.yml",
-    "cloudRunService": "amar-bot-v44-direct-install",
-    "automaticOnWebChanges": true,
-    "candidateNoTraffic": true,
-    "verification": true,
-    "rollback": true
+    "asterPublicConnectivity": "reachable"
   },
   "rollback": {
-    "retainedRevision": "tradementor-api-dca-e1f8132f-1",
-    "automaticAfterFailedPostPromotionCheck": true
+    "previousRevision": "tradementor-api-dca-e1f8132f-1",
+    "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853"
   },
-  "billing": {
-    "incidentCause": "billing account suspension after payment failure",
-    "interruptionMinutes": 340,
-    "directObserverApi": "HTTP 403 PERMISSION_DENIED",
-    "runtimeHealthIndependentOfBillingApi": true,
-    "externalBillingWatch": "active-hourly",
-    "budgetAlertExists": true
+  "proofs": {
+    "backendDeploymentIssue": 154,
+    "backendDeploymentResult": "SUCCESS",
+    "postDeployDiagnosisIssue": 155,
+    "postDeployRuntimeHealth": "HEALTHY",
+    "imageMode": "existing-live-image"
   },
-  "monitoring": {
-    "githubPublicUptimeMonitorMinutes": 15,
-    "botHealthWatch": "active-hourly",
-    "billingMailWatch": "active-hourly"
+  "diagnostics": {
+    "githubOnly": true,
+    "observerServiceAccount": "github-tradementor-observer@tradementor-production.iam.gserviceaccount.com",
+    "billingControl": "UNVERIFIED_DIRECT_API_403",
+    "billingAlertFallback": "Gmail Cloud Billing Watch"
   },
-  "protectedAreas": [
-    "trading logic",
-    "strategies",
-    "user settings",
-    "wallet/exchange connections",
-    "secrets",
-    "account data"
+  "uiDeployment": {
+    "githubFirst": true,
+    "candidateNoTraffic": true,
+    "prePromotionVerification": true,
+    "automaticRollback": true
+  },
+  "directGoogleAccessOnlyFor": [
+    "billing/payment",
+    "IAM/bootstrap",
+    "sensitive secrets",
+    "GitHub-to-Google control-path incident"
   ],
-  "lastControlPlaneCodeCommitBeforeFinalHandoff": "05cc44e13874e12c87b04070819e0b9a9ea26359",
-  "blockersForNormalDevelopment": [],
-  "nextStep": "For future normal tasks, read AGENT_HANDOFF.md and CURRENT_TASK.json, work through GitHub, deploy only the intended exact source commit, and use Workstation only for break-glass billing/IAM/secrets/control-path incidents."
+  "blockers": [],
+  "nextStep": "Handle the next user-requested app change directly through GitHub; do not require Workstation for normal work."
 }
