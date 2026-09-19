@@ -97,8 +97,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "DEPLOY_PHASE=capture-production" >> "$GITHUB_ENV"
+          echo "DEPLOY_PHASE=capture-service-metadata" >> "$GITHUB_ENV"
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-before.json"
+          echo "DEPLOY_PHASE=capture-iam-policy" >> "$GITHUB_ENV"
           gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/iam-before.json"
           python - "$RUNNER_TEMP/service-before.json" >> "$GITHUB_ENV" <<'PY'
           import json
@@ -119,12 +120,15 @@ jobs:
           print(f"SERVICE_URL={service_url}")
           print(f"PREVIOUS_REVISION={live['revisionName']}")
           PY
-          PREVIOUS_HEALTH="$(curl --fail --silent --show-error --retry 4 --retry-delay 3 "$SERVICE_URL/health")"
-          python - "$PREVIOUS_HEALTH" >> "$GITHUB_ENV" <<'PY'
+          echo "DEPLOY_PHASE=capture-current-health" >> "$GITHUB_ENV"
+          PREVIOUS_HEALTH_FILE="$RUNNER_TEMP/previous-health.json"
+          PREVIOUS_HEALTH_HTTP="$(curl --silent --show-error --retry 8 --retry-delay 3 --retry-all-errors --connect-timeout 10 --max-time 30 -o "$PREVIOUS_HEALTH_FILE" -w '%{http_code}' "$SERVICE_URL/health" || true)"
+          test "$PREVIOUS_HEALTH_HTTP" = "200"
+          python - "$PREVIOUS_HEALTH_FILE" >> "$GITHUB_ENV" <<'PY'
           import json
           import sys
 
-          health = json.loads(sys.argv[1])
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
           assert health["status"] == "ready"
           assert health["multiUser"] is True
           previous = health.get("sourceCommit") or health.get("imageSourceCommit") or ""
