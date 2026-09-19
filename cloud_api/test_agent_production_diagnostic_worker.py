@@ -23,7 +23,8 @@ def test_diagnostic_worker_uses_existing_keyless_wif_and_is_read_only():
     assert "workload_identity_provider:" in text
     assert "id-token: write" in text
     required = (
-        "gcloud beta billing projects describe",
+        "https://cloudbilling.googleapis.com/v1/projects/$GCP_PROJECT_ID/billingInfo",
+        "https://cloudbilling.googleapis.com/v1/billingAccounts/$BILLING_ACCOUNT",
         "gcloud run services describe",
         "gcloud firestore databases describe",
         "gcloud scheduler jobs describe",
