@@ -96,14 +96,27 @@ jobs:
             exit 0
           fi
 
-          BILLING="$(gcloud beta billing projects describe "$GCP_PROJECT_ID" --format='value(billingEnabled)' 2>/dev/null)"
-          if [ "$BILLING" = "True" ]; then
-            BILLING_LINE="✅ enabled"
-          elif [ "$BILLING" = "False" ]; then
-            BILLING_LINE="❌ disabled"
+          ACCESS_TOKEN="$(gcloud auth print-access-token 2>/dev/null)"
+          BILLING_JSON="$(curl --fail --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            "https://cloudbilling.googleapis.com/v1/projects/$GCP_PROJECT_ID/billingInfo" 2>/dev/null)"
+          BILLING="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print("True" if d.get("billingEnabled") is True else "False" if d.get("billingEnabled") is False else "")' "$BILLING_JSON" 2>/dev/null)"
+          BILLING_ACCOUNT="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print((d.get("billingAccountName") or "").split("/")[-1])' "$BILLING_JSON" 2>/dev/null)"
+          BILLING_ACCOUNT_JSON=""
+          BILLING_ACCOUNT_OPEN=""
+          if [ -n "$BILLING_ACCOUNT" ]; then
+            BILLING_ACCOUNT_JSON="$(curl --fail --silent --show-error --max-time 20 \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              "https://cloudbilling.googleapis.com/v1/billingAccounts/$BILLING_ACCOUNT" 2>/dev/null)"
+            BILLING_ACCOUNT_OPEN="$(python -c 'import json,sys; d=json.loads(sys.argv[1]); print("True" if d.get("open") is True else "False" if d.get("open") is False else "")' "$BILLING_ACCOUNT_JSON" 2>/dev/null)"
+          fi
+          if [ "$BILLING" = "True" ] && [ "$BILLING_ACCOUNT_OPEN" = "True" ]; then
+            BILLING_LINE="✅ project enabled · account open"
+          elif [ "$BILLING" = "False" ] || [ "$BILLING_ACCOUNT_OPEN" = "False" ]; then
+            BILLING_LINE="❌ disabled or billing account closed"
             STATUS="DEGRADED"
           else
-            BILLING_LINE="⚠️ unreadable with diagnostic IAM"
+            BILLING_LINE="⚠️ billing state unreadable"
             STATUS="DEGRADED"
           fi
 
