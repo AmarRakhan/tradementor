@@ -1,0 +1,144 @@
+name: Diagnose LONG refill account state 2026-09-19
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - '.github/workflows/diagnose-long-refill-account-20260919.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-long-refill-account-readonly
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read runtime identity and current account state
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          print(s['status']['url'])
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          live=[x for x in s['status'].get('traffic',[]) if int(x.get('percent',0) or 0)==100]
+          print(live[0]['revisionName'] if len(live)==1 else '')
+          PY
+          )
+          SERVICE_URL="${VALUES[0]}"; IMAGE="${VALUES[1]}"; RUNTIME_SA="${VALUES[2]}"; LIVE_REVISION="${VALUES[3]}"
+          HEALTH="$(curl --fail --silent --show-error --max-time 20 "$SERVICE_URL/health")"
+          python - "$HEALTH" "$LIVE_REVISION" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1])
+          print("LONG_REFILL_RUNTIME",json.dumps({
+              "liveRevision":sys.argv[2],
+              "sourceCommit":h.get("sourceCommit"),
+              "imageSourceCommit":h.get("imageSourceCommit"),
+              "status":h.get("status"),
+          },sort_keys=True))
+          PY
+
+          JOB="tm-longrefill-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+
+          project='tradementor-production'
+          target_digest='b4dfb7301bb40602e4b2225367437495652a360f6d4a071b8851c6324a82556d'
+          if not firebase_admin._apps:
+              firebase_admin.initialize_app(options={'projectId':project})
+          db=firestore.Client(project=project)
+
+          uid=None
+          page=auth.list_users()
+          while page and uid is None:
+              for u in page.users:
+                  normalized=str(u.email or '').strip().lower()
+                  if normalized and hashlib.sha256(normalized.encode()).hexdigest()==target_digest:
+                      uid=u.uid
+                      break
+              if uid is None:
+                  page=page.get_next_page()
+          if not uid:
+              print('LONG_REFILL_ACCOUNT '+json.dumps({"match":False},sort_keys=True),flush=True)
+              raise SystemExit(0)
+
+          snap=db.collection('asterStrategy2').document(uid).get()
+          raw=(snap.to_dict() or {}) if snap.exists else {}
+          settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+
+          safe_reasons=report.get('entrySkipReasons') if isinstance(report.get('entrySkipReasons'),dict) else {}
+          result={
+              "match":True,
+              "enabled":bool(raw.get('enabled')),
+              "monitor":bool(raw.get('monitor')),
+              "phase":str(raw.get('phase') or ''),
+              "engine":str(settings.get('engine',settings.get('strategyKind',''))),
+              "maximumPositions":settings.get('maximumPositions'),
+              "longSlots":settings.get('longSlots'),
+              "shortSlots":settings.get('shortSlots'),
+              "universeTopN":settings.get('universeTopN'),
+              "minimumLeverage":settings.get('minimumLeverage'),
+              "entryMarginUsd":settings.get('entryMarginUsd'),
+              "shortRequiresLongEnabled":bool(settings.get('shortRequiresLongEnabled',False)),
+              "bollingerEntryFilter15mEnabled":bool(settings.get('bollingerEntryFilter15mEnabled',False)),
+              "asymmetricHedgeModeEnabled":bool(settings.get('asymmetricHedgeModeEnabled',False)),
+              "reportActiveLong":report.get('activeLong'),
+              "reportActiveShort":report.get('activeShort'),
+              "reportRemainingLong":report.get('remainingLong'),
+              "reportRemainingShort":report.get('remainingShort'),
+              "entryStatus":report.get('entryStatus'),
+              "entryReason":report.get('entryReason'),
+              "candidateCount":report.get('candidateCount'),
+              "scannedCandidateCount":report.get('scannedCandidateCount'),
+              "executableCandidateCount":report.get('executableCandidateCount'),
+              "accountPositionCount":report.get('accountPositionCount'),
+              "accountRemainingCapacity":report.get('accountRemainingCapacity'),
+              "strategyPositionCount":report.get('strategyPositionCount'),
+              "entrySkipReasons":safe_reasons,
+              "stateCount":len(state),
+          }
+          print('LONG_REFILL_ACCOUNT '+json.dumps(result,sort_keys=True,separators=(',',':')),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+          sleep 3
+          gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"LONG_REFILL_ACCOUNT\"" \
+            --project "$GCP_PROJECT_ID" --freshness=15m --limit=10 --order=desc --format='value(textPayload)' | head -n 1
+
+          cleanup
+          trap - EXIT
