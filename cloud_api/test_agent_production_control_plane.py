@@ -9,49 +9,26 @@ def source() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_agent_control_plane_is_issue_triggered_and_posts_result_back_to_github():
+def test_main_control_plane_is_owner_only_github_dispatcher():
     text = source()
-    assert "issues:" in text
     assert "types: [opened]" in text
     assert "[AGENT-CONTROL] diagnose production" in text
+    assert "github.event.issue.user.login == 'AmarRakhan'" in text
+    assert "actions: write" in text
     assert "issues: write" in text
-    assert 'gh issue comment "$ISSUE_NUMBER"' in text
 
 
-def test_agent_control_plane_uses_keyless_wif_for_production():
+def test_main_control_plane_does_not_hold_google_identity():
     text = source()
-    assert "GCP_PROJECT_ID: tradementor-production" in text
-    assert "google-github-actions/auth@v2" in text
-    assert "workload_identity_provider:" in text
-    assert "id-token: write" in text
-    assert "service_account:" in text
+    assert "id-token: write" not in text
+    assert "google-github-actions/auth" not in text
+    assert "gcloud " not in text
+    assert "workload_identity_provider" not in text
 
 
-def test_agent_control_plane_checks_runtime_without_mutating_it():
+def test_main_control_plane_dispatches_trusted_branch_worker():
     text = source()
-    required = (
-        "gcloud beta billing projects describe",
-        "gcloud run services describe",
-        "gcloud firestore databases describe",
-        "gcloud scheduler jobs describe",
-        "gcloud logging read",
-        "https://fapi.asterdex.com/fapi/v3/exchangeInfo",
-    )
-    for item in required:
-        assert item in text
-    forbidden = (
-        "gcloud run services update",
-        "gcloud run services delete",
-        "gcloud scheduler jobs pause",
-        "gcloud scheduler jobs resume",
-        "gcloud scheduler jobs update",
-        "gcloud secrets versions access",
-        "/fapi/v3/order",
-    )
-    for item in forbidden:
-        assert item not in text
-
-
-def test_agent_control_plane_never_publishes_sensitive_exchange_or_account_data():
-    text = source()
-    assert "No secrets, wallet keys, private exchange credentials, order payloads, or account data were collected." in text
+    assert "TARGET_BRANCH: amar-crypto-bot-2026-cloud" in text
+    assert "gh workflow run agent-production-diagnostic-worker.yml" in text
+    assert '--ref "$TARGET_BRANCH"' in text
+    assert '-f request_issue="$ISSUE_NUMBER"' in text
