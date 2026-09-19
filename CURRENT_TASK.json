@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T09:18:00Z",
+  "updatedAt": "2026-09-19T09:35:00Z",
   "task": "24/7 infrastructure, GitHub Actions deployment hardening, monitoring, billing protection, chat handoff",
-  "status": "MERGED_AWAITING_CLOUD_RECONNECT_AND_DEPLOY",
+  "status": "GITHUB_CONTROL_PLANE_IMPLEMENTATION_IN_PROGRESS",
   "activeBranch": "amar-crypto-bot-2026-cloud",
   "branchHead": "c47ecdf8ee7bdb69df7155800f3ebae416afd489",
   "defaultBranchHead": "b02013861d5d1047b3e10f51f5ccf2f6fd4f0785",
@@ -44,7 +44,7 @@
     "revision": "tradementor-api-dca-e1f8132f-1",
     "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853"
   },
-  "nextStep": "Reconnect Cloud Workstation; dispatch hardened production workflow; verify candidate/promotion/rollback; then configure GCP Monitoring and earlier billing-budget alerts.",
+  "nextStep": "Finish CI/merge PRs 109-111; prove issue-triggered production diagnosis and backend deployment without Workstation; then update handoff with proof.",
   "implementation": {
     "featureBranch": "agent/infra-24x7-20260919",
     "commits": [
@@ -79,6 +79,30 @@
     "botHealthWatch": "active-hourly"
   },
   "blockers": [
-    "Cloud Workstation / Remote Commander currently offline; required for production workflow dispatch and Google Cloud monitoring/budget mutations with available tools."
-  ]
+    "PRs #109, #110 and #111 must pass CI and be merged before end-to-end GitHub-only diagnostic/deploy proof."
+  ],
+  "activeBranchHead": "3b3de93afda0e66d5425d0bdad9a089006fbece8",
+  "dailyOperatingModel": {
+    "normalDevelopment": "ChatGPT/agent -> GitHub -> CI/build -> GitHub Actions -> WIF -> Google Cloud",
+    "workstationRequiredForNormalChanges": false,
+    "uiDeployment": {
+      "workflow": "deploy-shared-v44-testapp.yml",
+      "trigger": "push web/** to amar-crypto-bot-2026-cloud",
+      "candidateNoTraffic": true,
+      "prePromotionChecks": true,
+      "rollback": true,
+      "cloudRunService": "amar-bot-v44-direct-install"
+    },
+    "backendControlPlane": {
+      "diagnosticsPR": 109,
+      "deployFeedbackPR": 110,
+      "dispatcherPR": 111
+    },
+    "directGoogleAccessOnlyFor": [
+      "billing/payment",
+      "IAM/bootstrap",
+      "sensitive secrets",
+      "GitHub-to-Google control-path incident"
+    ]
+  }
 }
