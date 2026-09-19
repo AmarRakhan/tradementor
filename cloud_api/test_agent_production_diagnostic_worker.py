@@ -51,3 +51,14 @@ def test_diagnostic_worker_posts_sanitized_result_to_requested_issue():
     assert 'gh issue comment "$REQUEST_ISSUE"' in text
     assert "issues: write" in text
     assert "No secrets, wallet keys, private exchange credentials, order payloads, or account data were collected." in text
+
+
+def test_billing_diagnostics_publish_only_sanitized_http_and_error_status():
+    text = source()
+    assert 'Billing project API: HTTP %s%s' in text
+    assert 'Billing account API: HTTP %s%s' in text
+    assert '(error or {}).get("status")' in text
+    assert 'billing-project.json' in text
+    assert 'billing-account.json' in text
+    assert 'rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json' in text
+    assert 'getPaymentInfo' not in text
