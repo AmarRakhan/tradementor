@@ -87,9 +87,22 @@ def test_exact_current_source_reuses_existing_live_image_for_noop_proof():
 def test_production_deploy_reports_failure_phase_without_expanding_deploy_identity():
     text = workflow()
     assert 'Failed phase: ${DEPLOY_PHASE:-unknown}' in text
-    assert "DEPLOY_PHASE=capture-production" in text
+    assert "DEPLOY_PHASE=capture-service-metadata" in text
+    assert "DEPLOY_PHASE=capture-iam-policy" in text
+    assert "DEPLOY_PHASE=capture-current-health" in text
     assert "DEPLOY_PHASE=select-image" in text
     assert "DEPLOY_PHASE=deploy-candidate" in text
     assert "DEPLOY_PHASE=verify-candidate" in text
     assert "DEPLOY_PHASE=promote" in text
     assert "DEPLOY_PHASE=verify-production" in text
+
+
+def test_current_production_health_capture_is_retryable_and_http_verified():
+    text = workflow()
+    assert 'PREVIOUS_HEALTH_HTTP=' in text
+    assert '--retry 8' in text
+    assert '--retry-all-errors' in text
+    assert '--connect-timeout 10' in text
+    assert '--max-time 30' in text
+    assert 'test "$PREVIOUS_HEALTH_HTTP" = "200"' in text
+    assert 'json.load(open(sys.argv[1], encoding="utf-8"))' in text
