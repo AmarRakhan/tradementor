@@ -4466,12 +4466,23 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
 def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     try: settings=MultiBbConfig.from_mapping({**request.settings,"mode":"paper"})
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
+    example_pair_max=300
+    example_effective=example_pair_max if settings.maximum_leverage is None else min(example_pair_max,settings.maximum_leverage)
+    stop_limit=settings.stop_loss_long
+    stop_mark=(100.0-stop_limit if settings.stop_loss_mode=="PERCENT" else 100.0)
     return {"mode":"paper","ordersSent":0,"engine":MULTI_BB_ENGINE,"sameEngineAsLive":True,"configurationValid":True,"errors":[],
         "plannedPositions":settings.maximum_positions,"longSlots":settings.long_slots,"shortSlots":settings.short_slots,
-        "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,"entryNotionalUsd":settings.entry_notional_usd,
+        "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,
+            "maximumLeverage":settings.maximum_leverage,"entryNotionalUsd":settings.entry_notional_usd,
             "dcaDistance":settings.dca_distance,"dcaMarginUsd":settings.dca_margin_usd,"maxDca":settings.max_dca,"takeProfit":settings.take_profit,
-            "entryMode":"immediate_fill"},
-        "message":"Nieuwe Multi DCA-configuratie gevalideerd; er zijn 0 orders verzonden."}
+            "stopLossEnabled":settings.stop_loss_enabled,"stopLossMode":settings.stop_loss_mode,
+            "stopLossLong":settings.stop_loss_long,"stopLossShort":settings.stop_loss_short,"entryMode":"immediate_fill"},
+        "simulationChecks":{"maximumLeverage":{"pairMaximumLeverage":example_pair_max,"effectiveLeverage":example_effective,
+                "legacyMaximumUnbounded":settings.maximum_leverage is None},
+            "stopLoss":{"enabled":settings.stop_loss_enabled,"mode":settings.stop_loss_mode,"entry":100.0,
+                "exampleMark":stop_mark,"limit":stop_limit,
+                "expectedAction":"STOP_LOSS_TRIGGERED" if settings.stop_loss_enabled else "NO_STOP_LOSS"}},
+        "message":"Nieuwe Multi DCA-configuratie gevalideerd; leverage-cap en Stoploss zijn veilig gesimuleerd; er zijn 0 orders verzonden."}
 
 
 @app.get("/v1/me/aster/strategy2/readiness")
