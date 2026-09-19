@@ -231,7 +231,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     setBusy(true); setMessage("");
     try {
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
-      // Minimum leverage remains the eligibility floor. Maximum leverage is an
+      // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
+      // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
       // optional cap; null deliberately preserves the established pair-maximum behavior.
       if (settings.maximumLeverage !== null && settings.maximumLeverage < settings.minimumLeverage) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage.");
       if (settings.stopLossEnabled && (settings.stopLossLong <= 0 || settings.stopLossShort <= 0)) throw new Error("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat.");
