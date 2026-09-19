@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-19T09:15:00Z",
+  "updatedAt": "2026-09-19T09:18:00Z",
   "task": "24/7 infrastructure, GitHub Actions deployment hardening, monitoring, billing protection, chat handoff",
-  "status": "MERGED_NOT_DEPLOYED",
+  "status": "MERGED_AWAITING_CLOUD_RECONNECT_AND_DEPLOY",
   "activeBranch": "amar-crypto-bot-2026-cloud",
   "branchHead": "c47ecdf8ee7bdb69df7155800f3ebae416afd489",
   "defaultBranchHead": "b02013861d5d1047b3e10f51f5ccf2f6fd4f0785",
@@ -44,7 +44,7 @@
     "revision": "tradementor-api-dca-e1f8132f-1",
     "sourceCommit": "ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853"
   },
-  "nextStep": "Dispatch deploy-cloud-production.yml on amar-crypto-bot-2026-cloud, verify candidate/no-traffic, promotion, exact commit, and rollback behavior; then configure GCP alert policies/budget thresholds.",
+  "nextStep": "Reconnect Cloud Workstation; dispatch hardened production workflow; verify candidate/promotion/rollback; then configure GCP Monitoring and earlier billing-budget alerts.",
   "implementation": {
     "featureBranch": "agent/infra-24x7-20260919",
     "commits": [
@@ -67,6 +67,18 @@
       "run": 378,
       "status": "success"
     },
-    "billingWatch": "active-hourly"
-  }
+    "billingWatch": "active-hourly",
+    "cloudBranchLatestHandoffCommit": "1d18655febe951b041bfe0912dc2f808159fad64",
+    "rejectedPushDeployPR": 107,
+    "rejectedPushDeployReason": "Existing CI enforces manual-only cloud production deployments; PR closed, not merged.",
+    "publicUptimeMonitor": {
+      "defaultBranch": "main",
+      "mergeCommit": "990f17120cfb193d3b5e25ce3b044b637749a3ff",
+      "intervalMinutes": 15
+    },
+    "botHealthWatch": "active-hourly"
+  },
+  "blockers": [
+    "Cloud Workstation / Remote Commander currently offline; required for production workflow dispatch and Google Cloud monitoring/budget mutations with available tools."
+  ]
 }
