@@ -24,36 +24,69 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-19",
-  title: "Hedge Dekking-kaart visueel vereenvoudigd",
+  title: "Vrije LONG-slots niet meer geblokkeerd door verborgen oude hedge-modus",
   newItems: [
-    "De Hedge Dekking-kaart sluit visueel rustiger aan op de overige Portfolio Snapshot-kaarten.",
+    "Normale Botinstellingen wissen voortaan expliciet de oude verborgen asymmetric-pairmodus bij Opslaan, Simuleren en Starten.",
   ],
   problems: [
-    "De Hedge Dekking-kaart sprong te sterk uit en oude doelinformatie nam onnodig ruimte in.",
+    "Een gebruiker kon vrije LONG-slots hebben terwijl geen LONG-instap plaatsvond, doordat een niet-zichtbare oude asymmetric hedge-instelling nog actief bleef.",
   ],
   causes: [
-    "De compacte kaart toonde naast het actuele percentage ook een doelpercentage en statusbadge, met extra statuskleuren en glow.",
+    "De normale Botinstellingen bouwden nieuwe settings bovenop alle eerder opgeslagen velden. Daardoor bleef asymmetricHedgeModeEnabled=true onzichtbaar behouden, ook nadat die modus uit de normale UI was verwijderd.",
   ],
   fixes: [
-    "Doelpercentage en doelstatusbadge zijn uit de compacte Hedge Dekking-kaart verwijderd.",
-    "De kaart gebruikt nu een rustige donkere basis met subtiele goud/groene accenten zonder overdreven glow.",
-    "De bestaande realtime hedge-dekkingberekening en het openen van de detailweergave zijn ongewijzigd gebleven.",
+    "Normale Multi DCA-instellingen sturen asymmetricHedgeModeEnabled nu expliciet als false.",
+    "De oude runtimecode blijft bestaan voor expliciete legacy/runtime-routes, maar kan niet meer onzichtbaar via de normale Botinstellingen blijven hangen.",
+    "Regressietests bewaken dat de verborgen paired-entrymodus niet opnieuw wordt meegenomen door een normale save/start.",
   ],
   now: [
-    "De compacte kaart toont alleen het schild, HEDGE DEKKING en het actuele percentage.",
-    "Waarden boven 100% blijven op mobiel en desktop binnen de kaart zonder overlap.",
+    "Als LONG-slots vrij zijn en SHORT-slots vol zitten, kan normale Multi DCA zelfstandig LONG-kandidaten blijven beoordelen zolang andere zichtbare filters dit toelaten.",
+    "Bollinger, SHORT alleen met LONG, Profit Lock en overige expliciete instellingen blijven onafhankelijk werken.",
   ],
-  before: "De kaart toonde onder meer Doel 80% en een status zoals Boven doel en kreeg daardoor een opvallende alarmkaart-uitstraling.",
-  after: "De kaart toont rustig het actuele hedgepercentage in dezelfde visuele hiërarchie als de omliggende Portfolio Snapshot-kaarten.",
+  before: "Een oude verborgen asymmetricHedgeModeEnabled=true kon 2 LONG / 7 SHORT met 7/7 slots behandelen alsof alleen volledige LONG+SHORT-paren mochten starten, waardoor vijf zichtbare LONG-slots leeg bleven.",
+  after: "Normale Botinstellingen kunnen die verborgen paarmodus niet meer stilzwijgend vasthouden; vrije LONG- en SHORT-capaciteit wordt weer volgens de zichtbare instellingen behandeld.",
   technicalDetails: [
-    "Alleen webpresentatie, CSS, versieadministratie en regressietests gewijzigd; geen trading-, DCA-, order-, API-, WebSocket- of accountlogica.",
-    "Visuele doelreferentie: file_00000000aa6c8210baf1b0ac8f94d18e.",
-    "Responsive gedrag gecontroleerd via bestaande 640px- en 380px-layoutcontracten.",
+    "Gerichte accountreparatie voor het gemelde incident is afzonderlijk uitgevoerd en door de Cloud Run repair-job post-scheduler gevalideerd.",
+    "Geen DCA-, TP-, order-, wallet-, WebSocket- of exchange-berekening gewijzigd.",
+    "Alleen normale websettings-serialisatie, regressietests, buildnummer en versiegeschiedenis gewijzigd.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-374-hedge-card",
+    version: "46",
+    build: "374",
+    releasedAt: "2026-09-19",
+    title: "Hedge Dekking-kaart visueel vereenvoudigd",
+    newItems: [
+      "De Hedge Dekking-kaart sluit visueel rustiger aan op de overige Portfolio Snapshot-kaarten.",
+    ],
+    problems: [
+      "De Hedge Dekking-kaart sprong te sterk uit en oude doelinformatie nam onnodig ruimte in.",
+    ],
+    causes: [
+      "De compacte kaart toonde naast het actuele percentage ook een doelpercentage en statusbadge, met extra statuskleuren en glow.",
+    ],
+    fixes: [
+      "Doelpercentage en doelstatusbadge zijn uit de compacte Hedge Dekking-kaart verwijderd.",
+      "De kaart gebruikt nu een rustige donkere basis met subtiele goud/groene accenten zonder overdreven glow.",
+      "De bestaande realtime hedge-dekkingberekening en het openen van de detailweergave zijn ongewijzigd gebleven.",
+    ],
+    now: [
+      "De compacte kaart toont alleen het schild, HEDGE DEKKING en het actuele percentage.",
+      "Waarden boven 100% blijven op mobiel en desktop binnen de kaart zonder overlap.",
+    ],
+    before: "De kaart toonde onder meer Doel 80% en een status zoals Boven doel en kreeg daardoor een opvallende alarmkaart-uitstraling.",
+    after: "De kaart toont rustig het actuele hedgepercentage in dezelfde visuele hiërarchie als de omliggende Portfolio Snapshot-kaarten.",
+    technicalDetails: [
+      "Alleen webpresentatie, CSS, versieadministratie en regressietests gewijzigd; geen trading-, DCA-, order-, API-, WebSocket- of accountlogica.",
+      "Visuele doelreferentie: file_00000000aa6c8210baf1b0ac8f94d18e.",
+      "Responsive gedrag gecontroleerd via bestaande 640px- en 380px-layoutcontracten.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-373-release-history",
     version: "46",

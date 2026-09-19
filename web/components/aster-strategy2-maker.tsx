@@ -148,6 +148,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualEnabled ? v.manualSymbols : [],
       shortRequiresLongEnabled: v.shortRequiresLongEnabled,
+      // Asymmetric hedge remains a legacy/runtime capability but has no control
+      // in normal Botinstellingen. Never carry an invisible stale paired-entry
+      // mode forward when the user saves, simulates or starts normal Multi DCA.
+      asymmetricHedgeModeEnabled: false,
       smartRescueEnabled: v.smartRescueEnabled, smartRescueVersion: 1, smartRescueRangePercent: n(v.smartRescueRange),
       smartRescueDcaCount: Math.round(n(v.smartRescueCount)), smartRescueOrderGrowthMultiplier: n(v.smartRescueGrowth),
       smartRescueTrailingRecoveryPercent: n(v.smartRescueRecovery), smartRescuePrimarySide: v.smartRescueEnabled ? "LONG" : null,

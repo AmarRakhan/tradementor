@@ -15,10 +15,18 @@ test("asymmetric hedge runtime remains available but is removed from normal Boti
   assert.match(core, /ASYM_SHORT_CLOSE/);
 });
 
-test("normal settings save does not clear persisted asymmetric state", () => {
+test("normal Botinstellingen never preserve a hidden stale asymmetric mode", () => {
   assert.match(maker, /\.\.\.persisted/);
-  assert.doesNotMatch(maker, /asymmetricHedgeModeEnabled:/);
+  assert.match(maker, /asymmetricHedgeModeEnabled:\s*false/);
   assert.doesNotMatch(maker, /shortStartMultiplier:/);
+});
+
+test("free LONG slots cannot be silently paired to a hidden SHORT requirement by normal settings", () => {
+  const settingsBlock = maker.match(/const settings = \(\(\) => \{[\s\S]*?\}\)\(\);/)?.[0] || "";
+  assert.match(settingsBlock, /longSlots/);
+  assert.match(settingsBlock, /shortSlots/);
+  assert.match(settingsBlock, /shortRequiresLongEnabled: v\.shortRequiresLongEnabled/);
+  assert.match(settingsBlock, /asymmetricHedgeModeEnabled:\s*false/);
 });
 
 test("readiness UI keeps durable live authorization visible after a transient report", () => {
