@@ -13,14 +13,13 @@ permissions:
 env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
-  CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
 
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
@@ -29,43 +28,104 @@ jobs:
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Read Cloud Run service and live revision
+      - name: Read production services and live responses
         shell: bash
         run: |
           set -u
-          echo '=== SERVICE ==='
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json
-          echo '=== REVISIONS ==='
-          gcloud run revisions list --service "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit=12 --format='table(metadata.name,status.conditions[0].status,spec.containerConcurrency,metadata.annotations.autoscaling.knative.dev/minScale,metadata.annotations.autoscaling.knative.dev/maxScale,status.serviceName)'
-          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
-          echo "SERVICE_URL=$SERVICE_URL"
-          echo '=== HEALTH RESPONSE ==='
-          curl -sS -D - -o /tmp/health-body.txt --max-time 20 "$SERVICE_URL/health" || true
-          echo '--- BODY ---'
-          cat /tmp/health-body.txt || true
+          for SERVICE in tradementor-api amar-bot-v44-direct-install; do
+            echo "=== SERVICE $SERVICE ==="
+            gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "/tmp/$SERVICE.json"
+            python - "/tmp/$SERVICE.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s.get('spec',{}).get('template',{}).get('spec',{})
+          meta=s.get('spec',{}).get('template',{}).get('metadata',{})
+          ann=meta.get('annotations',{}) or {}
+          containers=spec.get('containers',[]) or [{}]
+          c=containers[0]
+          print('url=',s.get('status',{}).get('url'))
+          print('latestReadyRevision=',s.get('status',{}).get('latestReadyRevisionName'))
+          print('latestCreatedRevision=',s.get('status',{}).get('latestCreatedRevisionName'))
+          print('containerConcurrency=',spec.get('containerConcurrency'))
+          print('timeoutSeconds=',spec.get('timeoutSeconds'))
+          print('minScale=',ann.get('autoscaling.knative.dev/minScale'))
+          print('maxScale=',ann.get('autoscaling.knative.dev/maxScale'))
+          print('cpuThrottling=',ann.get('run.googleapis.com/cpu-throttling'))
+          print('resources=',c.get('resources'))
+          print('traffic=',[(x.get('revisionName'),x.get('percent'),x.get('tag')) for x in s.get('status',{}).get('traffic',[]) if x.get('percent')])
+          PY
+            URL="$(python - "/tmp/$SERVICE.json" <<'PY'
+          import json,sys
+          print(json.load(open(sys.argv[1],encoding='utf-8')).get('status',{}).get('url',''))
+          PY
+          )"
+            if [ "$SERVICE" = "tradementor-api" ]; then PATHNAME="/health"; else PATHNAME="/"; fi
+            echo "=== HTTP $URL$PATHNAME ==="
+            curl -sS -D "/tmp/$SERVICE.headers" -o "/tmp/$SERVICE.body" --max-time 20 "$URL$PATHNAME" || true
+            head -30 "/tmp/$SERVICE.headers" || true
+            echo "--- BODY ---"
+            head -c 1000 "/tmp/$SERVICE.body" || true
+            echo
+          done
 
-      - name: Read recent 429 and warning logs
+      - name: Read recent Cloud Run 429 and 5xx logs
         shell: bash
         run: |
           set -u
-          echo '=== 429 REQUEST LOGS (2h) ==='
-          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status=429' --project "$GCP_PROJECT_ID" --freshness=2h --limit=100 --format=json || true
-          echo '=== RATE EXCEEDED TEXT LOGS (2h) ==='
-          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND ("Rate exceeded" OR "rate exceeded")' --project "$GCP_PROJECT_ID" --freshness=2h --limit=100 --format=json || true
-          echo '=== RECENT WARNING+ LOGS (30m) ==='
-          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND severity>=WARNING' --project "$GCP_PROJECT_ID" --freshness=30m --limit=100 --format=json || true
+          for SERVICE in tradementor-api amar-bot-v44-direct-install; do
+            echo "=== $SERVICE 429 LOGS ==="
+            gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE\" AND httpRequest.status=429" --project "$GCP_PROJECT_ID" --freshness=2h --limit=100 --format=json > "/tmp/$SERVICE-429.json" || true
+            python - "/tmp/$SERVICE-429.json" <<'PY'
+          import json,sys
+          try: rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          except Exception: rows=[]
+          print('count=',len(rows))
+          for x in rows[:30]:
+              h=x.get('httpRequest',{}) or {}
+              print(x.get('timestamp'), h.get('status'), h.get('requestMethod'), h.get('requestUrl'), 'latency=',h.get('latency'), 'revision=',x.get('resource',{}).get('labels',{}).get('revision_name'), 'text=',x.get('textPayload') or (x.get('jsonPayload') or {}).get('message'))
+          PY
+            echo "=== $SERVICE 5XX LOGS ==="
+            gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE\" AND httpRequest.status>=500" --project "$GCP_PROJECT_ID" --freshness=2h --limit=60 --format=json > "/tmp/$SERVICE-5xx.json" || true
+            python - "/tmp/$SERVICE-5xx.json" <<'PY'
+          import json,sys
+          try: rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          except Exception: rows=[]
+          print('count=',len(rows))
+          for x in rows[:20]:
+              h=x.get('httpRequest',{}) or {}
+              print(x.get('timestamp'), h.get('status'), h.get('requestUrl'), 'revision=',x.get('resource',{}).get('labels',{}).get('revision_name'))
+          PY
+          done
 
-      - name: Read App Engine and Workstations inventory
+      - name: Read costly legacy inventory
         shell: bash
         run: |
           set -u
           echo '=== APP ENGINE SERVICES ==='
-          gcloud app services list --project "$GCP_PROJECT_ID" --format='table(id,split.allocations)' || true
+          gcloud app services list --project "$GCP_PROJECT_ID" --format=json > /tmp/app-services.json || true
+          python - /tmp/app-services.json <<'PY'
+          import json,sys
+          try: rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          except Exception: rows=[]
+          print('count=',len(rows))
+          for x in rows: print(x.get('id'),x.get('split'))
+          PY
           echo '=== APP ENGINE VERSIONS ==='
-          gcloud app versions list --project "$GCP_PROJECT_ID" --format='table(service,version.id,traffic_split,version.instance_class,version.serving_status,last_deployed_time)' || true
+          gcloud app versions list --project "$GCP_PROJECT_ID" --format=json > /tmp/app-versions.json || true
+          python - /tmp/app-versions.json <<'PY'
+          import json,sys
+          try: rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          except Exception: rows=[]
+          print('count=',len(rows))
+          for x in rows[:50]:
+              print(x.get('service'),x.get('id'),x.get('servingStatus'),x.get('instanceClass'),x.get('trafficSplit'),x.get('lastDeployedTime'))
+          PY
           echo '=== WORKSTATION CLUSTERS ==='
-          gcloud workstations clusters list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='table(name,state,createTime)' || true
-          echo '=== WORKSTATION CONFIGS ==='
-          for c in $(gcloud workstations clusters list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(name)' 2>/dev/null); do
-            gcloud workstations configs list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --cluster "$c" --format='table(name,idleTimeout,runningTimeout,host.gceInstance.machineType,host.gceInstance.poolSize)' || true
-          done
+          gcloud workstations clusters list --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/ws-clusters.json || true
+          python - /tmp/ws-clusters.json <<'PY'
+          import json,sys
+          try: rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          except Exception: rows=[]
+          print('count=',len(rows))
+          for x in rows: print(x.get('name'),x.get('state'),x.get('createTime'))
+          PY
