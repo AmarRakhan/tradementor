@@ -49,7 +49,7 @@ const finiteNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : null;
 };
 
-export function PortfolioGrowthCard({ onChanged = () => {} }: { onChanged?: () => void }) {
+export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }: { onChanged?: () => void; refreshKey?: number | null }) {
   const [data, setData] = useState<Growth | null>(null);
   const [daily, setDaily] = useState<DailyGrowth | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,20 +72,21 @@ export function PortfolioGrowthCard({ onChanged = () => {} }: { onChanged?: () =
     }
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    authenticatedRequest("/api/exchanges/aster/portfolio-growth")
-      .then((value) => { if (active) setData(value as Growth); })
-      .catch((cause) => {
-        if (!active) return;
-        setData({ reliable: false });
-        setError(cause instanceof Error ? cause.message : "Berekening niet beschikbaar");
-      });
-    authenticatedRequest("/api/exchanges/aster/portfolio-growth/daily")
-      .then((value) => { if (active) setDaily(value as DailyGrowth); })
-      .catch(() => { if (active) setDaily({ reliable: false }); });
-    return () => { active = false; };
+  const loadDaily = useCallback(async () => {
+    try {
+      setDaily(await authenticatedRequest("/api/exchanges/aster/portfolio-growth/daily", { cache: "no-store" }) as DailyGrowth);
+    } catch {
+      setDaily({ reliable: false });
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    void loadDaily();
+  }, [loadDaily, refreshKey]);
 
   async function saveBaseline(isReset = false) {
     const value = Number(amount.replace(",", "."));

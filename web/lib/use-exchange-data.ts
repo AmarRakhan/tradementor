@@ -7,16 +7,16 @@ import { loadAsterSnapshot, mergeAsterSnapshotWithHistoryFallback, preserveConfi
 import { createLatestAsterRequestGate } from "./aster-strategy2-server-status.mjs";
 
 export type ExchangeId = "hyperliquid" | "aster";
-export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown> | null; error: string; updatedAt: number | null; source: "none" | "cache" | "server"; serverConfirmed: boolean; timings?: Record<string, number> };
+export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown> | null; error: string; updatedAt: number | null; serverUpdatedAt?: number | null; source: "none" | "cache" | "server"; serverConfirmed: boolean; timings?: Record<string, number> };
 export type ExchangeSnapshots = Record<ExchangeId, ExchangeSnapshot>;
 
-const emptySnapshot = (): ExchangeSnapshot => ({ loading: false, data: null, error: "", updatedAt: null, source: "none", serverConfirmed: false });
+const emptySnapshot = (): ExchangeSnapshot => ({ loading: false, data: null, error: "", updatedAt: null, serverUpdatedAt: null, source: "none", serverConfirmed: false });
 
 function cachedAsterSnapshot(uid: string): ExchangeSnapshot {
   if (typeof window === "undefined" || !uid) return emptySnapshot();
   const cached = loadAsterSnapshot(window.localStorage, uid);
   return cached
-    ? { loading: false, data: cached.data, error: "", updatedAt: cached.updatedAt, source: "cache", serverConfirmed: false }
+    ? { loading: false, data: cached.data, error: "", updatedAt: cached.updatedAt, serverUpdatedAt: null, source: "cache", serverConfirmed: false }
     : emptySnapshot();
 }
 
@@ -118,7 +118,7 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
           console.info("[TradeMentor Aster timing]", timings);
         }
         return { ...current, snapshots: { ...current.snapshots, [exchange]: {
-          loading: false, data: confirmedPayload, error: "", updatedAt, source: "server", serverConfirmed: true, ...(timings ? { timings } : {})
+          loading: false, data: confirmedPayload, error: "", updatedAt, serverUpdatedAt: updatedAt, source: "server", serverConfirmed: true, ...(timings ? { timings } : {})
         } } };
       });
     } catch (reason) {
