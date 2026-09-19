@@ -4226,6 +4226,7 @@ def strategy2_focus_markets(user:dict[str,Any]=Depends(authenticated_user))->dic
 def strategy2_leverage_tiers(
     symbol: str = Query(min_length=1, max_length=40),
     minimumLeverage: int | None = Query(default=None, ge=1, le=300),
+    maximumLeverage: int | None = Query(default=None, ge=1, le=300),
     entryMarginUsd: float | None = Query(default=None, gt=0, le=100000),
     dcaMarginUsd: float | None = Query(default=None, gt=0, le=100000),
     user: dict[str, Any] = Depends(authenticated_user),
@@ -4235,6 +4236,7 @@ def strategy2_leverage_tiers(
     settings = MultiBbConfig.from_mapping(raw.get("settings"))
     overrides = settings.public_dict()
     if minimumLeverage is not None: overrides["minimumLeverage"] = int(minimumLeverage)
+    if maximumLeverage is not None: overrides["maximumLeverage"] = int(maximumLeverage)
     if entryMarginUsd is not None:
         overrides["entryMarginUsd"] = float(entryMarginUsd); overrides["entrySizingMode"] = "margin"
     if dcaMarginUsd is not None: overrides["dcaMarginUsd"] = float(dcaMarginUsd)
