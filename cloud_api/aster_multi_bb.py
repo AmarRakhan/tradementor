@@ -181,6 +181,10 @@ class MultiBbConfig(_core.MultiBbConfig):
     long_take_profit_value: float = .015
     short_take_profit_value: float = .015
     portfolio_tp_percent: float = 20.0
+    stop_loss_enabled: bool = False
+    stop_loss_mode: str = "PERCENT"
+    stop_loss_long: float = 0.0
+    stop_loss_short: float = 0.0
     pair_overrides: dict[str, dict[str, Any]] = field(default_factory=dict, compare=False)
     profit_lock_ladder_enabled: bool = False
     profit_lock_levels: tuple[tuple[float, float], ...] = DEFAULT_LEVELS
@@ -211,6 +215,10 @@ class MultiBbConfig(_core.MultiBbConfig):
             "long_take_profit_value": _positive_ratio(source,("longTakeProfitValue","takeProfitLong"),base.take_profit),
             "short_take_profit_value": _positive_ratio(source,("shortTakeProfitValue","takeProfitShort"),base.take_profit),
             "portfolio_tp_percent": _finite(source.get("portfolioTpPercent"),20.0),
+            "stop_loss_enabled": bool(source.get("stopLossEnabled", False)),
+            "stop_loss_mode": str(source.get("stopLossMode", "PERCENT")).strip().upper().replace("%", "PERCENT").replace("$", "USD"),
+            "stop_loss_long": _finite(source.get("stopLossLong"), 0.0),
+            "stop_loss_short": _finite(source.get("stopLossShort"), 0.0),
             "pair_overrides": _parse_pair_overrides(source.get("pairOverrides")),
             "profit_lock_ladder_enabled": profit_lock_enabled,
             "profit_lock_levels": normalize_levels(source.get("profitLockLevels")),
@@ -232,6 +240,8 @@ class MultiBbConfig(_core.MultiBbConfig):
         if any(not 0 <= x <= _MAX_PAIR_DCA for x in (self.max_dca_long,self.max_dca_short)): raise ValueError(f"LONG/SHORT max DCA moet tussen 0 en {_MAX_PAIR_DCA} liggen")
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_take_profit_value,self.short_take_profit_value)): raise ValueError("LONG/SHORT Take Profit moet positief zijn")
         if not math.isfinite(self.portfolio_tp_percent) or not 0 < self.portfolio_tp_percent <= 10000: raise ValueError("Portfolio TP percentage moet groter dan 0 zijn")
+        if self.stop_loss_mode not in {"USD","PERCENT"}: raise ValueError("Stoploss type moet USD of PERCENT zijn")
+        if self.stop_loss_enabled and (not math.isfinite(self.stop_loss_long) or self.stop_loss_long <= 0 or not math.isfinite(self.stop_loss_short) or self.stop_loss_short <= 0): raise ValueError("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat")
         if self.smart_rescue_enabled:
             validate_smart_rescue_config(
                 rescue_range_percent=self.smart_rescue_range_percent,
@@ -263,6 +273,10 @@ class MultiBbConfig(_core.MultiBbConfig):
             "longTakeProfitValue":self.long_take_profit_value, "shortTakeProfitValue":self.short_take_profit_value,
             "takeProfitLong":self.long_take_profit_value, "takeProfitShort":self.short_take_profit_value,
             "portfolioTpPercent":self.portfolio_tp_percent,
+            "stopLossEnabled":self.stop_loss_enabled,
+            "stopLossMode":self.stop_loss_mode,
+            "stopLossLong":self.stop_loss_long,
+            "stopLossShort":self.stop_loss_short,
             "profitLockLadderEnabled":self.profit_lock_ladder_enabled,
             "profitLockLevels":public_levels(self.profit_lock_levels),
             "profitLockPrimarySide":"LONG" if self.profit_lock_ladder_enabled else None,
