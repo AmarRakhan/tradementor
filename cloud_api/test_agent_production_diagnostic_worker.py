@@ -62,3 +62,13 @@ def test_billing_diagnostics_publish_only_sanitized_http_and_error_status():
     assert 'billing-account.json' in text
     assert 'rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json' in text
     assert 'getPaymentInfo' not in text
+
+
+def test_unreadable_billing_is_separate_from_runtime_health():
+    text = source()
+    assert 'BILLING_CONTROL="UNVERIFIED"' in text
+    assert 'BILLING_CONTROL="FAILED"' in text
+    assert 'direct Billing API unavailable · external billing alert channel required' in text
+    assert '### Overall runtime health' in text
+    unreadable = text[text.index('else\n            BILLING_LINE="⚠️ direct Billing API unavailable'):text.index('          fi\n\n          SERVICE_JSON=')]
+    assert 'STATUS="DEGRADED"' not in unreadable

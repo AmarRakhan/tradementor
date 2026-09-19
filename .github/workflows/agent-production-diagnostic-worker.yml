@@ -143,18 +143,20 @@ jobs:
             fi
           fi
 
+          BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
+            BILLING_CONTROL="OK"
             if [ "$BILLING_ACCOUNT_OPEN" = "True" ]; then
               BILLING_LINE="✅ project enabled · account open"
             else
               BILLING_LINE="✅ project enabled · account-state metadata unavailable"
             fi
           elif [ "$BILLING" = "False" ]; then
+            BILLING_CONTROL="FAILED"
             BILLING_LINE="❌ project billing disabled"
             STATUS="DEGRADED"
           else
-            BILLING_LINE="⚠️ project billing state unreadable"
-            STATUS="DEGRADED"
+            BILLING_LINE="⚠️ direct Billing API unavailable · external billing alert channel required"
           fi
 
           SERVICE_JSON="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json 2>/dev/null)"
@@ -199,7 +201,7 @@ jobs:
 
           {
             echo "### Current state"
-            printf -- "- Billing: %s\n" "$BILLING_LINE"
+            printf -- "- Billing control: %s · %s\n" "$BILLING_CONTROL" "$BILLING_LINE"
             printf -- "- Billing project API: HTTP %s%s\n" "${BILLING_PROJECT_HTTP:-none}" "${BILLING_PROJECT_ERROR:+ · $BILLING_PROJECT_ERROR}"
             printf -- "- Billing account API: HTTP %s%s\n" "${BILLING_ACCOUNT_HTTP:-none}" "${BILLING_ACCOUNT_ERROR:+ · $BILLING_ACCOUNT_ERROR}"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
@@ -212,7 +214,7 @@ jobs:
             printf -- "- Backend HTTP 5xx in last 30m: %s\n" "${ERROR_COUNT:-unknown}"
             printf -- "- Aster public market API: %s\n" "$([ "$ASTER_OK" = yes ] && echo '✅ reachable' || echo '❌ unavailable')"
             echo
-            echo "### Overall"
+            echo "### Overall runtime health"
             printf "**%s**\n" "$STATUS"
             echo
             echo "_No secrets, wallet keys, private exchange credentials, order payloads, or account data were collected._"
