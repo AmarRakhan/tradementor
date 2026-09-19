@@ -27,12 +27,13 @@ def test_backend_dispatcher_only_allows_exact_current_cloud_branch_head():
     assert "commit:" in text
 
 
-def test_backend_dispatcher_ensures_exact_head_backend_ci_before_dispatch():
+def test_backend_dispatcher_tests_exact_branch_head_before_dispatch():
     text = source()
-    assert "cloud-backend-ci.yml/runs" in text
-    assert 'select(.head_sha == \"$COMMIT\")' in text
-    assert "gh workflow run cloud-backend-ci.yml" in text
-    assert 'test "$CI_RESULT" = "success"' in text
+    assert "Check out exact production commit" in text
+    assert "ref: ${{ steps.validate.outputs.commit }}" in text
+    assert "pip install -r cloud_api/requirements.txt pytest" in text
+    assert "Run full backend tests on exact production commit" in text
+    assert "pytest -q" in text
     assert 'test "$CURRENT_HEAD" = "$COMMIT"' in text
 
 
