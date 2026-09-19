@@ -1,159 +1,105 @@
 # AGENT HANDOFF — Amar Crypto Bot 2026 Cloud
 
 Last updated: 2026-09-19
-Status: GITHUB-FIRST DAILY CONTROL PLANE PROVEN END-TO-END
+Status: GITHUB-FIRST CONTROL PLANE PROVEN
 
-## Required operating model
-Normal development is GitHub-first:
+## Daily operating model — REQUIRED
+Normal development is now:
 
-ChatGPT / agent → GitHub → tests/build → GitHub Actions → Workload Identity Federation → Google Cloud → candidate checks → production verification.
+User → ChatGPT/agent → GitHub → tests/build → GitHub Actions → Workload Identity Federation → Google Cloud → candidate → verification → production.
 
-For normal UI work, backend debugging, fixes, deployment, diagnostics and rollback, the user must NOT need to connect a Cloud Workstation.
+For normal development, UI work, backend fixes, diagnostics, deployment and rollback, the user should NOT be asked to connect the Cloud Workstation first.
 
-Direct Google Cloud / Workstation access is break-glass only for:
-- billing/payment account incidents;
-- IAM/bootstrap changes;
-- highly sensitive secrets;
-- failure of the GitHub → Google control path itself.
+Direct Google Cloud / Workstation access is break-glass only for billing/payment, IAM/bootstrap, highly sensitive secrets, or failure of the GitHub→Google control path itself.
 
-A new chat must read this file and `CURRENT_TASK.json` before modifying code or assuming production state.
+A new chat must read AGENT_HANDOFF.md and CURRENT_TASK.json before changing code or assuming production state.
 
-## Production now
-- GCP project: `tradementor-production`
+## Production
+- Project: `tradementor-production`
 - Region: `europe-west4`
 - Backend service: `tradementor-api`
-- Live revision: `tradementor-api-src-ef3a5ecd-341284`
-- Live source commit: `ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853`
-- Health: `ready`
+- Current live revision: `tradementor-api-src-ef3a5ecd-341284`
+- Current live source commit: `ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853`
+- Previous rollback revision retained: `tradementor-api-dca-e1f8132f-1`
+- Runtime health after final proof: HEALTHY
 - Firestore metadata: reachable
 - Aster scheduler: ENABLED
-- Latest verified Aster automation tick: HTTP 200
-- Backend 5xx in final 30-minute verification window: 0
+- Recent Aster automation tick: HTTP 200
+- Backend 5xx in final 30-minute proof window: 0
 - Aster public market API: reachable
 
-Final GitHub-only post-deploy proof: issue #155.
-Successful no-op deployment proof: issue #154.
+## GitHub-first proof completed
+Issue #154 proved the complete backend deployment path without Workstation:
+1. Owner-only GitHub control issue.
+2. Exact requested source SHA validated against trusted cloud-branch history.
+3. Full backend tests run on that exact SHA.
+4. Existing live image reused because requested source matched live source.
+5. No-traffic Cloud Run candidate created.
+6. Candidate health and exact source identity verified.
+7. Candidate promoted to 100% traffic.
+8. Production health verified.
+9. Previous revision retained as rollback point.
+10. Final result posted back to GitHub automatically.
 
-## What is proven
-### UI / web
-`.github/workflows/deploy-shared-v44-testapp.yml` already provides the normal V46 web path:
-- push under `web/**`
-- tests/build
-- WIF authentication
-- no-traffic candidate on `amar-bot-v44-direct-install`
-- candidate verification
-- promotion
-- post-promotion verification
-- rollback on failure
+Issue #155 proved post-deployment read-only production diagnostics through GitHub/WIF without Workstation.
 
-Therefore normal requests such as adding tabs, buttons, layout/styling, mobile fixes, settings fields or charts do not require Workstation access.
+## Web/UI deployment
+The canonical V46 web app already deploys GitHub-first:
+- Changes under `web/**` trigger the V46 workflow.
+- Tests/build run in GitHub Actions.
+- WIF authenticates keylessly to Google Cloud.
+- A no-traffic candidate is created and verified.
+- Traffic is promoted only after verification.
+- Automatic rollback exists after failed post-promotion verification.
 
-### Backend deployment
-The production backend path now:
-- accepts an explicit 40-character `source_commit`;
-- requires that commit to belong to the trusted `amar-crypto-bot-2026-cloud` history;
-- tests the exact requested source;
-- never implicitly ships the current cloud-branch head;
-- uses GitHub Actions + keyless WIF;
-- captures the existing production rollback point;
-- reuses the current live image for a safe no-op proof when source commit equals the live source;
-- otherwise builds an exact-source image;
-- deploys a no-traffic candidate;
-- verifies exact source/image identity and `/health`;
-- promotes only after candidate verification;
-- verifies production after promotion;
-- automatically restores the previous revision after failed post-promotion verification;
-- reports success/failure and rollback context back to the agent request issue.
+Therefore normal requests such as new tabs, buttons, styling, mobile fixes, settings fields and charts must not require Cloud Workstation access.
 
-Owner-only GitHub issue dispatcher:
-`[AGENT-CONTROL] deploy backend`
+## Security boundaries
+- WIF provider remains restricted to repository `AmarRakhan/tradementor` and ref `refs/heads/amar-crypto-bot-2026-cloud`.
+- No permanent Google service-account key is required in GitHub.
+- Main-branch agent dispatchers have no Google identity.
+- Production diagnostics use dedicated observer service account `github-tradementor-observer@tradementor-production.iam.gserviceaccount.com`.
+- Observer roles are read-only: Cloud Run viewer, Logging viewer, Cloud Scheduler viewer, billing viewer, plus Firestore database metadata-only custom permissions.
+- Observer has no deploy, Secret Manager, order, wallet, or Firestore document-data permissions.
 
-### Production diagnostics
-Owner-only diagnostic issue:
-`[AGENT-CONTROL] diagnose production`
+## Billing incident
+Confirmed incident:
+- Billing account was suspended after a failed payment.
+- Last successful Aster tick before outage: 2026-09-18 23:28 UTC.
+- First billing-disabled failure: 2026-09-18 23:29 UTC.
+- Billing reinstated around 2026-09-19 04:39 UTC.
+- First successful Aster tick after recovery: 2026-09-19 05:09 UTC.
+- Full trading automation interruption: approximately 5h40m.
 
-The main branch acts only as a GitHub dispatcher. Google authentication remains restricted to the trusted `amar-crypto-bot-2026-cloud` branch.
+Direct Cloud Billing project API remains unavailable to the observer (HTTP 403 PERMISSION_DENIED). This does NOT make runtime health unknown; billing control is reported separately as UNVERIFIED. The independent Gmail Cloud Billing Watch remains the billing-suspension warning channel.
 
-The diagnostic worker can read, without Workstation:
-- Cloud Run health/revision/source commit;
-- Firestore database metadata only;
-- Cloud Scheduler state;
-- recent Aster automation tick;
-- backend 5xx count;
-- Aster public connectivity.
+## Monitoring
+Active layers:
+- GitHub-only read-only production diagnosis via control issues.
+- Independent public GitHub uptime monitor.
+- Hourly Bot Health Watch.
+- Hourly Gmail Cloud Billing Watch.
 
-Diagnostic identity:
-`github-tradementor-observer@tradementor-production.iam.gserviceaccount.com`
+Cloud Monitoring native alert policies can still be added later as an infrastructure enhancement, but they are not required for normal agent development/deployment.
 
-It has least-privilege read-only access only:
-- Cloud Run Viewer
-- Logging Viewer
-- Cloud Scheduler Viewer
-- Billing Viewer on billing account
-- custom Firestore metadata role containing only `datastore.databases.get` and `datastore.databases.getMetadata`
+## Workstation
+Cloud Workstation is now emergency/break-glass access only. It is no longer required for normal UI/backend development, diagnostics or deployments.
 
-It has no deploy, Secret Manager, exchange-order, wallet-key or Firestore-document permissions.
+## Must not change without explicit task scope
+- Trading strategies/order logic.
+- Existing user settings.
+- Wallet/exchange connections.
+- Secrets/Secret Manager values.
+- Account data.
 
-## WIF trust boundary
-The WIF provider remains restricted to:
-- repository: `AmarRakhan/tradementor`
-- ref: `refs/heads/amar-crypto-bot-2026-cloud`
+## Historical rollback point
+- Pre-migration backend revision: `tradementor-api-dca-e1f8132f-1`
+- Source commit: `ef3a5ecdad21fc44dd2e4945c12c16d6c45a8853`
 
-Do not broaden this merely for convenience.
+## Final proof references
+- GitHub-only safe no-op backend deployment: issue #154 — SUCCESS.
+- Post-deployment production diagnosis: issue #155 — HEALTHY.
+- Final live revision: `tradementor-api-src-ef3a5ecd-341284`.
 
-## Rollback
-Current retained rollback revision:
-`tradementor-api-dca-e1f8132f-1`
-
-The final proof promoted a new revision using the existing live image and the same live source commit. No later trading commit was shipped.
-
-## Billing incident — confirmed
-2026-09-19 incident:
-- billing account suspension caused Cloud Run requests and Aster automation ticks to fail;
-- last successful tick before interruption: 2026-09-18 23:28 UTC;
-- first billing-disabled failure: 2026-09-18 23:29 UTC;
-- billing reinstated around 2026-09-19 04:39 UTC;
-- first fully successful Aster tick after recovery: 2026-09-19 05:09 UTC;
-- full automation interruption: about 340 minutes;
-- confirmed cause: billing account suspension after a failed payment.
-
-Do not store payment instrument details in repository files.
-
-## Billing monitoring
-Direct Billing API reads from the observer currently return HTTP 403 / PERMISSION_DENIED. This does NOT affect runtime diagnosis or deployment.
-
-Billing monitoring remains separated from runtime health:
-- external Cloud Billing / Google Payments Gmail watch is active;
-- monthly Google Cloud budget alert exists;
-- runtime diagnostic explicitly reports billing as UNVERIFIED instead of falsely marking runtime unhealthy.
-
-Do not weaken IAM merely to make the diagnostic show billing as green. Billing/payment remains a break-glass/account-control concern.
-
-## Independent monitoring
-- GitHub public uptime monitor: scheduled every 15 minutes.
-- Hourly Cloud Billing Gmail watch: active.
-- Hourly Bot Health Watch: active.
-- GitHub-only production diagnostic path: proven.
-
-## Safety boundaries
-Do not change unless the task explicitly requires it:
-- trading strategies/order logic;
-- existing user settings;
-- wallet/exchange connections;
-- secrets / Secret Manager values;
-- account data.
-
-Never deploy the cloud-branch head merely because it is newer. Always identify and deploy the intended exact source commit.
-
-## Incident-proof deployment history
-- Issue #148: first GitHub-only proof safely failed before candidate creation.
-- Issue #151: second proof safely failed at `capture-current-health`; root cause was same-step GitHub Actions environment handling.
-- Fix: read `SERVICE_URL` locally in the same shell step instead of relying on `$GITHUB_ENV` before the next step.
-- Issue #154: final no-op deployment proof SUCCESS.
-- Issue #155: post-deploy read-only runtime verification HEALTHY.
-
-## Current conclusion
-The core migration goal is complete:
-normal development, UI changes, backend fixes, tests, production diagnostics, deployment and rollback control can now operate from GitHub without requiring the user to connect Google Cloud for each task.
-
-Cloud Workstation remains emergency/break-glass only.
+## Next normal task
+For the next requested bot change, start directly in GitHub. Do not ask the user to connect Google Cloud/Workstation unless the task is specifically billing, IAM/bootstrap, sensitive secrets, or the GitHub→Google control path itself is broken.
