@@ -49,7 +49,7 @@ jobs:
           )"
           gcloud run services update "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --max-instances 5 --no-traffic --tag "$TAG" --quiet
           gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/api-after.json
-          python - /tmp/api-before.json /tmp/api-after.json "$TAG" >> "$GITHUB_ENV" <<'PY'
+          python - /tmp/api-before.json /tmp/api-after.json "$TAG" <<'PY'
           import json,sys
           b=json.load(open(sys.argv[1],encoding='utf-8')); a=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
           bs=b['spec']['template']['spec']; ass=a['spec']['template']['spec']
@@ -62,9 +62,22 @@ jobs:
           assert bc.get('resources')==ac.get('resources')
           row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
           assert int(row.get('percent',0) or 0)==0
-          print('API_CANDIDATE_URL='+row['url'])
-          print('API_CANDIDATE_REVISION='+row['revisionName'])
+          print('validated', row['url'], row['revisionName'])
           PY
+          API_CANDIDATE_URL="$(python - /tmp/api-after.json "$TAG" <<'PY'
+          import json,sys
+          a=json.load(open(sys.argv[1],encoding='utf-8')); tag=sys.argv[2]
+          row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          print(row['url'])
+          PY
+          )"
+          API_CANDIDATE_REVISION="$(python - /tmp/api-after.json "$TAG" <<'PY'
+          import json,sys
+          a=json.load(open(sys.argv[1],encoding='utf-8')); tag=sys.argv[2]
+          row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          print(row['revisionName'])
+          PY
+          )"
           BODY="$(curl --fail --silent --show-error --retry 8 --retry-delay 3 "$API_CANDIDATE_URL/health")"
           python - "$BODY" <<'PY'
           import json,sys
@@ -88,7 +101,7 @@ jobs:
           )"
           gcloud run services update "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --max-instances 5 --no-traffic --tag "$TAG" --quiet
           gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > /tmp/web-after.json
-          python - /tmp/web-before.json /tmp/web-after.json "$TAG" >> "$GITHUB_ENV" <<'PY'
+          python - /tmp/web-before.json /tmp/web-after.json "$TAG" <<'PY'
           import json,sys
           b=json.load(open(sys.argv[1],encoding='utf-8')); a=json.load(open(sys.argv[2],encoding='utf-8')); tag=sys.argv[3]
           bs=b['spec']['template']['spec']; ass=a['spec']['template']['spec']
@@ -101,9 +114,22 @@ jobs:
           assert bc.get('resources')==ac.get('resources')
           row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
           assert int(row.get('percent',0) or 0)==0
-          print('WEB_CANDIDATE_URL='+row['url'])
-          print('WEB_CANDIDATE_REVISION='+row['revisionName'])
+          print('validated', row['url'], row['revisionName'])
           PY
+          WEB_CANDIDATE_URL="$(python - /tmp/web-after.json "$TAG" <<'PY'
+          import json,sys
+          a=json.load(open(sys.argv[1],encoding='utf-8')); tag=sys.argv[2]
+          row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          print(row['url'])
+          PY
+          )"
+          WEB_CANDIDATE_REVISION="$(python - /tmp/web-after.json "$TAG" <<'PY'
+          import json,sys
+          a=json.load(open(sys.argv[1],encoding='utf-8')); tag=sys.argv[2]
+          row=next(x for x in a['status']['traffic'] if x.get('tag')==tag)
+          print(row['revisionName'])
+          PY
+          )"
           HTML="$(curl --fail --silent --show-error --retry 8 --retry-delay 3 "$WEB_CANDIDATE_URL/")"
           test -n "$HTML"
           ! grep -Fq 'Rate exceeded.' <<<"$HTML"
@@ -126,3 +152,5 @@ jobs:
           echo "Production backend and web both healthy after max-instances=5." >> "$GITHUB_STEP_SUMMARY"
 
 # trigger retry
+
+# corrected same-step candidate variables
