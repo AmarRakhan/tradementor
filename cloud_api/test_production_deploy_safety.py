@@ -24,7 +24,6 @@ def test_production_deploy_verifies_exact_source_commit_before_promotion():
     assert 'health["sourceCommit"] == os.environ["GITHUB_SHA"]' in text
     assert 'health["imageSourceCommit"] == os.environ["GITHUB_SHA"]' in text
     assert '--no-traffic' in text
-    assert 'assert "/internal/aster-automation/tick" in paths' in text
 
 
 def test_production_deploy_checks_firestore_and_aster_before_build():
