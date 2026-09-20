@@ -256,13 +256,17 @@ def exit_decision(trade: dict[str, Any], position: dict[str, Any], *, now_ms: in
     elapsed = max(0, now_ms-opened)
     tp_percent = number(trade.get("tpPercent")) or settings.tp_min_percent
     pnl_percent = (pnl/notional*100) if notional > 0 else 0.0
+    peak = max(number(trade.get("peakPnlPercent")), pnl_percent)
+    base = {"pnlUsd": pnl, "pnlPercent": pnl_percent, "peakPnlPercent": peak}
     if pnl <= -settings.max_loss_usd:
-        return {"action": "CLOSE_LOSS", "reason": "Max verlies per trade bereikt", "pnlUsd": pnl, "pnlPercent": pnl_percent}
+        return {"action": "CLOSE_LOSS", "reason": "Max verlies per trade bereikt", **base}
     if pnl_percent >= tp_percent:
-        return {"action": "CLOSE_TP", "reason": "Dynamische Sniper TP bereikt", "pnlUsd": pnl, "pnlPercent": pnl_percent}
+        return {"action": "CLOSE_TP", "reason": "Dynamische Sniper TP bereikt", **base}
+    if peak >= settings.profit_lock_percent and pnl_percent <= peak - settings.profit_lock_percent:
+        return {"action": "CLOSE_PROFIT_LOCK", "reason": "Sniper profit lock beschermt behaalde winst", **base}
     if elapsed >= settings.max_trade_seconds * 1000:
-        return {"action": "CLOSE_TIMEOUT", "reason": "Harde Sniper tradeduur verstreken", "pnlUsd": pnl, "pnlPercent": pnl_percent}
-    return {"action": "HOLD", "reason": "Trade blijft binnen Sniper grenzen", "pnlUsd": pnl, "pnlPercent": pnl_percent}
+        return {"action": "CLOSE_TIMEOUT", "reason": "Harde Sniper tradeduur verstreken", **base}
+    return {"action": "HOLD", "reason": "Trade blijft binnen Sniper grenzen", **base}
 
 
 def backtest_candles(candles: list[list[Any]], settings: SniperSettings) -> dict[str, Any]:
