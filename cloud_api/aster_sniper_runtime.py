@@ -194,7 +194,8 @@ def run_sniper_tick(
     scan_batch=(universe[scan_cursor:scan_cursor+8]+universe[:max(0,scan_cursor+8-len(universe))]) if universe else []
     next_cursor=(scan_cursor+len(scan_batch))%max(1,len(universe))
     exchange_active_symbols={str(x.get("symbol","")).upper() for x in positions if abs(number(x.get("positionAmt")))>0}
-    active_symbols={str(x.get("symbol","")).upper() for x in trades}|set(blocked_symbols)|exchange_active_symbols
+    exchange_open_order_symbols={str(x.get("symbol","")).upper() for x in client.open_orders() if str(x.get("symbol","")).strip()}
+    active_symbols={str(x.get("symbol","")).upper() for x in trades}|set(blocked_symbols)|exchange_active_symbols|exchange_open_order_symbols
     cooldowns={str(k):dict(v) for k,v in (state.get("cooldowns") or {}).items() if isinstance(v,dict)}
     signals=[]
     for market in scan_batch:
