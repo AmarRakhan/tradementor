@@ -6814,14 +6814,22 @@ def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False,management_only:bool=Fal
         return {"status":"account-busy","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
     try:
         raw=ref.get().to_dict() or {};settings=SniperSettings.from_mapping(raw.get("settings"))
+        if dry_run:
+            raw={**raw,"enabled":True,"monitor":True}
         if management_only and event_symbol and normalize_symbol(event_symbol) not in sniper_active_symbols(raw):
             return {"status":"ignored","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
         if not dry_run and not bool(raw.get("monitor",False)):
             return {"status":"stopped","ordersSent":0}
         live=_sniper_live_gate_enabled() and not dry_run
         client=_sniper_client(uid,live=live)
-        def claim(symbol:str,owner:str)->bool:return _claim_aster_symbol(uid,symbol,owner,"SNIPER_RUNTIME")
-        def release(symbol:str)->None:_release_aster_symbol_claim(uid,symbol,"SNIPER")
+        if dry_run:
+            def claim(symbol:str,owner:str)->bool:
+                return owner_can_claim(owner,symbol,aster_strategy2_reference(uid).get().to_dict() or {},raw)
+            def release(symbol:str)->None:
+                return None
+        else:
+            def claim(symbol:str,owner:str)->bool:return _claim_aster_symbol(uid,symbol,owner,"SNIPER_RUNTIME")
+            def release(symbol:str)->None:_release_aster_symbol_claim(uid,symbol,"SNIPER")
         def persist_pending(value:dict[str,Any]|None)->None:
             ref.set({"pendingIntent":value,"updatedAt":datetime.now(timezone.utc)},merge=True)
         result=run_sniper_tick(client=client,state=raw,settings=settings,blocked_symbols=_aster_strategy2_owned_symbols(uid),
