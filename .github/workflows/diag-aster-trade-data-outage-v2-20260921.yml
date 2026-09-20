@@ -1,0 +1,73 @@
+name: Diagnose Aster trade data outage V2 2026-09-21
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - '.github/workflows/diag-aster-trade-data-outage-v2-20260921.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect current service and recent Aster traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api"'             --project "$GCP_PROJECT_ID" --freshness=90m --limit 2000 --format=json > "$RUNNER_TEMP/logs.json"
+          python - "$RUNNER_TEMP/service.json" "$RUNNER_TEMP/logs.json" <<'PY'
+          import json,re,sys,urllib.parse,collections
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          traffic=s.get('status',{}).get('traffic',[])
+          live=[x for x in traffic if int(x.get('percent',0))==100]
+          env={x['name']:x.get('value') for x in s['spec']['template']['spec']['containers'][0].get('env',[])}
+          print('TRADE_DIAG_V2 live_revision='+(live[0].get('revisionName','') if live else 'NONE'))
+          print('TRADE_DIAG_V2 source_commit='+str(env.get('TRADEMENTOR_SOURCE_COMMIT','')))
+          print('TRADE_DIAG_V2 realtime_worker='+str(env.get('ASTER_REALTIME_WORKER','')))
+          status=collections.Counter(); aster=collections.Counter(); paths=collections.Counter(); errors=[]
+          for r in rows:
+              h=r.get('httpRequest') or {}
+              st=int(h.get('status') or 0)
+              if st: status[st]+=1
+              url=str(h.get('requestUrl') or '')
+              path=urllib.parse.urlsplit(url).path if url else ''
+              if path:
+                  paths[(path,st)]+=1
+              if '/v1/me/aster/' in path:
+                  aster[(path,st)]+=1
+              sev=str(r.get('severity') or '')
+              msg=str(r.get('textPayload') or (r.get('jsonPayload') or {}).get('message') or '')
+              if st>=400 or sev in {'ERROR','CRITICAL','ALERT','EMERGENCY'} or re.search(r'exception|traceback|timeout|failed|asterapierror',msg,re.I):
+                  clean=re.sub(r'0x[a-fA-F0-9]{40}','0x[REDACTED]',msg)
+                  clean=re.sub(r'Bearer\s+\S+','Bearer [REDACTED]',clean,flags=re.I)
+                  errors.append((str(r.get('timestamp','')),sev,st,path,clean[:260]))
+          print('TRADE_DIAG_V2 http='+json.dumps(dict(status),sort_keys=True))
+          print('TRADE_DIAG_V2 aster='+json.dumps({f'{k[0]}::{k[1]}':v for k,v in aster.items()},sort_keys=True))
+          for (p,st),n in paths.most_common(35):
+              print('TRADE_DIAG_V2 path='+json.dumps({'path':p,'status':st,'count':n},sort_keys=True))
+          print('TRADE_DIAG_V2 error_count='+str(len(errors)))
+          for e in errors[-100:]:
+              print('TRADE_DIAG_V2 error='+json.dumps(e,ensure_ascii=False))
+          PY
