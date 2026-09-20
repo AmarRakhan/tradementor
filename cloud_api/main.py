@@ -4228,6 +4228,8 @@ def strategy2_leverage_tiers(
     minimumLeverage: int | None = Query(default=None, ge=1, le=300),
     maximumLeverage: int | None = Query(default=None, ge=1, le=300),
     entryMarginUsd: float | None = Query(default=None, gt=0, le=100000),
+    entryNotionalUsd: float | None = Query(default=None, gt=0, le=1000000),
+    entrySizingMode: str | None = Query(default=None, pattern="^(margin|notional)$"),
     dcaMarginUsd: float | None = Query(default=None, gt=0, le=100000),
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
@@ -4237,8 +4239,13 @@ def strategy2_leverage_tiers(
     overrides = settings.public_dict()
     if minimumLeverage is not None: overrides["minimumLeverage"] = int(minimumLeverage)
     if maximumLeverage is not None: overrides["maximumLeverage"] = int(maximumLeverage)
+    if entrySizingMode is not None: overrides["entrySizingMode"] = str(entrySizingMode)
+    if entryNotionalUsd is not None:
+        overrides["entryNotionalUsd"] = float(entryNotionalUsd)
+        if entrySizingMode is None: overrides["entrySizingMode"] = "notional"
     if entryMarginUsd is not None:
-        overrides["entryMarginUsd"] = float(entryMarginUsd); overrides["entrySizingMode"] = "margin"
+        overrides["entryMarginUsd"] = float(entryMarginUsd)
+        if entrySizingMode is None and entryNotionalUsd is None: overrides["entrySizingMode"] = "margin"
     if dcaMarginUsd is not None: overrides["dcaMarginUsd"] = float(dcaMarginUsd)
     settings = MultiBbConfig.from_mapping(overrides)
     secret = load_aster_secret(user)
@@ -4475,16 +4482,22 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
     return {"mode":"paper","ordersSent":0,"engine":MULTI_BB_ENGINE,"sameEngineAsLive":True,"configurationValid":True,"errors":[],
         "plannedPositions":settings.maximum_positions,"longSlots":settings.long_slots,"shortSlots":settings.short_slots,
         "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,
-            "maximumLeverage":settings.maximum_leverage,"entryNotionalUsd":settings.entry_notional_usd,
+            "maximumLeverage":settings.maximum_leverage,"entrySizingMode":settings.entry_sizing_mode,
+            "entryMarginLongUsd":settings.entry_margin_long_usd,"entryMarginShortUsd":settings.entry_margin_short_usd,
+            "entryNotionalUsd":settings.entry_notional_usd,"entryNotionalLongUsd":settings.entry_notional_long_usd,
+            "entryNotionalShortUsd":settings.entry_notional_short_usd,
             "dcaDistance":settings.dca_distance,"dcaMarginUsd":settings.dca_margin_usd,"maxDca":settings.max_dca,"takeProfit":settings.take_profit,
             "stopLossEnabled":settings.stop_loss_enabled,"stopLossMode":settings.stop_loss_mode,
             "stopLossLong":settings.stop_loss_long,"stopLossShort":settings.stop_loss_short,"entryMode":"immediate_fill"},
-        "simulationChecks":{"maximumLeverage":{"pairMaximumLeverage":example_pair_max,"effectiveLeverage":example_effective,
+        "simulationChecks":{"positionSizing":{"mode":settings.entry_sizing_mode,
+                "exampleNotionalUsd":6.0,"marginAt20x":0.30,"marginAt50x":0.12,"marginAt100x":0.06,
+                "notionalConstantWhenEnabled":settings.entry_sizing_mode=="notional"},
+            "maximumLeverage":{"pairMaximumLeverage":example_pair_max,"effectiveLeverage":example_effective,
                 "legacyMaximumUnbounded":settings.maximum_leverage is None},
             "stopLoss":{"enabled":settings.stop_loss_enabled,"mode":settings.stop_loss_mode,"entry":100.0,
                 "exampleMark":stop_mark,"limit":stop_limit,
                 "expectedAction":"STOP_LOSS_TRIGGERED" if settings.stop_loss_enabled else "NO_STOP_LOSS"}},
-        "message":"Nieuwe Multi DCA-configuratie gevalideerd; leverage-cap en Stoploss zijn veilig gesimuleerd; er zijn 0 orders verzonden."}
+        "message":"Multi DCA veilig gesimuleerd: sizing-mode, leverage-cap en Stoploss gevalideerd; 0 orders verzonden."}
 
 
 @app.get("/v1/me/aster/strategy2/readiness")

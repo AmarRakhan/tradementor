@@ -173,6 +173,8 @@ class MultiBbConfig(_core.MultiBbConfig):
     take_profit_mode: str = "PER_TRADE"
     entry_margin_long_usd: float = 5.0
     entry_margin_short_usd: float = 5.0
+    entry_notional_long_usd: float = 250.0
+    entry_notional_short_usd: float = 250.0
     long_dca_distance: float = .003
     short_dca_distance: float = .003
     long_dca_margin_usd: float = 2.0
@@ -207,6 +209,8 @@ class MultiBbConfig(_core.MultiBbConfig):
             "take_profit_mode": _normalize_mode(source.get("takeProfitMode"), legacy_enabled=base.take_profit_enabled),
             "entry_margin_long_usd": _positive_ratio(source,("entryMarginLongUsd","entryMarginLong"),legacy_entry),
             "entry_margin_short_usd": _positive_ratio(source,("entryMarginShortUsd","entryMarginShort"),legacy_entry),
+            "entry_notional_long_usd": _positive_ratio(source,("entryNotionalLongUsd","entryNotionalLong","entryNotionalUsd"),base.entry_notional_usd),
+            "entry_notional_short_usd": _positive_ratio(source,("entryNotionalShortUsd","entryNotionalShort"),base.entry_notional_usd),
             "long_dca_distance": _positive_ratio(source,("longDcaDistance",),base.dca_distance),
             "short_dca_distance": _positive_ratio(source,("shortDcaDistance",),base.dca_distance),
             "long_dca_margin_usd": _positive_ratio(source,("longDcaMarginUsd","longDcaAmount"),base.dca_margin_usd),
@@ -235,7 +239,8 @@ class MultiBbConfig(_core.MultiBbConfig):
     def validated(self) -> "MultiBbConfig":
         super().validated()
         if self.take_profit_mode not in _TP_MODES: raise ValueError("Take Profit Mode is ongeldig")
-        if any(not math.isfinite(x) or x <= 0 for x in (self.entry_margin_long_usd,self.entry_margin_short_usd)): raise ValueError("Instap LONG/SHORT moet positief zijn")
+        if any(not math.isfinite(x) or x <= 0 for x in (self.entry_margin_long_usd,self.entry_margin_short_usd)): raise ValueError("Instapmargin LONG/SHORT moet positief zijn")
+        if any(not math.isfinite(x) or x <= 0 for x in (self.entry_notional_long_usd,self.entry_notional_short_usd)): raise ValueError("Positieomvang LONG/SHORT moet positief zijn")
         if any(not .0001 <= x <= .50 for x in (self.long_dca_distance,self.short_dca_distance)): raise ValueError("LONG/SHORT DCA-afstand moet tussen 0,01% en 50% liggen")
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_dca_margin_usd,self.short_dca_margin_usd)): raise ValueError("LONG/SHORT DCA-bedrag moet positief zijn")
         if any(not 0 <= x <= _MAX_PAIR_DCA for x in (self.max_dca_long,self.max_dca_short)): raise ValueError(f"LONG/SHORT max DCA moet tussen 0 en {_MAX_PAIR_DCA} liggen")
@@ -263,6 +268,9 @@ class MultiBbConfig(_core.MultiBbConfig):
             "entryMarginUsd":self.entry_margin_long_usd,
             "entryMarginLongUsd":self.entry_margin_long_usd, "entryMarginShortUsd":self.entry_margin_short_usd,
             "entryMarginLong":self.entry_margin_long_usd, "entryMarginShort":self.entry_margin_short_usd,
+            "entryNotionalUsd":self.entry_notional_long_usd,
+            "entryNotionalLongUsd":self.entry_notional_long_usd, "entryNotionalShortUsd":self.entry_notional_short_usd,
+            "entryNotionalLong":self.entry_notional_long_usd, "entryNotionalShort":self.entry_notional_short_usd,
             "dcaDistance":self.long_dca_distance, "dcaMarginUsd":self.long_dca_margin_usd,
             "maxDca":self.max_dca_long, "takeProfit":self.long_take_profit_value,
             "takeProfitMode":self.take_profit_mode,
@@ -294,7 +302,7 @@ class MultiBbConfig(_core.MultiBbConfig):
 
 
 _SHARED_ATTR_TO_KEY = {"minimum_leverage":"minimumLeverage",
-                       "entry_notional_usd":"entryNotionalUsd","unlimited_dca":"unlimitedDca",
+                       "unlimited_dca":"unlimitedDca",
                        "short_start_multiplier":"shortStartMultiplier"}
 
 
@@ -328,6 +336,11 @@ def _execution_context_from_stack() -> tuple[str,str]:
 def _side_value(base: MultiBbConfig, override: dict[str,Any], side: str, kind: str) -> Any:
     is_short=side=="SHORT"
     if kind=="entry_margin_usd": return override.get("entryMarginUsd",base.entry_margin_short_usd if is_short else base.entry_margin_long_usd)
+    if kind=="entry_notional_usd":
+        side_key="entryNotionalShortUsd" if is_short else "entryNotionalLongUsd"
+        legacy_key="entryNotionalShort" if is_short else "entryNotionalLong"
+        fallback=base.entry_notional_short_usd if is_short else base.entry_notional_long_usd
+        return override.get(side_key,override.get(legacy_key,override.get("entryNotionalUsd",fallback)))
     if kind=="dca_distance": return override.get("shortDcaDistance" if is_short else "longDcaDistance",override.get("dcaDistance",base.short_dca_distance if is_short else base.long_dca_distance))
     if kind=="dca_margin_usd": return override.get("shortDcaMarginUsd" if is_short else "longDcaMarginUsd",override.get("dcaMarginUsd",base.short_dca_margin_usd if is_short else base.long_dca_margin_usd))
     if kind=="max_dca": return override.get("maxDcaShort" if is_short else "maxDcaLong",override.get("maxDca",base.max_dca_short if is_short else base.max_dca_long))
@@ -365,11 +378,12 @@ class _PairAwareSettings:
         if active_key in smart_keys and name=="unlimited_dca": return False
         if blocked_side and side==blocked_side and name=="take_profit_enabled": return False
         if blocked_side and side==blocked_side and name=="max_dca": return -1
-        if name in {"entry_margin_usd","dca_distance","dca_margin_usd","max_dca","take_profit"}:
-            legacy_key={"entry_margin_usd":"entryMarginUsd","dca_distance":"dcaDistance","dca_margin_usd":"dcaMarginUsd","max_dca":"maxDca","take_profit":"takeProfit"}[name]
+        if name in {"entry_margin_usd","entry_notional_usd","dca_distance","dca_margin_usd","max_dca","take_profit"}:
+            legacy_key={"entry_margin_usd":"entryMarginUsd","entry_notional_usd":"entryNotionalUsd","dca_distance":"dcaDistance","dca_margin_usd":"dcaMarginUsd","max_dca":"maxDca","take_profit":"takeProfit"}[name]
             if legacy_key in override: return override[legacy_key]
             if side in {"LONG","SHORT"}: return _side_value(base,override,side,name)
             if name=="entry_margin_usd": return base.entry_margin_long_usd
+            if name=="entry_notional_usd": return base.entry_notional_long_usd
         if name=="take_profit_enabled":
             if base.take_profit_mode!="PER_TRADE": return False
             return bool(override.get("takeProfitEnabled",base.take_profit_enabled))
@@ -385,6 +399,8 @@ def effective_pair_settings(settings:MultiBbConfig,symbol:str)->dict[str,Any]:
     result.update({
         "entryMarginLongUsd":_side_value(settings,override,"LONG","entry_margin_usd"),
         "entryMarginShortUsd":_side_value(settings,override,"SHORT","entry_margin_usd"),
+        "entryNotionalLongUsd":_side_value(settings,override,"LONG","entry_notional_usd"),
+        "entryNotionalShortUsd":_side_value(settings,override,"SHORT","entry_notional_usd"),
         "longDcaDistance":_side_value(settings,override,"LONG","dca_distance"),
         "shortDcaDistance":_side_value(settings,override,"SHORT","dca_distance"),
         "longDcaMarginUsd":_side_value(settings,override,"LONG","dca_margin_usd"),
@@ -449,8 +465,11 @@ class _CoreWriteProxy:
             entry=_finite(row.get("lastKnownEntry"),_finite(row.get("lastBotFillPrice")))
             if entry<=0: continue
             updated=dict(row)
+            leverage=max(1,_integer(row.get("leverage"),settings.minimum_leverage))
+            start_margin=(settings.entry_notional_long_usd/leverage
+                if settings.entry_sizing_mode=="notional" else settings.entry_margin_long_usd)
             updated["smartRescue"]=build_smart_rescue_position_state(
-                initial_entry_price=entry,start_margin_usd=settings.entry_margin_long_usd,
+                initial_entry_price=entry,start_margin_usd=start_margin,
                 rescue_range_percent=settings.smart_rescue_range_percent,dca_count=settings.smart_rescue_dca_count,
                 order_growth_multiplier=settings.smart_rescue_order_growth_multiplier,
                 trailing_recovery_percent=settings.smart_rescue_trailing_recovery_percent,
