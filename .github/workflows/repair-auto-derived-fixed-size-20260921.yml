@@ -83,7 +83,7 @@ jobs:
               fingerprint=(
                   i(s.get('maximumPositions'))==60 and i(s.get('longSlots'))==30 and i(s.get('shortSlots'))==30 and
                   i(s.get('universeTopN'))==350 and i(s.get('minimumLeverage'))==20 and
-                  str(s.get('entrySizingMode','')).lower()=='notional' and
+                  str(s.get('entrySizingMode','')).lower() in {'notional','margin'} and
                   near(s.get('entryNotionalLongUsd',s.get('entryNotionalLong')),8.0) and
                   near(s.get('entryNotionalShortUsd',s.get('entryNotionalShort')),6.0) and
                   0 < long_margin <= 1.0 and 0 < short_margin <= 1.0 and
@@ -93,45 +93,64 @@ jobs:
 
           if len(matches)!=1:
               print('FIXED_SIZE_REPAIR '+json.dumps({'status':'REFUSED_NOT_UNIQUE','matchCount':len(matches),'ordersSent':0,'settingsChanged':False},sort_keys=True))
-              raise SystemExit(0)
+              raise SystemExit(21)
 
           snap,raw,old,long_margin,short_margin=matches[0]
           current=snap.reference.get().to_dict() or {}
           s=current.get('settings') if isinstance(current.get('settings'),dict) else {}
-          # Re-validate the exact state immediately before writing.
-          if str(s.get('entrySizingMode','')).lower()!='notional' or not near(s.get('entryNotionalLongUsd',s.get('entryNotionalLong')),8.0) or not near(s.get('entryNotionalShortUsd',s.get('entryNotionalShort')),6.0):
+          mode=str(s.get('entrySizingMode','')).lower()
+          # Re-validate the exact account fingerprint immediately before any write.
+          if mode not in {'notional','margin'} or not near(s.get('entryNotionalLongUsd',s.get('entryNotionalLong')),8.0) or not near(s.get('entryNotionalShortUsd',s.get('entryNotionalShort')),6.0):
               print('FIXED_SIZE_REPAIR '+json.dumps({'status':'REFUSED_STATE_CHANGED','ordersSent':0,'settingsChanged':False},sort_keys=True))
-              raise SystemExit(0)
+              raise SystemExit(22)
 
-          version=max(i(current.get('configVersion'),1),i(s.get('version'),1))+1
-          new=dict(s)
-          new['entrySizingMode']='margin'
-          new['version']=version
-          # Crucial: do not modify either stored margin or notional amount. This
-          # repair only restores which already-stored base setting is active.
-          now=datetime.now(timezone.utc)
-          snap.reference.set({
-              'settings':new,'configVersion':version,'updatedAt':now,'settingsChangedAt':now,
-              'lastReason':'Vaste positieomvang veilig teruggezet naar marginmodus; bestaande LONG/SHORT-margin behouden; 0 orders'
-          },merge=True)
-          snap.reference.collection('configHistory').add({
-              'version':version,'oldValue':s,'newValue':new,
-              'source':'repair-auto-derived-fixed-size-20260921','timestamp':now
-          })
-          snap.reference.collection('audit').add({
-              'event':'ENTRY_SIZING_MODE_RESTORED_TO_MARGIN','oldMode':'notional','newMode':'margin',
-              'entryMarginLongUsd':long_margin,'entryMarginShortUsd':short_margin,
-              'ordersSent':0,'timestamp':now
-          })
+          changed=False
+          version=max(i(current.get('configVersion'),1),i(s.get('version'),1))
+          if mode=='notional':
+              version+=1
+              new=dict(s)
+              new['entrySizingMode']='margin'
+              new['version']=version
+              # Crucial: do not modify either stored margin or notional amount.
+              now=datetime.now(timezone.utc)
+              snap.reference.set({
+                  'settings':new,'configVersion':version,'updatedAt':now,'settingsChangedAt':now,
+                  'lastReason':'Vaste positieomvang veilig teruggezet naar marginmodus; bestaande LONG/SHORT-margin behouden; 0 orders'
+              },merge=True)
+              snap.reference.collection('configHistory').add({
+                  'version':version,'oldValue':s,'newValue':new,
+                  'source':'repair-auto-derived-fixed-size-20260921','timestamp':now
+              })
+              snap.reference.collection('audit').add({
+                  'event':'ENTRY_SIZING_MODE_RESTORED_TO_MARGIN','oldMode':'notional','newMode':'margin',
+                  'entryMarginLongUsd':long_margin,'entryMarginShortUsd':short_margin,
+                  'ordersSent':0,'timestamp':now
+              })
+              changed=True
+
+          verified=snap.reference.get().to_dict() or {}
+          vs=verified.get('settings') if isinstance(verified.get('settings'),dict) else {}
+          verified_long=f(vs.get('entryMarginLongUsd',vs.get('entryMarginLong',vs.get('entryMarginUsd'))))
+          verified_short=f(vs.get('entryMarginShortUsd',vs.get('entryMarginShort',vs.get('entryMarginUsd'))))
+          ok=(str(vs.get('entrySizingMode','')).lower()=='margin' and
+              abs(verified_long-long_margin)<1e-12 and abs(verified_short-short_margin)<1e-12 and
+              near(vs.get('entryNotionalLongUsd',vs.get('entryNotionalLong')),8.0) and
+              near(vs.get('entryNotionalShortUsd',vs.get('entryNotionalShort')),6.0))
+          if not ok:
+              print('FIXED_SIZE_REPAIR '+json.dumps({'status':'VERIFY_FAILED','ordersSent':0,'settingsChanged':changed},sort_keys=True))
+              raise SystemExit(23)
+
           result={
-              'status':'REPAIRED','ordersSent':0,'settingsChanged':True,
+              'status':'REPAIRED_AND_VERIFIED' if changed else 'ALREADY_REPAIRED_AND_VERIFIED',
+              'ordersSent':0,'settingsChanged':changed,
               'accountRef':hashlib.sha256(snap.id.encode()).hexdigest()[:12],
-              'entrySizingMode':'margin','entryMarginLongUsd':long_margin,'entryMarginShortUsd':short_margin,
-              'preservedEntryNotionalLongUsd':f(new.get('entryNotionalLongUsd',new.get('entryNotionalLong'))),
-              'preservedEntryNotionalShortUsd':f(new.get('entryNotionalShortUsd',new.get('entryNotionalShort'))),
-              'configVersion':version
+              'entrySizingMode':'margin','entryMarginLongUsd':verified_long,'entryMarginShortUsd':verified_short,
+              'preservedEntryNotionalLongUsd':f(vs.get('entryNotionalLongUsd',vs.get('entryNotionalLong'))),
+              'preservedEntryNotionalShortUsd':f(vs.get('entryNotionalShortUsd',vs.get('entryNotionalShort'))),
+              'configVersion':verified.get('configVersion')
           }
           print('FIXED_SIZE_REPAIR '+json.dumps(result,sort_keys=True,separators=(',',':')))
+          raise SystemExit(0)
           PY
           )"
 
@@ -150,12 +169,10 @@ jobs:
               >"$RUNNER_TEMP/execute.log" 2>&1
             EXEC_RC=$?
           fi
-          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" \
-            --project "$GCP_PROJECT_ID" --limit 150 --freshness=20m --format='value(textPayload)' \
-            >"$RUNNER_TEMP/job.log" 2>&1 || true
-          grep 'FIXED_SIZE_REPAIR' "$RUNNER_TEMP/job.log" | tail -1 > "$RUNNER_TEMP/result.txt" || true
-          if [ ! -s "$RUNNER_TEMP/result.txt" ]; then
-            python - "$DEPLOY_RC" "$EXEC_RC" "$RUNNER_TEMP/deploy.log" "$RUNNER_TEMP/execute.log" "$RUNNER_TEMP/job.log" > "$RUNNER_TEMP/diagnostic.json" <<'PY'
+          if [ "$DEPLOY_RC" -eq 0 ] && [ "$EXEC_RC" -eq 0 ]; then
+            echo '{"status":"VERIFIED_BY_EXECUTION","ordersSent":0,"settingsChangedOrAlreadyCorrect":true}' > "$RUNNER_TEMP/result.json"
+          else
+            python - "$DEPLOY_RC" "$EXEC_RC" "$RUNNER_TEMP/deploy.log" "$RUNNER_TEMP/execute.log" > "$RUNNER_TEMP/diagnostic.json" <<'PY'
           import json,sys,re
           deploy_rc=int(sys.argv[1]);exec_rc=int(sys.argv[2])
           def safe_tail(path):
@@ -168,7 +185,7 @@ jobs:
               return tail[:1200]
           print(json.dumps({"status":"WORKFLOW_DIAGNOSTIC","ordersSent":0,"settingsChanged":False,
                             "deployRc":deploy_rc,"executeRc":exec_rc,
-                            "deployTail":safe_tail(sys.argv[3]),"executeTail":safe_tail(sys.argv[4]),"jobTail":safe_tail(sys.argv[5])},
+                            "deployTail":safe_tail(sys.argv[3]),"executeTail":safe_tail(sys.argv[4])},
                            sort_keys=True,separators=(',',':')))
           PY
           fi
@@ -182,13 +199,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -s "$RUNNER_TEMP/result.txt" ]; then
+          if [ -s "$RUNNER_TEMP/result.json" ]; then
             {
               echo "## Fixed-position settings repair"
               echo
-              sed 's/^FIXED_SIZE_REPAIR /    /' "$RUNNER_TEMP/result.txt"
+              sed 's/^/    /' "$RUNNER_TEMP/result.json"
               echo
-              echo "No orders were submitted. Position/DCA/TP state was not reset."
+              echo "The exact account fingerprint finished with margin mode verified. No orders were submitted and position/DCA/TP state was not reset."
             } > "$RUNNER_TEMP/comment.md"
           elif [ -s "$RUNNER_TEMP/diagnostic.json" ]; then
             {
