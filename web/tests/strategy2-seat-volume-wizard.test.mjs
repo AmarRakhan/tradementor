@@ -12,7 +12,8 @@ test("direct settings support up to 100 total positions with independent LONG an
   assert.match(maker, /const longSlots = clampInt\(n\(v\.longSlots\), 0, MAX_SIDE_SLOTS\)/);
   assert.match(maker, /const shortSlots = clampInt\(n\(v\.shortSlots\), 0, MAX_SIDE_SLOTS\)/);
   assert.match(maker, /fixedPositionSize:\s*false/);
-  assert.match(maker, /entrySizingMode:\s*v\.fixedPositionSize \? "notional" : "margin"/);
+  assert.match(maker, /entrySizingMode:\s*"notional"/);
+  assert.match(maker, /entrySizingMode:\s*"margin"/);
   assert.match(maker, /entryMarginLongUsd/);
   assert.match(maker, /entryMarginShortUsd/);
   assert.match(maker, /Math\.max\(0, n\(v\.longSlots\) - activeLong\)/);
