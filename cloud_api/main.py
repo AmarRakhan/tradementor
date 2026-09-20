@@ -6739,12 +6739,17 @@ def _sniper_status_payload(uid:str)->dict[str,Any]:
         for doc in aster_sniper_reference(uid).collection("trades").order_by("closedAtMs",direction=firestore.Query.DESCENDING).limit(100).stream():
             row=doc.to_dict() or {};history.append({**row,"id":doc.id})
     except google_exceptions.GoogleAPICallError:pass
-    realized=sum(safe_float(x.get("realizedPnlUsd")) for x in history);wins=sum(1 for x in history if safe_float(x.get("realizedPnlUsd"))>0)
+    def closed_net(row:dict[str,Any])->float:
+        return safe_float(row.get("netRealizedPnlUsd")) if row.get("netRealizedPnlUsd") is not None else safe_float(row.get("realizedPnlUsd"))
+    realized=sum(closed_net(x) for x in history if x.get("costEvidenceReliable") is not False)
+    wins=sum(1 for x in history if x.get("costEvidenceReliable") is not False and closed_net(x)>0)
+    accounting_incomplete=sum(1 for x in history if x.get("costEvidenceReliable") is False)
     return {"enabled":bool(raw.get("enabled",False)),"monitor":bool(raw.get("monitor",False)),"phase":str(raw.get("phase","STOPPED")),
         "lastReason":str(raw.get("lastReason","")),"lastTickAt":raw.get("lastTickAt"),"settings":settings.public_dict(),
         "activeTrades":active,"signals":raw.get("signals",[]) if isinstance(raw.get("signals"),list) else [],"history":history,
-        "performance":{"realizedPnlUsd":realized,"closedTrades":len(history),"wins":wins,"winRate":(wins/len(history)*100 if history else None),
-            "dayRealizedPnlUsd":safe_float(raw.get("dayRealizedPnlUsd"))},
+        "performance":{"realizedPnlUsd":realized,"closedTrades":len(history),"wins":wins,
+            "winRate":(wins/(len(history)-accounting_incomplete)*100 if len(history)>accounting_incomplete else None),
+            "dayRealizedPnlUsd":safe_float(raw.get("dayRealizedPnlUsd")),"accountingIncomplete":accounting_incomplete},
         "sharedAccount":{"equity":equity,"availableBalance":available,"unrealizedPnl":unrealized,"maintenanceMargin":maintenance,
             "marginRatio":maintenance/equity if equity>0 else None},"liveExecutionEnabled":_sniper_live_gate_enabled(),
         "ownership":{"activeSymbols":sorted(sniper_active_symbols(raw)),"strategy2Symbols":sorted(_aster_strategy2_owned_symbols(uid)),
@@ -6788,7 +6793,8 @@ def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False,management_only:bool=Fal
             if bool(record.get("costEvidenceReliable")):
                 state["dayKey"]=today;state["dayRealizedPnlUsd"]=previous+safe_float(record.get("netRealizedPnlUsd"))
         if not bool(state.get("enabled")) and not state.get("activeTrades"):
-            state["monitor"]=False;state["phase"]="STOPPED"
+            state["monitor"]=False
+            if str(state.get("phase","")).upper()!="DATA_HOLD":state["phase"]="STOPPED"
         ref.set(state,merge=True)
         return {key:value for key,value in result.items() if key not in {"state","historyRecord"}}
     finally:
@@ -6803,7 +6809,6 @@ def aster_sniper_status(user:dict[str,Any]=Depends(authenticated_user))->dict[st
 @app.put("/v1/me/aster/sniper/settings")
 def save_aster_sniper_settings(request:AsterSniperSettingsRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     uid=str(user["uid"])
-    if _aster_close_all_active(uid):raise HTTPException(409,"Accountbrede noodstop is actief; Sniper kan niet worden gestart")
     ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     settings=SniperSettings.from_mapping({**current,**request.settings,"enabled":bool(raw.get("enabled",False))})
     ref.set({"settings":settings.public_dict(),"updatedAt":datetime.now(timezone.utc)},merge=True)
@@ -6814,7 +6819,9 @@ def save_aster_sniper_settings(request:AsterSniperSettingsRequest,user:dict[str,
 def start_aster_sniper(request:AsterSniperStartRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     if not request.confirm:raise HTTPException(422,"Bevestig Sniper live trading expliciet")
     if not _sniper_live_gate_enabled():raise HTTPException(423,"Sniper live execution staat centraal uit")
-    uid=str(user["uid"]);ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    uid=str(user["uid"])
+    if _aster_close_all_active(uid):raise HTTPException(409,"Accountbrede noodstop is actief; Sniper kan niet worden gestart")
+    ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     settings=SniperSettings.from_mapping({**current,**request.settings,"enabled":True})
     client=_sniper_client(uid,live=False)
     if not client.position_mode():raise HTTPException(409,"Aster Hedge Mode moet actief zijn voor Sniper")
@@ -6857,25 +6864,62 @@ def backtest_aster_sniper(user:dict[str,Any]=Depends(authenticated_user))->dict[
 @app.post("/v1/me/aster/sniper/trades/close")
 def close_aster_sniper_trade(request:AsterSniperCloseRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     if not request.confirm:raise HTTPException(422,"Bevestig de Sniper-trade close expliciet")
-    uid=str(user["uid"]);ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);trades=[dict(x) for x in raw.get("activeTrades",[]) if isinstance(x,dict)]
-    trade=next((x for x in trades if str(x.get("tradeId"))==request.trade_id),None)
-    if not trade:raise HTTPException(404,"Sniper-trade bestaat niet of is al gesloten")
-    symbol=str(trade.get("symbol","")).upper();side=str(trade.get("side","")).upper()
-    if symbol not in sniper_active_symbols(raw):raise HTTPException(409,"Sniper ownership is niet bewezen")
-    client=_sniper_client(uid,live=True);row=next((x for x in client.position_risk(symbol) if str(x.get("symbol","")).upper()==symbol
-        and str(x.get("positionSide","")).upper()==side and abs(safe_float(x.get("positionAmt")))>0),None)
-    if not row:raise HTTPException(409,"Exchange bevestigt geen open Sniper-positie")
-    qty=abs(Decimal(str(row.get("positionAmt"))));mark=safe_float(row.get("markPrice"));plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(mark)),max(1,int(safe_float(row.get("leverage")) or 1)))
-    prefix=f"snm-{hashlib.sha256((uid+request.trade_id).encode()).hexdigest()[:14]}"
-    ref.set({"pendingIntent":{"action":"CLOSE","symbol":symbol,"side":side,"tradeId":request.trade_id,"createdAtMs":int(time.time()*1000)}},merge=True)
-    result=execute_aster_leg(client,plan,side=PositionSide(side),action="CLOSE",id_prefix=prefix,confirm=True,automatic_loss_exit_authorized=True)
-    if any(abs(safe_float(x.get("positionAmt")))>1e-12 for x in client.position_risk(symbol) if str(x.get("positionSide","")).upper()==side):
-        raise HTTPException(409,"Aster heeft de Sniper-close nog niet volledig bevestigd")
-    pnl=safe_float(row.get("unRealizedProfit",row.get("unrealizedPnl")));now_ms=int(time.time()*1000);trades.remove(trade)
-    record={**trade,"closedAtMs":now_ms,"exitReason":"Handmatige Sniper-close","exitAction":"MANUAL_CLOSE","realizedPnlUsd":pnl,"status":"CLOSED"}
-    ref.collection("trades").document(request.trade_id).set(record,merge=True);ref.set({"activeTrades":trades,"pendingIntent":None,"updatedAt":datetime.now(timezone.utc)},merge=True)
-    _release_aster_symbol_claim(uid,symbol,"SNIPER")
-    return {"closed":True,"tradeId":request.trade_id,"symbol":symbol,"side":side,"order":result}
+    uid=str(user["uid"])
+    if _aster_close_all_active(uid):raise HTTPException(409,"Accountbrede noodstop beheert momenteel alle posities")
+    ref=aster_sniper_reference(uid);ensure_aster_sniper_control(uid)
+    token=_acquire_sniper_execution_lease(ref)
+    if not token:raise HTTPException(409,"Sniper verwerkt momenteel een andere order; probeer het zo opnieuw")
+    try:
+        raw=ref.get().to_dict() or {}
+        trades=[dict(x) for x in raw.get("activeTrades",[]) if isinstance(x,dict)]
+        trade=next((x for x in trades if str(x.get("tradeId"))==request.trade_id),None)
+        if not trade:raise HTTPException(404,"Sniper-trade bestaat niet of is al gesloten")
+        symbol=str(trade.get("symbol","")).upper();side=str(trade.get("side","")).upper()
+        if symbol not in sniper_active_symbols(raw):raise HTTPException(409,"Sniper ownership is niet bewezen")
+        client=_sniper_client(uid,live=True)
+        row=next((x for x in client.position_risk(symbol) if str(x.get("symbol","")).upper()==symbol
+            and str(x.get("positionSide","")).upper()==side and abs(safe_float(x.get("positionAmt")))>0),None)
+        if not row:raise HTTPException(409,"Exchange bevestigt geen open Sniper-positie")
+        qty=abs(Decimal(str(row.get("positionAmt"))));mark=safe_float(row.get("markPrice"))
+        plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(mark)),max(1,int(safe_float(row.get("leverage")) or 1)))
+        prefix=f"snm-{hashlib.sha256((uid+request.trade_id).encode()).hexdigest()[:14]}"
+        pending={"action":"CLOSE","symbol":symbol,"side":side,"tradeId":request.trade_id,
+            "createdAtMs":int(time.time()*1000),"clientOrderId":prefix,"reason":"Handmatige Sniper-close"}
+        ref.set({"pendingIntent":pending,"updatedAt":datetime.now(timezone.utc)},merge=True)
+        result=execute_aster_leg(client,plan,side=PositionSide(side),action="CLOSE",id_prefix=prefix,confirm=True,
+            automatic_loss_exit_authorized=True,fill_poll_attempts=2,fill_poll_delay_seconds=.15)
+        if any(abs(safe_float(x.get("positionAmt")))>1e-12 for x in client.position_risk(symbol)
+            if str(x.get("positionSide","")).upper()==side):
+            raise HTTPException(409,"Aster heeft de Sniper-close nog niet volledig bevestigd")
+        rr=result.get("result",{}) if isinstance(result,dict) else {};now=datetime.now(timezone.utc)
+        now_ms=int(now.timestamp()*1000);trades.remove(trade)
+        record={**trade,"closedAtMs":now_ms,"exitReason":"Handmatige Sniper-close","exitAction":"MANUAL_CLOSE",
+            "closeClientOrderId":str(rr.get("clientOrderId","")),"closeOrderId":str(rr.get("orderId","")),"status":"CLOSED"}
+        accounting_error=""
+        try:
+            record={**record,**_sniper_confirmed_close_evidence(client,record,symbol=symbol,side=side,
+                close_order_id=str(rr.get("orderId","")),close_client_order_id=str(rr.get("clientOrderId","")))}
+        except Exception as exc:
+            accounting_error=str(exc)[:240]
+            record={**record,"costEvidenceReliable":False,"accountingError":accounting_error}
+        ref.collection("trades").document(request.trade_id).set(record,merge=True)
+        update={"activeTrades":trades,"pendingIntent":None,"updatedAt":now}
+        today=now.date().isoformat()
+        if bool(record.get("costEvidenceReliable")):
+            previous=safe_float(raw.get("dayRealizedPnlUsd")) if raw.get("dayKey")==today else 0.0
+            update.update({"dayKey":today,"dayRealizedPnlUsd":previous+safe_float(record.get("netRealizedPnlUsd"))})
+        else:
+            update.update({"enabled":False,"monitor":False,"phase":"DATA_HOLD",
+                "lastReason":"Handmatige Sniper-close is flat, maar realized PnL/fees zijn nog niet betrouwbaar gereconcilieerd"})
+        ref.set(update,merge=True)
+        _release_aster_symbol_claim(uid,symbol,"SNIPER")
+        return {"closed":True,"tradeId":request.trade_id,"symbol":symbol,"side":side,"order":result,
+            "accountingReliable":bool(record.get("costEvidenceReliable")),
+            "realizedPnlUsd":record.get("realizedPnlUsd"),"feesUsd":record.get("feesUsd"),
+            "fundingUsd":record.get("fundingUsd"),"netRealizedPnlUsd":record.get("netRealizedPnlUsd"),
+            "accountingError":accounting_error}
+    finally:
+        _release_sniper_execution_lease(ref,str(token))
 
 
 @app.post("/internal/aster-automation/tick")
