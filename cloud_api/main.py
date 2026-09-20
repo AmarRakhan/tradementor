@@ -4596,6 +4596,9 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
     example_effective=example_pair_max if settings.maximum_leverage is None else min(example_pair_max,settings.maximum_leverage)
     stop_limit=settings.stop_loss_long
     stop_mark=(100.0-stop_limit if settings.stop_loss_mode=="PERCENT" else 100.0)
+    portfolio_example_base=settings.portfolio_tp_custom_base_equity if settings.portfolio_tp_base_mode=="CUSTOM" else 100.0
+    portfolio_example_target=(portfolio_example_base+settings.portfolio_tp_value if settings.portfolio_tp_input_mode=="USD"
+        else portfolio_example_base*(1.0+settings.portfolio_tp_value/100.0))
     return {"mode":"paper","ordersSent":0,"engine":MULTI_BB_ENGINE,"sameEngineAsLive":True,"configurationValid":True,"errors":[],
         "plannedPositions":settings.maximum_positions,"longSlots":settings.long_slots,"shortSlots":settings.short_slots,
         "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,
@@ -4604,6 +4607,9 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
             "entryNotionalUsd":settings.entry_notional_usd,"entryNotionalLongUsd":settings.entry_notional_long_usd,
             "entryNotionalShortUsd":settings.entry_notional_short_usd,
             "dcaDistance":settings.dca_distance,"dcaMarginUsd":settings.dca_margin_usd,"maxDca":settings.max_dca,"takeProfit":settings.take_profit,
+            "takeProfitMode":settings.take_profit_mode,"portfolioTpInputMode":settings.portfolio_tp_input_mode,
+            "portfolioTpValue":settings.portfolio_tp_value,"portfolioTpBaseMode":settings.portfolio_tp_base_mode,
+            "portfolioTpCustomBaseEquity":settings.portfolio_tp_custom_base_equity,
             "stopLossEnabled":settings.stop_loss_enabled,"stopLossMode":settings.stop_loss_mode,
             "stopLossLong":settings.stop_loss_long,"stopLossShort":settings.stop_loss_short,"entryMode":"immediate_fill"},
         "simulationChecks":{"positionSizing":{"mode":settings.entry_sizing_mode,
@@ -4613,8 +4619,11 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
                 "legacyMaximumUnbounded":settings.maximum_leverage is None},
             "stopLoss":{"enabled":settings.stop_loss_enabled,"mode":settings.stop_loss_mode,"entry":100.0,
                 "exampleMark":stop_mark,"limit":stop_limit,
-                "expectedAction":"STOP_LOSS_TRIGGERED" if settings.stop_loss_enabled else "NO_STOP_LOSS"}},
-        "message":"Multi DCA veilig gesimuleerd: sizing-mode, leverage-cap en Stoploss gevalideerd; 0 orders verzonden."}
+                "expectedAction":"STOP_LOSS_TRIGGERED" if settings.stop_loss_enabled else "NO_STOP_LOSS"},
+            "portfolioTakeProfit":{"inputMode":settings.portfolio_tp_input_mode,"baseMode":settings.portfolio_tp_base_mode,
+                "value":settings.portfolio_tp_value,"exampleBase":portfolio_example_base,
+                "exampleTarget":portfolio_example_target,"ordersSent":0}},
+        "message":"Multi DCA veilig gesimuleerd: sizing, leverage, Stoploss en Portfolio Take Profit 2.0 gevalideerd; 0 orders verzonden."}
 
 
 @app.get("/v1/me/aster/strategy2/readiness")
