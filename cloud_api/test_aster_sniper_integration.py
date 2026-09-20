@@ -206,4 +206,4 @@ def test_live_start_requires_bounded_activation_canary_before_scanner():
     stop=source.index('@app.post("/v1/me/aster/sniper/stop")',start)
     block=source[start:stop]
     assert "_run_sniper_activation_canary(uid,ref,fresh,settings)" in block
-    assert block.index("_run_sniper_activation_canary") < block.index('"enabled":True')
+    assert block.index("_run_sniper_activation_canary") < block.index('ref.set({"settings":settings.public_dict(),"enabled":True')
