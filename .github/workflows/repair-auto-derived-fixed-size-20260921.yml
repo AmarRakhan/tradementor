@@ -135,19 +135,46 @@ jobs:
           PY
           )"
 
+          set +e
           gcloud run jobs deploy "$JOB" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$IMAGE" --service-account "$RUNTIME_SA" \
             --command python \
             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
-            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet \
+            >"$RUNNER_TEMP/deploy.log" 2>&1
+          DEPLOY_RC=$?
+          EXEC_RC=99
+          if [ "$DEPLOY_RC" -eq 0 ]; then
+            gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait \
+              >"$RUNNER_TEMP/execute.log" 2>&1
+            EXEC_RC=$?
+          fi
           gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" \
-            --project "$GCP_PROJECT_ID" --limit 100 --freshness=15m --format='value(textPayload)' \
-            | grep 'FIXED_SIZE_REPAIR' | tail -1 > "$RUNNER_TEMP/result.txt"
-          test -s "$RUNNER_TEMP/result.txt"
+            --project "$GCP_PROJECT_ID" --limit 150 --freshness=20m --format='value(textPayload)' \
+            >"$RUNNER_TEMP/job.log" 2>&1 || true
+          grep 'FIXED_SIZE_REPAIR' "$RUNNER_TEMP/job.log" | tail -1 > "$RUNNER_TEMP/result.txt" || true
+          if [ ! -s "$RUNNER_TEMP/result.txt" ]; then
+            python - "$DEPLOY_RC" "$EXEC_RC" "$RUNNER_TEMP/deploy.log" "$RUNNER_TEMP/execute.log" "$RUNNER_TEMP/job.log" > "$RUNNER_TEMP/diagnostic.json" <<'PY'
+          import json,sys,re
+          deploy_rc=int(sys.argv[1]);exec_rc=int(sys.argv[2])
+          def safe_tail(path):
+              try:text=open(path,encoding='utf-8',errors='replace').read()
+              except Exception:return ""
+              lines=[x.strip() for x in text.splitlines() if x.strip()]
+              tail=" | ".join(lines[-8:])
+              tail=re.sub(r'projects/[^/\s]+/secrets/[^/\s]+','projects/[redacted]/secrets/[redacted]',tail)
+              tail=re.sub(r'(?i)(token|authorization|privatekey|private_key)\s*[:=]\s*\S+',r'\1=[redacted]',tail)
+              return tail[:1200]
+          print(json.dumps({"status":"WORKFLOW_DIAGNOSTIC","ordersSent":0,"settingsChanged":False,
+                            "deployRc":deploy_rc,"executeRc":exec_rc,
+                            "deployTail":safe_tail(sys.argv[3]),"executeTail":safe_tail(sys.argv[4]),"jobTail":safe_tail(sys.argv[5])},
+                           sort_keys=True,separators=(',',':')))
+          PY
+          fi
           cleanup
           trap - EXIT
+          set -e
 
       - name: Publish sanitized repair proof
         if: always()
@@ -162,6 +189,14 @@ jobs:
               sed 's/^FIXED_SIZE_REPAIR /    /' "$RUNNER_TEMP/result.txt"
               echo
               echo "No orders were submitted. Position/DCA/TP state was not reset."
+            } > "$RUNNER_TEMP/comment.md"
+          elif [ -s "$RUNNER_TEMP/diagnostic.json" ]; then
+            {
+              echo "## Fixed-position repair diagnostic"
+              echo
+              sed 's/^/    /' "$RUNNER_TEMP/diagnostic.json"
+              echo
+              echo "No orders were submitted and no settings were changed."
             } > "$RUNNER_TEMP/comment.md"
           else
             echo "Repair workflow produced no sanitized result. No order action was requested." > "$RUNNER_TEMP/comment.md"
