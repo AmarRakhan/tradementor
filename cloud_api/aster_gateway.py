@@ -309,6 +309,12 @@ class AsterV3Client:
             raise AsterApiError(invalid_message) from exc
         self._rest_guard.observe(response.status_code, payload)
         payload_code = payload.get("code") if isinstance(payload, dict) else None
+        if method.upper() != "GET" and str(payload_code) in {"-1006", "-1007"}:
+            code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
+            message = payload.get("msg", "uitvoeringsstatus onbekend") if isinstance(payload, dict) else "uitvoeringsstatus onbekend"
+            raise AsterSubmissionUncertain(
+                f"Aster {code}: {message}; uitvoeringsstatus is onbekend en mag niet blind opnieuw worden verstuurd"
+            )
         if response.status_code >= 400 or str(payload_code) == "-1003":
             code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
             message = payload.get("msg", "Aster-request afgewezen") if isinstance(payload, dict) else "Aster-request afgewezen"
