@@ -1182,6 +1182,35 @@ def _sniper_live_gate_enabled()->bool:
     return os.getenv("ASTER_SNIPER_LIVE_EXECUTION_ENABLED",fallback).lower()=="true"
 
 
+def _acquire_sniper_execution_lease(reference)->str|None:
+    """Fence scheduler, realtime and manual SNIPER execution per account."""
+    transaction=db.transaction();token=python_secrets.token_hex(16)
+    @firestore.transactional
+    def acquire(txn):
+        value=reference.get(transaction=txn).to_dict() or {};now=datetime.now(timezone.utc)
+        lease=value.get("executionLease") if isinstance(value.get("executionLease"),dict) else {}
+        until=lease.get("until")
+        if isinstance(until,datetime):
+            until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        if isinstance(until,datetime) and until>now:return None
+        txn.set(reference,{"executionLease":{"token":token,"until":now+timedelta(minutes=3),"acquiredAt":now}},merge=True)
+        return token
+    return acquire(transaction)
+
+
+def _release_sniper_execution_lease(reference,token:str)->None:
+    transaction=db.transaction()
+    @firestore.transactional
+    def release(txn):
+        value=reference.get(transaction=txn).to_dict() or {}
+        lease=value.get("executionLease") if isinstance(value.get("executionLease"),dict) else {}
+        if str(lease.get("token",""))!=token:return False
+        now=datetime.now(timezone.utc)
+        txn.set(reference,{"executionLease":{"token":"","until":now,"releasedAt":now}},merge=True)
+        return True
+    release(transaction)
+
+
 def portfolio_growth_reference(uid: str):
     return db.collection("users").document(uid).collection("portfolioGrowth").document("aster")
 
@@ -6478,10 +6507,11 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
 _aster_realtime_worker: AsterRealtimeWorker | None = None
 _aster_realtime_thread: threading.Thread | None = None
 _aster_realtime_simple_uids: set[str] = set()
+_aster_realtime_sniper_pairs: set[tuple[str,str]] = set()
 
 def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
-    global _aster_realtime_simple_uids
-    mapping:dict[str,set[str]]={};simple_uids:set[str]=set()
+    global _aster_realtime_simple_uids,_aster_realtime_sniper_pairs
+    mapping:dict[str,set[str]]={};simple_uids:set[str]=set();sniper_pairs:set[tuple[str,str]]=set()
     controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
     for item in controls[:100]:
         raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()
@@ -6506,19 +6536,33 @@ def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
         for row in raw.get("pendingReopens",[]) if isinstance(raw.get("pendingReopens"),list) else []:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
         for symbol in symbols:mapping.setdefault(symbol,set()).add(uid)
+    sniper_controls=list(db.collection("asterSniper").where("monitor","==",True).stream())
+    for item in sniper_controls[:100]:
+        raw=item.to_dict() or {};uid=item.id
+        for trade in raw.get("activeTrades",[]) if isinstance(raw.get("activeTrades"),list) else []:
+            if not isinstance(trade,dict):continue
+            symbol=normalize_symbol(trade.get("symbol"))
+            if not symbol:continue
+            mapping.setdefault(symbol,set()).add(uid);sniper_pairs.add((uid,symbol))
     _aster_realtime_simple_uids=simple_uids
+    _aster_realtime_sniper_pairs=sniper_pairs
     return mapping
 
 def _aster_realtime_force_evaluate(uid:str,symbol:str)->bool:
     return uid in _aster_realtime_simple_uids
 
 def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,Any]:
+    started=time.monotonic()
+    if (uid,event.symbol.upper()) in _aster_realtime_sniper_pairs:
+        result=_run_aster_sniper_tick(uid,management_only=True,event_symbol=event.symbol)
+        return {**result,"realtime":True,"strategyOwner":"SNIPER","marketEventAtMs":event.event_time_ms,
+            "marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
     ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
     if not token:return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}
-    started=time.monotonic()
     try:
         result=_run_aster_strategy2_queue_scan(uid,maximum_orders=2,management_only=True,event_symbol=event.symbol,event_mark_price=event.mark_price)
-        return {**result,"realtime":True,"marketEventAtMs":event.event_time_ms,"marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
+        return {**result,"realtime":True,"strategyOwner":"ASTER","marketEventAtMs":event.event_time_ms,
+            "marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
     finally:_release_strategy2_queue_lease(ref,str(token))
 
 def _persist_aster_realtime_health(payload:dict[str,Any])->None:
@@ -6638,29 +6682,38 @@ def _sniper_status_payload(uid:str)->dict[str,Any]:
             "overlap":sorted(ownership_intersection(aster_strategy2_reference(uid).get().to_dict() or {},raw))}}
 
 
-def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False)->dict[str,Any]:
-    ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);settings=SniperSettings.from_mapping(raw.get("settings"))
-    if not dry_run and not bool(raw.get("monitor",False)):
-        return {"status":"stopped","ordersSent":0}
-    live=_sniper_live_gate_enabled() and not dry_run
-    client=_sniper_client(uid,live=live)
-    def claim(symbol:str,owner:str)->bool:return _claim_aster_symbol(uid,symbol,owner,"SNIPER_RUNTIME")
-    def release(symbol:str)->None:_release_aster_symbol_claim(uid,symbol,"SNIPER")
-    def persist_pending(value:dict[str,Any]|None)->None:
-        ref.set({"pendingIntent":value,"updatedAt":datetime.now(timezone.utc)},merge=True)
-    result=run_sniper_tick(client=client,state=raw,settings=settings,blocked_symbols=_aster_strategy2_owned_symbols(uid),
-        claim_symbol=claim,release_symbol=release,persist_pending=persist_pending,live_enabled=live,dry_run=dry_run)
-    state=result.get("state") if isinstance(result.get("state"),dict) else raw;now=datetime.now(timezone.utc)
-    state={**state,"settings":settings.public_dict(),"lastTickAt":now,"updatedAt":now}
-    record=result.get("historyRecord") if isinstance(result.get("historyRecord"),dict) else None
-    if record:
-        ref.collection("trades").document(str(record.get("tradeId") or python_secrets.token_urlsafe(10))).set(record,merge=True)
-        today=now.date().isoformat();previous=safe_float(raw.get("dayRealizedPnlUsd")) if raw.get("dayKey")==today else 0.0
-        state["dayKey"]=today;state["dayRealizedPnlUsd"]=previous+safe_float(record.get("realizedPnlUsd"))
-    if not bool(state.get("enabled")) and not state.get("activeTrades"):
-        state["monitor"]=False;state["phase"]="STOPPED"
-    ref.set(state,merge=True)
-    return {key:value for key,value in result.items() if key not in {"state","historyRecord"}}
+def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False,management_only:bool=False,event_symbol:str="")->dict[str,Any]:
+    ref=aster_sniper_reference(uid);ensure_aster_sniper_control(uid)
+    token=_acquire_sniper_execution_lease(ref)
+    if not token:return {"status":"lease-busy","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
+    try:
+        raw=ref.get().to_dict() or {};settings=SniperSettings.from_mapping(raw.get("settings"))
+        if management_only and event_symbol and normalize_symbol(event_symbol) not in sniper_active_symbols(raw):
+            return {"status":"ignored","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
+        if not dry_run and not bool(raw.get("monitor",False)):
+            return {"status":"stopped","ordersSent":0}
+        live=_sniper_live_gate_enabled() and not dry_run
+        client=_sniper_client(uid,live=live)
+        def claim(symbol:str,owner:str)->bool:return _claim_aster_symbol(uid,symbol,owner,"SNIPER_RUNTIME")
+        def release(symbol:str)->None:_release_aster_symbol_claim(uid,symbol,"SNIPER")
+        def persist_pending(value:dict[str,Any]|None)->None:
+            ref.set({"pendingIntent":value,"updatedAt":datetime.now(timezone.utc)},merge=True)
+        result=run_sniper_tick(client=client,state=raw,settings=settings,blocked_symbols=_aster_strategy2_owned_symbols(uid),
+            claim_symbol=claim,release_symbol=release,persist_pending=persist_pending,live_enabled=live,dry_run=dry_run,
+            management_only=management_only)
+        state=result.get("state") if isinstance(result.get("state"),dict) else raw;now=datetime.now(timezone.utc)
+        state={**state,"settings":settings.public_dict(),"lastTickAt":now,"updatedAt":now}
+        record=result.get("historyRecord") if isinstance(result.get("historyRecord"),dict) else None
+        if record:
+            ref.collection("trades").document(str(record.get("tradeId") or python_secrets.token_urlsafe(10))).set(record,merge=True)
+            today=now.date().isoformat();previous=safe_float(raw.get("dayRealizedPnlUsd")) if raw.get("dayKey")==today else 0.0
+            state["dayKey"]=today;state["dayRealizedPnlUsd"]=previous+safe_float(record.get("realizedPnlUsd"))
+        if not bool(state.get("enabled")) and not state.get("activeTrades"):
+            state["monitor"]=False;state["phase"]="STOPPED"
+        ref.set(state,merge=True)
+        return {key:value for key,value in result.items() if key not in {"state","historyRecord"}}
+    finally:
+        _release_sniper_execution_lease(ref,str(token))
 
 
 @app.get("/v1/me/aster/sniper")
@@ -6670,7 +6723,9 @@ def aster_sniper_status(user:dict[str,Any]=Depends(authenticated_user))->dict[st
 
 @app.put("/v1/me/aster/sniper/settings")
 def save_aster_sniper_settings(request:AsterSniperSettingsRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
-    uid=str(user["uid"]);ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    uid=str(user["uid"])
+    if _aster_close_all_active(uid):raise HTTPException(409,"Accountbrede noodstop is actief; Sniper kan niet worden gestart")
+    ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     settings=SniperSettings.from_mapping({**current,**request.settings,"enabled":bool(raw.get("enabled",False))})
     ref.set({"settings":settings.public_dict(),"updatedAt":datetime.now(timezone.utc)},merge=True)
     return _sniper_status_payload(uid)
