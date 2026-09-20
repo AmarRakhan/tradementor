@@ -1,0 +1,54 @@
+name: Agent V46 Web Deploy Dispatcher
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  dispatch:
+    if: startsWith(github.event.issue.title, '[AGENT-CONTROL] deploy web v46') && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET_BRANCH: amar-crypto-bot-2026-cloud
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      REQUEST_BODY: ${{ github.event.issue.body }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate requested V46 source
+        id: validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT="$(printf '%s\n' "$REQUEST_BODY" | sed -nE 's/^[[:space:]]*commit:[[:space:]]*([0-9a-fA-F]{40})[[:space:]]*$/\1/p' | head -1 | tr 'A-F' 'a-f')"
+          test "${#COMMIT}" -eq 40
+          BRANCH_SHA="$(gh api "repos/$GITHUB_REPOSITORY/branches/$TARGET_BRANCH" --jq .commit.sha)"
+          test "$BRANCH_SHA" = "$COMMIT"
+          BUILD="$(gh api "repos/$GITHUB_REPOSITORY/contents/web/lib/app-version.ts?ref=$TARGET_BRANCH" --jq .content | base64 -d | sed -n 's/^export const WEBAPP_BUILD_NUMBER = "\([0-9][0-9]*\)";/\1/p')"
+          test "$BUILD" = "380"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch canonical V46 deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-shared-v44-testapp.yml             --repo "$GITHUB_REPOSITORY"             --ref "$TARGET_BRANCH"
+
+      - name: Confirm dispatch
+        shell: bash
+        env:
+          COMMIT: ${{ steps.validate.outputs.commit }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Verified V46 build 380 source $COMMIT and dispatched the canonical candidate → healthcheck → production web deployment."
+          gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --reason completed
+
+      - name: Report rejected request
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "V46 web deployment request was rejected before deployment. The requested commit must exactly equal the current amar-crypto-bot-2026-cloud head and that head must declare build 380."
