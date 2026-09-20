@@ -179,7 +179,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
         <small>Netto winst bij alles sluiten</small>
         <strong className="portfolio-growth-money">{data?.reliable ? money(difference, true) : "—"}</strong>
         <b>{data?.reliable ? percent(Number(data?.percentage ?? 0)) : "Onbetrouwbaar"}</b>
-        <button className="portfolio-close-all" disabled={busy || !data?.closeEnabled} onClick={() => setConfirm(true)}>{closeBusy ? "Bezig met sluiten..." : "ALLES SLUITEN"}</button>
+        <button className="portfolio-close-all" disabled={busy || !data?.reliable || !data?.quoteId} onClick={() => setConfirm(true)}>{closeBusy ? "NOODSTOP WORDT UITGEVOERD..." : "ALLES SLUITEN"}</button>
         <small>Startwaarde {data?.baseline ? money(data.baseline) : "—"}</small>
         <button className="portfolio-baseline-reset" disabled={busy} onClick={() => setReset(true)}>Startwaarde resetten</button>
       </>}
@@ -195,7 +195,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
           <p>Deze persoonlijke startwaarde wordt server-side opgeslagen en kan daarna alleen via de resetprocedure worden gewijzigd.</p>
           <dl><dt>Startwaarde</dt><dd>{money(Number(amount.replace(",", ".")) || 0)}</dd><dt>Valuta</dt><dd>USD</dd></dl>
         </> : <>
-          <h3>{closeBusy ? "Bezig met sluiten..." : "Alles sluiten bevestigen"}</h3>
+          <h3>{closeBusy ? "Noodstop wordt uitgevoerd..." : "Alle posities sluiten?"}</h3>
           <dl>
             <dt>Actuele startwaarde</dt><dd>{money(Number(data?.baseline ?? 0))}</dd>
             <dt>Verwachte netto eindwaarde</dt><dd>{money(Number(data?.expectedEndValue ?? 0))}</dd>
@@ -203,24 +203,24 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
             <dt>Verwacht percentage</dt><dd>{percent(Number(data?.percentage ?? 0))}</dd>
             <dt>Posities</dt><dd>{data?.positionCount ?? 0}</dd>
           </dl>
-          <p>{closeBusy ? "Aster wordt positie voor positie gecontroleerd. Dit venster blijft open totdat de exchange bevestigt dat alle exposure en open orders weg zijn." : "De server haalt alles opnieuw op en gaat alleen door als de nettowinst nog betrouwbaar positief is. De bot blijft daarna gepauzeerd."}</p>
+          <p>{closeBusy ? "Aster wordt positie voor positie gecontroleerd. Dit venster blijft open totdat de exchange bevestigt dat alle exposure en open orders weg zijn." : "NOODSTOP: hiermee worden alle open posities gesloten, inclusief Aster-, Sniper- en eventuele andere posities. Alle bots worden eerst uitgeschakeld en blijven daarna UIT. Dit is bewust accountbreed en negeert normale strategiegrenzen."}</p>
         </>}
         {error && <em>{error}</em>}
         <footer>
           <button disabled={busy} onClick={() => setConfirm(false)}>Annuleren</button>
-          <button disabled={busy} onClick={() => data?.setupRequired ? saveBaseline(false) : closeAll()}>{data?.setupRequired ? "Bevestig startwaarde" : closeBusy ? "Bezig met sluiten..." : "Bevestig alles sluiten"}</button>
+          <button disabled={busy} onClick={() => data?.setupRequired ? saveBaseline(false) : closeAll()}>{data?.setupRequired ? "Bevestig startwaarde" : closeBusy ? "Noodstop bezig..." : "JA, ALLES STOPPEN EN SLUITEN"}</button>
         </footer>
       </section>
     </div>}
 
     {closePhase === "success" && closeSuccess && <div className="portfolio-growth-modal" role="presentation" onMouseDown={() => { setClosePhase("idle"); setCloseSuccess(null); }}>
       <section role="dialog" aria-modal="true" aria-label="Alles sluiten voltooid" onMouseDown={(event) => event.stopPropagation()}>
-        <h3>Alles sluiten voltooid</h3>
-        <p>Alle posities en open orders zijn door Aster bevestigd gesloten.</p>
+        <h3>NOODSTOP UITGEVOERD</h3>
+        <p>Alle posities en open orders zijn door Aster bevestigd gesloten. Aster en Sniper blijven uit.</p>
         <dl>
           <dt>Gesloten posities</dt><dd>{closeSuccess.closedPositions ?? "Bevestigd"}</dd>
           {closeSuccess.newBaseline !== null ? <><dt>Nieuwe startwaarde</dt><dd>{money(closeSuccess.newBaseline)}</dd></> : null}
-          <dt>Botstatus</dt><dd>Gepauzeerd</dd>
+          <dt>Aster</dt><dd>UIT</dd><dt>Sniper</dt><dd>UIT</dd><dt>Open posities</dt><dd>0</dd>
         </dl>
         <p>{closeSuccess.message}</p>
         <footer><button onClick={() => { setClosePhase("idle"); setCloseSuccess(null); }}>Gereed</button></footer>
