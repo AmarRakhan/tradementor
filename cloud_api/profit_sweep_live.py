@@ -533,27 +533,51 @@ def finalize_close_sweep(
             ref.set({"status": "BLOCKED_GLOBAL_GATE", "completedAt": _now()}, merge=True)
             return {"status": "BLOCKED_GLOBAL_GATE"}
 
-        ref.set({"status": "SUBMITTING", "submittedAt": _now()}, merge=True)
+        submitted_at = _now()
+        ref.set({"status": "SUBMITTING", "submittedAt": submitted_at}, merge=True)
         try:
+            # Aster's documented transfer contract accepts only amount, asset,
+            # clientTranId and kindType. The signer is already attached by the
+            # authenticated V3 client; sending an extra user field is invalid.
             payload = client.signed_request("POST", TRANSFER_PATH, {
-                "user": prepared.master_address,
                 "asset": TRANSFER_ASSET,
                 "amount": _plain(contribution),
                 "clientTranId": prepared.client_tran_id,
                 "kindType": TRANSFER_KIND,
             })
         except AsterSubmissionUncertain as exc:
-            # Unknown submission state is terminal until a human/reconciler can
-            # prove the transaction. Never blind-retry a money movement.
-            ref.set({"status": "UNCERTAIN", "reason": str(exc)[:500], "updatedAt": _now()}, merge=True)
-            return {"status": "UNCERTAIN"}
+            # -1006, -1007 and HTTP 503 explicitly mean execution status
+            # unknown. Reconcile read-only history first and never blind-retry.
+            return _uncertain_result(
+                ref=ref,
+                reason=str(exc),
+                client=client,
+                contribution=contribution,
+                submitted_at=submitted_at,
+            )
         except AsterApiError as exc:
-            ref.set({"status": "FAILED_EXCHANGE", "reason": str(exc)[:500], "completedAt": _now()}, merge=True)
+            # Defensive compatibility for older clients that still surface
+            # Aster's unknown-execution codes as a regular API error.
+            message = str(exc)
+            if "-1006" in message or "-1007" in message or "execution status unknown" in message.lower():
+                return _uncertain_result(
+                    ref=ref,
+                    reason=message,
+                    client=client,
+                    contribution=contribution,
+                    submitted_at=submitted_at,
+                )
+            ref.set({"status": "FAILED_EXCHANGE", "reason": message[:500], "completedAt": _now()}, merge=True)
             return {"status": "FAILED_EXCHANGE"}
 
         if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != "SUCCESS" or payload.get("tranId") in (None, ""):
-            ref.set({"status": "FAILED_EXCHANGE", "reason": "Aster bevestigde geen SUCCESS + tranId", "providerResponse": payload if isinstance(payload, dict) else {}, "completedAt": _now()}, merge=True)
-            return {"status": "FAILED_EXCHANGE"}
+            return _uncertain_result(
+                ref=ref,
+                reason="Aster bevestigde geen SUCCESS + tranId",
+                client=client,
+                contribution=contribution,
+                submitted_at=submitted_at,
+            )
         ref.set({
             "status": "SUCCEEDED",
             "providerTransactionId": str(payload.get("tranId")),
