@@ -65,3 +65,26 @@ test("premium compact CSS covers slot bars, live config and Stoploss card", () =
   assert.ok(maker.includes(".stop-loss-card{"));
   assert.ok(maker.includes(".stop-loss-fields{"));
 });
+
+test("fixed position size is optional, explicit and persisted", () => {
+  assert.ok(maker.includes("Vaste positieomvang"));
+  assert.ok(maker.includes('role="switch" aria-checked={v.fixedPositionSize}'));
+  assert.ok(maker.includes('entrySizingMode: v.fixedPositionSize ? "notional" : "margin"'));
+  assert.ok(maker.includes("entryNotionalLongUsd: longNotional"));
+  assert.ok(maker.includes("entryNotionalShortUsd: shortNotional"));
+  assert.ok(maker.includes('"Instap LONG · positie"'));
+  assert.ok(maker.includes('"Instap LONG · margin"'));
+  assert.ok(maker.includes("margin = positie ÷ leverage"));
+});
+
+test("settings route preserves sizing mode and side notionals", () => {
+  for (const key of ["entrySizingMode", "entryNotionalUsd", "entryNotionalLongUsd", "entryNotionalShortUsd"]) {
+    assert.ok(settingsRoute.includes('"' + key + '"'), "missing sizing preservation key: " + key);
+  }
+});
+
+test("confirmed save verifies maximum leverage and sizing mode before clearing dirty state", () => {
+  assert.ok(maker.includes("Maximum leverage is niet server-side bevestigd"));
+  assert.ok(maker.includes("Positieomvang-modus is niet server-side bevestigd"));
+  assert.ok(maker.includes("setDirty(false)"));
+});
