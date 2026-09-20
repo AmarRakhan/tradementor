@@ -473,14 +473,17 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
     )
     next_cycle["restartStartedAt"] = now
     next_cycle["restartStartedAtMs"] = restart_ms
+    latest_after_close = ref.get().to_dict() or {}
+    latest_settings_after_close = latest_after_close.get("settings") if isinstance(latest_after_close.get("settings"), dict) else {}
+    normalized_settings = {**latest_settings_after_close, "portfolioTpBaseMode": "CYCLE_START"}
     _write_cycle(ref, next_cycle, phase=RESTARTING,
                  reason=f"Portfolio TP flat bevestigd; nieuwe cycle start vanaf echte equity {end_equity:.8f}",
-                 extra={**base_extra, "multiBbAdoptionPending": False})
+                 extra={**base_extra, "multiBbAdoptionPending": False, "settings": normalized_settings})
     ref.collection("audit").add({"event": "PORTFOLIO_TP_FLAT_CONFIRMED", "user": uid,
         "cycleId": completed_cycle.get("cycleId"), "cycleEndEquity": end_equity,
         "nextCycleId": next_cycle.get("cycleId"), "timestamp": now})
     restart_raw = {**raw_state, **base_extra, "multiBbCycle": next_cycle,
-                   "multiBbAdoptionPending": False, "phase": RESTARTING}
+                   "settings": normalized_settings, "multiBbAdoptionPending": False, "phase": RESTARTING}
     report = {**portfolio_cycle_snapshot(next_cycle, mode=mode, current_equity=end_equity,
                                          portfolio_tp_percent=portfolio_tp_percent),
               "actions": actions[-50:], "ordersSent": sent, "autoRestarted": True,
