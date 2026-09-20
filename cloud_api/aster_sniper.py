@@ -270,25 +270,65 @@ def exit_decision(trade: dict[str, Any], position: dict[str, Any], *, now_ms: in
 
 
 def backtest_candles(candles: list[list[Any]], settings: SniperSettings) -> dict[str, Any]:
+    """Conservative candle-only replay; orderbook/orderflow checks cannot be reconstructed historically."""
     closes = _series(candles, 4)
-    if len(closes) < 50:
-        return {"trades": 0, "wins": 0, "losses": 0, "netMovePercent": 0.0, "reliable": False}
-    moves = []
-    horizon = max(1, min(3, settings.max_trade_seconds // 60))
-    for i in range(25, len(closes)-horizon, 4):
-        fast = sum(closes[i-4:i]) / 4
-        slow = sum(closes[i-20:i]) / 20
-        side = 1 if fast >= slow else -1
-        raw = (closes[i+horizon] / closes[i] - 1) * side
-        capped = min(settings.tp_max_percent/100, max(-settings.max_loss_usd/max(settings.margin_per_trade_usd*settings.leverage, .01), raw))
-        moves.append(capped)
-    wins = sum(1 for move in moves if move > 0)
+    if len(closes) < 60:
+        return {"trades": 0, "wins": 0, "losses": 0, "grossMovePercent": 0.0,
+            "netMovePercent": 0.0, "reliable": False,
+            "limitations": ["Onvoldoende 1m-candles voor een betekenisvolle replay"]}
+    notional=max(settings.margin_per_trade_usd*settings.leverage,.01)
+    loss_cap=settings.max_loss_usd/notional
+    fee_rate=.0008       # 0.08% roundtrip assumption
+    spread_rate=.0002    # 0.02% historical spread proxy
+    slippage_rate=.0002  # 0.02% roundtrip slippage proxy
+    cost_rate=fee_rate+spread_rate+slippage_rate
+    horizon=max(1,min(3,settings.max_trade_seconds//60))
+    gross_moves=[];net_moves=[];targets=[]
+    # Signal is calculated at bar i and execution is delayed to bar i+1 to
+    # model at least one historical bar of latency instead of perfect fills.
+    for i in range(25,len(candles)-horizon-2,4):
+        history=candles[:i+1]
+        local_closes=_series(history,4)
+        if len(local_closes)<25:continue
+        fast=sum(local_closes[-4:])/4;slow=sum(local_closes[-20:])/20
+        momentum=local_closes[-1]/local_closes[-4]-1 if local_closes[-4]>0 else 0.0
+        side=1 if fast>slow and momentum>=0 else -1 if fast<slow and momentum<=0 else (1 if momentum>=0 else -1)
+        entry=number(candles[i+1][4])
+        if entry<=0:continue
+        atr=_atr_percent(history)
+        target=max(settings.tp_min_percent/100,min(settings.tp_max_percent/100,
+            max(atr*.75,settings.tp_min_percent/100)))
+        gross=None
+        for row in candles[i+2:i+2+horizon]:
+            high,low=number(row[2]),number(row[3])
+            if high<=0 or low<=0:continue
+            favorable=(high/entry-1) if side>0 else (entry/low-1)
+            adverse=(entry/low-1) if side>0 else (high/entry-1)
+            # If both boundaries are touched inside one 1m candle, assume the
+            # loss boundary happened first; this prevents optimistic ordering.
+            if adverse>=loss_cap:
+                gross=-loss_cap;break
+            if favorable>=target:
+                gross=target;break
+        if gross is None:
+            exit_price=number(candles[i+1+horizon][4])
+            if exit_price<=0:continue
+            raw=(exit_price/entry-1)*side
+            gross=min(target,max(-loss_cap,raw))
+        net=gross-cost_rate
+        gross_moves.append(gross);net_moves.append(net);targets.append(target)
+    wins=sum(1 for move in net_moves if move>0)
     return {
-        "trades": len(moves),
-        "wins": wins,
-        "losses": len(moves)-wins,
-        "winRate": wins/len(moves) if moves else 0.0,
-        "netMovePercent": sum(moves)*100,
-        "reliable": bool(moves),
-        "assumptions": {"roundtripFeePercent": .08, "slippageAndSpreadAppliedByLiveGate": True},
+        "trades":len(net_moves),"wins":wins,"losses":len(net_moves)-wins,
+        "winRate":wins/len(net_moves) if net_moves else 0.0,
+        "grossMovePercent":sum(gross_moves)*100,
+        "netMovePercent":sum(net_moves)*100,
+        "averageTargetPercent":(sum(targets)/len(targets)*100) if targets else 0.0,
+        "reliable":bool(net_moves),
+        "assumptions":{"roundtripFeePercent":fee_rate*100,"spreadProxyPercent":spread_rate*100,
+            "slippageProxyPercent":slippage_rate*100,"latencyModel":"entry on next 1m close",
+            "sameCandleTpAndStopOrdering":"stop-first"},
+        "limitations":["Historische orderbook/orderflow-data ontbreekt; dit is geen volledige 12/12 Sniper-replay",
+            "1m-candles kunnen de exacte volgorde van intrabar ticks niet bewijzen"],
     }
+
