@@ -8,8 +8,35 @@ from aster_execution import NewPositionLeverageBlocked
 
 from aster_multi_bb import (
     ENGINE, MultiBbConfig, leverage_tier_preview, max_contract_leverage,
-    rank_top_volume, run_multi_bb_step,
+    multi_bb_status_mapping, rank_top_volume, run_multi_bb_step,
 )
+
+
+def test_multi_bb_status_mapping_accepts_sub_dollar_margin_shape_without_mutation():
+    raw = {
+        "maximumPositions": 60,
+        "longSlots": 30,
+        "shortSlots": 30,
+        "minimumLeverage": 20,
+        "entrySizingMode": "margin",
+        "entryMarginLongUsd": 0.4,
+        "entryMarginShortUsd": 0.3,
+        "entryNotionalLongUsd": 8.0,
+        "entryNotionalShortUsd": 6.0,
+        "baseNotional": 0.3,
+        "universeTopN": 350,
+    }
+    original = dict(raw)
+    status_raw = multi_bb_status_mapping(raw)
+    assert raw == original
+    assert status_raw is not None
+    assert status_raw["engine"] == ENGINE
+    settings = MultiBbConfig.from_mapping(status_raw)
+    assert settings.entry_sizing_mode == "margin"
+    assert settings.entry_margin_long_usd == pytest.approx(0.4)
+    assert settings.entry_margin_short_usd == pytest.approx(0.3)
+    assert settings.entry_notional_long_usd == pytest.approx(8.0)
+    assert settings.entry_notional_short_usd == pytest.approx(6.0)
 
 
 def symbol_row(symbol="AAAUSDT"):
