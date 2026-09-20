@@ -86,7 +86,11 @@ jobs:
               n=num(v)
               return n is not None and abs(n-target)<1e-9
 
-          docs=list_collection('asterStrategy2')
+          try:
+              docs=list_collection('asterStrategy2')
+          except Exception as exc:
+              print(json.dumps({'readOnly':True,'ordersSent':0,'status':'READ_FAILED','errorType':type(exc).__name__,'error':str(exc)[:500]},sort_keys=True,separators=(',',':')))
+              raise SystemExit(0)
           near=[]; exact=[]
           for doc in docs:
               raw=doc_fields(doc)
@@ -120,7 +124,12 @@ jobs:
                   'nearMatches':[{'accountRef':hashlib.sha256(x[0].encode()).hexdigest()[:12],'current':slim(x[2])} for x in near[:5]]}
           if chosen:
               docid,raw,current=chosen
-              hist=list_collection(f'asterStrategy2/{urllib.parse.quote(docid,safe="")}/configHistory')
+              try:
+                  hist=list_collection(f'asterStrategy2/{urllib.parse.quote(docid,safe="")}/configHistory')
+              except Exception as exc:
+                  result.update({'status':'HISTORY_READ_FAILED','historyErrorType':type(exc).__name__,'historyError':str(exc)[:500]})
+                  print(json.dumps(result,ensure_ascii=False,sort_keys=True,separators=(',',':')))
+                  raise SystemExit(0)
               watched=set(fields)
               transitions=[]
               for hdoc in hist:
