@@ -4,12 +4,15 @@ import fs from "node:fs";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
 
-test("manual and automatic selection keep margin sizing with side-specific entries", () => {
+test("manual and automatic selection share optional fixed-position sizing with side-specific entries", () => {
   assert.match(maker, /Instap LONG/);
   assert.match(maker, /Instap SHORT/);
-  assert.match(maker, /entrySizingMode:\s*"margin"/);
+  assert.match(maker, /fixedPositionSize:\s*false/);
+  assert.match(maker, /entrySizingMode:\s*v\.fixedPositionSize \? "notional" : "margin"/);
   assert.match(maker, /entryMarginLongUsd:\s*longEntry/);
   assert.match(maker, /entryMarginShortUsd:\s*shortEntry/);
+  assert.match(maker, /entryNotionalLongUsd:\s*longNotional/);
+  assert.match(maker, /entryNotionalShortUsd:\s*shortNotional/);
   assert.doesNotMatch(maker, /entrySizingMode:\s*v\.manualEnabled/);
 });
 
