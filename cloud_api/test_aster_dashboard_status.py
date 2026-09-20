@@ -212,3 +212,12 @@ def test_contract_module_is_read_only_and_endpoint_is_get_only():
     assert '@app.get("/v1/me/aster/status")' in main_source
     status_route = main_source[main_source.index('def aster_status('):main_source.index('@app.get("/v1/me/aster/trade-events")')]
     assert '"botStatusDashboard": dashboard_status' not in status_route
+
+
+def test_status_multi_bb_projection_rejects_stale_shared_sub_dollar_base_notional():
+    main_source = Path("main.py").read_text()
+    start = main_source.index('def aster_status(')
+    end = main_source.index('@app.get("/v1/me/aster/trade-events")')
+    status_route = main_source[start:end]
+    assert '"baseNotional":multi_status_settings.entry_notional_usd' not in status_route
+    assert '"baseNotional":max(1.0,multi_status_settings.entry_notional_long_usd,multi_status_settings.entry_notional_short_usd)' in status_route
