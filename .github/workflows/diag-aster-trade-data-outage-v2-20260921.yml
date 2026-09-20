@@ -16,7 +16,7 @@ env:
   GCP_REGION: europe-west4
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
-  SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
 
 jobs:
   diagnose:
