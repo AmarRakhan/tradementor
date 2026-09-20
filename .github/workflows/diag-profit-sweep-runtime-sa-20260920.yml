@@ -1,0 +1,167 @@
+name: Diagnose Profit Sweep Via Runtime SA 2026-09-20
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diag-profit-sweep-runtime-sa-20260920.yml]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build and run private read-only diagnostic job
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          RUNTIME_SA="$(python - "$SERVICE_JSON" <<'PY'
+          import json,sys
+          value=json.load(open(sys.argv[1],encoding='utf-8'))
+          print(value['spec']['template']['spec']['serviceAccountName'])
+          PY
+          )"
+          test -n "$RUNTIME_SA"
+          mkdir -p "$RUNNER_TEMP/profit-sweep-diag"
+          cat > "$RUNNER_TEMP/profit-sweep-diag/Dockerfile" <<'DOCKER'
+          FROM python:3.12-slim
+          RUN pip install --no-cache-dir 'google-cloud-firestore>=2.21,<3'
+          COPY diag.py /diag.py
+          CMD ["python","/diag.py"]
+          DOCKER
+          cat > "$RUNNER_TEMP/profit-sweep-diag/diag.py" <<'PY'
+          from collections import Counter
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+          from google.cloud import firestore
+          import json
+
+          db=firestore.Client(project="tradementor-production")
+          ams=ZoneInfo("Europe/Amsterdam")
+          day_start=datetime(2026,9,20,0,0,tzinfo=ams).astimezone(timezone.utc)
+          latest_deploy=datetime(2026,9,20,9,31,tzinfo=timezone.utc)
+          accounts=[]
+
+          def as_utc(value):
+              if not isinstance(value,datetime):
+                  return None
+              return value.astimezone(timezone.utc)
+
+          def count_today(ref, field):
+              count=0
+              for snap in ref.stream():
+                  row=snap.to_dict() or {}
+                  stamp=as_utc(row.get(field))
+                  if stamp is not None and stamp>=day_start:
+                      count+=1
+              return count
+
+          for user in db.collection("users").stream():
+              control=user.reference.collection("executionControls").document("aster").get().to_dict() or {}
+              sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+              if sweep.get("enabled") is not True:
+                  continue
+              try:
+                  pct=float(sweep.get("sweepPercent",0))
+              except Exception:
+                  continue
+              if abs(pct-25.0)>1e-9:
+                  continue
+              updated=as_utc(sweep.get("updatedAt")) or datetime.fromtimestamp(0,tz=timezone.utc)
+              effective=max(updated,latest_deploy)
+
+              positive_today=0
+              positive_after_effective=0
+              total_realized_today=0
+              for snap in user.reference.collection("asterRealizedEvents").stream():
+                  row=snap.to_dict() or {}
+                  closed=as_utc(row.get("closedAt"))
+                  if closed is None or closed<day_start:
+                      continue
+                  total_realized_today+=1
+                  try:
+                      pnl=float(row.get("realizedPnlUsd",0) or 0)
+                  except Exception:
+                      pnl=0.0
+                  if pnl>0:
+                      positive_today+=1
+                      if closed>=effective:
+                          positive_after_effective+=1
+
+              statuses=Counter()
+              status_after_effective=Counter()
+              reason_classes=Counter()
+              latest_status=""
+              latest_created=None
+              for snap in user.reference.collection("asterProfitSweeps").stream():
+                  row=snap.to_dict() or {}
+                  created=as_utc(row.get("createdAt"))
+                  if created is None or created<day_start:
+                      continue
+                  status=str(row.get("status","UNKNOWN")).upper()
+                  statuses[status]+=1
+                  if created>=effective:
+                      status_after_effective[status]+=1
+                  if latest_created is None or created>latest_created:
+                      latest_created=created
+                      latest_status=status
+                  reason=str(row.get("reason","")).lower()
+                  if "inventory" in reason or "sluitfill" in reason or "fillhistorie" in reason or "cyclus" in reason:
+                      reason_classes["EVIDENCE_OR_INVENTORY"]+=1
+                  elif "-1006" in reason or "-1007" in reason or "execution status unknown" in reason:
+                      reason_classes["EXCHANGE_STATUS_UNKNOWN"]+=1
+                  elif reason:
+                      reason_classes["OTHER"]+=1
+
+              accounts.append({
+                  "masterAddressPresent":bool(str(control.get("masterAddress","")).strip()),
+                  "settingWasEnabledBeforeLatestDeploy":updated<=latest_deploy,
+                  "realizedEventsToday":total_realized_today,
+                  "positiveRealizedEventsToday":positive_today,
+                  "positiveRealizedEventsAfterSettingAndLatestDeploy":positive_after_effective,
+                  "profitSweepBookingsToday":sum(statuses.values()),
+                  "profitSweepStatusesToday":dict(statuses),
+                  "profitSweepStatusesAfterSettingAndLatestDeploy":dict(status_after_effective),
+                  "latestProfitSweepStatus":latest_status,
+                  "reasonClasses":dict(reason_classes),
+                  "bulkProfitCloseActionsToday":count_today(user.reference.collection("asterBulkProfitCloseIntents"),"createdAt"),
+                  "snapshotProfitCloseActionsToday":count_today(user.reference.collection("asterSnapshotProfitCloseIntents"),"createdAt"),
+              })
+
+          print("PROFIT_SWEEP_DIAG="+json.dumps({
+              "matching25PctEnabledAccounts":len(accounts),
+              "accounts":accounts,
+          },separators=(",",":"),sort_keys=True))
+          PY
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/profit-sweep-diag:$GITHUB_SHA"
+          docker build -t "$IMAGE" "$RUNNER_TEMP/profit-sweep-diag"
+          docker push "$IMAGE"
+          JOB="profit-sweep-diag-${GITHUB_RUN_ID: -8}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --quiet
+          EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
+          test -n "$EXECUTION"
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"PROFIT_SWEEP_DIAG=\"" --project "$GCP_PROJECT_ID" --limit=5 --freshness=20m --format='value(textPayload)'
