@@ -141,7 +141,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       longDcaAmount: txt(x.longDcaMarginUsd ?? x.longDcaAmount ?? legacyDcaAmount, legacyDcaAmount), shortDcaAmount: txt(x.shortDcaMarginUsd ?? x.shortDcaAmount ?? legacyDcaAmount, legacyDcaAmount),
       maxDcaLong: txt(x.maxDcaLong ?? x.longMaxDca ?? legacyMax, legacyMax), maxDcaShort: txt(x.maxDcaShort ?? x.shortMaxDca ?? legacyMax, legacyMax),
       longTp: pct(x.longTakeProfitValue ?? x.takeProfitLong ?? legacyTp, legacyTp), shortTp: pct(x.shortTakeProfitValue ?? x.takeProfitShort ?? legacyTp, legacyTp),
-      tpMode: tpModeFrom(x), portfolioTp: txt(x.portfolioTpPercent, 20), mode: x.mode === "paper" ? "paper" : "live",
+      tpMode: tpModeFrom(x),
+      portfolioTp: txt(x.portfolioTpValue ?? x.portfolioTpPercent, 20),
+      portfolioTpInputMode: portfolioTpInputModeFrom(x.portfolioTpInputMode),
+      portfolioTpBaseMode: portfolioTpBaseModeFrom(x.portfolioTpBaseMode),
+      portfolioTpCustomBase: Number(x.portfolioTpCustomBaseEquity ?? 0) > 0 ? txt(x.portfolioTpCustomBaseEquity, 0) : "",
+      mode: x.mode === "paper" ? "paper" : "live",
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
       shortRequiresLongEnabled: x.shortRequiresLongEnabled === true,
       smartRescueEnabled: x.smartRescueEnabled === true, smartRescueRange: txt(x.smartRescueRangePercent, 10),
@@ -173,7 +178,13 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       dcaMarginUsd: longAmount, longDcaMarginUsd: longAmount, shortDcaMarginUsd: shortAmount, longDcaAmount: longAmount, shortDcaAmount: shortAmount,
       maxDca: maxLong, maxDcaLong: maxLong, maxDcaShort: maxShort, longMaxDca: maxLong, shortMaxDca: maxShort, unlimitedDca: false,
       takeProfit: longTp, longTakeProfitValue: longTp, shortTakeProfitValue: shortTp, takeProfitLong: longTp, takeProfitShort: shortTp,
-      takeProfitMode: v.tpMode, portfolioTpPercent: n(v.portfolioTp), takeProfitEnabled: v.tpMode === "PER_TRADE",
+      takeProfitMode: v.tpMode,
+      portfolioTpPercent: v.portfolioTpInputMode === "PERCENT" ? n(v.portfolioTp) : finiteOr(persisted.portfolioTpPercent, 20),
+      portfolioTpInputMode: v.portfolioTpInputMode,
+      portfolioTpValue: n(v.portfolioTp),
+      portfolioTpBaseMode: v.portfolioTpBaseMode,
+      portfolioTpCustomBaseEquity: n(v.portfolioTpCustomBase),
+      takeProfitEnabled: v.tpMode === "PER_TRADE",
       stopLossEnabled: v.stopLossEnabled, stopLossMode: v.stopLossMode, stopLossLong: n(v.stopLossLong), stopLossShort: n(v.stopLossShort),
       entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualEnabled ? v.manualSymbols : [],
@@ -273,7 +284,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (settings.longDcaMarginUsd <= 0 || settings.shortDcaMarginUsd <= 0) throw new Error("DCA-bedrag LONG/SHORT moet positief zijn.");
       if (settings.maxDcaLong > MAX_DCA || settings.maxDcaShort > MAX_DCA) throw new Error(`Max DCA mag maximaal ${MAX_DCA} zijn.`);
       if (v.tpMode === "PER_TRADE" && (settings.longTakeProfitValue <= 0 || settings.shortTakeProfitValue <= 0)) throw new Error("Take Profit LONG/SHORT moet positief zijn.");
-      if (v.tpMode === "PORTFOLIO" && settings.portfolioTpPercent <= 0) throw new Error("Portfolio TP moet positief zijn.");
+      if (v.tpMode === "PORTFOLIO") {
+        if (settings.portfolioTpValue <= 0) throw new Error("Portfolio TP moet groter dan 0 zijn.");
+        if (settings.portfolioTpInputMode === "PERCENT" && settings.portfolioTpValue > 10000) throw new Error("Portfolio TP percentage mag maximaal 10.000% zijn.");
+        if (settings.portfolioTpBaseMode === "CUSTOM" && settings.portfolioTpCustomBaseEquity <= 0) throw new Error("Vul bij Aangepast een geldige basiswaarde groter dan 0 in.");
+      }
       if (v.smartRescueEnabled) {
         if (!(settings.smartRescueRangePercent > 0 && settings.smartRescueRangePercent < 100)) throw new Error("Smart Rescue bereik moet groter dan 0% en kleiner dan 100% zijn.");
         if (!(settings.smartRescueDcaCount >= 1 && settings.smartRescueDcaCount <= MAX_DCA)) throw new Error(`Smart Rescue aantal DCA's moet tussen 1 en ${MAX_DCA} liggen.`);
@@ -303,6 +318,21 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     } catch (error) { setMessage(error instanceof Error ? error.message : "Actie mislukt"); }
     finally { setBusy(false); }
   }
+  async function resetPortfolioCycle() {
+    if (busy) return;
+    setBusy(true); setMessage("");
+    try {
+      const result = await authenticatedRequest("/api/exchanges/aster/strategy2/portfolio-cycle/reset", { method: "POST", body: JSON.stringify({ confirm: true }) }) as Record<string, unknown>;
+      if (result.reset !== true || Number(result.ordersSent ?? -1) !== 0) throw new Error("Reset cycle is niet veilig server-side bevestigd.");
+      const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null;
+      if (confirmed) { setConfirmedState(confirmed); onConfirmed(confirmed); }
+      setV((current) => ({ ...current, portfolioTpBaseMode: "CYCLE_START" }));
+      setMessage(`Cycle start gereset naar huidige equity ${Number(result.cycleStartEquity || 0).toLocaleString("nl-NL", { style: "currency", currency: "USD" })}. 0 orders verzonden.`);
+      await Promise.resolve(onChanged());
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Reset cycle mislukt"); }
+    finally { setBusy(false); }
+  }
+
   async function checkReadiness(startWhenReady = false) {
     setBusy(true); setMessage("");
     try { const result = await authenticatedRequest("/api/exchanges/aster/strategy2/readiness") as Record<string, unknown>; setReadiness(result); if (startWhenReady && Boolean(result.liveReady)) { setBusy(false); await action("start"); return; } setMessage(Boolean(result.liveReady) ? "Live-gereedheid server-side bevestigd." : "Readiness gecontroleerd; live-start is nog niet vrijgegeven."); }
@@ -320,11 +350,22 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const displayRemainingShort = v.smartRescueEnabled ? 0 : remainingShort;
   const reportCurrent = Number(rawReport.configVersion ?? 0) === Number(state.configVersion ?? persisted.version ?? 0);
   const candidateCount = reportCurrent ? Number(rawReport.candidateCount ?? 0) : 0; const scannedCandidateCount = reportCurrent ? Number(rawReport.scannedCandidateCount ?? 0) : 0;
-  const cycleStart = Number(cycle.cycleStartEquity || 0); const currentEquity = Number(cycle.currentEquity || 0); const target = cycleStart > 0 ? cycleStart * (1 + n(v.portfolioTp) / 100) : Number(cycle.targetEquity || 0);
-  const portfolioWarning = v.tpMode === "PORTFOLIO" && target > 0 && currentEquity >= target;
   const snapshotAccount = (snapshot?.account && typeof snapshot.account === "object" ? snapshot.account : {}) as Record<string, unknown>;
   const portfolioEquity = finiteOr(snapshot?.equity ?? snapshot?.portfolioValue ?? snapshotAccount.totalMarginBalance ?? snapshotAccount.marginBalance ?? snapshotAccount.totalWalletBalance, 0);
   const availableBalance = finiteOr(snapshot?.availableBalance ?? snapshotAccount.availableBalance ?? snapshotAccount.availableMargin, 0);
+  const cycleStart = finiteOr(cycle.cycleStartEquity, 0);
+  const currentEquity = finiteOr(cycle.currentEquity, portfolioEquity);
+  const serverBase = finiteOr(cycle.baseEquity, 0);
+  const previewBase = v.portfolioTpBaseMode === "CURRENT_VALUE" ? currentEquity : v.portfolioTpBaseMode === "CUSTOM" ? n(v.portfolioTpCustomBase) : cycleStart;
+  const effectiveBase = dirty ? previewBase : serverBase || previewBase;
+  const serverInputMode = portfolioTpInputModeFrom(cycle.takeProfitInputMode);
+  const serverTpValue = finiteOr(cycle.takeProfitValue, 0);
+  const effectiveInputMode = dirty ? v.portfolioTpInputMode : cycle.takeProfitInputMode ? serverInputMode : v.portfolioTpInputMode;
+  const effectiveTpValue = dirty ? n(v.portfolioTp) : serverTpValue > 0 ? serverTpValue : n(v.portfolioTp);
+  const target = dirty ? portfolioTarget(previewBase, v.portfolioTpInputMode, n(v.portfolioTp)) : finiteOr(cycle.targetEquity, portfolioTarget(effectiveBase, effectiveInputMode, effectiveTpValue));
+  const portfolioWarning = v.tpMode === "PORTFOLIO" && target > 0 && currentEquity >= target;
+  const effectiveBaseMode = dirty ? v.portfolioTpBaseMode : cycle.baseMode ? portfolioTpBaseModeFrom(cycle.baseMode) : v.portfolioTpBaseMode;
+  const tpBadge = effectiveInputMode === "USD" ? `+${money2(effectiveTpValue)}` : `+${effectiveTpValue.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
   const firstSelectedLeverage = v.manualEnabled && v.manualSymbols.length ? tierPreviews[v.manualSymbols[0]?.symbol]?.entryPlan?.leverage || tierPreviews[v.manualSymbols[0]?.symbol]?.currentLeverage : 0;
   const smartPreviewLeverage = Math.max(1, Number(firstSelectedLeverage || n(v.minLeverage) || 1));
   const smartStartMargin = v.fixedPositionSize ? Math.max(.00000001, n(v.entryNotionalLong) / smartPreviewLeverage) : Math.max(.00000001, n(v.entryMarginLong));
@@ -394,8 +435,39 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       <div className={`strategy-power-control short-pair-control ${v.shortRequiresLongEnabled ? "enabled" : "ready"}`}><span className="pair-icon">↗</span><span><b>SHORT alleen met LONG</b><small>LONG mag altijd zelfstandig openen · ontbrekende LONG krijgt scanner-prioriteit.</small></span><button type="button" role="switch" aria-checked={v.shortRequiresLongEnabled} onClick={() => change({ ...v, shortRequiresLongEnabled: !v.shortRequiresLongEnabled })}><i />{v.shortRequiresLongEnabled ? "Aan" : "Uit"}</button></div>
 
       <section className="side-settings-block">
-        <div className="side-settings-head"><div><small>GEÏNTEGREERD</small><b>LONG / SHORT · DCA & Take Profit</b></div><div className="tp-tabs">{(["PER_TRADE", "PORTFOLIO", "OFF"] as TpMode[]).map((mode) => <button key={mode} type="button" className={v.tpMode === mode ? "active" : ""} onClick={() => change({ ...v, tpMode: mode })}>{mode === "PER_TRADE" ? "Per trade" : mode === "PORTFOLIO" ? "Portfolio" : "Uit"}</button>)}</div></div>
-        {v.tpMode === "PORTFOLIO" && <div className="portfolio-tp-row"><Field label="Portfolio TP (%)" value={v.portfolioTp} set={(value) => change({ ...v, portfolioTp: value })} /><span><small>Cycle start</small><b>{cycleStart ? `$${cycleStart.toFixed(2)}` : "—"}</b></span><span><small>Target</small><b>{target ? `$${target.toFixed(2)}` : "—"}</b></span><span><small>Equity</small><b>{currentEquity ? `$${currentEquity.toFixed(2)}` : "—"}</b></span>{portfolioWarning && <em>Target ligt al onder/huidige equity; na opslaan kan de bestaande Portfolio TP-cycle direct uitvoeren.</em>}</div>}
+        <div className="side-settings-head"><div><small>GEÏNTEGREERD</small><b>LONG / SHORT · DCA & Take Profit</b></div></div>
+        <div className="tp-tabs" aria-label="Take Profit modus">{(["PER_TRADE", "PORTFOLIO", "OFF"] as TpMode[]).map((mode) => <button key={mode} type="button" aria-pressed={v.tpMode === mode} className={v.tpMode === mode ? "active" : ""} onClick={() => change({ ...v, tpMode: mode })}>{mode === "PER_TRADE" ? "Per trade" : mode === "PORTFOLIO" ? "Portfolio" : "Uit"}</button>)}</div>
+        {v.tpMode === "PORTFOLIO" && <section className="portfolio-tp-panel" data-visual-reference={PORTFOLIO_TP_REFERENCE} aria-label="Portfolio Take Profit">
+          <header className="portfolio-tp-head"><span className="portfolio-tp-icon">◎</span><span><b>Portfolio Take Profit</b><small>Sluit alle posities wanneer de portfoliowaarde je doel bereikt.</small></span><i title="Portfolio TP sluit alle posities veilig en start daarna een nieuwe cycle vanaf de werkelijke sluitwaarde.">i</i></header>
+          <div className="portfolio-tp-controls">
+            <div className="portfolio-choice"><small>TP invoermodus</small><div className="segmented two"><button type="button" aria-pressed={v.portfolioTpInputMode === "PERCENT"} className={v.portfolioTpInputMode === "PERCENT" ? "active" : ""} onClick={() => change({ ...v, portfolioTpInputMode: "PERCENT" })}>%</button><button type="button" aria-pressed={v.portfolioTpInputMode === "USD"} className={v.portfolioTpInputMode === "USD" ? "active" : ""} onClick={() => change({ ...v, portfolioTpInputMode: "USD" })}>$</button></div></div>
+            <div className="portfolio-choice base-choice"><small>Bereken vanaf</small><div className="segmented three">{([
+              ["CYCLE_START", "Cycle start"], ["CURRENT_VALUE", "Huidige waarde"], ["CUSTOM", "Aangepast"],
+            ] as [PortfolioTpBaseMode, string][]).map(([mode, label]) => <button key={mode} type="button" aria-pressed={v.portfolioTpBaseMode === mode} className={v.portfolioTpBaseMode === mode ? "active" : ""} onClick={() => change({ ...v, portfolioTpBaseMode: mode })}>{label}</button>)}</div></div>
+          </div>
+          {v.portfolioTpBaseMode === "CYCLE_START" && <div className="cycle-reset-row"><button type="button" disabled={busy} onClick={() => void resetPortfolioCycle()}>↻ <b>Reset cycle</b></button><span>Reset zet cycle start gelijk aan huidige equity.</span></div>}
+          <div className="portfolio-input-grid">
+            <Field label={v.portfolioTpInputMode === "USD" ? "Portfolio TP ($)" : "Portfolio TP (%)"} value={v.portfolioTp} set={(value) => change({ ...v, portfolioTp: value })} suffix={v.portfolioTpInputMode === "USD" ? "$" : "%"} />
+            {v.portfolioTpBaseMode === "CUSTOM"
+              ? <Field label="Basiswaarde" value={v.portfolioTpCustomBase} set={(value) => change({ ...v, portfolioTpCustomBase: value })} suffix="$" />
+              : <label className="basis-readonly"><span>Basiswaarde <i title="Deze waarde wordt door de cycle vastgezet.">i</i></span><strong>${money2(dirty ? previewBase : effectiveBase)}</strong><em>✎</em></label>}
+          </div>
+          <div className="portfolio-target-flow">
+            <div className="equity-card"><span className="value-icon">◉</span><span><small>Huidige portfoliowaarde</small><em>Equity</em><b>${money2(currentEquity)}</b></span></div>
+            <strong className="target-arrow">→</strong>
+            <div className="target-card"><span className="value-icon">◉</span><span><small>Doelwaarde</small><b>${money2(target)}</b></span><em className="target-badge">{tpBadge}</em></div>
+          </div>
+          <p className="portfolio-target-note">Doel wordt berekend vanaf de gekozen basiswaarde.</p>
+          <p className="portfolio-cycle-note">ⓘ Na sluiting wordt de werkelijke sluitwaarde de nieuwe cycle start voor de volgende cyclus.</p>
+          <div className="portfolio-status-strip">
+            <span><i>⌁</i><small>Cycle start</small><b>${money2(cycleStart)}</b></span>
+            <span><i>◉</i><small>Equity</small><b>${money2(currentEquity)}</b></span>
+            <span><i>▱</i><small>Basis</small><b>${money2(effectiveBase)}</b></span>
+            <span><i>◎</i><small>Target</small><b>${money2(target)}</b></span>
+          </div>
+          <small className="portfolio-base-state">Actieve basis: {effectiveBaseMode === "CURRENT_VALUE" ? "Huidige waarde (vastgezet)" : effectiveBaseMode === "CUSTOM" ? "Aangepast" : "Cycle start"}</small>
+          {portfolioWarning && <em className="portfolio-warning">Target ligt op of onder de huidige equity; na opslaan kan Portfolio TP direct veilig uitvoeren.</em>}
+        </section>}
         {v.tpMode === "OFF" && <p className="tp-off-note">Automatische TP uit. DCA en overige strategie blijven actief.</p>}
         <div className="side-columns">
           <section className="side-card long"><b>LONG</b><Field label={v.fixedPositionSize ? "Instap LONG · positie" : "Instap LONG · margin"} value={v.fixedPositionSize ? v.entryNotionalLong : v.entryMarginLong} set={(value) => v.fixedPositionSize ? change({ ...v, entryNotionalLong: value }) : change({ ...v, entryMarginLong: value })} suffix="USDT" /><Field label="DCA-afstand LONG" value={v.longDcaDistance} set={(value) => change({ ...v, longDcaDistance: value })} suffix="%" disabled={v.smartRescueEnabled} /><Field label="DCA-bedrag LONG" value={v.longDcaAmount} set={(value) => change({ ...v, longDcaAmount: value })} suffix="USDT" disabled={v.smartRescueEnabled} /><Field label="Max DCA LONG" value={v.maxDcaLong} set={(value) => change({ ...v, maxDcaLong: value })} disabled={v.smartRescueEnabled} /><Field label="Take Profit LONG" value={v.longTp} set={(value) => change({ ...v, longTp: value })} suffix="%" disabled={v.tpMode !== "PER_TRADE"} /></section>
