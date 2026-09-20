@@ -165,12 +165,37 @@ jobs:
               >"$RUNNER_TEMP/execute.log" 2>&1
             EXEC_RC=$?
           fi
+          TASK_EXIT=""
+          EXECUTION_NAME="$(sed -nE 's/.*Execution \[([^]]+)\].*/\1/p' "$RUNNER_TEMP/execute.log" | tail -1)"
+          if [ -n "$EXECUTION_NAME" ]; then
+            ACCESS_TOKEN="$(gcloud auth print-access-token 2>/dev/null || true)"
+            if [ -n "$ACCESS_TOKEN" ]; then
+              curl --silent --show-error --max-time 20 \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                "https://run.googleapis.com/v2/projects/$GCP_PROJECT_ID/locations/$GCP_REGION/jobs/$JOB/executions/$EXECUTION_NAME/tasks?pageSize=20" \
+                > "$RUNNER_TEMP/tasks.json" 2>/dev/null || true
+              TASK_EXIT="$(python - "$RUNNER_TEMP/tasks.json" <<'PY'
+          import json,sys
+          try:
+              d=json.load(open(sys.argv[1],encoding='utf-8'))
+              vals=[]
+              for task in d.get('tasks',[]):
+                  r=task.get('lastAttemptResult') or task.get('last_attempt_result') or {}
+                  if 'exitCode' in r: vals.append(str(r['exitCode']))
+                  elif 'exit_code' in r: vals.append(str(r['exit_code']))
+              print(','.join(vals))
+          except Exception:
+              print('')
+          PY
+              )"
+            fi
+          fi
           if [ "$DEPLOY_RC" -eq 0 ] && [ "$EXEC_RC" -eq 0 ]; then
             echo '{"status":"VERIFIED_BY_EXECUTION","ordersSent":0,"settingsChangedOrAlreadyCorrect":true}' > "$RUNNER_TEMP/result.json"
           else
-            python - "$DEPLOY_RC" "$EXEC_RC" "$RUNNER_TEMP/deploy.log" "$RUNNER_TEMP/execute.log" > "$RUNNER_TEMP/diagnostic.json" <<'PY'
+            python - "$DEPLOY_RC" "$EXEC_RC" "$TASK_EXIT" "$RUNNER_TEMP/deploy.log" "$RUNNER_TEMP/execute.log" > "$RUNNER_TEMP/diagnostic.json" <<'PY'
           import json,sys,re
-          deploy_rc=int(sys.argv[1]);exec_rc=int(sys.argv[2])
+          deploy_rc=int(sys.argv[1]);exec_rc=int(sys.argv[2]);task_exit=sys.argv[3]
           def safe_tail(path):
               try:text=open(path,encoding='utf-8',errors='replace').read()
               except Exception:return ""
@@ -180,8 +205,8 @@ jobs:
               tail=re.sub(r'(?i)(token|authorization|privatekey|private_key)\s*[:=]\s*\S+',r'\1=[redacted]',tail)
               return tail[:1200]
           print(json.dumps({"status":"WORKFLOW_DIAGNOSTIC","ordersSent":0,"settingsChanged":False,
-                            "deployRc":deploy_rc,"executeRc":exec_rc,
-                            "deployTail":safe_tail(sys.argv[3]),"executeTail":safe_tail(sys.argv[4])},
+                            "deployRc":deploy_rc,"executeRc":exec_rc,"taskExitCode":task_exit,
+                            "deployTail":safe_tail(sys.argv[4]),"executeTail":safe_tail(sys.argv[5])},
                            sort_keys=True,separators=(',',':')))
           PY
           fi
