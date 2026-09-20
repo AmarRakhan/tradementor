@@ -148,3 +148,47 @@ def test_main_has_exact_sniper_close_accounting_and_shared_account_fence():
     assert '_acquire_aster_account_coordination(uid,"SNIPER","MANUAL_CLOSE")' in source
     assert '_acquire_aster_account_coordination(uid,"EMERGENCY","CLOSE_ALL")' in source
     assert '_acquire_aster_account_coordination(uid,"ASTER","SCHEDULER")' in source
+
+
+def test_dry_run_enables_scanner_without_persisted_symbol_claim_contract():
+    source=Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    assert 'if dry_run:' in source
+    assert 'raw={**raw,"enabled":True,"monitor":True}' in source
+    assert 'return owner_can_claim(owner,symbol' in source
+    assert 'def release(symbol:str)->None:\n                return None' in source
+
+
+def test_uncertain_entry_keeps_symbol_reserved_until_reconciliation(monkeypatch):
+    class ScannerClient(PendingClient):
+        def position_risk(self, symbol=None): return []
+        def account_information(self): return {"totalMarginBalance":"100","availableBalance":"100","totalMaintMargin":"0"}
+        def public_exchange_info(self):
+            return {"symbols":[{"symbol":"BTCUSDT","status":"TRADING","filters":[
+                {"filterType":"PRICE_FILTER","minPrice":"0.1","maxPrice":"1000000","tickSize":"0.1"},
+                {"filterType":"LOT_SIZE","minQty":"0.001","maxQty":"1000","stepSize":"0.001"},
+                {"filterType":"MARKET_LOT_SIZE","minQty":"0.001","maxQty":"1000","stepSize":"0.001"},
+                {"filterType":"MIN_NOTIONAL","notional":"1"}]}]}
+        def ticker_prices(self): return [{"symbol":"BTCUSDT","price":"100"}]
+        def ticker_24h(self): return [{"symbol":"BTCUSDT","quoteVolume":"100000000"}]
+        def leverage_brackets(self, symbol=None): return [{"notionalFloor":"0","notionalCap":"1000000","initialLeverage":20,"maintMarginRatio":"0.01"}]
+        def klines(self,*args,**kwargs):
+            return [[i,100+i*.01,101+i*.01,99+i*.01,100+i*.01,1000,i+1,100000,20,55000,45000,0] for i in range(120)]
+        def book_ticker(self,symbol): return {"bidPrice":"101","askPrice":"101.01"}
+        def order_book(self,symbol,limit=20): return {"bids":[["101","100"]]*20,"asks":[["101.01","80"]]*20}
+
+    client=ScannerClient()
+    monkeypatch.setattr(runtime,"evaluate_candidate",lambda *a,**k:{
+        "symbol":"BTCUSDT","side":"LONG","timeframe":"1m","eligible":True,"score":12,"price":101,
+        "tpPercent":.18,"checks":[],"reason":"12/12 checks · live entry gereed"})
+    monkeypatch.setattr(runtime,"plan_aster_pair",lambda *a,**k: runtime.PairExecutionPlan("BTCUSDT",runtime.Decimal("0.1"),runtime.Decimal("10"),20))
+    def uncertain(*args,**kwargs): raise RuntimeError("submission uncertain")
+    monkeypatch.setattr(runtime,"execute_leg_once",uncertain)
+    persisted=[];released=[]
+    try:
+        runtime.run_sniper_tick(client=client,state={"enabled":True,"activeTrades":[]},settings=SniperSettings(),
+            blocked_symbols=set(),claim_symbol=lambda *_:True,release_symbol=released.append,
+            persist_pending=persisted.append,live_enabled=True,now_ms=100000)
+    except RuntimeError:
+        pass
+    assert persisted and persisted[0]["action"]=="OPEN"
+    assert released==[]
