@@ -1,0 +1,107 @@
+name: Diagnose Aster trade data outage 2026-09-21
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - '.github/workflows/diag-aster-trade-data-outage-20260921.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: diag-aster-trade-data-outage-20260921
+  cancel-in-progress: true
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read current production service
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          traffic=s.get('status',{}).get('traffic',[])
+          live=[x for x in traffic if int(x.get('percent',0))==100]
+          spec=s['spec']['template']['spec']['containers'][0]
+          env={x['name']:x.get('value') for x in spec.get('env',[])}
+          print('TRADE_DIAG service_url='+s.get('status',{}).get('url',''))
+          print('TRADE_DIAG live_revision='+(live[0].get('revisionName','') if live else 'NONE'))
+          print('TRADE_DIAG source_commit='+str(env.get('TRADEMENTOR_SOURCE_COMMIT','')))
+          print('TRADE_DIAG realtime_worker='+str(env.get('ASTER_REALTIME_WORKER','')))
+          print('TRADE_DIAG realtime_execution='+str(env.get('ASTER_REALTIME_EXECUTION_ENABLED','')))
+          PY
+          SERVICE_URL="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"]["url"])' "$RUNNER_TEMP/service.json")"
+          curl --fail --silent --show-error "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/health.json" <<'PY'
+          import json,sys
+          h=json.load(open(sys.argv[1],encoding='utf-8'))
+          print('TRADE_DIAG health_status='+str(h.get('status')))
+          print('TRADE_DIAG health_source='+str(h.get('sourceCommit') or h.get('imageSourceCommit') or ''))
+          PY
+
+      - name: Summarize recent Cloud Run request failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND timestamp>="-PT90M"'             --project "$GCP_PROJECT_ID" --limit 1000 --format=json > "$RUNNER_TEMP/logs.json"
+          python - "$RUNNER_TEMP/logs.json" <<'PY'
+          import json,re,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          statuses={}
+          aster_statuses={}
+          errors=[]
+          def safe_text(v):
+              s=str(v or '')
+              s=re.sub(r'Bearer\s+[A-Za-z0-9._-]+','Bearer [REDACTED]',s,flags=re.I)
+              s=re.sub(r'0x[a-fA-F0-9]{40}','0x[REDACTED]',s)
+              s=re.sub(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}','[EMAIL]',s)
+              s=re.sub(r'(?i)(api[_ -]?key|secret|private[_ -]?key)\s*[:=]\s*[^ ,;]+',r'\1=[REDACTED]',s)
+              return s[:500]
+          for r in rows:
+              h=r.get('httpRequest') or {}
+              st=int(h.get('status') or 0)
+              if st:
+                  statuses[st]=statuses.get(st,0)+1
+              url=str(h.get('requestUrl') or '')
+              if '/v1/me/aster/' in url:
+                  key=(url.split('?',1)[0].split('/v1/me/aster/',1)[-1],st)
+                  aster_statuses[str(key)]=aster_statuses.get(str(key),0)+1
+              sev=str(r.get('severity') or '')
+              msg=(r.get('textPayload') or (r.get('jsonPayload') or {}).get('message') or '')
+              if st>=400 or sev in {'ERROR','CRITICAL','ALERT','EMERGENCY'} or re.search(r'exception|traceback|asterapierror|timeout|failed',str(msg),re.I):
+                  errors.append((r.get('timestamp',''),sev,st,safe_text(msg)))
+          print('TRADE_DIAG http_status_counts='+json.dumps(statuses,sort_keys=True))
+          print('TRADE_DIAG aster_route_status_counts='+json.dumps(aster_statuses,sort_keys=True))
+          print('TRADE_DIAG error_count='+str(len(errors)))
+          for e in errors[-80:]:
+              print('TRADE_DIAG error='+json.dumps(e,ensure_ascii=False))
+          PY
+
+      - name: Inspect revision startup and worker signals
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND timestamp>="-PT90M"'             --project "$GCP_PROJECT_ID" --limit 1500 --format='value(timestamp,severity,textPayload,jsonPayload.message)'             | grep -Ei 'realtime|worker|aster|exception|traceback|error|failed|timeout'             | sed -E 's/0x[0-9A-Fa-f]{40}/0x[REDACTED]/g'             | tail -120 || true
