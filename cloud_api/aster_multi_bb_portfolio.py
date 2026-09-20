@@ -26,6 +26,8 @@ FLAT_CONFIRMED = "FLAT_CONFIRMED"
 RESTARTING = "RESTARTING"
 RUNNING = "RUNNING"
 ACTIVE_EXIT_STATES = {PORTFOLIO_TP_EXECUTING, FLAT_CONFIRMING, RESTARTING}
+PORTFOLIO_TP_INPUT_MODES = {"PERCENT", "USD"}
+PORTFOLIO_TP_BASE_MODES = {"CYCLE_START", "CURRENT_VALUE", "CUSTOM"}
 
 
 class PortfolioCycleOrderBlocked(RuntimeError):
@@ -58,6 +60,7 @@ def exchange_equity(account: dict[str, Any] | None) -> float:
 
 
 def target_equity(cycle_start_equity: float, portfolio_tp_percent: float) -> float:
+    """Legacy percentage helper retained for older callers/tests."""
     start = _f(cycle_start_equity)
     pct = _f(portfolio_tp_percent)
     if start <= 0:
@@ -65,13 +68,47 @@ def target_equity(cycle_start_equity: float, portfolio_tp_percent: float) -> flo
     return start * (1.0 + pct / 100.0)
 
 
-def _new_cycle(uid: str, *, equity: float, portfolio_tp_percent: float, timestamp_ms: int) -> dict[str, Any]:
+def _normalize_input_mode(value: Any) -> str:
+    text = str(value or "PERCENT").strip().upper().replace("%", "PERCENT").replace("$", "USD")
+    return text if text in PORTFOLIO_TP_INPUT_MODES else "PERCENT"
+
+
+def _normalize_base_mode(value: Any) -> str:
+    text = str(value or "CYCLE_START").strip().upper().replace("-", "_").replace(" ", "_")
+    return text if text in PORTFOLIO_TP_BASE_MODES else "CYCLE_START"
+
+
+def target_equity_v2(base_equity: float, input_mode: str, value: float) -> float:
+    base = _f(base_equity)
+    amount = _f(value)
+    if base <= 0 or amount <= 0:
+        return 0.0
+    if _normalize_input_mode(input_mode) == "USD":
+        return base + amount
+    return base * (1.0 + amount / 100.0)
+
+
+def _new_cycle(uid: str, *, equity: float, portfolio_tp_percent: float, timestamp_ms: int,
+               portfolio_tp_input_mode: str = "PERCENT", portfolio_tp_value: float | None = None,
+               portfolio_tp_base_mode: str = "CYCLE_START", portfolio_tp_custom_base_equity: float = 0.0,
+               config_version: int = 0) -> dict[str, Any]:
     seed = f"{uid}|portfolio-cycle|{timestamp_ms}|{equity:.12f}"
     cycle_id = hashlib.sha256(seed.encode()).hexdigest()[:20]
+    input_mode = _normalize_input_mode(portfolio_tp_input_mode)
+    value = _f(portfolio_tp_value, _f(portfolio_tp_percent)) if portfolio_tp_value is not None else _f(portfolio_tp_percent)
+    base_mode = _normalize_base_mode(portfolio_tp_base_mode)
+    custom = _f(portfolio_tp_custom_base_equity)
+    base = custom if base_mode == "CUSTOM" and custom > 0 else _f(equity)
     return {
         "cycleId": cycle_id,
         "cycleStartEquity": equity,
-        "targetEquity": target_equity(equity, portfolio_tp_percent),
+        "baseMode": base_mode,
+        "baseEquity": base,
+        "customBaseEquity": custom if custom > 0 else None,
+        "baseConfigVersion": int(config_version or 0),
+        "takeProfitInputMode": input_mode,
+        "takeProfitValue": value,
+        "targetEquity": target_equity_v2(base, input_mode, value),
         "cycleEndEquity": None,
         "cycleStatus": RUNNING,
         "portfolioTpTriggeredAt": None,
@@ -83,29 +120,83 @@ def _new_cycle(uid: str, *, equity: float, portfolio_tp_percent: float, timestam
 
 
 def ensure_cycle(raw_state: dict[str, Any], *, uid: str, current_equity: float,
-                 portfolio_tp_percent: float, timestamp_ms: int) -> tuple[dict[str, Any], bool]:
-    """Return a durable cycle without ever rebasing an already valid baseline."""
+                 portfolio_tp_percent: float, timestamp_ms: int,
+                 portfolio_tp_input_mode: str = "PERCENT", portfolio_tp_value: float | None = None,
+                 portfolio_tp_base_mode: str = "CYCLE_START", portfolio_tp_custom_base_equity: float = 0.0,
+                 config_version: int = 0) -> tuple[dict[str, Any], bool]:
+    """Return durable cycle state and snapshot a requested base at most once per config version."""
     existing = raw_state.get("multiBbCycle") if isinstance(raw_state.get("multiBbCycle"), dict) else {}
     start = _f(existing.get("cycleStartEquity"))
     cycle_id = str(existing.get("cycleId") or "").strip()
+    input_mode = _normalize_input_mode(portfolio_tp_input_mode)
+    value = _f(portfolio_tp_value, _f(portfolio_tp_percent)) if portfolio_tp_value is not None else _f(portfolio_tp_percent)
+    requested_base_mode = _normalize_base_mode(portfolio_tp_base_mode)
+    custom = _f(portfolio_tp_custom_base_equity)
     if start > 0 and cycle_id:
         cycle = dict(existing)
-        cycle["targetEquity"] = target_equity(start, portfolio_tp_percent)
+        changed = False
+        prior_version = _i(cycle.get("baseConfigVersion"), 0)
+        should_apply_base = "baseEquity" not in cycle or (int(config_version or 0) > 0 and prior_version != int(config_version or 0))
+        if should_apply_base:
+            if requested_base_mode == "CURRENT_VALUE":
+                base = _f(current_equity)
+            elif requested_base_mode == "CUSTOM" and custom > 0:
+                base = custom
+            else:
+                base = start
+                requested_base_mode = "CYCLE_START"
+            cycle["baseMode"] = requested_base_mode
+            cycle["baseEquity"] = base
+            cycle["customBaseEquity"] = custom if custom > 0 else None
+            cycle["baseConfigVersion"] = int(config_version or 0)
+            changed = True
+        else:
+            base = _f(cycle.get("baseEquity"), start) or start
+        new_target = target_equity_v2(base, input_mode, value)
+        if abs(_f(cycle.get("targetEquity")) - new_target) > 1e-12:
+            changed = True
+        cycle["takeProfitInputMode"] = input_mode
+        cycle["takeProfitValue"] = value
+        cycle["targetEquity"] = new_target
+        cycle.setdefault("baseMode", "CYCLE_START")
+        cycle.setdefault("baseEquity", start)
         cycle.setdefault("cycleStatus", RUNNING)
         cycle["updatedAtMs"] = timestamp_ms
-        return cycle, False
+        return cycle, changed
     # Legacy active accounts cannot reconstruct a pre-deployment baseline from
-    # exchange truth.  Seed it exactly once from current exchange equity without
-    # touching positions, DCA counts or per-leg cycle ids.
-    cycle = _new_cycle(uid, equity=current_equity, portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=timestamp_ms)
+    # exchange truth. Seed it exactly once without touching positions or DCA state.
+    cycle = _new_cycle(
+        uid, equity=current_equity, portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=timestamp_ms,
+        portfolio_tp_input_mode=input_mode, portfolio_tp_value=value,
+        portfolio_tp_base_mode=requested_base_mode, portfolio_tp_custom_base_equity=custom,
+        config_version=config_version,
+    )
     cycle["baselineSource"] = "CYCLE_START" if not raw_state.get("multiBbPositions") else "MIGRATION_CURRENT_EXCHANGE_EQUITY"
     return cycle, True
+
+
+def reset_cycle_to_equity(*, uid: str, current_equity: float, portfolio_tp_percent: float,
+                          timestamp_ms: int, portfolio_tp_input_mode: str = "PERCENT",
+                          portfolio_tp_value: float | None = None, config_version: int = 0) -> dict[str, Any]:
+    """Manual reset: new portfolio cycle baseline only; never submits/cancels an order."""
+    cycle = _new_cycle(
+        uid, equity=_f(current_equity), portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=timestamp_ms,
+        portfolio_tp_input_mode=portfolio_tp_input_mode, portfolio_tp_value=portfolio_tp_value,
+        portfolio_tp_base_mode="CYCLE_START", portfolio_tp_custom_base_equity=0.0,
+        config_version=config_version,
+    )
+    cycle["baselineSource"] = "MANUAL_RESET_CURRENT_EQUITY"
+    return cycle
 
 
 def portfolio_cycle_snapshot(cycle: dict[str, Any], *, mode: str, current_equity: float,
                              portfolio_tp_percent: float) -> dict[str, Any]:
     start = _f(cycle.get("cycleStartEquity"))
-    target = target_equity(start, portfolio_tp_percent)
+    input_mode = _normalize_input_mode(cycle.get("takeProfitInputMode"))
+    value = _f(cycle.get("takeProfitValue"), portfolio_tp_percent)
+    base_mode = _normalize_base_mode(cycle.get("baseMode"))
+    base = _f(cycle.get("baseEquity"), start) or start
+    target = target_equity_v2(base, input_mode, value)
     current = _f(current_equity)
     distance_usd = max(0.0, target - current) if target > 0 else 0.0
     distance_pct = distance_usd / current * 100 if current > 0 else 0.0
@@ -113,7 +204,12 @@ def portfolio_cycle_snapshot(cycle: dict[str, Any], *, mode: str, current_equity
         "cycleId": str(cycle.get("cycleId") or ""),
         "cycleStartEquity": start,
         "takeProfitMode": mode,
-        "portfolioTpPercent": portfolio_tp_percent,
+        "portfolioTpPercent": value if input_mode == "PERCENT" else portfolio_tp_percent,
+        "takeProfitInputMode": input_mode,
+        "takeProfitValue": value,
+        "baseMode": base_mode,
+        "baseEquity": base,
+        "customBaseEquity": cycle.get("customBaseEquity"),
         "targetEquity": target,
         "currentEquity": current,
         "distanceToTargetUsd": distance_usd,
@@ -195,7 +291,10 @@ def assert_order_allowed(ref: Any, intent: Any, *, client: Any | None = None) ->
     if action == "OPEN" and mode == "PORTFOLIO" and client is not None:
         current = exchange_equity(client.account_information())
         start = _f(cycle.get("cycleStartEquity"))
-        target = target_equity(start, _f(settings.get("portfolioTpPercent")))
+        base = _f(cycle.get("baseEquity"), start) or start
+        input_mode = _normalize_input_mode(cycle.get("takeProfitInputMode", settings.get("portfolioTpInputMode")))
+        value = _f(cycle.get("takeProfitValue"), _f(settings.get("portfolioTpValue"), _f(settings.get("portfolioTpPercent"))))
+        target = _f(cycle.get("targetEquity")) or target_equity_v2(base, input_mode, value)
         if start > 0 and target > 0 and current >= target:
             raise PortfolioCycleOrderBlocked("Portfolio target is bereikt; nieuwe exposure geblokkeerd")
 
@@ -216,18 +315,24 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                          account: dict[str, Any], positions: list[dict[str, Any]],
                          open_orders: list[dict[str, Any]], timestamp_ms: int,
                          take_profit_mode: str, portfolio_tp_percent: float,
+                         portfolio_tp_input_mode: str = "PERCENT", portfolio_tp_value: float | None = None,
+                         portfolio_tp_base_mode: str = "CYCLE_START", portfolio_tp_custom_base_equity: float = 0.0,
+                         config_version: int = 0,
                          dry_run: bool = False, order_budget: int | None = None,
                          before_order: Any = None) -> PortfolioGateResult:
     mode = str(take_profit_mode or "PER_TRADE").upper()
     equity = exchange_equity(account)
-    cycle, created = ensure_cycle(raw_state, uid=uid, current_equity=equity,
-                                  portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=timestamp_ms)
-    cycle["targetEquity"] = target_equity(_f(cycle.get("cycleStartEquity")), portfolio_tp_percent)
+    cycle, cycle_changed = ensure_cycle(
+        raw_state, uid=uid, current_equity=equity, portfolio_tp_percent=portfolio_tp_percent,
+        timestamp_ms=timestamp_ms, portfolio_tp_input_mode=portfolio_tp_input_mode,
+        portfolio_tp_value=portfolio_tp_value, portfolio_tp_base_mode=portfolio_tp_base_mode,
+        portfolio_tp_custom_base_equity=portfolio_tp_custom_base_equity, config_version=config_version,
+    )
     cycle["updatedAtMs"] = timestamp_ms
     snapshot = portfolio_cycle_snapshot(cycle, mode=mode, current_equity=equity,
                                         portfolio_tp_percent=portfolio_tp_percent)
-    if created and not dry_run:
-        _write_cycle(ref, cycle, reason="Cycle baseline vastgelegd op echte Aster-equity")
+    if cycle_changed and not dry_run:
+        _write_cycle(ref, cycle, reason="Portfolio TP-cycle/basis server-side vastgelegd op echte Aster-equity")
 
     status = str(cycle.get("cycleStatus") or RUNNING).upper()
     target = _f(cycle.get("targetEquity"))
@@ -243,7 +348,12 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                 mode = latest_mode
             else:
                 portfolio_tp_percent = _f(latest_settings.get("portfolioTpPercent"), portfolio_tp_percent)
-                target = target_equity(_f(cycle.get("cycleStartEquity")), portfolio_tp_percent)
+                latest_input_mode = _normalize_input_mode(latest_settings.get("portfolioTpInputMode", portfolio_tp_input_mode))
+                latest_value = _f(latest_settings.get("portfolioTpValue"), portfolio_tp_percent if latest_input_mode == "PERCENT" else _f(portfolio_tp_value))
+                base = _f(cycle.get("baseEquity"), _f(cycle.get("cycleStartEquity")))
+                target = target_equity_v2(base, latest_input_mode, latest_value)
+                cycle["takeProfitInputMode"] = latest_input_mode
+                cycle["takeProfitValue"] = latest_value
                 cycle["targetEquity"] = target
     triggered = mode == "PORTFOLIO" and target > 0 and equity >= target
     if status == RUNNING and triggered:
@@ -355,7 +465,12 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                                    final_account, [], [], sent)
 
     restart_ms = max(timestamp_ms + 1, int(time.time() * 1000))
-    next_cycle = _new_cycle(uid, equity=end_equity, portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=restart_ms)
+    next_cycle = _new_cycle(
+        uid, equity=end_equity, portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=restart_ms,
+        portfolio_tp_input_mode=str(cycle.get("takeProfitInputMode") or portfolio_tp_input_mode),
+        portfolio_tp_value=_f(cycle.get("takeProfitValue"), _f(portfolio_tp_value, portfolio_tp_percent)),
+        portfolio_tp_base_mode="CYCLE_START", config_version=config_version,
+    )
     next_cycle["restartStartedAt"] = now
     next_cycle["restartStartedAtMs"] = restart_ms
     _write_cycle(ref, next_cycle, phase=RESTARTING,
