@@ -99,7 +99,7 @@ from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step, leverage_tier_preview
-from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
+from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
