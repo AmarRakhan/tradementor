@@ -36,15 +36,15 @@ jobs:
         run: |
           set -euo pipefail
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
-          python - "$RUNNER_TEMP/service.json" >> "$GITHUB_ENV" <<'PY'
-          import json,sys
-          service=json.load(open(sys.argv[1],encoding="utf-8"))
-          traffic=[row for row in service["status"].get("traffic",[]) if int(row.get("percent",0))==100]
-          assert len(traffic)==1 and traffic[0].get("revisionName")
-          print("LIVE_REVISION="+traffic[0]["revisionName"])
-          print("SERVICE_URL="+service["status"]["url"])
-          print("RUNTIME_SERVICE_ACCOUNT="+service["spec"]["template"]["spec"]["serviceAccountName"])
-          PY
+          LIVE_REVISION="$(python -c 'import json,sys; s=json.load(open(sys.argv[1],encoding="utf-8")); rows=[r for r in s["status"].get("traffic",[]) if int(r.get("percent",0))==100]; assert len(rows)==1 and rows[0].get("revisionName"); print(rows[0]["revisionName"])' "$RUNNER_TEMP/service.json")"
+          SERVICE_URL="$(python -c 'import json,sys; s=json.load(open(sys.argv[1],encoding="utf-8")); print(s["status"]["url"])' "$RUNNER_TEMP/service.json")"
+          RUNTIME_SERVICE_ACCOUNT="$(python -c 'import json,sys; s=json.load(open(sys.argv[1],encoding="utf-8")); print(s["spec"]["template"]["spec"]["serviceAccountName"])' "$RUNNER_TEMP/service.json")"
+          test -n "$LIVE_REVISION"
+          test -n "$SERVICE_URL"
+          test -n "$RUNTIME_SERVICE_ACCOUNT"
+          echo "LIVE_REVISION=$LIVE_REVISION" >> "$GITHUB_ENV"
+          echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+          echo "RUNTIME_SERVICE_ACCOUNT=$RUNTIME_SERVICE_ACCOUNT" >> "$GITHUB_ENV"
           curl --fail --silent --show-error -H 'Cache-Control: no-cache, no-store' "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
           python - "$RUNNER_TEMP/health.json" <<'PY'
           import json,os,sys
