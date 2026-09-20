@@ -71,3 +71,44 @@ jobs:
           for e in errors[-100:]:
               print('TRADE_DIAG_V2 error='+json.dumps(e,ensure_ascii=False))
           PY
+
+
+      - name: Extract targeted 5xx routes and exception roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status>=500' \
+            --project "$GCP_PROJECT_ID" --freshness=30m --limit=250 --format=json > "$RUNNER_TEMP/http5xx.json"
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api"' \
+            --project "$GCP_PROJECT_ID" --freshness=30m --limit=10000 --format=json > "$RUNNER_TEMP/all30m.json"
+          python - "$RUNNER_TEMP/http5xx.json" "$RUNNER_TEMP/all30m.json" <<'PY'
+          import collections,json,re,sys,urllib.parse
+          http=json.load(open(sys.argv[1],encoding='utf-8'))
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          paths=collections.Counter()
+          for r in http:
+              h=r.get('httpRequest') or {}
+              u=str(h.get('requestUrl') or '')
+              p=urllib.parse.urlsplit(u).path if u else ''
+              paths[(p,int(h.get('status') or 0))]+=1
+          print('TRADE_ROOT http5xx_count='+str(len(http)))
+          for (p,st),n in paths.most_common():
+              print('TRADE_ROOT 5xx='+json.dumps({'path':p,'status':st,'count':n},sort_keys=True))
+          matcher=re.compile(r'(File\s+"(?:/workspace|/app|/srv)|/cloud_api/|main\.py|aster_gateway\.py|profit_sweep|TypeError:|ValueError:|AttributeError:|RuntimeError:|KeyError:|AssertionError:|CancelledError|ClientDisconnect|EndOfStream|WouldBlock|BrokenPipeError|AsterApiError|AsterSubmissionUncertain|ExceptionGroup:|BaseExceptionGroup:)',re.I)
+          seen=set(); roots=[]
+          for r in rows:
+              msg=str(r.get('textPayload') or (r.get('jsonPayload') or {}).get('message') or '')
+              if not msg or not matcher.search(msg):
+                  continue
+              clean=re.sub(r'0x[a-fA-F0-9]{40}','0x[REDACTED]',msg)
+              clean=re.sub(r'Bearer\s+\S+','Bearer [REDACTED]',clean,flags=re.I)
+              clean=re.sub(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}','[EMAIL]',clean)
+              clean=clean.strip()[:900]
+              key=clean
+              if key in seen: continue
+              seen.add(key)
+              roots.append((str(r.get('timestamp','')),str(r.get('severity') or ''),clean))
+          print('TRADE_ROOT unique_root_lines='+str(len(roots)))
+          for row in roots[:200]:
+              print('TRADE_ROOT line='+json.dumps(row,ensure_ascii=False))
+          PY
