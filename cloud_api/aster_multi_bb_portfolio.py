@@ -465,16 +465,20 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                                    final_account, [], [], sent)
 
     restart_ms = max(timestamp_ms + 1, int(time.time() * 1000))
+    latest_after_close = ref.get().to_dict() or {}
+    latest_settings_after_close = latest_after_close.get("settings") if isinstance(latest_after_close.get("settings"), dict) else {}
+    next_input_mode = _normalize_input_mode(latest_settings_after_close.get("portfolioTpInputMode", cycle.get("takeProfitInputMode") or portfolio_tp_input_mode))
+    next_value = _f(latest_settings_after_close.get("portfolioTpValue"), _f(cycle.get("takeProfitValue"), _f(portfolio_tp_value, portfolio_tp_percent)))
+    next_percent = _f(latest_settings_after_close.get("portfolioTpPercent"), portfolio_tp_percent)
+    next_config_version = _i(latest_settings_after_close.get("version"), config_version)
     next_cycle = _new_cycle(
-        uid, equity=end_equity, portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=restart_ms,
-        portfolio_tp_input_mode=str(cycle.get("takeProfitInputMode") or portfolio_tp_input_mode),
-        portfolio_tp_value=_f(cycle.get("takeProfitValue"), _f(portfolio_tp_value, portfolio_tp_percent)),
-        portfolio_tp_base_mode="CYCLE_START", config_version=config_version,
+        uid, equity=end_equity, portfolio_tp_percent=next_percent, timestamp_ms=restart_ms,
+        portfolio_tp_input_mode=next_input_mode,
+        portfolio_tp_value=next_value,
+        portfolio_tp_base_mode="CYCLE_START", config_version=next_config_version,
     )
     next_cycle["restartStartedAt"] = now
     next_cycle["restartStartedAtMs"] = restart_ms
-    latest_after_close = ref.get().to_dict() or {}
-    latest_settings_after_close = latest_after_close.get("settings") if isinstance(latest_after_close.get("settings"), dict) else {}
     normalized_settings = {**latest_settings_after_close, "portfolioTpBaseMode": "CYCLE_START"}
     _write_cycle(ref, next_cycle, phase=RESTARTING,
                  reason=f"Portfolio TP flat bevestigd; nieuwe cycle start vanaf echte equity {end_equity:.8f}",
