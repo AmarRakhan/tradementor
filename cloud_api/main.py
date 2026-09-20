@@ -1145,10 +1145,14 @@ def _claim_aster_symbol(uid:str,symbol:str,owner:str,reason:str)->bool:
         current=claim_ref.get(transaction=txn).to_dict() or {}
         current_owner=str(current.get("owner","")).upper()
         if current_owner and current_owner!=owner and str(current.get("status","ACTIVE")).upper()=="ACTIVE":
+            until=current.get("until")
+            if isinstance(until,datetime):
+                until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
             other_active=(symbol in sniper_active_symbols(sn)) if current_owner=="SNIPER" else (symbol in strategy2_active_symbols(s2))
-            if other_active:return False
+            if other_active or (isinstance(until,datetime) and until>now):return False
         txn.set(claim_ref,{"uid":uid,"symbol":symbol,"owner":owner,"status":"ACTIVE","reason":reason,
-            "claimedAt":current.get("claimedAt",now) if current_owner==owner else now,"updatedAt":now},merge=True)
+            "claimedAt":current.get("claimedAt",now) if current_owner==owner else now,
+            "until":now+timedelta(minutes=10),"updatedAt":now},merge=True)
         return True
     return bool(claim(transaction))
 
@@ -1161,7 +1165,7 @@ def _release_aster_symbol_claim(uid:str,symbol:str,owner:str)->None:
     def release(txn):
         row=ref.get(transaction=txn).to_dict() or {}
         if str(row.get("owner","")).upper()!=owner:return
-        txn.set(ref,{"status":"RELEASED","releasedAt":now,"updatedAt":now},merge=True)
+        txn.set(ref,{"status":"RELEASED","until":now,"releasedAt":now,"updatedAt":now},merge=True)
     release(transaction)
 
 
