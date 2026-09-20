@@ -21,7 +21,7 @@
 .confirm-actions{display:flex;gap:8px;flex-wrap:wrap}
 .sniper-alert{padding:12px 14px;border:1px solid rgba(229,178,68,.28);border-radius:12px;background:rgba(144,100,22,.12);color:#e1c87e;font-size:13px}
 .sniper-alert.critical{border-color:rgba(238,89,89,.4);background:rgba(170,44,44,.13);color:#f29b9b;font-weight:800}
-.sniper-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}
+.sniper-metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}
 .sniper-metric{min-width:0;padding:14px;border:1px solid rgba(255,255,255,.07);border-radius:15px;background:#09120e}
 .sniper-metric span{display:block;font-size:9px;font-weight:850;letter-spacing:.11em;color:#6d8176}.sniper-metric strong{display:block;margin-top:6px;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sniper-metric small{display:block;margin-top:4px;color:#607267}
 .sniper-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;padding:5px;border:1px solid rgba(255,255,255,.07);border-radius:15px;background:#07100c}
