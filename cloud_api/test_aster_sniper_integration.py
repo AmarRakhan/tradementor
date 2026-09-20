@@ -207,3 +207,13 @@ def test_live_start_requires_bounded_activation_canary_before_scanner():
     block=source[start:stop]
     assert "_run_sniper_activation_canary(uid,ref,fresh,settings)" in block
     assert block.index("_run_sniper_activation_canary") < block.index('ref.set({"settings":settings.public_dict(),"enabled":True')
+
+
+def test_every_live_open_has_reciprocal_strategy_owner_guard():
+    source=Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    assert "def _block_strategy2_order_during_conflict" in source
+    assert "def _block_sniper_order_during_conflict" in source
+    assert "BLOCKED_BY_SNIPER_OWNER" in source
+    assert "BLOCKED_BY_ASTER_OWNER" in source
+    assert "before_order_submit=_block_strategy2_order_during_conflict(uid)" in source
+    assert "before_order_submit=_block_sniper_order_during_conflict(uid)" in source
