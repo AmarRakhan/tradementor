@@ -1,0 +1,222 @@
+name: Diagnose direct build 379 LONG refill 2026-09-20
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-fixed-size-long-refill-direct-20260920.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install read-only diagnostic dependencies
+        run: pip install -r cloud_api/requirements.txt
+      - name: Run read-only production diagnosis
+        env:
+          PYTHONPATH: cloud_api
+          GOOGLE_CLOUD_PROJECT: tradementor-production
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone, timedelta
+          from google.cloud import firestore, secretmanager
+          from aster_signing import AsterSecret, local_eip712_signer
+          from aster_gateway import AsterV3Client
+
+          PROJECT='tradementor-production'
+          now=datetime.now(timezone.utc)
+          db=firestore.Client(project=PROJECT)
+
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              try:
+                  fingerprint=(
+                      int(s.get('universeTopN',-1))==50 and
+                      int(s.get('maximumPositions',-1))==20 and
+                      int(s.get('longSlots',-1))==10 and
+                      int(s.get('shortSlots',-1))==10 and
+                      int(s.get('minimumLeverage',-1))==20 and
+                      bool(s.get('bollingerEntryFilter15mEnabled',False))
+                  )
+              except Exception:
+                  fingerprint=False
+              if fingerprint and bool(raw.get('enabled') or raw.get('monitor')):
+                  matches.append((snap,raw,s))
+
+          if len(matches)!=1:
+              print('FIXED_SIZE_REFILL_DIAG '+json.dumps({'readOnly':True,'ordersSent':0,'matchCount':len(matches),'status':'REFUSED_NOT_UNIQUE'},sort_keys=True))
+              raise SystemExit(0)
+
+          snap,raw,settings=matches[0]
+          uid=snap.id
+          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+
+          sm=secretmanager.SecretManagerServiceClient()
+          name=f'projects/{PROJECT}/secrets/tradementor-aster-{uid}/versions/latest'
+          payload=json.loads(sm.access_secret_version(request={'name':name}).payload.data.decode('utf-8'))
+          secret=AsterSecret.create(str(payload['signerAddress']),str(payload['privateKey']))
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+
+          positions=client.position_risk()
+          active=[]
+          for row in positions:
+              try: qty=abs(float(row.get('positionAmt') or 0))
+              except Exception: qty=0
+              if qty<=0: continue
+              symbol=str(row.get('symbol','')).upper()
+              side=str(row.get('positionSide','')).upper()
+              try:
+                  mark=float(row.get('markPrice') or row.get('entryPrice') or 0)
+                  lev=int(float(row.get('leverage') or 0))
+              except Exception:
+                  mark=0; lev=0
+              notional=qty*mark
+              active.append({
+                  'symbol':symbol,'side':side,'leverage':lev,
+                  'notionalUsd':round(notional,6),
+                  'derivedMarginUsd':round(notional/lev,6) if lev>0 else None,
+              })
+
+          active_long=sum(1 for x in active if x['side']=='LONG')
+          active_short=sum(1 for x in active if x['side']=='SHORT')
+
+          def iso(v):
+              if isinstance(v,datetime):
+                  return (v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)).isoformat()
+              return str(v or '')
+
+          history=[]
+          for h in snap.reference.collection('configHistory').stream():
+              row=h.to_dict() or {}
+              ts=row.get('timestamp')
+              if not isinstance(ts,datetime) or ts < now-timedelta(hours=12):
+                  continue
+              old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}
+              new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+              history.append({
+                  'timestamp':iso(ts),'version':row.get('version'),
+                  'oldMaximumLeverage':old.get('maximumLeverage'),
+                  'newMaximumLeverage':new.get('maximumLeverage'),
+                  'oldEntrySizingMode':old.get('entrySizingMode'),
+                  'newEntrySizingMode':new.get('entrySizingMode'),
+                  'newEntryMarginLongUsd':new.get('entryMarginLongUsd'),
+                  'newEntryMarginShortUsd':new.get('entryMarginShortUsd'),
+                  'newEntryNotionalUsd':new.get('entryNotionalUsd'),
+                  'newBollinger15m':new.get('bollingerEntryFilter15mEnabled'),
+              })
+          history.sort(key=lambda x:x['timestamp'],reverse=True)
+
+          audit=[]
+          for a in snap.reference.collection('audit').stream():
+              row=a.to_dict() or {}
+              ts=row.get('timestamp')
+              if not isinstance(ts,datetime) or ts < now-timedelta(minutes=120):
+                  continue
+              audit.append({
+                  'timestamp':iso(ts),'event':str(row.get('event','')),
+                  'symbol':str(row.get('symbol','')).upper(),
+                  'side':str(row.get('side','')).upper(),
+                  'leverage':row.get('leverage'),
+                  'reason':str(row.get('reason',''))[:180],
+              })
+          audit.sort(key=lambda x:x['timestamp'],reverse=True)
+          entries=[x for x in audit if x['event']=='MULTI_BB_ENTRY']
+
+          windows={}
+          for minutes in (15,30,60):
+              cutoff=now-timedelta(minutes=minutes)
+              count=0
+              for x in entries:
+                  try:
+                      if datetime.fromisoformat(x['timestamp'])>=cutoff:
+                          count+=1
+                  except Exception:
+                      pass
+              windows[str(minutes)]={'entries':count}
+
+          fills=[]
+          start_ms=int((now-timedelta(minutes=120)).timestamp()*1000)
+          for symbol in ('ARBUSDT','ENAUSDT'):
+              try:
+                  rows=client.user_trades(symbol,start_time=start_ms,limit=500)
+              except Exception:
+                  rows=[]
+              for row in rows:
+                  try:
+                      qty=abs(float(row.get('qty') or row.get('quantity') or 0))
+                      price=float(row.get('price') or row.get('avgPrice') or 0)
+                  except Exception:
+                      qty=0; price=0
+                  fills.append({
+                      'symbol':symbol,'positionSide':str(row.get('positionSide','')).upper(),
+                      'side':str(row.get('side','')).upper(),
+                      'timeMs':row.get('time',row.get('timestamp')),
+                      'qty':qty,'price':price,'notionalUsd':round(qty*price,6),
+                  })
+          fills.sort(key=lambda x:int(x.get('timeMs') or 0),reverse=True)
+
+          actions=[]
+          for row in report.get('actions',[]) if isinstance(report.get('actions'),list) else []:
+              if not isinstance(row,dict):
+                  continue
+              actions.append({k:row.get(k) for k in (
+                  'kind','symbol','side','reason','stage','leverage',
+                  'notionalUsd','marginUsd','requiredMargin'
+              ) if k in row})
+
+          safe={
+              'readOnly':True,'ordersSent':0,'matchCount':1,
+              'settings':{k:settings.get(k) for k in (
+                  'universeTopN','maximumPositions','longSlots','shortSlots',
+                  'minimumLeverage','maximumLeverage','entrySizingMode',
+                  'entryMarginUsd','entryMarginLongUsd','entryMarginShortUsd',
+                  'entryNotionalUsd','bollingerEntryFilter15mEnabled',
+                  'bollingerEntryFilterTimeframe'
+              )},
+              'exchange':{
+                  'activeLong':active_long,'activeShort':active_short,
+                  'activeTotal':len(active),'positions':active
+              },
+              'report':{k:report.get(k) for k in (
+                  'activeLong','activeShort','remainingLong','remainingShort',
+                  'entryStatus','entryReason','scannedCandidates',
+                  'executableCandidates','ordersSent','updatedAtMs'
+              )},
+              'latestActions':actions[-50:],
+              'entryWindowsMinutes':windows,
+              'recentEntryAudit':entries[:40],
+              'recentAudit':audit[:80],
+              'recentConfigHistory':history[:30],
+              'arbEnaFills120m':fills[:60],
+              'managedStateKeys':sorted(state.keys())[:100],
+          }
+          print('FIXED_SIZE_REFILL_DIAG '+json.dumps(safe,sort_keys=True,separators=(',',':')))
+          PY
