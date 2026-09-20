@@ -70,6 +70,36 @@ _CORE_HOOK_NAMES = (
 _ORIGINAL_CORE_HOOKS = {name: getattr(_core, name) for name in _CORE_HOOK_NAMES if hasattr(_core, name)}
 
 
+def multi_bb_status_mapping(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a read-only Multi BB status mapping for current fixed-size settings.
+
+    Some persisted fixed-size settings predate the explicit engine marker.  The
+    status endpoint must recognize their structural shape instead of sending
+    them through the legacy Strategy2Config validator.  This function only
+    returns a copy; it never mutates or persists the supplied settings.
+    """
+    if not isinstance(raw, dict):
+        return None
+    source = dict(raw)
+    engine = str(source.get("engine", source.get("strategyKind", ""))).strip()
+    structural_shape = all(
+        key in source for key in ("maximumPositions", "longSlots", "shortSlots", "entrySizingMode")
+    ) and any(
+        key in source
+        for key in (
+            "entryMarginUsd", "entryMarginLongUsd", "entryMarginShortUsd",
+            "entryNotionalUsd", "entryNotionalLongUsd", "entryNotionalShortUsd",
+        )
+    )
+    if engine != ENGINE and not structural_shape:
+        return None
+    # Normalize only the temporary status-read copy. Stored trading settings
+    # remain byte-for-byte untouched.
+    source["engine"] = ENGINE
+    source["strategyKind"] = ENGINE
+    return source
+
+
 def _sync_core_hooks() -> None:
     namespace = globals()
     for name, original in _ORIGINAL_CORE_HOOKS.items():
