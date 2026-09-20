@@ -192,3 +192,18 @@ def test_uncertain_entry_keeps_symbol_reserved_until_reconciliation(monkeypatch)
         pass
     assert persisted and persisted[0]["action"]=="OPEN"
     assert released==[]
+
+
+def test_live_start_requires_bounded_activation_canary_before_scanner():
+    source=Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    assert "def _run_sniper_activation_canary" in source
+    assert 'notionalUsd":float(plan.notional_per_leg)' in source
+    assert "plan_aster_pair(row,_aster_brackets(client.leverage_brackets(symbol),symbol),prices[symbol],6.0)" in source
+    assert 'new_position_leverage=plan.leverage' in source
+    assert '"canaryValidated":True' in source
+    assert '_sniper_confirmed_close_evidence(client,trade' in source
+    start=source.index('@app.post("/v1/me/aster/sniper/start")')
+    stop=source.index('@app.post("/v1/me/aster/sniper/stop")',start)
+    block=source[start:stop]
+    assert "_run_sniper_activation_canary(uid,ref,fresh,settings)" in block
+    assert block.index("_run_sniper_activation_canary") < block.index('"enabled":True')
