@@ -92,7 +92,7 @@ jobs:
               response=client._http.get(f"{ASTER_SPOT_REST}{path}?{encoded}&signature={sig}",headers=headers)
               return sanitized(response)
 
-          report={"matchingHistorical25PctAccounts":0,"current25PctEnabled":False,"probes":{},"fatal":False}
+          report={"matchingHistorical25PctAccounts":0,"currentSettingPresent":False,"currentEnabled":False,"currentPercent":None,"current25PctEnabled":False,"probes":{},"fatal":False}
           try:
               ams=ZoneInfo("Europe/Amsterdam")
               start=datetime(2026,9,20,0,0,tzinfo=ams).astimezone(timezone.utc)
@@ -122,9 +122,13 @@ jobs:
                   raise RuntimeError("ACCOUNT_MATCH_GUARD")
               control=matches[0].reference.collection("executionControls").document("aster").get().to_dict() or {}
               sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+              report["currentSettingPresent"]=isinstance(control.get("profitSweep"),dict)
+              report["currentEnabled"]=sweep.get("enabled") is True
               try:
-                  report["current25PctEnabled"]=sweep.get("enabled") is True and abs(float(sweep.get("sweepPercent",0))-25.0)<=1e-9
+                  report["currentPercent"]=float(sweep.get("sweepPercent")) if sweep.get("sweepPercent") is not None else None
+                  report["current25PctEnabled"]=report["currentEnabled"] and abs(float(report["currentPercent"])-25.0)<=1e-9
               except Exception:
+                  report["currentPercent"]=None
                   report["current25PctEnabled"]=False
 
               user=matches[0]
