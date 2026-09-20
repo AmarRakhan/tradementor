@@ -38,6 +38,8 @@ def test_reset_requires_confirmation_reason_and_audit():
 def test_close_all_lock_and_all_pauses_are_uid_scoped():
     assert '"closeLock":{"active":True' in ROUTE
     assert 'aster_strategy2_reference(uid)' in ROUTE
+    assert 'aster_sniper_reference(uid)' in ROUTE
+    assert '"phase":"EMERGENCY_STOP"' in ROUTE
     assert 'aster_automation_reference(uid)' not in ROUTE
     assert 'aster_strategy3_reference(uid)' not in ROUTE
 
@@ -56,7 +58,8 @@ def test_exchange_truth_is_refetched_after_lock_before_any_close():
     recalc = ROUTE.index('_portfolio_growth_estimate(user,persist_quote=False)')
     submit = ROUTE.index('execute_aster_leg(')
     assert recalc < submit
-    assert 'safe_float(preview.get("difference"))<=0' in ROUTE
+    assert 'if not preview.get("reliable"):' in ROUTE
+    assert 'safe_float(preview.get("difference"))<=0' not in ROUTE
 
 
 def test_partial_failure_never_writes_a_new_baseline():
