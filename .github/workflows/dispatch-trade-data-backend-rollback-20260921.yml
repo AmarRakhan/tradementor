@@ -1,0 +1,24 @@
+name: Dispatch trade-data backend rollback 2026-09-21
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - '.github/workflows/dispatch-trade-data-backend-rollback-20260921.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    if: github.event.head_commit.message == 'Dispatch trade-data backend rollback'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Roll production backend to previous proven source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-cloud-production.yml             --repo "$GITHUB_REPOSITORY"             --ref amar-crypto-bot-2026-cloud             -f confirmation=DEPLOY_PRODUCTION_BACKEND             -f source_commit=c156d4e9db9b8a76bfa1b93ba5e6ec665d5f2711
