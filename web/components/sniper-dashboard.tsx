@@ -244,7 +244,7 @@ export function SniperDashboard({ cloudReady }: { cloudReady: boolean }) {
           <div>
             <span>LIVE BEVESTIGING</span>
             <strong>Sniper gaat echte Aster-orders plaatsen.</strong>
-            <p>De strategie gebruikt dezelfde portfolio- en available margin als Aster, maar claimt uitsluitend vrije symbols. Aster en Sniper mogen nooit dezelfde munt beheren. ${!data?.canaryValidated ? "Bij de eerste activering voert Sniper eerst automatisch één zeer kleine echte Aster open/fill/close-canary uit. Alleen na volledige exchange-bevestiging wordt de scanner vrijgegeven." : "De live activation canary is al exchange-bevestigd."}</p>
+            <p>De strategie gebruikt dezelfde portfolio- en available margin als Aster, maar claimt uitsluitend vrije symbols. Aster en Sniper mogen nooit dezelfde munt beheren. {data?.canaryValidated ? "De live activation canary is al exchange-bevestigd." : "Bij de eerste activering voert Sniper eerst automatisch één zeer kleine echte Aster open/fill/close-canary uit. Alleen na volledige exchange-bevestiging wordt de scanner vrijgegeven."}</p>
           </div>
           <div className="confirm-actions">
             <button type="button" onClick={() => setStartConfirm(false)}>Annuleren</button>
