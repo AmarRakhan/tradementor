@@ -15,7 +15,7 @@ env:
   GCP_REGION: europe-west4
   ARTIFACT_REPOSITORY: tradementor
   CLOUD_RUN_SERVICE: tradementor-api
-  EXPECTED_SOURCE_COMMIT: 457c70d6af8fa392e74f549fc55ba8eeac4fb142
+  EXPECTED_SOURCE_COMMIT: c156d4e9db9b8a76bfa1b93ba5e6ec665d5f2711
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
 
@@ -141,18 +141,34 @@ jobs:
               "fatal":False,
           }
           exit_code=0
+          stage="account-match"
           try:
+              ams=ZoneInfo("Europe/Amsterdam")
+              start_local=datetime.combine(TARGET_DATE,dt_time.min,tzinfo=ams)
+              end_local=start_local+timedelta(days=1)
+              start_utc=start_local.astimezone(timezone.utc)
+              end_utc=end_local.astimezone(timezone.utc)
+
+              # Recover the unique account that actually booked 25% sweeps on
+              # the target day. Current settings may legitimately be changed
+              # later and must not erase a historical, already-recorded sweep.
               matching=[]
               for user in main.db.collection("users").stream():
-                  control=user.reference.collection("executionControls").document("aster").get().to_dict() or {}
-                  sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
-                  if sweep.get("enabled") is not True:
-                      continue
-                  try:
-                      pct=float(sweep.get("sweepPercent",0))
-                  except Exception:
-                      continue
-                  if abs(pct-25.0)<=1e-9:
+                  historical_25=False
+                  for snap in user.reference.collection("asterProfitSweeps").stream():
+                      row=snap.to_dict() or {}
+                      created=utc(row.get("createdAt"))
+                      if created is None or created<start_utc or created>=end_utc:
+                          continue
+                      try:
+                          pct=float(row.get("sweepPercent",0))
+                      except Exception:
+                          continue
+                      if abs(pct-25.0)<=1e-9 and str(row.get("status","")).upper() in RECOVERABLE:
+                          historical_25=True
+                          break
+                  if historical_25:
+                      control=user.reference.collection("executionControls").document("aster").get().to_dict() or {}
                       matching.append((user,control))
               report["matchedAccounts"]=len(matching)
               if len(matching)!=1:
@@ -160,6 +176,7 @@ jobs:
 
               user,control=matching[0]
               uid=str(user.id)
+              stage="load-secret"
               secret=main.load_aster_secret({"uid":uid})
               client=AsterV3Client(
                   signer_address=secret.signer_address,
@@ -167,15 +184,14 @@ jobs:
                   live_authorized=True,
               )
 
-              ams=ZoneInfo("Europe/Amsterdam")
-              start_local=datetime.combine(TARGET_DATE,dt_time.min,tzinfo=ams)
-              end_local=start_local+timedelta(days=1)
               start_ms=int(start_local.astimezone(timezone.utc).timestamp()*1000)
               end_ms=int(end_local.astimezone(timezone.utc).timestamp()*1000)-1
               history_start=max(0,start_ms-180_000)
               history_end=min(end_ms,int(datetime.now(timezone.utc).timestamp()*1000)+180_000)
 
+              stage="spot-account-read"
               spot_before=spot_usdt_total(client.signed_spot_request("GET","/api/v3/account",{}))
+              stage="spot-history-read"
               spot_rows=client.signed_spot_request("GET",SPOT_TRANSACTION_HISTORY_PATH,{
                   "asset":TRANSFER_ASSET,
                   "type":SPOT_TRANSFER_HISTORY_TYPE,
@@ -186,6 +202,7 @@ jobs:
               if not isinstance(spot_rows,list) or len(spot_rows)>=1000:
                   raise RuntimeError("SPOT_HISTORY_GUARD")
               spot_rows=[row for row in spot_rows if isinstance(row,dict)]
+              stage="futures-history-read"
               futures_rows=client.income_history(
                   income_type="TRANSFER",
                   start_time=history_start,
@@ -207,12 +224,17 @@ jobs:
                   created=utc(row.get("createdAt"))
                   if created is None or created<start_local.astimezone(timezone.utc) or created>=end_local.astimezone(timezone.utc):
                       continue
-                  if str(row.get("status","")).upper() in RECOVERABLE:
+                  try:
+                      sweep_pct=float(row.get("sweepPercent",0))
+                  except Exception:
+                      continue
+                  if abs(sweep_pct-25.0)<=1e-9 and str(row.get("status","")).upper() in RECOVERABLE:
                       targets.append((created,snap.id,snap.reference,row))
                       refs[snap.id]=snap.reference
               targets.sort(key=lambda item:item[0])
               report["targetSweeps"]=len(targets)
 
+              stage="recover-sweeps"
               for _created,sweep_id,ledger_ref,ledger in targets:
                   result=recover_failed_sweep(
                       uid=uid,
@@ -246,6 +268,7 @@ jobs:
                       break
                   time.sleep(0.35)
 
+              stage="post-verify"
               spot_after=spot_usdt_total(client.signed_spot_request("GET","/api/v3/account",{}))
               report["spotBalanceIncreased"]=spot_after>spot_before+1e-9
               fresh_spot_rows=client.signed_spot_request("GET",SPOT_TRANSACTION_HISTORY_PATH,{
@@ -275,6 +298,7 @@ jobs:
           except Exception as exc:
               report["fatal"]=True
               report["fatalClass"]=type(exc).__name__
+              report["fatalStage"]=stage
               exit_code=3
           finally:
               post_report(report)
