@@ -153,8 +153,10 @@ def test_mode_portfolio_and_off_disable_individual_tp_without_losing_values():
 
 def test_target_is_always_original_cycle_baseline():
     raw = {"multiBbCycle": {"cycleId": "abc", "cycleStartEquity": 1000, "cycleStatus": "RUNNING"}}
-    cycle, created = ensure_cycle(raw, uid="u", current_equity=1120, portfolio_tp_percent=20, timestamp_ms=2)
-    assert created is False
+    cycle, migrated = ensure_cycle(raw, uid="u", current_equity=1120, portfolio_tp_percent=20, timestamp_ms=2)
+    # Portfolio TP 2.0 adds durable base/input metadata exactly once while
+    # preserving the original cycle start; that metadata migration needs a write.
+    assert migrated is True
     assert cycle["cycleStartEquity"] == 1000
     assert cycle["targetEquity"] == pytest.approx(1200)
     assert target_equity(1000, 20) == pytest.approx(1200)

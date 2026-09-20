@@ -25,14 +25,17 @@ test("LONG and SHORT settings are persisted independently on the main page", () 
   ]) assert.ok(maker.includes(key), `missing ${key}`);
 });
 
-test("portfolio UI presents existing immutable cycle values without reset controls", () => {
+test("portfolio UI presents durable cycle values with an explicit order-free cycle reset", () => {
   assert.match(maker, /cycleStartEquity/);
   assert.match(maker, /currentEquity/);
   assert.match(maker, /targetEquity/);
   assert.match(maker, /Cycle start/);
   assert.match(maker, /Target/);
   assert.match(maker, /Equity/);
-  assert.doesNotMatch(maker, /resetCycle|resetDca|closeAll/);
+  assert.match(maker, /resetPortfolioCycle/);
+  assert.match(maker, /portfolio-cycle\/reset/);
+  assert.match(maker, /ordersSent/);
+  assert.doesNotMatch(maker, /resetDca|closeAll/);
 });
 
 test("portfolio mode warns before saving when current equity already meets target", () => {
@@ -53,5 +56,5 @@ test("no legacy popup or duplicate DCA TP settings source remains", () => {
 
 test("saving settings states that active trading state is preserved", () => {
   assert.match(maker, /Actieve posities, fills, avg entry, DCA-counts en Portfolio TP-cycle zijn intact gebleven/);
-  assert.doesNotMatch(maker, /resetCycle|resetDca|closeAll/);
+  assert.doesNotMatch(maker, /resetDca|closeAll/);
 });

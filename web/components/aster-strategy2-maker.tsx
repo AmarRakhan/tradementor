@@ -8,8 +8,11 @@ import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, s
 type ManualSide = "LONG" | "SHORT";
 type ManualSymbol = { symbol: string; side: ManualSide };
 type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
+type PortfolioTpInputMode = "PERCENT" | "USD";
+type PortfolioTpBaseMode = "CYCLE_START" | "CURRENT_VALUE" | "CUSTOM";
 type StopLossMode = "USD" | "PERCENT";
 const BOT_SETTINGS_REFERENCE = "file_00000000d2ec81f4b0c6fe6b9befe97c";
+const PORTFOLIO_TP_REFERENCE = "file_00000000f6e08210b726c694adc15111";
 type TierPreview = {
   symbol: string;
   entryPlan?: { leverage: number } | null;
@@ -26,6 +29,7 @@ type Values = {
   entryMarginLong: string; entryMarginShort: string; entryNotionalLong: string; entryNotionalShort: string;
   longDcaDistance: string; shortDcaDistance: string; longDcaAmount: string; shortDcaAmount: string;
   maxDcaLong: string; maxDcaShort: string; longTp: string; shortTp: string; tpMode: TpMode; portfolioTp: string;
+  portfolioTpInputMode: PortfolioTpInputMode; portfolioTpBaseMode: PortfolioTpBaseMode; portfolioTpCustomBase: string;
   mode: "paper" | "live"; manualEnabled: boolean; manualSymbols: ManualSymbol[]; shortRequiresLongEnabled: boolean;
   smartRescueEnabled: boolean; smartRescueRange: string; smartRescueCount: string; smartRescueGrowth: string; smartRescueRecovery: string;
 };
@@ -36,7 +40,8 @@ const initial: Values = {
   fixedPositionSize: false, entryMarginLong: "5", entryMarginShort: "5", entryNotionalLong: "250", entryNotionalShort: "250",
   longDcaDistance: "0.30", shortDcaDistance: "0.30",
   longDcaAmount: "2", shortDcaAmount: "2", maxDcaLong: "3", maxDcaShort: "3", longTp: "1.5", shortTp: "1.5",
-  tpMode: "PER_TRADE", portfolioTp: "20", mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
+  tpMode: "PER_TRADE", portfolioTp: "20", portfolioTpInputMode: "PERCENT", portfolioTpBaseMode: "CYCLE_START", portfolioTpCustomBase: "",
+  mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
   smartRescueEnabled: false, smartRescueRange: "10", smartRescueCount: "10", smartRescueGrowth: "1.35", smartRescueRecovery: "0.30",
 };
 const MAX_DCA = 500;
@@ -53,6 +58,13 @@ const tpModeFrom = (x: Record<string, unknown>): TpMode => {
   const raw = String(x.takeProfitMode || (x.takeProfitEnabled === false ? "OFF" : "PER_TRADE")).toUpperCase();
   return raw === "PORTFOLIO" ? "PORTFOLIO" : raw === "OFF" ? "OFF" : "PER_TRADE";
 };
+const portfolioTpInputModeFrom = (value: unknown): PortfolioTpInputMode => String(value || "PERCENT").toUpperCase().replace("%", "PERCENT").replace("$", "USD") === "USD" ? "USD" : "PERCENT";
+const portfolioTpBaseModeFrom = (value: unknown): PortfolioTpBaseMode => {
+  const raw = String(value || "CYCLE_START").toUpperCase().replaceAll("-", "_").replaceAll(" ", "_");
+  return raw === "CURRENT_VALUE" ? "CURRENT_VALUE" : raw === "CUSTOM" ? "CUSTOM" : "CYCLE_START";
+};
+const portfolioTarget = (base: number, mode: PortfolioTpInputMode, value: number) => base > 0 && value > 0 ? mode === "USD" ? base + value : base * (1 + value / 100) : 0;
+const money2 = (value: number) => Number.isFinite(value) && value > 0 ? value.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
 
 type SmartPreviewRow = {
   index: number; drop: number; trigger: number; orderMargin: number; cumulativeMargin: number; notional: number; averageEntry: number; pnl: number; breakEven: number; recovery: number; capped: boolean;
@@ -129,7 +141,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       longDcaAmount: txt(x.longDcaMarginUsd ?? x.longDcaAmount ?? legacyDcaAmount, legacyDcaAmount), shortDcaAmount: txt(x.shortDcaMarginUsd ?? x.shortDcaAmount ?? legacyDcaAmount, legacyDcaAmount),
       maxDcaLong: txt(x.maxDcaLong ?? x.longMaxDca ?? legacyMax, legacyMax), maxDcaShort: txt(x.maxDcaShort ?? x.shortMaxDca ?? legacyMax, legacyMax),
       longTp: pct(x.longTakeProfitValue ?? x.takeProfitLong ?? legacyTp, legacyTp), shortTp: pct(x.shortTakeProfitValue ?? x.takeProfitShort ?? legacyTp, legacyTp),
-      tpMode: tpModeFrom(x), portfolioTp: txt(x.portfolioTpPercent, 20), mode: x.mode === "paper" ? "paper" : "live",
+      tpMode: tpModeFrom(x),
+      portfolioTp: txt(x.portfolioTpValue ?? x.portfolioTpPercent, 20),
+      portfolioTpInputMode: portfolioTpInputModeFrom(x.portfolioTpInputMode),
+      portfolioTpBaseMode: portfolioTpBaseModeFrom(x.portfolioTpBaseMode),
+      portfolioTpCustomBase: Number(x.portfolioTpCustomBaseEquity ?? 0) > 0 ? txt(x.portfolioTpCustomBaseEquity, 0) : "",
+      mode: x.mode === "paper" ? "paper" : "live",
       manualEnabled: x.manualSymbolSelectionEnabled === true, manualSymbols: parseManualSymbols(x.manualSymbols),
       shortRequiresLongEnabled: x.shortRequiresLongEnabled === true,
       smartRescueEnabled: x.smartRescueEnabled === true, smartRescueRange: txt(x.smartRescueRangePercent, 10),
@@ -161,7 +178,13 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       dcaMarginUsd: longAmount, longDcaMarginUsd: longAmount, shortDcaMarginUsd: shortAmount, longDcaAmount: longAmount, shortDcaAmount: shortAmount,
       maxDca: maxLong, maxDcaLong: maxLong, maxDcaShort: maxShort, longMaxDca: maxLong, shortMaxDca: maxShort, unlimitedDca: false,
       takeProfit: longTp, longTakeProfitValue: longTp, shortTakeProfitValue: shortTp, takeProfitLong: longTp, takeProfitShort: shortTp,
-      takeProfitMode: v.tpMode, portfolioTpPercent: n(v.portfolioTp), takeProfitEnabled: v.tpMode === "PER_TRADE",
+      takeProfitMode: v.tpMode,
+      portfolioTpPercent: v.portfolioTpInputMode === "PERCENT" ? n(v.portfolioTp) : finiteOr(persisted.portfolioTpPercent, 20),
+      portfolioTpInputMode: v.portfolioTpInputMode,
+      portfolioTpValue: n(v.portfolioTp),
+      portfolioTpBaseMode: v.portfolioTpBaseMode,
+      portfolioTpCustomBaseEquity: n(v.portfolioTpCustomBase),
+      takeProfitEnabled: v.tpMode === "PER_TRADE",
       stopLossEnabled: v.stopLossEnabled, stopLossMode: v.stopLossMode, stopLossLong: n(v.stopLossLong), stopLossShort: n(v.stopLossShort),
       entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualEnabled ? v.manualSymbols : [],
@@ -261,7 +284,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (settings.longDcaMarginUsd <= 0 || settings.shortDcaMarginUsd <= 0) throw new Error("DCA-bedrag LONG/SHORT moet positief zijn.");
       if (settings.maxDcaLong > MAX_DCA || settings.maxDcaShort > MAX_DCA) throw new Error(`Max DCA mag maximaal ${MAX_DCA} zijn.`);
       if (v.tpMode === "PER_TRADE" && (settings.longTakeProfitValue <= 0 || settings.shortTakeProfitValue <= 0)) throw new Error("Take Profit LONG/SHORT moet positief zijn.");
-      if (v.tpMode === "PORTFOLIO" && settings.portfolioTpPercent <= 0) throw new Error("Portfolio TP moet positief zijn.");
+      if (v.tpMode === "PORTFOLIO") {
+        if (settings.portfolioTpValue <= 0) throw new Error("Portfolio TP moet groter dan 0 zijn.");
+        if (settings.portfolioTpInputMode === "PERCENT" && settings.portfolioTpValue > 10000) throw new Error("Portfolio TP percentage mag maximaal 10.000% zijn.");
+        if (settings.portfolioTpBaseMode === "CUSTOM" && settings.portfolioTpCustomBaseEquity <= 0) throw new Error("Vul bij Aangepast een geldige basiswaarde groter dan 0 in.");
+      }
       if (v.smartRescueEnabled) {
         if (!(settings.smartRescueRangePercent > 0 && settings.smartRescueRangePercent < 100)) throw new Error("Smart Rescue bereik moet groter dan 0% en kleiner dan 100% zijn.");
         if (!(settings.smartRescueDcaCount >= 1 && settings.smartRescueDcaCount <= MAX_DCA)) throw new Error(`Smart Rescue aantal DCA's moet tussen 1 en ${MAX_DCA} liggen.`);
@@ -281,6 +308,17 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         if (savedMax !== settings.maximumLeverage) throw new Error("Maximum leverage is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
         const savedSizing = String(savedSettings.entrySizingMode || "margin").toLowerCase();
         if (savedSizing !== settings.entrySizingMode) throw new Error("Positieomvang-modus is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
+        if (v.tpMode === "PORTFOLIO") {
+          const savedTpInput = portfolioTpInputModeFrom(savedSettings.portfolioTpInputMode);
+          const savedTpBase = portfolioTpBaseModeFrom(savedSettings.portfolioTpBaseMode);
+          const savedTpValue = finiteOr(savedSettings.portfolioTpValue, 0);
+          if (savedTpInput !== settings.portfolioTpInputMode || Math.abs(savedTpValue - settings.portfolioTpValue) > 1e-9 || savedTpBase !== settings.portfolioTpBaseMode) {
+            throw new Error("Portfolio Take Profit is niet volledig server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
+          }
+          if (settings.portfolioTpBaseMode === "CUSTOM" && Math.abs(finiteOr(savedSettings.portfolioTpCustomBaseEquity, 0) - settings.portfolioTpCustomBaseEquity) > 1e-9) {
+            throw new Error("Aangepaste Portfolio TP-basis is niet server-side bevestigd.");
+          }
+        }
         setV((current) => ({ ...current, maxLeverage: savedMax === null ? "" : String(savedMax), fixedPositionSize: savedSizing === "notional" }));
         setDirty(false); setMessage("Instellingen server-side opgeslagen en bevestigd. Actieve posities, fills, avg entry, DCA-counts en Portfolio TP-cycle zijn intact gebleven.");
       }
@@ -291,6 +329,21 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     } catch (error) { setMessage(error instanceof Error ? error.message : "Actie mislukt"); }
     finally { setBusy(false); }
   }
+  async function resetPortfolioCycle() {
+    if (busy) return;
+    setBusy(true); setMessage("");
+    try {
+      const result = await authenticatedRequest("/api/exchanges/aster/strategy2/portfolio-cycle/reset", { method: "POST", body: JSON.stringify({ confirm: true }) }) as Record<string, unknown>;
+      if (result.reset !== true || Number(result.ordersSent ?? -1) !== 0) throw new Error("Reset cycle is niet veilig server-side bevestigd.");
+      const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null;
+      if (confirmed) { setConfirmedState(confirmed); onConfirmed(confirmed); }
+      setV((current) => ({ ...current, portfolioTpBaseMode: "CYCLE_START" }));
+      setMessage(`Cycle start gereset naar huidige equity ${Number(result.cycleStartEquity || 0).toLocaleString("nl-NL", { style: "currency", currency: "USD" })}. 0 orders verzonden.`);
+      await Promise.resolve(onChanged());
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Reset cycle mislukt"); }
+    finally { setBusy(false); }
+  }
+
   async function checkReadiness(startWhenReady = false) {
     setBusy(true); setMessage("");
     try { const result = await authenticatedRequest("/api/exchanges/aster/strategy2/readiness") as Record<string, unknown>; setReadiness(result); if (startWhenReady && Boolean(result.liveReady)) { setBusy(false); await action("start"); return; } setMessage(Boolean(result.liveReady) ? "Live-gereedheid server-side bevestigd." : "Readiness gecontroleerd; live-start is nog niet vrijgegeven."); }
@@ -308,11 +361,22 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const displayRemainingShort = v.smartRescueEnabled ? 0 : remainingShort;
   const reportCurrent = Number(rawReport.configVersion ?? 0) === Number(state.configVersion ?? persisted.version ?? 0);
   const candidateCount = reportCurrent ? Number(rawReport.candidateCount ?? 0) : 0; const scannedCandidateCount = reportCurrent ? Number(rawReport.scannedCandidateCount ?? 0) : 0;
-  const cycleStart = Number(cycle.cycleStartEquity || 0); const currentEquity = Number(cycle.currentEquity || 0); const target = cycleStart > 0 ? cycleStart * (1 + n(v.portfolioTp) / 100) : Number(cycle.targetEquity || 0);
-  const portfolioWarning = v.tpMode === "PORTFOLIO" && target > 0 && currentEquity >= target;
   const snapshotAccount = (snapshot?.account && typeof snapshot.account === "object" ? snapshot.account : {}) as Record<string, unknown>;
   const portfolioEquity = finiteOr(snapshot?.equity ?? snapshot?.portfolioValue ?? snapshotAccount.totalMarginBalance ?? snapshotAccount.marginBalance ?? snapshotAccount.totalWalletBalance, 0);
   const availableBalance = finiteOr(snapshot?.availableBalance ?? snapshotAccount.availableBalance ?? snapshotAccount.availableMargin, 0);
+  const cycleStart = finiteOr(cycle.cycleStartEquity, 0);
+  const currentEquity = finiteOr(cycle.currentEquity, portfolioEquity);
+  const serverBase = finiteOr(cycle.baseEquity, 0);
+  const previewBase = v.portfolioTpBaseMode === "CURRENT_VALUE" ? currentEquity : v.portfolioTpBaseMode === "CUSTOM" ? n(v.portfolioTpCustomBase) : cycleStart;
+  const effectiveBase = dirty ? previewBase : serverBase || previewBase;
+  const serverInputMode = portfolioTpInputModeFrom(cycle.takeProfitInputMode);
+  const serverTpValue = finiteOr(cycle.takeProfitValue, 0);
+  const effectiveInputMode = dirty ? v.portfolioTpInputMode : cycle.takeProfitInputMode ? serverInputMode : v.portfolioTpInputMode;
+  const effectiveTpValue = dirty ? n(v.portfolioTp) : serverTpValue > 0 ? serverTpValue : n(v.portfolioTp);
+  const target = dirty ? portfolioTarget(previewBase, v.portfolioTpInputMode, n(v.portfolioTp)) : finiteOr(cycle.targetEquity, portfolioTarget(effectiveBase, effectiveInputMode, effectiveTpValue));
+  const portfolioWarning = v.tpMode === "PORTFOLIO" && target > 0 && currentEquity >= target;
+  const effectiveBaseMode = dirty ? v.portfolioTpBaseMode : cycle.baseMode ? portfolioTpBaseModeFrom(cycle.baseMode) : v.portfolioTpBaseMode;
+  const tpBadge = effectiveInputMode === "USD" ? `+${money2(effectiveTpValue)}` : `+${effectiveTpValue.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
   const firstSelectedLeverage = v.manualEnabled && v.manualSymbols.length ? tierPreviews[v.manualSymbols[0]?.symbol]?.entryPlan?.leverage || tierPreviews[v.manualSymbols[0]?.symbol]?.currentLeverage : 0;
   const smartPreviewLeverage = Math.max(1, Number(firstSelectedLeverage || n(v.minLeverage) || 1));
   const smartStartMargin = v.fixedPositionSize ? Math.max(.00000001, n(v.entryNotionalLong) / smartPreviewLeverage) : Math.max(.00000001, n(v.entryMarginLong));
@@ -382,8 +446,39 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       <div className={`strategy-power-control short-pair-control ${v.shortRequiresLongEnabled ? "enabled" : "ready"}`}><span className="pair-icon">↗</span><span><b>SHORT alleen met LONG</b><small>LONG mag altijd zelfstandig openen · ontbrekende LONG krijgt scanner-prioriteit.</small></span><button type="button" role="switch" aria-checked={v.shortRequiresLongEnabled} onClick={() => change({ ...v, shortRequiresLongEnabled: !v.shortRequiresLongEnabled })}><i />{v.shortRequiresLongEnabled ? "Aan" : "Uit"}</button></div>
 
       <section className="side-settings-block">
-        <div className="side-settings-head"><div><small>GEÏNTEGREERD</small><b>LONG / SHORT · DCA & Take Profit</b></div><div className="tp-tabs">{(["PER_TRADE", "PORTFOLIO", "OFF"] as TpMode[]).map((mode) => <button key={mode} type="button" className={v.tpMode === mode ? "active" : ""} onClick={() => change({ ...v, tpMode: mode })}>{mode === "PER_TRADE" ? "Per trade" : mode === "PORTFOLIO" ? "Portfolio" : "Uit"}</button>)}</div></div>
-        {v.tpMode === "PORTFOLIO" && <div className="portfolio-tp-row"><Field label="Portfolio TP (%)" value={v.portfolioTp} set={(value) => change({ ...v, portfolioTp: value })} /><span><small>Cycle start</small><b>{cycleStart ? `$${cycleStart.toFixed(2)}` : "—"}</b></span><span><small>Target</small><b>{target ? `$${target.toFixed(2)}` : "—"}</b></span><span><small>Equity</small><b>{currentEquity ? `$${currentEquity.toFixed(2)}` : "—"}</b></span>{portfolioWarning && <em>Target ligt al onder/huidige equity; na opslaan kan de bestaande Portfolio TP-cycle direct uitvoeren.</em>}</div>}
+        <div className="side-settings-head"><div><small>GEÏNTEGREERD</small><b>LONG / SHORT · DCA & Take Profit</b></div></div>
+        <div className="tp-tabs" aria-label="Take Profit modus">{(["PER_TRADE", "PORTFOLIO", "OFF"] as TpMode[]).map((mode) => <button key={mode} type="button" aria-pressed={v.tpMode === mode} className={v.tpMode === mode ? "active" : ""} onClick={() => change({ ...v, tpMode: mode })}>{mode === "PER_TRADE" ? "Per trade" : mode === "PORTFOLIO" ? "Portfolio" : "Uit"}</button>)}</div>
+        {v.tpMode === "PORTFOLIO" && <section className="portfolio-tp-panel" data-visual-reference={PORTFOLIO_TP_REFERENCE} aria-label="Portfolio Take Profit">
+          <header className="portfolio-tp-head"><span className="portfolio-tp-icon">◎</span><span><b>Portfolio Take Profit</b><small>Sluit alle posities wanneer de portfoliowaarde je doel bereikt.</small></span><i title="Portfolio TP sluit alle posities veilig en start daarna een nieuwe cycle vanaf de werkelijke sluitwaarde.">i</i></header>
+          <div className="portfolio-tp-controls">
+            <div className="portfolio-choice"><small>TP invoermodus</small><div className="segmented two"><button type="button" aria-pressed={v.portfolioTpInputMode === "PERCENT"} className={v.portfolioTpInputMode === "PERCENT" ? "active" : ""} onClick={() => change({ ...v, portfolioTpInputMode: "PERCENT" })}>%</button><button type="button" aria-pressed={v.portfolioTpInputMode === "USD"} className={v.portfolioTpInputMode === "USD" ? "active" : ""} onClick={() => change({ ...v, portfolioTpInputMode: "USD" })}>$</button></div></div>
+            <div className="portfolio-choice base-choice"><small>Bereken vanaf</small><div className="segmented three">{([
+              ["CYCLE_START", "Cycle start"], ["CURRENT_VALUE", "Huidige waarde"], ["CUSTOM", "Aangepast"],
+            ] as [PortfolioTpBaseMode, string][]).map(([mode, label]) => <button key={mode} type="button" aria-pressed={v.portfolioTpBaseMode === mode} className={v.portfolioTpBaseMode === mode ? "active" : ""} onClick={() => change({ ...v, portfolioTpBaseMode: mode })}>{label}</button>)}</div></div>
+          </div>
+          {v.portfolioTpBaseMode === "CYCLE_START" && <div className="cycle-reset-row"><button type="button" disabled={busy} onClick={() => void resetPortfolioCycle()}>↻ <b>Reset cycle</b></button><span>Reset zet cycle start gelijk aan huidige equity.</span></div>}
+          <div className="portfolio-input-grid">
+            <Field label={v.portfolioTpInputMode === "USD" ? "Portfolio TP ($)" : "Portfolio TP (%)"} value={v.portfolioTp} set={(value) => change({ ...v, portfolioTp: value })} suffix={v.portfolioTpInputMode === "USD" ? "$" : "%"} />
+            {v.portfolioTpBaseMode === "CUSTOM"
+              ? <Field label="Basiswaarde" value={v.portfolioTpCustomBase} set={(value) => change({ ...v, portfolioTpCustomBase: value })} suffix="$" />
+              : <label className="basis-readonly"><span>Basiswaarde <i title="Deze waarde wordt door de cycle vastgezet.">i</i></span><strong>${money2(dirty ? previewBase : effectiveBase)}</strong><em>✎</em></label>}
+          </div>
+          <div className="portfolio-target-flow">
+            <div className="equity-card"><span className="value-icon">◉</span><span><small>Huidige portfoliowaarde</small><em>Equity</em><b>${money2(currentEquity)}</b></span></div>
+            <strong className="target-arrow">→</strong>
+            <div className="target-card"><span className="value-icon">◉</span><span><small>Doelwaarde</small><b>${money2(target)}</b></span><em className="target-badge">{tpBadge}</em></div>
+          </div>
+          <p className="portfolio-target-note">Doel wordt berekend vanaf de gekozen basiswaarde.</p>
+          <p className="portfolio-cycle-note">ⓘ Na sluiting wordt de werkelijke sluitwaarde de nieuwe cycle start voor de volgende cyclus.</p>
+          <div className="portfolio-status-strip">
+            <span><i>⌁</i><small>Cycle start</small><b>${money2(cycleStart)}</b></span>
+            <span><i>◉</i><small>Equity</small><b>${money2(currentEquity)}</b></span>
+            <span><i>▱</i><small>Basis</small><b>${money2(effectiveBase)}</b></span>
+            <span><i>◎</i><small>Target</small><b>${money2(target)}</b></span>
+          </div>
+          <small className="portfolio-base-state">Actieve basis: {effectiveBaseMode === "CURRENT_VALUE" ? "Huidige waarde (vastgezet)" : effectiveBaseMode === "CUSTOM" ? "Aangepast" : "Cycle start"}</small>
+          {portfolioWarning && <em className="portfolio-warning">Target ligt al onder/huidige equity; na opslaan kan de bestaande Portfolio TP-cycle direct uitvoeren.</em>}
+        </section>}
         {v.tpMode === "OFF" && <p className="tp-off-note">Automatische TP uit. DCA en overige strategie blijven actief.</p>}
         <div className="side-columns">
           <section className="side-card long"><b>LONG</b><Field label={v.fixedPositionSize ? "Instap LONG · positie" : "Instap LONG · margin"} value={v.fixedPositionSize ? v.entryNotionalLong : v.entryMarginLong} set={(value) => v.fixedPositionSize ? change({ ...v, entryNotionalLong: value }) : change({ ...v, entryMarginLong: value })} suffix="USDT" /><Field label="DCA-afstand LONG" value={v.longDcaDistance} set={(value) => change({ ...v, longDcaDistance: value })} suffix="%" disabled={v.smartRescueEnabled} /><Field label="DCA-bedrag LONG" value={v.longDcaAmount} set={(value) => change({ ...v, longDcaAmount: value })} suffix="USDT" disabled={v.smartRescueEnabled} /><Field label="Max DCA LONG" value={v.maxDcaLong} set={(value) => change({ ...v, maxDcaLong: value })} disabled={v.smartRescueEnabled} /><Field label="Take Profit LONG" value={v.longTp} set={(value) => change({ ...v, longTp: value })} suffix="%" disabled={v.tpMode !== "PER_TRADE"} /></section>
@@ -437,14 +532,22 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       #strategy-2-maker.botsettings-ref .strategy-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:0 0 6px} #strategy-2-maker.botsettings-ref .strategy-facts span{padding:4px 3px;border:1px solid rgba(214,181,90,.22);border-radius:8px;background:rgba(255,255,255,.02);font-size:8.5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       #strategy-2-maker.botsettings-ref .compact-scan{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:3px 6px;padding:5px 7px;margin:0 0 6px;border:1px solid rgba(33,214,154,.18);border-radius:10px;background:rgba(3,17,13,.82);font-size:9px;align-items:center} #strategy-2-maker.botsettings-ref .compact-scan small,#strategy-2-maker.botsettings-ref .compact-scan em{grid-column:1/-1;font-size:8px;opacity:.72}
       #strategy-2-maker.botsettings-ref .strategy-power-control{padding:6px 8px;min-height:43px;margin-bottom:6px;border:1px solid rgba(214,181,90,.25);border-radius:11px;background:rgba(7,25,19,.94)} #strategy-2-maker.botsettings-ref .strategy-power-control b{font-size:11px} #strategy-2-maker.botsettings-ref .strategy-power-control small{font-size:8px} #strategy-2-maker.botsettings-ref .strategy-power-control button{min-height:31px;padding:0 9px;border-radius:9px;font-size:9px}
-      #strategy-2-maker.botsettings-ref .compact-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px} #strategy-2-maker.botsettings-ref .compact-settings-grid>label,#strategy-2-maker.botsettings-ref .position-settings-grid label,#strategy-2-maker.botsettings-ref .side-card label,#strategy-2-maker.botsettings-ref .portfolio-tp-row label{margin:0;gap:2px;font-size:9px}
+      #strategy-2-maker.botsettings-ref .compact-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px} #strategy-2-maker.botsettings-ref .compact-settings-grid>label,#strategy-2-maker.botsettings-ref .position-settings-grid label,#strategy-2-maker.botsettings-ref .side-card label,#strategy-2-maker.botsettings-ref .portfolio-tp-panel label{margin:0;gap:2px;font-size:9px}
       #strategy-2-maker.botsettings-ref .compact-settings-grid input{height:33px;min-width:0;padding:0 8px;border-radius:8px;border:1px solid rgba(214,181,90,.27);background:rgba(0,0,0,.28);font-size:12px} #strategy-2-maker.botsettings-ref .compact-settings-grid input:focus{border-color:rgba(33,214,154,.74);box-shadow:0 0 0 2px rgba(33,214,154,.09)}
       #strategy-2-maker.botsettings-ref .position-settings-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
       #strategy-2-maker.botsettings-ref .side-settings-block{grid-column:1/-1;display:grid;gap:6px;padding:7px;border:1px solid rgba(214,181,90,.32);border-radius:12px;background:linear-gradient(180deg,rgba(5,22,16,.96),rgba(2,10,8,.96))}
-      #strategy-2-maker.botsettings-ref .side-settings-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:7px} #strategy-2-maker.botsettings-ref .side-settings-head>div:first-child{display:grid;gap:1px} #strategy-2-maker.botsettings-ref .side-settings-head small{font-size:7px;letter-spacing:.13em;color:var(--gold)} #strategy-2-maker.botsettings-ref .side-settings-head b{font-size:11px}
-      #strategy-2-maker.botsettings-ref .tp-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:3px} #strategy-2-maker.botsettings-ref .tp-tabs button{min-height:28px;padding:0 6px;border-radius:8px;border:1px solid rgba(214,181,90,.20);background:#08100d;color:#9aa69f;font-size:8px;font-weight:800} #strategy-2-maker.botsettings-ref .tp-tabs button.active{color:#8ff4c6;border-color:rgba(33,214,154,.64);background:rgba(33,214,154,.11)}
+      #strategy-2-maker.botsettings-ref .side-settings-head{display:grid;align-items:end;gap:7px} #strategy-2-maker.botsettings-ref .side-settings-head>div:first-child{display:grid;gap:1px} #strategy-2-maker.botsettings-ref .side-settings-head small{font-size:7px;letter-spacing:.13em;color:var(--gold)} #strategy-2-maker.botsettings-ref .side-settings-head b{font-size:11px}
+      #strategy-2-maker.botsettings-ref .tp-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;width:100%} #strategy-2-maker.botsettings-ref .tp-tabs button{min-height:34px;padding:0 8px;border-radius:10px;border:1px solid rgba(214,181,90,.34);background:linear-gradient(180deg,rgba(14,35,27,.96),rgba(5,18,14,.98));color:#aeb9b3;font-size:9px;font-weight:850;letter-spacing:.01em;transition:.16s ease;box-shadow:inset 0 1px rgba(255,255,255,.02)} #strategy-2-maker.botsettings-ref .tp-tabs button.active{color:#fff5cf;border-color:#e2ba4c;background:linear-gradient(180deg,#a36e18 0%,#76500d 55%,#523706 100%);box-shadow:inset 0 1px rgba(255,244,192,.35),0 0 0 1px rgba(231,190,77,.18),0 5px 16px rgba(151,97,9,.24);text-shadow:0 1px 1px rgba(0,0,0,.5)}
       #strategy-2-maker.botsettings-ref .side-columns{display:grid;grid-template-columns:1fr 1fr;gap:5px} #strategy-2-maker.botsettings-ref .side-card{display:grid;gap:4px;padding:6px;border-radius:10px;background:rgba(255,255,255,.018)} #strategy-2-maker.botsettings-ref .side-card.long{border:1px solid rgba(33,214,154,.33)} #strategy-2-maker.botsettings-ref .side-card.short{border:1px solid rgba(255,120,146,.34)} #strategy-2-maker.botsettings-ref .side-card>b{font-size:10px} #strategy-2-maker.botsettings-ref .side-card.long>b{color:#67edb5} #strategy-2-maker.botsettings-ref .side-card.short>b{color:#ff90a4} #strategy-2-maker.botsettings-ref .side-card.short.inactive{opacity:.58} #strategy-2-maker.botsettings-ref .side-card label span.field-wrap{border-color:inherit}
-      #strategy-2-maker.botsettings-ref .portfolio-tp-row{display:grid;grid-template-columns:1.2fr repeat(3,.8fr);gap:5px;align-items:end;padding:5px;border-radius:9px;background:rgba(62,112,161,.08);border:1px solid rgba(95,151,207,.18)} #strategy-2-maker.botsettings-ref .portfolio-tp-row>span{display:grid;gap:1px;font-size:8px} #strategy-2-maker.botsettings-ref .portfolio-tp-row>span b{font-size:10px} #strategy-2-maker.botsettings-ref .portfolio-tp-row em{grid-column:1/-1;color:#ffc18f;font-size:8px;font-style:normal} #strategy-2-maker.botsettings-ref .tp-off-note{margin:0;padding:5px 6px;border-radius:8px;background:rgba(255,255,255,.03);font-size:8.5px;opacity:.8}
+      #strategy-2-maker.botsettings-ref .portfolio-tp-panel{display:grid;gap:10px;padding:12px;border:1px solid rgba(40,239,164,.72);border-radius:15px;background:radial-gradient(circle at 78% 8%,rgba(18,130,89,.12),transparent 34%),linear-gradient(180deg,rgba(2,29,21,.98),rgba(1,16,12,.99));box-shadow:inset 0 1px rgba(255,255,255,.025),0 12px 30px rgba(0,0,0,.24)}
+      #strategy-2-maker.botsettings-ref .portfolio-tp-head{display:grid;grid-template-columns:38px 1fr 22px;align-items:center;gap:9px} #strategy-2-maker.botsettings-ref .portfolio-tp-icon{display:grid;place-items:center;width:36px;height:36px;border:1px solid rgba(224,183,68,.80);border-radius:11px;color:#f0c64d;font-size:22px;background:rgba(207,160,34,.055)} #strategy-2-maker.botsettings-ref .portfolio-tp-head>span:nth-child(2){display:grid;gap:2px} #strategy-2-maker.botsettings-ref .portfolio-tp-head b{font-size:15px;color:#eefaf4} #strategy-2-maker.botsettings-ref .portfolio-tp-head small{font-size:8px;color:#9aa9a1} #strategy-2-maker.botsettings-ref .portfolio-tp-head>i{display:grid;place-items:center;width:20px;height:20px;border:1px solid rgba(183,201,191,.38);border-radius:50%;font-size:10px;font-style:normal;color:#b9c6bf}
+      #strategy-2-maker.botsettings-ref .portfolio-tp-controls{display:grid;grid-template-columns:.72fr 1.28fr;gap:10px} #strategy-2-maker.botsettings-ref .portfolio-choice{display:grid;gap:4px} #strategy-2-maker.botsettings-ref .portfolio-choice>small{font-size:8px;color:#dce7e1} #strategy-2-maker.botsettings-ref .segmented{display:grid;gap:0;border:1px solid rgba(214,181,90,.45);border-radius:12px;overflow:hidden;background:#06150f} #strategy-2-maker.botsettings-ref .segmented.two{grid-template-columns:repeat(2,1fr)} #strategy-2-maker.botsettings-ref .segmented.three{grid-template-columns:repeat(3,1fr)} #strategy-2-maker.botsettings-ref .segmented button{min-height:39px;border:0;border-right:1px solid rgba(214,181,90,.18);background:transparent;color:#bcc8c1;font-size:9px;font-weight:750;padding:0 5px} #strategy-2-maker.botsettings-ref .segmented button:last-child{border-right:0} #strategy-2-maker.botsettings-ref .segmented button.active{color:#e7fff3;background:linear-gradient(180deg,rgba(21,143,96,.42),rgba(7,79,55,.35));box-shadow:inset 0 0 0 1px #20d89b,0 0 12px rgba(31,218,154,.13)}
+      #strategy-2-maker.botsettings-ref .cycle-reset-row{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:10px;margin-top:-2px;padding-left:calc(28% + 10px)} #strategy-2-maker.botsettings-ref .cycle-reset-row button{min-height:32px;padding:0 12px;border-radius:10px;border:1px solid rgba(32,221,151,.72);background:rgba(8,54,38,.72);color:#d9fbee;font-size:9px} #strategy-2-maker.botsettings-ref .cycle-reset-row span{font-size:7.5px;color:#899a91}
+      #strategy-2-maker.botsettings-ref .portfolio-input-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:end} #strategy-2-maker.botsettings-ref .portfolio-input-grid label{display:grid;gap:4px} #strategy-2-maker.botsettings-ref .portfolio-input-grid label>span:first-child{font-size:9px;color:#e2ece7} #strategy-2-maker.botsettings-ref .portfolio-input-grid .field-wrap,#strategy-2-maker.botsettings-ref .basis-readonly{height:52px;border:1px solid rgba(214,181,90,.42);border-radius:12px;background:rgba(0,0,0,.28)} #strategy-2-maker.botsettings-ref .portfolio-input-grid input{height:50px;font-size:16px;padding:0 12px} #strategy-2-maker.botsettings-ref .basis-readonly{position:relative;display:grid;grid-template-columns:1fr auto;align-items:center;padding:20px 13px 2px;min-width:0} #strategy-2-maker.botsettings-ref .basis-readonly>span{position:absolute;left:0;top:-18px} #strategy-2-maker.botsettings-ref .basis-readonly span i{display:inline-grid;place-items:center;width:14px;height:14px;border:1px solid rgba(180,197,188,.38);border-radius:50%;font-size:7px;font-style:normal;color:#9cad9f} #strategy-2-maker.botsettings-ref .basis-readonly strong{font-size:16px;color:#eef6f2;font-weight:650} #strategy-2-maker.botsettings-ref .basis-readonly>em{font-size:14px;color:#aab6b0;font-style:normal}
+      #strategy-2-maker.botsettings-ref .portfolio-target-flow{display:grid;grid-template-columns:1fr 26px 1fr;gap:7px;align-items:center} #strategy-2-maker.botsettings-ref .equity-card,#strategy-2-maker.botsettings-ref .target-card{min-height:82px;display:grid;grid-template-columns:34px 1fr auto;align-items:center;gap:6px;padding:10px 12px;border:1px solid rgba(35,207,145,.38);border-radius:13px;background:linear-gradient(135deg,rgba(7,44,32,.86),rgba(2,19,14,.95))} #strategy-2-maker.botsettings-ref .equity-card .value-icon,#strategy-2-maker.botsettings-ref .target-card .value-icon{font-size:24px;color:#edc14b} #strategy-2-maker.botsettings-ref .target-card .value-icon{color:#23e5a0} #strategy-2-maker.botsettings-ref .equity-card>span:nth-child(2),#strategy-2-maker.botsettings-ref .target-card>span:nth-child(2){display:grid;gap:0} #strategy-2-maker.botsettings-ref .equity-card small,#strategy-2-maker.botsettings-ref .target-card small{font-size:8px;color:#dce9e2} #strategy-2-maker.botsettings-ref .equity-card em{font-size:7px;color:#7d8e85;font-style:normal} #strategy-2-maker.botsettings-ref .equity-card b,#strategy-2-maker.botsettings-ref .target-card b{font-size:19px;line-height:1.1;color:#f3faf6} #strategy-2-maker.botsettings-ref .target-card b{color:#31e8a5} #strategy-2-maker.botsettings-ref .target-card{border-color:rgba(38,226,158,.52)} #strategy-2-maker.botsettings-ref .target-badge{align-self:center;padding:5px 7px;border-radius:999px;border:1px solid rgba(38,226,158,.35);background:rgba(18,122,82,.30);color:#66f0bd;font-size:8px;font-style:normal;white-space:nowrap} #strategy-2-maker.botsettings-ref .target-arrow{text-align:center;color:#aab9b1;font-size:20px}
+      #strategy-2-maker.botsettings-ref .portfolio-target-note,#strategy-2-maker.botsettings-ref .portfolio-cycle-note{margin:-3px 0 0;text-align:center;font-size:7.5px;line-height:1.35;color:#87968e} #strategy-2-maker.botsettings-ref .portfolio-cycle-note{margin:0;color:#9facA5}
+      #strategy-2-maker.botsettings-ref .portfolio-status-strip{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid rgba(37,211,147,.24);border-radius:12px;background:rgba(1,26,18,.78);overflow:hidden} #strategy-2-maker.botsettings-ref .portfolio-status-strip>span{display:grid;grid-template-columns:17px 1fr;grid-template-rows:auto auto;gap:0 3px;padding:8px 7px;border-right:1px solid rgba(37,211,147,.16);min-width:0} #strategy-2-maker.botsettings-ref .portfolio-status-strip>span:last-child{border-right:0} #strategy-2-maker.botsettings-ref .portfolio-status-strip i{grid-row:1/3;align-self:center;color:#40e9ac;font-style:normal;font-size:13px} #strategy-2-maker.botsettings-ref .portfolio-status-strip small{font-size:6.5px;color:#87958e;white-space:nowrap} #strategy-2-maker.botsettings-ref .portfolio-status-strip b{font-size:9px;color:#eaf5ef;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} #strategy-2-maker.botsettings-ref .portfolio-status-strip>span:last-child b{color:#3fe9ab} #strategy-2-maker.botsettings-ref .portfolio-base-state{margin-top:-4px;text-align:right;font-size:6.5px;color:#71837a} #strategy-2-maker.botsettings-ref .portfolio-warning{padding:6px 7px;border:1px solid rgba(255,174,100,.26);border-radius:8px;background:rgba(126,63,9,.14);color:#ffc18f;font-size:8px;font-style:normal}
+      #strategy-2-maker.botsettings-ref .tp-off-note{margin:0;padding:5px 6px;border-radius:8px;background:rgba(255,255,255,.03);font-size:8.5px;opacity:.8}
       #strategy-2-maker.botsettings-ref .smart-rescue-card{grid-column:1/-1;border:1px solid rgba(92,119,108,.28);border-radius:13px;background:linear-gradient(180deg,rgba(8,17,14,.96),rgba(3,8,7,.98));overflow:hidden;transition:.2s ease} #strategy-2-maker.botsettings-ref .smart-rescue-card.enabled{border-color:rgba(33,214,154,.45);box-shadow:inset 0 1px rgba(255,255,255,.025),0 10px 28px rgba(0,0,0,.22)}
       #strategy-2-maker.botsettings-ref .smart-rescue-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;padding:9px 10px} #strategy-2-maker.botsettings-ref .smart-rescue-toggle>span{display:grid;gap:1px} #strategy-2-maker.botsettings-ref .smart-rescue-toggle small{font-size:7px;letter-spacing:.14em;color:var(--gold)} #strategy-2-maker.botsettings-ref .smart-rescue-toggle b{font-size:12px;color:#eaf7f1} #strategy-2-maker.botsettings-ref .smart-rescue-toggle em{font-size:8px;color:#8d9b94;font-style:normal} #strategy-2-maker.botsettings-ref .smart-rescue-toggle input{width:34px;height:20px;accent-color:var(--green)}
       #strategy-2-maker.botsettings-ref .smart-rescue-body{display:grid;gap:7px;padding:0 9px 9px} #strategy-2-maker.botsettings-ref .smart-rescue-note{margin:0;padding:6px 7px;border-radius:8px;background:rgba(33,214,154,.055);font-size:8px;line-height:1.35;color:#aebbb5} #strategy-2-maker.botsettings-ref .smart-rescue-note b{color:#d9eee4}
@@ -458,8 +561,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       #strategy-2-maker.botsettings-ref .smart-rescue-details{border-top:1px solid rgba(255,255,255,.05);padding-top:4px} #strategy-2-maker.botsettings-ref .smart-rescue-details summary{display:flex;justify-content:space-between;cursor:pointer;list-style:none;padding:5px 2px;color:#b8c8c0;font-size:8px;font-weight:800} #strategy-2-maker.botsettings-ref .smart-rescue-table-wrap{overflow:auto;border:1px solid rgba(255,255,255,.06);border-radius:8px} #strategy-2-maker.botsettings-ref .smart-rescue-table-wrap table{width:max-content;min-width:100%;border-collapse:collapse;font-size:7px} #strategy-2-maker.botsettings-ref .smart-rescue-table-wrap th,#strategy-2-maker.botsettings-ref .smart-rescue-table-wrap td{padding:5px 6px;border-bottom:1px solid rgba(255,255,255,.045);white-space:nowrap;text-align:right} #strategy-2-maker.botsettings-ref .smart-rescue-table-wrap th:first-child,#strategy-2-maker.botsettings-ref .smart-rescue-table-wrap td:first-child{text-align:left;position:sticky;left:0;background:#07100d} #strategy-2-maker.botsettings-ref .smart-rescue-table-wrap th{color:#829088;font-size:6px;letter-spacing:.05em} #strategy-2-maker.botsettings-ref .smart-rescue-disclaimer{display:block;margin-top:5px;font-size:6.5px;line-height:1.35;color:#75817b}
       #strategy-2-maker.botsettings-ref .manual-symbol-toggle{grid-column:1/-1;min-height:41px;margin:0;padding:6px 8px;border-radius:10px;border:1px solid rgba(214,181,90,.22)} #strategy-2-maker.botsettings-ref .manual-symbol-toggle b{font-size:10px} #strategy-2-maker.botsettings-ref .manual-symbol-toggle small{font-size:8px;line-height:1.2}
       #strategy-2-maker.botsettings-ref .manual-symbol-picker{grid-column:1/-1;margin:0} #strategy-2-maker.botsettings-ref .maker-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:7px;padding-bottom:max(3px,env(safe-area-inset-bottom))} #strategy-2-maker.botsettings-ref .maker-nav button{min-height:36px;padding:6px;border-radius:9px;font-size:8.5px;line-height:1.12} #strategy-2-maker.botsettings-ref .maker-nav button:first-child{border-color:rgba(33,214,154,.55);background:linear-gradient(180deg,rgba(33,214,154,.18),rgba(33,214,154,.07))}
-      @media(max-width:430px){#strategy-2-maker.botsettings-ref{padding:9px;border-radius:14px}#strategy-2-maker.botsettings-ref .smart-rescue-fields,#strategy-2-maker.botsettings-ref .smart-rescue-summary{grid-template-columns:1fr 1fr}#strategy-2-maker.botsettings-ref .stress-grid,#strategy-2-maker.botsettings-ref .smart-live-grid{grid-template-columns:1fr 1fr}#strategy-2-maker.botsettings-ref .risk-bars label{grid-template-columns:78px 1fr auto}#strategy-2-maker.botsettings-ref .side-settings-head{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .tp-tabs{width:100%}#strategy-2-maker.botsettings-ref .portfolio-tp-row{grid-template-columns:1fr 1fr}#strategy-2-maker.botsettings-ref .side-columns{gap:4px}#strategy-2-maker.botsettings-ref .side-card{padding:5px}#strategy-2-maker.botsettings-ref .compact-settings-grid input{height:31px;font-size:11px}}
-      @media(max-width:350px){#strategy-2-maker.botsettings-ref .side-columns{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .maker-nav{grid-template-columns:1fr}}
+      @media(max-width:430px){#strategy-2-maker.botsettings-ref{padding:9px;border-radius:14px}#strategy-2-maker.botsettings-ref .smart-rescue-fields,#strategy-2-maker.botsettings-ref .smart-rescue-summary{grid-template-columns:1fr 1fr}#strategy-2-maker.botsettings-ref .stress-grid,#strategy-2-maker.botsettings-ref .smart-live-grid{grid-template-columns:1fr 1fr}#strategy-2-maker.botsettings-ref .risk-bars label{grid-template-columns:78px 1fr auto}#strategy-2-maker.botsettings-ref .side-settings-head{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .tp-tabs{width:100%}#strategy-2-maker.botsettings-ref .portfolio-tp-controls{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .cycle-reset-row{padding-left:0}#strategy-2-maker.botsettings-ref .portfolio-input-grid{gap:10px}#strategy-2-maker.botsettings-ref .portfolio-target-flow{grid-template-columns:1fr 18px 1fr}#strategy-2-maker.botsettings-ref .equity-card,#strategy-2-maker.botsettings-ref .target-card{padding:8px;min-height:76px}#strategy-2-maker.botsettings-ref .equity-card b,#strategy-2-maker.botsettings-ref .target-card b{font-size:16px}#strategy-2-maker.botsettings-ref .portfolio-status-strip small{font-size:6px}#strategy-2-maker.botsettings-ref .portfolio-status-strip b{font-size:8px}#strategy-2-maker.botsettings-ref .side-columns{gap:4px}#strategy-2-maker.botsettings-ref .side-card{padding:5px}#strategy-2-maker.botsettings-ref .compact-settings-grid input{height:31px;font-size:11px}}
+      @media(max-width:350px){#strategy-2-maker.botsettings-ref .side-columns{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .maker-nav{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .portfolio-input-grid{grid-template-columns:1fr;gap:22px}#strategy-2-maker.botsettings-ref .portfolio-target-flow{grid-template-columns:1fr;gap:5px}#strategy-2-maker.botsettings-ref .target-arrow{transform:rotate(90deg);line-height:1}#strategy-2-maker.botsettings-ref .portfolio-status-strip{grid-template-columns:1fr 1fr}#strategy-2-maker.botsettings-ref .portfolio-status-strip>span:nth-child(2){border-right:0}#strategy-2-maker.botsettings-ref .portfolio-status-strip>span:nth-child(-n+2){border-bottom:1px solid rgba(37,211,147,.16)}}
     `}</style>
   </article>;
 }

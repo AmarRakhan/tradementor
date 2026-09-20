@@ -99,6 +99,7 @@ from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step, leverage_tier_preview
+from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -350,6 +351,10 @@ class AsterStrategyStopRequest(BaseModel):
 
 
 class AsterStrategy2FocusResetRequest(BaseModel):
+    confirm: bool
+
+
+class AsterStrategy2PortfolioCycleResetRequest(BaseModel):
     confirm: bool
 
 
@@ -4448,6 +4453,42 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
         # no clearing of recovery/asymmetric state.
         update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"settingsChangedAt":now,
             "lastReason":"Multi DCA-instellingen live bijgewerkt; actieve positie-, DCA- en cycle-state behouden"}
+    # Portfolio TP base selection is server-authoritative. CURRENT_VALUE is
+    # captured exactly once at Save time, even while the bot is off, so the
+    # target can never chase subsequent live-equity updates. Existing cycle
+    # start / DCA / position state remains untouched.
+    if not switching and saved.take_profit_mode=="PORTFOLIO":
+        existing_cycle=existing.get("multiBbCycle") if isinstance(existing.get("multiBbCycle"),dict) else {}
+        cycle_status=str(existing_cycle.get("cycleStatus") or "RUNNING").upper()
+        valid_existing_cycle=bool(str(existing_cycle.get("cycleId") or "").strip()) and safe_float(existing_cycle.get("cycleStartEquity"))>0
+        current_for_snapshot=safe_float((existing.get("multiBbReport") or {}).get("currentEquity")) if isinstance(existing.get("multiBbReport"),dict) else 0.0
+        if cycle_status not in ACTIVE_EXIT_STATES:
+            if saved.portfolio_tp_base_mode=="CURRENT_VALUE":
+                secret=load_aster_secret(user)
+                read_client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+                try:
+                    current_for_snapshot=multi_bb_exchange_equity(read_client.account_information())
+                except (AsterApiError,ValueError) as exc:
+                    raise HTTPException(409,f"Huidige portfolio-equity kon niet veilig worden vastgezet: {exc}") from exc
+                if current_for_snapshot<=0:
+                    raise HTTPException(409,"Huidige portfolio-equity is niet betrouwbaar beschikbaar")
+            if valid_existing_cycle or saved.portfolio_tp_base_mode=="CURRENT_VALUE":
+                cycle_candidate,_=ensure_multi_bb_portfolio_cycle(
+                    existing,uid=uid,current_equity=current_for_snapshot,
+                    portfolio_tp_percent=saved.portfolio_tp_percent,timestamp_ms=int(now.timestamp()*1000),
+                    portfolio_tp_input_mode=saved.portfolio_tp_input_mode,
+                    portfolio_tp_value=saved.portfolio_tp_value,
+                    portfolio_tp_base_mode=saved.portfolio_tp_base_mode,
+                    portfolio_tp_custom_base_equity=saved.portfolio_tp_custom_base_equity,
+                    config_version=version,
+                )
+                update["multiBbCycle"]=cycle_candidate
+                prior_report=existing.get("multiBbReport") if isinstance(existing.get("multiBbReport"),dict) else {}
+                update["multiBbReport"]={**prior_report,"portfolioCycle":portfolio_cycle_snapshot(
+                    cycle_candidate,mode=saved.take_profit_mode,current_equity=current_for_snapshot,
+                    portfolio_tp_percent=saved.portfolio_tp_percent,
+                )}
+
     ref.set(update,merge=True)
     ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved.public_dict(),"source":"user-multi-bb-v1","timestamp":now})
 
@@ -4471,6 +4512,118 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
             immediate={"status":"lease-busy","reason":"Bestaande Strategy-2-worker verwerkt de zojuist opgeslagen Portfolio-modus"}
     return {"saved":True,"activeStatePreserved":not switching,"immediateEvaluation":immediate,**aster_strategy2_public(uid)}
 
+
+@app.post("/v1/me/aster/strategy2/portfolio-cycle/reset")
+def reset_aster_strategy2_portfolio_cycle(request: AsterStrategy2PortfolioCycleResetRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    """Reset only the Portfolio TP baseline to current exchange equity.
+
+    This endpoint is deliberately order-free: it never closes, opens or cancels
+    positions/orders and it preserves all DCA/position runtime state.
+    """
+    if not request.confirm:
+        raise HTTPException(422, "Bevestig Portfolio TP cycle reset expliciet")
+    uid = str(user["uid"])
+    ref = aster_strategy2_reference(uid)
+    raw = ref.get().to_dict() or {}
+    old_settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+    try:
+        settings = MultiBbConfig.from_mapping(old_settings)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    cycle_before = raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"), dict) else {}
+    if str(cycle_before.get("cycleStatus") or "RUNNING").upper() in ACTIVE_EXIT_STATES:
+        raise HTTPException(409, "Portfolio TP sluit momenteel posities; reset is pas veilig nadat de exit is afgerond")
+
+    queue_token = None
+    legacy_lease = False
+    if _strategy2_order_queue_enabled(raw):
+        queue_token = _acquire_strategy2_queue_lease(ref)
+        if not queue_token:
+            raise HTTPException(409, "Strategy-2 verwerkt momenteel een andere actie; probeer Reset cycle opnieuw")
+    else:
+        legacy_lease = _acquire_mexc_automation_lease(ref)
+        if not legacy_lease:
+            raise HTTPException(409, "Strategy-2 verwerkt momenteel een andere actie; probeer Reset cycle opnieuw")
+
+    try:
+        secret = load_aster_secret(user)
+        client = AsterV3Client(
+            signer_address=secret.signer_address,
+            sign_message=local_eip712_signer(secret),
+            live_authorized=False,
+        )
+        try:
+            equity = multi_bb_exchange_equity(client.account_information())
+        except (AsterApiError, ValueError) as exc:
+            raise HTTPException(409, f"Actuele Aster-equity kon niet betrouwbaar worden gelezen: {exc}") from exc
+        if equity <= 0:
+            raise HTTPException(409, "Actuele Aster-equity is niet betrouwbaar beschikbaar")
+
+        version = max(int(safe_float(raw.get("configVersion"))), settings.version) + 1
+        reset_settings = MultiBbConfig.from_mapping({
+            **settings.public_dict(),
+            "version": version,
+            "portfolioTpBaseMode": "CYCLE_START",
+        })
+        now = datetime.now(timezone.utc)
+        now_ms = int(now.timestamp() * 1000)
+        cycle = reset_cycle_to_equity(
+            uid=uid,
+            current_equity=equity,
+            portfolio_tp_percent=reset_settings.portfolio_tp_percent,
+            timestamp_ms=now_ms,
+            portfolio_tp_input_mode=reset_settings.portfolio_tp_input_mode,
+            portfolio_tp_value=reset_settings.portfolio_tp_value,
+            config_version=version,
+        )
+        snapshot = portfolio_cycle_snapshot(
+            cycle,
+            mode=reset_settings.take_profit_mode,
+            current_equity=equity,
+            portfolio_tp_percent=reset_settings.portfolio_tp_percent,
+        )
+        prior_report = raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"), dict) else {}
+        report = {**prior_report, "portfolioCycle": snapshot, **snapshot}
+        ref.set({
+            "settings": reset_settings.public_dict(),
+            "configVersion": version,
+            "multiBbCycle": cycle,
+            "multiBbReport": report,
+            "updatedAt": now,
+            "settingsChangedAt": now,
+            "lastReason": f"Portfolio TP cycle handmatig gereset naar actuele Aster-equity {equity:.8f}; 0 orders",
+        }, merge=True)
+        ref.collection("configHistory").add({
+            "version": version,
+            "oldValue": old_settings,
+            "newValue": reset_settings.public_dict(),
+            "source": "portfolio-tp-cycle-reset",
+            "timestamp": now,
+        })
+        ref.collection("audit").add({
+            "event": "PORTFOLIO_TP_CYCLE_RESET",
+            "user": uid,
+            "previousCycleId": cycle_before.get("cycleId"),
+            "cycleId": cycle.get("cycleId"),
+            "cycleStartEquity": equity,
+            "targetEquity": snapshot.get("targetEquity"),
+            "ordersSent": 0,
+            "timestamp": now,
+        })
+        return {
+            "reset": True,
+            "ordersSent": 0,
+            "cycleStartEquity": equity,
+            "portfolioCycle": snapshot,
+            **aster_strategy2_public(uid),
+        }
+    finally:
+        if queue_token:
+            _release_strategy2_queue_lease(ref, str(queue_token))
+        elif legacy_lease:
+            ref.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
+
+
 @app.post("/v1/me/aster/strategy2/simulate")
 def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     try: settings=MultiBbConfig.from_mapping({**request.settings,"mode":"paper"})
@@ -4479,6 +4632,9 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
     example_effective=example_pair_max if settings.maximum_leverage is None else min(example_pair_max,settings.maximum_leverage)
     stop_limit=settings.stop_loss_long
     stop_mark=(100.0-stop_limit if settings.stop_loss_mode=="PERCENT" else 100.0)
+    portfolio_example_base=settings.portfolio_tp_custom_base_equity if settings.portfolio_tp_base_mode=="CUSTOM" else 100.0
+    portfolio_example_target=(portfolio_example_base+settings.portfolio_tp_value if settings.portfolio_tp_input_mode=="USD"
+        else portfolio_example_base*(1.0+settings.portfolio_tp_value/100.0))
     return {"mode":"paper","ordersSent":0,"engine":MULTI_BB_ENGINE,"sameEngineAsLive":True,"configurationValid":True,"errors":[],
         "plannedPositions":settings.maximum_positions,"longSlots":settings.long_slots,"shortSlots":settings.short_slots,
         "rules":{"universeTopN":settings.universe_top_n,"minimumLeverage":settings.minimum_leverage,
@@ -4487,6 +4643,9 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
             "entryNotionalUsd":settings.entry_notional_usd,"entryNotionalLongUsd":settings.entry_notional_long_usd,
             "entryNotionalShortUsd":settings.entry_notional_short_usd,
             "dcaDistance":settings.dca_distance,"dcaMarginUsd":settings.dca_margin_usd,"maxDca":settings.max_dca,"takeProfit":settings.take_profit,
+            "takeProfitMode":settings.take_profit_mode,"portfolioTpInputMode":settings.portfolio_tp_input_mode,
+            "portfolioTpValue":settings.portfolio_tp_value,"portfolioTpBaseMode":settings.portfolio_tp_base_mode,
+            "portfolioTpCustomBaseEquity":settings.portfolio_tp_custom_base_equity,
             "stopLossEnabled":settings.stop_loss_enabled,"stopLossMode":settings.stop_loss_mode,
             "stopLossLong":settings.stop_loss_long,"stopLossShort":settings.stop_loss_short,"entryMode":"immediate_fill"},
         "simulationChecks":{"positionSizing":{"mode":settings.entry_sizing_mode,
@@ -4496,8 +4655,11 @@ def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[s
                 "legacyMaximumUnbounded":settings.maximum_leverage is None},
             "stopLoss":{"enabled":settings.stop_loss_enabled,"mode":settings.stop_loss_mode,"entry":100.0,
                 "exampleMark":stop_mark,"limit":stop_limit,
-                "expectedAction":"STOP_LOSS_TRIGGERED" if settings.stop_loss_enabled else "NO_STOP_LOSS"}},
-        "message":"Multi DCA veilig gesimuleerd: sizing-mode, leverage-cap en Stoploss gevalideerd; 0 orders verzonden."}
+                "expectedAction":"STOP_LOSS_TRIGGERED" if settings.stop_loss_enabled else "NO_STOP_LOSS"},
+            "portfolioTakeProfit":{"inputMode":settings.portfolio_tp_input_mode,"baseMode":settings.portfolio_tp_base_mode,
+                "value":settings.portfolio_tp_value,"exampleBase":portfolio_example_base,
+                "exampleTarget":portfolio_example_target,"ordersSent":0}},
+        "message":"Multi DCA veilig gesimuleerd: sizing, leverage, Stoploss en Portfolio Take Profit 2.0 gevalideerd; 0 orders verzonden."}
 
 
 @app.get("/v1/me/aster/strategy2/readiness")
