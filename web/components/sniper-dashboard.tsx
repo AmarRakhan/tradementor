@@ -35,6 +35,11 @@ type SniperTrade = {
   unrealizedPnlUsd?: number;
   unrealizedPnlPercent?: number;
   realizedPnlUsd?: number;
+  feesUsd?: number;
+  fundingUsd?: number;
+  netRealizedPnlUsd?: number;
+  costEvidenceReliable?: boolean;
+  accountingError?: string;
   tpPercent?: number;
   elapsedSeconds?: number;
   deadlineAtMs?: number;
@@ -343,7 +348,7 @@ export function SniperDashboard({ cloudReady }: { cloudReady: boolean }) {
 
       {tab === "performance" && (
         <div className="sniper-grid four">
-          <article className="sniper-card"><CardHead kicker="TOTAAL" title="Gerealiseerde PnL" /><div className="big-value">{money(data?.performance?.realizedPnlUsd)}</div></article>
+          <article className="sniper-card"><CardHead kicker="TOTAAL" title="Netto gerealiseerd" /><div className="big-value">{money(data?.performance?.realizedPnlUsd)}</div></article>
           <article className="sniper-card"><CardHead kicker="TRADES" title="Gesloten" /><div className="big-value">{n(data?.performance?.closedTrades)}</div></article>
           <article className="sniper-card"><CardHead kicker="WINS" title="Winsttrades" /><div className="big-value">{n(data?.performance?.wins)}</div></article>
           <article className="sniper-card"><CardHead kicker="WINRATE" title="Bevestigd" /><div className="big-value">{data?.performance?.winRate == null ? "—" : `${n(data.performance.winRate).toFixed(1)}%`}</div></article>
@@ -424,7 +429,12 @@ function HistoryTable({ rows }: { rows: SniperTrade[] }) {
   return <div className="history-list">{rows.slice(0, 100).map((row, index) => (
     <div className="history-row" key={String(row.tradeId || index)}>
       <div><strong>{row.symbol || "—"}</strong><span>{row.side || "—"} · {row.timeframe || "—"}</span></div>
-      <div><span>{row.exitReason || "Gesloten"}</span><strong className={n(row.realizedPnlUsd) >= 0 ? "pnl-positive" : "pnl-negative"}>{money(row.realizedPnlUsd)}</strong></div>
+      <div>
+        <span>{row.costEvidenceReliable === false ? "Accounting controleren" : `${row.exitReason || "Gesloten"} · fees ${money(row.feesUsd)}`}</span>
+        <strong className={n(row.netRealizedPnlUsd ?? row.realizedPnlUsd) >= 0 ? "pnl-positive" : "pnl-negative"}>
+          {row.costEvidenceReliable === false ? "—" : money(row.netRealizedPnlUsd ?? row.realizedPnlUsd)}
+        </strong>
+      </div>
     </div>
   ))}</div>;
 }
