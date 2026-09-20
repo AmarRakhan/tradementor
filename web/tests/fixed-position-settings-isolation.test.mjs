@@ -7,7 +7,7 @@ const maker = readFileSync(new URL("../components/aster-strategy2-maker.tsx", im
 test("margin values are never converted into fixed position values", () => {
   assert.doesNotMatch(maker, /legacyLongMargin\s*\*\s*persistedMinLeverage/);
   assert.doesNotMatch(maker, /legacyShortMargin\s*\*\s*persistedMinLeverage/);
-  assert.match(maker, /Legacy\s*margin-mode entryNotionalUsd values were derived aliases, not user input/);
+  assert.match(maker, /margin-mode entryNotionalUsd values were derived aliases, not user input/);
 });
 
 test("base LONG and SHORT margin controls remain visible and independent when fixed size is enabled", () => {
