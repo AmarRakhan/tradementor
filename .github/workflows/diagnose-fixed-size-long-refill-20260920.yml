@@ -1,0 +1,189 @@
+name: Diagnose build 379 fixed-size and LONG refill 2026-09-20
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/diagnose-fixed-size-long-refill-20260920.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-fixed-size-long-refill-readonly
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run isolated read-only account diagnosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t SERVICE_VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${SERVICE_VALUES[0]}"
+          RUNTIME_SA="${SERVICE_VALUES[1]}"
+          JOB="tm-size-refill-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,time
+          from datetime import datetime, timezone, timedelta
+          from google.cloud import firestore, secretmanager
+          from aster_signing import AsterSecret, local_eip712_signer
+          from aster_gateway import AsterV3Client
+
+          PROJECT='tradementor-production'
+          now=datetime.now(timezone.utc)
+          db=firestore.Client(project=PROJECT)
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              try:
+                  fingerprint=(
+                      int(s.get('universeTopN',-1))==50 and
+                      int(s.get('maximumPositions',-1))==20 and
+                      int(s.get('longSlots',-1))==10 and
+                      int(s.get('shortSlots',-1))==10 and
+                      int(s.get('minimumLeverage',-1))==20 and
+                      bool(s.get('bollingerEntryFilter15mEnabled',False))
+                  )
+              except Exception:
+                  fingerprint=False
+              if fingerprint and bool(raw.get('enabled') or raw.get('monitor')):
+                  matches.append((snap,raw,s))
+          if len(matches)!=1:
+              print('FIXED_SIZE_REFILL_DIAG '+json.dumps({'readOnly':True,'ordersSent':0,'matchCount':len(matches),'status':'REFUSED_NOT_UNIQUE'},sort_keys=True))
+              raise SystemExit(0)
+
+          snap,raw,settings=matches[0]
+          uid=snap.id
+          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+
+          sm=secretmanager.SecretManagerServiceClient()
+          name=f'projects/{PROJECT}/secrets/tradementor-aster-{uid}/versions/latest'
+          payload=json.loads(sm.access_secret_version(request={'name':name}).payload.data.decode('utf-8'))
+          secret=AsterSecret.create(str(payload['signerAddress']),str(payload['privateKey']))
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+          positions=client.position_risk()
+          active=[]
+          for row in positions:
+              try: qty=abs(float(row.get('positionAmt') or 0))
+              except Exception: qty=0
+              if qty<=0: continue
+              symbol=str(row.get('symbol','')).upper(); side=str(row.get('positionSide','')).upper()
+              try: mark=float(row.get('markPrice') or row.get('entryPrice') or 0); lev=int(float(row.get('leverage') or 0))
+              except Exception: mark=0; lev=0
+              notional=qty*mark
+              active.append({'symbol':symbol,'side':side,'leverage':lev,'notionalUsd':round(notional,6),
+                             'derivedMarginUsd':round(notional/lev,6) if lev>0 else None})
+          active_long=sum(1 for x in active if x['side']=='LONG')
+          active_short=sum(1 for x in active if x['side']=='SHORT')
+
+          def iso(v):
+              if isinstance(v,datetime):
+                  return (v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)).isoformat()
+              return str(v or '')
+
+          history=[]
+          for h in snap.reference.collection('configHistory').stream():
+              row=h.to_dict() or {}; ts=row.get('timestamp')
+              if not isinstance(ts,datetime) or ts < now-timedelta(hours=6): continue
+              old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}
+              new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+              history.append({'timestamp':iso(ts),'version':row.get('version'),
+                'oldMaximumLeverage':old.get('maximumLeverage'),'newMaximumLeverage':new.get('maximumLeverage'),
+                'oldEntrySizingMode':old.get('entrySizingMode'),'newEntrySizingMode':new.get('entrySizingMode'),
+                'newEntryMarginLongUsd':new.get('entryMarginLongUsd'),'newEntryMarginShortUsd':new.get('entryMarginShortUsd'),
+                'newEntryNotionalUsd':new.get('entryNotionalUsd'),'newBollinger15m':new.get('bollingerEntryFilter15mEnabled')})
+          history.sort(key=lambda x:x['timestamp'],reverse=True)
+
+          audit=[]
+          for a in snap.reference.collection('audit').stream():
+              row=a.to_dict() or {}; ts=row.get('timestamp')
+              if not isinstance(ts,datetime) or ts < now-timedelta(minutes=90): continue
+              audit.append({'timestamp':iso(ts),'event':str(row.get('event','')),'symbol':str(row.get('symbol','')).upper(),
+                            'side':str(row.get('side','')).upper(),'leverage':row.get('leverage'),
+                            'reason':str(row.get('reason',''))[:180]})
+          audit.sort(key=lambda x:x['timestamp'],reverse=True)
+          entries=[x for x in audit if x['event']=='MULTI_BB_ENTRY']
+
+          windows={}
+          for minutes in (15,30,60):
+              cutoff=now-timedelta(minutes=minutes)
+              windows[str(minutes)]={'entries':sum(1 for x in entries if datetime.fromisoformat(x['timestamp'])>=cutoff)}
+
+          fills=[]
+          start_ms=int((now-timedelta(minutes=90)).timestamp()*1000)
+          for symbol in ('ARBUSDT','ENAUSDT'):
+              try: rows=client.user_trades(symbol,start_time=start_ms,limit=500)
+              except Exception: rows=[]
+              for row in rows:
+                  try:
+                      qty=abs(float(row.get('qty') or row.get('quantity') or 0)); price=float(row.get('price') or row.get('avgPrice') or 0)
+                  except Exception:
+                      qty=0; price=0
+                  fills.append({'symbol':symbol,'positionSide':str(row.get('positionSide','')).upper(),
+                                'side':str(row.get('side','')).upper(),'timeMs':row.get('time',row.get('timestamp')),
+                                'qty':qty,'price':price,'notionalUsd':round(qty*price,6)})
+          fills.sort(key=lambda x:int(x.get('timeMs') or 0),reverse=True)
+
+          actions=[]
+          for row in report.get('actions',[]) if isinstance(report.get('actions'),list) else []:
+              if not isinstance(row,dict): continue
+              actions.append({k:row.get(k) for k in ('kind','symbol','side','reason','stage','leverage','notionalUsd','marginUsd','requiredMargin') if k in row})
+
+          safe={
+              'readOnly':True,'ordersSent':0,'matchCount':1,
+              'settings':{k:settings.get(k) for k in (
+                  'universeTopN','maximumPositions','longSlots','shortSlots','minimumLeverage','maximumLeverage',
+                  'entrySizingMode','entryMarginUsd','entryMarginLongUsd','entryMarginShortUsd','entryNotionalUsd',
+                  'bollingerEntryFilter15mEnabled','bollingerEntryFilterTimeframe')},
+              'exchange':{'activeLong':active_long,'activeShort':active_short,'activeTotal':len(active),'positions':active},
+              'report':{k:report.get(k) for k in (
+                  'activeLong','activeShort','remainingLong','remainingShort','entryStatus','entryReason',
+                  'scannedCandidates','executableCandidates','ordersSent','updatedAtMs')},
+              'latestActions':actions[-40:],
+              'entryWindowsMinutes':windows,
+              'recentEntryAudit':entries[:30],
+              'recentAudit':audit[:60],
+              'recentConfigHistory':history[:20],
+              'arbEnaFills90m':fills[:40],
+          }
+          print('FIXED_SIZE_REFILL_DIAG '+json.dumps(safe,sort_keys=True,separators=(',',':')))
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB"             --project "$GCP_PROJECT_ID" --limit 100 --freshness=10m --format='value(textPayload)' | grep 'FIXED_SIZE_REFILL_DIAG' | tail -1
+          cleanup
+          trap - EXIT
