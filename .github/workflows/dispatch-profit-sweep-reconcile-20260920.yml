@@ -1,0 +1,29 @@
+name: Dispatch Profit Sweep Reconcile Production 2026-09-20
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/dispatch-profit-sweep-reconcile-20260920.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch-production:
+    if: github.event.head_commit.message == 'Dispatch Profit Sweep reconcile production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch guarded production backend workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: e5ff9e3e6e8bb0404fbd30b4c1e36ff6e8a060c9
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$SOURCE_COMMIT"
