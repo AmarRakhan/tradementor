@@ -3583,8 +3583,6 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
             if isinstance(row, dict) and abs(safe_float(row.get("positionAmt", row.get("quantity")))) > 0
         ]
         strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
-    sniper_state = ensure_aster_sniper_control(uid)
-    sniper_owned_symbols = sniper_active_symbols(sniper_state)
         strategy2_legs = strategy2_state.get("ownedLegs") if isinstance(strategy2_state.get("ownedLegs"), list) else []
         strategy_states = [("Strategy 2", strategy2_state)]
         strategy_by_intent = {}
@@ -3712,6 +3710,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     leg_last_order_at: dict[str, Any] = {}
     strategy_settings = AsterStrategySettings.from_mapping({})
     strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
+    sniper_state = ensure_aster_sniper_control(uid)
+    sniper_owned_symbols = sniper_active_symbols(sniper_state)
     for state, reference in ((strategy2_state, aster_strategy2_reference(uid)),):
         try:
             latest = next(iter(reference.collection("audit").order_by(
