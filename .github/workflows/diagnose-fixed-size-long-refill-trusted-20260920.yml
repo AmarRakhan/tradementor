@@ -4,7 +4,7 @@ on:
   push:
     branches: [amar-crypto-bot-2026-cloud]
     paths:
-      - ".github/workflows/diagnose-fixed-size-long-refill-20260920.yml"
+      - ".github/workflows/diagnose-fixed-size-long-refill-trusted-20260920.yml"
 
 permissions:
   contents: read
