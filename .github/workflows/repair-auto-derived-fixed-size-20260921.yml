@@ -82,27 +82,34 @@ jobs:
               s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
               long_margin=f(s.get('entryMarginLongUsd',s.get('entryMarginLong',s.get('entryMarginUsd'))))
               short_margin=f(s.get('entryMarginShortUsd',s.get('entryMarginShort',s.get('entryMarginUsd'))))
+              long_notional=f(s.get('entryNotionalLongUsd',s.get('entryNotionalLong',s.get('entryNotionalUsd'))))
+              short_notional=f(s.get('entryNotionalShortUsd',s.get('entryNotionalShort',s.get('entryNotionalUsd'))))
+              cycle=raw.get('multiBbCycle') if isinstance(raw.get('multiBbCycle'),dict) else {}
+              cycle_start=f(cycle.get('cycleStartEquity'))
               fingerprint=(
                   i(s.get('maximumPositions'))==60 and i(s.get('longSlots'))==30 and i(s.get('shortSlots'))==30 and
                   i(s.get('universeTopN'))==350 and i(s.get('minimumLeverage'))==20 and
                   str(s.get('entrySizingMode','')).lower() in {'notional','margin'} and
-                  near(s.get('entryNotionalLongUsd',s.get('entryNotionalLong')),8.0) and
-                  near(s.get('entryNotionalShortUsd',s.get('entryNotionalShort')),6.0) and
-                  0 < long_margin <= 1.0 and 0 < short_margin <= 1.0 and
-                  str(s.get('takeProfitMode','')).upper()=='PORTFOLIO'
+                  str(s.get('takeProfitMode','')).upper()=='PORTFOLIO' and
+                  abs(cycle_start-293.56) <= 0.02
               )
-              if fingerprint:matches.append((snap,raw,s,long_margin,short_margin))
+              if fingerprint:matches.append((snap,raw,s,long_margin,short_margin,long_notional,short_notional,cycle_start))
 
           if len(matches)!=1:
               print('FIXED_SIZE_REPAIR '+json.dumps({'status':'REFUSED_NOT_UNIQUE','matchCount':len(matches),'ordersSent':0,'settingsChanged':False},sort_keys=True))
               raise SystemExit(21)
 
-          snap,raw,old,long_margin,short_margin=matches[0]
+          snap,raw,old,long_margin,short_margin,long_notional,short_notional,cycle_start=matches[0]
           current=snap.reference.get().to_dict() or {}
           s=current.get('settings') if isinstance(current.get('settings'),dict) else {}
           mode=str(s.get('entrySizingMode','')).lower()
           # Re-validate the exact account fingerprint immediately before any write.
-          if mode not in {'notional','margin'} or not near(s.get('entryNotionalLongUsd',s.get('entryNotionalLong')),8.0) or not near(s.get('entryNotionalShortUsd',s.get('entryNotionalShort')),6.0):
+          live_cycle=current.get('multiBbCycle') if isinstance(current.get('multiBbCycle'),dict) else {}
+          if (mode not in {'notional','margin'} or
+              i(s.get('maximumPositions'))!=60 or i(s.get('longSlots'))!=30 or i(s.get('shortSlots'))!=30 or
+              i(s.get('universeTopN'))!=350 or i(s.get('minimumLeverage'))!=20 or
+              str(s.get('takeProfitMode','')).upper()!='PORTFOLIO' or
+              abs(f(live_cycle.get('cycleStartEquity'))-293.56)>0.02):
               print('FIXED_SIZE_REPAIR '+json.dumps({'status':'REFUSED_STATE_CHANGED','ordersSent':0,'settingsChanged':False},sort_keys=True))
               raise SystemExit(22)
 
@@ -134,10 +141,11 @@ jobs:
           vs=verified.get('settings') if isinstance(verified.get('settings'),dict) else {}
           verified_long=f(vs.get('entryMarginLongUsd',vs.get('entryMarginLong',vs.get('entryMarginUsd'))))
           verified_short=f(vs.get('entryMarginShortUsd',vs.get('entryMarginShort',vs.get('entryMarginUsd'))))
+          verified_long_notional=f(vs.get('entryNotionalLongUsd',vs.get('entryNotionalLong',vs.get('entryNotionalUsd'))))
+          verified_short_notional=f(vs.get('entryNotionalShortUsd',vs.get('entryNotionalShort',vs.get('entryNotionalUsd'))))
           ok=(str(vs.get('entrySizingMode','')).lower()=='margin' and
               abs(verified_long-long_margin)<1e-12 and abs(verified_short-short_margin)<1e-12 and
-              near(vs.get('entryNotionalLongUsd',vs.get('entryNotionalLong')),8.0) and
-              near(vs.get('entryNotionalShortUsd',vs.get('entryNotionalShort')),6.0))
+              abs(verified_long_notional-long_notional)<1e-12 and abs(verified_short_notional-short_notional)<1e-12)
           if not ok:
               print('FIXED_SIZE_REPAIR '+json.dumps({'status':'VERIFY_FAILED','ordersSent':0,'settingsChanged':changed},sort_keys=True))
               raise SystemExit(23)
@@ -147,8 +155,8 @@ jobs:
               'ordersSent':0,'settingsChanged':changed,
               'accountRef':hashlib.sha256(snap.id.encode()).hexdigest()[:12],
               'entrySizingMode':'margin','entryMarginLongUsd':verified_long,'entryMarginShortUsd':verified_short,
-              'preservedEntryNotionalLongUsd':f(vs.get('entryNotionalLongUsd',vs.get('entryNotionalLong'))),
-              'preservedEntryNotionalShortUsd':f(vs.get('entryNotionalShortUsd',vs.get('entryNotionalShort'))),
+              'preservedEntryNotionalLongUsd':verified_long_notional,
+              'preservedEntryNotionalShortUsd':verified_short_notional,
               'configVersion':verified.get('configVersion')
           }
           print('FIXED_SIZE_REPAIR '+json.dumps(result,sort_keys=True,separators=(',',':')))
