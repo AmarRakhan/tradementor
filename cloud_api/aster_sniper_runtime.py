@@ -51,9 +51,12 @@ def reconcile_pending(
     if not pending:
         return state,None
     symbol=str(pending.get("symbol","")).upper();side=str(pending.get("side","")).upper()
+    action=str(pending.get("action","")).upper()
     positions=client.position_risk()
     row=_position(positions,symbol,side)
-    if row is not None and str(pending.get("action","")).upper()=="OPEN":
+    orders=[x for x in client.open_orders(symbol) if str(x.get("symbol","")).upper()==symbol]
+    age=now_ms-int(number(pending.get("createdAtMs")))
+    if row is not None and action=="OPEN":
         trades=[dict(x) for x in state.get("activeTrades",[]) if isinstance(x,dict)]
         if not any(str(x.get("symbol","")).upper()==symbol for x in trades):
             qty=abs(number(row.get("positionAmt")));entry=number(row.get("entryPrice"));mark=number(row.get("markPrice"))
@@ -73,14 +76,24 @@ def reconcile_pending(
         state={**state,"activeTrades":trades,"pendingIntent":None,"phase":"RUNNING",
             "lastReason":f"{symbol}: pending Sniper-entry uit exchange-state hersteld"}
         return state,{"event":"RECOVERED_OPEN","symbol":symbol,"side":side}
-    if row is None:
-        orders=[x for x in client.open_orders(symbol) if str(x.get("symbol","")).upper()==symbol]
-        age=now_ms-int(number(pending.get("createdAtMs")))
-        if not orders and age>=60_000:
+    if action=="CLOSE":
+        if row is None and not orders:
             release_symbol(symbol)
             state={**state,"pendingIntent":None,"phase":"RUNNING",
-                "lastReason":f"{symbol}: onbevestigde Sniper-intentie veilig vrijgegeven na exchange-reconciliation"}
-            return state,{"event":"PENDING_CLEARED","symbol":symbol,"side":side}
+                "lastReason":f"{symbol}: pending Sniper-close is exchange-flat bevestigd"}
+            return state,{"event":"RECOVERED_CLOSE","symbol":symbol,"side":side}
+        if row is not None and not orders and age>=60_000:
+            # The exchange still has the position and no close order exists:
+            # clear only the intent, retain ownership, and allow one safe retry.
+            state={**state,"pendingIntent":None,"phase":"RUNNING",
+                "lastReason":f"{symbol}: onbevestigde close-intentie vrijgegeven voor gecontroleerde retry"}
+            return state,{"event":"CLOSE_RETRY_READY","symbol":symbol,"side":side}
+        return state,None
+    if action=="OPEN" and row is None and not orders and age>=60_000:
+        release_symbol(symbol)
+        state={**state,"pendingIntent":None,"phase":"RUNNING",
+            "lastReason":f"{symbol}: onbevestigde Sniper-entry veilig vrijgegeven na exchange-reconciliation"}
+        return state,{"event":"PENDING_CLEARED","symbol":symbol,"side":side}
     return state,None
 
 
@@ -120,6 +133,7 @@ def run_sniper_tick(
         decision=exit_decision(trade,row,now_ms=now_ms,settings=settings)
         trade.update(_trade_public(trade,row,now_ms))
         trade["lastKnownPnlUsd"]=decision["pnlUsd"]
+        trade["peakPnlPercent"]=decision.get("peakPnlPercent",trade.get("peakPnlPercent",0))
         if decision["action"]=="HOLD":
             continue
         if dry_run or not live_enabled:
@@ -141,8 +155,10 @@ def run_sniper_tick(
         history_record={**trade,"closedAtMs":now_ms,"exitReason":decision["reason"],"exitAction":decision["action"],
             "realizedPnlUsd":decision["pnlUsd"],"closeClientOrderId":str(rr.get("clientOrderId","")),
             "closeOrderId":str(rr.get("orderId","")),"status":"CLOSED"}
-        state={**state,"activeTrades":trades,"pendingIntent":None,"phase":"RUNNING" if state.get("enabled") else "DRAINING",
-            "lastReason":f"{symbol}: {decision['reason']}"}
+        cooldowns={str(k):dict(v) for k,v in (state.get("cooldowns") or {}).items() if isinstance(v,dict)}
+        cooldowns[symbol]={"untilMs":now_ms+settings.cooldown_seconds*1000,"reason":decision["action"]}
+        state={**state,"activeTrades":trades,"pendingIntent":None,"cooldowns":cooldowns,
+            "phase":"RUNNING" if state.get("enabled") else "DRAINING","lastReason":f"{symbol}: {decision['reason']}"}
         return {"status":"ok","action":decision["action"],"ordersSent":1,"state":state,"historyRecord":history_record}
 
     state={**state,"activeTrades":trades}
@@ -151,6 +167,11 @@ def run_sniper_tick(
     if len(trades)>=settings.max_concurrent:
         return {"status":"waiting","ordersSent":0,"state":state,"reason":"Sniper maximum gelijktijdige trades bereikt"}
 
+    day_key=time.strftime("%Y-%m-%d",time.gmtime(now_ms/1000))
+    attempts_today={str(k):int(number(v)) for k,v in (state.get("attemptsToday") or {}).items()}
+    if str(state.get("attemptsDayKey",""))!=day_key:
+        attempts_today={}
+        state={**state,"attemptsDayKey":day_key,"attemptsToday":attempts_today,"dayRealizedPnlUsd":0.0}
     day_loss=number(state.get("dayRealizedPnlUsd"))
     if day_loss<=-settings.max_daily_loss_usd:
         return {"status":"risk-hold","ordersSent":0,"state":{**state,"phase":"RISK_HOLD","lastReason":"Maximaal Sniper dagverlies bereikt"}}
@@ -165,16 +186,23 @@ def run_sniper_tick(
     prices={str(x.get("symbol","")).upper():number(x.get("price")) for x in client.ticker_prices()}
     tickers=[x for x in client.ticker_24h() if isinstance(x,dict)]
     tickers.sort(key=lambda x:number(x.get("quoteVolume")),reverse=True)
+    universe=tickers[:settings.universe_top_n]
+    scan_cursor=int(number(state.get("scanCursor"))) % max(1,len(universe))
+    scan_batch=(universe[scan_cursor:scan_cursor+8]+universe[:max(0,scan_cursor+8-len(universe))]) if universe else []
+    next_cursor=(scan_cursor+len(scan_batch))%max(1,len(universe))
     exchange_active_symbols={str(x.get("symbol","")).upper() for x in positions if abs(number(x.get("positionAmt")))>0}
     active_symbols={str(x.get("symbol","")).upper() for x in trades}|set(blocked_symbols)|exchange_active_symbols
     cooldowns={str(k):dict(v) for k,v in (state.get("cooldowns") or {}).items() if isinstance(v,dict)}
     signals=[]
-    for market in tickers[:settings.universe_top_n]:
+    for market in scan_batch:
         symbol=str(market.get("symbol","")).upper()
         if not symbol.endswith("USDT") or symbol in active_symbols or symbol not in info_rows or prices.get(symbol,0)<=0:
             continue
         prior=cooldowns.get(symbol,{})
         if int(number(prior.get("untilMs")))>now_ms:
+            continue
+        if attempts_today.get(symbol,0)>=settings.attempts_per_coin:
+            signals.append({"symbol":symbol,"score":0,"eligible":False,"reason":"Daglimiet pogingen voor deze coin bereikt"})
             continue
         try:
             signal=evaluate_candidate(symbol,candles_1m=client.klines(symbol,"1m",100),
@@ -189,6 +217,7 @@ def run_sniper_tick(
         if not claim_symbol(symbol,"SNIPER"):
             signals[-1]={**signal,"eligible":False,"reason":"BLOCKED_BY_OTHER_STRATEGY"}
             continue
+        submission_pending=False
         try:
             notional=settings.margin_per_trade_usd*settings.leverage
             plan=plan_aster_pair(info_rows[symbol],_brackets(client.leverage_brackets(symbol),symbol),prices[symbol],notional,
@@ -211,6 +240,7 @@ def run_sniper_tick(
                 release_symbol(symbol)
                 return {"status":"blocked","ordersSent":0,"state":state,"signals":signals[:20],"reason":"Sniper live execution staat centraal uit"}
             persist_pending(pending)
+            submission_pending=True
             opened=execute_leg_once(client,plan,side=PositionSide(signal["side"]),action="OPEN",id_prefix=prefix,confirm=True,
                 new_position_leverage=settings.leverage,fill_poll_attempts=2,fill_poll_delay_seconds=.15)
             rr=opened.get("result",{});qty=number(rr.get("executedQty"));entry=number(rr.get("avgPrice"))
@@ -221,14 +251,17 @@ def run_sniper_tick(
                 "openClientOrderId":str(rr.get("clientOrderId","")),"openOrderId":str(rr.get("orderId","")),
                 "entryReason":signal["reason"],"status":"OPEN"}
             trades.append(trade);persist_pending(None)
-            state={**state,"activeTrades":trades,"pendingIntent":None,"signals":signals[:20],"phase":"RUNNING",
+            attempts_today[symbol]=attempts_today.get(symbol,0)+1
+            state={**state,"activeTrades":trades,"pendingIntent":None,"signals":signals[:20],
+                "attemptsDayKey":day_key,"attemptsToday":attempts_today,"scanCursor":next_cursor,"phase":"RUNNING",
                 "lastReason":f"{symbol} {signal['side']}: Sniper live entry bevestigd","lastActionAtMs":now_ms}
             return {"status":"ok","action":"OPEN","ordersSent":1,"state":state,"trade":trade,"signals":signals[:20]}
         except Exception:
-            # Keep a persisted pending intent when submission may have happened.
-            # The next tick reconciles it against exchange truth before any retry.
-            if not state.get("pendingIntent"):
+            # Once a pending intent is persisted, ownership must stay locked until
+            # the next exchange reconciliation proves whether an order exists.
+            if not submission_pending:
                 release_symbol(symbol)
             raise
-    state={**state,"signals":signals[:20],"phase":"SCANNING","lastReason":"Geen 12/12 Sniper setup gevonden","lastScanAtMs":now_ms}
+    state={**state,"signals":signals[:20],"scanCursor":next_cursor,"phase":"SCANNING",
+        "lastReason":"Geen 12/12 Sniper setup gevonden","lastScanAtMs":now_ms}
     return {"status":"waiting","ordersSent":0,"state":state,"signals":signals[:20]}
