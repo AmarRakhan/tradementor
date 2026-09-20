@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { MarketsPage } from "@/components/markets-page";
 
 const VIEW_PARAM = "tmView";
-const MOBILE_DESTINATIONS = ["markets", "aster", "news", "journey", "wallet"] as const;
+const MOBILE_DESTINATIONS = ["markets", "aster", "sniper", "news", "journey", "wallet"] as const;
 const NAV_DESTINATIONS = ["home", ...MOBILE_DESTINATIONS] as const;
 
 function isMarketsRoute() {
