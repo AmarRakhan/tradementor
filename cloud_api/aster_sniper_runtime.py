@@ -108,6 +108,7 @@ def run_sniper_tick(
     persist_pending: Callable[[dict[str, Any] | None], None],
     live_enabled: bool,
     dry_run: bool = False,
+    management_only: bool = False,
     now_ms: int | None = None,
 ) -> dict[str, Any]:
     now_ms=int(now_ms or time.time()*1000)
@@ -162,6 +163,8 @@ def run_sniper_tick(
         return {"status":"ok","action":decision["action"],"ordersSent":1,"state":state,"historyRecord":history_record}
 
     state={**state,"activeTrades":trades}
+    if management_only:
+        return {"status":"management-hold","ordersSent":0,"state":state,"reason":"Realtime Sniper-beheer gecontroleerd; geen exit nodig"}
     if not bool(state.get("enabled")):
         return {"status":"stopped","ordersSent":0,"state":{**state,"monitor":bool(trades),"phase":"DRAINING" if trades else "STOPPED"}}
     if len(trades)>=settings.max_concurrent:
