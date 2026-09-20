@@ -157,6 +157,30 @@ def test_signed_spot_transfer_uses_sapi_host_and_api_wallet_signer():
     ]
 
 
+def test_signed_spot_get_omits_form_content_type_header():
+    signed_messages = []
+
+    def sign(message: str) -> str:
+        signed_messages.append(message)
+        return "signature"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.host == "sapi.asterdex.com"
+        assert request.url.path == "/api/v3/account"
+        assert request.headers.get("content-type") is None
+        assert "signer=0xagent" in request.url.query.decode()
+        assert "signature=signature" in request.url.query.decode()
+        return httpx.Response(200, json={"balances": []})
+
+    client = AsterV3Client(
+        signer_address="0xagent", sign_message=sign,
+        transport=httpx.MockTransport(handler), nonce=MonotonicNonce(lambda: 1700000000000000),
+    )
+    assert client.signed_spot_request("GET", "/api/v3/account", {}) == {"balances": []}
+    assert signed_messages == ["nonce=1700000000000000&signer=0xagent"]
+
+
 def test_spot_minus_1006_is_uncertain_and_never_blind_retried():
     calls = []
     def handler(request: httpx.Request) -> httpx.Response:
