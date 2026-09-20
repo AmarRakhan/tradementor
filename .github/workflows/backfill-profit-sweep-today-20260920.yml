@@ -66,8 +66,8 @@ jobs:
           cat > "$RUNNER_TEMP/profit-sweep-backfill/Dockerfile" <<'DOCKER'
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
-          COPY backfill.py /backfill.py
-          CMD ["python","/backfill.py"]
+          COPY backfill.py /app/backfill.py
+          CMD ["python","/app/backfill.py"]
           DOCKER
           cat > "$RUNNER_TEMP/profit-sweep-backfill/backfill.py" <<'PY'
           from __future__ import annotations
