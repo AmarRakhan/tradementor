@@ -23,6 +23,7 @@ import httpx
 
 
 ASTER_FUTURES_REST = "https://fapi.asterdex.com"
+ASTER_SPOT_REST = "https://sapi.asterdex.com"
 ASTER_FUTURES_WEBSOCKET = "wss://fstream.asterdex.com"
 ASTER_API_VERSION = "v3"
 CLIENT_ORDER_ID_PATTERN = re.compile(r"^[.A-Z:/a-z0-9_-]{1,36}$")
@@ -404,6 +405,51 @@ class AsterV3Client:
             code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
             message = payload.get("msg", "Aster-request afgewezen") if isinstance(payload, dict) else "Aster-request afgewezen"
             raise AsterApiError(f"Aster {code}: {message}")
+        return payload
+
+    def signed_spot_request(self, method: str, path: str, parameters: dict[str, Any] | None = None) -> Any:
+        """Send one signed Aster Spot V3 request with the existing approved API wallet.
+
+        Spot TRADE/USER_DATA endpoints use the same EIP-712 signer contract as
+        Futures, but they must be submitted to sapi.asterdex.com rather than the
+        Futures host. Money-moving unknown states are never retried here.
+        """
+        self._rest_guard.assert_allowed()
+        values = dict(parameters or {})
+        values["nonce"] = str(self._nonce.next())
+        values["signer"] = self._signer_address
+        encoded = urlencode([(key, str(value)) for key, value in values.items()])
+        signature = self._sign_message(encoded)
+        signed = f"{encoded}&signature={signature}"
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        url = f"{ASTER_SPOT_REST}{path}"
+        try:
+            if method.upper() == "GET":
+                response = self._http.get(f"{url}?{signed}", headers=headers)
+            else:
+                response = self._http.request(method.upper(), url, content=signed.encode(), headers=headers)
+        except httpx.HTTPError as exc:
+            raise AsterApiError("Aster Spot is tijdelijk niet bereikbaar") from exc
+        if response.status_code == 503:
+            raise AsterSubmissionUncertain(
+                "Aster Spot gaf 503; uitvoeringsstatus is onbekend en mag niet blind opnieuw worden verstuurd"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise AsterApiError("Aster Spot gaf geen geldig JSON-antwoord") from exc
+        self._rest_guard.observe(response.status_code, payload)
+        payload_code = payload.get("code") if isinstance(payload, dict) else None
+        if method.upper() != "GET" and str(payload_code) in {"-1006", "-1007"}:
+            code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
+            message = payload.get("msg", "uitvoeringsstatus onbekend") if isinstance(payload, dict) else "uitvoeringsstatus onbekend"
+            raise AsterSubmissionUncertain(
+                f"Aster Spot {code}: {message}; uitvoeringsstatus is onbekend en mag niet blind opnieuw worden verstuurd"
+            )
+        if response.status_code >= 400 or str(payload_code) == "-1003":
+            code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
+            message = payload.get("msg", payload.get("message", "Aster Spot-request afgewezen")) if isinstance(payload, dict) else "Aster Spot-request afgewezen"
+            raise AsterApiError(f"Aster Spot {code}: {message}")
         return payload
 
     def position_mode(self) -> bool:

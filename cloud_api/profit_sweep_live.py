@@ -24,7 +24,9 @@ from aster_gateway import AsterApiError, AsterSubmissionUncertain
 from profit_sweep import ProfitSweepError, normalize_sweep_percent, sweep_contribution
 
 LIVE_ENV = "ASTER_PROFIT_SWEEP_LIVE_ENABLED"
-TRANSFER_PATH = "/fapi/v3/asset/wallet/transfer"
+TRANSFER_PATH = "/api/v3/asset/wallet/transfer"
+SPOT_TRANSACTION_HISTORY_PATH = "/api/v3/transactionHistory"
+SPOT_TRANSFER_HISTORY_TYPE = "TRANSFER_FUTURE_TO_SPOT"
 TRANSFER_KIND = "FUTURE_SPOT"
 TRANSFER_ASSET = "USDT"
 _AMOUNT_QUANTUM = Decimal("0.00000001")
@@ -285,36 +287,120 @@ def _transfer_history_match(
     return "NOT_FOUND", None
 
 
+def _spot_transfer_history_match(
+    rows: list[dict[str, Any]],
+    *,
+    amount: Decimal,
+    submitted_at: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    """Match a FUTURE->SPOT credit in Aster Spot transaction history."""
+    submitted_ms = _timestamp_ms(submitted_at)
+    if submitted_ms <= 0 or amount <= 0:
+        return "INVALID_EVIDENCE", None
+    lower = max(0, submitted_ms - 15_000)
+    upper = submitted_ms + 180_000
+    expected = abs(amount).quantize(_AMOUNT_QUANTUM)
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("type", "")).upper() != SPOT_TRANSFER_HISTORY_TYPE:
+            continue
+        if str(row.get("asset", "")).upper() != TRANSFER_ASSET:
+            continue
+        row_time = _timestamp_ms(row.get("time"))
+        if row_time < lower or row_time > upper:
+            continue
+        if abs(_d(row.get("balanceDelta"))).quantize(_AMOUNT_QUANTUM) != expected:
+            continue
+        if row.get("tranId") in (None, ""):
+            continue
+        matches.append(row)
+    if len(matches) == 1:
+        return "CONFIRMED_SPOT", matches[0]
+    if len(matches) > 1:
+        return "AMBIGUOUS_SPOT", None
+    return "NOT_FOUND_SPOT", None
+
+
+def reconcile_transfer_rows(
+    *,
+    spot_rows: list[dict[str, Any]],
+    futures_rows: list[dict[str, Any]],
+    amount: Decimal,
+    submitted_at: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    spot_state, spot_match = _spot_transfer_history_match(
+        spot_rows, amount=amount, submitted_at=submitted_at,
+    )
+    if spot_match is not None or spot_state == "AMBIGUOUS_SPOT":
+        return spot_state, spot_match
+    future_state, future_match = _transfer_history_match(
+        futures_rows, amount=amount, submitted_at=submitted_at,
+    )
+    if future_match is not None or future_state == "AMBIGUOUS":
+        return future_state, future_match
+    return "NOT_FOUND", None
+
+
 def reconcile_transfer_history(
     *,
     client: Any,
     amount: Decimal,
     submitted_at: Any,
-    poll_attempts: int = 4,
+    poll_attempts: int = 2,
     poll_delay_seconds: float = 0.35,
 ) -> tuple[str, dict[str, Any] | None]:
-    """Read-only reconciliation for an Aster transfer with unknown status."""
+    """Read-only reconciliation across Spot and Futures ledgers."""
     submitted_ms = _timestamp_ms(submitted_at)
     if submitted_ms <= 0:
         return "INVALID_EVIDENCE", None
     attempts = max(1, int(poll_attempts))
     last_state = "NOT_FOUND"
     for attempt in range(attempts):
+        spot_rows: list[dict[str, Any]] = []
+        futures_rows: list[dict[str, Any]] = []
+        spot_ok = futures_ok = False
         try:
-            rows = client.income_history(
+            payload = client.signed_spot_request("GET", SPOT_TRANSACTION_HISTORY_PATH, {
+                "asset": TRANSFER_ASSET,
+                "type": SPOT_TRANSFER_HISTORY_TYPE,
+                "startTime": max(0, submitted_ms - 15_000),
+                "endTime": submitted_ms + 180_000,
+                "limit": 1000,
+            })
+            if isinstance(payload, list) and len(payload) < 1000:
+                spot_rows = [row for row in payload if isinstance(row, dict)]
+                spot_ok = True
+            elif isinstance(payload, list):
+                return "SPOT_HISTORY_TRUNCATED", None
+        except (AsterApiError, AsterSubmissionUncertain):
+            pass
+        try:
+            payload = client.income_history(
                 income_type="TRANSFER",
                 start_time=max(0, submitted_ms - 15_000),
+                end_time=submitted_ms + 180_000,
                 limit=1000,
             )
-            if len(rows) >= 1000:
-                return "HISTORY_TRUNCATED", None
-            state, match = _transfer_history_match(rows, amount=amount, submitted_at=submitted_at)
-            if match is not None:
+            if len(payload) < 1000:
+                futures_rows = list(payload)
+                futures_ok = True
+            else:
+                return "FUTURES_HISTORY_TRUNCATED", None
+        except (AsterApiError, AsterSubmissionUncertain):
+            pass
+        if spot_ok or futures_ok:
+            state, match = reconcile_transfer_rows(
+                spot_rows=spot_rows,
+                futures_rows=futures_rows,
+                amount=amount,
+                submitted_at=submitted_at,
+            )
+            if match is not None or state in {"AMBIGUOUS", "AMBIGUOUS_SPOT"}:
                 return state, match
             last_state = state
-            if state == "AMBIGUOUS":
-                return state, None
-        except (AsterApiError, AsterSubmissionUncertain):
+        else:
             last_state = "HISTORY_UNAVAILABLE"
         if attempt + 1 < attempts and poll_delay_seconds > 0:
             time.sleep(poll_delay_seconds)
@@ -367,6 +453,195 @@ def _uncertain_result(
         "updatedAt": _now(),
     }, merge=True)
     return {"status": "UNCERTAIN", "reconciliationStatus": state}
+
+
+def _recovery_client_tran_id(uid: str, sweep_id: str) -> str:
+    return "tmpr-" + hashlib.sha256(f"{uid}:{sweep_id}:spot-recovery".encode()).hexdigest()[:27]
+
+
+def _unknown_execution_reason(value: Any) -> bool:
+    text = str(value or "").lower()
+    return (
+        "-1006" in text
+        or "-1007" in text
+        or "execution status unknown" in text
+        or "uitvoeringsstatus onbekend" in text
+        or "status unknown" in text
+    )
+
+
+def recover_failed_sweep(
+    *,
+    uid: str,
+    sweep_id: str,
+    user_ref: Any,
+    ledger_ref: Any,
+    ledger: dict[str, Any],
+    client: Any,
+    spot_rows: list[dict[str, Any]] | None = None,
+    futures_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Safely recover one old -1006/-1007 sweep without a blind duplicate.
+
+    Recovery first proves that the original transfer did not appear in either
+    Aster ledger. Only then may exactly one Spot-V3 recovery POST be claimed.
+    The separate recovery document makes the retry idempotent across processes.
+    """
+    status = str(ledger.get("status", "")).upper()
+    if status == "SUCCEEDED":
+        return {"status": "ALREADY_SUCCEEDED"}
+    if status not in {"FAILED_EXCHANGE", "UNCERTAIN", "RECOVERY_UNCERTAIN"}:
+        return {"status": "NOT_RECOVERABLE", "sourceStatus": status}
+    if not _unknown_execution_reason(ledger.get("reason")):
+        return {"status": "NOT_RECOVERABLE", "sourceStatus": status}
+
+    contribution = _d(ledger.get("sweepContribution"))
+    submitted_at = ledger.get("submittedAt") or ledger.get("updatedAt") or ledger.get("completedAt")
+    if contribution <= 0 or _timestamp_ms(submitted_at) <= 0:
+        return {"status": "INVALID_RECOVERY_EVIDENCE"}
+
+    if spot_rows is not None or futures_rows is not None:
+        reconcile_state, record = reconcile_transfer_rows(
+            spot_rows=list(spot_rows or []),
+            futures_rows=list(futures_rows or []),
+            amount=contribution,
+            submitted_at=submitted_at,
+        )
+    else:
+        reconcile_state, record = reconcile_transfer_history(
+            client=client,
+            amount=contribution,
+            submitted_at=submitted_at,
+            poll_attempts=1,
+            poll_delay_seconds=0,
+        )
+    if record is not None:
+        result = _reconciled_result(ref=ledger_ref, contribution=contribution, record=record)
+        ledger_ref.set({
+            "recoveryAvoidedDuplicate": True,
+            "reconciliationStatus": reconcile_state,
+        }, merge=True)
+        return result
+    if reconcile_state in {"AMBIGUOUS", "AMBIGUOUS_SPOT", "HISTORY_UNAVAILABLE"}:
+        ledger_ref.set({
+            "status": "UNCERTAIN",
+            "reconciliationStatus": reconcile_state,
+            "updatedAt": _now(),
+        }, merge=True)
+        return {"status": "UNCERTAIN", "reconciliationStatus": reconcile_state}
+
+    if not live_enabled():
+        return {"status": "BLOCKED_GLOBAL_GATE"}
+
+    account = client.account_information()
+    safe, margin_reason, projection = transfer_safety(account, contribution)
+    ledger_ref.set({
+        "recoveryMarginSafety": projection,
+        "recoveryMarginSafetyReason": margin_reason,
+        "updatedAt": _now(),
+    }, merge=True)
+    if not safe:
+        ledger_ref.set({"status": "RECOVERY_BLOCKED_MARGIN", "updatedAt": _now()}, merge=True)
+        return {"status": "RECOVERY_BLOCKED_MARGIN", "reason": margin_reason}
+
+    recovery_ref = user_ref.collection("asterProfitSweepRecoveries").document(sweep_id)
+    recovery_client_id = _recovery_client_tran_id(uid, sweep_id)
+    try:
+        recovery_ref.create({
+            "uid": uid,
+            "sweepId": sweep_id,
+            "clientTranId": recovery_client_id,
+            "asset": TRANSFER_ASSET,
+            "kindType": TRANSFER_KIND,
+            "amount": _plain(contribution),
+            "status": "CLAIMED",
+            "createdAt": _now(),
+        })
+    except google_exceptions.AlreadyExists:
+        ledger_ref.set({
+            "status": "RECOVERY_UNCERTAIN",
+            "reason": "Recovery is eerder geclaimd; geen tweede geldverplaatsing verstuurd",
+            "updatedAt": _now(),
+        }, merge=True)
+        return {"status": "RECOVERY_ALREADY_CLAIMED"}
+
+    recovery_submitted_at = _now()
+    recovery_ref.set({"status": "SUBMITTING", "submittedAt": recovery_submitted_at}, merge=True)
+    ledger_ref.set({
+        "status": "RECOVERY_SUBMITTING",
+        "recoveryClientTranId": recovery_client_id,
+        "recoverySubmittedAt": recovery_submitted_at,
+        "updatedAt": _now(),
+    }, merge=True)
+    try:
+        payload = client.signed_spot_request("POST", TRANSFER_PATH, {
+            "asset": TRANSFER_ASSET,
+            "amount": _plain(contribution),
+            "clientTranId": recovery_client_id,
+            "kindType": TRANSFER_KIND,
+        })
+    except AsterSubmissionUncertain as exc:
+        result = _uncertain_result(
+            ref=ledger_ref,
+            reason=str(exc),
+            client=client,
+            contribution=contribution,
+            submitted_at=recovery_submitted_at,
+        )
+        recovery_ref.set({
+            "status": "UNCERTAIN",
+            "reason": str(exc)[:500],
+            "updatedAt": _now(),
+        }, merge=True)
+        return result
+    except AsterApiError as exc:
+        recovery_ref.set({
+            "status": "FAILED_EXCHANGE",
+            "reason": str(exc)[:500],
+            "completedAt": _now(),
+        }, merge=True)
+        ledger_ref.set({
+            "status": "RECOVERY_FAILED_EXCHANGE",
+            "reason": str(exc)[:500],
+            "updatedAt": _now(),
+        }, merge=True)
+        return {"status": "RECOVERY_FAILED_EXCHANGE"}
+
+    if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != "SUCCESS" or payload.get("tranId") in (None, ""):
+        result = _uncertain_result(
+            ref=ledger_ref,
+            reason="Aster Spot bevestigde geen SUCCESS + tranId",
+            client=client,
+            contribution=contribution,
+            submitted_at=recovery_submitted_at,
+        )
+        recovery_ref.set({
+            "status": "UNCERTAIN",
+            "providerResponse": payload if isinstance(payload, dict) else {},
+            "updatedAt": _now(),
+        }, merge=True)
+        return result
+
+    tran_id = str(payload.get("tranId"))
+    recovery_ref.set({
+        "status": "SUCCEEDED",
+        "providerTransactionId": tran_id,
+        "completedAt": _now(),
+    }, merge=True)
+    ledger_ref.set({
+        "status": "SUCCEEDED",
+        "providerTransactionId": tran_id,
+        "providerStatus": "SUCCESS",
+        "recoveredViaSpotV3": True,
+        "recoveryClientTranId": recovery_client_id,
+        "completedAt": _now(),
+    }, merge=True)
+    return {
+        "status": "SUCCEEDED",
+        "contribution": _plain(contribution),
+        "tranId": tran_id,
+        "recovered": True,
+    }
 
 
 def prepare_close_sweep(
@@ -536,10 +811,10 @@ def finalize_close_sweep(
         submitted_at = _now()
         ref.set({"status": "SUBMITTING", "submittedAt": submitted_at}, merge=True)
         try:
-            # Aster's documented transfer contract accepts only amount, asset,
-            # clientTranId and kindType. The signer is already attached by the
-            # authenticated V3 client; sending an extra user field is invalid.
-            payload = client.signed_request("POST", TRANSFER_PATH, {
+            # Aster documents perp->spot as a Spot TRADE endpoint. Using the
+            # Futures host produced repeated -1006 unknown-execution responses.
+            # Submit through the approved API-wallet signer on Spot V3.
+            payload = client.signed_spot_request("POST", TRANSFER_PATH, {
                 "asset": TRANSFER_ASSET,
                 "amount": _plain(contribution),
                 "clientTranId": prepared.client_tran_id,

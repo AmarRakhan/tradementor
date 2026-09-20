@@ -125,6 +125,54 @@ def test_signed_read_uses_exact_encoded_message_and_never_exposes_credentials():
     assert signed_messages == ["nonce=1700000000000000&signer=0xagent"]
 
 
+def test_signed_spot_transfer_uses_sapi_host_and_api_wallet_signer():
+    signed_messages = []
+
+    def sign(message: str) -> str:
+        signed_messages.append(message)
+        return "signature"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.host == "sapi.asterdex.com"
+        assert request.url.path == "/api/v3/asset/wallet/transfer"
+        body = request.content.decode()
+        assert "asset=USDT" in body
+        assert "kindType=FUTURE_SPOT" in body
+        assert "clientTranId=tmpp-test" in body
+        assert "signer=0xagent" in body
+        assert "signature=signature" in body
+        return httpx.Response(200, json={"tranId": 123, "status": "SUCCESS"})
+
+    client = AsterV3Client(
+        signer_address="0xagent", sign_message=sign,
+        transport=httpx.MockTransport(handler), nonce=MonotonicNonce(lambda: 1700000000000000),
+    )
+    result = client.signed_spot_request("POST", "/api/v3/asset/wallet/transfer", {
+        "asset": "USDT", "amount": "1", "clientTranId": "tmpp-test", "kindType": "FUTURE_SPOT",
+    })
+    assert result == {"tranId": 123, "status": "SUCCESS"}
+    assert signed_messages == [
+        "asset=USDT&amount=1&clientTranId=tmpp-test&kindType=FUTURE_SPOT&nonce=1700000000000000&signer=0xagent"
+    ]
+
+
+def test_spot_minus_1006_is_uncertain_and_never_blind_retried():
+    calls = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.host, request.url.path))
+        return httpx.Response(400, json={"code": -1006, "msg": "Execution status unknown"})
+    client = AsterV3Client(
+        signer_address="0xagent", sign_message=lambda _: "sig",
+        transport=httpx.MockTransport(handler), nonce=MonotonicNonce(lambda: 1700000000000000),
+    )
+    with pytest.raises(AsterSubmissionUncertain):
+        client.signed_spot_request("POST", "/api/v3/asset/wallet/transfer", {
+            "asset": "USDT", "amount": "1", "clientTranId": "tmpp-spot-1006", "kindType": "FUTURE_SPOT",
+        })
+    assert calls == [("POST", "sapi.asterdex.com", "/api/v3/asset/wallet/transfer")]
+
+
 def test_public_ticker_read_never_signs_or_submits_an_order():
     calls = []
 

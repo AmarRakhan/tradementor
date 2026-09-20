@@ -30,10 +30,11 @@ def test_settings_route_keeps_user_control_separate_from_global_live_gate():
 
 def test_live_engine_uses_only_internal_future_to_spot_transfer_and_no_withdrawal():
     source = (ROOT / "profit_sweep_live.py").read_text(encoding="utf-8")
-    assert 'TRANSFER_PATH = "/fapi/v3/asset/wallet/transfer"' in source
+    assert 'TRANSFER_PATH = "/api/v3/asset/wallet/transfer"' in source
     assert 'TRANSFER_KIND = "FUTURE_SPOT"' in source
     assert 'TRANSFER_ASSET = "USDT"' in source
     assert '"clientTranId": prepared.client_tran_id' in source
+    assert 'client.signed_spot_request("POST", TRANSFER_PATH' in source
     assert 'str(payload.get("status", "")).upper() != "SUCCESS"' in source
     assert 'payload.get("tranId")' in source
     assert 'except AsterSubmissionUncertain' in source

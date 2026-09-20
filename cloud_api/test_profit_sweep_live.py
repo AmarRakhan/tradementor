@@ -11,6 +11,7 @@ from profit_sweep_live import (
     net_realized_for_order,
     open_inventory,
     prepare_close_sweep,
+    recover_failed_sweep,
     transfer_safety,
 )
 
@@ -56,11 +57,12 @@ class FakeUserRef:
 
 
 class FakeClient:
-    def __init__(self, *, uncertain=False, transfer_history=None):
+    def __init__(self, *, uncertain=False, transfer_history=None, spot_history=None):
         self.calls = 0
         self.transfers = []
         self.uncertain = uncertain
         self.transfer_history = list(transfer_history or [])
+        self.spot_history = list(spot_history or [])
         self.pre = [{
             "id": 1, "orderId": 10, "symbol": "BTCUSDT", "positionSide": "LONG", "side": "BUY",
             "qty": "1", "commission": "-0.10", "commissionAsset": "USDT", "realizedPnl": "0", "time": 1000,
@@ -79,6 +81,10 @@ class FakeClient:
     def account_information(self):
         return {"availableBalance": "100", "totalMarginBalance": "100", "totalMaintMargin": "10"}
     def signed_request(self, method, path, params):
+        return {"ok": True}
+    def signed_spot_request(self, method, path, params):
+        if method.upper() == "GET":
+            return list(self.spot_history)
         self.transfers.append((method, path, dict(params)))
         if self.uncertain: raise AsterSubmissionUncertain("unknown")
         return {"tranId": 777, "status": "SUCCESS"}
@@ -222,3 +228,113 @@ def test_uncertain_transfer_reconciles_from_authoritative_income_history(monkeyp
         "reconciled": True,
     }
     assert len(client.transfers) == 1
+
+
+def test_uncertain_transfer_reconciles_from_spot_transaction_history(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=25)
+    client = FakeClient(
+        uncertain=True,
+        spot_history=[{
+            "type": "TRANSFER_FUTURE_TO_SPOT",
+            "balanceDelta": "0.96250000",
+            "asset": "USDT",
+            "time": int(time.time() * 1000),
+            "tranId": "889",
+        }],
+    )
+    prepared = prepare_close_sweep(
+        uid="u5", user_ref=user, client=client, intent_id="close-spot-reconciled", symbol="BTCUSDT",
+        position_side="LONG", close_quantity="1",
+    )
+    result = finalize_close_sweep(prepared, client=client, confirmed_order={
+        "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
+    })
+    assert result == {
+        "status": "SUCCEEDED",
+        "contribution": "0.9625",
+        "tranId": "889",
+        "reconciled": True,
+    }
+    assert len(client.transfers) == 1
+
+
+def test_failed_unknown_sweep_gets_one_idempotent_spot_recovery(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=25)
+    client = FakeClient()
+    ledger_ref = user.collection("asterProfitSweeps").document("sweep-old")
+    submitted = time.time()
+    ledger = {
+        "status": "FAILED_EXCHANGE",
+        "reason": "Aster -1006: Execution status unknown",
+        "sweepContribution": "0.75",
+        "submittedAt": submitted,
+    }
+    ledger_ref.set(ledger)
+    result = recover_failed_sweep(
+        uid="u6",
+        sweep_id="sweep-old",
+        user_ref=user,
+        ledger_ref=ledger_ref,
+        ledger=ledger,
+        client=client,
+        spot_rows=[],
+        futures_rows=[],
+    )
+    assert result["status"] == "SUCCEEDED"
+    assert result["recovered"] is True
+    assert len(client.transfers) == 1
+    assert client.transfers[0][1] == TRANSFER_PATH
+    assert client.transfers[0][2]["clientTranId"].startswith("tmpr-")
+    second = recover_failed_sweep(
+        uid="u6",
+        sweep_id="sweep-old",
+        user_ref=user,
+        ledger_ref=ledger_ref,
+        ledger={
+            "status": "UNCERTAIN",
+            "reason": "execution status unknown",
+            "sweepContribution": "0.75",
+            "submittedAt": submitted,
+        },
+        client=client,
+        spot_rows=[],
+        futures_rows=[],
+    )
+    assert second["status"] == "RECOVERY_ALREADY_CLAIMED"
+    assert len(client.transfers) == 1
+
+
+def test_recovery_never_reposts_when_original_transfer_is_already_in_spot_history(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=25)
+    client = FakeClient()
+    submitted_ms = int(time.time() * 1000)
+    ledger_ref = user.collection("asterProfitSweeps").document("sweep-existing")
+    ledger = {
+        "status": "UNCERTAIN",
+        "reason": "Aster -1007: execution status unknown",
+        "sweepContribution": "0.5",
+        "submittedAt": submitted_ms,
+    }
+    ledger_ref.set(ledger)
+    result = recover_failed_sweep(
+        uid="u7",
+        sweep_id="sweep-existing",
+        user_ref=user,
+        ledger_ref=ledger_ref,
+        ledger=ledger,
+        client=client,
+        spot_rows=[{
+            "type": "TRANSFER_FUTURE_TO_SPOT",
+            "balanceDelta": "0.50000000",
+            "asset": "USDT",
+            "time": submitted_ms + 1000,
+            "tranId": "already-done",
+        }],
+        futures_rows=[],
+    )
+    assert result["status"] == "SUCCEEDED"
+    assert result["tranId"] == "already-done"
+    assert client.transfers == []
