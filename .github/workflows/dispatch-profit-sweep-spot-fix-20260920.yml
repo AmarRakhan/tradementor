@@ -1,4 +1,4 @@
-name: Dispatch Profit Sweep Spot GET Fix Production 2026-09-20
+name: Dispatch Profit Sweep Idempotent Recovery Production 2026-09-20
 
 on:
   push:
@@ -13,13 +13,13 @@ permissions:
 
 jobs:
   dispatch-production:
-    if: github.event.head_commit.message == 'Dispatch Profit Sweep Spot GET fix production'
+    if: github.event.head_commit.message == 'Dispatch Profit Sweep idempotent recovery production'
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch guarded production backend workflow
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_COMMIT: c156d4e9db9b8a76bfa1b93ba5e6ec665d5f2711
+          SOURCE_COMMIT: 1de810af01c47f31fc5cc294d50e585aaed49bfb
         run: |
           set -euo pipefail
           gh workflow run deploy-cloud-production.yml \
