@@ -26,6 +26,12 @@ jobs:
     timeout-minutes: 12
     environment: production
     steps:
+      - name: Announce repair verification run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Fixed-size repair verification run ID: $GITHUB_RUN_ID"
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
         with:
