@@ -60,6 +60,8 @@ rank_top_volume = _core.rank_top_volume
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,32}USDT$")
 _MAX_PAIR_DCA = 500
 _TP_MODES = {"PER_TRADE", "PORTFOLIO", "OFF"}
+_PORTFOLIO_TP_INPUT_MODES = {"PERCENT", "USD"}
+_PORTFOLIO_TP_BASE_MODES = {"CYCLE_START", "CURRENT_VALUE", "CUSTOM"}
 _CORE_HOOK_NAMES = (
     "execute_leg_once", "max_contract_leverage", "rank_top_volume",
     "is_definite_contract_rejection", "plan_pair", "resolve_entry",
@@ -91,6 +93,22 @@ def _normalize_mode(value: Any, *, legacy_enabled: bool = True) -> str:
             "PORTFOLIO_TP":"PORTFOLIO", "NONE":"OFF", "UIT":"OFF"}.get(text, text)
     if not text: return "PER_TRADE" if legacy_enabled else "OFF"
     if text not in _TP_MODES: raise ValueError("Take Profit Mode moet PER_TRADE, PORTFOLIO of OFF zijn")
+    return text
+
+
+def _normalize_portfolio_tp_input_mode(value: Any) -> str:
+    text = str(value or "PERCENT").strip().upper().replace("%", "PERCENT").replace("$", "USD")
+    if text not in _PORTFOLIO_TP_INPUT_MODES:
+        raise ValueError("Portfolio TP invoermodus moet PERCENT of USD zijn")
+    return text
+
+
+def _normalize_portfolio_tp_base_mode(value: Any) -> str:
+    text = str(value or "CYCLE_START").strip().upper().replace("-", "_").replace(" ", "_")
+    text = {"CYCLE":"CYCLE_START", "CURRENT":"CURRENT_VALUE", "CURRENT_EQUITY":"CURRENT_VALUE",
+            "CUSTOM_VALUE":"CUSTOM", "AANGEPAST":"CUSTOM"}.get(text, text)
+    if text not in _PORTFOLIO_TP_BASE_MODES:
+        raise ValueError("Portfolio TP basis moet CYCLE_START, CURRENT_VALUE of CUSTOM zijn")
     return text
 
 
@@ -184,6 +202,10 @@ class MultiBbConfig(_core.MultiBbConfig):
     long_take_profit_value: float = .015
     short_take_profit_value: float = .015
     portfolio_tp_percent: float = 20.0
+    portfolio_tp_input_mode: str = "PERCENT"
+    portfolio_tp_value: float = 20.0
+    portfolio_tp_base_mode: str = "CYCLE_START"
+    portfolio_tp_custom_base_equity: float = 0.0
     stop_loss_enabled: bool = False
     stop_loss_mode: str = "PERCENT"
     stop_loss_long: float = 0.0
@@ -205,6 +227,10 @@ class MultiBbConfig(_core.MultiBbConfig):
         base = _core.MultiBbConfig.from_mapping(normalized)
         values = {item.name:getattr(base,item.name) for item in fields(_core.MultiBbConfig)}
         legacy_entry = base.entry_margin_usd
+        legacy_portfolio_tp = _finite(source.get("portfolioTpPercent"), 20.0)
+        portfolio_tp_input_mode = _normalize_portfolio_tp_input_mode(source.get("portfolioTpInputMode"))
+        portfolio_tp_value = _finite(source.get("portfolioTpValue"), legacy_portfolio_tp if portfolio_tp_input_mode == "PERCENT" else 5.0)
+        portfolio_tp_base_mode = _normalize_portfolio_tp_base_mode(source.get("portfolioTpBaseMode"))
         values.update({
             "take_profit_mode": _normalize_mode(source.get("takeProfitMode"), legacy_enabled=base.take_profit_enabled),
             "entry_margin_long_usd": _positive_ratio(source,("entryMarginLongUsd","entryMarginLong"),legacy_entry),
@@ -219,7 +245,11 @@ class MultiBbConfig(_core.MultiBbConfig):
             "max_dca_short": _integer(source.get("maxDcaShort",source.get("shortMaxDca",base.max_dca)),base.max_dca),
             "long_take_profit_value": _positive_ratio(source,("longTakeProfitValue","takeProfitLong"),base.take_profit),
             "short_take_profit_value": _positive_ratio(source,("shortTakeProfitValue","takeProfitShort"),base.take_profit),
-            "portfolio_tp_percent": _finite(source.get("portfolioTpPercent"),20.0),
+            "portfolio_tp_percent": legacy_portfolio_tp,
+            "portfolio_tp_input_mode": portfolio_tp_input_mode,
+            "portfolio_tp_value": portfolio_tp_value,
+            "portfolio_tp_base_mode": portfolio_tp_base_mode,
+            "portfolio_tp_custom_base_equity": _finite(source.get("portfolioTpCustomBaseEquity"), 0.0),
             "stop_loss_enabled": bool(source.get("stopLossEnabled", False)),
             "stop_loss_mode": str(source.get("stopLossMode", "PERCENT")).strip().upper().replace("%", "PERCENT").replace("$", "USD"),
             "stop_loss_long": _finite(source.get("stopLossLong"), 0.0),
@@ -245,7 +275,12 @@ class MultiBbConfig(_core.MultiBbConfig):
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_dca_margin_usd,self.short_dca_margin_usd)): raise ValueError("LONG/SHORT DCA-bedrag moet positief zijn")
         if any(not 0 <= x <= _MAX_PAIR_DCA for x in (self.max_dca_long,self.max_dca_short)): raise ValueError(f"LONG/SHORT max DCA moet tussen 0 en {_MAX_PAIR_DCA} liggen")
         if any(not math.isfinite(x) or x <= 0 for x in (self.long_take_profit_value,self.short_take_profit_value)): raise ValueError("LONG/SHORT Take Profit moet positief zijn")
-        if not math.isfinite(self.portfolio_tp_percent) or not 0 < self.portfolio_tp_percent <= 10000: raise ValueError("Portfolio TP percentage moet groter dan 0 zijn")
+        if self.portfolio_tp_input_mode not in _PORTFOLIO_TP_INPUT_MODES: raise ValueError("Portfolio TP invoermodus is ongeldig")
+        if self.portfolio_tp_base_mode not in _PORTFOLIO_TP_BASE_MODES: raise ValueError("Portfolio TP basis is ongeldig")
+        if not math.isfinite(self.portfolio_tp_value) or self.portfolio_tp_value <= 0: raise ValueError("Portfolio TP moet groter dan 0 zijn")
+        if self.portfolio_tp_input_mode == "PERCENT" and self.portfolio_tp_value > 10000: raise ValueError("Portfolio TP percentage mag maximaal 10.000% zijn")
+        if self.portfolio_tp_input_mode == "USD" and self.portfolio_tp_value > 1_000_000_000: raise ValueError("Portfolio TP bedrag is te groot")
+        if self.portfolio_tp_base_mode == "CUSTOM" and (not math.isfinite(self.portfolio_tp_custom_base_equity) or self.portfolio_tp_custom_base_equity <= 0): raise ValueError("Aangepaste Portfolio TP basis moet groter dan 0 zijn")
         if self.stop_loss_mode not in {"USD","PERCENT"}: raise ValueError("Stoploss type moet USD of PERCENT zijn")
         if self.stop_loss_enabled and (not math.isfinite(self.stop_loss_long) or self.stop_loss_long <= 0 or not math.isfinite(self.stop_loss_short) or self.stop_loss_short <= 0): raise ValueError("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat")
         if self.smart_rescue_enabled:
@@ -281,7 +316,11 @@ class MultiBbConfig(_core.MultiBbConfig):
             "longMaxDca":self.max_dca_long, "shortMaxDca":self.max_dca_short,
             "longTakeProfitValue":self.long_take_profit_value, "shortTakeProfitValue":self.short_take_profit_value,
             "takeProfitLong":self.long_take_profit_value, "takeProfitShort":self.short_take_profit_value,
-            "portfolioTpPercent":self.portfolio_tp_percent,
+            "portfolioTpPercent":self.portfolio_tp_value if self.portfolio_tp_input_mode=="PERCENT" else self.portfolio_tp_percent,
+            "portfolioTpInputMode":self.portfolio_tp_input_mode,
+            "portfolioTpValue":self.portfolio_tp_value,
+            "portfolioTpBaseMode":self.portfolio_tp_base_mode,
+            "portfolioTpCustomBaseEquity":self.portfolio_tp_custom_base_equity,
             "stopLossEnabled":self.stop_loss_enabled,
             "stopLossMode":self.stop_loss_mode,
             "stopLossLong":self.stop_loss_long,
