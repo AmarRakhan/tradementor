@@ -38,7 +38,10 @@ def test_production_scheduler_endpoint_runs_strategy2_and_isolated_sniper_only()
     block = source[start:end]
     assert "_run_aster_strategy2_tick" in block
     assert "_run_aster_strategy3_tick" not in block
-    assert '"strategy2Only":False' in block\n    assert '"sniper":sniper_results' in block\n    assert 'db.collection("asterSniper").where("monitor","==",True)' in block\n    assert "_run_aster_sniper_tick(item.id)" in block
+    assert '"strategy2Only":False' in block
+    assert '"sniper":sniper_results' in block
+    assert 'db.collection("asterSniper").where("monitor","==",True)' in block
+    assert "_run_aster_sniper_tick(item.id)" in block
     assert '"strategy1"' not in block
     assert '"strategy3"' not in block
 
