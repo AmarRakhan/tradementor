@@ -1182,6 +1182,38 @@ def _sniper_live_gate_enabled()->bool:
     return os.getenv("ASTER_SNIPER_LIVE_EXECUTION_ENABLED",fallback).lower()=="true"
 
 
+def aster_account_coordination_reference(uid:str):
+    return db.collection("asterAccountCoordination").document(uid)
+
+
+def _acquire_aster_account_coordination(uid:str,owner:str,purpose:str)->str|None:
+    """Serialize account-risk-changing strategy work so shared available cannot be double-spent."""
+    ref=aster_account_coordination_reference(uid);transaction=db.transaction();token=python_secrets.token_hex(16)
+    @firestore.transactional
+    def acquire(txn):
+        value=ref.get(transaction=txn).to_dict() or {};now=datetime.now(timezone.utc)
+        lease=value.get("lease") if isinstance(value.get("lease"),dict) else {}
+        until=lease.get("until")
+        if isinstance(until,datetime):
+            until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        if isinstance(until,datetime) and until>now:return None
+        txn.set(ref,{"lease":{"token":token,"owner":owner,"purpose":purpose,
+            "until":now+timedelta(seconds=45),"acquiredAt":now},"updatedAt":now},merge=True)
+        return token
+    return acquire(transaction)
+
+
+def _release_aster_account_coordination(uid:str,token:str)->None:
+    ref=aster_account_coordination_reference(uid);transaction=db.transaction()
+    @firestore.transactional
+    def release(txn):
+        value=ref.get(transaction=txn).to_dict() or {};lease=value.get("lease") if isinstance(value.get("lease"),dict) else {}
+        if str(lease.get("token",""))!=token:return False
+        now=datetime.now(timezone.utc);txn.set(ref,{"lease":{"token":"","until":now,"releasedAt":now},"updatedAt":now},merge=True)
+        return True
+    release(transaction)
+
+
 def _acquire_sniper_execution_lease(reference)->str|None:
     """Fence scheduler, realtime and manual SNIPER execution per account."""
     transaction=db.transaction();token=python_secrets.token_hex(16)
@@ -6585,13 +6617,19 @@ def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,
         result=_run_aster_sniper_tick(uid,management_only=True,event_symbol=event.symbol)
         return {**result,"realtime":True,"strategyOwner":"SNIPER","marketEventAtMs":event.event_time_ms,
             "marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
+    account_token=_acquire_aster_account_coordination(uid,"ASTER","REALTIME_MANAGEMENT")
+    if not account_token:return {"status":"account-busy","ordersSent":0,"symbol":event.symbol}
     ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
-    if not token:return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}
+    if not token:
+        _release_aster_account_coordination(uid,str(account_token))
+        return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}
     try:
         result=_run_aster_strategy2_queue_scan(uid,maximum_orders=2,management_only=True,event_symbol=event.symbol,event_mark_price=event.mark_price)
         return {**result,"realtime":True,"strategyOwner":"ASTER","marketEventAtMs":event.event_time_ms,
             "marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
-    finally:_release_strategy2_queue_lease(ref,str(token))
+    finally:
+        _release_strategy2_queue_lease(ref,str(token))
+        _release_aster_account_coordination(uid,str(account_token))
 
 def _persist_aster_realtime_health(payload:dict[str,Any])->None:
     db.collection("systemStatus").document("asterRealtime").set({**payload,"updatedAt":datetime.now(timezone.utc)},merge=True)
@@ -6760,6 +6798,10 @@ def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False,management_only:bool=Fal
     ref=aster_sniper_reference(uid);ensure_aster_sniper_control(uid)
     token=_acquire_sniper_execution_lease(ref)
     if not token:return {"status":"lease-busy","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
+    account_token=_acquire_aster_account_coordination(uid,"SNIPER","REALTIME_MANAGEMENT" if management_only else "SCANNER")
+    if not account_token:
+        _release_sniper_execution_lease(ref,str(token))
+        return {"status":"account-busy","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
     try:
         raw=ref.get().to_dict() or {};settings=SniperSettings.from_mapping(raw.get("settings"))
         if management_only and event_symbol and normalize_symbol(event_symbol) not in sniper_active_symbols(raw):
@@ -6798,6 +6840,7 @@ def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False,management_only:bool=Fal
         ref.set(state,merge=True)
         return {key:value for key,value in result.items() if key not in {"state","historyRecord"}}
     finally:
+        _release_aster_account_coordination(uid,str(account_token))
         _release_sniper_execution_lease(ref,str(token))
 
 
@@ -6869,6 +6912,10 @@ def close_aster_sniper_trade(request:AsterSniperCloseRequest,user:dict[str,Any]=
     ref=aster_sniper_reference(uid);ensure_aster_sniper_control(uid)
     token=_acquire_sniper_execution_lease(ref)
     if not token:raise HTTPException(409,"Sniper verwerkt momenteel een andere order; probeer het zo opnieuw")
+    account_token=_acquire_aster_account_coordination(uid,"SNIPER","MANUAL_CLOSE")
+    if not account_token:
+        _release_sniper_execution_lease(ref,str(token))
+        raise HTTPException(409,"Aster-account verwerkt momenteel een andere strategieactie")
     try:
         raw=ref.get().to_dict() or {}
         trades=[dict(x) for x in raw.get("activeTrades",[]) if isinstance(x,dict)]
@@ -6919,6 +6966,7 @@ def close_aster_sniper_trade(request:AsterSniperCloseRequest,user:dict[str,Any]=
             "fundingUsd":record.get("fundingUsd"),"netRealizedPnlUsd":record.get("netRealizedPnlUsd"),
             "accountingError":accounting_error}
     finally:
+        _release_aster_account_coordination(uid,str(account_token))
         _release_sniper_execution_lease(ref,str(token))
 
 
@@ -6933,6 +6981,8 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
 
     def run_strategy2_account(uid:str)->dict[str,Any]:
         reference=aster_strategy2_reference(uid)
+        account_token=_acquire_aster_account_coordination(uid,"ASTER","SCHEDULER")
+        if not account_token:return {"uid":uid,"status":"account-busy"}
         raw=reference.get().to_dict() or {};queue_enabled=_strategy2_order_queue_enabled(raw)
         queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
         has_unresolved_intent=bool(queue_state.get("currentIntent")) or bool(queue_state.get("haltedUncertain",False))
@@ -6955,6 +7005,7 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
         finally:
             if uses_queue_lease:_release_strategy2_queue_lease(reference,str(queue_token))
             else:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+            _release_aster_account_coordination(uid,str(account_token))
 
     strategy2_uids=[item.id for item in strategy2_controls[:100]]
     if strategy2_uids:
