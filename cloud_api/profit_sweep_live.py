@@ -481,11 +481,13 @@ def recover_failed_sweep(
     spot_rows: list[dict[str, Any]] | None = None,
     futures_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Safely recover one old -1006/-1007 sweep without a blind duplicate.
+    """Safely recover one old unknown sweep with a deterministic idempotency key.
 
-    Recovery first proves that the original transfer did not appear in either
-    Aster ledger. Only then may exactly one Spot-V3 recovery POST be claimed.
-    The separate recovery document makes the retry idempotent across processes.
+    The original submission is reconciled first. A recovery uses a deterministic
+    clientTranId that Aster requires to be unique for seven days. If Aster returns
+    -1006/-1007, at most one replay of that exact same clientTranId is allowed;
+    this cannot intentionally create a second transfer and avoids inventing a
+    fresh transaction id for an unknown execution state.
     """
     status = str(ledger.get("status", "")).upper()
     if status == "SUCCEEDED":
@@ -530,6 +532,80 @@ def recover_failed_sweep(
         }, merge=True)
         return {"status": "UNCERTAIN", "reconciliationStatus": reconcile_state}
 
+    recovery_ref = user_ref.collection("asterProfitSweepRecoveries").document(sweep_id)
+    recovery_client_id = _recovery_client_tran_id(uid, sweep_id)
+    existing_recovery: dict[str, Any] = {}
+    try:
+        recovery_ref.create({
+            "uid": uid,
+            "sweepId": sweep_id,
+            "clientTranId": recovery_client_id,
+            "asset": TRANSFER_ASSET,
+            "kindType": TRANSFER_KIND,
+            "amount": _plain(contribution),
+            "status": "CLAIMED",
+            "submitAttempts": 0,
+            "createdAt": _now(),
+        })
+    except google_exceptions.AlreadyExists:
+        existing_recovery = recovery_ref.get().to_dict() or {}
+        # Never continue a claim whose immutable identity/economic fields differ.
+        if (
+            str(existing_recovery.get("clientTranId", "")) != recovery_client_id
+            or str(existing_recovery.get("asset", "")).upper() != TRANSFER_ASSET
+            or str(existing_recovery.get("kindType", "")).upper() != TRANSFER_KIND
+            or _d(existing_recovery.get("amount")) != contribution
+        ):
+            ledger_ref.set({
+                "status": "RECOVERY_UNCERTAIN",
+                "reason": "Bestaande recovery-claim komt niet overeen; geen geldverplaatsing verstuurd",
+                "updatedAt": _now(),
+            }, merge=True)
+            return {"status": "RECOVERY_ALREADY_CLAIMED"}
+
+        provider_id = existing_recovery.get("providerTransactionId")
+        if str(existing_recovery.get("status", "")).upper() == "SUCCEEDED" and provider_id not in (None, ""):
+            ledger_ref.set({
+                "status": "SUCCEEDED",
+                "providerTransactionId": str(provider_id),
+                "providerStatus": "SUCCESS",
+                "recoveredViaSpotV3": True,
+                "recoveryClientTranId": recovery_client_id,
+                "completedAt": _now(),
+            }, merge=True)
+            return {
+                "status": "SUCCEEDED",
+                "contribution": _plain(contribution),
+                "tranId": str(provider_id),
+                "recovered": True,
+            }
+
+        prior_recovery_submitted = existing_recovery.get("submittedAt") or ledger.get("recoverySubmittedAt")
+        if _timestamp_ms(prior_recovery_submitted) > 0:
+            prior_state, prior_record = reconcile_transfer_history(
+                client=client,
+                amount=contribution,
+                submitted_at=prior_recovery_submitted,
+                poll_attempts=2,
+                poll_delay_seconds=0.35,
+            )
+            if prior_record is not None:
+                result = _reconciled_result(ref=ledger_ref, contribution=contribution, record=prior_record)
+                recovery_ref.set({
+                    "status": "SUCCEEDED",
+                    "providerTransactionId": str(prior_record.get("tranId")),
+                    "reconciliationStatus": prior_state,
+                    "completedAt": _now(),
+                }, merge=True)
+                return {**result, "recovered": True}
+            if prior_state in {"AMBIGUOUS", "AMBIGUOUS_SPOT", "HISTORY_UNAVAILABLE"}:
+                ledger_ref.set({
+                    "status": "RECOVERY_UNCERTAIN",
+                    "reconciliationStatus": prior_state,
+                    "updatedAt": _now(),
+                }, merge=True)
+                return {"status": "UNCERTAIN", "reconciliationStatus": prior_state}
+
     if not live_enabled():
         return {"status": "BLOCKED_GLOBAL_GATE"}
 
@@ -544,104 +620,169 @@ def recover_failed_sweep(
         ledger_ref.set({"status": "RECOVERY_BLOCKED_MARGIN", "updatedAt": _now()}, merge=True)
         return {"status": "RECOVERY_BLOCKED_MARGIN", "reason": margin_reason}
 
-    recovery_ref = user_ref.collection("asterProfitSweepRecoveries").document(sweep_id)
-    recovery_client_id = _recovery_client_tran_id(uid, sweep_id)
-    try:
-        recovery_ref.create({
-            "uid": uid,
-            "sweepId": sweep_id,
-            "clientTranId": recovery_client_id,
-            "asset": TRANSFER_ASSET,
-            "kindType": TRANSFER_KIND,
-            "amount": _plain(contribution),
-            "status": "CLAIMED",
-            "createdAt": _now(),
-        })
-    except google_exceptions.AlreadyExists:
+    # Aster documents clientTranId as unique for seven days. Therefore a replay
+    # is only permitted with this exact deterministic id, never with a fresh id.
+    if existing_recovery:
+        try:
+            attempts = int(existing_recovery.get("submitAttempts", 1 if existing_recovery.get("submittedAt") else 0))
+        except (TypeError, ValueError):
+            attempts = 1 if existing_recovery.get("submittedAt") else 0
+    else:
+        attempts = 0
+    if attempts >= 2:
         ledger_ref.set({
             "status": "RECOVERY_UNCERTAIN",
-            "reason": "Recovery is eerder geclaimd; geen tweede geldverplaatsing verstuurd",
+            "reason": "Recovery bleef onzeker na idempotente replay; geen extra geldverplaatsing verstuurd",
             "updatedAt": _now(),
         }, merge=True)
-        return {"status": "RECOVERY_ALREADY_CLAIMED"}
+        return {"status": "UNCERTAIN", "reconciliationStatus": "IDEMPOTENT_REPLAY_EXHAUSTED"}
 
-    recovery_submitted_at = _now()
-    recovery_ref.set({"status": "SUBMITTING", "submittedAt": recovery_submitted_at}, merge=True)
-    ledger_ref.set({
-        "status": "RECOVERY_SUBMITTING",
-        "recoveryClientTranId": recovery_client_id,
-        "recoverySubmittedAt": recovery_submitted_at,
-        "updatedAt": _now(),
-    }, merge=True)
-    try:
-        payload = client.signed_spot_request("POST", TRANSFER_PATH, {
-            "asset": TRANSFER_ASSET,
-            "amount": _plain(contribution),
-            "clientTranId": recovery_client_id,
-            "kindType": TRANSFER_KIND,
-        })
-    except AsterSubmissionUncertain as exc:
-        result = _uncertain_result(
-            ref=ledger_ref,
-            reason=str(exc),
-            client=client,
-            contribution=contribution,
-            submitted_at=recovery_submitted_at,
-        )
+    while attempts < 2:
+        attempts += 1
+        recovery_submitted_at = _now()
         recovery_ref.set({
-            "status": "UNCERTAIN",
-            "reason": str(exc)[:500],
+            "status": "SUBMITTING" if attempts == 1 else "RESUBMITTING_SAME_ID",
+            "submitAttempts": attempts,
+            "submittedAt": existing_recovery.get("submittedAt", recovery_submitted_at) if existing_recovery else recovery_submitted_at,
+            "lastSubmittedAt": recovery_submitted_at,
             "updatedAt": _now(),
         }, merge=True)
-        return result
-    except AsterApiError as exc:
+        ledger_ref.set({
+            "status": "RECOVERY_SUBMITTING",
+            "recoveryClientTranId": recovery_client_id,
+            "recoverySubmittedAt": recovery_submitted_at,
+            "recoverySubmitAttempts": attempts,
+            "updatedAt": _now(),
+        }, merge=True)
+        try:
+            payload = client.signed_spot_request("POST", TRANSFER_PATH, {
+                "asset": TRANSFER_ASSET,
+                "amount": _plain(contribution),
+                "clientTranId": recovery_client_id,
+                "kindType": TRANSFER_KIND,
+            })
+        except AsterSubmissionUncertain as exc:
+            result = _uncertain_result(
+                ref=ledger_ref,
+                reason=str(exc),
+                client=client,
+                contribution=contribution,
+                submitted_at=recovery_submitted_at,
+            )
+            if str(result.get("status", "")).upper() == "SUCCEEDED":
+                recovery_ref.set({
+                    "status": "SUCCEEDED",
+                    "providerTransactionId": str(result.get("tranId")),
+                    "reconciliationStatus": result.get("reconciliationStatus"),
+                    "completedAt": _now(),
+                }, merge=True)
+                return {**result, "recovered": True}
+            recovery_ref.set({
+                "status": "UNCERTAIN",
+                "reason": str(exc)[:500],
+                "submitAttempts": attempts,
+                "updatedAt": _now(),
+            }, merge=True)
+            if attempts < 2 and str(result.get("reconciliationStatus", "")).upper() == "NOT_FOUND":
+                continue
+            return result
+        except AsterApiError as exc:
+            message = str(exc)
+            if "-4115" in message:
+                # Same clientTranId is already known to Aster. Never invent a new
+                # id; reconcile the existing transfer and otherwise remain safe.
+                dup_state, dup_record = reconcile_transfer_history(
+                    client=client,
+                    amount=contribution,
+                    submitted_at=existing_recovery.get("submittedAt") or recovery_submitted_at,
+                    poll_attempts=2,
+                    poll_delay_seconds=0.35,
+                )
+                if dup_record is not None:
+                    result = _reconciled_result(ref=ledger_ref, contribution=contribution, record=dup_record)
+                    recovery_ref.set({
+                        "status": "SUCCEEDED",
+                        "providerTransactionId": str(dup_record.get("tranId")),
+                        "reconciliationStatus": dup_state,
+                        "completedAt": _now(),
+                    }, merge=True)
+                    return {**result, "recovered": True}
+                recovery_ref.set({
+                    "status": "UNCERTAIN",
+                    "reason": "DUPLICATED_CLIENT_TRAN_ID",
+                    "submitAttempts": attempts,
+                    "reconciliationStatus": dup_state,
+                    "updatedAt": _now(),
+                }, merge=True)
+                ledger_ref.set({
+                    "status": "RECOVERY_UNCERTAIN",
+                    "reason": "Aster kent dezelfde recovery-id; historie bevestigt de transfer nog niet",
+                    "reconciliationStatus": dup_state,
+                    "updatedAt": _now(),
+                }, merge=True)
+                return {"status": "UNCERTAIN", "reconciliationStatus": dup_state}
+            recovery_ref.set({
+                "status": "FAILED_EXCHANGE",
+                "reason": message[:500],
+                "submitAttempts": attempts,
+                "completedAt": _now(),
+            }, merge=True)
+            ledger_ref.set({
+                "status": "RECOVERY_FAILED_EXCHANGE",
+                "reason": message[:500],
+                "updatedAt": _now(),
+            }, merge=True)
+            return {"status": "RECOVERY_FAILED_EXCHANGE"}
+
+        if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != "SUCCESS" or payload.get("tranId") in (None, ""):
+            result = _uncertain_result(
+                ref=ledger_ref,
+                reason="Aster Spot bevestigde geen SUCCESS + tranId",
+                client=client,
+                contribution=contribution,
+                submitted_at=recovery_submitted_at,
+            )
+            if str(result.get("status", "")).upper() == "SUCCEEDED":
+                recovery_ref.set({
+                    "status": "SUCCEEDED",
+                    "providerTransactionId": str(result.get("tranId")),
+                    "reconciliationStatus": result.get("reconciliationStatus"),
+                    "completedAt": _now(),
+                }, merge=True)
+                return {**result, "recovered": True}
+            recovery_ref.set({
+                "status": "UNCERTAIN",
+                "providerResponse": payload if isinstance(payload, dict) else {},
+                "submitAttempts": attempts,
+                "updatedAt": _now(),
+            }, merge=True)
+            if attempts < 2 and str(result.get("reconciliationStatus", "")).upper() == "NOT_FOUND":
+                continue
+            return result
+
+        tran_id = str(payload.get("tranId"))
         recovery_ref.set({
-            "status": "FAILED_EXCHANGE",
-            "reason": str(exc)[:500],
+            "status": "SUCCEEDED",
+            "providerTransactionId": tran_id,
+            "submitAttempts": attempts,
             "completedAt": _now(),
         }, merge=True)
         ledger_ref.set({
-            "status": "RECOVERY_FAILED_EXCHANGE",
-            "reason": str(exc)[:500],
-            "updatedAt": _now(),
+            "status": "SUCCEEDED",
+            "providerTransactionId": tran_id,
+            "providerStatus": "SUCCESS",
+            "recoveredViaSpotV3": True,
+            "recoveryClientTranId": recovery_client_id,
+            "completedAt": _now(),
         }, merge=True)
-        return {"status": "RECOVERY_FAILED_EXCHANGE"}
+        return {
+            "status": "SUCCEEDED",
+            "contribution": _plain(contribution),
+            "tranId": tran_id,
+            "recovered": True,
+        }
 
-    if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != "SUCCESS" or payload.get("tranId") in (None, ""):
-        result = _uncertain_result(
-            ref=ledger_ref,
-            reason="Aster Spot bevestigde geen SUCCESS + tranId",
-            client=client,
-            contribution=contribution,
-            submitted_at=recovery_submitted_at,
-        )
-        recovery_ref.set({
-            "status": "UNCERTAIN",
-            "providerResponse": payload if isinstance(payload, dict) else {},
-            "updatedAt": _now(),
-        }, merge=True)
-        return result
-
-    tran_id = str(payload.get("tranId"))
-    recovery_ref.set({
-        "status": "SUCCEEDED",
-        "providerTransactionId": tran_id,
-        "completedAt": _now(),
-    }, merge=True)
-    ledger_ref.set({
-        "status": "SUCCEEDED",
-        "providerTransactionId": tran_id,
-        "providerStatus": "SUCCESS",
-        "recoveredViaSpotV3": True,
-        "recoveryClientTranId": recovery_client_id,
-        "completedAt": _now(),
-    }, merge=True)
-    return {
-        "status": "SUCCEEDED",
-        "contribution": _plain(contribution),
-        "tranId": tran_id,
-        "recovered": True,
-    }
+    return {"status": "UNCERTAIN", "reconciliationStatus": "IDEMPOTENT_REPLAY_EXHAUSTED"}
 
 
 def prepare_close_sweep(
