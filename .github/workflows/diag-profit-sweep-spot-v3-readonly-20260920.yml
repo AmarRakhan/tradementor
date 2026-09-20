@@ -1,4 +1,4 @@
-name: Diagnose Profit Sweep Spot V3 Read Only 2026-09-20
+name: Diagnose Profit Sweep Spot V3 Read Only 2026-09-20 # post-recovery
 
 on:
   push:
