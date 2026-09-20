@@ -79,7 +79,7 @@ from aster_strategy2_state import OwnedLeg, reconcile_owned_legs
 from aster_strategy2_readiness import build_readiness_report
 from aster_canary import choose_flat_symbol, existing_canary_action
 from aster_strategy2 import Decision
-from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_user_trades, refresh_owned_costs
+from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_user_trades, paged_income_history, refresh_owned_costs
 from aster_strategy_status import (operating_status_contract, ownership_reason_contract,
     position_count_contract, proven_owned_rows, reconciled_ownership_update)
 from aster_strategy2_execution import ExecutionContext, Strategy2RiskBlocked, execute_decision as execute_aster_strategy2_decision
@@ -368,7 +368,7 @@ class MoneyGrabberRoundStartRequest(BaseModel):
 
 class AsterCloseAllRequest(BaseModel):
     confirm: bool
-    quote_id: str = Field(min_length=16, max_length=120)
+    quote_id: str | None = Field(default=None, min_length=16, max_length=120)
     idempotency_key: str = Field(min_length=16, max_length=120)
 
 
@@ -6649,6 +6649,47 @@ def _sniper_client(uid:str, *, live:bool)->AsterV3Client:
         live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
 
 
+def _sniper_confirmed_close_evidence(client:Any,trade:dict[str,Any],*,symbol:str,side:str,
+        close_order_id:str="",close_client_order_id:str="")->dict[str,Any]:
+    """Read exact Aster fills/costs for one already-confirmed Sniper close."""
+    opened_at=max(0,int(safe_float(trade.get("openedAtMs"))))
+    fills=paged_user_trades(client,symbol,start_time=max(0,opened_at-60_000) if opened_at else None)
+    wanted_order=str(close_order_id or "").strip();wanted_client=str(close_client_order_id or "").strip()
+    closing_side="SELL" if side=="LONG" else "BUY"
+    matches=[]
+    for row in fills:
+        if str(row.get("symbol","")).upper()!=symbol or str(row.get("positionSide","")).upper()!=side:continue
+        if str(row.get("side","")).upper()!=closing_side:continue
+        order_id=str(row.get("orderId",row.get("orderID",""))).strip()
+        client_id=str(row.get("clientOrderId",row.get("clientOrderID",""))).strip()
+        if wanted_order and order_id==wanted_order:matches.append(row)
+        elif wanted_client and client_id==wanted_client:matches.append(row)
+    if not matches:
+        raise ValueError(f"{symbol} {side}: geen exchange-bevestigde Sniper sluitfill gevonden")
+    close_qty=sum(abs(safe_float(row.get("qty",row.get("quantity")))) for row in matches)
+    if close_qty<=0:raise ValueError(f"{symbol} {side}: sluitfills hebben geen bevestigde hoeveelheid")
+    fee_assets={str(row.get("commissionAsset","USDT")).upper().strip() or "USDT" for row in matches}
+    if any(asset not in {"USDT","USD"} for asset in fee_assets):
+        raise ValueError(f"{symbol} {side}: commissieasset is niet betrouwbaar naar USD te waarderen")
+    gross=sum(safe_float(row.get("realizedPnl",row.get("realizedProfit"))) for row in matches)
+    fees=sum(abs(safe_float(row.get("commission"))) for row in matches)
+    closed_at=max(int(safe_float(row.get("time",row.get("updateTime")))) for row in matches)
+    income=paged_income_history(client,symbol=symbol,start_time=opened_at or None)
+    funding=0.0
+    for row in income:
+        stamp=int(safe_float(row.get("time",row.get("timestamp"))))
+        if opened_at and stamp<opened_at:continue
+        if closed_at and stamp>closed_at+60_000:continue
+        if str(row.get("incomeType","")).upper()!="FUNDING_FEE":continue
+        income_side=str(row.get("positionSide","")).upper()
+        if income_side and income_side!=side:continue
+        funding+=safe_float(row.get("income"))
+    return {"realizedPnlUsd":gross,"feesUsd":fees,"fundingUsd":funding,
+        "netRealizedPnlUsd":gross+funding-fees,"costEvidenceReliable":True,
+        "closeFillQuantity":close_qty,"closeFillCount":len(matches),"closedAtMs":closed_at,
+        "feeAssets":sorted(fee_assets)}
+
+
 def _sniper_status_payload(uid:str)->dict[str,Any]:
     raw=ensure_aster_sniper_control(uid);settings=SniperSettings.from_mapping(raw.get("settings"))
     client=_sniper_client(uid,live=False);account=client.account_information();positions=client.position_risk()
@@ -6705,9 +6746,19 @@ def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False,management_only:bool=Fal
         state={**state,"settings":settings.public_dict(),"lastTickAt":now,"updatedAt":now}
         record=result.get("historyRecord") if isinstance(result.get("historyRecord"),dict) else None
         if record:
+            try:
+                evidence=_sniper_confirmed_close_evidence(client,record,symbol=str(record.get("symbol","")).upper(),
+                    side=str(record.get("side","")).upper(),close_order_id=str(record.get("closeOrderId","")),
+                    close_client_order_id=str(record.get("closeClientOrderId","")))
+                record={**record,**evidence}
+            except Exception as exc:
+                record={**record,"costEvidenceReliable":False,"accountingError":str(exc)[:240]}
+                state={**state,"enabled":False,"monitor":False,"phase":"DATA_HOLD",
+                    "lastReason":"Sniper-close is flat bevestigd, maar realized PnL/fees konden niet betrouwbaar worden gereconcilieerd"}
             ref.collection("trades").document(str(record.get("tradeId") or python_secrets.token_urlsafe(10))).set(record,merge=True)
             today=now.date().isoformat();previous=safe_float(raw.get("dayRealizedPnlUsd")) if raw.get("dayKey")==today else 0.0
-            state["dayKey"]=today;state["dayRealizedPnlUsd"]=previous+safe_float(record.get("realizedPnlUsd"))
+            if bool(record.get("costEvidenceReliable")):
+                state["dayKey"]=today;state["dayRealizedPnlUsd"]=previous+safe_float(record.get("netRealizedPnlUsd"))
         if not bool(state.get("enabled")) and not state.get("activeTrades"):
             state["monitor"]=False;state["phase"]="STOPPED"
         ref.set(state,merge=True)
