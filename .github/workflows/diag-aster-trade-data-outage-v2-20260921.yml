@@ -112,3 +112,24 @@ jobs:
           for row in roots[:200]:
               print('TRADE_ROOT line='+json.dumps(row,ensure_ascii=False))
           PY
+
+
+      - name: Verify post-fix Aster status errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.requestUrl:"/v1/me/aster/status"' \
+            --project "$GCP_PROJECT_ID" --freshness=5m --limit=500 --format=json > "$RUNNER_TEMP/aster-status-5m.json"
+          python - "$RUNNER_TEMP/aster-status-5m.json" <<'PY'
+          import collections,json,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          counts=collections.Counter(int((r.get('httpRequest') or {}).get('status') or 0) for r in rows)
+          failures=[r for r in rows if int((r.get('httpRequest') or {}).get('status') or 0)>=500]
+          latest=max((str(r.get('timestamp','')) for r in rows),default='')
+          latest_failure=max((str(r.get('timestamp','')) for r in failures),default='')
+          print('POSTFIX_ASTER_STATUS count='+str(len(rows)))
+          print('POSTFIX_ASTER_STATUS statuses='+json.dumps(dict(counts),sort_keys=True))
+          print('POSTFIX_ASTER_STATUS failures='+str(len(failures)))
+          print('POSTFIX_ASTER_STATUS latest='+latest)
+          print('POSTFIX_ASTER_STATUS latest_failure='+latest_failure)
+          PY
