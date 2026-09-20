@@ -5274,7 +5274,7 @@ def close_all_aster_strategy(
             completed.update(audit)
 
         complete(finish)
-        complete_manual_action(dynamic_hedge_ref,manual_guard,[])
+        complete_manual_action(dynamic_hedge_ref, manual_guard, remaining)
         _release_all_aster_symbol_claims(uid)
         return {"actionId":action_hash,"status":"COMPLETED","closedPositions":len(submitted),
             "newBaseline":completed.get("newBaseline"),"botPaused":True,"asterEnabled":False,
