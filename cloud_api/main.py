@@ -5281,7 +5281,7 @@ def close_all_aster_strategy(
             "sniperEnabled":False,"openPositions":0,
             "message":"NOODSTOP UITGEVOERD · Aster UIT · Sniper UIT · open posities 0."}
     except Exception as exc:
-        fail_manual_action(dynamic_hedge_ref,manual_guard,str(exc))
+        fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE",
             "submitted":len(submitted),"reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,
