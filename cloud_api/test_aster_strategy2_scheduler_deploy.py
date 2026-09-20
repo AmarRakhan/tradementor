@@ -31,7 +31,7 @@ def test_production_runtime_requires_live_s2_boundary_and_rejects_s3_target():
     assert "/internal/aster-strategy3/tick" not in workflow
 
 
-def test_production_scheduler_endpoint_is_strategy2_only():
+def test_production_scheduler_endpoint_runs_strategy2_and_isolated_sniper_only():
     source = (ROOT / "cloud_api/main.py").read_text(encoding="utf-8")
     start = source.index('@app.post("/internal/aster-automation/tick")')
     end = source.index('@app.post("/internal/aster-strategy2/{uid}/simulate")', start)
