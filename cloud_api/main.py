@@ -1177,6 +1177,13 @@ def _aster_strategy2_owned_symbols(uid:str)->set[str]:
     return strategy2_active_symbols(aster_strategy2_reference(uid).get().to_dict() or {})
 
 
+def _aster_strategy2_owned_keys(uid:str)->set[tuple[str,str]]:
+    raw=aster_strategy2_reference(uid).get().to_dict() or {}
+    rows=proven_owned_rows(raw.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
+    return {(str(row.get("symbol","")).upper(),str(row.get("side","")).upper())
+        for row in rows if str(row.get("symbol","")).strip() and str(row.get("side","")).upper() in {"LONG","SHORT"}}
+
+
 def _sniper_live_gate_enabled()->bool:
     fallback=os.getenv("ASTER_LIVE_EXECUTION_ENABLED","false")
     return os.getenv("ASTER_SNIPER_LIVE_EXECUTION_ENABLED",fallback).lower()=="true"
@@ -5321,8 +5328,9 @@ def preview_profitable_aster_positions(
     """Return a fresh, UID-scoped Aster preview; this endpoint never trades."""
     client = _portfolio_growth_client(user, live=False)
     try:
-        owned_symbols=_aster_strategy2_owned_symbols(str(user["uid"]))
-        rows=[row for row in client.position_risk() if str(row.get("symbol","")).upper() in owned_symbols]
+        owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
+        rows=[row for row in client.position_risk()
+            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
         preview = profit_preview_with_settings(rows, load_hedge_settings(user, user_reference))
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
@@ -5378,8 +5386,9 @@ def close_profitable_aster_positions(
     failed: list[dict[str, Any]] = []
     try:
         client = _portfolio_growth_client(user, live=True)
-        owned_symbols=_aster_strategy2_owned_symbols(uid)
-        initial = profitable_positions([row for row in client.position_risk() if str(row.get("symbol","")).upper() in owned_symbols])
+        owned_keys=_aster_strategy2_owned_keys(uid)
+        initial = profitable_positions([row for row in client.position_risk()
+            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys])
         if scope != "ALL":
             initial = [candidate for candidate in initial if candidate["side"] == scope]
         for index, candidate in enumerate(initial, 1):
