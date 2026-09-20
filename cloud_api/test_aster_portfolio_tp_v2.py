@@ -196,3 +196,16 @@ def test_reset_route_is_read_only_at_exchange_layer_and_has_zero_order_contract(
     assert "execute_aster" not in block
     assert "submit_order" not in block
     assert "cancel_order" not in block
+
+
+def test_settings_save_snapshots_current_value_server_side_with_read_only_exchange_access():
+    source = Path("main.py").read_text()
+    start = source.index('@app.put("/v1/me/aster/strategy2/settings")')
+    end = source.index('\n\n@app.post("/v1/me/aster/strategy2/portfolio-cycle/reset")', start)
+    block = source[start:end]
+    assert 'saved.portfolio_tp_base_mode=="CURRENT_VALUE"' in block
+    assert "live_authorized=False" in block
+    assert "multi_bb_exchange_equity(read_client.account_information())" in block
+    assert "ensure_multi_bb_portfolio_cycle(" in block
+    assert '"multiBbCycle"' in block
+    assert '"multiBbPositions":{}' not in block.split("else:", 1)[-1]
