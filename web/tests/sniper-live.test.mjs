@@ -30,6 +30,9 @@ test("Sniper dashboard exposes exactly the agreed strategy sections and live act
   assert.match(dashboard, /\/api\/exchanges\/aster\/sniper\/stop/);
   assert.doesNotMatch(dashboard, /simulation:\s*true/);
   assert.doesNotMatch(dashboard, /liveLocked\s*=\s*true/);
+  assert.match(dashboard, /LIVE CANARY/);
+  assert.match(dashboard, /eerste activering voert Sniper eerst automatisch één zeer kleine echte Aster open\/fill\/close-canary uit/);
+  assert.match(dashboard, /canaryValidated/);
 });
 
 test("Sniper keeps hard live defaults visible and configurable", () => {
@@ -61,6 +64,7 @@ test("mobile Sniper navigation stays compact with seven destinations", () => {
   assert.match(css, /@media\(max-width:760px\)/);
   assert.match(css, /\.bottom-nav \.nav-button small/);
   assert.match(layout, /import "\.\/sniper-bridge\.css"/);
+  assert.match(css, /grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/);
 });
 
 test("build 382 release history identifies Sniper Live Trading", () => {
