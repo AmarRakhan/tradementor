@@ -109,8 +109,9 @@ def test_sniper_stop_blocks_new_entries_but_still_closes_owned_timeout(monkeypat
 
 def test_main_contract_filters_strategy_profit_close_and_emergency_disables_both_bots():
     source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
-    assert 'owned_symbols=_aster_strategy2_owned_symbols(str(user["uid"]))' in source
-    assert 'initial = profitable_positions([row for row in client.position_risk() if str(row.get("symbol","")).upper() in owned_symbols])' in source
+    assert 'owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))' in source
+    assert 'owned_keys=_aster_strategy2_owned_keys(uid)' in source
+    assert '(str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys' in source
     assert 'txn.set(aster_sniper_reference(uid),{"enabled":False,"monitor":False,"phase":"EMERGENCY_STOP"' in source
     assert "_release_all_aster_symbol_claims(uid)" in source
     close_block=source[source.index('@app.post("/v1/me/aster/automation/close-all")'):]
@@ -217,3 +218,12 @@ def test_every_live_open_has_reciprocal_strategy_owner_guard():
     assert "BLOCKED_BY_ASTER_OWNER" in source
     assert "before_order_submit=_block_strategy2_order_during_conflict(uid)" in source
     assert "before_order_submit=_block_sniper_order_during_conflict(uid)" in source
+
+
+def test_aster_bulk_profit_close_is_exact_side_owned_not_symbol_only():
+    source=Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    assert "def _aster_strategy2_owned_keys" in source
+    assert "proven_owned_rows(raw.get(\"ownedLegs\",[]),strategy_id=\"aster-strategy-2\",engine_type=\"strategy2\")" in source
+    route=source[source.index('@app.post("/v1/me/aster/positions/close-profitable")'):]
+    assert "_aster_strategy2_owned_keys(uid)" in route
+    assert "positionSide" in route
