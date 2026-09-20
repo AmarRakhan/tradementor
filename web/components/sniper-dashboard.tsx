@@ -66,6 +66,8 @@ type SniperPayload = {
   phase?: string;
   lastReason?: string;
   liveExecutionEnabled?: boolean;
+  canaryValidated?: boolean;
+  canaryStatus?: string;
   settings?: SniperSettings;
   activeTrades?: SniperTrade[];
   signals?: Signal[];
@@ -242,7 +244,7 @@ export function SniperDashboard({ cloudReady }: { cloudReady: boolean }) {
           <div>
             <span>LIVE BEVESTIGING</span>
             <strong>Sniper gaat echte Aster-orders plaatsen.</strong>
-            <p>De strategie gebruikt dezelfde portfolio- en available margin als Aster, maar claimt uitsluitend vrije symbols. Aster en Sniper mogen nooit dezelfde munt beheren.</p>
+            <p>De strategie gebruikt dezelfde portfolio- en available margin als Aster, maar claimt uitsluitend vrije symbols. Aster en Sniper mogen nooit dezelfde munt beheren. ${!data?.canaryValidated ? "Bij de eerste activering voert Sniper eerst automatisch één zeer kleine echte Aster open/fill/close-canary uit. Alleen na volledige exchange-bevestiging wordt de scanner vrijgegeven." : "De live activation canary is al exchange-bevestigd."}</p>
           </div>
           <div className="confirm-actions">
             <button type="button" onClick={() => setStartConfirm(false)}>Annuleren</button>
@@ -260,6 +262,7 @@ export function SniperDashboard({ cloudReady }: { cloudReady: boolean }) {
         <Metric label="SNIPER OPEN" value={String(trades.length)} detail={`max ${settings.maxConcurrent}`} />
         <Metric label="VANDAAG" value={money(data?.performance?.dayRealizedPnlUsd)} detail="Sniper gerealiseerd" />
         <Metric label="ACCOUNT RISK" value={data?.sharedAccount?.marginRatio == null ? "—" : `${(n(data.sharedAccount.marginRatio) * 100).toFixed(1)}%`} detail="Gedeeld liquidatierisico" />
+        <Metric label="LIVE CANARY" value={data?.canaryValidated ? "BEVESTIGD" : String(data?.canaryStatus || "NIET GEDRAAID").replaceAll("_", " ")} detail={data?.canaryValidated ? "Aster open/fill/close bewezen" : "Eerste live start voert bounded canary uit"} />
       </div>
 
       <nav className="sniper-tabs" aria-label="Sniper onderdelen">
