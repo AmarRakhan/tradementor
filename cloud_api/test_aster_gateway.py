@@ -209,6 +209,29 @@ def test_503_recovers_by_client_order_id_without_second_post():
     assert calls == [("POST", "/fapi/v3/order"), ("GET", "/fapi/v3/order")]
 
 
+def test_minus_1006_and_1007_are_uncertain_for_money_moving_posts():
+    for code in (-1006, -1007):
+        def handler(request: httpx.Request, response_code=code) -> httpx.Response:
+            return httpx.Response(400, json={
+                "code": response_code,
+                "msg": "Execution status unknown",
+            })
+
+        client = AsterV3Client(
+            signer_address="0xagent",
+            sign_message=lambda _: "sig",
+            transport=httpx.MockTransport(handler),
+            nonce=MonotonicNonce(lambda: 1700000000000000),
+        )
+        with pytest.raises(AsterSubmissionUncertain):
+            client.signed_request("POST", "/fapi/v3/asset/wallet/transfer", {
+                "asset": "USDT",
+                "amount": "1",
+                "clientTranId": f"tmpp-{abs(code)}",
+                "kindType": "FUTURE_SPOT",
+            })
+
+
 def test_margin_and_leverage_configuration_are_signed_once():
     seen = []
     def handler(request: httpx.Request):

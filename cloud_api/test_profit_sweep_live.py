@@ -1,4 +1,5 @@
 from decimal import Decimal
+import time
 
 from google.api_core import exceptions as google_exceptions
 
@@ -55,10 +56,11 @@ class FakeUserRef:
 
 
 class FakeClient:
-    def __init__(self, *, uncertain=False):
+    def __init__(self, *, uncertain=False, transfer_history=None):
         self.calls = 0
         self.transfers = []
         self.uncertain = uncertain
+        self.transfer_history = list(transfer_history or [])
         self.pre = [{
             "id": 1, "orderId": 10, "symbol": "BTCUSDT", "positionSide": "LONG", "side": "BUY",
             "qty": "1", "commission": "-0.10", "commissionAsset": "USDT", "realizedPnl": "0", "time": 1000,
@@ -70,7 +72,10 @@ class FakeClient:
     def user_trades(self, symbol, **kwargs):
         self.calls += 1
         return list(self.pre if self.calls == 1 else self.post)
-    def income_history(self, **kwargs): return []
+    def income_history(self, **kwargs):
+        if str(kwargs.get("income_type", "")).upper() == "TRANSFER":
+            return list(self.transfer_history)
+        return []
     def account_information(self):
         return {"availableBalance": "100", "totalMarginBalance": "100", "totalMaintMargin": "10"}
     def signed_request(self, method, path, params):
@@ -147,7 +152,7 @@ def test_live_25_percent_sweep_posts_exactly_once(monkeypatch):
     assert payload["kindType"] == "FUTURE_SPOT"
     assert payload["asset"] == "USDT"
     assert payload["amount"] == "0.9625"
-    assert payload["user"] == "0x" + "a" * 40
+    assert "user" not in payload
     assert payload["clientTranId"].startswith("tmpp-")
     # Same logical close cannot create a second sweep booking or transfer.
     duplicate = prepare_close_sweep(
@@ -176,6 +181,7 @@ def test_disabled_or_global_gate_off_never_posts(monkeypatch):
 
 def test_uncertain_transfer_is_never_blind_retried(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    monkeypatch.setattr("profit_sweep_live.time.sleep", lambda _: None)
     user = FakeUserRef(enabled=True, percent=25)
     client = FakeClient(uncertain=True)
     prepared = prepare_close_sweep(
@@ -185,5 +191,34 @@ def test_uncertain_transfer_is_never_blind_retried(monkeypatch):
     result = finalize_close_sweep(prepared, client=client, confirmed_order={
         "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
     })
-    assert result == {"status": "UNCERTAIN"}
+    assert result == {"status": "UNCERTAIN", "reconciliationStatus": "NOT_FOUND"}
+    assert len(client.transfers) == 1
+
+
+def test_uncertain_transfer_reconciles_from_authoritative_income_history(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=25)
+    client = FakeClient(
+        uncertain=True,
+        transfer_history=[{
+            "incomeType": "TRANSFER",
+            "income": "-0.96250000",
+            "asset": "USDT",
+            "time": int(time.time() * 1000),
+            "tranId": "888",
+        }],
+    )
+    prepared = prepare_close_sweep(
+        uid="u4", user_ref=user, client=client, intent_id="close-reconciled", symbol="BTCUSDT",
+        position_side="LONG", close_quantity="1",
+    )
+    result = finalize_close_sweep(prepared, client=client, confirmed_order={
+        "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
+    })
+    assert result == {
+        "status": "SUCCEEDED",
+        "contribution": "0.9625",
+        "tranId": "888",
+        "reconciled": True,
+    }
     assert len(client.transfers) == 1

@@ -234,6 +234,141 @@ def _sweep_id(uid: str, intent_id: str) -> str:
     return hashlib.sha256(f"ASTER:{uid}:{intent_id}".encode()).hexdigest()
 
 
+def _timestamp_ms(value: Any) -> int:
+    if isinstance(value, datetime):
+        return int(value.timestamp() * 1000)
+    try:
+        return max(0, int(float(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _transfer_history_match(
+    rows: list[dict[str, Any]],
+    *,
+    amount: Decimal,
+    submitted_at: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    """Match one FUTURE_SPOT transfer without issuing another money movement.
+
+    Aster's futures income history exposes transfer transaction id, amount,
+    asset and timestamp, but not clientTranId. We therefore only accept a
+    unique, exact USDT debit in a tight window around this submission. Zero or
+    multiple matches remain uncertain and are never treated as proof.
+    """
+    submitted_ms = _timestamp_ms(submitted_at)
+    if submitted_ms <= 0 or amount <= 0:
+        return "INVALID_EVIDENCE", None
+    lower = max(0, submitted_ms - 15_000)
+    upper = submitted_ms + 180_000
+    expected = (-abs(amount)).quantize(_AMOUNT_QUANTUM)
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("incomeType", "")).upper() != "TRANSFER":
+            continue
+        if str(row.get("asset", "")).upper() != TRANSFER_ASSET:
+            continue
+        row_time = _timestamp_ms(row.get("time"))
+        if row_time < lower or row_time > upper:
+            continue
+        if _d(row.get("income")).quantize(_AMOUNT_QUANTUM) != expected:
+            continue
+        if row.get("tranId") in (None, ""):
+            continue
+        matches.append(row)
+    if len(matches) == 1:
+        return "CONFIRMED", matches[0]
+    if len(matches) > 1:
+        return "AMBIGUOUS", None
+    return "NOT_FOUND", None
+
+
+def reconcile_transfer_history(
+    *,
+    client: Any,
+    amount: Decimal,
+    submitted_at: Any,
+    poll_attempts: int = 4,
+    poll_delay_seconds: float = 0.35,
+) -> tuple[str, dict[str, Any] | None]:
+    """Read-only reconciliation for an Aster transfer with unknown status."""
+    submitted_ms = _timestamp_ms(submitted_at)
+    if submitted_ms <= 0:
+        return "INVALID_EVIDENCE", None
+    attempts = max(1, int(poll_attempts))
+    last_state = "NOT_FOUND"
+    for attempt in range(attempts):
+        try:
+            rows = client.income_history(
+                income_type="TRANSFER",
+                start_time=max(0, submitted_ms - 15_000),
+                limit=1000,
+            )
+            if len(rows) >= 1000:
+                return "HISTORY_TRUNCATED", None
+            state, match = _transfer_history_match(rows, amount=amount, submitted_at=submitted_at)
+            if match is not None:
+                return state, match
+            last_state = state
+            if state == "AMBIGUOUS":
+                return state, None
+        except (AsterApiError, AsterSubmissionUncertain):
+            last_state = "HISTORY_UNAVAILABLE"
+        if attempt + 1 < attempts and poll_delay_seconds > 0:
+            time.sleep(poll_delay_seconds)
+    return last_state, None
+
+
+def _reconciled_result(
+    *,
+    ref: Any,
+    contribution: Decimal,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    tran_id = str(record.get("tranId", "")).strip()
+    ref.set({
+        "status": "SUCCEEDED",
+        "providerTransactionId": tran_id,
+        "providerStatus": "SUCCESS",
+        "reconciledFromHistory": True,
+        "reconciledAt": _now(),
+        "completedAt": _now(),
+    }, merge=True)
+    return {
+        "status": "SUCCEEDED",
+        "contribution": _plain(contribution),
+        "tranId": tran_id,
+        "reconciled": True,
+    }
+
+
+def _uncertain_result(
+    *,
+    ref: Any,
+    reason: str,
+    client: Any,
+    contribution: Decimal,
+    submitted_at: Any,
+) -> dict[str, Any]:
+    state, record = reconcile_transfer_history(
+        client=client,
+        amount=contribution,
+        submitted_at=submitted_at,
+    )
+    if record is not None:
+        return _reconciled_result(ref=ref, contribution=contribution, record=record)
+    ref.set({
+        "status": "UNCERTAIN",
+        "reason": str(reason)[:500],
+        "reconciliationStatus": state,
+        "reconciledAt": _now(),
+        "updatedAt": _now(),
+    }, merge=True)
+    return {"status": "UNCERTAIN", "reconciliationStatus": state}
+
+
 def prepare_close_sweep(
     *,
     uid: str,
@@ -398,27 +533,51 @@ def finalize_close_sweep(
             ref.set({"status": "BLOCKED_GLOBAL_GATE", "completedAt": _now()}, merge=True)
             return {"status": "BLOCKED_GLOBAL_GATE"}
 
-        ref.set({"status": "SUBMITTING", "submittedAt": _now()}, merge=True)
+        submitted_at = _now()
+        ref.set({"status": "SUBMITTING", "submittedAt": submitted_at}, merge=True)
         try:
+            # Aster's documented transfer contract accepts only amount, asset,
+            # clientTranId and kindType. The signer is already attached by the
+            # authenticated V3 client; sending an extra user field is invalid.
             payload = client.signed_request("POST", TRANSFER_PATH, {
-                "user": prepared.master_address,
                 "asset": TRANSFER_ASSET,
                 "amount": _plain(contribution),
                 "clientTranId": prepared.client_tran_id,
                 "kindType": TRANSFER_KIND,
             })
         except AsterSubmissionUncertain as exc:
-            # Unknown submission state is terminal until a human/reconciler can
-            # prove the transaction. Never blind-retry a money movement.
-            ref.set({"status": "UNCERTAIN", "reason": str(exc)[:500], "updatedAt": _now()}, merge=True)
-            return {"status": "UNCERTAIN"}
+            # -1006, -1007 and HTTP 503 explicitly mean execution status
+            # unknown. Reconcile read-only history first and never blind-retry.
+            return _uncertain_result(
+                ref=ref,
+                reason=str(exc),
+                client=client,
+                contribution=contribution,
+                submitted_at=submitted_at,
+            )
         except AsterApiError as exc:
-            ref.set({"status": "FAILED_EXCHANGE", "reason": str(exc)[:500], "completedAt": _now()}, merge=True)
+            # Defensive compatibility for older clients that still surface
+            # Aster's unknown-execution codes as a regular API error.
+            message = str(exc)
+            if "-1006" in message or "-1007" in message or "execution status unknown" in message.lower():
+                return _uncertain_result(
+                    ref=ref,
+                    reason=message,
+                    client=client,
+                    contribution=contribution,
+                    submitted_at=submitted_at,
+                )
+            ref.set({"status": "FAILED_EXCHANGE", "reason": message[:500], "completedAt": _now()}, merge=True)
             return {"status": "FAILED_EXCHANGE"}
 
         if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != "SUCCESS" or payload.get("tranId") in (None, ""):
-            ref.set({"status": "FAILED_EXCHANGE", "reason": "Aster bevestigde geen SUCCESS + tranId", "providerResponse": payload if isinstance(payload, dict) else {}, "completedAt": _now()}, merge=True)
-            return {"status": "FAILED_EXCHANGE"}
+            return _uncertain_result(
+                ref=ref,
+                reason="Aster bevestigde geen SUCCESS + tranId",
+                client=client,
+                contribution=contribution,
+                submitted_at=submitted_at,
+            )
         ref.set({
             "status": "SUCCEEDED",
             "providerTransactionId": str(payload.get("tranId")),
