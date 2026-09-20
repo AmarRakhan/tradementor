@@ -56,6 +56,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
   const [error, setError] = useState("");
   const [amount, setAmount] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [emergencyConfirm, setEmergencyConfirm] = useState(false);
   const [reset, setReset] = useState(false);
   const [resetReason, setResetReason] = useState("");
   const [closePhase, setClosePhase] = useState<ClosePhase>("idle");
@@ -140,6 +141,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
       });
       closeRequest.current = { key: "" };
       setConfirm(false);
+      setEmergencyConfirm(false);
       setClosePhase("success");
       await load();
       onChanged();
@@ -173,6 +175,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
           <small>Stel eenmalig je startwaarde in</small>
           <input aria-label="Startwaarde in US-dollar" inputMode="decimal" placeholder="US$ 359,00" value={amount} onChange={(event) => setAmount(event.target.value)} />
           <button disabled={busy} onClick={() => setConfirm(true)}>STARTWAARDE OPSLAAN</button>
+          <button className="portfolio-close-all" disabled={busy} onClick={() => setEmergencyConfirm(true)}>ALLES SLUITEN</button>
         </div>
       ) : <>
         <small>Netto winst bij alles sluiten</small>
@@ -208,6 +211,18 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
         <footer>
           <button disabled={busy} onClick={() => setConfirm(false)}>Annuleren</button>
           <button disabled={busy} onClick={() => data?.setupRequired ? saveBaseline(false) : closeAll()}>{data?.setupRequired ? "Bevestig startwaarde" : closeBusy ? "Noodstop bezig..." : "JA, ALLES STOPPEN EN SLUITEN"}</button>
+        </footer>
+      </section>
+    </div>}
+
+    {emergencyConfirm && data?.setupRequired && <div className="portfolio-growth-modal" role="presentation" onMouseDown={() => { if (!busy) setEmergencyConfirm(false); }}>
+      <section role="dialog" aria-modal="true" aria-label="Alle posities sluiten bevestigen" onMouseDown={(event) => event.stopPropagation()}>
+        <h3>{closeBusy ? "Noodstop wordt uitgevoerd..." : "Alle posities sluiten?"}</h3>
+        <p>{closeBusy ? "Aster controleert alle posities en open orders totdat het account exchange-bevestigd vlak is." : "NOODSTOP: hiermee worden alle open posities gesloten, inclusief Aster-, Sniper- en eventuele andere posities. Alle bots worden eerst uitgeschakeld en blijven daarna UIT. Een Portfolio Groei-startwaarde is hiervoor niet nodig."}</p>
+        {error && <em>{error}</em>}
+        <footer>
+          <button disabled={busy} onClick={() => setEmergencyConfirm(false)}>Annuleren</button>
+          <button disabled={busy} onClick={() => closeAll()}>{closeBusy ? "Noodstop bezig..." : "JA, ALLES STOPPEN EN SLUITEN"}</button>
         </footer>
       </section>
     </div>}
