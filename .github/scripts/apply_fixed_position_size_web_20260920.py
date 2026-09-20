@@ -186,6 +186,63 @@ test("confirmed save verifies maximum leverage and sizing mode before clearing d
 """
         test.write_text(t, encoding="utf-8")
 
+    focus_test = ROOT / "web/tests/strategy2-focus-preview-price.test.mjs"
+    focus_text = focus_test.read_text(encoding="utf-8")
+    old_focus = '''test("Multi BB entry sizing keeps margin semantics with independent LONG and SHORT values", () => {
+  assert.match(maker, /Instap LONG/);
+  assert.match(maker, /Instap SHORT/);
+  assert.match(maker, /entrySizingMode: "margin"/);
+  assert.match(maker, /DCA-bedrag LONG/);
+  assert.match(maker, /DCA-bedrag SHORT/);
+  assert.doesNotMatch(maker, /focusExposurePreview/);
+});'''
+    new_focus = '''test("Multi BB entry sizing keeps independent LONG and SHORT values with optional fixed position size", () => {
+  assert.match(maker, /Instap LONG/);
+  assert.match(maker, /Instap SHORT/);
+  assert.match(maker, /fixedPositionSize:\\s*false/);
+  assert.match(maker, /entrySizingMode:\\s*v\\.fixedPositionSize \\? "notional" : "margin"/);
+  assert.match(maker, /entryMarginLongUsd:\\s*longEntry/);
+  assert.match(maker, /entryMarginShortUsd:\\s*shortEntry/);
+  assert.match(maker, /entryNotionalLongUsd:\\s*longNotional/);
+  assert.match(maker, /entryNotionalShortUsd:\\s*shortNotional/);
+  assert.match(maker, /DCA-bedrag LONG/);
+  assert.match(maker, /DCA-bedrag SHORT/);
+  assert.doesNotMatch(maker, /focusExposurePreview/);
+});'''
+    if old_focus in focus_text:
+        focus_test.write_text(focus_text.replace(old_focus, new_focus, 1), encoding="utf-8")
+
+    manual_test = ROOT / "web/tests/strategy2-manual-margin-unlimited-dca.test.mjs"
+    manual_text = manual_test.read_text(encoding="utf-8")
+    old_manual = '''test("manual and automatic selection keep margin sizing with side-specific entries", () => {
+  assert.match(maker, /Instap LONG/);
+  assert.match(maker, /Instap SHORT/);
+  assert.match(maker, /entrySizingMode:\\s*"margin"/);
+  assert.match(maker, /entryMarginLongUsd:\\s*longEntry/);
+  assert.match(maker, /entryMarginShortUsd:\\s*shortEntry/);
+  assert.doesNotMatch(maker, /entrySizingMode:\\s*v\\.manualEnabled/);
+});'''
+    new_manual = '''test("manual and automatic selection share optional fixed-position sizing with side-specific entries", () => {
+  assert.match(maker, /Instap LONG/);
+  assert.match(maker, /Instap SHORT/);
+  assert.match(maker, /fixedPositionSize:\\s*false/);
+  assert.match(maker, /entrySizingMode:\\s*v\\.fixedPositionSize \\? "notional" : "margin"/);
+  assert.match(maker, /entryMarginLongUsd:\\s*longEntry/);
+  assert.match(maker, /entryMarginShortUsd:\\s*shortEntry/);
+  assert.match(maker, /entryNotionalLongUsd:\\s*longNotional/);
+  assert.match(maker, /entryNotionalShortUsd:\\s*shortNotional/);
+  assert.doesNotMatch(maker, /entrySizingMode:\\s*v\\.manualEnabled/);
+});'''
+    if old_manual in manual_text:
+        manual_test.write_text(manual_text.replace(old_manual, new_manual, 1), encoding="utf-8")
+
+    seat_test = ROOT / "web/tests/strategy2-seat-volume-wizard.test.mjs"
+    seat_text = seat_test.read_text(encoding="utf-8")
+    old_seat = '  assert.match(maker, /entrySizingMode: "margin"/);'
+    new_seat = '  assert.match(maker, /fixedPositionSize:\\s*false/);\\n  assert.match(maker, /entrySizingMode:\\s*v\\.fixedPositionSize \\? "notional" : "margin"/);'
+    if old_seat in seat_text:
+        seat_test.write_text(seat_text.replace(old_seat, new_seat, 1), encoding="utf-8")
+
     version = ROOT / "web/lib/app-version.ts"
     vtext = version.read_text(encoding="utf-8")
     if 'WEBAPP_BUILD_NUMBER = "379"' in vtext:
