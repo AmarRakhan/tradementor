@@ -557,7 +557,10 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     effective_tp_mode = "OFF" if settings.profit_lock_ladder_enabled else settings.take_profit_mode
     gate=portfolio_cycle_gate(client=client,ref=runtime_ref,raw_state=raw_state,uid=uid,account=account,positions=positions,
         open_orders=open_orders,timestamp_ms=timestamp_ms,take_profit_mode=effective_tp_mode,
-        portfolio_tp_percent=settings.portfolio_tp_percent,dry_run=dry_run,order_budget=order_budget,before_order=before_order)
+        portfolio_tp_percent=settings.portfolio_tp_percent,portfolio_tp_input_mode=settings.portfolio_tp_input_mode,
+        portfolio_tp_value=settings.portfolio_tp_value,portfolio_tp_base_mode=settings.portfolio_tp_base_mode,
+        portfolio_tp_custom_base_equity=settings.portfolio_tp_custom_base_equity,config_version=settings.version,
+        dry_run=dry_run,order_budget=order_budget,before_order=before_order)
     cycle_snapshot=gate.report
     if gate.handled and not gate.restart:
         report={"engine":ENGINE,"configVersion":settings.version,"status":"simulated" if dry_run else "portfolio-tp-executing",
