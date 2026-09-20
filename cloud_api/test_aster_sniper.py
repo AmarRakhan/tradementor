@@ -65,3 +65,16 @@ def test_profit_lock_trails_peak_without_waiting_for_timeout():
     decision=exit_decision(trade,row,now_ms=10_000,settings=cfg)
     assert decision["action"]=="CLOSE_PROFIT_LOCK"
     assert decision["peakPnlPercent"]==.25
+
+
+def test_backtest_applies_fee_spread_slippage_and_latency_assumptions():
+    cfg=SniperSettings()
+    candles=[candle(i,100+i*.015+(i%5)*.01) for i in range(140)]
+    result=backtest_candles(candles,cfg)
+    assumptions=result["assumptions"]
+    assert assumptions["roundtripFeePercent"]>0
+    assert assumptions["spreadProxyPercent"]>0
+    assert assumptions["slippageProxyPercent"]>0
+    assert "next 1m close" in assumptions["latencyModel"]
+    assert result["netMovePercent"] <= result["grossMovePercent"]
+    assert result["limitations"]
