@@ -165,7 +165,8 @@ def run_sniper_tick(
     prices={str(x.get("symbol","")).upper():number(x.get("price")) for x in client.ticker_prices()}
     tickers=[x for x in client.ticker_24h() if isinstance(x,dict)]
     tickers.sort(key=lambda x:number(x.get("quoteVolume")),reverse=True)
-    active_symbols={str(x.get("symbol","")).upper() for x in trades}|set(blocked_symbols)
+    exchange_active_symbols={str(x.get("symbol","")).upper() for x in positions if abs(number(x.get("positionAmt")))>0}
+    active_symbols={str(x.get("symbol","")).upper() for x in trades}|set(blocked_symbols)|exchange_active_symbols
     cooldowns={str(k):dict(v) for k,v in (state.get("cooldowns") or {}).items() if isinstance(v,dict)}
     signals=[]
     for market in tickers[:settings.universe_top_n]:
