@@ -60,7 +60,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
   const [resetReason, setResetReason] = useState("");
   const [closePhase, setClosePhase] = useState<ClosePhase>("idle");
   const [closeSuccess, setCloseSuccess] = useState<CloseSuccess | null>(null);
-  const closeRequest = useRef<{ quoteId: string; key: string }>({ quoteId: "", key: "" });
+  const closeRequest = useRef<{ key: string }>({ key: "" });
 
   const load = useCallback(async () => {
     setError("");
@@ -115,10 +115,9 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
   }
 
   async function closeAll() {
-    if (!data?.quoteId || busy) return;
-    const quoteId = data.quoteId;
-    if (closeRequest.current.quoteId !== quoteId || !closeRequest.current.key) {
-      closeRequest.current = { quoteId, key: crypto.randomUUID() };
+    if (busy) return;
+    if (!closeRequest.current.key) {
+      closeRequest.current = { key: crypto.randomUUID() };
     }
     setBusy(true);
     setClosePhase("busy");
@@ -127,7 +126,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
     try {
       const result = await authenticatedRequest("/api/exchanges/aster/automation/close-all", {
         method: "POST",
-        body: JSON.stringify({confirm: true, quote_id:data.quoteId, idempotency_key: closeRequest.current.key}),
+        body: JSON.stringify({ confirm: true, idempotency_key: closeRequest.current.key }),
       }) as CloseResult;
       if (String(result.status || "").toUpperCase() !== "COMPLETED") {
         throw new Error("Aster heeft Alles sluiten niet als voltooid bevestigd.");
@@ -139,7 +138,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
         newBaseline,
         message: String(result.message || "Alle posities en open orders zijn door Aster bevestigd gesloten. Het account blijft bewust gepauzeerd."),
       });
-      closeRequest.current = { quoteId: "", key: "" };
+      closeRequest.current = { key: "" };
       setConfirm(false);
       setClosePhase("success");
       await load();
@@ -179,7 +178,7 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
         <small>Netto winst bij alles sluiten</small>
         <strong className="portfolio-growth-money">{data?.reliable ? money(difference, true) : "—"}</strong>
         <b>{data?.reliable ? percent(Number(data?.percentage ?? 0)) : "Onbetrouwbaar"}</b>
-        <button className="portfolio-close-all" disabled={busy || !data?.reliable || !data?.quoteId} onClick={() => setConfirm(true)}>{closeBusy ? "NOODSTOP WORDT UITGEVOERD..." : "ALLES SLUITEN"}</button>
+        <button className="portfolio-close-all" disabled={busy} onClick={() => setConfirm(true)}>{closeBusy ? "NOODSTOP WORDT UITGEVOERD..." : "ALLES SLUITEN"}</button>
         <small>Startwaarde {data?.baseline ? money(data.baseline) : "—"}</small>
         <button className="portfolio-baseline-reset" disabled={busy} onClick={() => setReset(true)}>Startwaarde resetten</button>
       </>}
