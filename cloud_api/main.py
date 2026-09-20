@@ -5206,8 +5206,7 @@ def close_all_aster_strategy(
     manual_guard=None
     try:
         try:
-            initial_rows=client.position_risk()
-            manual_guard=begin_manual_action(dynamic_hedge_ref,"ALL",initial_rows)
+            manual_guard=begin_manual_action(dynamic_hedge_ref, "ALL", client.position_risk())
         except Exception as exc:
             action_ref.set({"status":"FAILED_BEFORE_CLOSE","submitted":0,
                 "reason":f"Dynamic Hedge lock: {str(exc)[:400]}","updatedAt":datetime.now(timezone.utc)},merge=True)
