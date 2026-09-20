@@ -6,7 +6,7 @@ import { NewsView } from "@/components/news-view";
 import styles from "./news-view.module.css";
 
 const VIEW_PARAM = "tmView";
-const MOBILE_DESTINATIONS = ["markets", "aster", "news", "journey", "wallet"] as const;
+const MOBILE_DESTINATIONS = ["markets", "aster", "sniper", "news", "journey", "wallet"] as const;
 const NAV_DESTINATIONS = ["home", ...MOBILE_DESTINATIONS] as const;
 
 function isNewsRoute() {
