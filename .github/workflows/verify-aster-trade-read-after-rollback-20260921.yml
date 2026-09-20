@@ -46,7 +46,7 @@ jobs:
           print('SOURCE='+shlex.quote(env.get('TRADEMENTOR_SOURCE_COMMIT','')))
           PY
           )"
-          test "$SOURCE" = "c156d4e9db9b8a76bfa1b93ba5e6ec665d5f2711"
+          test "$SOURCE" = "0a01bcd57c84daf6093d39c66aa2f69835964a38"
           JOB="tm-aster-read-${GITHUB_RUN_ID: -7}"
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
