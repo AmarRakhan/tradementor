@@ -98,7 +98,7 @@ from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
-from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, run_multi_bb_step, leverage_tier_preview
+from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -3653,8 +3653,14 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         age=evidence_now-stamp
         return timedelta(0)<=age<=timedelta(minutes=5)
     strategy2_settings_raw=strategy2_state.get("settings") if isinstance(strategy2_state.get("settings"),dict) else {}
-    if str(strategy2_settings_raw.get("engine",strategy2_settings_raw.get("strategyKind","")))==MULTI_BB_ENGINE:
-        multi_status_settings=MultiBbConfig.from_mapping(strategy2_settings_raw)
+    # Status is a read path. Fixed-size Multi BB settings can legitimately use
+    # sub-$1 margin values (for example $0.30 margin at leverage) and older
+    # documents may not carry the explicit engine marker. Recognize that shape
+    # in a temporary copy so the legacy Base Order validator cannot turn a
+    # healthy account snapshot into HTTP 500. No stored setting is changed.
+    multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)
+    if multi_status_raw is not None:
+        multi_status_settings=MultiBbConfig.from_mapping(multi_status_raw)
         # Dashboard compatibility only: Multi BB is the live engine. The old
         # Strategy2Config shape is still consumed by legacy presentation helpers,
         # so project the current settings without re-validating Multi BB TP limits.
