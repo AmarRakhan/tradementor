@@ -11,6 +11,7 @@ from profit_sweep_live import (
     net_realized_for_order,
     open_inventory,
     prepare_close_sweep,
+    _recovery_client_tran_id,
     recover_failed_sweep,
     transfer_safety,
 )
@@ -302,9 +303,108 @@ def test_failed_unknown_sweep_gets_one_idempotent_spot_recovery(monkeypatch):
         spot_rows=[],
         futures_rows=[],
     )
-    assert second["status"] == "RECOVERY_ALREADY_CLAIMED"
+    assert second["status"] == "SUCCEEDED"
+    assert second["recovered"] is True
     assert len(client.transfers) == 1
 
+
+
+def test_recovery_replays_unknown_once_with_exact_same_client_tran_id(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    monkeypatch.setattr("profit_sweep_live.time.sleep", lambda _: None)
+
+    class OneUnknownThenSuccessClient(FakeClient):
+        def signed_spot_request(self, method, path, params):
+            if method.upper() == "GET":
+                return []
+            self.transfers.append((method, path, dict(params)))
+            if len(self.transfers) == 1:
+                raise AsterSubmissionUncertain("Aster -1006: Execution status unknown")
+            return {"tranId": 778, "status": "SUCCESS"}
+
+    user = FakeUserRef(enabled=True, percent=25)
+    client = OneUnknownThenSuccessClient()
+    ledger_ref = user.collection("asterProfitSweeps").document("sweep-replay")
+    ledger = {
+        "status": "FAILED_EXCHANGE",
+        "reason": "Aster -1006: Execution status unknown",
+        "sweepContribution": "0.75",
+        "submittedAt": time.time(),
+    }
+    ledger_ref.set(ledger)
+
+    result = recover_failed_sweep(
+        uid="u8",
+        sweep_id="sweep-replay",
+        user_ref=user,
+        ledger_ref=ledger_ref,
+        ledger=ledger,
+        client=client,
+        spot_rows=[],
+        futures_rows=[],
+    )
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["recovered"] is True
+    assert result["tranId"] == "778"
+    assert len(client.transfers) == 2
+    first_id = client.transfers[0][2]["clientTranId"]
+    second_id = client.transfers[1][2]["clientTranId"]
+    assert first_id == second_id
+    assert first_id == _recovery_client_tran_id("u8", "sweep-replay")
+    recovery = user.collection("asterProfitSweepRecoveries").document("sweep-replay").data
+    assert recovery["status"] == "SUCCEEDED"
+    assert recovery["submitAttempts"] == 2
+
+
+def test_existing_single_unknown_recovery_claim_gets_only_same_id_replay(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    monkeypatch.setattr("profit_sweep_live.time.sleep", lambda _: None)
+    user = FakeUserRef(enabled=True, percent=25)
+    client = FakeClient()
+    sweep_id = "sweep-existing-claim"
+    recovery_id = _recovery_client_tran_id("u9", sweep_id)
+    submitted = time.time()
+
+    ledger_ref = user.collection("asterProfitSweeps").document(sweep_id)
+    ledger = {
+        "status": "UNCERTAIN",
+        "reason": "Aster -1006: Execution status unknown",
+        "sweepContribution": "0.75",
+        "submittedAt": submitted - 30,
+        "recoverySubmittedAt": submitted,
+    }
+    ledger_ref.set(ledger)
+    user.collection("asterProfitSweepRecoveries").document(sweep_id).set({
+        "uid": "u9",
+        "sweepId": sweep_id,
+        "clientTranId": recovery_id,
+        "asset": "USDT",
+        "kindType": "FUTURE_SPOT",
+        "amount": "0.75",
+        "status": "UNCERTAIN",
+        "submittedAt": submitted,
+        "reason": "Aster -1006: Execution status unknown",
+    })
+
+    result = recover_failed_sweep(
+        uid="u9",
+        sweep_id=sweep_id,
+        user_ref=user,
+        ledger_ref=ledger_ref,
+        ledger=ledger,
+        client=client,
+        spot_rows=[],
+        futures_rows=[],
+    )
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["recovered"] is True
+    assert len(client.transfers) == 1
+    assert client.transfers[0][2]["clientTranId"] == recovery_id
+    recovery = user.collection("asterProfitSweepRecoveries").document(sweep_id).data
+    assert recovery["submitAttempts"] == 2
+    assert recovery["status"] == "SUCCEEDED"
 
 def test_recovery_never_reposts_when_original_transfer_is_already_in_spot_history(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
