@@ -421,13 +421,17 @@ class AsterV3Client:
         encoded = urlencode([(key, str(value)) for key, value in values.items()])
         signature = self._sign_message(encoded)
         signed = f"{encoded}&signature={signature}"
-        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        request_method = method.upper()
+        # Aster Spot V3 requires signed GET parameters in the query string and
+        # explicitly warns not to send the form Content-Type header on GETs.
+        # Keep application/x-www-form-urlencoded only for money-moving writes.
+        headers = {} if request_method == "GET" else {"Content-Type": "application/x-www-form-urlencoded"}
         url = f"{ASTER_SPOT_REST}{path}"
         try:
-            if method.upper() == "GET":
+            if request_method == "GET":
                 response = self._http.get(f"{url}?{signed}", headers=headers)
             else:
-                response = self._http.request(method.upper(), url, content=signed.encode(), headers=headers)
+                response = self._http.request(request_method, url, content=signed.encode(), headers=headers)
         except httpx.HTTPError as exc:
             raise AsterApiError("Aster Spot is tijdelijk niet bereikbaar") from exc
         if response.status_code == 503:
