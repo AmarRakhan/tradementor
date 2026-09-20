@@ -8,8 +8,11 @@ import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, s
 type ManualSide = "LONG" | "SHORT";
 type ManualSymbol = { symbol: string; side: ManualSide };
 type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
+type PortfolioTpInputMode = "PERCENT" | "USD";
+type PortfolioTpBaseMode = "CYCLE_START" | "CURRENT_VALUE" | "CUSTOM";
 type StopLossMode = "USD" | "PERCENT";
 const BOT_SETTINGS_REFERENCE = "file_00000000d2ec81f4b0c6fe6b9befe97c";
+const PORTFOLIO_TP_REFERENCE = "file_00000000f6e08210b726c694adc15111";
 type TierPreview = {
   symbol: string;
   entryPlan?: { leverage: number } | null;
@@ -26,6 +29,7 @@ type Values = {
   entryMarginLong: string; entryMarginShort: string; entryNotionalLong: string; entryNotionalShort: string;
   longDcaDistance: string; shortDcaDistance: string; longDcaAmount: string; shortDcaAmount: string;
   maxDcaLong: string; maxDcaShort: string; longTp: string; shortTp: string; tpMode: TpMode; portfolioTp: string;
+  portfolioTpInputMode: PortfolioTpInputMode; portfolioTpBaseMode: PortfolioTpBaseMode; portfolioTpCustomBase: string;
   mode: "paper" | "live"; manualEnabled: boolean; manualSymbols: ManualSymbol[]; shortRequiresLongEnabled: boolean;
   smartRescueEnabled: boolean; smartRescueRange: string; smartRescueCount: string; smartRescueGrowth: string; smartRescueRecovery: string;
 };
@@ -36,7 +40,8 @@ const initial: Values = {
   fixedPositionSize: false, entryMarginLong: "5", entryMarginShort: "5", entryNotionalLong: "250", entryNotionalShort: "250",
   longDcaDistance: "0.30", shortDcaDistance: "0.30",
   longDcaAmount: "2", shortDcaAmount: "2", maxDcaLong: "3", maxDcaShort: "3", longTp: "1.5", shortTp: "1.5",
-  tpMode: "PER_TRADE", portfolioTp: "20", mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
+  tpMode: "PER_TRADE", portfolioTp: "20", portfolioTpInputMode: "PERCENT", portfolioTpBaseMode: "CYCLE_START", portfolioTpCustomBase: "",
+  mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
   smartRescueEnabled: false, smartRescueRange: "10", smartRescueCount: "10", smartRescueGrowth: "1.35", smartRescueRecovery: "0.30",
 };
 const MAX_DCA = 500;
@@ -53,6 +58,13 @@ const tpModeFrom = (x: Record<string, unknown>): TpMode => {
   const raw = String(x.takeProfitMode || (x.takeProfitEnabled === false ? "OFF" : "PER_TRADE")).toUpperCase();
   return raw === "PORTFOLIO" ? "PORTFOLIO" : raw === "OFF" ? "OFF" : "PER_TRADE";
 };
+const portfolioTpInputModeFrom = (value: unknown): PortfolioTpInputMode => String(value || "PERCENT").toUpperCase().replace("%", "PERCENT").replace("$", "USD") === "USD" ? "USD" : "PERCENT";
+const portfolioTpBaseModeFrom = (value: unknown): PortfolioTpBaseMode => {
+  const raw = String(value || "CYCLE_START").toUpperCase().replaceAll("-", "_").replaceAll(" ", "_");
+  return raw === "CURRENT_VALUE" ? "CURRENT_VALUE" : raw === "CUSTOM" ? "CUSTOM" : "CYCLE_START";
+};
+const portfolioTarget = (base: number, mode: PortfolioTpInputMode, value: number) => base > 0 && value > 0 ? mode === "USD" ? base + value : base * (1 + value / 100) : 0;
+const money2 = (value: number) => Number.isFinite(value) && value > 0 ? value.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—";
 
 type SmartPreviewRow = {
   index: number; drop: number; trigger: number; orderMargin: number; cumulativeMargin: number; notional: number; averageEntry: number; pnl: number; breakEven: number; recovery: number; capped: boolean;
