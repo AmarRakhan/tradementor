@@ -1,11 +1,7 @@
-name: Repair auto-derived fixed position size 2026-09-21
+name: Repair auto-derived fixed position size 2026-09-21 (manual only)
 
 on:
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - '.github/workflows/repair-auto-derived-fixed-size-20260921.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
