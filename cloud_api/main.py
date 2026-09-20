@@ -6793,6 +6793,8 @@ def _sniper_status_payload(uid:str)->dict[str,Any]:
     wins=sum(1 for x in history if x.get("costEvidenceReliable") is not False and closed_net(x)>0)
     accounting_incomplete=sum(1 for x in history if x.get("costEvidenceReliable") is False)
     return {"enabled":bool(raw.get("enabled",False)),"monitor":bool(raw.get("monitor",False)),"phase":str(raw.get("phase","STOPPED")),
+        "canaryValidated":bool(raw.get("canaryValidated",False)),
+        "canaryStatus":str((raw.get("canary") or {}).get("status","NOT_RUN")) if isinstance(raw.get("canary"),dict) else "NOT_RUN",
         "lastReason":str(raw.get("lastReason","")),"lastTickAt":raw.get("lastTickAt"),"settings":settings.public_dict(),
         "activeTrades":active,"signals":raw.get("signals",[]) if isinstance(raw.get("signals"),list) else [],"history":history,
         "performance":{"realizedPnlUsd":realized,"closedTrades":len(history),"wins":wins,
@@ -6876,6 +6878,91 @@ def save_aster_sniper_settings(request:AsterSniperSettingsRequest,user:dict[str,
     return _sniper_status_payload(uid)
 
 
+def _run_sniper_activation_canary(uid:str,ref:Any,raw:dict[str,Any],settings:SniperSettings)->dict[str,Any]:
+    """Bounded real-money open/fill/close proof before the first Sniper activation."""
+    if bool(raw.get("canaryValidated",False)):
+        return {"status":"COMPLETED","replayed":True,"ordersSent":0}
+    client=_sniper_client(uid,live=True);now=datetime.now(timezone.utc);now_ms=int(now.timestamp()*1000)
+    if not client.position_mode():raise HTTPException(409,"Sniper-canary vereist Aster Hedge Mode")
+    account=client.account_information();equity,_,available,_,maintenance=aster_account_information_values(account)
+    if equity<=0 or available<=0 or maintenance/max(equity,1)>.50:
+        raise HTTPException(409,"Sniper-canary geblokkeerd door actuele account- of marginrisk")
+    positions=client.position_risk();orders=client.open_orders()
+    active_symbols={str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0}
+    active_symbols|={str(x.get("symbol","")).upper() for x in orders if str(x.get("symbol","")).strip()}
+    active_symbols|=_aster_strategy2_owned_symbols(uid)|sniper_active_symbols(raw)
+    info=client.public_exchange_info();prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
+    tested=set(active_symbols);plan=None;symbol="";last_error=""
+    for _ in range(25):
+        try:row=choose_flat_symbol(info,prices,tested)
+        except ValueError:break
+        symbol=str(row.get("symbol","")).upper();tested.add(symbol)
+        try:
+            candidate=plan_aster_pair(row,_aster_brackets(client.leverage_brackets(symbol),symbol),prices[symbol],6.0)
+            plan=replace(candidate,leverage=max(1,min(candidate.leverage,10)));break
+        except (ValueError,AsterApiError,AsterValidationError) as exc:
+            last_error=str(exc);continue
+    if plan is None or not symbol:
+        raise HTTPException(409,f"Geen veilig vlak contract voor Sniper-canary: {last_error[:180]}")
+    if not _claim_aster_symbol(uid,symbol,"SNIPER","SNIPER_ACTIVATION_CANARY"):
+        raise HTTPException(409,f"{symbol}: Sniper-canary symbol kon niet exclusief worden geclaimd")
+    canary_id=f"sn-canary-{now_ms}-{symbol.lower()}";prefix=f"snc-{hashlib.sha256(canary_id.encode()).hexdigest()[:14]}"
+    pending={"action":"OPEN","symbol":symbol,"side":"LONG","tradeId":canary_id,"createdAtMs":now_ms,
+        "marginUsd":float(plan.notional_per_leg)/max(1,plan.leverage),"notionalUsd":float(plan.notional_per_leg),
+        "leverage":plan.leverage,"tpPercent":settings.tp_min_percent,"checks":[],"timeframe":"canary","clientOrderId":prefix}
+    ref.set({"canary":{"status":"OPENING","tradeId":canary_id,"symbol":symbol,"startedAt":now},
+        "pendingIntent":pending,"updatedAt":now},merge=True)
+    opened=None
+    try:
+        opened=execute_aster_leg(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True,
+            new_position_leverage=plan.leverage,fill_poll_attempts=2,fill_poll_delay_seconds=.15)
+        rr=opened.get("result",{});qty=abs(safe_float(rr.get("executedQty")));entry=safe_float(rr.get("avgPrice"))
+        if qty<=0 or entry<=0:raise RuntimeError("Sniper-canary openingsfill ontbreekt")
+        trade={**pending,"quantity":qty,"entryPrice":entry,"openedAtMs":now_ms,
+            "deadlineAtMs":now_ms+settings.max_trade_seconds*1000,"openOrderId":str(rr.get("orderId","")),
+            "openClientOrderId":str(rr.get("clientOrderId","")),"entryReason":"Sniper live activation canary","status":"OPEN"}
+        ref.set({"activeTrades":[trade],"pendingIntent":None,"monitor":True,"enabled":False,
+            "phase":"CANARY_CLOSING","updatedAt":datetime.now(timezone.utc)},merge=True)
+        live_row=next((x for x in client.position_risk(symbol) if str(x.get("positionSide","")).upper()=="LONG"
+            and abs(safe_float(x.get("positionAmt")))>0),None)
+        if not live_row:raise RuntimeError("Sniper-canary positie ontbreekt na bevestigde openingsfill")
+        mark=safe_float(live_row.get("markPrice"));close_qty=abs(Decimal(str(live_row.get("positionAmt"))))
+        close_plan=PairExecutionPlan(symbol,close_qty,close_qty*Decimal(str(mark)),
+            max(1,int(safe_float(live_row.get("leverage")) or plan.leverage)))
+        close_prefix=f"{prefix}-x";close_pending={"action":"CLOSE","symbol":symbol,"side":"LONG",
+            "tradeId":canary_id,"createdAtMs":int(time.time()*1000),"clientOrderId":close_prefix,"reason":"Activation canary close"}
+        ref.set({"pendingIntent":close_pending,"updatedAt":datetime.now(timezone.utc)},merge=True)
+        closed=execute_aster_leg(client,close_plan,side=PositionSide.LONG,action="CLOSE",id_prefix=close_prefix,
+            confirm=True,automatic_loss_exit_authorized=True,fill_poll_attempts=2,fill_poll_delay_seconds=.15)
+        if any(abs(safe_float(x.get("positionAmt")))>1e-12 for x in client.position_risk(symbol)
+            if str(x.get("positionSide","")).upper()=="LONG"):
+            raise RuntimeError("Sniper-canary close is nog niet exchange-flat")
+        cr=closed.get("result",{}) if isinstance(closed,dict) else {}
+        evidence=_sniper_confirmed_close_evidence(client,trade,symbol=symbol,side="LONG",
+            close_order_id=str(cr.get("orderId","")),close_client_order_id=str(cr.get("clientOrderId","")))
+        completed_at=datetime.now(timezone.utc)
+        proof={"status":"COMPLETED","tradeId":canary_id,"symbol":symbol,"openedOrderId":str(rr.get("orderId","")),
+            "closedOrderId":str(cr.get("orderId","")),"notionalUsd":float(plan.notional_per_leg),
+            **evidence,"completedAt":completed_at}
+        ref.collection("canaries").document(canary_id).set(proof)
+        ref.set({"canary":proof,"canaryValidated":True,"activeTrades":[],"pendingIntent":None,
+            "monitor":False,"enabled":False,"phase":"CANARY_COMPLETE",
+            "lastReason":"Sniper live canary open/fill/close volledig door Aster bevestigd","updatedAt":completed_at},merge=True)
+        _release_aster_symbol_claim(uid,symbol,"SNIPER")
+        return {**proof,"ordersSent":2,"replayed":False}
+    except Exception as exc:
+        # Never blind-retry. If an OPEN may have reached Aster, pendingIntent /
+        # activeTrades remains persisted for normal reconciliation and safe drain.
+        current=ref.get().to_dict() or {}
+        has_active=bool(current.get("activeTrades")) or bool(current.get("pendingIntent"))
+        if not has_active:_release_aster_symbol_claim(uid,symbol,"SNIPER")
+        ref.set({"canary":{"status":"FAILED_OR_UNCERTAIN","tradeId":canary_id,"symbol":symbol,
+            "reason":str(exc)[:300],"updatedAt":datetime.now(timezone.utc)},"canaryValidated":False,
+            "enabled":False,"monitor":has_active,"phase":"CANARY_DRAINING" if has_active else "CANARY_FAILED",
+            "lastReason":f"Sniper-canary niet volledig bevestigd: {str(exc)[:240]}","updatedAt":datetime.now(timezone.utc)},merge=True)
+        raise HTTPException(409,f"Sniper live canary niet volledig afgerond; geen retry verzonden: {str(exc)[:240]}") from exc
+
+
 @app.post("/v1/me/aster/sniper/start")
 def start_aster_sniper(request:AsterSniperStartRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     if not request.confirm:raise HTTPException(422,"Bevestig Sniper live trading expliciet")
@@ -6884,12 +6971,24 @@ def start_aster_sniper(request:AsterSniperStartRequest,user:dict[str,Any]=Depend
     if _aster_close_all_active(uid):raise HTTPException(409,"Accountbrede noodstop is actief; Sniper kan niet worden gestart")
     ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     settings=SniperSettings.from_mapping({**current,**request.settings,"enabled":True})
-    client=_sniper_client(uid,live=False)
-    if not client.position_mode():raise HTTPException(409,"Aster Hedge Mode moet actief zijn voor Sniper")
     overlap=ownership_intersection(aster_strategy2_reference(uid).get().to_dict() or {},raw)
     if overlap:raise HTTPException(409,f"Strategy ownership overlapt op: {', '.join(sorted(overlap))}")
-    now=datetime.now(timezone.utc);ref.set({"settings":settings.public_dict(),"enabled":True,"monitor":True,"phase":"SCANNING",
-        "lastReason":"Sniper live scanner gestart","updatedAt":now},merge=True)
+    token=_acquire_sniper_execution_lease(ref)
+    if not token:raise HTTPException(409,"Sniper verwerkt momenteel een andere actie")
+    account_token=_acquire_aster_account_coordination(uid,"SNIPER","ACTIVATION_CANARY")
+    if not account_token:
+        _release_sniper_execution_lease(ref,str(token))
+        raise HTTPException(409,"Aster-account verwerkt momenteel een andere strategieactie")
+    try:
+        fresh=ref.get().to_dict() or {}
+        canary=_run_sniper_activation_canary(uid,ref,fresh,settings)
+        now=datetime.now(timezone.utc)
+        ref.set({"settings":settings.public_dict(),"enabled":True,"monitor":True,"phase":"SCANNING",
+            "lastReason":"Sniper live scanner gestart na bevestigde activation canary",
+            "lastActivationCanary":canary,"updatedAt":now},merge=True)
+    finally:
+        _release_aster_account_coordination(uid,str(account_token))
+        _release_sniper_execution_lease(ref,str(token))
     return _sniper_status_payload(uid)
 
 
