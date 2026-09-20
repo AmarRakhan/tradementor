@@ -9,7 +9,9 @@ test("Home is first and Sniper is inserted without removing Markets, News or exi
     read("components/home-navigation-bridge.tsx"), read("components/markets-navigation-bridge.tsx"),
     read("components/news-navigation-bridge.tsx"), read("app/page.tsx"),
   ]);
-  assert.match(home, /insertBefore\(button, first \|\| null\)/);
+  assert.match(home, /insertBefore\\(home, first \\|\\| null\\)/);
+  assert.match(home, /insertBefore\\(sniper, news\\)/);
+  assert.match(home, /data-destination="aster"/);
   assert.match(markets, /NAV_DESTINATIONS = \["home", \.\.\.MOBILE_DESTINATIONS\]/);
   assert.match(news, /NAV_DESTINATIONS = \["home", \.\.\.MOBILE_DESTINATIONS\]/);
   assert.match(page, /<HomeNavigationBridge \/><TradeMentorHome \/>/);
