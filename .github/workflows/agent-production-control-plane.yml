@@ -42,6 +42,33 @@ jobs:
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Production diagnostic dispatch failed before Google Cloud access. No production mutation was attempted."
 
+  dispatch-fixed-size-repair:
+    if: github.event.issue.title == '[AGENT-CONTROL] repair fixed size 20260921' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch guarded fixed-size repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run repair-auto-derived-fixed-size-20260921.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH"
+
+      - name: Confirm repair dispatch
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Dispatched the guarded fixed-size repair on amar-crypto-bot-2026-cloud. The worker only changes entrySizingMode from notional to margin for one exact account fingerprint, preserves stored margin/notional values, and sends 0 orders."
+
+      - name: Report repair dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Fixed-size repair dispatch failed before the production repair workflow started. No settings or orders were changed."
+
   diagnose-web-deploy:
     if: startsWith(github.event.issue.title, '[AGENT-CONTROL] diagnose web deploy') && github.event.issue.user.login == 'AmarRakhan'
     runs-on: ubuntu-latest
