@@ -1,0 +1,168 @@
+name: Diagnose Profit Sweep Spot V3 Read Only 2026-09-20
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diag-profit-sweep-spot-v3-readonly-20260920.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run signed Spot V3 read-only probes from exact live image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          LIVE_REVISION="$(python -c 'import json,sys; s=json.load(open(sys.argv[1])); rows=[r for r in s["status"].get("traffic",[]) if int(r.get("percent",0))==100]; assert len(rows)==1; print(rows[0]["revisionName"])' "$RUNNER_TEMP/service.json")"
+          RUNTIME_SA="$(python -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["spec"]["template"]["spec"]["serviceAccountName"])' "$RUNNER_TEMP/service.json")"
+          PROD_IMAGE="$(gcloud run revisions describe "$LIVE_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          test -n "$RUNTIME_SA"
+          test -n "$PROD_IMAGE"
+
+          mkdir -p "$RUNNER_TEMP/spot-v3-diag"
+          cat > "$RUNNER_TEMP/spot-v3-diag/Dockerfile" <<'DOCKER'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          COPY diag.py /app/diag_spot_v3.py
+          CMD ["python","/app/diag_spot_v3.py"]
+          DOCKER
+
+          cat > "$RUNNER_TEMP/spot-v3-diag/diag.py" <<'PY'
+          from __future__ import annotations
+          from urllib.parse import urlencode
+          import json, os, urllib.request
+
+          import main
+          from aster_gateway import AsterV3Client, ASTER_SPOT_REST
+          from aster_signing import local_eip712_signer
+
+          def sanitized(response):
+              result={"http":int(response.status_code)}
+              try:
+                  payload=response.json()
+              except Exception:
+                  result["json"]=False
+                  return result
+              result["json"]=True
+              if isinstance(payload,dict):
+                  if payload.get("code") is not None:
+                      result["code"]=str(payload.get("code"))
+                  if payload.get("msg") is not None:
+                      result["msg"]=str(payload.get("msg"))[:180]
+                  if isinstance(payload.get("balances"),list):
+                      result["balancesArray"]=True
+              elif isinstance(payload,list):
+                  result["array"]=True
+                  result["count"]=len(payload)
+              return result
+
+          def raw_get(client,path,params,*,content_type):
+              values=dict(params or {})
+              values["nonce"]=str(client._nonce.next())
+              values["signer"]=client._signer_address
+              encoded=urlencode([(k,str(v)) for k,v in values.items()])
+              sig=client._sign_message(encoded)
+              headers={}
+              if content_type:
+                  headers["Content-Type"]="application/x-www-form-urlencoded"
+              response=client._http.get(f"{ASTER_SPOT_REST}{path}?{encoded}&signature={sig}",headers=headers)
+              return sanitized(response)
+
+          report={"matching25PctEnabledAccounts":0,"probes":{},"fatal":False}
+          try:
+              matches=[]
+              for user in main.db.collection("users").stream():
+                  control=user.reference.collection("executionControls").document("aster").get().to_dict() or {}
+                  sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+                  if sweep.get("enabled") is not True:
+                      continue
+                  try:
+                      pct=float(sweep.get("sweepPercent",0))
+                  except Exception:
+                      continue
+                  if abs(pct-25.0)<=1e-9:
+                      matches.append(user)
+              report["matching25PctEnabledAccounts"]=len(matches)
+              if len(matches)!=1:
+                  raise RuntimeError("ACCOUNT_MATCH_GUARD")
+
+              user=matches[0]
+              secret=main.load_aster_secret({"uid":str(user.id)})
+              client=AsterV3Client(
+                  signer_address=secret.signer_address,
+                  sign_message=local_eip712_signer(secret),
+                  live_authorized=False,
+              )
+              for label,path,params in [
+                  ("account","/api/v3/account",{}),
+                  ("history","/api/v3/transactionHistory",{"asset":"USDT","type":"TRANSFER_FUTURE_TO_SPOT","limit":10}),
+              ]:
+                  one={}
+                  try:
+                      one["withContentType"]=raw_get(client,path,params,content_type=True)
+                  except Exception as exc:
+                      one["withContentTypeException"]=type(exc).__name__+":"+str(exc)[:180]
+                  try:
+                      one["withoutContentType"]=raw_get(client,path,params,content_type=False)
+                  except Exception as exc:
+                      one["withoutContentTypeException"]=type(exc).__name__+":"+str(exc)[:180]
+                  report["probes"][label]=one
+          except Exception as exc:
+              report["fatal"]=True
+              report["fatalClass"]=type(exc).__name__
+              report["fatalReason"]=str(exc)[:180]
+
+          body="PROFIT_SWEEP_SPOT_V3_READONLY "+json.dumps(report,separators=(",",":"),sort_keys=True)
+          print(body)
+          token=os.environ.get("REPORT_GH_TOKEN","")
+          repo=os.environ.get("REPORT_REPO","")
+          if token and repo:
+              req=urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/issues/41/comments",
+                  data=json.dumps({"body":body}).encode(),
+                  method="POST",
+                  headers={
+                      "Authorization":f"Bearer {token}",
+                      "Accept":"application/vnd.github+json",
+                      "Content-Type":"application/json",
+                      "User-Agent":"tradementor-profit-sweep-spot-v3-diag",
+                  },
+              )
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  assert 200 <= response.status < 300
+          PY
+
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/profit-sweep-spot-v3-diag:$GITHUB_SHA"
+          docker build --build-arg "BASE_IMAGE=$PROD_IMAGE" -t "$IMAGE" "$RUNNER_TEMP/spot-v3-diag"
+          docker push "$IMAGE"
+
+          JOB="profit-sweep-v3diag-${GITHUB_RUN_ID: -8}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SA"             --max-retries 0             --task-timeout 300s             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,REPORT_REPO=$GITHUB_REPOSITORY,REPORT_GH_TOKEN=${{ github.token }}"             --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --quiet
