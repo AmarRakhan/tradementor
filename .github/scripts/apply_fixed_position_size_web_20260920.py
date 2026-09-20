@@ -58,7 +58,7 @@ def main() -> None:
         replace_once(
             "web/components/aster-strategy2-maker.tsx",
             '    const longEntry = n(v.entryMarginLong); const shortEntry = n(v.entryMarginShort);\n',
-            '    const longMargin = n(v.entryMarginLong); const shortMargin = n(v.entryMarginShort);\n'
+            '    const longEntry = n(v.entryMarginLong); const shortEntry = n(v.entryMarginShort);\n'
             '    const longNotional = n(v.entryNotionalLong); const shortNotional = n(v.entryNotionalShort);\n',
         )
         replace_once(
@@ -68,7 +68,7 @@ def main() -> None:
             '      entryNotionalUsd: longEntry * minLeverage,\n',
             '      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,\n'
             '      entrySizingMode: v.fixedPositionSize ? "notional" : "margin",\n'
-            '      entryMarginUsd: longMargin, entryMarginLongUsd: longMargin, entryMarginShortUsd: shortMargin, entryMarginLong: longMargin, entryMarginShort: shortMargin,\n'
+            '      entryMarginUsd: longEntry, entryMarginLongUsd: longEntry, entryMarginShortUsd: shortEntry, entryMarginLong: longEntry, entryMarginShort: shortEntry,\n'
             '      entryNotionalUsd: longNotional, entryNotionalLongUsd: longNotional, entryNotionalShortUsd: shortNotional, entryNotionalLong: longNotional, entryNotionalShort: shortNotional,\n',
         )
         replace_once(
@@ -116,7 +116,7 @@ def main() -> None:
             '        const savedSizing = String(savedSettings.entrySizingMode || "margin").toLowerCase();\n'
             '        if (savedSizing !== settings.entrySizingMode) throw new Error("Positieomvang-modus is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");\n'
             '        setV((current) => ({ ...current, maxLeverage: savedMax === null ? "" : String(savedMax), fixedPositionSize: savedSizing === "notional" }));\n'
-            '        setDirty(false); setMessage("Instellingen server-side opgeslagen en bevestigd. Actieve positie-, DCA- en cycle-state zijn intact gebleven.");\n'
+            '        setDirty(false); setMessage("Instellingen server-side opgeslagen en bevestigd. Actieve posities, fills, avg entry, DCA-counts en Portfolio TP-cycle zijn intact gebleven.");\n'
             '      }\n',
         )
         replace_once(
@@ -239,7 +239,8 @@ test("confirmed save verifies maximum leverage and sizing mode before clearing d
     seat_test = ROOT / "web/tests/strategy2-seat-volume-wizard.test.mjs"
     seat_text = seat_test.read_text(encoding="utf-8")
     old_seat = '  assert.match(maker, /entrySizingMode: "margin"/);'
-    new_seat = '  assert.match(maker, /fixedPositionSize:\\s*false/);\\n  assert.match(maker, /entrySizingMode:\\s*v\\.fixedPositionSize \\? "notional" : "margin"/);'
+    new_seat = '''  assert.match(maker, /fixedPositionSize:\\s*false/);
+  assert.match(maker, /entrySizingMode:\\s*v\\.fixedPositionSize \\? "notional" : "margin"/);'''
     if old_seat in seat_text:
         seat_test.write_text(seat_text.replace(old_seat, new_seat, 1), encoding="utf-8")
 
