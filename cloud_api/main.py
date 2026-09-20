@@ -4453,6 +4453,42 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
         # no clearing of recovery/asymmetric state.
         update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"settingsChangedAt":now,
             "lastReason":"Multi DCA-instellingen live bijgewerkt; actieve positie-, DCA- en cycle-state behouden"}
+    # Portfolio TP base selection is server-authoritative. CURRENT_VALUE is
+    # captured exactly once at Save time, even while the bot is off, so the
+    # target can never chase subsequent live-equity updates. Existing cycle
+    # start / DCA / position state remains untouched.
+    if not switching and saved.take_profit_mode=="PORTFOLIO":
+        existing_cycle=existing.get("multiBbCycle") if isinstance(existing.get("multiBbCycle"),dict) else {}
+        cycle_status=str(existing_cycle.get("cycleStatus") or "RUNNING").upper()
+        valid_existing_cycle=bool(str(existing_cycle.get("cycleId") or "").strip()) and safe_float(existing_cycle.get("cycleStartEquity"))>0
+        current_for_snapshot=safe_float((existing.get("multiBbReport") or {}).get("currentEquity")) if isinstance(existing.get("multiBbReport"),dict) else 0.0
+        if cycle_status not in ACTIVE_EXIT_STATES:
+            if saved.portfolio_tp_base_mode=="CURRENT_VALUE":
+                secret=load_aster_secret(user)
+                read_client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+                try:
+                    current_for_snapshot=multi_bb_exchange_equity(read_client.account_information())
+                except (AsterApiError,ValueError) as exc:
+                    raise HTTPException(409,f"Huidige portfolio-equity kon niet veilig worden vastgezet: {exc}") from exc
+                if current_for_snapshot<=0:
+                    raise HTTPException(409,"Huidige portfolio-equity is niet betrouwbaar beschikbaar")
+            if valid_existing_cycle or saved.portfolio_tp_base_mode=="CURRENT_VALUE":
+                cycle_candidate,_=ensure_multi_bb_portfolio_cycle(
+                    existing,uid=uid,current_equity=current_for_snapshot,
+                    portfolio_tp_percent=saved.portfolio_tp_percent,timestamp_ms=int(now.timestamp()*1000),
+                    portfolio_tp_input_mode=saved.portfolio_tp_input_mode,
+                    portfolio_tp_value=saved.portfolio_tp_value,
+                    portfolio_tp_base_mode=saved.portfolio_tp_base_mode,
+                    portfolio_tp_custom_base_equity=saved.portfolio_tp_custom_base_equity,
+                    config_version=version,
+                )
+                update["multiBbCycle"]=cycle_candidate
+                prior_report=existing.get("multiBbReport") if isinstance(existing.get("multiBbReport"),dict) else {}
+                update["multiBbReport"]={**prior_report,"portfolioCycle":portfolio_cycle_snapshot(
+                    cycle_candidate,mode=saved.take_profit_mode,current_equity=current_for_snapshot,
+                    portfolio_tp_percent=saved.portfolio_tp_percent,
+                )}
+
     ref.set(update,merge=True)
     ref.collection("configHistory").add({"version":version,"oldValue":old,"newValue":saved.public_dict(),"source":"user-multi-bb-v1","timestamp":now})
 
