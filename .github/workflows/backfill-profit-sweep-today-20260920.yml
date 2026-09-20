@@ -1,0 +1,312 @@
+name: Backfill Profit Sweep Today 2026-09-20
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/backfill-profit-sweep-today-20260920.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  EXPECTED_SOURCE_COMMIT: 457c70d6af8fa392e74f549fc55ba8eeac4fb142
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify exact Profit Sweep production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          python - "$RUNNER_TEMP/service.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          traffic=[row for row in service["status"].get("traffic",[]) if int(row.get("percent",0))==100]
+          assert len(traffic)==1 and traffic[0].get("revisionName")
+          print("LIVE_REVISION="+traffic[0]["revisionName"])
+          print("SERVICE_URL="+service["status"]["url"])
+          print("RUNTIME_SERVICE_ACCOUNT="+service["spec"]["template"]["spec"]["serviceAccountName"])
+          PY
+          curl --fail --silent --show-error -H 'Cache-Control: no-cache, no-store' "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/health.json" <<'PY'
+          import json,os,sys
+          health=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert health.get("status")=="ready"
+          assert health.get("sourceCommit")==os.environ["EXPECTED_SOURCE_COMMIT"]
+          assert health.get("imageSourceCommit")==os.environ["EXPECTED_SOURCE_COMMIT"]
+          PY
+          PROD_IMAGE="$(gcloud run revisions describe "$LIVE_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          test -n "$PROD_IMAGE"
+          echo "PROD_IMAGE=$PROD_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Build one-off recovery image from exact live image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          mkdir -p "$RUNNER_TEMP/profit-sweep-backfill"
+          cat > "$RUNNER_TEMP/profit-sweep-backfill/Dockerfile" <<'DOCKER'
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+          COPY backfill.py /backfill.py
+          CMD ["python","/backfill.py"]
+          DOCKER
+          cat > "$RUNNER_TEMP/profit-sweep-backfill/backfill.py" <<'PY'
+          from __future__ import annotations
+          from datetime import date, datetime, time as dt_time, timedelta, timezone
+          from zoneinfo import ZoneInfo
+          import json, os, sys, time, urllib.request
+
+          import main
+          from aster_gateway import AsterV3Client
+          from aster_signing import local_eip712_signer
+          from profit_sweep_live import (
+              SPOT_TRANSACTION_HISTORY_PATH,
+              SPOT_TRANSFER_HISTORY_TYPE,
+              TRANSFER_ASSET,
+              recover_failed_sweep,
+          )
+
+          TARGET_DATE = date(2026, 9, 20)
+          RECOVERABLE = {"FAILED_EXCHANGE", "UNCERTAIN", "RECOVERY_UNCERTAIN"}
+          STOP_STATUSES = {
+              "UNCERTAIN", "RECOVERY_FAILED_EXCHANGE", "RECOVERY_ALREADY_CLAIMED",
+              "RECOVERY_BLOCKED_MARGIN", "INVALID_RECOVERY_EVIDENCE",
+          }
+
+          def utc(value):
+              if not isinstance(value, datetime):
+                  return None
+              return value.astimezone(timezone.utc)
+
+          def spot_usdt_total(payload):
+              if not isinstance(payload, dict) or not isinstance(payload.get("balances"), list):
+                  raise RuntimeError("SPOT_ACCOUNT_INVALID")
+              row = next((x for x in payload["balances"] if isinstance(x,dict) and str(x.get("asset","")).upper()=="USDT"), {})
+              return float(row.get("free",0) or 0) + float(row.get("locked",0) or 0)
+
+          def post_report(report):
+              token=os.environ.get("REPORT_GH_TOKEN","")
+              repo=os.environ.get("REPORT_REPO","")
+              if not token or not repo:
+                  return
+              body="PROFIT_SWEEP_BACKFILL_RESULT "+json.dumps(report,separators=(",",":"),sort_keys=True)
+              request=urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/issues/41/comments",
+                  data=json.dumps({"body":body}).encode(),
+                  method="POST",
+                  headers={
+                      "Authorization":f"Bearer {token}",
+                      "Accept":"application/vnd.github+json",
+                      "Content-Type":"application/json",
+                      "User-Agent":"tradementor-profit-sweep-backfill",
+                  },
+              )
+              with urllib.request.urlopen(request,timeout=20) as response:
+                  if not 200 <= response.status < 300:
+                      raise RuntimeError("REPORT_FAILED")
+
+          report={
+              "targetDate":TARGET_DATE.isoformat(),
+              "matchedAccounts":0,
+              "targetSweeps":0,
+              "recoveredNew":0,
+              "reconciledExisting":0,
+              "resolvedAlready":0,
+              "blockedMargin":0,
+              "uncertain":0,
+              "failed":0,
+              "unresolvedAfterRun":0,
+              "stoppedEarly":False,
+              "spotBalanceIncreased":False,
+              "spotHistoryCountIncreased":False,
+              "fatal":False,
+          }
+          exit_code=0
+          try:
+              matching=[]
+              for user in main.db.collection("users").stream():
+                  control=user.reference.collection("executionControls").document("aster").get().to_dict() or {}
+                  sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+                  if sweep.get("enabled") is not True:
+                      continue
+                  try:
+                      pct=float(sweep.get("sweepPercent",0))
+                  except Exception:
+                      continue
+                  if abs(pct-25.0)<=1e-9:
+                      matching.append((user,control))
+              report["matchedAccounts"]=len(matching)
+              if len(matching)!=1:
+                  raise RuntimeError("ACCOUNT_MATCH_GUARD")
+
+              user,control=matching[0]
+              uid=str(user.id)
+              secret=main.load_aster_secret({"uid":uid})
+              client=AsterV3Client(
+                  signer_address=secret.signer_address,
+                  sign_message=local_eip712_signer(secret),
+                  live_authorized=True,
+              )
+
+              ams=ZoneInfo("Europe/Amsterdam")
+              start_local=datetime.combine(TARGET_DATE,dt_time.min,tzinfo=ams)
+              end_local=start_local+timedelta(days=1)
+              start_ms=int(start_local.astimezone(timezone.utc).timestamp()*1000)
+              end_ms=int(end_local.astimezone(timezone.utc).timestamp()*1000)-1
+              history_start=max(0,start_ms-180_000)
+              history_end=min(end_ms,int(datetime.now(timezone.utc).timestamp()*1000)+180_000)
+
+              spot_before=spot_usdt_total(client.signed_spot_request("GET","/api/v3/account",{}))
+              spot_rows=client.signed_spot_request("GET",SPOT_TRANSACTION_HISTORY_PATH,{
+                  "asset":TRANSFER_ASSET,
+                  "type":SPOT_TRANSFER_HISTORY_TYPE,
+                  "startTime":history_start,
+                  "endTime":history_end,
+                  "limit":1000,
+              })
+              if not isinstance(spot_rows,list) or len(spot_rows)>=1000:
+                  raise RuntimeError("SPOT_HISTORY_GUARD")
+              spot_rows=[row for row in spot_rows if isinstance(row,dict)]
+              futures_rows=client.income_history(
+                  income_type="TRANSFER",
+                  start_time=history_start,
+                  end_time=history_end,
+                  limit=1000,
+              )
+              if len(futures_rows)>=1000:
+                  raise RuntimeError("FUTURES_HISTORY_GUARD")
+              spot_history_count_before=sum(
+                  1 for row in spot_rows
+                  if str(row.get("type","")).upper()==SPOT_TRANSFER_HISTORY_TYPE
+                  and str(row.get("asset","")).upper()==TRANSFER_ASSET
+              )
+
+              targets=[]
+              refs={}
+              for snap in user.reference.collection("asterProfitSweeps").stream():
+                  row=snap.to_dict() or {}
+                  created=utc(row.get("createdAt"))
+                  if created is None or created<start_local.astimezone(timezone.utc) or created>=end_local.astimezone(timezone.utc):
+                      continue
+                  if str(row.get("status","")).upper() in RECOVERABLE:
+                      targets.append((created,snap.id,snap.reference,row))
+                      refs[snap.id]=snap.reference
+              targets.sort(key=lambda item:item[0])
+              report["targetSweeps"]=len(targets)
+
+              for _created,sweep_id,ledger_ref,ledger in targets:
+                  result=recover_failed_sweep(
+                      uid=uid,
+                      sweep_id=sweep_id,
+                      user_ref=user.reference,
+                      ledger_ref=ledger_ref,
+                      ledger=ledger,
+                      client=client,
+                      spot_rows=spot_rows,
+                      futures_rows=futures_rows,
+                  )
+                  status=str(result.get("status","UNKNOWN")).upper()
+                  if status=="SUCCEEDED":
+                      if result.get("recovered") is True:
+                          report["recoveredNew"]+=1
+                      elif result.get("reconciled") is True:
+                          report["reconciledExisting"]+=1
+                      else:
+                          report["resolvedAlready"]+=1
+                  elif status=="ALREADY_SUCCEEDED":
+                      report["resolvedAlready"]+=1
+                  elif status=="RECOVERY_BLOCKED_MARGIN":
+                      report["blockedMargin"]+=1
+                  elif status=="UNCERTAIN":
+                      report["uncertain"]+=1
+                  else:
+                      report["failed"]+=1
+                  if status in STOP_STATUSES:
+                      report["stoppedEarly"]=True
+                      exit_code=2
+                      break
+                  time.sleep(0.35)
+
+              spot_after=spot_usdt_total(client.signed_spot_request("GET","/api/v3/account",{}))
+              report["spotBalanceIncreased"]=spot_after>spot_before+1e-9
+              fresh_spot_rows=client.signed_spot_request("GET",SPOT_TRANSACTION_HISTORY_PATH,{
+                  "asset":TRANSFER_ASSET,
+                  "type":SPOT_TRANSFER_HISTORY_TYPE,
+                  "startTime":history_start,
+                  "endTime":min(end_ms,int(datetime.now(timezone.utc).timestamp()*1000)+180_000),
+                  "limit":1000,
+              })
+              if isinstance(fresh_spot_rows,list):
+                  count_after=sum(
+                      1 for row in fresh_spot_rows
+                      if isinstance(row,dict)
+                      and str(row.get("type","")).upper()==SPOT_TRANSFER_HISTORY_TYPE
+                      and str(row.get("asset","")).upper()==TRANSFER_ASSET
+                  )
+                  report["spotHistoryCountIncreased"]=count_after>spot_history_count_before
+
+              unresolved=0
+              for _created,sweep_id,_ref,_ledger in targets:
+                  row=refs[sweep_id].get().to_dict() or {}
+                  if str(row.get("status","")).upper()!="SUCCEEDED":
+                      unresolved+=1
+              report["unresolvedAfterRun"]=unresolved
+              if unresolved:
+                  exit_code=max(exit_code,2)
+          except Exception as exc:
+              report["fatal"]=True
+              report["fatalClass"]=type(exc).__name__
+              exit_code=3
+          finally:
+              post_report(report)
+          sys.exit(exit_code)
+          PY
+          HELPER_IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/profit-sweep-backfill:$GITHUB_SHA"
+          docker build --build-arg "BASE_IMAGE=$PROD_IMAGE" -t "$HELPER_IMAGE" "$RUNNER_TEMP/profit-sweep-backfill"
+          docker push "$HELPER_IMAGE"
+          echo "HELPER_IMAGE=$HELPER_IMAGE" >> "$GITHUB_ENV"
+
+      - name: Reverify source and recover today's missed 25 percent sweeps
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error -H 'Cache-Control: no-cache, no-store' "$SERVICE_URL/health" > "$RUNNER_TEMP/health-before-recovery.json"
+          python - "$RUNNER_TEMP/health-before-recovery.json" <<'PY'
+          import json,os,sys
+          health=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert health.get("sourceCommit")==os.environ["EXPECTED_SOURCE_COMMIT"]
+          PY
+          JOB="profit-sweep-backfill-${GITHUB_RUN_ID: -8}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$HELPER_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --max-retries 0 \
+            --task-timeout 600s \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,REPORT_REPO=$GITHUB_REPOSITORY,REPORT_GH_TOKEN=${{ github.token }}" \
+            --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --quiet
