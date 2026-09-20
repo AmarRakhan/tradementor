@@ -113,7 +113,9 @@ def test_main_contract_filters_strategy_profit_close_and_emergency_disables_both
     assert 'initial = profitable_positions([row for row in client.position_risk() if str(row.get("symbol","")).upper() in owned_symbols])' in source
     assert 'txn.set(aster_sniper_reference(uid),{"enabled":False,"monitor":False,"phase":"EMERGENCY_STOP"' in source
     assert "_release_all_aster_symbol_claims(uid)" in source
-    assert 'if not preview.get("reliable"):' in source
+    close_block=source[source.index('@app.post("/v1/me/aster/automation/close-all")'):]
+    assert '_portfolio_growth_estimate(user,persist_quote=False)' not in close_block
+    assert '"emergency":True' in close_block
 
 
 def test_scheduler_has_independent_sniper_collection_and_runtime():
@@ -134,3 +136,15 @@ def test_stale_close_intent_keeps_symbol_owned_when_position_still_exists():
     assert next_state["pendingIntent"] is None
     assert event["event"]=="CLOSE_RETRY_READY"
     assert released==[]
+
+
+def test_main_has_exact_sniper_close_accounting_and_shared_account_fence():
+    source=Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    assert "def _sniper_confirmed_close_evidence" in source
+    assert "paged_user_trades(client,symbol" in source
+    assert "paged_income_history(client,symbol=symbol" in source
+    assert '"netRealizedPnlUsd":gross+funding-fees' in source
+    assert "_acquire_sniper_execution_lease(ref)" in source
+    assert '_acquire_aster_account_coordination(uid,"SNIPER","MANUAL_CLOSE")' in source
+    assert '_acquire_aster_account_coordination(uid,"EMERGENCY","CLOSE_ALL")' in source
+    assert '_acquire_aster_account_coordination(uid,"ASTER","SCHEDULER")' in source
