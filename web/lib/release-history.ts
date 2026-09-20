@@ -46,6 +46,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Aster Close Profits >= $0,50 selecteert alleen bewezen Aster-owned symbols; Sniper exits raken alleen bewezen Sniper trades.",
     "De algemene Close All blijft bewust accountbreed: eerst emergency lock en beide bots UIT, daarna alle posities sluiten en exchange-flat verifiëren.",
     "Pending/unknown orders blijven fail-closed en worden eerst via exchange-reconciliation hersteld voordat een nieuwe order is toegestaan.",
+    "Een accountbrede execution coordinator voorkomt dat Aster en Sniper gelijktijdig dezelfde verouderde available margin reserveren.",
+    "De eerste echte Sniper-activering is geblokkeerd achter een zeer kleine open/fill/close Aster-canary; de scanner wordt pas daarna ingeschakeld.",
+    "Gesloten Sniper-trades gebruiken exchange-bevestigde realized PnL, fees en funding voor hun netto resultaat.",
   ],
   now: [
     "Sniper staat tussen Aster en Nieuws en toont uitsluitend eigen posities, signalen, historie en performance.",
@@ -58,7 +61,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Primaire visuele referentie: https://chatgpt.com/s/m_6aab179ba6008191b3b874803a1508ab.",
     "Aanvullende goedgekeurde referenties: 3b80f501-69c7-424a-bb80-9aff04bb7594, 0cee1df2-8608-4a48-9e7d-1421d4ff3177, e6590034-d49b-485f-a581-53fc605b11ea, de872ec8-e8c9-4ffa-af9e-e35970c35c93, a1138afd-dd0f-46ec-be4e-eb7302ba181f, 25ca0d1c-4e95-473b-b1de-311e75a0f3f4, e8366e61-315b-4016-a02e-a23736fc59ea en 3548d2b7-c1d8-494b-b0c2-c588505a6b7c.",
     "Bestaande prototypebasis: aavansh-sniper-build372 / web/components/sniper-dashboard.tsx.",
-    "Live release vereist groene backend/web regressies, fault/recovery-tests en een bevestigde beperkte live canary; de versiegeschiedenis wordt niet als live bewijs gebruikt.",
+    "Historische Sniper-replay modelleert fees, spread, slippage, next-bar latency en stop-first bij onzekere intrabar-volgorde; ontbrekende historische orderbook/orderflow-data wordt expliciet als beperking gemeld.",
+    "Fault/recovery-tests dekken onder meer onzekere submissions, pending open/close recovery, timeout-exits, symbol overlap, strategy-scoped bulk close en accountbrede noodstop.",
+    "De beperkte live canary is een harde runtime-gate bij de eerste live activering; de versiegeschiedenis wordt niet als bewijs van een reeds uitgevoerde canary gebruikt.",
   ],
   confidence: "confirmed",
 };
