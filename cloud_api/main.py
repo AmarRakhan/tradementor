@@ -3667,7 +3667,11 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         dashboard_max_pairs=min(100,max(1,multi_status_settings.maximum_positions))
         strategy2_settings=Strategy2Config.from_mapping({
             "mode":multi_status_settings.mode,
-            "baseNotional":multi_status_settings.entry_notional_usd,
+            # Legacy Strategy2Config requires Base Order >= $1. Multi BB may persist
+            # a stale shared baseNotional below $1 while the authoritative side-specific
+            # notionals remain valid (for example LONG $8 / SHORT $6). Use only a
+            # read-only compatibility value here; never mutate persisted settings.
+            "baseNotional":max(1.0,multi_status_settings.entry_notional_long_usd,multi_status_settings.entry_notional_short_usd),
             "takeProfit":min(.20,max(.001,multi_status_settings.take_profit)),
             "autoRestart":True,"dcaEnabled":True,
             "longDcaDistance":multi_status_settings.dca_distance,
