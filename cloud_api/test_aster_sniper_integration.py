@@ -121,3 +121,16 @@ def test_scheduler_has_independent_sniper_collection_and_runtime():
     assert 'db.collection("asterSniper").where("monitor","==",True)' in source
     assert "_run_aster_sniper_tick(item.id)" in source
     assert '"sniper":sniper_results' in source
+
+
+def test_stale_close_intent_keeps_symbol_owned_when_position_still_exists():
+    state={
+        "pendingIntent":{"action":"CLOSE","symbol":"BTCUSDT","side":"LONG","tradeId":"sn-close-0001","createdAtMs":1_000},
+        "activeTrades":[{"tradeId":"sn-close-0001","symbol":"BTCUSDT","side":"LONG"}],
+    }
+    client=PendingClient(positions=[{"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"0.001","markPrice":"100000"}])
+    released=[]
+    next_state,event=runtime.reconcile_pending(client=client,state=state,settings=SniperSettings(),now_ms=62_000,release_symbol=released.append)
+    assert next_state["pendingIntent"] is None
+    assert event["event"]=="CLOSE_RETRY_READY"
+    assert released==[]
