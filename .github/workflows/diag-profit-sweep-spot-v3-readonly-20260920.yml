@@ -52,6 +52,8 @@ jobs:
           cat > "$RUNNER_TEMP/spot-v3-diag/diag.py" <<'PY'
           from __future__ import annotations
           from urllib.parse import urlencode
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
           import json, os, urllib.request
 
           import main
@@ -90,23 +92,40 @@ jobs:
               response=client._http.get(f"{ASTER_SPOT_REST}{path}?{encoded}&signature={sig}",headers=headers)
               return sanitized(response)
 
-          report={"matching25PctEnabledAccounts":0,"probes":{},"fatal":False}
+          report={"matchingHistorical25PctAccounts":0,"current25PctEnabled":False,"probes":{},"fatal":False}
           try:
+              ams=ZoneInfo("Europe/Amsterdam")
+              start=datetime(2026,9,20,0,0,tzinfo=ams).astimezone(timezone.utc)
+              end=datetime(2026,9,21,0,0,tzinfo=ams).astimezone(timezone.utc)
               matches=[]
               for user in main.db.collection("users").stream():
-                  control=user.reference.collection("executionControls").document("aster").get().to_dict() or {}
-                  sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
-                  if sweep.get("enabled") is not True:
-                      continue
-                  try:
-                      pct=float(sweep.get("sweepPercent",0))
-                  except Exception:
-                      continue
-                  if abs(pct-25.0)<=1e-9:
+                  historical=False
+                  for snap in user.reference.collection("asterProfitSweeps").stream():
+                      row=snap.to_dict() or {}
+                      created=row.get("createdAt")
+                      if not isinstance(created,datetime):
+                          continue
+                      created=created.astimezone(timezone.utc)
+                      if not (start <= created < end):
+                          continue
+                      try:
+                          pct=float(row.get("sweepPercent",0))
+                      except Exception:
+                          continue
+                      if abs(pct-25.0)<=1e-9:
+                          historical=True
+                          break
+                  if historical:
                       matches.append(user)
-              report["matching25PctEnabledAccounts"]=len(matches)
+              report["matchingHistorical25PctAccounts"]=len(matches)
               if len(matches)!=1:
                   raise RuntimeError("ACCOUNT_MATCH_GUARD")
+              control=matches[0].reference.collection("executionControls").document("aster").get().to_dict() or {}
+              sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+              try:
+                  report["current25PctEnabled"]=sweep.get("enabled") is True and abs(float(sweep.get("sweepPercent",0))-25.0)<=1e-9
+              except Exception:
+                  report["current25PctEnabled"]=False
 
               user=matches[0]
               secret=main.load_aster_secret({"uid":str(user.id)})
