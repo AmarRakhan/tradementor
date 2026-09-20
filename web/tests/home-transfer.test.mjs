@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("Home is the first mobile tab without removing Markets, News or existing tabs", async () => {
+test("Home is first and Sniper is inserted without removing Markets, News or existing tabs", async () => {
   const [home, markets, news, page] = await Promise.all([
     read("components/home-navigation-bridge.tsx"), read("components/markets-navigation-bridge.tsx"),
     read("components/news-navigation-bridge.tsx"), read("app/page.tsx"),
