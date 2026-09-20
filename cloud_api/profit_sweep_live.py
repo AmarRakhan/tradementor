@@ -348,31 +348,59 @@ def reconcile_transfer_history(
     client: Any,
     amount: Decimal,
     submitted_at: Any,
-    poll_attempts: int = 4,
+    poll_attempts: int = 2,
     poll_delay_seconds: float = 0.35,
 ) -> tuple[str, dict[str, Any] | None]:
-    """Read-only reconciliation for an Aster transfer with unknown status."""
+    """Read-only reconciliation across Spot and Futures ledgers."""
     submitted_ms = _timestamp_ms(submitted_at)
     if submitted_ms <= 0:
         return "INVALID_EVIDENCE", None
     attempts = max(1, int(poll_attempts))
     last_state = "NOT_FOUND"
     for attempt in range(attempts):
+        spot_rows: list[dict[str, Any]] = []
+        futures_rows: list[dict[str, Any]] = []
+        spot_ok = futures_ok = False
         try:
-            rows = client.income_history(
+            payload = client.signed_spot_request("GET", SPOT_TRANSACTION_HISTORY_PATH, {
+                "asset": TRANSFER_ASSET,
+                "type": SPOT_TRANSFER_HISTORY_TYPE,
+                "startTime": max(0, submitted_ms - 15_000),
+                "endTime": submitted_ms + 180_000,
+                "limit": 1000,
+            })
+            if isinstance(payload, list) and len(payload) < 1000:
+                spot_rows = [row for row in payload if isinstance(row, dict)]
+                spot_ok = True
+            elif isinstance(payload, list):
+                return "SPOT_HISTORY_TRUNCATED", None
+        except (AsterApiError, AsterSubmissionUncertain):
+            pass
+        try:
+            payload = client.income_history(
                 income_type="TRANSFER",
                 start_time=max(0, submitted_ms - 15_000),
+                end_time=submitted_ms + 180_000,
                 limit=1000,
             )
-            if len(rows) >= 1000:
-                return "HISTORY_TRUNCATED", None
-            state, match = _transfer_history_match(rows, amount=amount, submitted_at=submitted_at)
-            if match is not None:
+            if len(payload) < 1000:
+                futures_rows = list(payload)
+                futures_ok = True
+            else:
+                return "FUTURES_HISTORY_TRUNCATED", None
+        except (AsterApiError, AsterSubmissionUncertain):
+            pass
+        if spot_ok or futures_ok:
+            state, match = reconcile_transfer_rows(
+                spot_rows=spot_rows,
+                futures_rows=futures_rows,
+                amount=amount,
+                submitted_at=submitted_at,
+            )
+            if match is not None or state in {"AMBIGUOUS", "AMBIGUOUS_SPOT"}:
                 return state, match
             last_state = state
-            if state == "AMBIGUOUS":
-                return state, None
-        except (AsterApiError, AsterSubmissionUncertain):
+        else:
             last_state = "HISTORY_UNAVAILABLE"
         if attempt + 1 < attempts and poll_delay_seconds > 0:
             time.sleep(poll_delay_seconds)
