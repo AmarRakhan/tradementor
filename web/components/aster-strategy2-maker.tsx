@@ -308,6 +308,17 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         if (savedMax !== settings.maximumLeverage) throw new Error("Maximum leverage is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
         const savedSizing = String(savedSettings.entrySizingMode || "margin").toLowerCase();
         if (savedSizing !== settings.entrySizingMode) throw new Error("Positieomvang-modus is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
+        if (v.tpMode === "PORTFOLIO") {
+          const savedTpInput = portfolioTpInputModeFrom(savedSettings.portfolioTpInputMode);
+          const savedTpBase = portfolioTpBaseModeFrom(savedSettings.portfolioTpBaseMode);
+          const savedTpValue = finiteOr(savedSettings.portfolioTpValue, 0);
+          if (savedTpInput !== settings.portfolioTpInputMode || Math.abs(savedTpValue - settings.portfolioTpValue) > 1e-9 || savedTpBase !== settings.portfolioTpBaseMode) {
+            throw new Error("Portfolio Take Profit is niet volledig server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
+          }
+          if (settings.portfolioTpBaseMode === "CUSTOM" && Math.abs(finiteOr(savedSettings.portfolioTpCustomBaseEquity, 0) - settings.portfolioTpCustomBaseEquity) > 1e-9) {
+            throw new Error("Aangepaste Portfolio TP-basis is niet server-side bevestigd.");
+          }
+        }
         setV((current) => ({ ...current, maxLeverage: savedMax === null ? "" : String(savedMax), fixedPositionSize: savedSizing === "notional" }));
         setDirty(false); setMessage("Instellingen server-side opgeslagen en bevestigd. Actieve posities, fills, avg entry, DCA-counts en Portfolio TP-cycle zijn intact gebleven.");
       }
@@ -466,7 +477,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
             <span><i>◎</i><small>Target</small><b>${money2(target)}</b></span>
           </div>
           <small className="portfolio-base-state">Actieve basis: {effectiveBaseMode === "CURRENT_VALUE" ? "Huidige waarde (vastgezet)" : effectiveBaseMode === "CUSTOM" ? "Aangepast" : "Cycle start"}</small>
-          {portfolioWarning && <em className="portfolio-warning">Target ligt op of onder de huidige equity; na opslaan kan Portfolio TP direct veilig uitvoeren.</em>}
+          {portfolioWarning && <em className="portfolio-warning">Target ligt al onder/huidige equity; na opslaan kan de bestaande Portfolio TP-cycle direct uitvoeren.</em>}
         </section>}
         {v.tpMode === "OFF" && <p className="tp-off-note">Automatische TP uit. DCA en overige strategie blijven actief.</p>}
         <div className="side-columns">
