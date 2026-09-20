@@ -5192,6 +5192,15 @@ def close_all_aster_strategy(
     if status!="RESERVED":
         return {"actionId":action_hash,"status":status,"duplicate":True}
 
+    account_token=None
+    for _ in range(20):
+        account_token=_acquire_aster_account_coordination(uid,"EMERGENCY","CLOSE_ALL")
+        if account_token:break
+        time.sleep(.10)
+    if not account_token:
+        action_ref.set({"status":"FAILED_BEFORE_CLOSE","submitted":0,
+            "reason":"Account execution bleef bezet tijdens noodstop","updatedAt":datetime.now(timezone.utc)},merge=True)
+        raise HTTPException(409,"NOODSTOP wacht op een lopende strategieactie; bots staan al UIT. Probeer Alles sluiten opnieuw.")
     client=_portfolio_growth_client(user,live=True);submitted=[]
     dynamic_hedge_ref=user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard=None
@@ -5278,6 +5287,8 @@ def close_all_aster_strategy(
             "submitted":len(submitted),"reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,
             f"NOODSTOP ONVOLLEDIG; account blijft geblokkeerd en bots blijven UIT: {str(exc)[:300]}") from exc
+    finally:
+        _release_aster_account_coordination(uid,str(account_token))
 
 
 @app.get("/v1/me/aster/positions/profitable-close-preview")
@@ -6990,8 +7001,12 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
         queue_recovery_required=has_unresolved_intent or has_pending_reopen
         uses_queue_lease=queue_enabled or queue_recovery_required
         queue_token=_acquire_strategy2_queue_lease(reference) if uses_queue_lease else None
-        if uses_queue_lease and not queue_token:return {"uid":uid,"status":"lease-busy"}
-        if not uses_queue_lease and not _acquire_mexc_automation_lease(reference):return {"uid":uid,"status":"lease-busy"}
+        if uses_queue_lease and not queue_token:
+            _release_aster_account_coordination(uid,str(account_token))
+            return {"uid":uid,"status":"lease-busy"}
+        if not uses_queue_lease and not _acquire_mexc_automation_lease(reference):
+            _release_aster_account_coordination(uid,str(account_token))
+            return {"uid":uid,"status":"lease-busy"}
         try:
             result=(_run_aster_strategy2_queue_scan(uid,
                 reconcile_only=not queue_enabled and has_unresolved_intent,
