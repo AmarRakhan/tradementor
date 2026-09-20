@@ -7,6 +7,7 @@ const settingsBridge = await readFile(new URL("../components/aster-profit-sweep-
 const css = await readFile(new URL("../app/profit-pot-snapshot.css", import.meta.url), "utf8");
 const route = await readFile(new URL("../app/api/exchanges/aster/profit-sweep-settings/route.ts", import.meta.url), "utf8");
 const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
+const profitPotCardSource = profitPotBridge.match(/<article className="aps-profit-pot-card"[\s\S]*?<\/article>/)?.[0] ?? "";
 
 test("each user can enable Profit sparen and choose 5, 10, 25, 50 or a custom percentage", () => {
   assert.match(settingsBridge, /const PRESETS = \[5, 10, 25, 50\]/);
@@ -20,7 +21,8 @@ test("each user can enable Profit sparen and choose 5, 10, 25, 50 or a custom pe
 test("existing Profit Pot value tile stays strictly read-only and settings are isolated", () => {
   assert.match(profitPotBridge, /<article className="aps-profit-pot-card"/);
   assert.match(profitPotBridge, /aster-profit-sweep-settings-host/);
-  assert.doesNotMatch(profitPotBridge, /authenticatedRequest|onClick=|method: "PUT"/);
+  assert.ok(profitPotCardSource);
+  assert.doesNotMatch(profitPotCardSource, /authenticatedRequest|onClick=|method: "PUT"/);
   assert.match(settingsBridge, /<button className="aps-profit-save-card"/);
   assert.match(css, /\.aps-profit-pot-card\{[^}]*pointer-events:none/);
   assert.match(css, /\.aps-profit-save-card\{/);

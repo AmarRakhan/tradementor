@@ -352,10 +352,21 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   }
 
   const enabled = status.enabled === true; const liveReady = status.liveReady === true || (!status.pending && readiness?.liveReady === true);
-  // Position counts come from the current persisted bot state. A scan report can
-  // belong to the previous settings version for up to one scheduler interval, so
-  // never let stale remainingLong/remainingShort override the slots shown above.
-  const activeLong = Number(state.longLegs ?? rawReport.activeLong ?? 0); const activeShort = Number(state.shortLegs ?? rawReport.activeShort ?? 0);
+  // Slot occupancy must follow the same Aster exchange-truth as Portfolio Snapshot.
+  // Strategy ownership state can legitimately lag or lose a row after recovery/config
+  // changes; it remains useful for management, but must never invent a free seat.
+  const exchangeSlotRows = Array.isArray(snapshot?.positions)
+    ? snapshot.positions.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+    : [];
+  const reportedAccountPositions = Number(snapshot?.activePositions);
+  const exchangeSlotTruthAvailable = Array.isArray(snapshot?.positions)
+    && (exchangeSlotRows.length > 0 || reportedAccountPositions === 0);
+  const exchangeActiveLong = exchangeSlotRows.filter((row) => String(row.side ?? row.positionSide ?? "").toUpperCase() === "LONG").length;
+  const exchangeActiveShort = exchangeSlotRows.filter((row) => String(row.side ?? row.positionSide ?? "").toUpperCase() === "SHORT").length;
+  const strategyActiveLong = Number(state.longLegs ?? rawReport.activeLong ?? 0);
+  const strategyActiveShort = Number(state.shortLegs ?? rawReport.activeShort ?? 0);
+  const activeLong = exchangeSlotTruthAvailable ? exchangeActiveLong : strategyActiveLong;
+  const activeShort = exchangeSlotTruthAvailable ? exchangeActiveShort : strategyActiveShort;
   const remainingLong = Math.max(0, n(v.longSlots) - activeLong); const remainingShort = Math.max(0, n(v.shortSlots) - activeShort);
   const displayRemainingLong = v.smartRescueEnabled ? Math.max(0, n(v.positions) - activeLong) : remainingLong;
   const displayRemainingShort = v.smartRescueEnabled ? 0 : remainingShort;
