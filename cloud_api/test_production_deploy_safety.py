@@ -30,6 +30,12 @@ def test_production_deploy_verifies_exact_source_commit_before_promotion():
     assert '--no-traffic' in text
 
 
+def test_candidate_updates_runtime_and_image_source_commit_together():
+    text = workflow()
+    assert '--update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT,TRADEMENTOR_IMAGE_SOURCE_COMMIT=$SOURCE_COMMIT' in text
+    assert '"TRADEMENTOR_IMAGE_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"]' in text
+
+
 def test_production_deploy_does_not_depend_on_database_or_exchange_availability_before_candidate():
     text = workflow()
     assert 'gcloud firestore databases describe --database="(default)"' not in text
