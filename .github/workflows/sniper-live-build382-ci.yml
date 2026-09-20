@@ -1,0 +1,64 @@
+name: SNIPER Live Build 382 CI
+
+on:
+  push:
+    branches:
+      - agent/sniper-live-build382-20260920
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Compile Sniper and production API modules
+        working-directory: cloud_api
+        run: python -m py_compile aster_sniper.py aster_sniper_runtime.py aster_symbol_ownership.py aster_gateway.py main.py
+      - name: Run focused Sniper isolation tests
+        working-directory: cloud_api
+        run: pytest -q test_aster_sniper.py test_aster_sniper_integration.py test_aster_profit_close.py test_close_all.py test_order_coordinator.py
+      - name: Run complete backend regression suite
+        working-directory: cloud_api
+        run: pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Build production web app
+        working-directory: web
+        run: npm run build
+      - name: Run complete web regression suite
+        working-directory: web
+        run: node --test tests/*.test.mjs
+      - name: Verify Build 382 live Sniper release contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'WEBAPP_BUILD_NUMBER = "382"' web/lib/app-version.ts
+          grep -q 'SNIPER Live Trading' web/lib/release-history.ts
+          grep -q 'BEVESTIG LIVE SNIPER' web/components/sniper-dashboard.tsx
+          grep -q '"markets", "aster", "sniper", "news", "journey", "wallet"' web/components/news-navigation-bridge.tsx
+          grep -q '"markets", "aster", "sniper", "news", "journey", "wallet"' web/components/markets-navigation-bridge.tsx
+          ! grep -q 'liveLocked = true' web/components/sniper-dashboard.tsx
+          ! grep -q 'simulation: true' web/components/sniper-dashboard.tsx
