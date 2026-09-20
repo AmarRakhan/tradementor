@@ -622,10 +622,10 @@ def finalize_close_sweep(
         submitted_at = _now()
         ref.set({"status": "SUBMITTING", "submittedAt": submitted_at}, merge=True)
         try:
-            # Aster's documented transfer contract accepts only amount, asset,
-            # clientTranId and kindType. The signer is already attached by the
-            # authenticated V3 client; sending an extra user field is invalid.
-            payload = client.signed_request("POST", TRANSFER_PATH, {
+            # Aster documents perp->spot as a Spot TRADE endpoint. Using the
+            # Futures host produced repeated -1006 unknown-execution responses.
+            # Submit through the approved API-wallet signer on Spot V3.
+            payload = client.signed_spot_request("POST", TRANSFER_PATH, {
                 "asset": TRANSFER_ASSET,
                 "amount": _plain(contribution),
                 "clientTranId": prepared.client_tran_id,
