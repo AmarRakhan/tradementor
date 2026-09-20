@@ -24,7 +24,9 @@ from aster_gateway import AsterApiError, AsterSubmissionUncertain
 from profit_sweep import ProfitSweepError, normalize_sweep_percent, sweep_contribution
 
 LIVE_ENV = "ASTER_PROFIT_SWEEP_LIVE_ENABLED"
-TRANSFER_PATH = "/fapi/v3/asset/wallet/transfer"
+TRANSFER_PATH = "/api/v3/asset/wallet/transfer"
+SPOT_TRANSACTION_HISTORY_PATH = "/api/v3/transactionHistory"
+SPOT_TRANSFER_HISTORY_TYPE = "TRANSFER_FUTURE_TO_SPOT"
 TRANSFER_KIND = "FUTURE_SPOT"
 TRANSFER_ASSET = "USDT"
 _AMOUNT_QUANTUM = Decimal("0.00000001")
@@ -282,6 +284,62 @@ def _transfer_history_match(
         return "CONFIRMED", matches[0]
     if len(matches) > 1:
         return "AMBIGUOUS", None
+    return "NOT_FOUND", None
+
+
+def _spot_transfer_history_match(
+    rows: list[dict[str, Any]],
+    *,
+    amount: Decimal,
+    submitted_at: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    """Match a FUTURE->SPOT credit in Aster Spot transaction history."""
+    submitted_ms = _timestamp_ms(submitted_at)
+    if submitted_ms <= 0 or amount <= 0:
+        return "INVALID_EVIDENCE", None
+    lower = max(0, submitted_ms - 15_000)
+    upper = submitted_ms + 180_000
+    expected = abs(amount).quantize(_AMOUNT_QUANTUM)
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("type", "")).upper() != SPOT_TRANSFER_HISTORY_TYPE:
+            continue
+        if str(row.get("asset", "")).upper() != TRANSFER_ASSET:
+            continue
+        row_time = _timestamp_ms(row.get("time"))
+        if row_time < lower or row_time > upper:
+            continue
+        if abs(_d(row.get("balanceDelta"))).quantize(_AMOUNT_QUANTUM) != expected:
+            continue
+        if row.get("tranId") in (None, ""):
+            continue
+        matches.append(row)
+    if len(matches) == 1:
+        return "CONFIRMED_SPOT", matches[0]
+    if len(matches) > 1:
+        return "AMBIGUOUS_SPOT", None
+    return "NOT_FOUND_SPOT", None
+
+
+def reconcile_transfer_rows(
+    *,
+    spot_rows: list[dict[str, Any]],
+    futures_rows: list[dict[str, Any]],
+    amount: Decimal,
+    submitted_at: Any,
+) -> tuple[str, dict[str, Any] | None]:
+    spot_state, spot_match = _spot_transfer_history_match(
+        spot_rows, amount=amount, submitted_at=submitted_at,
+    )
+    if spot_match is not None or spot_state == "AMBIGUOUS_SPOT":
+        return spot_state, spot_match
+    future_state, future_match = _transfer_history_match(
+        futures_rows, amount=amount, submitted_at=submitted_at,
+    )
+    if future_match is not None or future_state == "AMBIGUOUS":
+        return future_state, future_match
     return "NOT_FOUND", None
 
 
