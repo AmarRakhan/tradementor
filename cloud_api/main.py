@@ -1260,6 +1260,30 @@ def _block_order_during_close_all(uid:str):
     return guard
 
 
+def _block_strategy2_order_during_conflict(uid:str):
+    """Final pre-submit owner guard for every Strategy-2 OPEN path."""
+    close_guard=_block_order_during_close_all(uid)
+    def guard(intent:AsterOrderIntent)->None:
+        close_guard(intent)
+        if intent.risk_increasing():
+            sniper=aster_sniper_reference(uid).get().to_dict() or {}
+            if intent.symbol.upper() in sniper_active_symbols(sniper):
+                raise AsterValidationError(f"{intent.symbol}: BLOCKED_BY_SNIPER_OWNER")
+    return guard
+
+
+def _block_sniper_order_during_conflict(uid:str):
+    """Final pre-submit owner guard for every SNIPER OPEN path."""
+    close_guard=_block_order_during_close_all(uid)
+    def guard(intent:AsterOrderIntent)->None:
+        close_guard(intent)
+        if intent.risk_increasing():
+            strategy2=aster_strategy2_reference(uid).get().to_dict() or {}
+            if intent.symbol.upper() in strategy2_active_symbols(strategy2):
+                raise AsterValidationError(f"{intent.symbol}: BLOCKED_BY_ASTER_OWNER")
+    return guard
+
+
 def ensure_aster_strategy2_control(uid: str) -> dict[str, Any]:
     """Register every linked user with Strategy 2 without enabling trading.
 
@@ -1552,7 +1576,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         raw={**raw,"liveReady":True}
         ref.set({"liveReady":True,"liveReadyRecoveredAt":now,
             "liveReadyRecoveryReason":"COMPLETED_CANARY_AUTHORIZATION"},merge=True)
-    secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
+    secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live,before_order_submit=_block_strategy2_order_during_conflict(uid))
     try: hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True);return {"status":"data-hold","reason":str(exc)}
@@ -6722,7 +6746,7 @@ def run_mexc_automation_internal_simulation(uid: str, authorization: str | None 
 def _sniper_client(uid:str, *, live:bool)->AsterV3Client:
     secret=load_aster_secret({"uid":uid})
     return AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),
-        live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
+        live_authorized=live,before_order_submit=_block_sniper_order_during_conflict(uid))
 
 
 def _sniper_confirmed_close_evidence(client:Any,trade:dict[str,Any],*,symbol:str,side:str,
