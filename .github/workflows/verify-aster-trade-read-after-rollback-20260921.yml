@@ -30,7 +30,6 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-
       - name: Verify exact account can read Aster state
         shell: bash
         run: |
@@ -41,73 +40,18 @@ jobs:
           import json,shlex,sys
           s=json.load(open(sys.argv[1],encoding='utf-8'))
           spec=s['spec']['template']['spec']
-          image=spec['containers'][0]['image']
-          sa=spec['serviceAccountName']
           env={x['name']:x.get('value','') for x in spec['containers'][0].get('env',[])}
-          source=env.get('TRADEMENTOR_SOURCE_COMMIT','')
-          print('IMAGE='+shlex.quote(image))
-          print('RUNTIME_SA='+shlex.quote(sa))
-          print('SOURCE='+shlex.quote(source))
+          print('IMAGE='+shlex.quote(spec['containers'][0]['image']))
+          print('RUNTIME_SA='+shlex.quote(spec['serviceAccountName']))
+          print('SOURCE='+shlex.quote(env.get('TRADEMENTOR_SOURCE_COMMIT','')))
           PY
           )"
           test "$SOURCE" = "c156d4e9db9b8a76bfa1b93ba5e6ec665d5f2711"
-
           JOB="tm-aster-read-${GITHUB_RUN_ID: -7}"
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-
-          SCRIPT_B64="$(python - <<'PY'
-          import base64
-          script=r"""
-import sys
-import main
-
-def f(v):
-    try:return float(v)
-    except:return 0.0
-def i(v):
-    try:return int(float(v))
-    except:return 0
-def near(v,t):
-    return abs(f(v)-t) < 1e-9
-
-matches=[]
-for snap in main.db.collection("asterStrategy2").stream():
-    raw=snap.to_dict() or {}
-    s=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
-    lm=f(s.get("entryMarginLongUsd",s.get("entryMarginLong",s.get("entryMarginUsd"))))
-    sm=f(s.get("entryMarginShortUsd",s.get("entryMarginShort",s.get("entryMarginUsd"))))
-    if (i(s.get("maximumPositions"))==60 and i(s.get("longSlots"))==30 and i(s.get("shortSlots"))==30
-        and i(s.get("universeTopN"))==350 and i(s.get("minimumLeverage"))==20
-        and str(s.get("entrySizingMode","")).lower()=="margin"
-        and near(s.get("entryNotionalLongUsd",s.get("entryNotionalLong")),8.0)
-        and near(s.get("entryNotionalShortUsd",s.get("entryNotionalShort")),6.0)
-        and 0 < lm <= 1.0 and 0 < sm <= 1.0):
-        matches.append(snap.id)
-if len(matches)!=1:
-    raise SystemExit(21)
-
-user={"uid":matches[0]}
-try:
-    secret=main.load_aster_secret(user)
-except Exception:
-    raise SystemExit(22)
-try:
-    result=main.inspect_aster(secret)
-except Exception:
-    raise SystemExit(23)
-if result.get("configured") is not True or result.get("credentialsVerified") is not True:
-    raise SystemExit(24)
-if int(result.get("tradableSymbols") or 0) <= 0:
-    raise SystemExit(25)
-raise SystemExit(0)
-"""
-          print(base64.b64encode(script.encode()).decode())
-          PY
-          )"
-
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
-
+          SCRIPT_B64='aW1wb3J0IHN5cwppbXBvcnQgbWFpbgoKZGVmIGYodik6CiAgICB0cnk6cmV0dXJuIGZsb2F0KHYpCiAgICBleGNlcHQ6cmV0dXJuIDAuMApkZWYgaSh2KToKICAgIHRyeTpyZXR1cm4gaW50KGZsb2F0KHYpKQogICAgZXhjZXB0OnJldHVybiAwCmRlZiBuZWFyKHYsdCk6CiAgICByZXR1cm4gYWJzKGYodiktdCkgPCAxZS05CgptYXRjaGVzPVtdCmZvciBzbmFwIGluIG1haW4uZGIuY29sbGVjdGlvbigiYXN0ZXJTdHJhdGVneTIiKS5zdHJlYW0oKToKICAgIHJhdz1zbmFwLnRvX2RpY3QoKSBvciB7fQogICAgcz1yYXcuZ2V0KCJzZXR0aW5ncyIpIGlmIGlzaW5zdGFuY2UocmF3LmdldCgic2V0dGluZ3MiKSxkaWN0KSBlbHNlIHt9CiAgICBsbT1mKHMuZ2V0KCJlbnRyeU1hcmdpbkxvbmdVc2QiLHMuZ2V0KCJlbnRyeU1hcmdpbkxvbmciLHMuZ2V0KCJlbnRyeU1hcmdpblVzZCIpKSkpCiAgICBzbT1mKHMuZ2V0KCJlbnRyeU1hcmdpblNob3J0VXNkIixzLmdldCgiZW50cnlNYXJnaW5TaG9ydCIscy5nZXQoImVudHJ5TWFyZ2luVXNkIikpKSkKICAgIGlmIChpKHMuZ2V0KCJtYXhpbXVtUG9zaXRpb25zIikpPT02MCBhbmQgaShzLmdldCgibG9uZ1Nsb3RzIikpPT0zMCBhbmQgaShzLmdldCgic2hvcnRTbG90cyIpKT09MzAKICAgICAgICBhbmQgaShzLmdldCgidW5pdmVyc2VUb3BOIikpPT0zNTAgYW5kIGkocy5nZXQoIm1pbmltdW1MZXZlcmFnZSIpKT09MjAKICAgICAgICBhbmQgc3RyKHMuZ2V0KCJlbnRyeVNpemluZ01vZGUiLCIiKSkubG93ZXIoKT09Im1hcmdpbiIKICAgICAgICBhbmQgbmVhcihzLmdldCgiZW50cnlOb3Rpb25hbExvbmdVc2QiLHMuZ2V0KCJlbnRyeU5vdGlvbmFsTG9uZyIpKSw4LjApCiAgICAgICAgYW5kIG5lYXIocy5nZXQoImVudHJ5Tm90aW9uYWxTaG9ydFVzZCIscy5nZXQoImVudHJ5Tm90aW9uYWxTaG9ydCIpKSw2LjApCiAgICAgICAgYW5kIDAgPCBsbSA8PSAxLjAgYW5kIDAgPCBzbSA8PSAxLjApOgogICAgICAgIG1hdGNoZXMuYXBwZW5kKHNuYXAuaWQpCmlmIGxlbihtYXRjaGVzKSE9MToKICAgIHJhaXNlIFN5c3RlbUV4aXQoMjEpCgp1c2VyPXsidWlkIjptYXRjaGVzWzBdfQp0cnk6CiAgICBzZWNyZXQ9bWFpbi5sb2FkX2FzdGVyX3NlY3JldCh1c2VyKQpleGNlcHQgRXhjZXB0aW9uOgogICAgcmFpc2UgU3lzdGVtRXhpdCgyMikKdHJ5OgogICAgcmVzdWx0PW1haW4uaW5zcGVjdF9hc3RlcihzZWNyZXQpCmV4Y2VwdCBFeGNlcHRpb246CiAgICByYWlzZSBTeXN0ZW1FeGl0KDIzKQppZiByZXN1bHQuZ2V0KCJjb25maWd1cmVkIikgaXMgbm90IFRydWUgb3IgcmVzdWx0LmdldCgiY3JlZGVudGlhbHNWZXJpZmllZCIpIGlzIG5vdCBUcnVlOgogICAgcmFpc2UgU3lzdGVtRXhpdCgyNCkKaWYgaW50KHJlc3VsdC5nZXQoInRyYWRhYmxlU3ltYm9scyIpIG9yIDApIDw9IDA6CiAgICByYWlzZSBTeXN0ZW1FeGl0KDI1KQpyYWlzZSBTeXN0ZW1FeGl0KDAp'
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           RC=$?
