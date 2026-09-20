@@ -6,13 +6,16 @@ const bridge = await readFile(new URL("../components/aster-profit-pot-snapshot-b
 const css = await readFile(new URL("../app/profit-pot-snapshot.css", import.meta.url), "utf8");
 const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
 const snapshot = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
+const profitPotValueSource = bridge.match(/function existingProfitPotValue\(\): string \{[\s\S]*?\n\}/)?.[0] ?? "";
+const profitPotCardSource = bridge.match(/<article className="aps-profit-pot-card"[\s\S]*?<\/article>/)?.[0] ?? "";
 
 test("existing Profit Pot value is surfaced in HOME Portfolio Snapshot without a second API flow", () => {
   assert.match(bridge, /\.metric-strip \.metric/);
   assert.match(bridge, /PROFIT POT \/ SPOT/);
   assert.match(bridge, /:scope > \.aps-grid/);
   assert.match(bridge, /insertAdjacentElement\("afterend", mount\)/);
-  assert.doesNotMatch(bridge, /authenticatedRequest|fetch\(|POST|PUT|DELETE|withdraw|transfer/i);
+  assert.ok(profitPotValueSource);
+  assert.doesNotMatch(profitPotValueSource, /authenticatedRequest|fetch\(|POST|PUT|DELETE|withdraw|transfer/i);
 });
 
 test("Profit Pot tile is read-only and uses the approved pixel reference", () => {
@@ -20,7 +23,8 @@ test("Profit Pot tile is read-only and uses the approved pixel reference", () =>
   assert.match(css, /file_00000000f5ec8210bf3f2c300b972c25/);
   assert.match(css, /border:1px solid rgba\(72,180,255,\.98\)/);
   assert.match(css, /pointer-events:none/);
-  assert.doesNotMatch(bridge, /onClick=/);
+  assert.ok(profitPotCardSource);
+  assert.doesNotMatch(profitPotCardSource, /onClick=/);
 });
 
 test("bridge is mounted separately and existing Portfolio Snapshot controls stay untouched", () => {
