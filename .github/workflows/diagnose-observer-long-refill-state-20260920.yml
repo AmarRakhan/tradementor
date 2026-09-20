@@ -1,0 +1,156 @@
+name: Diagnose observer LONG refill state 2026-09-20
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-observer-long-refill-state-20260920.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Firestore client
+        run: pip install google-cloud-firestore
+      - name: Read sanitized Strategy-2 state
+        env:
+          GOOGLE_CLOUD_PROJECT: tradementor-production
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone, timedelta
+          from google.cloud import firestore
+
+          now=datetime.now(timezone.utc)
+          db=firestore.Client(project='tradementor-production')
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              try:
+                  fingerprint=(
+                      int(s.get('universeTopN',-1))==50 and
+                      int(s.get('maximumPositions',-1))==20 and
+                      int(s.get('longSlots',-1))==10 and
+                      int(s.get('shortSlots',-1))==10 and
+                      int(s.get('minimumLeverage',-1))==20 and
+                      bool(s.get('bollingerEntryFilter15mEnabled',False))
+                  )
+              except Exception:
+                  fingerprint=False
+              if fingerprint:
+                  matches.append((snap,raw,s))
+          if len(matches)!=1:
+              print('OBSERVER_LONG_REFILL_DIAG '+json.dumps({'readOnly':True,'matchCount':len(matches),'status':'REFUSED_NOT_UNIQUE'},sort_keys=True))
+              raise SystemExit(0)
+
+          snap,raw,s=matches[0]
+          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          positions=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+
+          def iso(v):
+              if isinstance(v,datetime):
+                  if v.tzinfo is None: v=v.replace(tzinfo=timezone.utc)
+                  return v.astimezone(timezone.utc).isoformat()
+              return str(v or '')
+
+          hist=[]
+          for h in snap.reference.collection('configHistory').stream():
+              row=h.to_dict() or {}; ts=row.get('timestamp')
+              if isinstance(ts,datetime) and ts >= now-timedelta(hours=12):
+                  old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}
+                  new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+                  hist.append({
+                      'timestamp':iso(ts),'version':row.get('version'),
+                      'oldMaximumLeverage':old.get('maximumLeverage'),
+                      'newMaximumLeverage':new.get('maximumLeverage'),
+                      'oldEntrySizingMode':old.get('entrySizingMode'),
+                      'newEntrySizingMode':new.get('entrySizingMode'),
+                      'oldEntryMarginUsd':old.get('entryMarginUsd'),
+                      'newEntryMarginUsd':new.get('entryMarginUsd'),
+                      'newEntryMarginLongUsd':new.get('entryMarginLongUsd'),
+                      'newEntryMarginShortUsd':new.get('entryMarginShortUsd'),
+                      'newEntryNotionalUsd':new.get('entryNotionalUsd'),
+                      'newBollinger15m':new.get('bollingerEntryFilter15mEnabled'),
+                  })
+          hist.sort(key=lambda x:x['timestamp'], reverse=True)
+
+          audit=[]
+          for a in snap.reference.collection('audit').stream():
+              row=a.to_dict() or {}; ts=row.get('timestamp')
+              if isinstance(ts,datetime) and ts >= now-timedelta(minutes=120):
+                  audit.append({
+                      'timestamp':iso(ts),
+                      'event':str(row.get('event','')),
+                      'symbol':str(row.get('symbol','')).upper(),
+                      'side':str(row.get('side','')).upper(),
+                      'leverage':row.get('leverage'),
+                      'reason':str(row.get('reason',''))[:180],
+                  })
+          audit.sort(key=lambda x:x['timestamp'], reverse=True)
+
+          actions=[]
+          for row in report.get('actions',[]) if isinstance(report.get('actions'),list) else []:
+              if isinstance(row,dict):
+                  actions.append({k:row.get(k) for k in (
+                      'kind','symbol','side','reason','stage','leverage',
+                      'notionalUsd','marginUsd','requiredMargin',
+                      'bollingerEntryFilter15m'
+                  ) if k in row})
+
+          managed=[]
+          for key,row in positions.items():
+              if not isinstance(row,dict): continue
+              managed.append({
+                  'key':key,'leverage':row.get('leverage'),
+                  'cycleStartedAtMs':row.get('cycleStartedAtMs'),
+                  'lastKnownEntry':row.get('lastKnownEntry'),
+                  'lastKnownQty':row.get('lastKnownQty'),
+                  'dcaCount':row.get('dcaCount'),
+              })
+
+          safe={
+              'readOnly':True,'matchCount':1,'enabled':bool(raw.get('enabled')),
+              'monitor':bool(raw.get('monitor')),'configVersion':raw.get('configVersion'),
+              'settings':{k:s.get(k) for k in (
+                  'universeTopN','maximumPositions','longSlots','shortSlots',
+                  'minimumLeverage','maximumLeverage','entrySizingMode',
+                  'entryMarginUsd','entryMarginLongUsd','entryMarginShortUsd',
+                  'entryNotionalUsd','bollingerEntryFilter15mEnabled',
+                  'bollingerEntryFilterTimeframe'
+              )},
+              'report':{k:report.get(k) for k in (
+                  'configVersion','status','action','entryStatus','entryReason',
+                  'activeLong','activeShort','remainingLong','remainingShort',
+                  'candidateCount','scannedCandidateCount','executableCandidates',
+                  'ordersSent'
+              )},
+              'latestActions':actions[-60:],
+              'managedPositions':managed,
+              'recentAudit':audit[:100],
+              'recentConfigHistory':hist[:30],
+          }
+          print('OBSERVER_LONG_REFILL_DIAG '+json.dumps(safe,sort_keys=True,separators=(',',':')))
+          PY
