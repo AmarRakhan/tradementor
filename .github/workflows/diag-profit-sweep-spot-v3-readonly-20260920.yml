@@ -92,7 +92,7 @@ jobs:
               response=client._http.get(f"{ASTER_SPOT_REST}{path}?{encoded}&signature={sig}",headers=headers)
               return sanitized(response)
 
-          report={"matchingHistorical25PctAccounts":0,"currentSettingPresent":False,"currentEnabled":False,"currentPercent":None,"current25PctEnabled":False,"probes":{},"fatal":False}
+          report={"matchingHistorical25PctAccounts":0,"currentSettingPresent":False,"currentEnabled":False,"currentPercent":None,"current25PctEnabled":False,"recoveryStatusCounts":{},"recoveryReasonClasses":{},"sweepStatusCounts":{},"probes":{},"fatal":False}
           try:
               ams=ZoneInfo("Europe/Amsterdam")
               start=datetime(2026,9,20,0,0,tzinfo=ams).astimezone(timezone.utc)
@@ -132,6 +132,30 @@ jobs:
                   report["current25PctEnabled"]=False
 
               user=matches[0]
+              for snap in user.reference.collection("asterProfitSweepRecoveries").stream():
+                  row=snap.to_dict() or {}
+                  st=str(row.get("status","UNKNOWN")).upper()
+                  report["recoveryStatusCounts"][st]=report["recoveryStatusCounts"].get(st,0)+1
+                  reason=str(row.get("reason","")).lower()
+                  cls="-1006" if "-1006" in reason else "-1007" if "-1007" in reason else "-4115" if "-4115" in reason else "OTHER"
+                  if reason:
+                      report["recoveryReasonClasses"][cls]=report["recoveryReasonClasses"].get(cls,0)+1
+              for snap in user.reference.collection("asterProfitSweeps").stream():
+                  row=snap.to_dict() or {}
+                  created=row.get("createdAt")
+                  if not isinstance(created,datetime):
+                      continue
+                  created=created.astimezone(timezone.utc)
+                  if not (start <= created < end):
+                      continue
+                  try:
+                      pct=float(row.get("sweepPercent",0))
+                  except Exception:
+                      continue
+                  if abs(pct-25.0)>1e-9:
+                      continue
+                  st=str(row.get("status","UNKNOWN")).upper()
+                  report["sweepStatusCounts"][st]=report["sweepStatusCounts"].get(st,0)+1
               secret=main.load_aster_secret({"uid":str(user.id)})
               client=AsterV3Client(
                   signer_address=secret.signer_address,
