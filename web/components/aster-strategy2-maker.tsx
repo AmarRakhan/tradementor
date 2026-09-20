@@ -37,7 +37,7 @@ type Values = {
 const initial: Values = {
   name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10", minLeverage: "50", maxLeverage: "",
   stopLossEnabled: false, stopLossMode: "PERCENT", stopLossLong: "5", stopLossShort: "5",
-  fixedPositionSize: false, entryMarginLong: "5", entryMarginShort: "5", entryNotionalLong: "250", entryNotionalShort: "250",
+  fixedPositionSize: false, entryMarginLong: "5", entryMarginShort: "5", entryNotionalLong: "", entryNotionalShort: "",
   longDcaDistance: "0.30", shortDcaDistance: "0.30",
   longDcaAmount: "2", shortDcaAmount: "2", maxDcaLong: "3", maxDcaShort: "3", longTp: "1.5", shortTp: "1.5",
   tpMode: "PER_TRADE", portfolioTp: "20", portfolioTpInputMode: "PERCENT", portfolioTpBaseMode: "CYCLE_START", portfolioTpCustomBase: "",
@@ -125,18 +125,23 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     if (!x || String(x.engine || x.strategyKind) !== "multi_bb_v1") return;
     const longSlots = clampInt(Number(x.longSlots ?? 20), 0, MAX_SIDE_SLOTS); const shortSlots = clampInt(Number(x.shortSlots ?? 10), 0, MAX_SIDE_SLOTS);
     const legacyEntry = Number(x.entryMarginUsd ?? 5);
-    const persistedMinLeverage = Math.max(1, Number(x.minimumLeverage ?? 50));
     const legacyLongMargin = Number(x.entryMarginLongUsd ?? x.entryMarginLong ?? legacyEntry);
     const legacyShortMargin = Number(x.entryMarginShortUsd ?? x.entryMarginShort ?? legacyEntry);
-    const legacyLongNotional = Number(x.entryNotionalLongUsd ?? x.entryNotionalLong ?? x.entryNotionalUsd ?? legacyLongMargin * persistedMinLeverage);
-    const legacyShortNotional = Number(x.entryNotionalShortUsd ?? x.entryNotionalShort ?? legacyShortMargin * persistedMinLeverage);
+    const persistedFixedPositionSize = String(x.entrySizingMode || "margin").toLowerCase() === "notional";
+    // Never manufacture a position-size setting from margin × leverage. Legacy
+    // margin-mode entryNotionalUsd values were derived aliases, not user input.
+    // Only surface notional values that were stored while notional mode is active
+    // (or explicit side-specific values that already exist).
+    const storedLongNotional = x.entryNotionalLongUsd ?? x.entryNotionalLong ?? (persistedFixedPositionSize ? x.entryNotionalUsd : undefined);
+    const storedShortNotional = x.entryNotionalShortUsd ?? x.entryNotionalShort ?? (persistedFixedPositionSize ? x.entryNotionalUsd : undefined);
     const legacyDcaDistance = Number(x.dcaDistance ?? .003); const legacyDcaAmount = Number(x.dcaMarginUsd ?? 2); const legacyMax = Number(x.maxDca ?? 3); const legacyTp = Number(x.takeProfit ?? .015);
     setV({
       name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
       stopLossEnabled: x.stopLossEnabled === true, stopLossMode: String(x.stopLossMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT", stopLossLong: txt(x.stopLossLong, 5), stopLossShort: txt(x.stopLossShort, 5),
-      fixedPositionSize: String(x.entrySizingMode || "margin").toLowerCase() === "notional",
+      fixedPositionSize: persistedFixedPositionSize,
       entryMarginLong: txt(legacyLongMargin, legacyEntry), entryMarginShort: txt(legacyShortMargin, legacyEntry),
-      entryNotionalLong: txt(legacyLongNotional, legacyEntry * persistedMinLeverage), entryNotionalShort: txt(legacyShortNotional, legacyEntry * persistedMinLeverage),
+      entryNotionalLong: storedLongNotional === undefined || storedLongNotional === null ? "" : txt(storedLongNotional, 0),
+      entryNotionalShort: storedShortNotional === undefined || storedShortNotional === null ? "" : txt(storedShortNotional, 0),
       longDcaDistance: pct(x.longDcaDistance ?? legacyDcaDistance, legacyDcaDistance), shortDcaDistance: pct(x.shortDcaDistance ?? legacyDcaDistance, legacyDcaDistance),
       longDcaAmount: txt(x.longDcaMarginUsd ?? x.longDcaAmount ?? legacyDcaAmount, legacyDcaAmount), shortDcaAmount: txt(x.shortDcaMarginUsd ?? x.shortDcaAmount ?? legacyDcaAmount, legacyDcaAmount),
       maxDcaLong: txt(x.maxDcaLong ?? x.longMaxDca ?? legacyMax, legacyMax), maxDcaShort: txt(x.maxDcaShort ?? x.shortMaxDca ?? legacyMax, legacyMax),
@@ -164,6 +169,18 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     const maxLeverageText = v.maxLeverage.trim(); const maxLeverage = maxLeverageText ? Math.max(1, Math.round(n(maxLeverageText))) : null;
     const longEntry = n(v.entryMarginLong); const shortEntry = n(v.entryMarginShort);
     const longNotional = n(v.entryNotionalLong); const shortNotional = n(v.entryNotionalShort);
+    const sizingSettings = v.fixedPositionSize ? {
+      entrySizingMode: "notional",
+      entryNotionalUsd: longNotional,
+      entryNotionalLongUsd: longNotional,
+      entryNotionalShortUsd: shortNotional,
+      entryNotionalLong: longNotional,
+      entryNotionalShort: shortNotional,
+    } : {
+      // Turning fixed size OFF restores margin execution without rewriting the
+      // separately stored notional values. Margin and notional are independent.
+      entrySizingMode: "margin",
+    };
     const longDistance = n(v.longDcaDistance) / 100; const shortDistance = n(v.shortDcaDistance) / 100;
     const longAmount = n(v.longDcaAmount); const shortAmount = n(v.shortDcaAmount); const maxLong = clampInt(n(v.maxDcaLong), 0, MAX_DCA); const maxShort = clampInt(n(v.maxDcaShort), 0, MAX_DCA);
     const longTp = n(v.longTp) / 100; const shortTp = n(v.shortTp) / 100;
@@ -171,9 +188,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
       maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,
-      entrySizingMode: v.fixedPositionSize ? "notional" : "margin",
+      ...sizingSettings,
+      // Base entry margins are always preserved exactly as entered. Enabling
+      // fixed position size must never convert or overwrite these values.
       entryMarginUsd: longEntry, entryMarginLongUsd: longEntry, entryMarginShortUsd: shortEntry, entryMarginLong: longEntry, entryMarginShort: shortEntry,
-      entryNotionalUsd: longNotional, entryNotionalLongUsd: longNotional, entryNotionalShortUsd: shortNotional, entryNotionalLong: longNotional, entryNotionalShort: shortNotional,
       dcaDistance: longDistance, longDcaDistance: longDistance, shortDcaDistance: shortDistance,
       dcaMarginUsd: longAmount, longDcaMarginUsd: longAmount, shortDcaMarginUsd: shortAmount, longDcaAmount: longAmount, shortDcaAmount: shortAmount,
       maxDca: maxLong, maxDcaLong: maxLong, maxDcaShort: maxShort, longMaxDca: maxLong, shortMaxDca: maxShort, unlimitedDca: false,
@@ -274,8 +292,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (settings.maximumLeverage !== null && settings.maximumLeverage < settings.minimumLeverage) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage.");
       if (settings.stopLossEnabled && (settings.stopLossLong <= 0 || settings.stopLossShort <= 0)) throw new Error("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat.");
       if (settings.entrySizingMode === "notional") {
-        if (settings.longSlots > 0 && settings.entryNotionalLongUsd <= 0) throw new Error("Positie LONG moet groter dan 0 USDT zijn.");
-        if (settings.shortSlots > 0 && settings.entryNotionalShortUsd <= 0) throw new Error("Positie SHORT moet groter dan 0 USDT zijn.");
+        if (settings.longSlots > 0 && settings.entryNotionalLongUsd <= 0) throw new Error("Vul Vaste positie LONG expliciet in. De bestaande LONG-margin wordt niet automatisch omgerekend.");
+        if (settings.shortSlots > 0 && settings.entryNotionalShortUsd <= 0) throw new Error("Vul Vaste positie SHORT expliciet in. De bestaande SHORT-margin wordt niet automatisch omgerekend.");
       } else {
         if (settings.longSlots > 0 && settings.entryMarginLongUsd <= 0) throw new Error("Instapmargin LONG moet groter dan 0 USDT zijn.");
         if (settings.shortSlots > 0 && settings.entryMarginShortUsd <= 0) throw new Error("Instapmargin SHORT moet groter dan 0 USDT zijn.");
@@ -449,7 +467,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     </section>
 
     <div className={"strategy-power-control entry-sizing-control " + (v.fixedPositionSize ? "enabled" : "ready")}>
-      <span className="pair-icon">◎</span><span><b>Vaste positieomvang</b><small>Aan: instapbedrag = totale positie in USDT · margin = positie ÷ leverage. Uit: instapbedrag = margin.</small></span>
+      <span className="pair-icon">◎</span><span><b>Vaste positieomvang</b><small>Aan: gebruikt een aparte vaste positie in USDT. Je bestaande LONG/SHORT-margin blijft exact ongewijzigd. Uit: instapbedrag = margin.</small></span>
       <button type="button" role="switch" aria-checked={v.fixedPositionSize} onClick={() => change({ ...v, fixedPositionSize: !v.fixedPositionSize })}><i />{v.fixedPositionSize ? "Aan" : "Uit"}</button>
     </div>
 
@@ -492,8 +510,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         </section>}
         {v.tpMode === "OFF" && <p className="tp-off-note">Automatische TP uit. DCA en overige strategie blijven actief.</p>}
         <div className="side-columns">
-          <section className="side-card long"><b>LONG</b><Field label={v.fixedPositionSize ? "Instap LONG · positie" : "Instap LONG · margin"} value={v.fixedPositionSize ? v.entryNotionalLong : v.entryMarginLong} set={(value) => v.fixedPositionSize ? change({ ...v, entryNotionalLong: value }) : change({ ...v, entryMarginLong: value })} suffix="USDT" /><Field label="DCA-afstand LONG" value={v.longDcaDistance} set={(value) => change({ ...v, longDcaDistance: value })} suffix="%" disabled={v.smartRescueEnabled} /><Field label="DCA-bedrag LONG" value={v.longDcaAmount} set={(value) => change({ ...v, longDcaAmount: value })} suffix="USDT" disabled={v.smartRescueEnabled} /><Field label="Max DCA LONG" value={v.maxDcaLong} set={(value) => change({ ...v, maxDcaLong: value })} disabled={v.smartRescueEnabled} /><Field label="Take Profit LONG" value={v.longTp} set={(value) => change({ ...v, longTp: value })} suffix="%" disabled={v.tpMode !== "PER_TRADE"} /></section>
-          <section className={`side-card short ${v.smartRescueEnabled ? "inactive" : ""}`}><b>SHORT {v.smartRescueEnabled ? "· bewaard, runtime uit" : ""}</b><Field label={v.fixedPositionSize ? "Instap SHORT · positie" : "Instap SHORT · margin"} value={v.fixedPositionSize ? v.entryNotionalShort : v.entryMarginShort} set={(value) => v.fixedPositionSize ? change({ ...v, entryNotionalShort: value }) : change({ ...v, entryMarginShort: value })} suffix="USDT" disabled={v.smartRescueEnabled} /><Field label="DCA-afstand SHORT" value={v.shortDcaDistance} set={(value) => change({ ...v, shortDcaDistance: value })} suffix="%" disabled={v.smartRescueEnabled} /><Field label="DCA-bedrag SHORT" value={v.shortDcaAmount} set={(value) => change({ ...v, shortDcaAmount: value })} suffix="USDT" disabled={v.smartRescueEnabled} /><Field label="Max DCA SHORT" value={v.maxDcaShort} set={(value) => change({ ...v, maxDcaShort: value })} disabled={v.smartRescueEnabled} /><Field label="Take Profit SHORT" value={v.shortTp} set={(value) => change({ ...v, shortTp: value })} suffix="%" disabled={v.smartRescueEnabled || v.tpMode !== "PER_TRADE"} /></section>
+          <section className="side-card long"><b>LONG</b><Field label="Instap LONG · margin" value={v.entryMarginLong} set={(value) => change({ ...v, entryMarginLong: value })} suffix="USDT" />{v.fixedPositionSize && <Field label="Vaste positie LONG" value={v.entryNotionalLong} set={(value) => change({ ...v, entryNotionalLong: value })} suffix="USDT" />}<Field label="DCA-afstand LONG" value={v.longDcaDistance} set={(value) => change({ ...v, longDcaDistance: value })} suffix="%" disabled={v.smartRescueEnabled} /><Field label="DCA-bedrag LONG" value={v.longDcaAmount} set={(value) => change({ ...v, longDcaAmount: value })} suffix="USDT" disabled={v.smartRescueEnabled} /><Field label="Max DCA LONG" value={v.maxDcaLong} set={(value) => change({ ...v, maxDcaLong: value })} disabled={v.smartRescueEnabled} /><Field label="Take Profit LONG" value={v.longTp} set={(value) => change({ ...v, longTp: value })} suffix="%" disabled={v.tpMode !== "PER_TRADE"} /></section>
+          <section className={`side-card short ${v.smartRescueEnabled ? "inactive" : ""}`}><b>SHORT {v.smartRescueEnabled ? "· bewaard, runtime uit" : ""}</b><Field label="Instap SHORT · margin" value={v.entryMarginShort} set={(value) => change({ ...v, entryMarginShort: value })} suffix="USDT" disabled={v.smartRescueEnabled} />{v.fixedPositionSize && <Field label="Vaste positie SHORT" value={v.entryNotionalShort} set={(value) => change({ ...v, entryNotionalShort: value })} suffix="USDT" disabled={v.smartRescueEnabled} />}<Field label="DCA-afstand SHORT" value={v.shortDcaDistance} set={(value) => change({ ...v, shortDcaDistance: value })} suffix="%" disabled={v.smartRescueEnabled} /><Field label="DCA-bedrag SHORT" value={v.shortDcaAmount} set={(value) => change({ ...v, shortDcaAmount: value })} suffix="USDT" disabled={v.smartRescueEnabled} /><Field label="Max DCA SHORT" value={v.maxDcaShort} set={(value) => change({ ...v, maxDcaShort: value })} disabled={v.smartRescueEnabled} /><Field label="Take Profit SHORT" value={v.shortTp} set={(value) => change({ ...v, shortTp: value })} suffix="%" disabled={v.smartRescueEnabled || v.tpMode !== "PER_TRADE"} /></section>
         </div>
       </section>
 

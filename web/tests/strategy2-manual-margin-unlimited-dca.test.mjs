@@ -8,7 +8,8 @@ test("manual and automatic selection share optional fixed-position sizing with s
   assert.match(maker, /Instap LONG/);
   assert.match(maker, /Instap SHORT/);
   assert.match(maker, /fixedPositionSize:\s*false/);
-  assert.match(maker, /entrySizingMode:\s*v\.fixedPositionSize \? "notional" : "margin"/);
+  assert.match(maker, /entrySizingMode:\s*"notional"/);
+  assert.match(maker, /entrySizingMode:\s*"margin"/);
   assert.match(maker, /entryMarginLongUsd:\s*longEntry/);
   assert.match(maker, /entryMarginShortUsd:\s*shortEntry/);
   assert.match(maker, /entryNotionalLongUsd:\s*longNotional/);
