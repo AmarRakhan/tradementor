@@ -1,0 +1,29 @@
+name: Dispatch Profit Sweep Spot Fix Production 2026-09-20
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/dispatch-profit-sweep-spot-fix-20260920.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch-production:
+    if: github.event.head_commit.message == 'Dispatch Profit Sweep Spot fix production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch guarded production backend workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: 457c70d6af8fa392e74f549fc55ba8eeac4fb142
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$SOURCE_COMMIT"
