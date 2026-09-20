@@ -69,12 +69,13 @@ test("premium compact CSS covers slot bars, live config and Stoploss card", () =
 test("fixed position size is optional, explicit and persisted", () => {
   assert.ok(maker.includes("Vaste positieomvang"));
   assert.ok(maker.includes('role="switch" aria-checked={v.fixedPositionSize}'));
-  assert.ok(maker.includes('entrySizingMode: v.fixedPositionSize ? "notional" : "margin"'));
+  assert.ok(maker.includes('entrySizingMode: "notional"'));
+  assert.ok(maker.includes('entrySizingMode: "margin"'));
   assert.ok(maker.includes("entryNotionalLongUsd: longNotional"));
   assert.ok(maker.includes("entryNotionalShortUsd: shortNotional"));
-  assert.ok(maker.includes('"Instap LONG · positie"'));
-  assert.ok(maker.includes('"Instap LONG · margin"'));
-  assert.ok(maker.includes("margin = positie ÷ leverage"));
+  assert.ok(maker.includes('label="Instap LONG · margin"'));
+  assert.ok(maker.includes('label="Vaste positie LONG"'));
+  assert.ok(maker.includes("bestaande LONG/SHORT-margin blijft exact ongewijzigd"));
 });
 
 test("settings route preserves sizing mode and side notionals", () => {
