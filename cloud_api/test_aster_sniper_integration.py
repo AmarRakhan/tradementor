@@ -227,3 +227,12 @@ def test_aster_bulk_profit_close_is_exact_side_owned_not_symbol_only():
     route=source[source.index('@app.post("/v1/me/aster/positions/close-profitable")'):]
     assert "_aster_strategy2_owned_keys(uid)" in route
     assert "positionSide" in route
+
+
+def test_symbol_claim_and_scanner_keep_unresolved_orders_exclusive():
+    main=Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    runtime_source=Path(__file__).with_name("aster_sniper_runtime.py").read_text(encoding="utf-8")
+    assert '"until":now+timedelta(minutes=10)' in main
+    assert 'other_active or (isinstance(until,datetime) and until>now)' in main
+    assert 'exchange_open_order_symbols=' in runtime_source
+    assert '|exchange_open_order_symbols' in runtime_source
