@@ -1,0 +1,118 @@
+name: Diagnose Profit Sweep Live 2026-09-20
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diag-profit-sweep-live-20260920.yml]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install 'google-cloud-firestore>=2.21,<3'
+      - name: Read sanitized Profit Sweep state
+        shell: bash
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+          from google.cloud import firestore
+          import json
+
+          db=firestore.Client(project="tradementor-production")
+          ams=ZoneInfo("Europe/Amsterdam")
+          day_start=datetime(2026,9,20,0,0,tzinfo=ams).astimezone(timezone.utc)
+          deploy_at=datetime(2026,9,20,9,31,tzinfo=timezone.utc)
+          accounts=[]
+          for user in db.collection("users").stream():
+              control_ref=user.reference.collection("executionControls").document("aster")
+              control=control_ref.get().to_dict() or {}
+              sweep=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+              if sweep.get("enabled") is not True:
+                  continue
+              try:
+                  pct=float(sweep.get("sweepPercent",0))
+              except Exception:
+                  continue
+              if abs(pct-25.0)>1e-9:
+                  continue
+              updated=sweep.get("updatedAt")
+              if not isinstance(updated,datetime):
+                  updated=datetime.fromtimestamp(0,tz=timezone.utc)
+              else:
+                  updated=updated.astimezone(timezone.utc)
+
+              events=[]
+              for snap in user.reference.collection("asterRealizedEvents").stream():
+                  row=snap.to_dict() or {}
+                  closed=row.get("closedAt")
+                  if not isinstance(closed,datetime) or closed.astimezone(timezone.utc)<day_start:
+                      continue
+                  try:
+                      pnl=float(row.get("realizedPnlUsd",0) or 0)
+                  except Exception:
+                      pnl=0.0
+                  events.append((closed.astimezone(timezone.utc),pnl))
+              positive_today=sum(1 for t,p in events if p>0)
+              positive_after_setting=sum(1 for t,p in events if p>0 and t>=updated)
+              positive_after_deploy=sum(1 for t,p in events if p>0 and t>=deploy_at)
+              positive_after_both=sum(1 for t,p in events if p>0 and t>=max(updated,deploy_at))
+
+              statuses=Counter()
+              reason_codes=Counter()
+              sweep_after_both=0
+              for snap in user.reference.collection("asterProfitSweeps").stream():
+                  row=snap.to_dict() or {}
+                  created=row.get("createdAt")
+                  if not isinstance(created,datetime) or created.astimezone(timezone.utc)<day_start:
+                      continue
+                  status=str(row.get("status","UNKNOWN")).upper()
+                  statuses[status]+=1
+                  if created.astimezone(timezone.utc)>=max(updated,deploy_at):
+                      sweep_after_both+=1
+                  reason=str(row.get("reason","")).lower()
+                  if "inventory" in reason or "sluitfill" in reason or "fillhistorie" in reason or "cyclus" in reason:
+                      reason_codes["EVIDENCE_OR_INVENTORY"]+=1
+                  elif "execution status unknown" in reason or "-1006" in reason or "-1007" in reason:
+                      reason_codes["EXCHANGE_STATUS_UNKNOWN"]+=1
+                  elif reason:
+                      reason_codes["OTHER"]+=1
+
+              accounts.append({
+                  "masterAddressPresent": bool(str(control.get("masterAddress","")).strip()),
+                  "profitSweepUpdatedBeforeDeploy": updated<=deploy_at,
+                  "positiveRealizedToday": positive_today,
+                  "positiveRealizedAfterSetting": positive_after_setting,
+                  "positiveRealizedAfterLatestDeploy": positive_after_deploy,
+                  "positiveRealizedAfterSettingAndDeploy": positive_after_both,
+                  "profitSweepBookingsToday": sum(statuses.values()),
+                  "profitSweepBookingsAfterSettingAndDeploy": sweep_after_both,
+                  "statuses": dict(statuses),
+                  "reasonClasses": dict(reason_codes),
+              })
+
+          report={
+              "matching25PctEnabledAccounts":len(accounts),
+              "accounts":accounts,
+          }
+          print("PROFIT_SWEEP_DIAG="+json.dumps(report,separators=(",",":"),sort_keys=True))
+          PY
