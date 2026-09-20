@@ -56,3 +56,12 @@ def test_backtest_is_deterministic():
     cfg=SniperSettings()
     candles=[candle(i,100+i*.02+(i%7)*.01) for i in range(120)]
     assert backtest_candles(candles,cfg)==backtest_candles(candles,cfg)
+
+
+def test_profit_lock_trails_peak_without_waiting_for_timeout():
+    cfg=SniperSettings(profit_lock_percent=.10)
+    trade={"openedAtMs":1000,"tpPercent":.45,"peakPnlPercent":.25}
+    row={"positionAmt":"1","markPrice":"100","unRealizedProfit":"0.14"}
+    decision=exit_decision(trade,row,now_ms=10_000,settings=cfg)
+    assert decision["action"]=="CLOSE_PROFIT_LOCK"
+    assert decision["peakPnlPercent"]==.25
