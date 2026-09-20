@@ -13,8 +13,6 @@ permissions:
 
 env:
   GCP_PROJECT_ID: tradementor-production
-  GCP_REGION: europe-west4
-  CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
   ISSUE_NUMBER: '190'
@@ -22,7 +20,7 @@ env:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
@@ -31,140 +29,119 @@ jobs:
           service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Run isolated read-only sizing-history diagnosis
+      - name: Read Firestore config history via REST only
+        id: inspect
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
-          readarray -t SERVICE_VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
-          import json,sys
-          service=json.load(open(sys.argv[1],encoding='utf-8'))
-          spec=service['spec']['template']['spec']
-          print(spec['containers'][0]['image'])
-          print(spec['serviceAccountName'])
-          PY
-          )
-          IMAGE="${SERVICE_VALUES[0]}"
-          RUNTIME_SA="${SERVICE_VALUES[1]}"
-          JOB="tm-sizing-${GITHUB_RUN_ID: -7}"
-          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-
-          SCRIPT_B64="$(base64 -w0 <<'PY'
-          import hashlib,json
+          export ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          python - <<'PY' > "$RUNNER_TEMP/result.json"
+          import os,json,hashlib,urllib.request,urllib.parse
           from datetime import datetime,timezone
           from zoneinfo import ZoneInfo
-          from google.cloud import firestore
 
-          PROJECT='tradementor-production'
-          db=firestore.Client(project=PROJECT)
+          project='tradementor-production'
+          token=os.environ['ACCESS_TOKEN']
+          base=f'https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents'
 
-          def num(v, default=None):
+          def get(url):
+              req=urllib.request.Request(url,headers={'Authorization':f'Bearer {token}'})
+              with urllib.request.urlopen(req,timeout=30) as resp:return json.load(resp)
+
+          def val(v):
+              if not isinstance(v,dict):return None
+              for k in ('stringValue','booleanValue','integerValue','doubleValue','timestampValue','nullValue','referenceValue'):
+                  if k in v:
+                      x=v[k]
+                      if k=='integerValue':
+                          try:return int(x)
+                          except:return x
+                      if k=='doubleValue':
+                          try:return float(x)
+                          except:return x
+                      if k=='nullValue':return None
+                      return x
+              if 'mapValue' in v:return {k:val(x) for k,x in (v['mapValue'].get('fields') or {}).items()}
+              if 'arrayValue' in v:return [val(x) for x in (v['arrayValue'].get('values') or [])]
+              return None
+
+          def doc_fields(doc):return {k:val(v) for k,v in (doc.get('fields') or {}).items()}
+
+          def list_collection(path):
+              out=[]; page=''
+              while True:
+                  query={'pageSize':'300'}
+                  if page:query['pageToken']=page
+                  payload=get(f"{base}/{path}?{urllib.parse.urlencode(query)}")
+                  out.extend(payload.get('documents') or [])
+                  page=payload.get('nextPageToken') or ''
+                  if not page:break
+              return out
+
+          def num(v,default=None):
               try:return float(v)
-              except (TypeError,ValueError):return default
+              except:return default
 
           def eq(v,target):
               n=num(v)
               return n is not None and abs(n-target)<1e-9
 
-          matches=[]
-          for snap in db.collection('asterStrategy2').stream():
-              raw=snap.to_dict() or {}
+          docs=list_collection('asterStrategy2')
+          near=[]; exact=[]
+          for doc in docs:
+              raw=doc_fields(doc)
               s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-              fingerprint=(
-                  int(num(s.get('maximumPositions'),-1))==60 and
-                  int(num(s.get('longSlots'),-1))==30 and
-                  int(num(s.get('shortSlots'),-1))==30 and
-                  int(num(s.get('universeTopN'),-1))==350 and
-                  int(num(s.get('minimumLeverage'),-1))==20 and
-                  str(s.get('entrySizingMode','')).lower()=='notional' and
-                  eq(s.get('entryNotionalLongUsd',s.get('entryNotionalLong')),8.0) and
-                  eq(s.get('entryNotionalShortUsd',s.get('entryNotionalShort')),6.0)
-              )
-              if fingerprint:
-                  matches.append((snap,raw,s))
+              core=(int(num(s.get('maximumPositions'),-1))==60 and int(num(s.get('longSlots'),-1))==30 and
+                    int(num(s.get('shortSlots'),-1))==30 and int(num(s.get('universeTopN'),-1))==350 and
+                    int(num(s.get('minimumLeverage'),-1))==20)
+              if not core:continue
+              docid=doc['name'].rsplit('/',1)[-1]
+              row=(docid,raw,s)
+              near.append(row)
+              mode=str(s.get('entrySizingMode','')).lower()
+              nl=s.get('entryNotionalLongUsd',s.get('entryNotionalLong'))
+              ns=s.get('entryNotionalShortUsd',s.get('entryNotionalShort'))
+              if mode=='notional' and eq(nl,8) and eq(ns,6):exact.append(row)
 
-          if len(matches)!=1:
-              print('SIZING_HISTORY '+json.dumps({'readOnly':True,'ordersSent':0,'matchCount':len(matches),'status':'REFUSED_NOT_UNIQUE'},sort_keys=True))
-              raise SystemExit(0)
+          chosen=exact[0] if len(exact)==1 else near[0] if len(near)==1 else None
+          fields=['entrySizingMode','entryMarginUsd','entryMarginLongUsd','entryMarginShortUsd','entryMarginLong','entryMarginShort',
+                  'entryNotionalUsd','entryNotionalLongUsd','entryNotionalShortUsd','entryNotionalLong','entryNotionalShort',
+                  'minimumLeverage','maximumLeverage','maximumPositions','longSlots','shortSlots','universeTopN','version']
+          def slim(s):return {k:s.get(k) for k in fields if k in s} if isinstance(s,dict) else {}
+          def fmt_time(v):
+              if not v:return ''
+              try:
+                  d=datetime.fromisoformat(str(v).replace('Z','+00:00'))
+                  if d.tzinfo is None:d=d.replace(tzinfo=timezone.utc)
+                  return {'utc':d.astimezone(timezone.utc).isoformat(),'nl':d.astimezone(ZoneInfo('Europe/Amsterdam')).isoformat()}
+              except:return str(v)
 
-          snap,raw,current=matches[0]
-          uid=snap.id
-          fields=[
-              'entrySizingMode','entryMarginUsd','entryMarginLongUsd','entryMarginShortUsd',
-              'entryMarginLong','entryMarginShort','entryNotionalUsd','entryNotionalLongUsd',
-              'entryNotionalShortUsd','entryNotionalLong','entryNotionalShort',
-              'minimumLeverage','maximumLeverage','maximumPositions','longSlots','shortSlots'
-          ]
-
-          def slim(s):
-              if not isinstance(s,dict): return {}
-              return {k:s.get(k) for k in fields if k in s}
-
-          def changed(old,new):
-              o=slim(old); n=slim(new)
-              keys=set(o)|set(n)
-              return any(o.get(k)!=n.get(k) for k in keys)
-
-          def iso(v):
-              if not isinstance(v,datetime): return str(v or '')
-              if v.tzinfo is None:v=v.replace(tzinfo=timezone.utc)
-              utc=v.astimezone(timezone.utc)
-              nl=v.astimezone(ZoneInfo('Europe/Amsterdam'))
-              return {'utc':utc.isoformat(),'nl':nl.isoformat()}
-
-          history=[]
-          for h in snap.reference.collection('configHistory').stream():
-              row=h.to_dict() or {}
-              old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}
-              new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
-              if not changed(old,new): continue
-              history.append({
-                  'timestamp':row.get('timestamp'),
-                  'source':row.get('source'),
-                  'version':row.get('version'),
-                  'old':slim(old),
-                  'new':slim(new),
-              })
-          history.sort(key=lambda x:x['timestamp'] if isinstance(x['timestamp'],datetime) else datetime.min.replace(tzinfo=timezone.utc))
-
-          sizing_transitions=[]
-          watched={'entrySizingMode','entryMarginUsd','entryMarginLongUsd','entryMarginShortUsd','entryMarginLong','entryMarginShort','entryNotionalUsd','entryNotionalLongUsd','entryNotionalShortUsd','entryNotionalLong','entryNotionalShort'}
-          for row in history:
-              keys=watched & (set(row['old'])|set(row['new']))
-              if any(row['old'].get(k)!=row['new'].get(k) for k in keys):
-                  sizing_transitions.append({
-                      'timestamp':iso(row['timestamp']),
-                      'source':row['source'],
-                      'version':row['version'],
-                      'old':row['old'],
-                      'new':row['new'],
-                  })
-
-          result={
-              'readOnly':True,'ordersSent':0,'matchCount':1,'status':'OK',
-              'accountRef':hashlib.sha256(uid.encode()).hexdigest()[:12],
-              'current':slim(current),
-              'configVersion':raw.get('configVersion'),
-              'settingsChangedAt':iso(raw.get('settingsChangedAt')),
-              'sizingTransitions':sizing_transitions[-12:],
-          }
-          print('SIZING_HISTORY '+json.dumps(result,sort_keys=True,separators=(',',':')))
+          result={'readOnly':True,'ordersSent':0,'documentCount':len(docs),'nearMatchCount':len(near),'exactMatchCount':len(exact),
+                  'nearMatches':[{'accountRef':hashlib.sha256(x[0].encode()).hexdigest()[:12],'current':slim(x[2])} for x in near[:5]]}
+          if chosen:
+              docid,raw,current=chosen
+              hist=list_collection(f'asterStrategy2/{urllib.parse.quote(docid,safe="")}/configHistory')
+              watched=set(fields)
+              transitions=[]
+              for hdoc in hist:
+                  row=doc_fields(hdoc)
+                  old=row.get('oldValue') if isinstance(row.get('oldValue'),dict) else {}
+                  new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+                  if not any(old.get(k)!=new.get(k) for k in watched):continue
+                  transitions.append({'timestamp':fmt_time(row.get('timestamp')),'source':row.get('source'),'version':row.get('version'),
+                                      'old':slim(old),'new':slim(new)})
+              def sortkey(x):
+                  t=x.get('timestamp')
+                  return (t.get('utc') if isinstance(t,dict) else str(t or ''))
+              transitions.sort(key=sortkey)
+              result.update({'status':'OK','accountRef':hashlib.sha256(docid.encode()).hexdigest()[:12],
+                             'current':slim(current),'configVersion':raw.get('configVersion'),
+                             'settingsChangedAt':fmt_time(raw.get('settingsChangedAt')),
+                             'transitions':transitions[-20:]})
+          else:
+              result['status']='REFUSED_NOT_UNIQUE'
+          print(json.dumps(result,ensure_ascii=False,sort_keys=True,separators=(',',':')))
           PY
-          )"
-
-          gcloud run jobs deploy "$JOB" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --image "$IMAGE" --service-account "$RUNTIME_SA" \
-            --command python \
-            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
-            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
-          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB" \
-            --project "$GCP_PROJECT_ID" --limit 100 --freshness=15m --format='value(textPayload)' \
-            | grep 'SIZING_HISTORY' | tail -1 > "$RUNNER_TEMP/result.txt"
-          cleanup
-          trap - EXIT
 
       - name: Publish sanitized result
         if: always()
@@ -172,15 +149,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -s "$RUNNER_TEMP/result.txt" ]; then
+          if [ -s "$RUNNER_TEMP/result.json" ]; then
             {
               echo "## Read-only entry sizing history"
               echo
-              sed 's/^SIZING_HISTORY /    /' "$RUNNER_TEMP/result.txt"
+              sed 's/^/    /' "$RUNNER_TEMP/result.json"
               echo
               echo "No settings were changed and no orders were sent."
             } > "$RUNNER_TEMP/comment.md"
           else
-            echo "Sizing-history diagnosis produced no result. No settings were changed and no orders were sent." > "$RUNNER_TEMP/comment.md"
+            echo "Sizing-history diagnosis failed before a sanitized result was produced. No settings were changed and no orders were sent." > "$RUNNER_TEMP/comment.md"
           fi
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
