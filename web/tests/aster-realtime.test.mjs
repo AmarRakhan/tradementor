@@ -3,12 +3,15 @@ import assert from "node:assert/strict";
 import { applyAsterRealtimeMark, parseSseChunk } from "../lib/aster-realtime.mjs";
 import { readFile } from "node:fs/promises";
 
-test("live mark updates only matching position and recalculates PnL", () => {
-  const source={positions:[{symbol:"SOLUSDT",side:"LONG",quantity:2,entryPrice:100,markPrice:100,unrealizedPnl:0},{symbol:"BTCUSDT",side:"SHORT",quantity:1,entryPrice:50,markPrice:50,unrealizedPnl:0}]};
+test("live mark updates matching position, PnL and account equity", () => {
+  const source={walletBalance:300,equity:300,unrealizedPnl:0,positions:[{symbol:"SOLUSDT",side:"LONG",quantity:2,entryPrice:100,markPrice:100,unrealizedPnl:0},{symbol:"BTCUSDT",side:"SHORT",quantity:1,entryPrice:50,markPrice:50,unrealizedPnl:0}]};
   const out=applyAsterRealtimeMark(source,{symbol:"SOLUSDT",markPrice:103,receivedAtMs:10,transportLatencyMs:4});
   assert.equal(out.positions[0].markPrice,103);assert.equal(out.positions[0].unrealizedPnl,6);assert.equal(out.positions[0].notionalUsd,206);
-  assert.equal(out.positions[1],source.positions[1]);assert.equal(out.unrealizedPnl,6);assert.equal(source.positions[0].markPrice,100);
+  assert.equal(out.positions[1],source.positions[1]);assert.equal(out.unrealizedPnl,6);assert.equal(out.equity,306);assert.equal(out.realtimeEquityAt,10);
+  assert.equal(source.positions[0].markPrice,100);assert.equal(source.equity,300);
 });
 test("short PnL uses inverse price direction",()=>{const out=applyAsterRealtimeMark({positions:[{symbol:"X",side:"SHORT",quantity:2,entryPrice:10}]},{symbol:"X",markPrice:8});assert.equal(out.positions[0].unrealizedPnl,4)});
+test("realtime equity falls back to confirmed equity plus PnL delta when wallet is unavailable",()=>{const out=applyAsterRealtimeMark({equity:250,unrealizedPnl:5,positions:[{symbol:"X",side:"LONG",quantity:1,entryPrice:100,unrealizedPnl:5}]},{symbol:"X",markPrice:108,receivedAtMs:20});assert.equal(out.unrealizedPnl,8);assert.equal(out.equity,253);assert.equal(out.realtimeEquityAt,20)});
+
 test("SSE parser preserves split frames",()=>{const a=parseSseChunk('', 'event: mark\ndata: {"symbol":"SOL');const b=parseSseChunk(a.rest,'USDT","markPrice":101}\n\n');assert.equal(b.events[0].symbol,'SOLUSDT');assert.equal(b.events[0].markPrice,101)});
 test("realtime marks are batched before rendering the full dashboard",async()=>{const source=await readFile(new URL("../lib/use-exchange-data.ts",import.meta.url),"utf8");assert.match(source,/realtimeBatch\.current\.set/);assert.match(source,/window\.setTimeout/);assert.match(source,/, 250\)/);assert.match(source,/events\.reduce/)});

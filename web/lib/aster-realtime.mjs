@@ -33,11 +33,22 @@ export function applyAsterRealtimeMark(snapshot, event) {
   });
   if (!changed) return snapshot;
   const totalPnl = nextPositions.reduce((sum, row) => sum + (finite(row?.unrealizedPnl) ?? 0), 0);
+  const previousPnl = finite(snapshot.unrealizedPnl);
+  const walletBalance = finite(snapshot.walletBalance);
+  const previousEquity = finite(snapshot.equity);
+  const realtimeEquity = walletBalance !== null
+    ? walletBalance + totalPnl
+    : previousEquity !== null && previousPnl !== null
+      ? previousEquity + (totalPnl - previousPnl)
+      : previousEquity;
+  const realtimeAt = finite(event.receivedAtMs) ?? Date.now();
   return {
     ...snapshot,
     positions: nextPositions,
     unrealizedPnl: totalPnl,
-    realtimeMarketAt: finite(event.receivedAtMs) ?? Date.now(),
+    ...(realtimeEquity !== null ? { equity: realtimeEquity } : {}),
+    realtimeEquityAt: realtimeAt,
+    realtimeMarketAt: realtimeAt,
     realtimeTransportLatencyMs: finite(event.transportLatencyMs),
   };
 }
