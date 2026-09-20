@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  issues: write
 
 env:
   GCP_PROJECT_ID: tradementor-production
@@ -53,7 +54,7 @@ jobs:
           from datetime import datetime, timezone
           from zoneinfo import ZoneInfo
           from google.cloud import firestore
-          import json
+          import json, os, urllib.request
 
           db=firestore.Client(project="tradementor-production")
           ams=ZoneInfo("Europe/Amsterdam")
@@ -147,10 +148,27 @@ jobs:
                   "snapshotProfitCloseActionsToday":count_today(user.reference.collection("asterSnapshotProfitCloseIntents"),"createdAt"),
               })
 
-          print("PROFIT_SWEEP_DIAG="+json.dumps({
+          report=json.dumps({
               "matching25PctEnabledAccounts":len(accounts),
               "accounts":accounts,
-          },separators=(",",":"),sort_keys=True))
+          },separators=(",",":"),sort_keys=True)
+          print("PROFIT_SWEEP_DIAG="+report)
+          token=os.environ.get("DIAG_GH_TOKEN","")
+          repo=os.environ.get("DIAG_REPO","")
+          if token and repo:
+              req=urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/issues/41/comments",
+                  data=json.dumps({"body":"PROFIT_SWEEP_RUNTIME_DIAG "+report}).encode(),
+                  method="POST",
+                  headers={
+                      "Authorization":f"Bearer {token}",
+                      "Accept":"application/vnd.github+json",
+                      "Content-Type":"application/json",
+                      "User-Agent":"tradementor-profit-sweep-diag",
+                  },
+              )
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  assert 200 <= response.status < 300
           PY
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
           IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/profit-sweep-diag:$GITHUB_SHA"
@@ -161,7 +179,6 @@ jobs:
             gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }}" --quiet
           EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
           test -n "$EXECUTION"
-          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"PROFIT_SWEEP_DIAG=\"" --project "$GCP_PROJECT_ID" --limit=5 --freshness=20m --format='value(textPayload)'
