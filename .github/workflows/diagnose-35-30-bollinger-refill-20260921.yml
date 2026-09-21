@@ -2,10 +2,6 @@ name: Read-only diagnose 35-30 Bollinger refill 20260921
 
 on:
   workflow_dispatch:
-  push:
-    branches: [amar-crypto-bot-2026-cloud]
-    paths:
-      - '.github/workflows/diagnose-35-30-bollinger-refill-20260921.yml'
 
 permissions:
   contents: read
@@ -18,8 +14,6 @@ concurrency:
 
 env:
   GCP_PROJECT_ID: tradementor-production
-  GCP_REGION: europe-west4
-  CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
   RESULT_ISSUE: '209'
@@ -27,7 +21,7 @@ env:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -35,188 +29,149 @@ jobs:
           service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Run sanitized read-only account diagnosis
+      - name: Read current Strategy-2 state via Firestore REST only
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
-          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
-          import json,sys
-          s=json.load(open(sys.argv[1],encoding='utf-8'))
-          spec=s['spec']['template']['spec']
-          print(spec['containers'][0]['image'])
-          print(spec['serviceAccountName'])
-          PY
-          )
-          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
-          JOB="tm-diag-3530-${GITHUB_RUN_ID: -7}"
-          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-
-          SCRIPT_B64="$(base64 -w0 <<'PY'
-          import os
-          from google.cloud import firestore
+          export ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          python - <<'PY' > "$RUNNER_TEMP/result.md"
+          import os,json,urllib.request,urllib.parse
+          from datetime import datetime,timezone
 
           project='tradementor-production'
-          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
-          db=firestore.Client(project=project)
+          token=os.environ['ACCESS_TOKEN']
+          base=f'https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents'
 
-          matches=[]
-          for snap in db.collection('asterStrategy2').stream():
-              raw=snap.to_dict() or {}
-              settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-              try:
-                  if int(round(float(settings.get('longSlots') or 0))) != 35: continue
-                  if int(round(float(settings.get('shortSlots') or 0))) != 30: continue
-                  if int(round(float(settings.get('universeTopN') or 0))) != 350: continue
-                  if int(round(float(settings.get('maximumPositions') or 0))) != 65: continue
-              except Exception:
-                  continue
-              matches.append(raw)
+          def get(url):
+              req=urllib.request.Request(url,headers={'Authorization':f'Bearer {token}'})
+              with urllib.request.urlopen(req,timeout=30) as resp:return json.load(resp)
+
+          def val(v):
+              if not isinstance(v,dict):return None
+              for k in ('stringValue','booleanValue','integerValue','doubleValue','timestampValue','nullValue','referenceValue'):
+                  if k in v:
+                      x=v[k]
+                      if k=='integerValue':
+                          try:return int(x)
+                          except:return x
+                      if k=='doubleValue':
+                          try:return float(x)
+                          except:return x
+                      if k=='nullValue':return None
+                      return x
+              if 'mapValue' in v:return {k:val(x) for k,x in (v['mapValue'].get('fields') or {}).items()}
+              if 'arrayValue' in v:return [val(x) for x in (v['arrayValue'].get('values') or [])]
+              return None
+
+          def fields(doc):return {k:val(v) for k,v in (doc.get('fields') or {}).items()}
+
+          def list_collection(path):
+              out=[]; page=''
+              while True:
+                  q={'pageSize':'300'}
+                  if page:q['pageToken']=page
+                  payload=get(f"{base}/{path}?{urllib.parse.urlencode(q)}")
+                  out.extend(payload.get('documents') or [])
+                  page=payload.get('nextPageToken') or ''
+                  if not page:break
+              return out
 
           def num(v,default=0):
               try:return int(round(float(v)))
-              except Exception:return default
-          def b(v): return 1 if v is True else 0
-          def clamp(v): return min(max(num(v),0),248)
+              except:return default
 
-          if idx == 0:
-              raise SystemExit(min(len(matches),248)+1)
-          if len(matches) != 1:
-              raise SystemExit(250)
+          def reason_counts(reasons):
+              out={'bb':0,'leverage':0,'margin':0,'pair':0,'capacity':0,'other':0}
+              if not isinstance(reasons,dict):return out
+              for key,value in reasons.items():
+                  s=str(key).upper()
+                  try:n=max(1,int(value))
+                  except:n=1
+                  if s.startswith('BB_') or s.startswith('PRICE_') or 'BOLLINGER' in s: out['bb']+=n
+                  elif 'LEVERAGE' in s: out['leverage']+=n
+                  elif 'MARGIN' in s or 'BUDGET' in s or 'NOTIONAL' in s or '5018' in s: out['margin']+=n
+                  elif 'SHORT_REQUIRES_LONG' in s: out['pair']+=n
+                  elif 'CAPACITY' in s or 'SLOT_CAP' in s: out['capacity']+=n
+                  else: out['other']+=n
+              return out
 
-          raw=matches[0]
-          settings=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
-          reasons=report.get('entrySkipReasons') if isinstance(report.get('entrySkipReasons'),dict) else {}
+          docs=list_collection('asterStrategy2')
+          matches=[]
+          for doc in docs:
+              raw=fields(doc)
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if num(s.get('longSlots'),-1)!=35: continue
+              if num(s.get('shortSlots'),-1)!=30: continue
+              if num(s.get('universeTopN'),-1)!=350: continue
+              if num(s.get('maximumPositions'),-1)!=65: continue
+              if num(s.get('minimumLeverage'),-1)!=20: continue
+              matches.append(raw)
 
-          status_map={
-              'WAITING_CAPACITY':1,'WAITING_ACCOUNT_CAP':2,'WAITING_BOLLINGER_ENTRY':3,
-              'ORDER_REJECTED':4,'READY_FOR_ENTRY':5,'PARTIAL_FILL_SUBMITTED':6,
-              'ENTRY_SUBMITTED':7,'POSITION_ALREADY_OPEN':8,'WAITING_BUDGET':9,
-              'WAITING_EXCHANGE':10,'PARTIAL_FILL_PLANNED':11,'ENTRY_PLANNED':12,
-          }
-          tf_map={'1m':1,'5m':5,'15m':15,'1h':60,'4h':240,'1d':248}
-          def reason_sum(kind):
-              total=0
-              for k,v in reasons.items():
-                  s=str(k).upper()
-                  try:n=int(v)
-                  except Exception:n=1
-                  if kind=='bb' and (s.startswith('BB_') or s.startswith('PRICE_') or 'BOLLINGER' in s): total+=n
-                  if kind=='lev' and 'LEVERAGE' in s: total+=n
-                  if kind=='margin' and ('MARGIN' in s or 'BUDGET' in s): total+=n
-                  if kind=='pair' and 'SHORT_REQUIRES_LONG' in s: total+=n
-              return total
-
-          settings_version=num(raw.get('configVersion',settings.get('version',0)))
-          report_version=num(report.get('configVersion',0))
-          metrics={
-              1:b(raw.get('enabled')),
-              2:1 if report_version==settings_version and settings_version>0 else 0,
-              3:b(settings.get('bollingerEntryFilter15mEnabled')),
-              4:tf_map.get(str(settings.get('bollingerEntryFilterTimeframe') or '15m'),0),
-              5:clamp(settings.get('longSlots')),
-              6:clamp(settings.get('shortSlots')),
-              7:clamp(report.get('activeLong')),
-              8:clamp(report.get('activeShort')),
-              9:clamp(report.get('remainingLong')),
-              10:clamp(report.get('remainingShort')),
-              11:status_map.get(str(report.get('entryStatus') or ''),0),
-              12:clamp(report.get('candidateCount')),
-              13:clamp(report.get('scannedCandidateCount')),
-              14:clamp(report.get('executableCandidateCount')),
-              15:clamp(reason_sum('bb')),
-              16:clamp(reason_sum('lev')),
-              17:clamp(reason_sum('margin')),
-              18:clamp(reason_sum('pair')),
-              19:clamp(report.get('accountRemainingCapacity')),
-              20:clamp(report.get('accountPositionCount')),
-              21:clamp(report.get('minimumOrderRejectedCount')),
-              22:clamp(len(state)),
-              23:b(report.get('capacityOwnershipFallback')),
-              24:b(settings.get('shortRequiresLongEnabled')),
-              25:b(settings.get('asymmetricHedgeModeEnabled')),
-              26:clamp(sum(num(v,1) for v in reasons.values())),
-          }
-          raise SystemExit(metrics.get(idx,0)+1)
-          PY
-          )"
-
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 27 --parallelism 4 --max-retries 0 --task-timeout 180s --quiet
-          set +e
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
-          set -e
-          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
-          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          STATUS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
-
-          python - "$STATUS" > "$RUNNER_TEMP/result.md" <<'PY'
-          import json,sys
-          rows=json.loads(sys.argv[1])
-          vals={int(r['index']):int(r['exitCode'])-1 for r in rows}
-          match_count=vals.get(0,-2)
-          status_names={
-              1:'WAITING_CAPACITY',2:'WAITING_ACCOUNT_CAP',3:'WAITING_BOLLINGER_ENTRY',
-              4:'ORDER_REJECTED',5:'READY_FOR_ENTRY',6:'PARTIAL_FILL_SUBMITTED',
-              7:'ENTRY_SUBMITTED',8:'POSITION_ALREADY_OPEN',9:'WAITING_BUDGET',
-              10:'WAITING_EXCHANGE',11:'PARTIAL_FILL_PLANNED',12:'ENTRY_PLANNED',
-          }
           print('## Read-only LONG refill diagnosis')
           print()
-          print(f'- Matching anonymous 35L/30S · Top-N 350 configuration(s): **{match_count}**')
-          if match_count != 1:
-              print('- Result: **AMBIGUOUS** — no account-specific conclusion was drawn.')
-              sys.exit()
-          print(f'- Bot enabled: **{"yes" if vals.get(1)==1 else "no"}**')
-          print(f'- Report belongs to current settings version: **{"yes" if vals.get(2)==1 else "no"}**')
-          print(f'- Bollinger entry filter enabled: **{"yes" if vals.get(3)==1 else "no"}**')
-          print(f'- Bollinger timeframe code: **{vals.get(4)} min**')
-          print(f'- Configured slots: **{vals.get(5)} LONG / {vals.get(6)} SHORT**')
-          print(f'- Reported active: **{vals.get(7)} LONG / {vals.get(8)} SHORT**')
-          print(f'- Reported remaining: **{vals.get(9)} LONG / {vals.get(10)} SHORT**')
-          print(f'- Entry status: **{status_names.get(vals.get(11), "UNKNOWN")}**')
-          print(f'- Candidate count before Bollinger: **{vals.get(12)}**')
-          print(f'- Scanned candidates: **{vals.get(13)}**')
-          print(f'- Executable candidates: **{vals.get(14)}**')
-          print(f'- Bollinger/price rejects: **{vals.get(15)}**')
-          print(f'- Leverage rejects: **{vals.get(16)}**')
-          print(f'- Margin/budget rejects: **{vals.get(17)}**')
-          print(f'- SHORT-requires-LONG rejects: **{vals.get(18)}**')
-          print(f'- Account remaining capacity: **{vals.get(19)}**')
-          print(f'- Account position count: **{vals.get(20)}**')
-          print(f'- Minimum-order rejects: **{vals.get(21)}**')
-          print(f'- Managed Strategy-2 rows: **{vals.get(22)}**')
-          print(f'- Capacity ownership fallback: **{"yes" if vals.get(23)==1 else "no"}**')
-          print(f'- SHORT only with LONG: **{"yes" if vals.get(24)==1 else "no"}**')
-          print(f'- Legacy asymmetric mode: **{"yes" if vals.get(25)==1 else "no"}**')
-          print(f'- Total recorded skip reasons: **{vals.get(26)}**')
-          print()
-          if vals.get(2)!=1:
-              print('### Conclusion')
-              print('The visible “0 candidates” can be a stale-display placeholder because the latest scanner report has not yet caught up with the newly saved slot configuration.')
-          elif vals.get(11)==3 and vals.get(15,0)>0:
-              print('### Conclusion')
-              print('The empty LONG seats are currently being held open by the Bollinger entry gate: candidates exist, but none pass the configured Bollinger/price condition.')
-          elif vals.get(12)==0:
-              print('### Conclusion')
-              print('This is not a Bollinger rejection: the pre-Bollinger candidate pool itself is empty.')
-          elif vals.get(17,0)>0 or vals.get(21,0)>0:
-              print('### Conclusion')
-              print('Candidates exist, but margin/minimum-order constraints are preventing at least some entries.')
-          elif vals.get(16,0)>0:
-              print('### Conclusion')
-              print('Candidates exist, but leverage requirements are rejecting at least some entries.')
-          else:
-              print('### Conclusion')
-              print('Bollinger is not proven as the blocker by the current report; inspect the entry status and skip counts above.')
-          print()
-          print('_Sanitized read-only inspection only. No UID, email, wallet, credential, order payload or setting value outside the matching configuration was emitted or changed._')
-          PY
+          print(f'- Matching anonymous configuration(s): **{len(matches)}**')
+          if len(matches)!=1:
+              print('- Result: **REFUSED_NOT_UNIQUE** — no account-specific conclusion was drawn.')
+              print()
+              print('_No UID, email, wallet, credential or order payload was emitted or changed._')
+              raise SystemExit(0)
 
+          raw=matches[0]
+          s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+          state_version=num(raw.get('configVersion',s.get('version',0)),0)
+          report_version=num(report.get('configVersion'),0)
+          current=(state_version>0 and report_version==state_version)
+          reasons=reason_counts(report.get('entrySkipReasons'))
+          status=str(report.get('entryStatus') or 'UNKNOWN')
+          reason=str(report.get('entryReason') or '').strip()
+          updated=num(report.get('updatedAtMs'),0)
+          updated_iso=datetime.fromtimestamp(updated/1000,tz=timezone.utc).isoformat() if updated>0 else 'unknown'
+
+          print(f'- Bot enabled: **{"yes" if raw.get("enabled") is True else "no"}**')
+          print(f'- Scanner report is current for saved settings: **{"yes" if current else "no"}**')
+          print(f'- Bollinger entry filter: **{"ON" if s.get("bollingerEntryFilter15mEnabled") is True else "OFF"}**')
+          print(f'- Bollinger timeframe: **{s.get("bollingerEntryFilterTimeframe") or "15m"}**')
+          print(f'- Slots configured: **{num(s.get("longSlots"))} LONG / {num(s.get("shortSlots"))} SHORT**')
+          print(f'- Active in report: **{num(report.get("activeLong"))} LONG / {num(report.get("activeShort"))} SHORT**')
+          print(f'- Remaining in report: **{num(report.get("remainingLong"))} LONG / {num(report.get("remainingShort"))} SHORT**')
+          print(f'- Entry status: **{status}**')
+          if reason: print(f'- Entry reason: **{reason[:240]}**')
+          print(f'- Candidate count BEFORE Bollinger: **{num(report.get("candidateCount"))}**')
+          print(f'- Scanned candidates: **{num(report.get("scannedCandidateCount"))}**')
+          print(f'- Executable candidates: **{num(report.get("executableCandidateCount"))}**')
+          print(f'- BB/price rejects: **{reasons["bb"]}**')
+          print(f'- Leverage rejects: **{reasons["leverage"]}**')
+          print(f'- Margin/minimum-order rejects: **{reasons["margin"] + num(report.get("minimumOrderRejectedCount"))}**')
+          print(f'- SHORT-requires-LONG rejects: **{reasons["pair"]}**')
+          print(f'- Capacity rejects: **{reasons["capacity"]}**')
+          print(f'- Other rejects: **{reasons["other"]}**')
+          print(f'- Account position count: **{num(report.get("accountPositionCount"))}**')
+          print(f'- Account remaining capacity: **{num(report.get("accountRemainingCapacity"))}**')
+          print(f'- Managed Strategy-2 rows: **{len(state)}**')
+          print(f'- SHORT only with LONG: **{"ON" if s.get("shortRequiresLongEnabled") is True else "OFF"}**')
+          print(f'- Legacy asymmetric mode: **{"ON" if s.get("asymmetricHedgeModeEnabled") is True else "OFF"}**')
+          print(f'- Report updated UTC: **{updated_iso}**')
+          print()
+          print('### Conclusion')
+          if not current:
+              print('The visible “0 kandidaten” is not reliable evidence of a market/Bollinger shortage: the scanner report is from an older settings version. The UI intentionally displays 0 candidates until a fresh report catches up.')
+          elif status=='WAITING_BOLLINGER_ENTRY' and reasons['bb']>0:
+              print('Confirmed: the free seat(s) are currently waiting on the Bollinger entry gate. The pre-Bollinger pool exists, but candidates are rejected by the configured price/Bollinger condition.')
+          elif num(report.get('candidateCount'))==0:
+              print('Not Bollinger: the candidate pool is already empty before the Bollinger check. The cause is upstream market/ranking availability or candidate construction.')
+          elif status=='WAITING_BUDGET' or reasons['margin']>0 or num(report.get('minimumOrderRejectedCount'))>0:
+              print('Not primarily Bollinger: candidate(s) exist, but margin/minimum-order constraints are blocking entries.')
+          elif status=='WAITING_EXCHANGE' or reasons['leverage']>0:
+              print('Not primarily Bollinger: candidate(s) exist, but leverage/exchange data constraints are blocking entries.')
+          elif status=='WAITING_ACCOUNT_CAP':
+              print('Not Bollinger: account-capacity logic is blocking new entries.')
+          else:
+              print('Bollinger is not confirmed as the blocker by the current report. The entry status and rejection counts above show the active gate.')
+          print()
+          print('_Sanitized read-only inspection only. No UID, email, wallet, credential, order payload or setting was emitted or changed._')
+          PY
           gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
-          cleanup
-          trap - EXIT
