@@ -103,7 +103,6 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
     ],
     confidence: "confirmed",
   },
-] = [
   {
     id: "v46-build-384-portfolio-cycle",
     version: "46",
