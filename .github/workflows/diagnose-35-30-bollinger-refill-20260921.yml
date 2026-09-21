@@ -1,4 +1,4 @@
-name: Read-only diagnose 35-30 Bollinger refill 20260921
+name: Read-only diagnose 35-30 refill subtype 20260921
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ env:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     steps:
       - uses: google-github-actions/auth@v2
         with:
@@ -31,7 +31,7 @@ jobs:
           service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Classify current refill gate with runtime identity
+      - name: Distinguish minimum-order from available-margin block
         shell: bash
         run: |
           set -euo pipefail
@@ -50,7 +50,6 @@ jobs:
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import os
           from google.cloud import firestore
-
           project='tradementor-production'
           test=os.environ.get('DIAG_TEST','')
           db=firestore.Client(project=project)
@@ -58,39 +57,6 @@ jobs:
           def num(v,default=0):
               try:return int(round(float(v)))
               except:return default
-
-          def bb_rejects(reasons):
-              total=0
-              if not isinstance(reasons,dict): return 0
-              for k,v in reasons.items():
-                  s=str(k).upper()
-                  if s.startswith('BB_') or s.startswith('PRICE_') or 'BOLLINGER' in s:
-                      try: total+=max(1,int(v))
-                      except: total+=1
-              return total
-
-          def category(raw):
-              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-              r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-              sv=num(raw.get('configVersion',s.get('version',0)),0)
-              rv=num(r.get('configVersion'),0)
-              if not (sv>0 and rv==sv): return 1
-              status=str(r.get('entryStatus') or '')
-              reasons=r.get('entrySkipReasons') if isinstance(r.get('entrySkipReasons'),dict) else {}
-              bb=bb_rejects(reasons)
-              margin=0; leverage=0
-              for k,v in reasons.items():
-                  key=str(k).upper()
-                  try:n=max(1,int(v))
-                  except:n=1
-                  if 'MARGIN' in key or 'BUDGET' in key or 'NOTIONAL' in key or '5018' in key: margin+=n
-                  if 'LEVERAGE' in key: leverage+=n
-              if status=='WAITING_BOLLINGER_ENTRY' and bb>0: return 2
-              if num(r.get('candidateCount'))==0: return 3
-              if status=='WAITING_BUDGET' or margin>0 or num(r.get('minimumOrderRejectedCount'))>0: return 4
-              if status=='WAITING_EXCHANGE' or leverage>0: return 5
-              if status=='WAITING_ACCOUNT_CAP': return 6
-              return 7
 
           matches=[]
           for snap in db.collection('asterStrategy2').stream():
@@ -103,28 +69,24 @@ jobs:
               if num(s.get('minimumLeverage'),-1)!=20: continue
               matches.append(raw)
 
-          unique=(len(matches)==1)
+          unique=len(matches)==1
           raw=matches[0] if unique else {}
           s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
           r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-          code=category(raw) if unique else 0
-
+          reasons=r.get('entrySkipReasons') if isinstance(r.get('entrySkipReasons'),dict) else {}
+          reason_text=' '.join(str(k).upper() for k in reasons)
           truth=False
           if test=='unique': truth=unique
-          elif test=='bb_enabled': truth=unique and s.get('bollingerEntryFilter15mEnabled') is True
-          elif test=='tf_15m': truth=unique and str(s.get('bollingerEntryFilterTimeframe') or '15m')=='15m'
-          elif test=='five_long_free': truth=unique and num(r.get('remainingLong'))>=5
-          elif test=='bit0': truth=bool(code & 1)
-          elif test=='bit1': truth=bool(code & 2)
-          elif test=='bit2': truth=bool(code & 4)
+          elif test=='minimum_order': truth=unique and num(r.get('minimumOrderRejectedCount'))>0
+          elif test=='budget_wait': truth=unique and str(r.get('entryStatus') or '')=='WAITING_BUDGET'
+          elif test=='fixed_notional': truth=unique and str(s.get('entrySizingMode') or '').lower()=='notional'
+          elif test=='margin_reason': truth=unique and ('MARGIN' in reason_text or 'BUDGET' in reason_text)
           raise SystemExit(0 if truth else 9)
           PY
           )"
 
           run_test() {
-            local test="$1"
-            local suffix="$2"
-            local job="tm3530-${GITHUB_RUN_ID: -5}-$suffix"
+            local test="$1"; local suffix="$2"; local job="tm3530s-${GITHUB_RUN_ID: -5}-$suffix"
             gcloud run jobs deploy "$job" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"               --image "$IMAGE" --service-account "$RUNTIME_SA" --command python               --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"               --set-env-vars "DIAG_TEST=$test" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet >/dev/null
             set +e
             gcloud run jobs execute "$job" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
@@ -135,14 +97,12 @@ jobs:
           }
 
           run_test unique u
-          run_test bb_enabled b
-          run_test tf_15m t
-          run_test five_long_free f
-          run_test bit0 c0
-          run_test bit1 c1
-          run_test bit2 c2
+          run_test minimum_order m
+          run_test budget_wait b
+          run_test fixed_notional n
+          run_test margin_reason r
 
-      - name: Publish decoded sanitized diagnosis
+      - name: Publish subtype result
         if: always()
         shell: bash
         env:
@@ -155,49 +115,27 @@ jobs:
               for line in open(sys.argv[1],encoding='utf-8'):
                   if '=' in line:
                       k,v=line.strip().split('=',1); flags[k]=v=='1'
-          except Exception:
-              pass
-
-          print('## Read-only LONG refill diagnosis')
+          except Exception: pass
+          print('## Refill-block vervolgdiagnose')
           print()
           if not flags.get('unique'):
               print('- Result: **REFUSED_NOT_UNIQUE_OR_READ_FAILED**')
-              print('- De diagnose heeft geen account-specifieke conclusie getrokken.')
-              print()
-              print('_Geen instellingen of orders zijn gewijzigd._')
-              raise SystemExit(0)
-
-          code=(1 if flags.get('bit0') else 0)+(2 if flags.get('bit1') else 0)+(4 if flags.get('bit2') else 0)
-          labels={
-              1:'STALE_SCANNER_REPORT',
-              2:'WAITING_BOLLINGER_ENTRY',
-              3:'PRE_BOLLINGER_CANDIDATE_POOL_EMPTY',
-              4:'MARGIN_OR_MINIMUM_ORDER_BLOCK',
-              5:'LEVERAGE_OR_EXCHANGE_DATA_BLOCK',
-              6:'ACCOUNT_CAPACITY_BLOCK',
-              7:'OTHER_OR_READY',
-          }
-          print(f'- Bollingerfilter: **{"AAN" if flags.get("bb_enabled") else "UIT"}**')
-          print(f'- Timeframe 15m: **{"JA" if flags.get("tf_15m") else "NEE"}**')
-          print(f'- Minstens 5 LONG-stoelen vrij in huidige report: **{"JA" if flags.get("five_long_free") else "NEE"}**')
-          print(f'- Actieve refill-gate: **{labels.get(code,"UNKNOWN")}**')
-          print()
-          print('### Conclusie')
-          if code==1:
-              print('Het zichtbare “0 kandidaten” komt van een verouderd scannerreport na de configuratiewijziging. Dat is geen bewijs dat Bollinger geen kandidaat vindt.')
-          elif code==2:
-              print('Bevestigd: de vrije LONG-stoelen wachten nu op het 15m Bollinger-instapfilter.')
-          elif code==3:
-              print('Niet Bollinger: de kandidaatpool is al leeg vóór de Bollingercontrole.')
-          elif code==4:
-              print('Niet primair Bollinger: margin of minimum-orderregels blokkeren de instap.')
-          elif code==5:
-              print('Niet primair Bollinger: leverage- of exchange-data blokkeert de instap.')
-          elif code==6:
-              print('Niet Bollinger: account-capaciteitslogica blokkeert nieuwe posities.')
           else:
-              print('Bollinger is niet als blocker bevestigd; de scanner staat in een andere/ready toestand.')
+              print(f'- Vaste positieomvang / notional mode: **{"AAN" if flags.get("fixed_notional") else "UIT"}**')
+              print(f'- Minimum-exchangeorder rejects aanwezig: **{"JA" if flags.get("minimum_order") else "NEE"}**')
+              print(f'- Beschikbare-margin wait actief: **{"JA" if flags.get("budget_wait") else "NEE"}**')
+              print(f'- Overige margin/budget rejectcode aanwezig: **{"JA" if flags.get("margin_reason") else "NEE"}**')
+              print()
+              print('### Conclusie')
+              if flags.get('minimum_order') and not flags.get('budget_wait'):
+                  print('De blokkade komt van de minimale exchange-order / te kleine geplande instap, niet van te weinig beschikbare accountmargin en niet van Bollinger.')
+              elif flags.get('budget_wait'):
+                  print('De blokkade is daadwerkelijk onvoldoende beschikbare margin voor de geplande nieuwe instap.')
+              elif flags.get('margin_reason'):
+                  print('De blokkade zit in een margin/notional-validatie tijdens entry planning.')
+              else:
+                  print('De eerdere margin/minimum-order classificatie is niet meer actief; de scannerstatus is intussen gewijzigd.')
           print()
-          print('_Sanitized read-only check via de bestaande runtime-identiteit; geen UID, e-mail, wallet, credentials of orderpayloads zijn gepubliceerd of gewijzigd._')
+          print('_Read-only; geen instellingen of orders gewijzigd._')
           PY
           gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
