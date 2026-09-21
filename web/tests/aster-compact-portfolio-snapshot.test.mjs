@@ -78,3 +78,18 @@ test("Snapshot has three live-data profit actions with separate LONG SHORT and A
   assert.match(closeRoute, /close-profitable/);
   assert.match(closeRoute, /"POST"/);
 });
+
+
+test("Portfolio Snapshot shows active versus configured LONG and SHORT slot capacity", async () => {
+  const component = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
+
+  assert.match(component, /function slotCount\(side: "long" \| "short"\)/);
+  assert.match(component, /\.slot-overview \.slot-row\.\$\{side\}/);
+  assert.match(component, /longCapacity: string/);
+  assert.match(component, /shortCapacity: string/);
+  assert.match(component, /longSlots\.active \|\| counts\?\.\[2\]/);
+  assert.match(component, /shortSlots\.active \|\| counts\?\.\[3\]/);
+  assert.match(component, /values\.longs\}\/\$\{values\.longCapacity\}L/);
+  assert.match(component, /values\.shorts\}\/\$\{values\.shortCapacity\}S/);
+  assert.match(component, /active-trades-index > small/);
+});

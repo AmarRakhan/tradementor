@@ -67,8 +67,8 @@ test("mobile Sniper navigation stays compact with seven destinations", () => {
   assert.match(css, /grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/);
 });
 
-test("build 386 Sniper remains in history after build 387 fix release", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "387"/);
+test("build 386 Sniper remains in history after later fix releases", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "388"/);
   assert.match(release, /id: "v46-build-386-sniper-live"/);
   assert.match(release, /title: "SNIPER Live Trading"/);
   assert.match(release, /aavansh-sniper-build372/);
