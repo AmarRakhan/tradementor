@@ -90,7 +90,7 @@ jobs:
           : > "$RUNNER_TEMP/vals.txt"
           for CHECK in hasLong35 hasShort30 hasTop350 hasLong35Short30 hasLong35Top350 hasShort30Top350 unique maxpos65 bbEnabled timeframe1m portfolioTp modeNotional modeMargin enabled monitor; do
             set +e
-            gcloud beta run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --update-env-vars "CHECK=$CHECK" --wait >/dev/null 2>&1
+            gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --update-env-vars "CHECK=$CHECK" --wait >/dev/null 2>&1
             RC=$?
             set -e
             if [ "$RC" -eq 0 ]; then VALUE=true; else VALUE=false; fi
