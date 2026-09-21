@@ -21,6 +21,8 @@ type SnapshotValues = {
   tradesClosed: string;
   longs: string;
   shorts: string;
+  longCapacity: string;
+  shortCapacity: string;
   dca: string;
   liquidation: string;
   todayGrowth: string;
@@ -81,7 +83,7 @@ type ProfitPreview = {
 
 const EMPTY: SnapshotValues = {
   equity: "—", available: "—", activeCapital: "—", activePositions: "—",
-  realized: "—", tradesClosed: "—", longs: "—", shorts: "—", dca: "—",
+  realized: "—", tradesClosed: "—", longs: "—", shorts: "—", longCapacity: "—", shortCapacity: "—", dca: "—",
   liquidation: "—", todayGrowth: "—", averageDailyGrowth: "—",
   realizedTone: "neutral", todayGrowthTone: "neutral", averageDailyGrowthTone: "neutral", riskTone: "unknown",
   closeDisabled: true, closeBusy: false,
@@ -113,6 +115,13 @@ function metric(label: string) {
   const rows = Array.from(document.querySelectorAll<HTMLElement>(".metric-strip .metric"));
   const row = rows.find((item) => item.querySelector("span")?.textContent?.trim().toUpperCase() === label);
   return row ? directText(row, "strong") : "—";
+}
+
+function slotCount(side: "long" | "short") {
+  const row = document.querySelector<HTMLElement>(`.slot-overview .slot-row.${side}`);
+  const countText = row?.querySelector<HTMLElement>("b")?.textContent || "";
+  const match = countText.match(/(\d+)\s*\/\s*(\d+)/);
+  return { active: match?.[1] || "", capacity: match?.[2] || "" };
 }
 
 function percentageTone(value: string): Tone {
@@ -181,6 +190,8 @@ function readSnapshot(): SnapshotValues {
   const tradesClosed = directText(document.querySelector(".realized-trades-count"), "strong");
   const indexSummary = document.querySelector<HTMLElement>(".active-trades-index > small")?.textContent || "";
   const counts = indexSummary.match(/(\d+)\s*posities\s*·\s*(\d+)L\s*\/\s*(\d+)S\s*·\s*(\d+)\s*DCA/i);
+  const longSlots = slotCount("long");
+  const shortSlots = slotCount("short");
   const risk = document.querySelector<HTMLElement>(".liquidation-risk");
   const riskClass = risk?.className || "";
   const closeButton = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
@@ -195,8 +206,10 @@ function readSnapshot(): SnapshotValues {
     activePositions: metric("ACTIEVE POSITIES"),
     realized,
     tradesClosed,
-    longs: counts?.[2] || "—",
-    shorts: counts?.[3] || "—",
+    longs: longSlots.active || counts?.[2] || "—",
+    shorts: shortSlots.active || counts?.[3] || "—",
+    longCapacity: longSlots.capacity || "—",
+    shortCapacity: shortSlots.capacity || "—",
     dca: counts?.[4] || "—",
     liquidation: directText(risk, ".risk-core strong"),
     todayGrowth,
@@ -560,7 +573,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
     <div className="aps-health-grid">
       <div className="aps-health-left">
         <div className="aps-status-row">
-          <div className="aps-status aps-balance"><Icon name="balance" /><strong><b>{values.longs}L</b><span>/</span><em>{values.shorts}S</em></strong></div>
+          <div className="aps-status aps-balance"><Icon name="balance" /><strong><b>{values.longCapacity !== "—" ? `${values.longs}/${values.longCapacity}L` : `${values.longs}L`}</b><span>/</span><em>{values.shortCapacity !== "—" ? `${values.shorts}/${values.shortCapacity}S` : `${values.shorts}S`}</em></strong></div>
           <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
         </div>
         <div className="aps-growth-row">
