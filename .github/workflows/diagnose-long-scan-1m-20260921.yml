@@ -1,0 +1,162 @@
+name: Read-only diagnose current Top350 LONG scan 1m 20260921
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-readonly-longscan-1m
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  RESULT_ISSUE: '209'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read sanitized current Top-350 LONG scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
+          JOB="tm-longscan-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json
+          from google.cloud import firestore
+
+          def n(v,d=0):
+              try:return float(v)
+              except:return d
+
+          db=firestore.Client(project='tradementor-production')
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if round(n(s.get('longSlots'),-1))!=35: continue
+              if round(n(s.get('shortSlots'),-1))!=30: continue
+              if round(n(s.get('universeTopN'),-1))!=350: continue
+              if round(n(s.get('maximumPositions'),-1))!=65: continue
+              if s.get('bollingerEntryFilter15mEnabled') is not True: continue
+              matches.append(raw)
+
+          out={'matchCount':len(matches)}
+          if len(matches)==1:
+              raw=matches[0]
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+              reasons=r.get('entrySkipReasons') if isinstance(r.get('entrySkipReasons'),dict) else {}
+              keep_reasons={}
+              for k,v in reasons.items():
+                  key=str(k)
+                  if key.startswith('PRICE_') or key.startswith('BB_') or 'minimum' in key.lower() or 'MAX_LEVERAGE' in key or 'SHORT_REQUIRES_LONG' in key or 'SLOT_CAP' in key:
+                      try: keep_reasons[key]=int(v)
+                      except: keep_reasons[key]=v
+              out.update({
+                  'timeframe':s.get('bollingerEntryFilterTimeframe'),
+                  'entrySizingMode':s.get('entrySizingMode'),
+                  'entryMarginUsd':s.get('entryMarginUsd'),
+                  'entryNotionalUsd':s.get('entryNotionalUsd'),
+                  'minimumLeverage':s.get('minimumLeverage'),
+                  'maximumLeverage':s.get('maximumLeverage'),
+                  'entryStatus':r.get('entryStatus'),
+                  'entryReason':r.get('entryReason'),
+                  'activeLong':r.get('activeLong'),
+                  'activeShort':r.get('activeShort'),
+                  'remainingLong':r.get('remainingLong'),
+                  'remainingShort':r.get('remainingShort'),
+                  'candidateCount':r.get('candidateCount'),
+                  'scannedCandidateCount':r.get('scannedCandidateCount'),
+                  'executableCandidateCount':r.get('executableCandidateCount'),
+                  'minimumOrderRejectedCount':r.get('minimumOrderRejectedCount'),
+                  'nextRequiredEntryMarginUsd':r.get('nextRequiredEntryMarginUsd'),
+                  'updatedAtMs':r.get('updatedAtMs'),
+                  'skipReasons':keep_reasons,
+              })
+          print('SANITIZED_LONGSCAN='+json.dumps(out,separators=(',',':'),sort_keys=True))
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$IMAGE" --service-account "$RUNTIME_SA" --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet >/dev/null
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          sleep 3
+          LOG_LINE="$(gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"SANITIZED_LONGSCAN=\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=20 --order=desc --format='value(textPayload)' | grep 'SANITIZED_LONGSCAN=' | head -n1 || true)"
+          printf '%s\n' "${LOG_LINE#SANITIZED_LONGSCAN=}" > "$RUNNER_TEMP/longscan.json"
+          cleanup
+          trap - EXIT
+
+      - name: Publish sanitized result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - "$RUNNER_TEMP/longscan.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys,datetime
+          print('## Top-350 LONG scan · actuele productiestatus')
+          print()
+          try:
+              d=json.load(open(sys.argv[1],encoding='utf-8'))
+          except Exception:
+              d={}
+          if not d:
+              print('- Resultaat: **diagnose-uitvoer niet leesbaar**')
+          elif d.get('matchCount')!=1:
+              print(f"- Exacte 35L/30S · Top-350 configuraties gevonden: **{d.get('matchCount')}**")
+              print('- Geen account-specifieke conclusie getrokken.')
+          else:
+              print(f"- Opgeslagen Bollinger-timeframe: **{d.get('timeframe')}**")
+              print(f"- Entry sizing: **{d.get('entrySizingMode')}** · margin={d.get('entryMarginUsd')} · notional={d.get('entryNotionalUsd')}")
+              print(f"- Leverage instelling: min={d.get('minimumLeverage')} · max={d.get('maximumLeverage')}")
+              print(f"- Posities: LONG {d.get('activeLong')} / SHORT {d.get('activeShort')} · vrij LONG {d.get('remainingLong')} / SHORT {d.get('remainingShort')}")
+              print(f"- Kandidaten: totaal={d.get('candidateCount')} · gescand={d.get('scannedCandidateCount')} · orderplan uitvoerbaar={d.get('executableCandidateCount')}")
+              print(f"- Minimum-order rejects: **{d.get('minimumOrderRejectedCount')}** · eerstvolgende benodigde entry-margin={d.get('nextRequiredEntryMarginUsd')}")
+              print(f"- Entry status: **{d.get('entryStatus')}**")
+              print(f"- Entry reason: {d.get('entryReason')}")
+              ts=d.get('updatedAtMs')
+              if isinstance(ts,(int,float)) and ts>0:
+                  print('- Report bijgewerkt: **'+datetime.datetime.fromtimestamp(ts/1000,datetime.timezone.utc).isoformat()+'**')
+              reasons=d.get('skipReasons') or {}
+              print()
+              print('### Relevante skipredenen in deze scan')
+              if reasons:
+                  for k,v in sorted(reasons.items(), key=lambda kv:(-int(kv[1]) if str(kv[1]).isdigit() else 0, kv[0])):
+                      print(f'- `{k}`: **{v}**')
+              else:
+                  print('- Geen relevante skipredenen gerapporteerd.')
+          print()
+          print('_Read-only; geen instellingen, posities of orders gewijzigd._')
+          PY
+          gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
