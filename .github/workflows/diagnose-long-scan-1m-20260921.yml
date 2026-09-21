@@ -1,195 +1,113 @@
-name: Read-only diagnose current Top350 LONG scan 1m 20260921
+name: Public Aster Top350 1m LONG Bollinger scan 20260921
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
   issues: write
 
 concurrency:
-  group: tradementor-readonly-longscan-1m
-  cancel-in-progress: false
+  group: tradementor-public-top350-1m-longscan
+  cancel-in-progress: true
 
 env:
-  GCP_PROJECT_ID: tradementor-production
-  GCP_REGION: europe-west4
-  CLOUD_RUN_SERVICE: tradementor-api
-  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
-  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
   RESULT_ISSUE: '209'
 
 jobs:
-  diagnose:
+  scan:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Read sanitized scan through runtime identity
+      - name: Scan live public Aster Top-350 with production Bollinger rule
         shell: bash
         run: |
           set -euo pipefail
-          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
-          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
-          import json,sys
-          s=json.load(open(sys.argv[1],encoding='utf-8'))
-          spec=s['spec']['template']['spec']
-          print(spec['containers'][0]['image'])
-          print(spec['serviceAccountName'])
+          python - <<'PY' > "$RUNNER_TEMP/publicscan.json"
+          import json,math,time,urllib.parse,urllib.request,concurrent.futures
+
+          BASE='https://fapi.asterdex.com'
+          UA={'User-Agent':'tradementor-readonly-diagnostic/1.0'}
+          def get(path,timeout=15):
+              req=urllib.request.Request(BASE+path,headers=UA)
+              with urllib.request.urlopen(req,timeout=timeout) as r:
+                  return json.loads(r.read().decode())
+
+          info=get('/fapi/v3/exchangeInfo')
+          ticks=get('/fapi/v3/ticker/24hr')
+          prices=get('/fapi/v3/ticker/price')
+          allowed={str(x.get('symbol','')).upper() for x in info.get('symbols',[]) if str(x.get('quoteAsset','USDT')).upper()=='USDT' and str(x.get('status','TRADING')).upper()=='TRADING'}
+          ranked=[]
+          for row in ticks if isinstance(ticks,list) else []:
+              s=str(row.get('symbol','')).upper()
+              if s not in allowed or not s.endswith('USDT'): continue
+              try:v=float(row.get('quoteVolume',row.get('quoteVolume24h',0)) or 0)
+              except:v=0
+              if v>0:ranked.append((s,v))
+          ranked.sort(key=lambda x:(-x[1],x[0]))
+          top=[s for s,_ in ranked[:350]]
+          pmap={str(x.get('symbol','')).upper():float(x.get('price') or 0) for x in prices if isinstance(x,dict)}
+
+          def one(symbol):
+              try:
+                  q=urllib.parse.urlencode({'interval':'1m','symbol':symbol,'limit':25})
+                  rows=get('/fapi/v1/klines?'+q)
+                  if not isinstance(rows,list) or len(rows)<20:return ('error',symbol,None,None,None)
+                  closes=[float(r[4] if isinstance(r,(list,tuple)) else r.get('close',r.get('c'))) for r in rows[-20:]]
+                  mean=sum(closes)/20
+                  var=sum((x-mean)**2 for x in closes)/20
+                  lower=mean-2*math.sqrt(max(0,var))
+                  price=float(pmap.get(symbol,0))
+                  if price<=0 or lower<=0:return ('error',symbol,None,None,None)
+                  dist=(lower-price)/lower*100
+                  return ('pass' if price<lower else 'reject',symbol,price,lower,dist)
+              except Exception as e:
+                  return ('error',symbol,None,None,None)
+
+          out=[]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+              for r in ex.map(one,top):out.append(r)
+          passes=[r for r in out if r[0]=='pass']
+          rejects=[r for r in out if r[0]=='reject']
+          errors=[r for r in out if r[0]=='error']
+          passes.sort(key=lambda r:r[4],reverse=True)
+          print(json.dumps({
+             'topCount':len(top),'passCount':len(passes),'rejectCount':len(rejects),'errorCount':len(errors),
+             'signals':[{'symbol':r[1],'price':r[2],'lower':r[3],'belowLowerPct':r[4]} for r in passes[:25]],
+             'checkedAtMs':int(time.time()*1000)
+          },separators=(',',':')))
           PY
-          )
-          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
-          JOB="tm-longscan-${GITHUB_RUN_ID: -7}"
-          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
 
-          SCRIPT_B64="$(base64 -w0 <<'PY'
-          import os,sys
-          from google.cloud import firestore
-
-          def n(v,d=0):
-              try:return float(v)
-              except:return d
-          def reason_count(reasons,prefix=None,contains=None):
-              total=0
-              for k,v in reasons.items():
-                  s=str(k)
-                  if prefix is not None and not s.startswith(prefix): continue
-                  if contains is not None and contains.lower() not in s.lower(): continue
-                  try: total+=int(v)
-                  except: pass
-              return total
-          def parts(v):
-              x=max(0,min(999,int(v or 0)))
-              return x//100,x%100
-
-          matches=[]
-          db=firestore.Client(project='tradementor-production')
-          for snap in db.collection('asterStrategy2').stream():
-              raw=snap.to_dict() or {}
-              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-              if round(n(s.get('longSlots'),-1))!=35: continue
-              if round(n(s.get('shortSlots'),-1))!=30: continue
-              if round(n(s.get('universeTopN'),-1))!=350: continue
-              if round(n(s.get('maximumPositions'),-1))!=65: continue
-              if s.get('bollingerEntryFilter15mEnabled') is not True: continue
-              matches.append(raw)
-
-          idx=int(os.environ.get('CLOUD_RUN_TASK_INDEX','0'))
-          values=[min(249,len(matches))]
-          if len(matches)==1:
-              raw=matches[0]
-              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-              r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-              reasons=r.get('entrySkipReasons') if isinstance(r.get('entrySkipReasons'),dict) else {}
-              tf={'1m':1,'5m':5,'15m':15,'1h':61,'4h':64,'1d':24}.get(str(s.get('bollingerEntryFilterTimeframe') or ''),249)
-              sizing={'notional':1,'margin':2}.get(str(s.get('entrySizingMode') or '').lower(),249)
-              status={'WAITING_BOLLINGER_ENTRY':1,'ORDER_REJECTED':2,'WAITING_BUDGET':3,'WAITING_ACCOUNT_CAP':4,'WAITING_CAPACITY':5,'READY_FOR_ENTRY':6,'ENTRY_SUBMITTED':7,'PARTIAL_FILL_SUBMITTED':8}.get(str(r.get('entryStatus') or ''),249)
-              ch,cl=parts(r.get('candidateCount'))
-              sh,sl=parts(r.get('scannedCandidateCount'))
-              eh,el=parts(r.get('executableCandidateCount'))
-              mh,ml=parts(r.get('minimumOrderRejectedCount'))
-              bh,bl=parts(reason_count(reasons,prefix='PRICE_NOT_BELOW_LOWER_BAND'))
-              dh,dl=parts(reason_count(reasons,prefix='BB_DATA_UNAVAILABLE_OR_STALE'))
-              xh,xl=parts(reason_count(reasons,contains='MAX_LEVERAGE_BELOW_MINIMUM'))
-              values += [tf,sizing,int(n(r.get('activeLong'))),int(n(r.get('remainingLong'))),ch,cl,sh,sl,eh,el,mh,ml,bh,bl,dh,dl,xh,xl,status]
-          else:
-              values += [249]*19
-          value=values[idx] if idx < len(values) else 249
-          sys.exit(max(1,min(249,int(value)+1)))
-          PY
-          )"
-
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --image "$IMAGE" --service-account "$RUNTIME_SA" --command python \
-            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
-            --tasks 20 --parallelism 20 --max-retries 0 --task-timeout 120s --quiet >/dev/null
-          set +e
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
-          set -e
-          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
-          gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/tasks.json"
-          python - "$RUNNER_TEMP/tasks.json" > "$RUNNER_TEMP/decoded.json" <<'PY'
-          import json,sys
-          data=json.load(open(sys.argv[1],encoding='utf-8'))
-          found={}
-          def find_exit(obj):
-              if isinstance(obj,dict):
-                  if isinstance(obj.get('exitCode'),int): return obj['exitCode']
-                  for v in obj.values():
-                      x=find_exit(v)
-                      if x is not None:return x
-              elif isinstance(obj,list):
-                  for v in obj:
-                      x=find_exit(v)
-                      if x is not None:return x
-              return None
-          def walk(obj):
-              if isinstance(obj,dict):
-                  idx=obj.get('index')
-                  try:i=int(idx)
-                  except:i=None
-                  if i is not None and i not in found:
-                      x=find_exit(obj)
-                      if x is not None:found[i]=x
-                  for v in obj.values():walk(v)
-              elif isinstance(obj,list):
-                  for v in obj:walk(v)
-          walk(data)
-          def v(i):\n              x=found.get(i,-1)\n              return x-1 if x>=1 else -1
-          def join(hi,lo):
-              return -1 if hi<0 or lo<0 else hi*100+lo
-          out={
-            'matchCount':v(0),'timeframeCode':v(1),'sizingCode':v(2),'activeLong':v(3),'remainingLong':v(4),
-            'candidateCount':join(v(5),v(6)),'scannedCandidateCount':join(v(7),v(8)),
-            'executableCandidateCount':join(v(9),v(10)),'minimumOrderRejectedCount':join(v(11),v(12)),
-            'longBbRejectCount':join(v(13),v(14)),'bbDataRejectCount':join(v(15),v(16)),
-            'maxLeverageRejectCount':join(v(17),v(18)),'statusCode':v(19),'rawTaskCount':len(found)
-          }
-          json.dump(out,sys.stdout)
-          PY
-          cleanup
-          trap - EXIT
-
-      - name: Publish sanitized result
+      - name: Publish public market result
         if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python - "$RUNNER_TEMP/decoded.json" > "$RUNNER_TEMP/result.md" <<'PY'
-          import json,sys
-          print('## Top-350 LONG scan · actuele productiestatus v2')
+          python - "$RUNNER_TEMP/publicscan.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys,datetime
+          print('## Publieke Aster Top-350 · 1m LONG Bollinger scan')
           print()
           try:d=json.load(open(sys.argv[1],encoding='utf-8'))
           except Exception:d={}
           if not d:
-              print('- Resultaat: **diagnose-uitvoer niet leesbaar**')
-          elif d.get('matchCount')!=1:
-              print(f"- Exacte 35L/30S · Top-350 configuraties gevonden: **{d.get('matchCount')}**")
-              print(f"- Gelezen taakwaarden: {d.get('rawTaskCount')}")
+              print('- Resultaat: **scan niet leesbaar**')
           else:
-              tf={1:'1m',5:'5m',15:'15m',61:'1h',64:'4h',24:'1d'}.get(d.get('timeframeCode'),'onbekend')
-              sizing={1:'notional',2:'margin'}.get(d.get('sizingCode'),'onbekend')
-              status={1:'WAITING_BOLLINGER_ENTRY',2:'ORDER_REJECTED',3:'WAITING_BUDGET',4:'WAITING_ACCOUNT_CAP',5:'WAITING_CAPACITY',6:'READY_FOR_ENTRY',7:'ENTRY_SUBMITTED',8:'PARTIAL_FILL_SUBMITTED'}.get(d.get('statusCode'),'anders/onbekend')
-              print(f'- Opgeslagen Bollinger-timeframe: **{tf}**')
-              print(f'- Entry sizing: **{sizing}**')
-              print(f"- LONG: actief **{d.get('activeLong')}** · vrij **{d.get('remainingLong')}**")
-              print(f"- Top-N kandidaten: **{d.get('candidateCount')}** · werkelijk gescand: **{d.get('scannedCandidateCount')}**")
-              print(f"- Kandidaten die tot een uitvoerbaar orderplan kwamen: **{d.get('executableCandidateCount')}**")
-              print(f"- LONG Bollinger rejects (`PRICE_NOT_BELOW_LOWER_BAND`): **{d.get('longBbRejectCount')}**")
-              print(f"- Bollinger data/stale rejects: **{d.get('bbDataRejectCount')}**")
-              print(f"- Minimum-order rejects: **{d.get('minimumOrderRejectedCount')}**")
-              print(f"- Max-leverage-below-minimum rejects: **{d.get('maxLeverageRejectCount')}**")
-              print(f'- Entry status: **{status}**')
-              print(f"- Diagnose taakwaarden gelezen: {d.get('rawTaskCount')}/20")
+              print(f"- Top-N markten: **{d.get('topCount')}**")
+              print(f"- LONG-signaal nu (live prijs < 20×1m lower Bollinger): **{d.get('passCount')}**")
+              print(f"- Geen LONG-signaal: **{d.get('rejectCount')}**")
+              print(f"- Marktdatafouten: **{d.get('errorCount')}**")
+              sig=d.get('signals') or []
+              if sig:
+                  print()
+                  print('### Actuele LONG-signalen')
+                  for x in sig:
+                      print(f"- `{x['symbol']}` · {x['belowLowerPct']:.4f}% onder lower band")
+              ts=d.get('checkedAtMs')
+              if ts:
+                  print()
+                  print('- Gemeten: **'+datetime.datetime.fromtimestamp(ts/1000,datetime.timezone.utc).isoformat()+'**')
           print()
-          print('_Read-only; geen instellingen, posities of orders gewijzigd._')
+          print('_Publieke marktdata; geen accountdata gelezen en niets gewijzigd._')
           PY
           gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
