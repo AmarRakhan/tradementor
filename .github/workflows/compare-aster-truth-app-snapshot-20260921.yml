@@ -84,7 +84,23 @@ jobs:
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
           : > "$RUNNER_TEMP/value.txt"
           for N in 1 2 3 4 5 6 7 8 9 10; do
-            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\" AND textPayload:\"$MARKER=\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=10 --order=desc --format='value(textPayload)' | grep "$MARKER=" | head -n1 > "$RUNNER_TEMP/value.txt" || true
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json" || echo '[]' > "$RUNNER_TEMP/logs.json"
+            python - "$MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/value.txt" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          try: data=json.load(open(sys.argv[2],encoding='utf-8'))
+          except: data=[]
+          def strings(obj):
+              if isinstance(obj,str): yield obj
+              elif isinstance(obj,dict):
+                  for v in obj.values(): yield from strings(v)
+              elif isinstance(obj,list):
+                  for v in obj: yield from strings(v)
+          for row in data if isinstance(data,list) else []:
+              for value in strings(row):
+                  if marker in value:
+                      print(value[value.index(marker):].splitlines()[0]); raise SystemExit
+          PY
             [ -s "$RUNNER_TEMP/value.txt" ] && break
             sleep 3
           done
