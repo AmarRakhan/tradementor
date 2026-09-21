@@ -140,15 +140,18 @@ def test_pair_override_side_precedence_and_reset_fallback():
     assert (btc["longDcaDistance"], btc["shortDcaDistance"]) == (.003, .03)
 
 
-def test_mode_portfolio_and_off_disable_individual_tp_without_losing_values():
-    for mode in ("PORTFOLIO", "OFF"):
-        cfg = config(takeProfitMode=mode, longTakeProfitValue=.015, shortTakeProfitValue=.10)
-        assert cfg.public_dict()["longTakeProfitValue"] == .015
-        assert cfg.public_dict()["shortTakeProfitValue"] == .10
-        proxy = _PairAwareSettings(cfg)
-        # Direct no-stack lookup proves the global gate itself is off; runtime
-        # side selection is covered by effective settings above/core tests.
-        assert proxy.take_profit_enabled is False
+def test_portfolio_keeps_individual_tp_active_and_off_disables_it_without_losing_values():
+    portfolio = config(takeProfitMode="PORTFOLIO", longTakeProfitValue=.015, shortTakeProfitValue=.10)
+    assert portfolio.public_dict()["longTakeProfitValue"] == .015
+    assert portfolio.public_dict()["shortTakeProfitValue"] == .10
+    assert _PairAwareSettings(portfolio).take_profit_enabled is True
+    assert effective_pair_settings(portfolio, "BTCUSDT")["individualTpActive"] is True
+
+    off = config(takeProfitMode="OFF", longTakeProfitValue=.015, shortTakeProfitValue=.10)
+    assert off.public_dict()["longTakeProfitValue"] == .015
+    assert off.public_dict()["shortTakeProfitValue"] == .10
+    assert _PairAwareSettings(off).take_profit_enabled is False
+    assert effective_pair_settings(off, "BTCUSDT")["individualTpActive"] is False
 
 
 def test_target_is_always_original_cycle_baseline():
@@ -237,13 +240,17 @@ def test_bot_off_finishes_exit_but_does_not_restart():
     assert client.positions == []
 
 
-def test_stale_individual_tp_is_blocked_after_mode_switch():
-    raw = {"settings": {"takeProfitMode": "PORTFOLIO", "portfolioTpPercent": 20},
-           "multiBbCycle": {"cycleId": "abc", "cycleStartEquity": 1000, "cycleStatus": "RUNNING"}}
-    ref = Ref(raw)
+def test_individual_tp_remains_allowed_in_portfolio_mode_and_off_still_blocks_it():
     intent = type("Intent", (), {"intent_id": "mbb-tp-old", "action": "CLOSE"})()
+
+    portfolio_ref = Ref({"settings": {"takeProfitMode": "PORTFOLIO", "portfolioTpPercent": 20},
+                         "multiBbCycle": {"cycleId": "abc", "cycleStartEquity": 1000, "cycleStatus": "RUNNING"}})
+    assert_order_allowed(portfolio_ref, intent)
+
+    off_ref = Ref({"settings": {"takeProfitMode": "OFF", "portfolioTpPercent": 20},
+                   "multiBbCycle": {"cycleId": "abc", "cycleStartEquity": 1000, "cycleStatus": "RUNNING"}})
     with pytest.raises(PortfolioCycleOrderBlocked):
-        assert_order_allowed(ref, intent)
+        assert_order_allowed(off_ref, intent)
 
 
 def test_stale_open_is_blocked_when_portfolio_target_is_already_reached():

@@ -24,38 +24,75 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-21",
-  title: "Portfolio Snapshot toont echte slotcapaciteit",
+  title: "Portfolio TP behoudt per-trade Take Profit",
   newItems: [
-    "Portfolio Snapshot toont nu per zijde zowel actieve posities als de ingestelde LONG/SHORT-capaciteit.",
-    "De compacte status gebruikt dezelfde zichtbare Slot-overzicht-bron als Botinstellingen en behoudt de bestaande actieve-positiesbron als fallback.",
+    "Portfolio Take Profit werkt nu aanvullend op de bestaande LONG/SHORT Take Profit per positie.",
+    "De portfolio-doelwaarde sluit nog steeds alle posities zodra het portfoliodoel wordt bereikt.",
   ],
   problems: [
-    "Na het verhogen van LONG-slots van 30 naar 35 bleef Portfolio Snapshot alleen 30L / 30S tonen.",
-    "Daardoor leek de portefeuille visueel volledig bezet terwijl Botinstellingen correct 30 / 35 LONG en 5 vrije LONG-stoelen aangaf.",
+    "Wanneer Take Profit op Portfolio stond, werd de normale pair-level Take Profit volledig uitgeschakeld.",
+    "Daardoor konden winstgevende individuele LONG/SHORT-posities hun eigen ingestelde TP passeren zonder automatisch te sluiten.",
   ],
   causes: [
-    "De compacte Portfolio Snapshot las alleen actieve LONG/SHORT-aantallen uit de legacy Active Trades Index en kende de ingestelde zijde-capaciteit niet.",
+    "De webapp schreef takeProfitEnabled=false zodra de modus niet PER_TRADE was.",
+    "De Multi BB runtime en de portfolio-orderguard behandelden PORTFOLIO ten onrechte als een exclusieve TP-modus en blokkeerden individuele mbb-tp closes.",
   ],
   fixes: [
-    "Portfolio Snapshot leest nu de actuele LONG- en SHORT-teller uit het bestaande Slot-overzicht, inclusief ingestelde capaciteit.",
-    "De status toont bijvoorbeeld 30/35L / 30/30S zodat vrije capaciteit direct zichtbaar is.",
-    "Als het Slot-overzicht tijdelijk nog niet beschikbaar is, blijft de bestaande actieve LONG/SHORT-weergave als veilige fallback functioneren.",
+    "PORTFOLIO houdt takeProfitEnabled nu actief; alleen OFF schakelt individuele TP uit.",
+    "De pair-aware runtime blijft in PORTFOLIO mode de LONG/SHORT TP-waarden toepassen.",
+    "De last-millisecond portfolio guard staat individuele TP-closes toe zolang de portfolio-exit zelf niet actief is; bij bereikt portfolio-doel behoudt de volledige portfolio-exit prioriteit.",
   ],
   now: [
-    "Actieve positie-aantallen en ingestelde stoelcapaciteit zijn in Portfolio Snapshot niet langer met elkaar te verwarren.",
-    "Deze wijziging raakt uitsluitend de webpresentatie; scanner-, Bollinger-, order-, DCA-, TP- en exchange-logica blijven ongewijzigd.",
+    "PER_TRADE: individuele LONG/SHORT TP actief.",
+    "PORTFOLIO: individuele LONG/SHORT TP actief én volledige portfolio-close op het ingestelde portfoliodoel.",
+    "OFF: individuele en portfolio Take Profit uit.",
   ],
-  before: "Portfolio Snapshot toonde alleen 30L / 30S en kon daardoor volledig gevuld lijken terwijl 5 LONG-stoelen vrij waren.",
-  after: "Portfolio Snapshot toont actieve/beoogde capaciteit per zijde, bijvoorbeeld 30/35L / 30/30S.",
+  before: "Portfolio mode schakelde de individuele pair Take Profit uit.",
+  after: "Portfolio mode is additief: pair TP blijft werken en het portfolio-doel sluit daarnaast alles zodra dat doel wordt bereikt.",
   technicalDetails: [
-    "Bron voor capaciteit: bestaand Botinstellingen Slot-overzicht, dat sinds Build 382 Aster exchange-truth voor bezetting gebruikt.",
-    "Fallback blijft de bestaande Active Trades Index zodat de Snapshot niet leegvalt wanneer de instellingencomponent nog niet gemount is.",
-    "Geen accountinstelling, positie, order of strategieparameter wordt door deze release gewijzigd.",
+    "Aangepast in web/components/aster-strategy2-maker.tsx, cloud_api/aster_multi_bb.py en cloud_api/aster_multi_bb_portfolio.py.",
+    "Profit Lock Ladder behoudt zijn bestaande expliciete TP-suppressie; deze fix verandert die aparte strategie niet.",
+    "Geen DCA-, Bollinger-, leverage-, slot- of Stoploss-regel is door deze release gewijzigd.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-388-slot-capacity-release-history",
+    version: "46",
+    build: "388",
+    releasedAt: "2026-09-21",
+    title: "Portfolio Snapshot toont echte slotcapaciteit",
+    newItems: [
+      "Portfolio Snapshot toont nu per zijde zowel actieve posities als de ingestelde LONG/SHORT-capaciteit.",
+      "De compacte status gebruikt dezelfde zichtbare Slot-overzicht-bron als Botinstellingen en behoudt de bestaande actieve-positiesbron als fallback.",
+    ],
+    problems: [
+      "Na het verhogen van LONG-slots van 30 naar 35 bleef Portfolio Snapshot alleen 30L / 30S tonen.",
+      "Daardoor leek de portefeuille visueel volledig bezet terwijl Botinstellingen correct 30 / 35 LONG en 5 vrije LONG-stoelen aangaf.",
+    ],
+    causes: [
+      "De compacte Portfolio Snapshot las alleen actieve LONG/SHORT-aantallen uit de legacy Active Trades Index en kende de ingestelde zijde-capaciteit niet.",
+    ],
+    fixes: [
+      "Portfolio Snapshot leest nu de actuele LONG- en SHORT-teller uit het bestaande Slot-overzicht, inclusief ingestelde capaciteit.",
+      "De status toont bijvoorbeeld 30/35L / 30/30S zodat vrije capaciteit direct zichtbaar is.",
+      "Als het Slot-overzicht tijdelijk nog niet beschikbaar is, blijft de bestaande actieve LONG/SHORT-weergave als veilige fallback functioneren.",
+    ],
+    now: [
+      "Actieve positie-aantallen en ingestelde stoelcapaciteit zijn in Portfolio Snapshot niet langer met elkaar te verwarren.",
+      "Deze wijziging raakt uitsluitend de webpresentatie; scanner-, Bollinger-, order-, DCA-, TP- en exchange-logica blijven ongewijzigd.",
+    ],
+    before: "Portfolio Snapshot toonde alleen 30L / 30S en kon daardoor volledig gevuld lijken terwijl 5 LONG-stoelen vrij waren.",
+    after: "Portfolio Snapshot toont actieve/beoogde capaciteit per zijde, bijvoorbeeld 30/35L / 30/30S.",
+    technicalDetails: [
+      "Bron voor capaciteit: bestaand Botinstellingen Slot-overzicht, dat sinds Build 382 Aster exchange-truth voor bezetting gebruikt.",
+      "Fallback blijft de bestaande Active Trades Index zodat de Snapshot niet leegvalt wanneer de instellingencomponent nog niet gemount is.",
+      "Geen accountinstelling, positie, order of strategieparameter wordt door deze release gewijzigd.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-387-profit-close-release-history",
     version: "46",

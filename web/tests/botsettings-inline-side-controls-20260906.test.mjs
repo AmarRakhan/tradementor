@@ -46,8 +46,9 @@ test("side-specific DCA and TP values do not collapse to one shared field", () =
   assert.match(maker, /shortTakeProfitValue:\s*shortTp/);
 });
 
-test("Portfolio and OFF modes preserve DCA while disabling individual TP execution", () => {
+test("Portfolio mode adds a portfolio exit while OFF alone disables individual TP execution", () => {
   assert.match(maker, /takeProfitMode:\s*v\.tpMode/);
-  assert.match(maker, /takeProfitEnabled:\s*v\.tpMode === "PER_TRADE"/);
+  assert.match(maker, /takeProfitEnabled:\s*v\.tpMode !== "OFF"/);
+  assert.match(maker, /disabled=\{v\.tpMode === "OFF"\}/);
   assert.match(maker, /Automatische TP uit\. DCA en overige strategie blijven actief/);
 });

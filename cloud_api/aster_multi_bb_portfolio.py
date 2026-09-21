@@ -1,10 +1,11 @@
 """Portfolio Take Profit cycle gate for the Multi BB runtime.
 
-This module deliberately sits *in front of* the proven Multi BB engine.  It
-never changes the asymmetric hedge state machine.  In PORTFOLIO mode it
-preempts every scanner/DCA/per-position TP action, closes exchange exposure,
-confirms flat, records real exchange equity and only then permits a clean new
-cycle.
+This module deliberately sits *in front of* the proven Multi BB engine. It
+never changes the asymmetric hedge state machine. PORTFOLIO mode is additive:
+normal per-position TP remains active while the portfolio target is below its
+threshold. Once the portfolio target is reached, the portfolio exit preempts
+scanner/DCA/per-position TP actions, closes exchange exposure, confirms flat,
+records real exchange equity and only then permits a clean new cycle.
 """
 from __future__ import annotations
 
@@ -274,8 +275,8 @@ def _write_cycle(ref: Any, cycle: dict[str, Any], *, phase: str | None = None,
 def assert_order_allowed(ref: Any, intent: Any, *, client: Any | None = None) -> None:
     """Last-millisecond race guard for stale workers.
 
-    The durable cycle state wins over any worker-local snapshot.  Per-trade TP
-    closes are also rejected immediately after a mode switch to PORTFOLIO/OFF.
+    The durable cycle state wins over any worker-local snapshot. Pair-level TP
+    remains valid in PORTFOLIO mode and is blocked only when Take Profit is OFF.
     """
     latest = ref.get().to_dict() or {}
     cycle = latest.get("multiBbCycle") if isinstance(latest.get("multiBbCycle"), dict) else {}
@@ -286,8 +287,8 @@ def assert_order_allowed(ref: Any, intent: Any, *, client: Any | None = None) ->
         raise PortfolioCycleOrderBlocked(f"{status}: normale Strategy-2 order geblokkeerd")
     settings = latest.get("settings") if isinstance(latest.get("settings"), dict) else {}
     mode = str(settings.get("takeProfitMode", "PER_TRADE")).upper()
-    if intent_id.startswith("mbb-tp-") and mode != "PER_TRADE":
-        raise PortfolioCycleOrderBlocked(f"Take Profit Mode {mode}: individuele TP geblokkeerd")
+    if intent_id.startswith("mbb-tp-") and mode == "OFF":
+        raise PortfolioCycleOrderBlocked("Take Profit Mode OFF: individuele TP geblokkeerd")
     if action == "OPEN" and mode == "PORTFOLIO" and client is not None:
         current = exchange_equity(client.account_information())
         start = _f(cycle.get("cycleStartEquity"))
