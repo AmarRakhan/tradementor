@@ -395,7 +395,8 @@ test("Aster summary places Portfolio Groei between realized profit and closed tr
   assert.match(card, /PORTFOLIO GROEI/);
   assert.match(card, /Netto winst bij alles sluiten/);
   assert.match(card, /ALLES SLUITEN/);
-  assert.match(card, /quote_id:data\.quoteId/);
+  assert.doesNotMatch(card, /quote_id:data\.quoteId/);
+  assert.match(card, /idempotency_key: closeRequest\.current\.key/);
   assert.match(styles, /\.portfolio-growth\.profit\{[^}]*border:/i);
   assert.match(styles, /\.portfolio-close-all:disabled/);
 });
