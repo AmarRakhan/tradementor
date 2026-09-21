@@ -53,7 +53,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Aangepast in web/lib/aster-strategy2-server-status.mjs en web/components/aster-strategy2-maker.tsx.",
     "De publieke Aster-controle vond tijdens diagnose 44 actuele LONG-signalen binnen Top-350 op 1m; de marktvoorwaarde zelf was dus niet de primaire blokkade.",
     "Geen backend tradingformule, Bollingerberekening, leverage-resolver of order-executionpad is door deze webrelease aangepast.",
-    "Build 390 behoudt tevens het bestaande Profit Lock preservation-contract terwijl dezelfde fresh-server read nu ook de sizingmodus beschermt.",
+    "Build 390 behoudt bestaande Profit Lock- en Sniper-historiecontracten terwijl dezelfde fresh-server read nu ook de sizingmodus beschermt.",
   ],
   confidence: "confirmed",
 };
