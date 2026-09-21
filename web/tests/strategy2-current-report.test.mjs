@@ -35,6 +35,6 @@ test("position inputs wait until blur and commit through deterministic slot help
   assert.match(maker, /onBlur=\{commitLong\}/);
   assert.match(maker, /onBlur=\{commitShort\}/);
   assert.match(maker, /splitTotalPositions\(raw\)/);
-  assert.match(maker, /applyLongSlots\(v\.positions, raw\)/);
-  assert.match(maker, /applyShortSlots\(v\.positions, raw\)/);
+  assert.match(maker, /applyLongSlots\(v\.shortSlots, raw\)/);
+  assert.match(maker, /applyShortSlots\(v\.longSlots, raw\)/);
 });

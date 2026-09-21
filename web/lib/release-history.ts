@@ -40,7 +40,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Bij een LONG-wijziging blijft het actuele aantal SHORT-stoelen exact staan en volgt Totaal posities automatisch LONG + SHORT.",
     "Bij een SHORT-wijziging blijft het actuele aantal LONG-stoelen exact staan en volgt Totaal posities automatisch LONG + SHORT.",
     "De bestaande harde limiet van 100 totale posities blijft behouden; alleen de gewijzigde zijde wordt zo nodig begrensd.",
-    "Regressietests bewaken zowel de rekenregel als de koppeling in Botinstellingen.",
+    "Regressietests bewaken zowel de rekenregel als de koppeling in Botinstellingen, inclusief de bestaande blur/commit-flow.",
   ],
   now: [
     "35 LONG + 30 SHORT → LONG naar 45 geeft direct 45 LONG + 30 SHORT = 75 totaal.",
@@ -50,7 +50,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   before: "LONG of SHORT wijzigen hield het totaal vast en schoof daardoor automatisch de andere zijde mee.",
   after: "LONG en SHORT zijn onafhankelijke invoervelden; alleen het gewijzigde veld verandert en het totaal volgt automatisch.",
   technicalDetails: [
-    "Aangepast in web/components/aster-strategy2-maker.tsx en web/lib/position-slot-input.ts.",
+    "Aangepast in web/components/aster-strategy2-maker.tsx, web/lib/position-slot-input.ts en de bijbehorende regressiecontracten.",
     "Geen scanner-, Bollinger-, leverage-, DCA-, TP-, order- of exchange-executionlogica gewijzigd.",
     "Bestaande opgeslagen LONG/SHORT-instellingen en actieve posities worden niet automatisch gewijzigd door deze release.",
   ],
@@ -59,9 +59,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
-    id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
-    version: WEBAPP_VERSION,
-    build: WEBAPP_BUILD_NUMBER,
+    id: "v46-build-390-sizing-isolation",
+    version: "46",
+    build: "390",
     releasedAt: "2026-09-21",
     title: "Strategy-2 sizingmodus beschermd tegen oude UI-state",
     newItems: [
