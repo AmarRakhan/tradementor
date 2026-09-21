@@ -102,7 +102,7 @@ jobs:
           else:
               values += [249]*19
           value=values[idx] if idx < len(values) else 249
-          sys.exit(max(0,min(249,int(value))))
+          sys.exit(max(1,min(249,int(value)+1)))
           PY
           )"
 
@@ -142,7 +142,7 @@ jobs:
               elif isinstance(obj,list):
                   for v in obj:walk(v)
           walk(data)
-          def v(i):return found.get(i,-1)
+          def v(i):\n              x=found.get(i,-1)\n              return x-1 if x>=1 else -1
           def join(hi,lo):
               return -1 if hi<0 or lo<0 else hi*100+lo
           out={
