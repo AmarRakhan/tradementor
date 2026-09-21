@@ -24,7 +24,7 @@ env:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     environment: production
     steps:
       - uses: google-github-actions/auth@v2
@@ -33,7 +33,7 @@ jobs:
           service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Run encoded read-only account diagnosis
+      - name: Run compact encoded read-only diagnosis
         shell: bash
         run: |
           set -euo pipefail
@@ -81,7 +81,6 @@ jobs:
           raw=(db.collection('asterStrategy2').document(uid).get().to_dict() or {})
           s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
           report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
 
           def n(v,default=0):
               try:return int(round(float(v)))
@@ -101,65 +100,40 @@ jobs:
               'ENTRY_SUBMITTED':7,'POSITION_ALREADY_OPEN':8,'WAITING_BUDGET':9,
               'WAITING_EXCHANGE':10,'PARTIAL_FILL_PLANNED':11,'ENTRY_PLANNED':12,
           }
-          timeframe_map={'1m':1,'5m':2,'15m':3,'1h':4,'4h':5,'1d':6,'1u':4,'4u':5}
-          sizing_map={'margin':1,'notional':2}
-
           reasons=report.get('entrySkipReasons') if isinstance(report.get('entrySkipReasons'),dict) else {}
-          reason_mask=0; bb_count=lev_count=budget_count=0
+          reason_mask=0; bb_count=0
           for key,val in reasons.items():
               name=str(key).upper(); count=max(0,n(val,1))
               if name.startswith('PRICE_') or 'BB_' in name or 'BOLLINGER' in name:
                   reason_mask|=1; bb_count+=count
-              if 'LEVERAGE' in name:
-                  reason_mask|=2; lev_count+=count
-              if 'MARGIN' in name or 'BUDGET' in name:
-                  reason_mask|=4; budget_count+=count
-              if 'SLOT_CAP' in name or 'CAPACITY' in name:
-                  reason_mask|=8
-              if 'NOTIONAL' in name or '5018' in name or 'MINIMUM' in name:
-                  reason_mask|=16
-              if 'SHORT_REQUIRES_LONG' in name:
-                  reason_mask|=32
-              if 'EXCHANGE' in name or 'DATA_UNAVAILABLE' in name or 'STALE' in name:
-                  reason_mask|=64
+              if 'LEVERAGE' in name: reason_mask|=2
+              if 'MARGIN' in name or 'BUDGET' in name: reason_mask|=4
+              if 'SLOT_CAP' in name or 'CAPACITY' in name: reason_mask|=8
+              if 'NOTIONAL' in name or '5018' in name or 'MINIMUM' in name: reason_mask|=16
+              if 'SHORT_REQUIRES_LONG' in name: reason_mask|=32
+              if 'EXCHANGE' in name or 'DATA_UNAVAILABLE' in name or 'STALE' in name: reason_mask|=64
 
-          updated=report.get('updatedAtMs')
           age=249
-          try: age=cap(max(0,(int(time.time()*1000)-int(updated))/1000))
+          try: age=cap(max(0,(int(time.time()*1000)-int(report.get('updatedAtMs')))/1000))
           except Exception: pass
+          topn=max(0,n(s.get('universeTopN')))
 
           metrics={
-              0:42,
-              1:flags,
-              2:cap(s.get('maximumPositions')),
-              3:cap(s.get('longSlots')),
-              4:cap(s.get('shortSlots')),
-              5:cap(s.get('minimumLeverage')),
-              6:cap(s.get('maximumLeverage')),
-              7:status_map.get(str(report.get('entryStatus') or ''),0),
-              8:cap(report.get('activeLong')),
-              9:cap(report.get('activeShort')),
-              10:cap(report.get('remainingLong')),
-              11:cap(report.get('remainingShort')),
-              12:cap(report.get('accountPositionCount')),
-              13:cap(report.get('accountRemainingCapacity')),
-              14:cap(report.get('candidateCount')),
-              15:cap(report.get('scannedCandidateCount')),
-              16:cap(report.get('executableCandidateCount')),
-              17:cap(reason_mask),
-              18:cap(bb_count),
-              19:cap(lev_count),
-              20:cap(budget_count),
-              21:age,
-              22:timeframe_map.get(str(s.get('bollingerEntryFilterTimeframe') or '15m').lower(),0),
-              23:sizing_map.get(str(s.get('entrySizingMode') or '').lower(),0),
-              24:cap(len(state)),
+              0:42, 1:flags,
+              2:status_map.get(str(report.get('entryStatus') or ''),0),
+              3:cap(report.get('activeLong')), 4:cap(report.get('activeShort')),
+              5:cap(report.get('remainingLong')), 6:cap(report.get('remainingShort')),
+              7:cap(report.get('accountRemainingCapacity')),
+              8:cap(report.get('scannedCandidateCount')),
+              9:cap(report.get('executableCandidateCount')),
+              10:cap(reason_mask), 11:cap(bb_count), 12:age,
+              13:min(topn//250,249), 14:topn%250,
           }
           raise SystemExit(metrics.get(idx,0)+1)
           PY
           )"
 
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 25 --parallelism 5 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 15 --parallelism 15 --max-retries 0 --task-timeout 180s --quiet
 
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
@@ -167,30 +141,19 @@ jobs:
 
           EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
           TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          python - "$TASKS_JSON" <<'PY'
+          STATUS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
+          echo "TARGET_LONG_REFILL_RAW $STATUS"
+          python - "$STATUS" <<'PY'
           import json,sys
           rows=json.loads(sys.argv[1])
-          values={}
-          for row in rows:
-              idx=row.get('index')
-              if idx is None: idx=((row.get('metadata') or {}).get('labels') or {}).get('run.googleapis.com/task-index')
-              try: idx=int(idx)
-              except Exception: continue
-              codes=[]
-              def walk(v):
-                  if isinstance(v,dict):
-                      for k,x in v.items():
-                          if k=='exitCode' and isinstance(x,(int,float)): codes.append(int(x))
-                          else: walk(x)
-                  elif isinstance(v,list):
-                      for x in v: walk(x)
-              walk(row)
-              if codes: values[idx]=max(0,codes[0]-1)
-          labels=['marker','flags','maxPositions','longSlots','shortSlots','minLev','maxLev','entryStatus',
-                  'activeLong','activeShort','remainingLong','remainingShort','accountCount','accountRemaining',
-                  'candidateCount','scannedCount','executableCount','reasonMask','bbRejectCount','levRejectCount',
-                  'budgetRejectCount','reportAgeSec','timeframeCode','sizingCode','managedCount']
-          print('TARGET_LONG_REFILL_CODES '+json.dumps({labels[i]:values.get(i) for i in range(len(labels))},sort_keys=True))
+          vals={int(r['index']):max(0,int(r['exitCode'])-1) for r in rows if int(r.get('exitCode',-1))>=1}
+          labels=['marker','flags','entryStatus','activeLong','activeShort','remainingLong','remainingShort',
+                  'accountRemaining','scannedCount','executableCount','reasonMask','bbRejectCount','reportAgeSec',
+                  'topNHigh','topNLow']
+          out={labels[i]:vals.get(i) for i in range(len(labels))}
+          if out['topNHigh'] is not None and out['topNLow'] is not None:
+              out['topN']=out['topNHigh']*250+out['topNLow']
+          print('TARGET_LONG_REFILL_CODES '+json.dumps(out,sort_keys=True))
           PY
 
           cleanup
