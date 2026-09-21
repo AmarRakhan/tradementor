@@ -1,0 +1,91 @@
+name: Diagnose current sizing via Firestore REST 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-current-sizing-firestore-20260921.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: '209'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Query sanitized config summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-access-token)"
+          cat > "$RUNNER_TEMP/query.json" <<'JSON'
+          {"structuredQuery":{"from":[{"collectionId":"asterStrategy2"}]}}
+          JSON
+          HTTP="$(curl -sS -o "$RUNNER_TEMP/raw.json" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            --data-binary @"$RUNNER_TEMP/query.json" \
+            "https://firestore.googleapis.com/v1/projects/$GCP_PROJECT_ID/databases/(default)/documents:runQuery")"
+          python - "$HTTP" "$RUNNER_TEMP/raw.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys
+          http=sys.argv[1]
+          print('## Live config na sizing-repair · Firestore REST')
+          if http!='200':
+              print(f'- Firestore read: **HTTP {http}**')
+              print('- Geen productie-instelling gewijzigd.')
+              raise SystemExit(0)
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def unwrap(v):
+              if not isinstance(v,dict): return None
+              for k in ('stringValue','integerValue','doubleValue','booleanValue','timestampValue','nullValue'):
+                  if k in v:
+                      x=v[k]
+                      if k=='integerValue':
+                          try:return int(x)
+                          except:return x
+                      return x
+              if 'mapValue' in v:
+                  return {k:unwrap(x) for k,x in (v['mapValue'].get('fields') or {}).items()}
+              if 'arrayValue' in v:
+                  return [unwrap(x) for x in (v['arrayValue'].get('values') or [])]
+              return None
+          docs=[]
+          for row in rows:
+              doc=row.get('document') or {}; fields={k:unwrap(v) for k,v in (doc.get('fields') or {}).items()}
+              s=fields.get('settings') if isinstance(fields.get('settings'),dict) else {}
+              def i(v,d=-1):
+                  try:return int(round(float(v)))
+                  except:return d
+              if i(s.get('longSlots'))==35 and i(s.get('shortSlots'))==30 and i(s.get('universeTopN'))==350:
+                  docs.append((fields,s))
+          print(f'- Unieke 35L/30S/Top-350 matches: **{len(docs)}**')
+          if len(docs)==1:
+              raw,s=docs[0]
+              print(f'- entrySizingMode: **{str(s.get("entrySizingMode","<missing>")).lower()}**')
+              print(f'- maximumPositions: **{s.get("maximumPositions")}**')
+              print(f'- Bollinger enabled: **{s.get("bollingerEntryFilter15mEnabled")}**')
+              print(f'- Bollinger timeframe: **{s.get("bollingerEntryFilterTimeframe")}**')
+              print(f'- Take Profit mode: **{s.get("takeProfitMode")}**')
+              print(f'- Bot enabled: **{bool(raw.get("enabled"))}**')
+              print(f'- Monitor: **{bool(raw.get("monitor"))}**')
+              print(f'- LONG margin: **{s.get("entryMarginLongUsd",s.get("entryMarginLong",s.get("entryMarginUsd")))}**')
+              print(f'- SHORT margin: **{s.get("entryMarginShortUsd",s.get("entryMarginShort",s.get("entryMarginUsd")))}**')
+              report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+              for key in ('activeLong','activeShort','remainingLong','remainingShort','scannedCandidates','executableCandidates','ordersSent','entryStatus','entryReason','updatedAtMs'):
+                  if key in report: print(f'- report.{key}: **{report.get(key)}**')
+          print('\n_Gesanitizeerd en read-only; geen user-ID, wallet, credentials, settings of orders gepubliceerd/gewijzigd._')
+          PY
+          GH_TOKEN="${{ github.token }}" gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
