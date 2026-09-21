@@ -1,0 +1,54 @@
+name: Diagnose Aster scheduler freshness 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-aster-scheduler-freshness-20260921.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: '209'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect scheduler jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud scheduler jobs list --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/jobs.json" || echo '[]' > "$RUNNER_TEMP/jobs.json"
+          python - "$RUNNER_TEMP/jobs.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          print('## Aster cloudscheduler · read-only status')
+          found=[]
+          for row in rows if isinstance(rows,list) else []:
+              http=row.get('httpTarget') or {}; uri=str(http.get('uri') or '')
+              name=str(row.get('name') or '').split('/')[-1]
+              if 'aster' in name.lower() or 'aster-automation/tick' in uri:
+                  found.append((name,row,uri))
+          print(f'- Aster-gerelateerde schedulerjobs gevonden: **{len(found)}**')
+          for name,row,uri in found:
+              safe_path='/' + uri.split('/',3)[-1].split('?',1)[0] if '://' in uri else uri.split('?',1)[0]
+              print(f'- `{name}` · state=**{row.get("state")}** · schedule=**{row.get("schedule")}** · target=**{safe_path}**')
+              if row.get('lastAttemptTime'): print(f'  - lastAttemptTime: **{row.get("lastAttemptTime")}**')
+              if row.get('status'): print(f'  - status: **{row.get("status")}**')
+          print('\n_Read-only; geen scheduler, settings of orders gewijzigd._')
+          PY
+          GH_TOKEN="${{ github.token }}" gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
