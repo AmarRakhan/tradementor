@@ -18,7 +18,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   REPAIR_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  ISSUE_NUMBER: '190'
+  ISSUE_NUMBER: '209'
 
 jobs:
   repair:
@@ -87,11 +87,12 @@ jobs:
               cycle=raw.get('multiBbCycle') if isinstance(raw.get('multiBbCycle'),dict) else {}
               cycle_start=f(cycle.get('cycleStartEquity'))
               fingerprint=(
-                  i(s.get('maximumPositions'))==60 and i(s.get('longSlots'))==30 and i(s.get('shortSlots'))==30 and
-                  i(s.get('universeTopN'))==350 and i(s.get('minimumLeverage'))==20 and
+                  i(s.get('maximumPositions'))==65 and i(s.get('longSlots'))==35 and i(s.get('shortSlots'))==30 and
+                  i(s.get('universeTopN'))==350 and
+                  s.get('bollingerEntryFilter15mEnabled') is True and
+                  str(s.get('bollingerEntryFilterTimeframe','')).lower()=='1m' and
                   str(s.get('entrySizingMode','')).lower() in {'notional','margin'} and
-                  str(s.get('takeProfitMode','')).upper()=='PORTFOLIO' and
-                  abs(cycle_start-293.56) <= 0.02
+                  str(s.get('takeProfitMode','')).upper()=='PORTFOLIO'
               )
               if fingerprint:matches.append((snap,raw,s,long_margin,short_margin,long_notional,short_notional,cycle_start))
 
@@ -106,10 +107,11 @@ jobs:
           # Re-validate the exact account fingerprint immediately before any write.
           live_cycle=current.get('multiBbCycle') if isinstance(current.get('multiBbCycle'),dict) else {}
           if (mode not in {'notional','margin'} or
-              i(s.get('maximumPositions'))!=60 or i(s.get('longSlots'))!=30 or i(s.get('shortSlots'))!=30 or
-              i(s.get('universeTopN'))!=350 or i(s.get('minimumLeverage'))!=20 or
-              str(s.get('takeProfitMode','')).upper()!='PORTFOLIO' or
-              abs(f(live_cycle.get('cycleStartEquity'))-293.56)>0.02):
+              i(s.get('maximumPositions'))!=65 or i(s.get('longSlots'))!=35 or i(s.get('shortSlots'))!=30 or
+              i(s.get('universeTopN'))!=350 or
+              s.get('bollingerEntryFilter15mEnabled') is not True or
+              str(s.get('bollingerEntryFilterTimeframe','')).lower()!='1m' or
+              str(s.get('takeProfitMode','')).upper()!='PORTFOLIO'):
               print('FIXED_SIZE_REPAIR '+json.dumps({'status':'REFUSED_STATE_CHANGED','ordersSent':0,'settingsChanged':False},sort_keys=True))
               raise SystemExit(22)
 
@@ -124,11 +126,11 @@ jobs:
               now=datetime.now(timezone.utc)
               snap.reference.set({
                   'settings':new,'configVersion':version,'updatedAt':now,'settingsChangedAt':now,
-                  'lastReason':'Vaste positieomvang veilig teruggezet naar marginmodus; bestaande LONG/SHORT-margin behouden; 0 orders'
+                  'lastReason':'Entry sizing hersteld naar marginmodus voor 35L/30S Top-350 1m; bestaande LONG/SHORT-margin en tradingstate behouden; repair zelf 0 orders'
               },merge=True)
               snap.reference.collection('configHistory').add({
                   'version':version,'oldValue':s,'newValue':new,
-                  'source':'repair-auto-derived-fixed-size-20260921','timestamp':now
+                  'source':'repair-current-35-30-top350-1m-20260921','timestamp':now
               })
               snap.reference.collection('audit').add({
                   'event':'ENTRY_SIZING_MODE_RESTORED_TO_MARGIN','oldMode':'notional','newMode':'margin',
