@@ -202,7 +202,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       portfolioTpValue: n(v.portfolioTp),
       portfolioTpBaseMode: v.portfolioTpBaseMode,
       portfolioTpCustomBaseEquity: n(v.portfolioTpCustomBase),
-      takeProfitEnabled: v.tpMode === "PER_TRADE",
+      // Portfolio TP is additive: pair-level TP remains active and only OFF disables it.
+      takeProfitEnabled: v.tpMode !== "OFF",
       stopLossEnabled: v.stopLossEnabled, stopLossMode: v.stopLossMode, stopLossLong: n(v.stopLossLong), stopLossShort: n(v.stopLossShort),
       entryMode: "immediate_fill", marginMode: "cross", autoRestart: true,
       manualSymbolSelectionEnabled: v.manualEnabled, manualSymbols: v.manualEnabled ? v.manualSymbols : [],
