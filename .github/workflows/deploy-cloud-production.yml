@@ -224,6 +224,15 @@ jobs:
           assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           paths = openapi.get("paths", {})
           assert "/health" in paths
+          for required in (
+              "/v1/me/aster/sniper",
+              "/v1/me/aster/sniper/start",
+              "/v1/me/aster/sniper/stop",
+              "/v1/me/aster/sniper/settings",
+              "/v1/me/aster/sniper/trades/close",
+              "/v1/me/aster/automation/close-all",
+          ):
+              assert required in paths, required
           PY
 
       - name: Promote verified revision
