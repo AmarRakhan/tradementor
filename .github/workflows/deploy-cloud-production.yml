@@ -177,7 +177,7 @@ jobs:
           RUN_SUFFIX="${GITHUB_RUN_ID: -6}"
           REVISION_SUFFIX="src-${SOURCE_COMMIT:0:8}-$RUN_SUFFIX"
           TAG="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
+          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT,TRADEMENTOR_IMAGE_SOURCE_COMMIT=$SOURCE_COMMIT,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-candidate.json"
           python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
           import json
@@ -195,7 +195,7 @@ jobs:
           before_env = {item["name"]: item.get("value") for item in before_spec["containers"][0].get("env", [])}
           after_env = {item["name"]: item.get("value") for item in after_spec["containers"][0].get("env", [])}
           expected_env = dict(before_env)
-          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
+          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"TRADEMENTOR_IMAGE_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
           assert after_env == expected_env
           candidate = next(row for row in after["status"]["traffic"] if row.get("tag") == tag)
           print(f'CANDIDATE_URL={candidate["url"]}')
@@ -207,21 +207,32 @@ jobs:
         run: |
           set -euo pipefail
           echo "DEPLOY_PHASE=verify-candidate" >> "$GITHUB_ENV"
-          HEALTH="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/health")"
-          OPENAPI="$(curl --fail --silent --show-error --retry 4 --retry-delay 3 "$CANDIDATE_URL/openapi.json")"
-          python - "$HEALTH" "$OPENAPI" <<'PY'
+          CANDIDATE_HEALTH_FILE="$RUNNER_TEMP/candidate-health.json"
+          CANDIDATE_OPENAPI_FILE="$RUNNER_TEMP/candidate-openapi.json"
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/health" -o "$CANDIDATE_HEALTH_FILE"
+          curl --fail --silent --show-error --retry 4 --retry-delay 3 "$CANDIDATE_URL/openapi.json" -o "$CANDIDATE_OPENAPI_FILE"
+          python - "$CANDIDATE_HEALTH_FILE" "$CANDIDATE_OPENAPI_FILE" <<'PY'
           import json
           import os
           import sys
 
-          health = json.loads(sys.argv[1])
-          openapi = json.loads(sys.argv[2])
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          openapi = json.load(open(sys.argv[2], encoding="utf-8"))
           assert health["status"] == "ready"
           assert health["multiUser"] is True
           assert health["sourceCommit"] == os.environ["SOURCE_COMMIT"]
           assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           paths = openapi.get("paths", {})
           assert "/health" in paths
+          for required in (
+              "/v1/me/aster/sniper",
+              "/v1/me/aster/sniper/start",
+              "/v1/me/aster/sniper/stop",
+              "/v1/me/aster/sniper/settings",
+              "/v1/me/aster/sniper/trades/close",
+              "/v1/me/aster/automation/close-all",
+          ):
+              assert required in paths, required
           PY
 
       - name: Promote verified revision
