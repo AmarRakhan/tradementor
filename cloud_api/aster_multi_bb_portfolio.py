@@ -1,10 +1,11 @@
 """Portfolio Take Profit cycle gate for the Multi BB runtime.
 
-This module deliberately sits *in front of* the proven Multi BB engine.  It
-never changes the asymmetric hedge state machine.  In PORTFOLIO mode it
-preempts every scanner/DCA/per-position TP action, closes exchange exposure,
-confirms flat, records real exchange equity and only then permits a clean new
-cycle.
+This module deliberately sits *in front of* the proven Multi BB engine. It
+never changes the asymmetric hedge state machine. PORTFOLIO mode is additive:
+normal per-position TP remains active while the portfolio target is below its
+threshold. Once the portfolio target is reached, the portfolio exit preempts
+scanner/DCA/per-position TP actions, closes exchange exposure, confirms flat,
+records real exchange equity and only then permits a clean new cycle.
 """
 from __future__ import annotations
 
