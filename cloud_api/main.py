@@ -3793,11 +3793,41 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     # avoiding a signed Aster request for every open browser tab.
     uid = str(user["uid"])
     ensure_aster_strategy2_control(uid)
+    strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
     automation_ref = aster_automation_reference(uid)
     automation = automation_ref.get().to_dict() or {}
     snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
+
+    # The browser-facing account snapshot is legacy storage, while Multi BB lives
+    # under Strategy 2. A freshly confirmed Strategy-2 fill must invalidate the
+    # legacy snapshot immediately; otherwise the UI can keep showing an old seat
+    # count for up to multiple refresh cycles even though Aster already filled.
+    managed_map = strategy2_state.get("multiBbPositions") if isinstance(strategy2_state.get("multiBbPositions"), dict) else {}
+    managed_keys = {str(key).upper() for key in managed_map if "|" in str(key)}
+    snapshot_rows = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
+    snapshot_keys = {
+        f"{str(row.get('symbol', '')).upper()}|{str(row.get('side', '')).upper()}"
+        for row in snapshot_rows if isinstance(row, dict) and str(row.get("symbol", "")).strip()
+    }
+    managed_position_missing_from_snapshot = bool(managed_keys - snapshot_keys)
+
     captured_at = snapshot.get("capturedAt")
-    snapshot_stale = not isinstance(captured_at, datetime) or datetime.now(timezone.utc) - captured_at > timedelta(seconds=30)
+    if isinstance(captured_at, datetime):
+        captured_at = captured_at.replace(tzinfo=timezone.utc) if captured_at.tzinfo is None else captured_at.astimezone(timezone.utc)
+    strategy_tick_at = strategy2_state.get("lastTickAt")
+    if isinstance(strategy_tick_at, datetime):
+        strategy_tick_at = strategy_tick_at.replace(tzinfo=timezone.utc) if strategy_tick_at.tzinfo is None else strategy_tick_at.astimezone(timezone.utc)
+    strategy_newer_than_snapshot = bool(
+        isinstance(strategy_tick_at, datetime)
+        and (not isinstance(captured_at, datetime) or strategy_tick_at > captured_at)
+    )
+    snapshot_stale = (
+        not isinstance(captured_at, datetime)
+        or datetime.now(timezone.utc) - captured_at > timedelta(seconds=30)
+        or strategy_newer_than_snapshot
+        or managed_position_missing_from_snapshot
+    )
+
     if snapshot_stale:
         try:
             read_client = AsterV3Client(
@@ -3805,22 +3835,27 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 sign_message=local_eip712_signer(secret),
                 live_authorized=False,
             )
+            # Position/account truth is independently authoritative. Do not throw
+            # away a successful fresh positionRisk snapshot merely because the
+            # separate open-orders endpoint is temporarily rate-limited.
             current = aster_dashboard_snapshot(read_client.account_information(), read_client.position_risk())
-            # Open-order evidence is part of the same read-only exchange snapshot.
-            # A failed order read keeps the previous snapshot, so the dashboard
-            # cannot claim that entries are safe from partial Aster evidence.
-            current["openOrders"] = len(read_client.open_orders())
+            try:
+                current["openOrders"] = len(read_client.open_orders())
+                current["openOrdersFresh"] = True
+            except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
+                if "openOrders" in snapshot:
+                    current["openOrders"] = snapshot.get("openOrders")
+                current["openOrdersFresh"] = False
             snapshot = {**snapshot, **current, "capturedAt": datetime.now(timezone.utc)}
             automation_ref.set({"accountSnapshot": snapshot}, merge=True)
         except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
             # Preserve the last exchange-confirmed snapshot rather than showing
-            # invented zeroes when Aster is temporarily unavailable.
+            # invented zeroes when Aster account/position truth is unavailable.
             pass
     hedge_mode = bool(snapshot.get("hedgeMode", True))
     leg_meta: dict[str, Any] = {}
     leg_last_order_at: dict[str, Any] = {}
     strategy_settings = AsterStrategySettings.from_mapping({})
-    strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
     sniper_state = ensure_aster_sniper_control(uid)
     sniper_owned_symbols = sniper_active_symbols(sniper_state)
     for state, reference in ((strategy2_state, aster_strategy2_reference(uid)),):
