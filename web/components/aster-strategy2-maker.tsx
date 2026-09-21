@@ -270,7 +270,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const setSymbolSide = (symbol: string, side: ManualSide) => change({ ...v, manualSymbols: v.manualSymbols.map((row) => row.symbol === symbol ? { ...row, side } : row) });
   const removeSymbol = (symbol: string) => change({ ...v, manualSymbols: v.manualSymbols.filter((row) => row.symbol !== symbol) });
 
-  async function withLatestProtectedSettings(draft: Record<string, unknown>) {
+  async function withLatestProfitLockSettings(draft: Record<string, unknown>) {
     // Some settings can be changed by their own server-side flow or another
     // client. Always reconcile those fields against a fresh server snapshot
     // before a normal save/start so stale browser state cannot write them back.
@@ -294,7 +294,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   async function action(kind: "save" | "simulate" | "start" | "stop") {
     setBusy(true); setMessage("");
     try {
-      const outgoingSettings = kind === "stop" ? settings : await withLatestProtectedSettings(settings);
+      const outgoingSettings = kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
       const outgoingSizingMode = String(outgoingSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
       // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every

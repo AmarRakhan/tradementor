@@ -33,7 +33,7 @@ test("enabling fixed size requires explicit position values instead of leverage 
 
 test("unrelated saves preserve fresh server sizing mode unless the user touched the switch", () => {
   assert.match(maker, /sizingModeTouched/);
-  assert.match(maker, /withLatestProtectedSettings/);
+  assert.match(maker, /withLatestProfitLockSettings/);
   assert.match(maker, /!sizingModeTouched/);
   assert.match(maker, /latestSettings\.entrySizingMode/);
   assert.match(maker, /setSizingModeTouched\(true\)/);
