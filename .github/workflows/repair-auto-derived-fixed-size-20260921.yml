@@ -62,6 +62,7 @@ jobs:
           import hashlib,json
           from datetime import datetime,timezone
           from google.cloud import firestore
+          from aster_multi_bb import MultiBbConfig
 
           PROJECT='tradementor-production'
           db=firestore.Client(project=PROJECT)
@@ -86,13 +87,16 @@ jobs:
               short_notional=f(s.get('entryNotionalShortUsd',s.get('entryNotionalShort',s.get('entryNotionalUsd'))))
               cycle=raw.get('multiBbCycle') if isinstance(raw.get('multiBbCycle'),dict) else {}
               cycle_start=f(cycle.get('cycleStartEquity'))
+              try: cfg=MultiBbConfig.from_mapping(s)
+              except Exception: continue
               fingerprint=(
                   i(s.get('maximumPositions'))==65 and i(s.get('longSlots'))==35 and i(s.get('shortSlots'))==30 and
                   i(s.get('universeTopN'))==350 and
-                  s.get('bollingerEntryFilter15mEnabled') is True and
-                  str(s.get('bollingerEntryFilterTimeframe','')).lower()=='1m' and
-                  str(s.get('entrySizingMode','')).lower() in {'notional','margin'} and
-                  str(s.get('takeProfitMode','')).upper()=='PORTFOLIO'
+                  bool(raw.get('enabled')) and bool(raw.get('monitor')) and
+                  bool(cfg.bollinger_entry_filter_15m_enabled) and
+                  str(cfg.bollinger_entry_filter_timeframe).lower()=='1m' and
+                  str(cfg.take_profit_mode).upper()=='PER_TRADE' and
+                  str(cfg.entry_sizing_mode).lower() in {'notional','margin'}
               )
               if fingerprint:matches.append((snap,raw,s,long_margin,short_margin,long_notional,short_notional,cycle_start))
 
@@ -106,12 +110,18 @@ jobs:
           mode=str(s.get('entrySizingMode','')).lower()
           # Re-validate the exact account fingerprint immediately before any write.
           live_cycle=current.get('multiBbCycle') if isinstance(current.get('multiBbCycle'),dict) else {}
+          try: live_cfg=MultiBbConfig.from_mapping(s)
+          except Exception:
+              print('FIXED_SIZE_REPAIR '+json.dumps({'status':'REFUSED_INVALID_CONFIG','ordersSent':0,'settingsChanged':False},sort_keys=True))
+              raise SystemExit(22)
+          mode=str(live_cfg.entry_sizing_mode).lower()
           if (mode not in {'notional','margin'} or
               i(s.get('maximumPositions'))!=65 or i(s.get('longSlots'))!=35 or i(s.get('shortSlots'))!=30 or
               i(s.get('universeTopN'))!=350 or
-              s.get('bollingerEntryFilter15mEnabled') is not True or
-              str(s.get('bollingerEntryFilterTimeframe','')).lower()!='1m' or
-              str(s.get('takeProfitMode','')).upper()!='PORTFOLIO'):
+              not bool(current.get('enabled')) or not bool(current.get('monitor')) or
+              not bool(live_cfg.bollinger_entry_filter_15m_enabled) or
+              str(live_cfg.bollinger_entry_filter_timeframe).lower()!='1m' or
+              str(live_cfg.take_profit_mode).upper()!='PER_TRADE'):
               print('FIXED_SIZE_REPAIR '+json.dumps({'status':'REFUSED_STATE_CHANGED','ordersSent':0,'settingsChanged':False},sort_keys=True))
               raise SystemExit(22)
 
@@ -126,11 +136,11 @@ jobs:
               now=datetime.now(timezone.utc)
               snap.reference.set({
                   'settings':new,'configVersion':version,'updatedAt':now,'settingsChangedAt':now,
-                  'lastReason':'Entry sizing hersteld naar marginmodus voor 35L/30S Top-350 1m; bestaande LONG/SHORT-margin en tradingstate behouden; repair zelf 0 orders'
+                  'lastReason':'Entry sizing hersteld naar marginmodus voor unieke 35L/30S Top-350 1m PER_TRADE-config; bestaande LONG/SHORT-margin en tradingstate behouden; repair zelf 0 orders'
               },merge=True)
               snap.reference.collection('configHistory').add({
                   'version':version,'oldValue':s,'newValue':new,
-                  'source':'repair-current-35-30-top350-1m-20260921','timestamp':now
+                  'source':'repair-current-35-30-top350-1m-pertrade-20260921','timestamp':now
               })
               snap.reference.collection('audit').add({
                   'event':'ENTRY_SIZING_MODE_RESTORED_TO_MARGIN','oldMode':'notional','newMode':'margin',
