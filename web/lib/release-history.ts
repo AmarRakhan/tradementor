@@ -24,41 +24,79 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-21",
-  title: "Strategy-2 sizingmodus beschermd tegen oude UI-state",
+  title: "LONG en SHORT-stoelen onafhankelijk instelbaar",
   newItems: [
-    "Botinstellingen vergelijken bevestigde UI-state voortaan met de nieuwste server-configVersion voordat instellingen opnieuw worden geladen.",
-    "Opslaan en Starten lezen vlak vóór verzending de actuele serverinstellingen en bewaren de server-side positieomvangmodus tenzij de gebruiker de schakelaar Vaste positieomvang expliciet heeft gewijzigd.",
+    "LONG slots en SHORT slots kunnen nu ieder rechtstreeks worden verhoogd of verlaagd zonder eerst Totaal posities aan te passen.",
+    "Totaal posities wordt automatisch opnieuw berekend als de som van de twee zijden.",
   ],
   problems: [
-    "Een eerder bevestigde browserstate kon nieuwer serverherstel blijven overschrijven en daardoor entrySizingMode opnieuw op notional zetten.",
-    "Bij Top-350 en vrije LONG-stoelen kon dit geldige 1m Bollinger-kandidaten alsnog blokkeren doordat een kleine vaste notional tegen de minimale Aster-order botste.",
+    "Wie bijvoorbeeld van 35 naar 45 LONG-stoelen wilde, moest eerst het totaal verhogen en daarna opnieuw onthouden en instellen hoeveel SHORT-stoelen moesten blijven staan.",
+    "Een wijziging aan één zijde veranderde voorheen impliciet de andere zijde omdat het totaal als vaste waarde werd behandeld.",
   ],
   causes: [
-    "strategy2ServerStatus gaf iedere lokale confirmedState onbeperkt voorrang, ook wanneer de server inmiddels een hogere configVersion had.",
-    "De Botinstellingen stuurden entrySizingMode bij iedere gewone save/start opnieuw mee vanuit die mogelijk verouderde schakelaarstate.",
+    "De slot-helper hield Totaal posities vast en berekende de tegenoverliggende zijde als restwaarde.",
   ],
   fixes: [
-    "Een server-snapshot met een hogere configVersion vervangt nu automatisch een oudere confirmedState.",
-    "De positieomvangmodus wordt bij save/start tegen een no-store server-snapshot gereconcilieerd; alleen een expliciete interactie met Vaste positieomvang mag margin/notional wijzigen.",
-    "Nieuwe regressietests bewaken zowel server-versiefreshness als isolatie van de sizingmodus bij overige instellingen.",
+    "Bij een LONG-wijziging blijft het actuele aantal SHORT-stoelen exact staan en volgt Totaal posities automatisch LONG + SHORT.",
+    "Bij een SHORT-wijziging blijft het actuele aantal LONG-stoelen exact staan en volgt Totaal posities automatisch LONG + SHORT.",
+    "De bestaande harde limiet van 100 totale posities blijft behouden; alleen de gewijzigde zijde wordt zo nodig begrensd.",
+    "Regressietests bewaken zowel de rekenregel als de koppeling in Botinstellingen.",
   ],
   now: [
-    "Wijzigingen aan slots, Top-N, Portfolio TP, Bollinger-timeframe of andere Botinstellingen kunnen een gerepareerde marginmodus niet meer stil terugzetten naar notional.",
-    "De schakelaar Vaste positieomvang blijft wel volledig bruikbaar wanneer de gebruiker hem bewust zelf aan- of uitzet.",
-    "Deze release verandert geen bestaande positie, order, DCA-state of actuele accountinstelling automatisch.",
+    "35 LONG + 30 SHORT → LONG naar 45 geeft direct 45 LONG + 30 SHORT = 75 totaal.",
+    "45 LONG + 30 SHORT → SHORT naar 20 geeft direct 45 LONG + 20 SHORT = 65 totaal.",
+    "De gebruiker hoeft de niet-aangepaste zijde niet meer opnieuw in te voeren of te onthouden.",
   ],
-  before: "Een stale browser-confirmatie kon een nieuwere serverconfig negeren en later opnieuw als notional opslaan.",
-  after: "De nieuwste serverconfig is leidend en sizing verandert alleen na een expliciete gebruikeractie op de sizing-schakelaar.",
+  before: "LONG of SHORT wijzigen hield het totaal vast en schoof daardoor automatisch de andere zijde mee.",
+  after: "LONG en SHORT zijn onafhankelijke invoervelden; alleen het gewijzigde veld verandert en het totaal volgt automatisch.",
   technicalDetails: [
-    "Aangepast in web/lib/aster-strategy2-server-status.mjs en web/components/aster-strategy2-maker.tsx.",
-    "De publieke Aster-controle vond tijdens diagnose 44 actuele LONG-signalen binnen Top-350 op 1m; de marktvoorwaarde zelf was dus niet de primaire blokkade.",
-    "Geen backend tradingformule, Bollingerberekening, leverage-resolver of order-executionpad is door deze webrelease aangepast.",
-    "Build 390 behoudt bestaande Profit Lock- en Sniper-historiecontracten; de Sniper-regressietest valideert voortaan toekomstvast in plaats van één hardcoded buildnummer.",
+    "Aangepast in web/components/aster-strategy2-maker.tsx en web/lib/position-slot-input.ts.",
+    "Geen scanner-, Bollinger-, leverage-, DCA-, TP-, order- of exchange-executionlogica gewijzigd.",
+    "Bestaande opgeslagen LONG/SHORT-instellingen en actieve posities worden niet automatisch gewijzigd door deze release.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+    version: WEBAPP_VERSION,
+    build: WEBAPP_BUILD_NUMBER,
+    releasedAt: "2026-09-21",
+    title: "Strategy-2 sizingmodus beschermd tegen oude UI-state",
+    newItems: [
+      "Botinstellingen vergelijken bevestigde UI-state voortaan met de nieuwste server-configVersion voordat instellingen opnieuw worden geladen.",
+      "Opslaan en Starten lezen vlak vóór verzending de actuele serverinstellingen en bewaren de server-side positieomvangmodus tenzij de gebruiker de schakelaar Vaste positieomvang expliciet heeft gewijzigd.",
+    ],
+    problems: [
+      "Een eerder bevestigde browserstate kon nieuwer serverherstel blijven overschrijven en daardoor entrySizingMode opnieuw op notional zetten.",
+      "Bij Top-350 en vrije LONG-stoelen kon dit geldige 1m Bollinger-kandidaten alsnog blokkeren doordat een kleine vaste notional tegen de minimale Aster-order botste.",
+    ],
+    causes: [
+      "strategy2ServerStatus gaf iedere lokale confirmedState onbeperkt voorrang, ook wanneer de server inmiddels een hogere configVersion had.",
+      "De Botinstellingen stuurden entrySizingMode bij iedere gewone save/start opnieuw mee vanuit die mogelijk verouderde schakelaarstate.",
+    ],
+    fixes: [
+      "Een server-snapshot met een hogere configVersion vervangt nu automatisch een oudere confirmedState.",
+      "De positieomvangmodus wordt bij save/start tegen een no-store server-snapshot gereconcilieerd; alleen een expliciete interactie met Vaste positieomvang mag margin/notional wijzigen.",
+      "Nieuwe regressietests bewaken zowel server-versiefreshness als isolatie van de sizingmodus bij overige instellingen.",
+    ],
+    now: [
+      "Wijzigingen aan slots, Top-N, Portfolio TP, Bollinger-timeframe of andere Botinstellingen kunnen een gerepareerde marginmodus niet meer stil terugzetten naar notional.",
+      "De schakelaar Vaste positieomvang blijft wel volledig bruikbaar wanneer de gebruiker hem bewust zelf aan- of uitzet.",
+      "Deze release verandert geen bestaande positie, order, DCA-state of actuele accountinstelling automatisch.",
+    ],
+    before: "Een stale browser-confirmatie kon een nieuwere serverconfig negeren en later opnieuw als notional opslaan.",
+    after: "De nieuwste serverconfig is leidend en sizing verandert alleen na een expliciete gebruikeractie op de sizing-schakelaar.",
+    technicalDetails: [
+      "Aangepast in web/lib/aster-strategy2-server-status.mjs en web/components/aster-strategy2-maker.tsx.",
+      "De publieke Aster-controle vond tijdens diagnose 44 actuele LONG-signalen binnen Top-350 op 1m; de marktvoorwaarde zelf was dus niet de primaire blokkade.",
+      "Geen backend tradingformule, Bollingerberekening, leverage-resolver of order-executionpad is door deze webrelease aangepast.",
+      "Build 390 behoudt bestaande Profit Lock- en Sniper-historiecontracten; de Sniper-regressietest valideert voortaan toekomstvast in plaats van één hardcoded buildnummer.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-389-portfolio-tp-additive",
     version: "46",
