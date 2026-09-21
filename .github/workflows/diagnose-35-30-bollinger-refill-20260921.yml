@@ -31,7 +31,7 @@ jobs:
           service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Run sanitized read-only diagnosis in production runtime identity
+      - name: Classify current refill gate with runtime identity
         shell: bash
         run: |
           set -euo pipefail
@@ -45,36 +45,52 @@ jobs:
           PY
           )
           IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
-          JOB="tm-diag-3530-${GITHUB_RUN_ID: -7}"
-          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
+          : > "$RUNNER_TEMP/flags.txt"
 
           SCRIPT_B64="$(base64 -w0 <<'PY'
-          import json
-          from datetime import datetime,timezone
+          import os
           from google.cloud import firestore
 
           project='tradementor-production'
+          test=os.environ.get('DIAG_TEST','')
           db=firestore.Client(project=project)
 
           def num(v,default=0):
               try:return int(round(float(v)))
               except:return default
 
-          def reason_counts(reasons):
-              out={'bb':0,'leverage':0,'margin':0,'pair':0,'capacity':0,'other':0}
-              if not isinstance(reasons,dict):return out
-              for key,value in reasons.items():
-                  s=str(key).upper()
-                  try:n=max(1,int(value))
+          def bb_rejects(reasons):
+              total=0
+              if not isinstance(reasons,dict): return 0
+              for k,v in reasons.items():
+                  s=str(k).upper()
+                  if s.startswith('BB_') or s.startswith('PRICE_') or 'BOLLINGER' in s:
+                      try: total+=max(1,int(v))
+                      except: total+=1
+              return total
+
+          def category(raw):
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+              sv=num(raw.get('configVersion',s.get('version',0)),0)
+              rv=num(r.get('configVersion'),0)
+              if not (sv>0 and rv==sv): return 1
+              status=str(r.get('entryStatus') or '')
+              reasons=r.get('entrySkipReasons') if isinstance(r.get('entrySkipReasons'),dict) else {}
+              bb=bb_rejects(reasons)
+              margin=0; leverage=0
+              for k,v in reasons.items():
+                  key=str(k).upper()
+                  try:n=max(1,int(v))
                   except:n=1
-                  if s.startswith('BB_') or s.startswith('PRICE_') or 'BOLLINGER' in s: out['bb']+=n
-                  elif 'LEVERAGE' in s: out['leverage']+=n
-                  elif 'MARGIN' in s or 'BUDGET' in s or 'NOTIONAL' in s or '5018' in s: out['margin']+=n
-                  elif 'SHORT_REQUIRES_LONG' in s: out['pair']+=n
-                  elif 'CAPACITY' in s or 'SLOT_CAP' in s: out['capacity']+=n
-                  else: out['other']+=n
-              return out
+                  if 'MARGIN' in key or 'BUDGET' in key or 'NOTIONAL' in key or '5018' in key: margin+=n
+                  if 'LEVERAGE' in key: leverage+=n
+              if status=='WAITING_BOLLINGER_ENTRY' and bb>0: return 2
+              if num(r.get('candidateCount'))==0: return 3
+              if status=='WAITING_BUDGET' or margin>0 or num(r.get('minimumOrderRejectedCount'))>0: return 4
+              if status=='WAITING_EXCHANGE' or leverage>0: return 5
+              if status=='WAITING_ACCOUNT_CAP': return 6
+              return 7
 
           matches=[]
           for snap in db.collection('asterStrategy2').stream():
@@ -87,134 +103,101 @@ jobs:
               if num(s.get('minimumLeverage'),-1)!=20: continue
               matches.append(raw)
 
-          result={'matchCount':len(matches),'readOnly':True,'ordersSent':0}
-          if len(matches)==1:
-              raw=matches[0]
-              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-              report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-              state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
-              state_version=num(raw.get('configVersion',s.get('version',0)),0)
-              report_version=num(report.get('configVersion'),0)
-              reasons=reason_counts(report.get('entrySkipReasons'))
-              updated=num(report.get('updatedAtMs'),0)
-              result.update({
-                  'enabled':raw.get('enabled') is True,
-                  'reportCurrent':state_version>0 and report_version==state_version,
-                  'stateVersion':state_version,
-                  'reportVersion':report_version,
-                  'bollingerEnabled':s.get('bollingerEntryFilter15mEnabled') is True,
-                  'bollingerTimeframe':str(s.get('bollingerEntryFilterTimeframe') or '15m'),
-                  'longSlots':num(s.get('longSlots')),
-                  'shortSlots':num(s.get('shortSlots')),
-                  'activeLong':num(report.get('activeLong')),
-                  'activeShort':num(report.get('activeShort')),
-                  'remainingLong':num(report.get('remainingLong')),
-                  'remainingShort':num(report.get('remainingShort')),
-                  'entryStatus':str(report.get('entryStatus') or 'UNKNOWN'),
-                  'entryReason':str(report.get('entryReason') or '')[:240],
-                  'candidateCount':num(report.get('candidateCount')),
-                  'scannedCandidateCount':num(report.get('scannedCandidateCount')),
-                  'executableCandidateCount':num(report.get('executableCandidateCount')),
-                  'bbRejects':reasons['bb'],
-                  'leverageRejects':reasons['leverage'],
-                  'marginRejects':reasons['margin']+num(report.get('minimumOrderRejectedCount')),
-                  'pairRejects':reasons['pair'],
-                  'capacityRejects':reasons['capacity'],
-                  'otherRejects':reasons['other'],
-                  'accountPositionCount':num(report.get('accountPositionCount')),
-                  'accountRemainingCapacity':num(report.get('accountRemainingCapacity')),
-                  'managedRows':len(state),
-                  'shortRequiresLong':s.get('shortRequiresLongEnabled') is True,
-                  'asymmetricMode':s.get('asymmetricHedgeModeEnabled') is True,
-                  'reportUpdatedUtc':datetime.fromtimestamp(updated/1000,tz=timezone.utc).isoformat() if updated>0 else 'unknown',
-              })
-          print('DIAG3530_RESULT '+json.dumps(result,sort_keys=True,separators=(',',':')),flush=True)
+          unique=(len(matches)==1)
+          raw=matches[0] if unique else {}
+          s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          code=category(raw) if unique else 0
+
+          truth=False
+          if test=='unique': truth=unique
+          elif test=='bb_enabled': truth=unique and s.get('bollingerEntryFilter15mEnabled') is True
+          elif test=='tf_15m': truth=unique and str(s.get('bollingerEntryFilterTimeframe') or '15m')=='15m'
+          elif test=='five_long_free': truth=unique and num(r.get('remainingLong'))>=5
+          elif test=='bit0': truth=bool(code & 1)
+          elif test=='bit1': truth=bool(code & 2)
+          elif test=='bit2': truth=bool(code & 4)
+          raise SystemExit(0 if truth else 9)
           PY
           )"
 
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          run_test() {
+            local test="$1"
+            local suffix="$2"
+            local job="tm3530-${GITHUB_RUN_ID: -5}-$suffix"
+            gcloud run jobs deploy "$job" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"               --image "$IMAGE" --service-account "$RUNTIME_SA" --command python               --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"               --set-env-vars "DIAG_TEST=$test" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet >/dev/null
+            set +e
+            gcloud run jobs execute "$job" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+            local rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then echo "$test=1" >> "$RUNNER_TEMP/flags.txt"; else echo "$test=0" >> "$RUNNER_TEMP/flags.txt"; fi
+            gcloud run jobs delete "$job" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
 
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
-          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          run_test unique u
+          run_test bb_enabled b
+          run_test tf_15m t
+          run_test five_long_free f
+          run_test bit0 c0
+          run_test bit1 c1
+          run_test bit2 c2
 
-          LOGS="$(gcloud run jobs executions logs read "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 200 2>/dev/null || true)"
-          RESULT_LINE="$(printf '%s\n' "$LOGS" | grep 'DIAG3530_RESULT ' | tail -1 | sed 's/^.*DIAG3530_RESULT //')"
-          if [ -z "$RESULT_LINE" ]; then
-            RESULT_LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:DIAG3530_RESULT" --project "$GCP_PROJECT_ID" --freshness=20m --limit=20 --order=desc --format='value(textPayload)' 2>/dev/null | grep 'DIAG3530_RESULT ' | head -1 | sed 's/^.*DIAG3530_RESULT //' || true)"
-          fi
-          if [ -z "$RESULT_LINE" ]; then
-            echo '{"status":"RESULT_LOG_UNAVAILABLE"}' > "$RUNNER_TEMP/result.json"
-          else
-            printf '%s\n' "$RESULT_LINE" > "$RUNNER_TEMP/result.json"
-          fi
-          cleanup
-          trap - EXIT
-
-      - name: Publish sanitized diagnosis
+      - name: Publish decoded sanitized diagnosis
         if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python - "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/result.md" <<'PY'
-          import json,sys,os
+          python - "$RUNNER_TEMP/flags.txt" > "$RUNNER_TEMP/result.md" <<'PY'
+          import sys
+          flags={}
           try:
-              data=json.load(open(sys.argv[1],encoding='utf-8'))
-          except Exception as exc:
-              data={'status':'RESULT_PARSE_FAILED','error':type(exc).__name__}
+              for line in open(sys.argv[1],encoding='utf-8'):
+                  if '=' in line:
+                      k,v=line.strip().split('=',1); flags[k]=v=='1'
+          except Exception:
+              pass
 
           print('## Read-only LONG refill diagnosis')
           print()
-          if data.get('status'):
-              print(f'- Result: **{data.get("status")}**')
+          if not flags.get('unique'):
+              print('- Result: **REFUSED_NOT_UNIQUE_OR_READ_FAILED**')
+              print('- De diagnose heeft geen account-specifieke conclusie getrokken.')
               print()
-              print('_No settings or orders were changed._')
+              print('_Geen instellingen of orders zijn gewijzigd._')
               raise SystemExit(0)
 
-          print(f'- Matching anonymous configuration(s): **{data.get("matchCount",0)}**')
-          if data.get('matchCount')!=1:
-              print('- Result: **REFUSED_NOT_UNIQUE** — no account-specific conclusion was drawn.')
-              print()
-              print('_No UID, email, wallet, credential, order payload or setting was emitted or changed._')
-              raise SystemExit(0)
-
-          print(f'- Bot enabled: **{"yes" if data.get("enabled") else "no"}**')
-          print(f'- Scanner report current for saved settings: **{"yes" if data.get("reportCurrent") else "no"}**')
-          print(f'- Bollinger filter: **{"ON" if data.get("bollingerEnabled") else "OFF"} · {data.get("bollingerTimeframe")}**')
-          print(f'- Slots: **{data.get("activeLong")}/{data.get("longSlots")} LONG · {data.get("activeShort")}/{data.get("shortSlots")} SHORT**')
-          print(f'- Remaining: **{data.get("remainingLong")} LONG · {data.get("remainingShort")} SHORT**')
-          print(f'- Entry status: **{data.get("entryStatus")}**')
-          if data.get('entryReason'): print(f'- Entry reason: **{data.get("entryReason")}**')
-          print(f'- Candidate count BEFORE Bollinger: **{data.get("candidateCount")}**')
-          print(f'- Scanned candidates: **{data.get("scannedCandidateCount")}**')
-          print(f'- Executable candidates: **{data.get("executableCandidateCount")}**')
-          print(f'- BB/price rejects: **{data.get("bbRejects")}**')
-          print(f'- Leverage rejects: **{data.get("leverageRejects")}**')
-          print(f'- Margin/minimum-order rejects: **{data.get("marginRejects")}**')
-          print(f'- SHORT-requires-LONG rejects: **{data.get("pairRejects")}**')
-          print(f'- Capacity rejects: **{data.get("capacityRejects")}**')
-          print(f'- Account positions / remaining capacity: **{data.get("accountPositionCount")} / {data.get("accountRemainingCapacity")}**')
-          print(f'- Managed Strategy-2 rows: **{data.get("managedRows")}**')
-          print(f'- SHORT only with LONG: **{"ON" if data.get("shortRequiresLong") else "OFF"}**')
-          print(f'- Legacy asymmetric mode: **{"ON" if data.get("asymmetricMode") else "OFF"}**')
-          print(f'- Report updated UTC: **{data.get("reportUpdatedUtc")}**')
+          code=(1 if flags.get('bit0') else 0)+(2 if flags.get('bit1') else 0)+(4 if flags.get('bit2') else 0)
+          labels={
+              1:'STALE_SCANNER_REPORT',
+              2:'WAITING_BOLLINGER_ENTRY',
+              3:'PRE_BOLLINGER_CANDIDATE_POOL_EMPTY',
+              4:'MARGIN_OR_MINIMUM_ORDER_BLOCK',
+              5:'LEVERAGE_OR_EXCHANGE_DATA_BLOCK',
+              6:'ACCOUNT_CAPACITY_BLOCK',
+              7:'OTHER_OR_READY',
+          }
+          print(f'- Bollingerfilter: **{"AAN" if flags.get("bb_enabled") else "UIT"}**')
+          print(f'- Timeframe 15m: **{"JA" if flags.get("tf_15m") else "NEE"}**')
+          print(f'- Minstens 5 LONG-stoelen vrij in huidige report: **{"JA" if flags.get("five_long_free") else "NEE"}**')
+          print(f'- Actieve refill-gate: **{labels.get(code,"UNKNOWN")}**')
           print()
-          print('### Conclusion')
-          if not data.get('reportCurrent'):
-              print('The visible “0 kandidaten” is a stale-display placeholder: the scanner report has not caught up with the saved slot configuration yet.')
-          elif data.get('entryStatus')=='WAITING_BOLLINGER_ENTRY' and int(data.get('bbRejects') or 0)>0:
-              print('Confirmed: the free LONG seat(s) are currently waiting on the Bollinger entry gate. Candidates exist before the filter, but the configured Bollinger/price condition rejects them.')
-          elif int(data.get('candidateCount') or 0)==0:
-              print('Not Bollinger: the candidate pool is empty before the Bollinger check.')
-          elif data.get('entryStatus')=='WAITING_BUDGET' or int(data.get('marginRejects') or 0)>0:
-              print('Not primarily Bollinger: margin/minimum-order constraints are blocking entries.')
-          elif data.get('entryStatus')=='WAITING_EXCHANGE' or int(data.get('leverageRejects') or 0)>0:
-              print('Not primarily Bollinger: leverage/exchange-data constraints are blocking entries.')
-          elif data.get('entryStatus')=='WAITING_ACCOUNT_CAP':
-              print('Not Bollinger: account-capacity logic is blocking entries.')
+          print('### Conclusie')
+          if code==1:
+              print('Het zichtbare “0 kandidaten” komt van een verouderd scannerreport na de configuratiewijziging. Dat is geen bewijs dat Bollinger geen kandidaat vindt.')
+          elif code==2:
+              print('Bevestigd: de vrije LONG-stoelen wachten nu op het 15m Bollinger-instapfilter.')
+          elif code==3:
+              print('Niet Bollinger: de kandidaatpool is al leeg vóór de Bollingercontrole.')
+          elif code==4:
+              print('Niet primair Bollinger: margin of minimum-orderregels blokkeren de instap.')
+          elif code==5:
+              print('Niet primair Bollinger: leverage- of exchange-data blokkeert de instap.')
+          elif code==6:
+              print('Niet Bollinger: account-capaciteitslogica blokkeert nieuwe posities.')
           else:
-              print('Bollinger is not confirmed as the blocker by the current report; the active gate is shown above.')
+              print('Bollinger is niet als blocker bevestigd; de scanner staat in een andere/ready toestand.')
           print()
-          print('_Sanitized read-only inspection only. No UID, email, wallet, credential, order payload or setting was emitted or changed._')
+          print('_Sanitized read-only check via de bestaande runtime-identiteit; geen UID, e-mail, wallet, credentials of orderpayloads zijn gepubliceerd of gewijzigd._')
           PY
           gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
