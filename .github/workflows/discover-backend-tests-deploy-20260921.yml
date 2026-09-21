@@ -1,0 +1,31 @@
+name: Discover backend tests and deploy workflow 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/discover-backend-tests-deploy-20260921.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '## Backend tests/deploy discovery'
+            echo '### Test files'
+            find cloud_api -maxdepth 3 -type f \( -name 'test_*.py' -o -name '*_test.py' \) | sort | head -n 200
+            echo
+            echo '### Workflows touching cloud_api / tradementor-api'
+            grep -R -n -E 'cloud_api/|tradementor-api|CLOUD_RUN_SERVICE.*tradementor-api' .github/workflows | head -n 400 || true
+          } > "$RUNNER_TEMP/result.md"
+          gh issue comment 209 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
