@@ -169,3 +169,39 @@ jobs:
         shell: bash
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment dispatch failed before production mutation. No Cloud Run revision was promoted."
+
+  diagnose-backend-deploy:
+    if: github.event.issue.title == '[AGENT-CONTROL] diagnose backend deploy fa9275d' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Read latest canonical backend deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?branch=$TARGET_BRANCH&event=workflow_dispatch&per_page=10" --jq '.workflow_runs | sort_by(.created_at) | reverse | .[0]')"
+          test "$RUN_JSON" != "null"
+          RUN_ID="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$RUN_JSON")"
+          RUN_STATUS="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["status"])' "$RUN_JSON")"
+          RUN_CONCLUSION="$(python -c 'import json,sys; print(json.loads(sys.argv[1]).get("conclusion") or "")' "$RUN_JSON")"
+          HEAD_SHA="$(python -c 'import json,sys; print(json.loads(sys.argv[1])["head_sha"])' "$RUN_JSON")"
+          JOBS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
+          python - "$RUN_ID" "$RUN_STATUS" "$RUN_CONCLUSION" "$HEAD_SHA" "$JOBS_JSON" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys
+          run_id,status,conclusion,head_sha,jobs_json=sys.argv[1:]
+          jobs=json.loads(jobs_json).get('jobs',[])
+          print('## Production backend deployment status')
+          print(f'- Run ID: **{run_id}**')
+          print(f'- Head SHA: `{head_sha}`')
+          print(f'- Status: **{status}**')
+          print(f'- Conclusion: **{conclusion or "pending"}**')
+          for job in jobs:
+              print(f'- Job `{job.get("name")}`: **{job.get("status")} / {job.get("conclusion") or "pending"}**')
+              for step in job.get('steps',[]):
+                  if step.get('status')=='in_progress': print(f'  - CURRENT: {step.get("name")}')
+                  if step.get('conclusion')=='failure': print(f'  - FAILED: {step.get("name")}')
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
