@@ -138,29 +138,3 @@ jobs:
           else
             gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Could not read the canonical V46 GitHub Actions deployment. No production mutation was attempted."
           fi
-
-
-
-
-  dispatch-longscan-1m-diagnosis:
-    if: github.event.issue.title == '[AGENT-CONTROL] diagnose top350 longscan 1m' && github.event.issue.user.login == 'AmarRakhan'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      GH_TOKEN: ${{ github.token }}
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
-    steps:
-      - name: Dispatch read-only Top-350 LONG scan diagnosis
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh workflow run diagnose-long-scan-1m-20260921.yml --repo "$GITHUB_REPOSITORY" --ref "$TARGET_BRANCH"
-      - name: Confirm dispatch
-        shell: bash
-        run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Read-only Top-350 LONG scan diagnosis dispatched; result is posted to issue #209."
-      - name: Report dispatch failure
-        if: failure()
-        shell: bash
-        run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Top-350 LONG scan diagnosis dispatch failed. No production settings or orders were changed."
