@@ -1,0 +1,78 @@
+name: Diagnose sizing shape matrix 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-sizing-shape-matrix-20260921.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: '209'
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [long35, short30, top350, long35short30, long35top350, short30top350]
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Probe ${{ matrix.check }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); s=d['spec']['template']['spec']
+          print(s['containers'][0]['image']); print(s['serviceAccountName'])
+          PY
+          )
+          IMAGE="${V[0]}"; RUNTIME_SA="${V[1]}"; CHECK="${{ matrix.check }}"; JOB="tm-shape-${CHECK:0:8}-${GITHUB_RUN_ID: -5}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import os
+          from google.cloud import firestore
+          db=firestore.Client(project='tradementor-production')
+          def i(v,d=-1):
+              try:return int(round(float(v)))
+              except:return d
+          check=os.environ.get('CHECK','')
+          ok=False
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}; s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              L=i(s.get('longSlots')); S=i(s.get('shortSlots')); N=i(s.get('universeTopN'))
+              cond={
+                'long35':L==35, 'short30':S==30, 'top350':N==350,
+                'long35short30':L==35 and S==30,
+                'long35top350':L==35 and N==350,
+                'short30top350':S==30 and N==350,
+              }.get(check,False)
+              if cond: ok=True; break
+          raise SystemExit(0 if ok else 1)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "CHECK=$CHECK" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 90s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then V=true; else V=false; fi
+          GH_TOKEN="${{ github.token }}" gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "SHAPE_PROBE $CHECK=$V · read-only"
