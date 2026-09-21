@@ -1,0 +1,137 @@
+name: Read-only diagnose current LONG minimum notional 20260921
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-readonly-long-min-notional
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  RESULT_ISSUE: '209'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read sanitized current minimum notional through runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
+          JOB="tm-minnot-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import math,re
+          from google.cloud import firestore
+          project='tradementor-production'
+          db=firestore.Client(project=project)
+
+          def n(v,d=0):
+              try:return float(v)
+              except:return d
+
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if round(n(s.get('longSlots'),-1))!=35: continue
+              if round(n(s.get('shortSlots'),-1))!=30: continue
+              if round(n(s.get('universeTopN'),-1))!=350: continue
+              if round(n(s.get('maximumPositions'),-1))!=65: continue
+              if str(s.get('entrySizingMode') or '').lower()!='notional': continue
+              if s.get('bollingerEntryFilter15mEnabled') is not True: continue
+              matches.append(raw)
+
+          if len(matches)!=1:
+              raise SystemExit(250)
+
+          raw=matches[0]
+          s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          reasons=r.get('entrySkipReasons') if isinstance(r.get('entrySkipReasons'),dict) else {}
+
+          mins=[]
+          for key in reasons:
+              m=re.search(r'minimale exchangeorder\s+([0-9]+(?:\.[0-9]+)?)\s+USD',str(key),re.I)
+              if m: mins.append(float(m.group(1)))
+          if not mins:
+              # Fall back to current entryReason, which may carry the first reject.
+              m=re.search(r'minimale exchangeorder\s+([0-9]+(?:\.[0-9]+)?)\s+USD',str(r.get('entryReason') or ''),re.I)
+              if m: mins.append(float(m.group(1)))
+          if not mins:
+              raise SystemExit(249)
+
+          # Lowest currently observed rejected minimum order, rounded up to whole USD.
+          value=min(248,max(1,int(math.ceil(min(mins)))))
+          raise SystemExit(value+1)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet >/dev/null
+
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          EXIT="$(jq -r '[.. | objects | select((.index? | type) == "number") | ([.. | objects | .exitCode? | select(type == "number")][0] // -1)] | first // -1' <<<"$TASKS_JSON")"
+          echo "$EXIT" > "$RUNNER_TEMP/exit.txt"
+          cleanup
+          trap - EXIT
+
+      - name: Publish sanitized result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - "$RUNNER_TEMP/exit.txt" > "$RUNNER_TEMP/result.md" <<'PY'
+          import sys
+          try: code=int(open(sys.argv[1]).read().strip())
+          except: code=-1
+          print('## Huidige LONG minimum-order drempel')
+          print()
+          if code==250:
+              print('- Resultaat: **configuratie niet uniek gevonden**')
+          elif code==249:
+              print('- Resultaat: **geen actuele minimum-order rejecttekst gevonden**')
+          elif 2 <= code <= 249:
+              usd=code-1
+              print(f'- Laagste momenteel waargenomen Aster-minimumorder onder de afgewezen kandidaten: **ongeveer US$ {usd} notional** (naar boven afgerond).')
+              print(f'- Praktische ondergrens om ten minste die laagste reject technisch te kunnen passeren: **US$ {usd} vaste LONG-positie**.')
+              print('- Dit garandeert niet dat álle Top-350 markten op dat bedrag open kunnen; munten met een hogere minimumorder kunnen nog steeds worden overgeslagen.')
+          else:
+              print('- Resultaat: **diagnose niet leesbaar**')
+          print()
+          print('_Read-only; geen instellingen of orders gewijzigd._')
+          PY
+          gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
