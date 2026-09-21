@@ -10,10 +10,6 @@ permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: tradementor-target-long-refill-readonly
-  cancel-in-progress: false
-
 env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
@@ -24,7 +20,7 @@ env:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     environment: production
     steps:
       - uses: google-github-actions/auth@v2
@@ -32,129 +28,65 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Run compact encoded read-only diagnosis
+      - name: Count exact current LONG-entry rejection reasons
         shell: bash
         run: |
           set -euo pipefail
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
-          readarray -t SERVICE_VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
           import json,sys
-          service=json.load(open(sys.argv[1],encoding='utf-8'))
-          spec=service['spec']['template']['spec']
-          print(spec['containers'][0]['image'])
-          print(spec['serviceAccountName'])
+          s=json.load(open(sys.argv[1],encoding='utf-8')); spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image']); print(spec['serviceAccountName'])
           PY
           )
-          IMAGE="${SERVICE_VALUES[0]}"
-          RUNTIME_SA="${SERVICE_VALUES[1]}"
-          JOB="tm-target-long-${GITHUB_RUN_ID: -7}"
+          JOB="tm-target-reasons-${GITHUB_RUN_ID: -7}"
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-
           SCRIPT_B64="$(base64 -w0 <<'PY'
-          import hashlib,os,time
+          import hashlib,os
           import firebase_admin
           from firebase_admin import auth
           from google.cloud import firestore
-
-          PROJECT='tradementor-production'
-          TARGET_DIGEST='1736185e83bf4d709f2d772a03c45f61682e848841e54109f3f054011ba05f16'
-          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
-          if not firebase_admin._apps:
-              firebase_admin.initialize_app(options={'projectId':PROJECT})
-          db=firestore.Client(project=PROJECT)
-
-          uid=None
-          page=auth.list_users()
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX']); project='tradementor-production'
+          digest='1736185e83bf4d709f2d772a03c45f61682e848841e54109f3f054011ba05f16'
+          if not firebase_admin._apps: firebase_admin.initialize_app(options={'projectId':project})
+          uid=None; page=auth.list_users()
           while page and uid is None:
               for u in page.users:
-                  normalized=str(u.email or '').strip().lower()
-                  if normalized and hashlib.sha256(normalized.encode()).hexdigest()==TARGET_DIGEST:
-                      uid=u.uid
-                      break
-              if uid is None:
-                  page=page.get_next_page()
-          if not uid:
-              raise SystemExit(1)
-
-          raw=(db.collection('asterStrategy2').document(uid).get().to_dict() or {})
-          s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-
-          def n(v,default=0):
-              try:return int(round(float(v)))
-              except Exception:return default
-          def cap(v): return min(max(n(v),0),249)
-          def bit(v): return 1 if v is True else 0
-
-          flags=(bit(raw.get('enabled')) | (bit(raw.get('monitor'))<<1) |
-                 (bit(s.get('bollingerEntryFilter15mEnabled'))<<2) |
-                 (bit(s.get('shortRequiresLongEnabled'))<<3) |
-                 (bit(s.get('asymmetricHedgeModeEnabled'))<<4) |
-                 (bit(s.get('manualSymbolSelectionEnabled'))<<5))
-
-          status_map={
-              'WAITING_CAPACITY':1,'WAITING_ACCOUNT_CAP':2,'WAITING_BOLLINGER_ENTRY':3,
-              'ORDER_REJECTED':4,'READY_FOR_ENTRY':5,'PARTIAL_FILL_SUBMITTED':6,
-              'ENTRY_SUBMITTED':7,'POSITION_ALREADY_OPEN':8,'WAITING_BUDGET':9,
-              'WAITING_EXCHANGE':10,'PARTIAL_FILL_PLANNED':11,'ENTRY_PLANNED':12,
-          }
-          reasons=report.get('entrySkipReasons') if isinstance(report.get('entrySkipReasons'),dict) else {}
-          reason_mask=0; bb_count=0
-          for key,val in reasons.items():
-              name=str(key).upper(); count=max(0,n(val,1))
-              if name.startswith('PRICE_') or 'BB_' in name or 'BOLLINGER' in name:
-                  reason_mask|=1; bb_count+=count
-              if 'LEVERAGE' in name: reason_mask|=2
-              if 'MARGIN' in name or 'BUDGET' in name: reason_mask|=4
-              if 'SLOT_CAP' in name or 'CAPACITY' in name: reason_mask|=8
-              if 'NOTIONAL' in name or '5018' in name or 'MINIMUM' in name: reason_mask|=16
-              if 'SHORT_REQUIRES_LONG' in name: reason_mask|=32
-              if 'EXCHANGE' in name or 'DATA_UNAVAILABLE' in name or 'STALE' in name: reason_mask|=64
-
-          age=249
-          try: age=cap(max(0,(int(time.time()*1000)-int(report.get('updatedAtMs')))/1000))
-          except Exception: pass
-          topn=max(0,n(s.get('universeTopN')))
-
-          metrics={
-              0:42, 1:flags,
-              2:status_map.get(str(report.get('entryStatus') or ''),0),
-              3:cap(report.get('activeLong')), 4:cap(report.get('activeShort')),
-              5:cap(report.get('remainingLong')), 6:cap(report.get('remainingShort')),
-              7:cap(report.get('accountRemainingCapacity')),
-              8:cap(report.get('scannedCandidateCount')),
-              9:cap(report.get('executableCandidateCount')),
-              10:cap(reason_mask), 11:cap(bb_count), 12:age,
-              13:min(topn//250,249), 14:topn%250,
-          }
+                  e=str(u.email or '').strip().lower()
+                  if e and hashlib.sha256(e.encode()).hexdigest()==digest: uid=u.uid; break
+              if uid is None: page=page.get_next_page()
+          if not uid: raise SystemExit(1)
+          raw=firestore.Client(project=project).collection('asterStrategy2').document(uid).get().to_dict() or {}
+          rep=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          reasons=rep.get('entrySkipReasons') if isinstance(rep.get('entrySkipReasons'),dict) else {}
+          def count(pred):
+              total=0
+              for k,v in reasons.items():
+                  if pred(str(k).upper()):
+                      try: total+=int(v)
+                      except Exception: total+=1
+              return min(max(total,0),249)
+          price=count(lambda k:k.startswith('PRICE_NOT_BELOW_LOWER_BAND'))
+          bbdata=count(lambda k:'BB_DATA_UNAVAILABLE_OR_STALE' in k)
+          maxlev=count(lambda k:'MAX_LEVERAGE_BELOW_MINIMUM' in k)
+          levdata=count(lambda k:k.startswith('LEVERAGE-DATA:') or 'SYMBOL_LEVERAGE_DATA_UNAVAILABLE' in k)
+          notional=count(lambda k:'MAX_NOTIONAL_LIMIT' in k or '5018' in k)
+          margin=count(lambda k:'INSUFFICIENT_AVAILABLE_MARGIN' in k)
+          known=price+bbdata+maxlev+levdata+notional+margin
+          total=sum((int(v) if str(v).isdigit() else 1) for v in reasons.values())
+          other=min(max(total-known,0),249)
+          metrics={1:price,2:bbdata,3:maxlev,4:levdata,5:notional,6:margin,7:other}
           raise SystemExit(metrics.get(idx,0)+1)
           PY
           )"
-
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 15 --parallelism 15 --max-retries 0 --task-timeout 180s --quiet
-
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "${V[0]}" --service-account "${V[1]}" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 8 --parallelism 8 --max-retries 0 --task-timeout 180s --quiet
           set +e
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
-
           EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
-          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          STATUS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
-          echo "TARGET_LONG_REFILL_RAW $STATUS"
-          python - "$STATUS" <<'PY'
-          import json,sys
-          rows=json.loads(sys.argv[1])
-          vals={int(r['index']):max(0,int(r['exitCode'])-1) for r in rows if int(r.get('exitCode',-1))>=1}
-          labels=['marker','flags','entryStatus','activeLong','activeShort','remainingLong','remainingShort',
-                  'accountRemaining','scannedCount','executableCount','reasonMask','bbRejectCount','reportAgeSec',
-                  'topNHigh','topNLow']
-          out={labels[i]:vals.get(i) for i in range(len(labels))}
-          if out['topNHigh'] is not None and out['topNLow'] is not None:
-              out['topN']=out['topNHigh']*250+out['topNLow']
-          print('TARGET_LONG_REFILL_CODES '+json.dumps(out,sort_keys=True))
-          PY
-
+          J="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          S="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$J")"
+          echo "TARGET_LONG_REASON_CODES $S"
           cleanup
           trap - EXIT
