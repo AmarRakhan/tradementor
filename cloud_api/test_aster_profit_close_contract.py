@@ -44,3 +44,20 @@ def test_bulk_close_is_sequential_and_holds_strategy_queue_lease():
     assert "failed.append" in route
     assert "skipped.append" in route
     assert "BULK_PROFIT_CLOSE_COMPLETED" in route
+
+
+def test_profit_preview_and_bulk_close_use_full_uid_scoped_aster_account_truth():
+    source = Path(__file__).with_name("main.py").read_text()
+    preview_start = source.index('@app.get("/v1/me/aster/positions/profitable-close-preview")')
+    close_start = source.index('@app.post("/v1/me/aster/positions/close-profitable")')
+    close_end = source.index('@app.post("/v1/me/aster/positions/{symbol}/close")')
+    preview = source[preview_start:close_start]
+    route = source[close_start:close_end]
+
+    # Portfolio Snapshot and Tradecentrum must be driven by the same live Aster
+    # account truth. Strategy ownership may not hide a real open position from
+    # the explicitly confirmed profit-close workflow.
+    assert "rows = client.position_risk()" in preview
+    assert "_aster_strategy2_owned_keys" not in preview
+    assert "initial = profitable_positions(client.position_risk())" in route
+    assert "_aster_strategy2_owned_keys" not in route
