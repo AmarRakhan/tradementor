@@ -24,41 +24,77 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-21",
-  title: "Portfolio winstknoppen gelijkgetrokken + fixes zichtbaar",
+  title: "Portfolio Snapshot toont echte slotcapaciteit",
   newItems: [
-    "Alle productiefixes worden voortaan ook als afzonderlijke, zichtbare release-notitie in Versiegeschiedenis opgenomen.",
-    "Deze release documenteert de live backendfix waardoor Portfolio Snapshot en Tradecentrum dezelfde Multi BB-winstposities herkennen.",
+    "Portfolio Snapshot toont nu per zijde zowel actieve posities als de ingestelde LONG/SHORT-capaciteit.",
+    "De compacte status gebruikt dezelfde zichtbare Slot-overzicht-bron als Botinstellingen en behoudt de bestaande actieve-positiesbron als fallback.",
   ],
   problems: [
-    "Tradecentrum kon bijvoorbeeld 5 winstposities en +$17,57 tonen, terwijl Portfolio Snapshot tegelijk Close Long/Short/All op 0 posities en US$ 0,00 zette.",
-    "Daardoor gaf één scherm twee verschillende antwoorden over exact dezelfde open Aster-posities.",
+    "Na het verhogen van LONG-slots van 30 naar 35 bleef Portfolio Snapshot alleen 30L / 30S tonen.",
+    "Daardoor leek de portefeuille visueel volledig bezet terwijl Botinstellingen correct 30 / 35 LONG en 5 vrije LONG-stoelen aangaf.",
   ],
   causes: [
-    "De veilige Strategy-2 profit-close gebruikte legacy ownedLegs als ownershipbron, terwijl de actieve Multi BB-engine haar beheerde posities in multiBbPositions bijhoudt.",
-    "De live Tradecentrum-lijst zag de Aster-posities wel, maar de profit-close preview verloor Multi BB-posities tijdens de ownershipfilter.",
+    "De compacte Portfolio Snapshot las alleen actieve LONG/SHORT-aantallen uit de legacy Active Trades Index en kende de ingestelde zijde-capaciteit niet.",
   ],
   fixes: [
-    "De Strategy-2 ownershipresolver neemt nu ook geldige bot-managed LONG/SHORT-legs uit multiBbPositions mee.",
-    "De bestaande Strategy-2/Sniper scheiding blijft intact: deze wijziging maakt Sniper-posities niet sluitbaar via de Aster Multi BB-profitknoppen.",
-    "Vlak vóór iedere daadwerkelijke profit-close wordt de Aster-positie opnieuw gelezen en moet de positie nog steeds aan de winstgrens voldoen.",
-    "De volledige backendtestset, candidate-healthcheck en productiecontrole zijn vóór en na promotie geslaagd.",
+    "Portfolio Snapshot leest nu de actuele LONG- en SHORT-teller uit het bestaande Slot-overzicht, inclusief ingestelde capaciteit.",
+    "De status toont bijvoorbeeld 30/35L / 30/30S zodat vrije capaciteit direct zichtbaar is.",
+    "Als het Slot-overzicht tijdelijk nog niet beschikbaar is, blijft de bestaande actieve LONG/SHORT-weergave als veilige fallback functioneren.",
   ],
   now: [
-    "Portfolio Snapshot Close Long, Close Short en Close All herkennen dezelfde beheerde Multi BB-posities als Tradecentrum.",
-    "Een winstpositie verdwijnt niet meer uit Portfolio Snapshot alleen omdat deze via Multi BB-runtimeownership in plaats van legacy ownedLegs wordt beheerd.",
-    "Build 386 SNIPER Live Trading blijft volledig behouden; Build 387 voegt deze fixregistratie en zichtbare release-notitie toe.",
+    "Actieve positie-aantallen en ingestelde stoelcapaciteit zijn in Portfolio Snapshot niet langer met elkaar te verwarren.",
+    "Deze wijziging raakt uitsluitend de webpresentatie; scanner-, Bollinger-, order-, DCA-, TP- en exchange-logica blijven ongewijzigd.",
   ],
-  before: "Tradecentrum en Portfolio Snapshot konden voor dezelfde Aster-accountpositie verschillende winst-aantallen tonen.",
-  after: "Multi BB-posities worden in de veilige Strategy-2 profit-close correct als owned herkend, terwijl Sniper-isolatie behouden blijft.",
+  before: "Portfolio Snapshot toonde alleen 30L / 30S en kon daardoor volledig gevuld lijken terwijl 5 LONG-stoelen vrij waren.",
+  after: "Portfolio Snapshot toont actieve/beoogde capaciteit per zijde, bijvoorbeeld 30/35L / 30/30S.",
   technicalDetails: [
-    "Backendfix commit: b2f20b6e924a8a71d8c2d7f3986c96d74daf4cf2.",
-    "Live backendrevision na verificatie: tradementor-api-src-b2f20b6e-249023.",
-    "Geen bestaande positie is door deze release automatisch gesloten; alleen herkenning, preview en expliciet bevestigde profit-close scope zijn gecorrigeerd.",
+    "Bron voor capaciteit: bestaand Botinstellingen Slot-overzicht, dat sinds Build 382 Aster exchange-truth voor bezetting gebruikt.",
+    "Fallback blijft de bestaande Active Trades Index zodat de Snapshot niet leegvalt wanneer de instellingencomponent nog niet gemount is.",
+    "Geen accountinstelling, positie, order of strategieparameter wordt door deze release gewijzigd.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-387-profit-close-release-history",
+    version: "46",
+    build: "387",
+    releasedAt: "2026-09-21",
+    title: "Portfolio winstknoppen gelijkgetrokken + fixes zichtbaar",
+    newItems: [
+      "Alle productiefixes worden voortaan ook als afzonderlijke, zichtbare release-notitie in Versiegeschiedenis opgenomen.",
+      "Deze release documenteert de live backendfix waardoor Portfolio Snapshot en Tradecentrum dezelfde Multi BB-winstposities herkennen.",
+    ],
+    problems: [
+      "Tradecentrum kon bijvoorbeeld 5 winstposities en +$17,57 tonen, terwijl Portfolio Snapshot tegelijk Close Long/Short/All op 0 posities en US$ 0,00 zette.",
+      "Daardoor gaf één scherm twee verschillende antwoorden over exact dezelfde open Aster-posities.",
+    ],
+    causes: [
+      "De veilige Strategy-2 profit-close gebruikte legacy ownedLegs als ownershipbron, terwijl de actieve Multi BB-engine haar beheerde posities in multiBbPositions bijhoudt.",
+      "De live Tradecentrum-lijst zag de Aster-posities wel, maar de profit-close preview verloor Multi BB-posities tijdens de ownershipfilter.",
+    ],
+    fixes: [
+      "De Strategy-2 ownershipresolver neemt nu ook geldige bot-managed LONG/SHORT-legs uit multiBbPositions mee.",
+      "De bestaande Strategy-2/Sniper scheiding blijft intact: deze wijziging maakt Sniper-posities niet sluitbaar via de Aster Multi BB-profitknoppen.",
+      "Vlak vóór iedere daadwerkelijke profit-close wordt de Aster-positie opnieuw gelezen en moet de positie nog steeds aan de winstgrens voldoen.",
+      "De volledige backendtestset, candidate-healthcheck en productiecontrole zijn vóór en na promotie geslaagd.",
+    ],
+    now: [
+      "Portfolio Snapshot Close Long, Close Short en Close All herkennen dezelfde beheerde Multi BB-posities als Tradecentrum.",
+      "Een winstpositie verdwijnt niet meer uit Portfolio Snapshot alleen omdat deze via Multi BB-runtimeownership in plaats van legacy ownedLegs wordt beheerd.",
+      "Build 386 SNIPER Live Trading blijft volledig behouden; Build 387 voegt deze fixregistratie en zichtbare release-notitie toe.",
+    ],
+    before: "Tradecentrum en Portfolio Snapshot konden voor dezelfde Aster-accountpositie verschillende winst-aantallen tonen.",
+    after: "Multi BB-posities worden in de veilige Strategy-2 profit-close correct als owned herkend, terwijl Sniper-isolatie behouden blijft.",
+    technicalDetails: [
+      "Backendfix commit: b2f20b6e924a8a71d8c2d7f3986c96d74daf4cf2.",
+      "Live backendrevision na verificatie: tradementor-api-src-b2f20b6e-249023.",
+      "Geen bestaande positie is door deze release automatisch gesloten; alleen herkenning, preview en expliciet bevestigde profit-close scope zijn gecorrigeerd.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
   id: "v46-build-386-sniper-live",
   version: "46",
