@@ -106,7 +106,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
     "De beperkte live canary is een harde runtime-gate bij de eerste live activering; de versiegeschiedenis wordt niet als bewijs van een reeds uitgevoerde canary gebruikt.",
   ],
   confidence: "confirmed",
-};,
+},
 
   {
     id: "v46-build-385-aster-realtime-equity",
