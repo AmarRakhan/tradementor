@@ -362,6 +362,20 @@ class AsterV3Client:
         if not isinstance(payload, list): raise AsterApiError("Aster 24-uursmarktdata heeft een ongeldig formaat")
         return [item for item in payload if isinstance(item, dict)]
 
+    def book_ticker(self, symbol: str) -> dict[str, Any]:
+        safe_symbol=str(symbol).upper().strip()
+        payload=self._public_get(f"/fapi/v1/ticker/bookTicker?symbol={safe_symbol}",ttl_seconds=2,
+            invalid_message="Aster best bid/ask kon niet betrouwbaar worden gelezen")
+        if not isinstance(payload,dict): raise AsterApiError("Aster bookTicker heeft een ongeldig formaat")
+        return payload
+
+    def order_book(self, symbol: str, limit: int = 20) -> dict[str, Any]:
+        safe_symbol=str(symbol).upper().strip();safe_limit=max(5,min(100,int(limit)))
+        payload=self._public_get(f"/fapi/v1/depth?symbol={safe_symbol}&limit={safe_limit}",ttl_seconds=2,
+            invalid_message="Aster orderboek kon niet betrouwbaar worden gelezen")
+        if not isinstance(payload,dict): raise AsterApiError("Aster orderboek heeft een ongeldig formaat")
+        return payload
+
     def klines(self, symbol: str, interval: str = "15m", limit: int = 60) -> list[list[Any]]:
         safe_symbol=str(symbol).upper().strip();safe_limit=max(1,min(1000,int(limit)))
         path=f"/fapi/v1/klines?symbol={safe_symbol}&interval={interval}&limit={safe_limit}"

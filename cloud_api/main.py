@@ -79,7 +79,7 @@ from aster_strategy2_state import OwnedLeg, reconcile_owned_legs
 from aster_strategy2_readiness import build_readiness_report
 from aster_canary import choose_flat_symbol, existing_canary_action
 from aster_strategy2 import Decision
-from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_user_trades, refresh_owned_costs
+from aster_cost_evidence import bounded_history_symbols, cost_refresh_symbols, paged_user_trades, paged_income_history, refresh_owned_costs
 from aster_strategy_status import (operating_status_contract, ownership_reason_contract,
     position_count_contract, proven_owned_rows, reconciled_ownership_update)
 from aster_strategy2_execution import ExecutionContext, Strategy2RiskBlocked, execute_decision as execute_aster_strategy2_decision
@@ -116,6 +116,9 @@ from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rej
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
+from aster_sniper import SniperSettings, backtest_candles
+from aster_sniper_runtime import run_sniper_tick
+from aster_symbol_ownership import normalize_symbol, strategy2_active_symbols, sniper_active_symbols, ownership_intersection, owner_can_claim
 from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings
 from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action
@@ -365,7 +368,7 @@ class MoneyGrabberRoundStartRequest(BaseModel):
 
 class AsterCloseAllRequest(BaseModel):
     confirm: bool
-    quote_id: str = Field(min_length=16, max_length=120)
+    quote_id: str | None = Field(default=None, min_length=16, max_length=120)
     idempotency_key: str = Field(min_length=16, max_length=120)
 
 
@@ -400,6 +403,24 @@ class AsterStrategy2CanaryRequest(BaseModel):
     """Separately bounded Strategy-2 open/fill/close canary."""
     confirm: bool
     notional_usd: float = Field(default=20.0, ge=5.0, le=20.0)
+
+
+class AsterSniperSettingsRequest(BaseModel):
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class AsterSniperStartRequest(BaseModel):
+    confirm: bool
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class AsterSniperStopRequest(BaseModel):
+    confirm: bool
+
+
+class AsterSniperCloseRequest(BaseModel):
+    confirm: bool
+    trade_id: str = Field(min_length=8, max_length=160)
 
 
 class AsterRapidBuildRequest(BaseModel):
@@ -1092,6 +1113,147 @@ def aster_strategy3_reference(uid: str):
     return db.collection("asterStrategy3").document(uid)
 
 
+def aster_sniper_reference(uid: str):
+    return db.collection("asterSniper").document(uid)
+
+
+def aster_symbol_claim_reference(uid: str, symbol: str):
+    return db.collection("asterSymbolClaims").document(uid).collection("symbols").document(normalize_symbol(symbol))
+
+
+def ensure_aster_sniper_control(uid: str) -> dict[str, Any]:
+    ref=aster_sniper_reference(uid);snapshot=ref.get()
+    if snapshot.exists:return snapshot.to_dict() or {}
+    now=datetime.now(timezone.utc);settings=SniperSettings().public_dict()
+    initial={"settings":settings,"enabled":False,"monitor":False,"phase":"STOPPED","activeTrades":[],
+        "signals":[],"pendingIntent":None,"dayKey":now.date().isoformat(),"dayRealizedPnlUsd":0.0,
+        "lastReason":"Sniper gereed; wacht op persoonlijke live-activering","createdAt":now,"updatedAt":now}
+    try:ref.create(initial)
+    except google_exceptions.AlreadyExists:pass
+    return ref.get().to_dict() or initial
+
+
+def _claim_aster_symbol(uid:str,symbol:str,owner:str,reason:str)->bool:
+    symbol=normalize_symbol(symbol);owner=str(owner).upper().strip()
+    if not symbol or owner not in {"ASTER","SNIPER"}:return False
+    claim_ref=aster_symbol_claim_reference(uid,symbol);transaction=db.transaction();now=datetime.now(timezone.utc)
+    @firestore.transactional
+    def claim(txn):
+        s2=aster_strategy2_reference(uid).get(transaction=txn).to_dict() or {}
+        sn=aster_sniper_reference(uid).get(transaction=txn).to_dict() or {}
+        if not owner_can_claim(owner,symbol,s2,sn):return False
+        current=claim_ref.get(transaction=txn).to_dict() or {}
+        current_owner=str(current.get("owner","")).upper()
+        if current_owner and current_owner!=owner and str(current.get("status","ACTIVE")).upper()=="ACTIVE":
+            until=current.get("until")
+            if isinstance(until,datetime):
+                until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+            other_active=(symbol in sniper_active_symbols(sn)) if current_owner=="SNIPER" else (symbol in strategy2_active_symbols(s2))
+            if other_active or (isinstance(until,datetime) and until>now):return False
+        txn.set(claim_ref,{"uid":uid,"symbol":symbol,"owner":owner,"status":"ACTIVE","reason":reason,
+            "claimedAt":current.get("claimedAt",now) if current_owner==owner else now,
+            "until":now+timedelta(minutes=10),"updatedAt":now},merge=True)
+        return True
+    return bool(claim(transaction))
+
+
+def _release_aster_symbol_claim(uid:str,symbol:str,owner:str)->None:
+    symbol=normalize_symbol(symbol);owner=str(owner).upper().strip()
+    if not symbol:return
+    ref=aster_symbol_claim_reference(uid,symbol);transaction=db.transaction();now=datetime.now(timezone.utc)
+    @firestore.transactional
+    def release(txn):
+        row=ref.get(transaction=txn).to_dict() or {}
+        if str(row.get("owner","")).upper()!=owner:return
+        txn.set(ref,{"status":"RELEASED","until":now,"releasedAt":now,"updatedAt":now},merge=True)
+    release(transaction)
+
+
+def _release_all_aster_symbol_claims(uid:str)->None:
+    batch=db.batch();now=datetime.now(timezone.utc);count=0
+    for doc in db.collection("asterSymbolClaims").document(uid).collection("symbols").stream():
+        batch.set(doc.reference,{"status":"RELEASED","releasedAt":now,"updatedAt":now},merge=True);count+=1
+        if count>=400:break
+    if count:batch.commit()
+
+
+def _aster_strategy2_owned_symbols(uid:str)->set[str]:
+    return strategy2_active_symbols(aster_strategy2_reference(uid).get().to_dict() or {})
+
+
+def _aster_strategy2_owned_keys(uid:str)->set[tuple[str,str]]:
+    raw=aster_strategy2_reference(uid).get().to_dict() or {}
+    rows=proven_owned_rows(raw.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
+    return {(str(row.get("symbol","")).upper(),str(row.get("side","")).upper())
+        for row in rows if str(row.get("symbol","")).strip() and str(row.get("side","")).upper() in {"LONG","SHORT"}}
+
+
+def _sniper_live_gate_enabled()->bool:
+    fallback=os.getenv("ASTER_LIVE_EXECUTION_ENABLED","false")
+    return os.getenv("ASTER_SNIPER_LIVE_EXECUTION_ENABLED",fallback).lower()=="true"
+
+
+def aster_account_coordination_reference(uid:str):
+    return db.collection("asterAccountCoordination").document(uid)
+
+
+def _acquire_aster_account_coordination(uid:str,owner:str,purpose:str)->str|None:
+    """Serialize account-risk-changing strategy work so shared available cannot be double-spent."""
+    ref=aster_account_coordination_reference(uid);transaction=db.transaction();token=python_secrets.token_hex(16)
+    @firestore.transactional
+    def acquire(txn):
+        value=ref.get(transaction=txn).to_dict() or {};now=datetime.now(timezone.utc)
+        lease=value.get("lease") if isinstance(value.get("lease"),dict) else {}
+        until=lease.get("until")
+        if isinstance(until,datetime):
+            until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        if isinstance(until,datetime) and until>now:return None
+        txn.set(ref,{"lease":{"token":token,"owner":owner,"purpose":purpose,
+            "until":now+timedelta(seconds=45),"acquiredAt":now},"updatedAt":now},merge=True)
+        return token
+    return acquire(transaction)
+
+
+def _release_aster_account_coordination(uid:str,token:str)->None:
+    ref=aster_account_coordination_reference(uid);transaction=db.transaction()
+    @firestore.transactional
+    def release(txn):
+        value=ref.get(transaction=txn).to_dict() or {};lease=value.get("lease") if isinstance(value.get("lease"),dict) else {}
+        if str(lease.get("token",""))!=token:return False
+        now=datetime.now(timezone.utc);txn.set(ref,{"lease":{"token":"","until":now,"releasedAt":now},"updatedAt":now},merge=True)
+        return True
+    release(transaction)
+
+
+def _acquire_sniper_execution_lease(reference)->str|None:
+    """Fence scheduler, realtime and manual SNIPER execution per account."""
+    transaction=db.transaction();token=python_secrets.token_hex(16)
+    @firestore.transactional
+    def acquire(txn):
+        value=reference.get(transaction=txn).to_dict() or {};now=datetime.now(timezone.utc)
+        lease=value.get("executionLease") if isinstance(value.get("executionLease"),dict) else {}
+        until=lease.get("until")
+        if isinstance(until,datetime):
+            until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        if isinstance(until,datetime) and until>now:return None
+        txn.set(reference,{"executionLease":{"token":token,"until":now+timedelta(minutes=3),"acquiredAt":now}},merge=True)
+        return token
+    return acquire(transaction)
+
+
+def _release_sniper_execution_lease(reference,token:str)->None:
+    transaction=db.transaction()
+    @firestore.transactional
+    def release(txn):
+        value=reference.get(transaction=txn).to_dict() or {}
+        lease=value.get("executionLease") if isinstance(value.get("executionLease"),dict) else {}
+        if str(lease.get("token",""))!=token:return False
+        now=datetime.now(timezone.utc)
+        txn.set(reference,{"executionLease":{"token":"","until":now,"releasedAt":now}},merge=True)
+        return True
+    release(transaction)
+
+
 def portfolio_growth_reference(uid: str):
     return db.collection("users").document(uid).collection("portfolioGrowth").document("aster")
 
@@ -1106,6 +1268,30 @@ def _aster_close_all_active(uid: str) -> bool:
 def _block_order_during_close_all(uid:str):
     def guard(_intent:AsterOrderIntent)->None:
         if _aster_close_all_active(uid):raise AsterValidationError("Accountgebonden Alles-sluiten-lock blokkeert deze order")
+    return guard
+
+
+def _block_strategy2_order_during_conflict(uid:str):
+    """Final pre-submit owner guard for every Strategy-2 OPEN path."""
+    close_guard=_block_order_during_close_all(uid)
+    def guard(intent:AsterOrderIntent)->None:
+        close_guard(intent)
+        if intent.risk_increasing():
+            sniper=aster_sniper_reference(uid).get().to_dict() or {}
+            if intent.symbol.upper() in sniper_active_symbols(sniper):
+                raise AsterValidationError(f"{intent.symbol}: BLOCKED_BY_SNIPER_OWNER")
+    return guard
+
+
+def _block_sniper_order_during_conflict(uid:str):
+    """Final pre-submit owner guard for every SNIPER OPEN path."""
+    close_guard=_block_order_during_close_all(uid)
+    def guard(intent:AsterOrderIntent)->None:
+        close_guard(intent)
+        if intent.risk_increasing():
+            strategy2=aster_strategy2_reference(uid).get().to_dict() or {}
+            if intent.symbol.upper() in strategy2_active_symbols(strategy2):
+                raise AsterValidationError(f"{intent.symbol}: BLOCKED_BY_ASTER_OWNER")
     return guard
 
 
@@ -1401,7 +1587,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         raw={**raw,"liveReady":True}
         ref.set({"liveReady":True,"liveReadyRecoveredAt":now,
             "liveReadyRecoveryReason":"COMPLETED_CANARY_AUTHORIZATION"},merge=True)
-    secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live,before_order_submit=_block_order_during_close_all(uid))
+    secret=load_aster_secret({"uid":uid});client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=live,before_order_submit=_block_strategy2_order_during_conflict(uid))
     try: hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True);return {"status":"data-hold","reason":str(exc)}
@@ -2094,6 +2280,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                         budget_blocked=True;scan_skipped+=1;advanced_after_rejection=True
                         candidate_failures.append(f"{candidate}: onvoldoende vrije Aster-margin inclusief 5% uitvoeringsbuffer")
                         continue
+                    if not _claim_aster_symbol(uid,candidate,"ASTER","STRATEGY2_ENTRY"):
+                        scan_skipped+=1;advanced_after_rejection=True
+                        candidate_failures.append(f"{candidate}: BLOCKED_BY_OTHER_STRATEGY")
+                        continue
                     try:
                         scan_key=str(raw.get("orderQueueState",{}).get("scanId",""))
                         entry_prefix=(f"s2q-i-{hashlib.sha256((uid+scan_key+candidate+entry_side+str(index)).encode()).hexdigest()[:12]}"
@@ -2106,6 +2296,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                     except Exception as exc:
                         if not isinstance(exc,NewPositionLeverageBlocked) and not is_definite_contract_rejection(exc):
                             raise
+                        _release_aster_symbol_claim(uid,candidate,"ASTER")
                         candidate_failures.append(f"{candidate}: {exc}")
                         scan_skipped+=1;advanced_after_rejection=True
                         attempts=int(safe_float(prior.get("attempts")))+1
@@ -3615,6 +3806,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     leg_last_order_at: dict[str, Any] = {}
     strategy_settings = AsterStrategySettings.from_mapping({})
     strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
+    sniper_state = ensure_aster_sniper_control(uid)
+    sniper_owned_symbols = sniper_active_symbols(sniper_state)
     for state, reference in ((strategy2_state, aster_strategy2_reference(uid)),):
         try:
             latest = next(iter(reference.collection("audit").order_by(
@@ -3705,6 +3898,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     for raw in snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []:
         row = dict(raw) if isinstance(raw, dict) else {}
         symbol, side = str(row.get("symbol", "")).upper(), str(row.get("side", "")).upper()
+        if symbol in sniper_owned_symbols:
+            continue
         stored_dca = int(safe_float((leg_meta.get(symbol) or {}).get(side)))
         inferred_dca = infer_aster_dca_level(
             abs(safe_float(row.get("quantity"))) * safe_float(row.get("entryPrice")), strategy_settings.base_notional,
@@ -3888,6 +4083,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "availableBalance": confirmed_snapshot_number("availableBalance"),
         "unrealizedPnl": confirmed_snapshot_number("unrealizedPnl"),
         "activePositions": len(positions),
+        "accountActivePositions": int(safe_float(snapshot.get("activePositions"))),
         "activeTradeCapital": confirmed_snapshot_number("activeTradeCapital"),
         "financialDataContract": snapshot.get("financialDataContract") if isinstance(snapshot.get("financialDataContract"), dict) else {},
         "maintenanceMargin": confirmed_snapshot_number("maintenanceMargin"),
@@ -5009,93 +5205,134 @@ def close_all_aster_strategy(
     request: AsterCloseAllRequest,
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
+    """Account-wide emergency stop. It never depends on portfolio profit/baseline state."""
     if not request.confirm:
         raise HTTPException(422, "Bevestig Alles sluiten expliciet")
     if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
         raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
-    uid=str(user["uid"]);growth=portfolio_growth_reference(uid);quote_ref=growth.collection("quotes").document(request.quote_id)
-    action_hash=hashlib.sha256(f"{uid}:{request.idempotency_key}".encode()).hexdigest();action_ref=growth.collection("actions").document(action_hash)
+    uid=str(user["uid"]);growth=portfolio_growth_reference(uid)
+    action_hash=hashlib.sha256(f"{uid}:{request.idempotency_key}".encode()).hexdigest()
+    action_ref=growth.collection("actions").document(action_hash)
     transaction=db.transaction();now=datetime.now(timezone.utc);lock_token=python_secrets.token_hex(16)
+
     @firestore.transactional
     def reserve(txn):
         existing=action_ref.get(transaction=txn)
         if existing.exists:return (existing.to_dict() or {}).get("status","UNKNOWN")
-        quote=quote_ref.get(transaction=txn);quote_data=quote.to_dict() or {}
-        if not quote.exists or quote_data.get("uid")!=uid:raise HTTPException(409,"De persoonlijke sluitpreview bestaat niet")
-        expires_at=quote_data.get("expiresAt")
-        if isinstance(expires_at,datetime) and expires_at.tzinfo is None:
-            expires_at=expires_at.replace(tzinfo=timezone.utc)
-        if not isinstance(expires_at,datetime) or expires_at<=now:
-            raise HTTPException(409,"De sluitpreview is verlopen; vernieuw eerst de actuele berekening")
-        preview=quote_data.get("payload") if isinstance(quote_data.get("payload"),dict) else {}
-        if not preview.get("closeEnabled") or not preview.get("reliable"):
-            raise HTTPException(409,"De bewaarde sluitpreview is niet aantoonbaar positief en betrouwbaar")
-        lock=(growth.get(transaction=txn).to_dict() or {}).get("closeLock")
-        if isinstance(lock,dict) and lock.get("active"):raise HTTPException(409,"Voor dit account loopt al een sluitactie")
-        txn.set(action_ref,{"uid":uid,"status":"RESERVED","quoteId":request.quote_id,"preview":preview,"createdAt":now})
-        txn.set(growth,{"closeLock":{"active":True,"token":lock_token,"actionId":action_hash,"until":now+timedelta(hours=24)}},merge=True)
-        pause={"enabled":False,"monitor":True,"closeAllPause":True,"phase":"CLOSING_ALL","lastReason":"Persoonlijk Alles sluiten actief","updatedAt":now}
+        current=growth.get(transaction=txn).to_dict() or {};lock=current.get("closeLock")
+        if isinstance(lock,dict) and lock.get("active"):
+            raise HTTPException(409,"Voor dit account loopt al een sluitactie")
+        txn.set(action_ref,{"uid":uid,"status":"RESERVED","quoteId":request.quote_id or "",
+            "emergency":True,"createdAt":now})
+        txn.set(growth,{"closeLock":{"active":True,"token":lock_token,"actionId":action_hash,
+            "until":now+timedelta(hours=24)},"updatedAt":now},merge=True)
+        pause={"enabled":False,"monitor":False,"closeAllPause":True,"phase":"CLOSING_ALL",
+            "lastReason":"Persoonlijke accountbrede noodstop actief","updatedAt":now}
         txn.set(aster_strategy2_reference(uid),pause,merge=True)
+        txn.set(aster_sniper_reference(uid),{"enabled":False,"monitor":False,"phase":"EMERGENCY_STOP",
+            "lastReason":"Accountbrede Close All-noodstop actief","updatedAt":now},merge=True)
         return "RESERVED"
+
     status=reserve(transaction)
-    if status!="RESERVED":return {"actionId":action_hash,"status":status,"duplicate":True}
+    if status!="RESERVED":
+        return {"actionId":action_hash,"status":status,"duplicate":True}
+
+    account_token=None
+    for _ in range(20):
+        account_token=_acquire_aster_account_coordination(uid,"EMERGENCY","CLOSE_ALL")
+        if account_token:break
+        time.sleep(.10)
+    if not account_token:
+        action_ref.set({"status":"FAILED_BEFORE_CLOSE","submitted":0,
+            "reason":"Account execution bleef bezet tijdens noodstop","updatedAt":datetime.now(timezone.utc)},merge=True)
+        raise HTTPException(409,"NOODSTOP wacht op een lopende strategieactie; bots staan al UIT. Probeer Alles sluiten opnieuw.")
     client=_portfolio_growth_client(user,live=True);submitted=[]
-    dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
-    manual_guard = None
+    dynamic_hedge_ref=user_reference(user).collection("asterDynamicHedge").document("control")
+    manual_guard=None
     try:
-        manual_guard = begin_manual_action(dynamic_hedge_ref, "ALL", client.position_risk())
-    except Exception as exc:
-        raise HTTPException(502, "Dynamic Hedge kon vóór Alles sluiten niet veilig worden vergrendeld") from exc
-    try:
-        open_orders=client.open_orders();unknown=[row for row in open_orders if is_exposure_order(row) is None]
-        if unknown:raise RuntimeError("Open order(s) kunnen niet veilig als instap of bescherming worden geclassificeerd")
-        for order in [row for row in open_orders if is_exposure_order(row) is True]:
-            client.cancel_order(str(order.get("symbol","")),order_id=order.get("orderId"),client_order_id=order.get("clientOrderId"))
-        preview=_portfolio_growth_estimate(user,persist_quote=False)
-        if not preview.get("reliable") or not preview.get("closeEnabled") or safe_float(preview.get("difference"))<=0:
-            raise RuntimeError("De opnieuw berekende netto sluitwaarde is niet meer betrouwbaar positief")
+        try:
+            manual_guard=begin_manual_action(dynamic_hedge_ref, "ALL", client.position_risk())
+        except Exception as exc:
+            action_ref.set({"status":"FAILED_BEFORE_CLOSE","submitted":0,
+                "reason":f"Dynamic Hedge lock: {str(exc)[:400]}","updatedAt":datetime.now(timezone.utc)},merge=True)
+            raise RuntimeError("Dynamic Hedge kon vóór Alles sluiten niet veilig worden vergrendeld") from exc
+
+        # Emergency semantics: cancel every open Aster order account-wide first.
+        # There is deliberately no strategy/profit/owner filter here.
+        for order in client.open_orders():
+            symbol=str(order.get("symbol","")).upper()
+            if not symbol:raise RuntimeError("Open order zonder betrouwbaar symbool")
+            client.cancel_order(symbol,order_id=order.get("orderId"),
+                client_order_id=str(order.get("clientOrderId","") or "") or None)
+
         positions=[x for x in client.position_risk() if abs(safe_float(x.get("positionAmt")))>0]
         for index,row in enumerate(positions,1):
-            symbol=str(row.get("symbol","")).upper();qty=abs(Decimal(str(row.get("positionAmt"))));mark=safe_float(row.get("markPrice"))
-            if not symbol or qty<=0 or mark<=0:raise RuntimeError("Positie bevat geen betrouwbare sluitgegevens")
-            plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(mark)),max(1,int(safe_float(row.get("leverage")) or 1)))
-            result=execute_aster_leg(client,plan,side=PositionSide(str(row.get("positionSide","")).upper()),action="CLOSE",
+            symbol=str(row.get("symbol","")).upper();side=str(row.get("positionSide","")).upper()
+            qty=abs(Decimal(str(row.get("positionAmt"))));mark=safe_float(row.get("markPrice"))
+            if not symbol or side not in {"LONG","SHORT"} or qty<=0 or mark<=0:
+                raise RuntimeError("Positie bevat geen betrouwbare noodsluitgegevens")
+            plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(mark)),
+                max(1,int(safe_float(row.get("leverage")) or 1)))
+            result=execute_aster_leg(client,plan,side=PositionSide(side),action="CLOSE",
                 id_prefix=f"tm-ca-{action_hash[:14]}-{index}",confirm=True,manual_loss_confirmation=True)
             submitted.append(result)
-        remaining=[x for x in client.position_risk() if abs(safe_float(x.get("positionAmt")))>0]
+
+        # Reconcile repeatedly; never report success from one stale snapshot.
+        remaining=[];remaining_orders=[]
+        for _ in range(8):
+            remaining=[x for x in client.position_risk() if abs(safe_float(x.get("positionAmt")))>0]
+            remaining_orders=client.open_orders()
+            if not remaining and not remaining_orders:break
+            time.sleep(.35)
         if remaining:
             detail=", ".join(f"{str(x.get('symbol','?'))}:{str(x.get('positionSide','?'))}:{abs(safe_float(x.get('positionAmt'))):g}" for x in remaining[:20])
-            raise RuntimeError(f"Aster bevestigt nog {len(remaining)} open positie(s) [{detail}]; geen nieuwe basis opgeslagen")
-        for order in client.open_orders():
-            client.cancel_order(str(order.get("symbol","")),order_id=order.get("orderId"),client_order_id=order.get("clientOrderId"))
-        remaining_orders=client.open_orders()
+            raise RuntimeError(f"Aster bevestigt nog {len(remaining)} open positie(s) [{detail}]")
         if remaining_orders:
             detail=", ".join(f"{str(x.get('symbol','?'))}:{str(x.get('orderId',x.get('clientOrderId','?')))}" for x in remaining_orders[:20])
-            raise RuntimeError(f"Aster bevestigt nog {len(remaining_orders)} open order(s) [{detail}]; geen nieuwe basis opgeslagen")
-        final_account=client.account_information();final_equity=aster_account_information_values(final_account)[0]
-        if final_equity<=0:raise RuntimeError("De werkelijk gerealiseerde eindwaarde is niet betrouwbaar bevestigd")
-        finish=db.transaction();finished_at=datetime.now(timezone.utc)
+            raise RuntimeError(f"Aster bevestigt nog {len(remaining_orders)} open order(s) [{detail}]")
+
+        final_account=client.account_information()
+        final_equity=aster_account_information_values(final_account)[0]
+        finish=db.transaction();finished_at=datetime.now(timezone.utc);completed={}
         @firestore.transactional
         def complete(txn):
-            current=growth.get(transaction=txn).to_dict() or {};old=safe_float(current.get("baseline"));lock=current.get("closeLock") or {}
+            current=growth.get(transaction=txn).to_dict() or {};old=safe_float(current.get("baseline"))
+            lock=current.get("closeLock") or {}
             if lock.get("token")!=lock_token:raise RuntimeError("Accountlock is tijdens afronding gewijzigd")
-            txn.set(growth,{"baseline":final_equity,"baselineSetAt":finished_at,"baselineSource":"CONFIRMED_CLOSE_ALL",
-                "updatedAt":finished_at,"closeLock":{"active":False,"token":"","actionId":action_hash,"releasedAt":finished_at}},merge=True)
+            growth_update={"updatedAt":finished_at,
+                "closeLock":{"active":False,"token":"","actionId":action_hash,"releasedAt":finished_at}}
+            new_baseline=None
+            # Preserve legacy Portfolio Growth behavior only when the owner had
+            # already configured a baseline; emergency Close All never creates one.
+            if old>0 and final_equity>0:
+                new_baseline=final_equity
+                growth_update.update({"baseline":final_equity,"baselineSetAt":finished_at,
+                    "baselineSource":"CONFIRMED_CLOSE_ALL"})
+            txn.set(growth,growth_update,merge=True)
             actual_fees=sum(abs(safe_float(((item.get("result") or {}) if isinstance(item,dict) else {}).get("commission"))) for item in submitted)
-            audit={"event":"CLOSE_ALL_CONFIRMED_FLAT","uid":uid,"actionId":action_hash,"oldBaseline":old,"newBaseline":final_equity,
-                "estimatedDifference":safe_float(preview.get("difference")),"expectedFees":safe_float(preview.get("expectedFees")),
-                "confirmedReportedFees":actual_fees,"slippageBuffer":safe_float(preview.get("slippageBuffer")),
-                "ordersSubmitted":len(submitted),"timestamp":finished_at}
-            txn.set(growth.collection("audit").document(),audit);txn.set(action_ref,{"status":"COMPLETED","result":audit,"completedAt":finished_at},merge=True)
+            audit={"event":"CLOSE_ALL_CONFIRMED_FLAT","uid":uid,"actionId":action_hash,
+                "oldBaseline":old if old>0 else None,"newBaseline":new_baseline,
+                "confirmedReportedFees":actual_fees,"ordersSubmitted":len(submitted),
+                "emergency":True,"timestamp":finished_at}
+            txn.set(growth.collection("audit").document(),audit)
+            txn.set(action_ref,{"status":"COMPLETED","result":audit,"completedAt":finished_at},merge=True)
+            completed.update(audit)
+
         complete(finish)
         complete_manual_action(dynamic_hedge_ref, manual_guard, remaining)
-        return {"actionId":action_hash,"status":"COMPLETED","closedPositions":len(submitted),"newBaseline":final_equity,
-            "botPaused":True,"message":"Alle posities en orders zijn exchange-bevestigd weg; het account blijft bewust gepauzeerd."}
+        _release_all_aster_symbol_claims(uid)
+        return {"actionId":action_hash,"status":"COMPLETED","closedPositions":len(submitted),
+            "newBaseline":completed.get("newBaseline"),"botPaused":True,"asterEnabled":False,
+            "sniperEnabled":False,"openPositions":0,
+            "message":"NOODSTOP UITGEVOERD · Aster UIT · Sniper UIT · open posities 0."}
     except Exception as exc:
         fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
-        action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE","submitted":len(submitted),
-            "reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
-        raise HTTPException(409,f"Alles sluiten is fail-closed gestopt; account blijft gepauzeerd: {str(exc)[:300]}") from exc
+        action_ref.set({"status":"PARTIAL_FAIL_CLOSED" if submitted else "FAILED_BEFORE_CLOSE",
+            "submitted":len(submitted),"reason":str(exc)[:500],"updatedAt":datetime.now(timezone.utc)},merge=True)
+        raise HTTPException(409,
+            f"NOODSTOP ONVOLLEDIG; account blijft geblokkeerd en bots blijven UIT: {str(exc)[:300]}") from exc
+    finally:
+        _release_aster_account_coordination(uid,str(account_token))
 
 
 @app.get("/v1/me/aster/positions/profitable-close-preview")
@@ -5105,7 +5342,10 @@ def preview_profitable_aster_positions(
     """Return a fresh, UID-scoped Aster preview; this endpoint never trades."""
     client = _portfolio_growth_client(user, live=False)
     try:
-        preview = profit_preview_with_settings(client.position_risk(), load_hedge_settings(user, user_reference))
+        owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
+        rows=[row for row in client.position_risk()
+            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
+        preview = profit_preview_with_settings(rows, load_hedge_settings(user, user_reference))
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
     return {**preview, "generatedAt": datetime.now(timezone.utc).isoformat(), "reliable": True}
@@ -5160,7 +5400,9 @@ def close_profitable_aster_positions(
     failed: list[dict[str, Any]] = []
     try:
         client = _portfolio_growth_client(user, live=True)
-        initial = profitable_positions(client.position_risk())
+        owned_keys=_aster_strategy2_owned_keys(uid)
+        initial = profitable_positions([row for row in client.position_risk()
+            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys])
         if scope != "ALL":
             initial = [candidate for candidate in initial if candidate["side"] == scope]
         for index, candidate in enumerate(initial, 1):
@@ -6382,10 +6624,11 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
 _aster_realtime_worker: AsterRealtimeWorker | None = None
 _aster_realtime_thread: threading.Thread | None = None
 _aster_realtime_simple_uids: set[str] = set()
+_aster_realtime_sniper_pairs: set[tuple[str,str]] = set()
 
 def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
-    global _aster_realtime_simple_uids
-    mapping:dict[str,set[str]]={};simple_uids:set[str]=set()
+    global _aster_realtime_simple_uids,_aster_realtime_sniper_pairs
+    mapping:dict[str,set[str]]={};simple_uids:set[str]=set();sniper_pairs:set[tuple[str,str]]=set()
     controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
     for item in controls[:100]:
         raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()
@@ -6410,20 +6653,40 @@ def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
         for row in raw.get("pendingReopens",[]) if isinstance(raw.get("pendingReopens"),list) else []:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
         for symbol in symbols:mapping.setdefault(symbol,set()).add(uid)
+    sniper_controls=list(db.collection("asterSniper").where("monitor","==",True).stream())
+    for item in sniper_controls[:100]:
+        raw=item.to_dict() or {};uid=item.id
+        for trade in raw.get("activeTrades",[]) if isinstance(raw.get("activeTrades"),list) else []:
+            if not isinstance(trade,dict):continue
+            symbol=normalize_symbol(trade.get("symbol"))
+            if not symbol:continue
+            mapping.setdefault(symbol,set()).add(uid);sniper_pairs.add((uid,symbol))
     _aster_realtime_simple_uids=simple_uids
+    _aster_realtime_sniper_pairs=sniper_pairs
     return mapping
 
 def _aster_realtime_force_evaluate(uid:str,symbol:str)->bool:
     return uid in _aster_realtime_simple_uids
 
 def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,Any]:
-    ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
-    if not token:return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}
     started=time.monotonic()
+    if (uid,event.symbol.upper()) in _aster_realtime_sniper_pairs:
+        result=_run_aster_sniper_tick(uid,management_only=True,event_symbol=event.symbol)
+        return {**result,"realtime":True,"strategyOwner":"SNIPER","marketEventAtMs":event.event_time_ms,
+            "marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
+    account_token=_acquire_aster_account_coordination(uid,"ASTER","REALTIME_MANAGEMENT")
+    if not account_token:return {"status":"account-busy","ordersSent":0,"symbol":event.symbol}
+    ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
+    if not token:
+        _release_aster_account_coordination(uid,str(account_token))
+        return {"status":"lease-busy","ordersSent":0,"symbol":event.symbol}
     try:
         result=_run_aster_strategy2_queue_scan(uid,maximum_orders=2,management_only=True,event_symbol=event.symbol,event_mark_price=event.mark_price)
-        return {**result,"realtime":True,"marketEventAtMs":event.event_time_ms,"marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
-    finally:_release_strategy2_queue_lease(ref,str(token))
+        return {**result,"realtime":True,"strategyOwner":"ASTER","marketEventAtMs":event.event_time_ms,
+            "marketReceivedAtMs":event.received_at_ms,"reactionMs":round((time.monotonic()-started)*1000,2)}
+    finally:
+        _release_strategy2_queue_lease(ref,str(token))
+        _release_aster_account_coordination(uid,str(account_token))
 
 def _persist_aster_realtime_health(payload:dict[str,Any])->None:
     db.collection("systemStatus").document("asterRealtime").set({**payload,"updatedAt":datetime.now(timezone.utc)},merge=True)
@@ -6503,6 +6766,374 @@ def run_mexc_automation_internal_simulation(uid: str, authorization: str | None 
     return _run_mexc_automation_tick(uid, dry_run=True, ignore_monitor=True)
 
 
+def _sniper_client(uid:str, *, live:bool)->AsterV3Client:
+    secret=load_aster_secret({"uid":uid})
+    return AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),
+        live_authorized=live,before_order_submit=_block_sniper_order_during_conflict(uid))
+
+
+def _sniper_confirmed_close_evidence(client:Any,trade:dict[str,Any],*,symbol:str,side:str,
+        close_order_id:str="",close_client_order_id:str="")->dict[str,Any]:
+    """Read exact Aster fills/costs for one already-confirmed Sniper close."""
+    opened_at=max(0,int(safe_float(trade.get("openedAtMs"))))
+    fills=paged_user_trades(client,symbol,start_time=max(0,opened_at-60_000) if opened_at else None)
+    wanted_order=str(close_order_id or "").strip();wanted_client=str(close_client_order_id or "").strip()
+    closing_side="SELL" if side=="LONG" else "BUY"
+    matches=[]
+    for row in fills:
+        if str(row.get("symbol","")).upper()!=symbol or str(row.get("positionSide","")).upper()!=side:continue
+        if str(row.get("side","")).upper()!=closing_side:continue
+        order_id=str(row.get("orderId",row.get("orderID",""))).strip()
+        client_id=str(row.get("clientOrderId",row.get("clientOrderID",""))).strip()
+        if wanted_order and order_id==wanted_order:matches.append(row)
+        elif wanted_client and client_id==wanted_client:matches.append(row)
+    if not matches:
+        raise ValueError(f"{symbol} {side}: geen exchange-bevestigde Sniper sluitfill gevonden")
+    close_qty=sum(abs(safe_float(row.get("qty",row.get("quantity")))) for row in matches)
+    if close_qty<=0:raise ValueError(f"{symbol} {side}: sluitfills hebben geen bevestigde hoeveelheid")
+    fee_assets={str(row.get("commissionAsset","USDT")).upper().strip() or "USDT" for row in matches}
+    if any(asset not in {"USDT","USD"} for asset in fee_assets):
+        raise ValueError(f"{symbol} {side}: commissieasset is niet betrouwbaar naar USD te waarderen")
+    gross=sum(safe_float(row.get("realizedPnl",row.get("realizedProfit"))) for row in matches)
+    fees=sum(abs(safe_float(row.get("commission"))) for row in matches)
+    closed_at=max(int(safe_float(row.get("time",row.get("updateTime")))) for row in matches)
+    income=paged_income_history(client,symbol=symbol,start_time=opened_at or None)
+    funding=0.0
+    for row in income:
+        stamp=int(safe_float(row.get("time",row.get("timestamp"))))
+        if opened_at and stamp<opened_at:continue
+        if closed_at and stamp>closed_at+60_000:continue
+        if str(row.get("incomeType","")).upper()!="FUNDING_FEE":continue
+        income_side=str(row.get("positionSide","")).upper()
+        if income_side and income_side!=side:continue
+        funding+=safe_float(row.get("income"))
+    return {"realizedPnlUsd":gross,"feesUsd":fees,"fundingUsd":funding,
+        "netRealizedPnlUsd":gross+funding-fees,"costEvidenceReliable":True,
+        "closeFillQuantity":close_qty,"closeFillCount":len(matches),"closedAtMs":closed_at,
+        "feeAssets":sorted(fee_assets)}
+
+
+def _sniper_status_payload(uid:str)->dict[str,Any]:
+    raw=ensure_aster_sniper_control(uid);settings=SniperSettings.from_mapping(raw.get("settings"))
+    client=_sniper_client(uid,live=False);account=client.account_information();positions=client.position_risk()
+    equity,_,available,unrealized,maintenance=aster_account_information_values(account)
+    now_ms=int(time.time()*1000);active=[]
+    for trade in raw.get("activeTrades",[]) if isinstance(raw.get("activeTrades"),list) else []:
+        if not isinstance(trade,dict):continue
+        symbol=str(trade.get("symbol","")).upper();side=str(trade.get("side","")).upper()
+        row=next((x for x in positions if str(x.get("symbol","")).upper()==symbol and str(x.get("positionSide","")).upper()==side
+            and abs(safe_float(x.get("positionAmt")))>0),None)
+        value=dict(trade);value["elapsedSeconds"]=max(0,(now_ms-int(safe_float(trade.get("openedAtMs"))))/1000)
+        if row:
+            qty=abs(safe_float(row.get("positionAmt")));mark=safe_float(row.get("markPrice"));pnl=safe_float(row.get("unRealizedProfit",row.get("unrealizedPnl")))
+            value.update({"quantity":qty,"markPrice":mark,"notionalUsd":qty*mark,"unrealizedPnlUsd":pnl,
+                "unrealizedPnlPercent":(pnl/(qty*mark)*100 if qty*mark>0 else 0.0)})
+        active.append(value)
+    history=[]
+    try:
+        for doc in aster_sniper_reference(uid).collection("trades").order_by("closedAtMs",direction=firestore.Query.DESCENDING).limit(100).stream():
+            row=doc.to_dict() or {};history.append({**row,"id":doc.id})
+    except google_exceptions.GoogleAPICallError:pass
+    def closed_net(row:dict[str,Any])->float:
+        return safe_float(row.get("netRealizedPnlUsd")) if row.get("netRealizedPnlUsd") is not None else safe_float(row.get("realizedPnlUsd"))
+    realized=sum(closed_net(x) for x in history if x.get("costEvidenceReliable") is not False)
+    wins=sum(1 for x in history if x.get("costEvidenceReliable") is not False and closed_net(x)>0)
+    accounting_incomplete=sum(1 for x in history if x.get("costEvidenceReliable") is False)
+    return {"enabled":bool(raw.get("enabled",False)),"monitor":bool(raw.get("monitor",False)),"phase":str(raw.get("phase","STOPPED")),
+        "canaryValidated":bool(raw.get("canaryValidated",False)),
+        "canaryStatus":str((raw.get("canary") or {}).get("status","NOT_RUN")) if isinstance(raw.get("canary"),dict) else "NOT_RUN",
+        "lastReason":str(raw.get("lastReason","")),"lastTickAt":raw.get("lastTickAt"),"settings":settings.public_dict(),
+        "activeTrades":active,"signals":raw.get("signals",[]) if isinstance(raw.get("signals"),list) else [],"history":history,
+        "performance":{"realizedPnlUsd":realized,"closedTrades":len(history),"wins":wins,
+            "winRate":(wins/(len(history)-accounting_incomplete)*100 if len(history)>accounting_incomplete else None),
+            "dayRealizedPnlUsd":safe_float(raw.get("dayRealizedPnlUsd")),"accountingIncomplete":accounting_incomplete},
+        "sharedAccount":{"equity":equity,"availableBalance":available,"unrealizedPnl":unrealized,"maintenanceMargin":maintenance,
+            "marginRatio":maintenance/equity if equity>0 else None},"liveExecutionEnabled":_sniper_live_gate_enabled(),
+        "ownership":{"activeSymbols":sorted(sniper_active_symbols(raw)),"strategy2Symbols":sorted(_aster_strategy2_owned_symbols(uid)),
+            "overlap":sorted(ownership_intersection(aster_strategy2_reference(uid).get().to_dict() or {},raw))}}
+
+
+def _run_aster_sniper_tick(uid:str,*,dry_run:bool=False,management_only:bool=False,event_symbol:str="")->dict[str,Any]:
+    ref=aster_sniper_reference(uid);ensure_aster_sniper_control(uid)
+    token=_acquire_sniper_execution_lease(ref)
+    if not token:return {"status":"lease-busy","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
+    account_token=_acquire_aster_account_coordination(uid,"SNIPER","REALTIME_MANAGEMENT" if management_only else "SCANNER")
+    if not account_token:
+        _release_sniper_execution_lease(ref,str(token))
+        return {"status":"account-busy","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
+    try:
+        raw=ref.get().to_dict() or {};settings=SniperSettings.from_mapping(raw.get("settings"))
+        if dry_run:
+            raw={**raw,"enabled":True,"monitor":True}
+        if management_only and event_symbol and normalize_symbol(event_symbol) not in sniper_active_symbols(raw):
+            return {"status":"ignored","ordersSent":0,"symbol":normalize_symbol(event_symbol)}
+        if not dry_run and not bool(raw.get("monitor",False)):
+            return {"status":"stopped","ordersSent":0}
+        live=_sniper_live_gate_enabled() and not dry_run
+        client=_sniper_client(uid,live=live)
+        if dry_run:
+            def claim(symbol:str,owner:str)->bool:
+                return owner_can_claim(owner,symbol,aster_strategy2_reference(uid).get().to_dict() or {},raw)
+            def release(symbol:str)->None:
+                return None
+        else:
+            def claim(symbol:str,owner:str)->bool:return _claim_aster_symbol(uid,symbol,owner,"SNIPER_RUNTIME")
+            def release(symbol:str)->None:_release_aster_symbol_claim(uid,symbol,"SNIPER")
+        def persist_pending(value:dict[str,Any]|None)->None:
+            ref.set({"pendingIntent":value,"updatedAt":datetime.now(timezone.utc)},merge=True)
+        result=run_sniper_tick(client=client,state=raw,settings=settings,blocked_symbols=_aster_strategy2_owned_symbols(uid),
+            claim_symbol=claim,release_symbol=release,persist_pending=persist_pending,live_enabled=live,dry_run=dry_run,
+            management_only=management_only)
+        state=result.get("state") if isinstance(result.get("state"),dict) else raw;now=datetime.now(timezone.utc)
+        state={**state,"settings":settings.public_dict(),"lastTickAt":now,"updatedAt":now}
+        record=result.get("historyRecord") if isinstance(result.get("historyRecord"),dict) else None
+        if record:
+            try:
+                evidence=_sniper_confirmed_close_evidence(client,record,symbol=str(record.get("symbol","")).upper(),
+                    side=str(record.get("side","")).upper(),close_order_id=str(record.get("closeOrderId","")),
+                    close_client_order_id=str(record.get("closeClientOrderId","")))
+                record={**record,**evidence}
+            except Exception as exc:
+                record={**record,"costEvidenceReliable":False,"accountingError":str(exc)[:240]}
+                state={**state,"enabled":False,"monitor":False,"phase":"DATA_HOLD",
+                    "lastReason":"Sniper-close is flat bevestigd, maar realized PnL/fees konden niet betrouwbaar worden gereconcilieerd"}
+            ref.collection("trades").document(str(record.get("tradeId") or python_secrets.token_urlsafe(10))).set(record,merge=True)
+            today=now.date().isoformat();previous=safe_float(raw.get("dayRealizedPnlUsd")) if raw.get("dayKey")==today else 0.0
+            if bool(record.get("costEvidenceReliable")):
+                state["dayKey"]=today;state["dayRealizedPnlUsd"]=previous+safe_float(record.get("netRealizedPnlUsd"))
+        if not bool(state.get("enabled")) and not state.get("activeTrades"):
+            state["monitor"]=False
+            if str(state.get("phase","")).upper()!="DATA_HOLD":state["phase"]="STOPPED"
+        ref.set(state,merge=True)
+        return {key:value for key,value in result.items() if key not in {"state","historyRecord"}}
+    finally:
+        _release_aster_account_coordination(uid,str(account_token))
+        _release_sniper_execution_lease(ref,str(token))
+
+
+@app.get("/v1/me/aster/sniper")
+def aster_sniper_status(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    return _sniper_status_payload(str(user["uid"]))
+
+
+@app.put("/v1/me/aster/sniper/settings")
+def save_aster_sniper_settings(request:AsterSniperSettingsRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    uid=str(user["uid"])
+    ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    settings=SniperSettings.from_mapping({**current,**request.settings,"enabled":bool(raw.get("enabled",False))})
+    ref.set({"settings":settings.public_dict(),"updatedAt":datetime.now(timezone.utc)},merge=True)
+    return _sniper_status_payload(uid)
+
+
+def _run_sniper_activation_canary(uid:str,ref:Any,raw:dict[str,Any],settings:SniperSettings)->dict[str,Any]:
+    """Bounded real-money open/fill/close proof before the first Sniper activation."""
+    if bool(raw.get("canaryValidated",False)):
+        return {"status":"COMPLETED","replayed":True,"ordersSent":0}
+    client=_sniper_client(uid,live=True);now=datetime.now(timezone.utc);now_ms=int(now.timestamp()*1000)
+    if not client.position_mode():raise HTTPException(409,"Sniper-canary vereist Aster Hedge Mode")
+    account=client.account_information();equity,_,available,_,maintenance=aster_account_information_values(account)
+    if equity<=0 or available<=0 or maintenance/max(equity,1)>.50:
+        raise HTTPException(409,"Sniper-canary geblokkeerd door actuele account- of marginrisk")
+    positions=client.position_risk();orders=client.open_orders()
+    active_symbols={str(x.get("symbol","")).upper() for x in positions if abs(safe_float(x.get("positionAmt")))>0}
+    active_symbols|={str(x.get("symbol","")).upper() for x in orders if str(x.get("symbol","")).strip()}
+    active_symbols|=_aster_strategy2_owned_symbols(uid)|sniper_active_symbols(raw)
+    info=client.public_exchange_info();prices={str(x.get("symbol","")).upper():safe_float(x.get("price")) for x in client.ticker_prices()}
+    tested=set(active_symbols);plan=None;symbol="";last_error=""
+    for _ in range(25):
+        try:row=choose_flat_symbol(info,prices,tested)
+        except ValueError:break
+        symbol=str(row.get("symbol","")).upper();tested.add(symbol)
+        try:
+            candidate=plan_aster_pair(row,_aster_brackets(client.leverage_brackets(symbol),symbol),prices[symbol],6.0)
+            plan=replace(candidate,leverage=max(1,min(candidate.leverage,10)));break
+        except (ValueError,AsterApiError,AsterValidationError) as exc:
+            last_error=str(exc);continue
+    if plan is None or not symbol:
+        raise HTTPException(409,f"Geen veilig vlak contract voor Sniper-canary: {last_error[:180]}")
+    if not _claim_aster_symbol(uid,symbol,"SNIPER","SNIPER_ACTIVATION_CANARY"):
+        raise HTTPException(409,f"{symbol}: Sniper-canary symbol kon niet exclusief worden geclaimd")
+    canary_id=f"sn-canary-{now_ms}-{symbol.lower()}";prefix=f"snc-{hashlib.sha256(canary_id.encode()).hexdigest()[:14]}"
+    pending={"action":"OPEN","symbol":symbol,"side":"LONG","tradeId":canary_id,"createdAtMs":now_ms,
+        "marginUsd":float(plan.notional_per_leg)/max(1,plan.leverage),"notionalUsd":float(plan.notional_per_leg),
+        "leverage":plan.leverage,"tpPercent":settings.tp_min_percent,"checks":[],"timeframe":"canary","clientOrderId":prefix}
+    ref.set({"canary":{"status":"OPENING","tradeId":canary_id,"symbol":symbol,"startedAt":now},
+        "pendingIntent":pending,"updatedAt":now},merge=True)
+    opened=None
+    try:
+        opened=execute_aster_leg(client,plan,side=PositionSide.LONG,action="OPEN",id_prefix=prefix,confirm=True,
+            new_position_leverage=plan.leverage,fill_poll_attempts=2,fill_poll_delay_seconds=.15)
+        rr=opened.get("result",{});qty=abs(safe_float(rr.get("executedQty")));entry=safe_float(rr.get("avgPrice"))
+        if qty<=0 or entry<=0:raise RuntimeError("Sniper-canary openingsfill ontbreekt")
+        trade={**pending,"quantity":qty,"entryPrice":entry,"openedAtMs":now_ms,
+            "deadlineAtMs":now_ms+settings.max_trade_seconds*1000,"openOrderId":str(rr.get("orderId","")),
+            "openClientOrderId":str(rr.get("clientOrderId","")),"entryReason":"Sniper live activation canary","status":"OPEN"}
+        ref.set({"activeTrades":[trade],"pendingIntent":None,"monitor":True,"enabled":False,
+            "phase":"CANARY_CLOSING","updatedAt":datetime.now(timezone.utc)},merge=True)
+        live_row=next((x for x in client.position_risk(symbol) if str(x.get("positionSide","")).upper()=="LONG"
+            and abs(safe_float(x.get("positionAmt")))>0),None)
+        if not live_row:raise RuntimeError("Sniper-canary positie ontbreekt na bevestigde openingsfill")
+        mark=safe_float(live_row.get("markPrice"));close_qty=abs(Decimal(str(live_row.get("positionAmt"))))
+        close_plan=PairExecutionPlan(symbol,close_qty,close_qty*Decimal(str(mark)),
+            max(1,int(safe_float(live_row.get("leverage")) or plan.leverage)))
+        close_prefix=f"{prefix}-x";close_pending={"action":"CLOSE","symbol":symbol,"side":"LONG",
+            "tradeId":canary_id,"createdAtMs":int(time.time()*1000),"clientOrderId":close_prefix,"reason":"Activation canary close"}
+        ref.set({"pendingIntent":close_pending,"updatedAt":datetime.now(timezone.utc)},merge=True)
+        closed=execute_aster_leg(client,close_plan,side=PositionSide.LONG,action="CLOSE",id_prefix=close_prefix,
+            confirm=True,automatic_loss_exit_authorized=True,fill_poll_attempts=2,fill_poll_delay_seconds=.15)
+        if any(abs(safe_float(x.get("positionAmt")))>1e-12 for x in client.position_risk(symbol)
+            if str(x.get("positionSide","")).upper()=="LONG"):
+            raise RuntimeError("Sniper-canary close is nog niet exchange-flat")
+        cr=closed.get("result",{}) if isinstance(closed,dict) else {}
+        evidence=_sniper_confirmed_close_evidence(client,trade,symbol=symbol,side="LONG",
+            close_order_id=str(cr.get("orderId","")),close_client_order_id=str(cr.get("clientOrderId","")))
+        completed_at=datetime.now(timezone.utc)
+        proof={"status":"COMPLETED","tradeId":canary_id,"symbol":symbol,"openedOrderId":str(rr.get("orderId","")),
+            "closedOrderId":str(cr.get("orderId","")),"notionalUsd":float(plan.notional_per_leg),
+            **evidence,"completedAt":completed_at}
+        ref.collection("canaries").document(canary_id).set(proof)
+        ref.set({"canary":proof,"canaryValidated":True,"activeTrades":[],"pendingIntent":None,
+            "monitor":False,"enabled":False,"phase":"CANARY_COMPLETE",
+            "lastReason":"Sniper live canary open/fill/close volledig door Aster bevestigd","updatedAt":completed_at},merge=True)
+        _release_aster_symbol_claim(uid,symbol,"SNIPER")
+        return {**proof,"ordersSent":2,"replayed":False}
+    except Exception as exc:
+        # Never blind-retry. If an OPEN may have reached Aster, pendingIntent /
+        # activeTrades remains persisted for normal reconciliation and safe drain.
+        current=ref.get().to_dict() or {}
+        has_active=bool(current.get("activeTrades")) or bool(current.get("pendingIntent"))
+        if not has_active:_release_aster_symbol_claim(uid,symbol,"SNIPER")
+        ref.set({"canary":{"status":"FAILED_OR_UNCERTAIN","tradeId":canary_id,"symbol":symbol,
+            "reason":str(exc)[:300],"updatedAt":datetime.now(timezone.utc)},"canaryValidated":False,
+            "enabled":False,"monitor":has_active,"phase":"CANARY_DRAINING" if has_active else "CANARY_FAILED",
+            "lastReason":f"Sniper-canary niet volledig bevestigd: {str(exc)[:240]}","updatedAt":datetime.now(timezone.utc)},merge=True)
+        raise HTTPException(409,f"Sniper live canary niet volledig afgerond; geen retry verzonden: {str(exc)[:240]}") from exc
+
+
+@app.post("/v1/me/aster/sniper/start")
+def start_aster_sniper(request:AsterSniperStartRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    if not request.confirm:raise HTTPException(422,"Bevestig Sniper live trading expliciet")
+    if not _sniper_live_gate_enabled():raise HTTPException(423,"Sniper live execution staat centraal uit")
+    uid=str(user["uid"])
+    if _aster_close_all_active(uid):raise HTTPException(409,"Accountbrede noodstop is actief; Sniper kan niet worden gestart")
+    ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);current=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    settings=SniperSettings.from_mapping({**current,**request.settings,"enabled":True})
+    overlap=ownership_intersection(aster_strategy2_reference(uid).get().to_dict() or {},raw)
+    if overlap:raise HTTPException(409,f"Strategy ownership overlapt op: {', '.join(sorted(overlap))}")
+    token=_acquire_sniper_execution_lease(ref)
+    if not token:raise HTTPException(409,"Sniper verwerkt momenteel een andere actie")
+    account_token=_acquire_aster_account_coordination(uid,"SNIPER","ACTIVATION_CANARY")
+    if not account_token:
+        _release_sniper_execution_lease(ref,str(token))
+        raise HTTPException(409,"Aster-account verwerkt momenteel een andere strategieactie")
+    try:
+        fresh=ref.get().to_dict() or {}
+        canary=_run_sniper_activation_canary(uid,ref,fresh,settings)
+        now=datetime.now(timezone.utc)
+        ref.set({"settings":settings.public_dict(),"enabled":True,"monitor":True,"phase":"SCANNING",
+            "lastReason":"Sniper live scanner gestart na bevestigde activation canary",
+            "lastActivationCanary":canary,"updatedAt":now},merge=True)
+    finally:
+        _release_aster_account_coordination(uid,str(account_token))
+        _release_sniper_execution_lease(ref,str(token))
+    return _sniper_status_payload(uid)
+
+
+@app.post("/v1/me/aster/sniper/stop")
+def stop_aster_sniper(request:AsterSniperStopRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    if not request.confirm:raise HTTPException(422,"Bevestig Sniper stoppen expliciet")
+    uid=str(user["uid"]);ref=aster_sniper_reference(uid);raw=ensure_aster_sniper_control(uid);active=raw.get("activeTrades",[]) if isinstance(raw.get("activeTrades"),list) else []
+    ref.set({"enabled":False,"monitor":bool(active),"phase":"DRAINING" if active else "STOPPED",
+        "lastReason":"Nieuwe Sniper-entries gestopt; bestaande trades worden veilig afgebouwd" if active else "Sniper gestopt",
+        "updatedAt":datetime.now(timezone.utc)},merge=True)
+    return _sniper_status_payload(uid)
+
+
+@app.post("/v1/me/aster/sniper/simulate")
+def simulate_aster_sniper(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    uid=str(user["uid"]);raw=ensure_aster_sniper_control(uid);aster_sniper_reference(uid).set({"monitor":True},merge=True)
+    try:return _run_aster_sniper_tick(uid,dry_run=True)
+    finally:aster_sniper_reference(uid).set({"monitor":bool(raw.get("monitor",False))},merge=True)
+
+
+@app.post("/v1/me/aster/sniper/backtest")
+def backtest_aster_sniper(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    uid=str(user["uid"]);settings=SniperSettings.from_mapping(ensure_aster_sniper_control(uid).get("settings"));client=_sniper_client(uid,live=False)
+    tickers=[x for x in client.ticker_24h() if isinstance(x,dict) and str(x.get("symbol","")).upper().endswith("USDT")]
+    tickers.sort(key=lambda x:safe_float(x.get("quoteVolume")),reverse=True);results=[]
+    for row in tickers[:10]:
+        symbol=str(row.get("symbol","")).upper()
+        try:results.append({"symbol":symbol,**backtest_candles(client.klines(symbol,"1m",500),settings)})
+        except Exception as exc:results.append({"symbol":symbol,"reliable":False,"error":str(exc)[:160]})
+    return {"readOnly":True,"ordersSent":0,"symbols":results,"settings":settings.public_dict(),"generatedAt":datetime.now(timezone.utc)}
+
+
+@app.post("/v1/me/aster/sniper/trades/close")
+def close_aster_sniper_trade(request:AsterSniperCloseRequest,user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    if not request.confirm:raise HTTPException(422,"Bevestig de Sniper-trade close expliciet")
+    uid=str(user["uid"])
+    if _aster_close_all_active(uid):raise HTTPException(409,"Accountbrede noodstop beheert momenteel alle posities")
+    ref=aster_sniper_reference(uid);ensure_aster_sniper_control(uid)
+    token=_acquire_sniper_execution_lease(ref)
+    if not token:raise HTTPException(409,"Sniper verwerkt momenteel een andere order; probeer het zo opnieuw")
+    account_token=_acquire_aster_account_coordination(uid,"SNIPER","MANUAL_CLOSE")
+    if not account_token:
+        _release_sniper_execution_lease(ref,str(token))
+        raise HTTPException(409,"Aster-account verwerkt momenteel een andere strategieactie")
+    try:
+        raw=ref.get().to_dict() or {}
+        trades=[dict(x) for x in raw.get("activeTrades",[]) if isinstance(x,dict)]
+        trade=next((x for x in trades if str(x.get("tradeId"))==request.trade_id),None)
+        if not trade:raise HTTPException(404,"Sniper-trade bestaat niet of is al gesloten")
+        symbol=str(trade.get("symbol","")).upper();side=str(trade.get("side","")).upper()
+        if symbol not in sniper_active_symbols(raw):raise HTTPException(409,"Sniper ownership is niet bewezen")
+        client=_sniper_client(uid,live=True)
+        row=next((x for x in client.position_risk(symbol) if str(x.get("symbol","")).upper()==symbol
+            and str(x.get("positionSide","")).upper()==side and abs(safe_float(x.get("positionAmt")))>0),None)
+        if not row:raise HTTPException(409,"Exchange bevestigt geen open Sniper-positie")
+        qty=abs(Decimal(str(row.get("positionAmt"))));mark=safe_float(row.get("markPrice"))
+        plan=PairExecutionPlan(symbol,qty,qty*Decimal(str(mark)),max(1,int(safe_float(row.get("leverage")) or 1)))
+        prefix=f"snm-{hashlib.sha256((uid+request.trade_id).encode()).hexdigest()[:14]}"
+        pending={"action":"CLOSE","symbol":symbol,"side":side,"tradeId":request.trade_id,
+            "createdAtMs":int(time.time()*1000),"clientOrderId":prefix,"reason":"Handmatige Sniper-close"}
+        ref.set({"pendingIntent":pending,"updatedAt":datetime.now(timezone.utc)},merge=True)
+        result=execute_aster_leg(client,plan,side=PositionSide(side),action="CLOSE",id_prefix=prefix,confirm=True,
+            automatic_loss_exit_authorized=True,fill_poll_attempts=2,fill_poll_delay_seconds=.15)
+        if any(abs(safe_float(x.get("positionAmt")))>1e-12 for x in client.position_risk(symbol)
+            if str(x.get("positionSide","")).upper()==side):
+            raise HTTPException(409,"Aster heeft de Sniper-close nog niet volledig bevestigd")
+        rr=result.get("result",{}) if isinstance(result,dict) else {};now=datetime.now(timezone.utc)
+        now_ms=int(now.timestamp()*1000);trades.remove(trade)
+        record={**trade,"closedAtMs":now_ms,"exitReason":"Handmatige Sniper-close","exitAction":"MANUAL_CLOSE",
+            "closeClientOrderId":str(rr.get("clientOrderId","")),"closeOrderId":str(rr.get("orderId","")),"status":"CLOSED"}
+        accounting_error=""
+        try:
+            record={**record,**_sniper_confirmed_close_evidence(client,record,symbol=symbol,side=side,
+                close_order_id=str(rr.get("orderId","")),close_client_order_id=str(rr.get("clientOrderId","")))}
+        except Exception as exc:
+            accounting_error=str(exc)[:240]
+            record={**record,"costEvidenceReliable":False,"accountingError":accounting_error}
+        ref.collection("trades").document(request.trade_id).set(record,merge=True)
+        update={"activeTrades":trades,"pendingIntent":None,"updatedAt":now}
+        today=now.date().isoformat()
+        if bool(record.get("costEvidenceReliable")):
+            previous=safe_float(raw.get("dayRealizedPnlUsd")) if raw.get("dayKey")==today else 0.0
+            update.update({"dayKey":today,"dayRealizedPnlUsd":previous+safe_float(record.get("netRealizedPnlUsd"))})
+        else:
+            update.update({"enabled":False,"monitor":False,"phase":"DATA_HOLD",
+                "lastReason":"Handmatige Sniper-close is flat, maar realized PnL/fees zijn nog niet betrouwbaar gereconcilieerd"})
+        ref.set(update,merge=True)
+        _release_aster_symbol_claim(uid,symbol,"SNIPER")
+        return {"closed":True,"tradeId":request.trade_id,"symbol":symbol,"side":side,"order":result,
+            "accountingReliable":bool(record.get("costEvidenceReliable")),
+            "realizedPnlUsd":record.get("realizedPnlUsd"),"feesUsd":record.get("feesUsd"),
+            "fundingUsd":record.get("fundingUsd"),"netRealizedPnlUsd":record.get("netRealizedPnlUsd"),
+            "accountingError":accounting_error}
+    finally:
+        _release_aster_account_coordination(uid,str(account_token))
+        _release_sniper_execution_lease(ref,str(token))
+
+
 @app.post("/internal/aster-automation/tick")
 def run_aster_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     verify_internal_cloud_request(authorization)
@@ -6514,6 +7145,8 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
 
     def run_strategy2_account(uid:str)->dict[str,Any]:
         reference=aster_strategy2_reference(uid)
+        account_token=_acquire_aster_account_coordination(uid,"ASTER","SCHEDULER")
+        if not account_token:return {"uid":uid,"status":"account-busy"}
         raw=reference.get().to_dict() or {};queue_enabled=_strategy2_order_queue_enabled(raw)
         queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
         has_unresolved_intent=bool(queue_state.get("currentIntent")) or bool(queue_state.get("haltedUncertain",False))
@@ -6521,8 +7154,12 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
         queue_recovery_required=has_unresolved_intent or has_pending_reopen
         uses_queue_lease=queue_enabled or queue_recovery_required
         queue_token=_acquire_strategy2_queue_lease(reference) if uses_queue_lease else None
-        if uses_queue_lease and not queue_token:return {"uid":uid,"status":"lease-busy"}
-        if not uses_queue_lease and not _acquire_mexc_automation_lease(reference):return {"uid":uid,"status":"lease-busy"}
+        if uses_queue_lease and not queue_token:
+            _release_aster_account_coordination(uid,str(account_token))
+            return {"uid":uid,"status":"lease-busy"}
+        if not uses_queue_lease and not _acquire_mexc_automation_lease(reference):
+            _release_aster_account_coordination(uid,str(account_token))
+            return {"uid":uid,"status":"lease-busy"}
         try:
             result=(_run_aster_strategy2_queue_scan(uid,
                 reconcile_only=not queue_enabled and has_unresolved_intent,
@@ -6536,6 +7173,7 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
         finally:
             if uses_queue_lease:_release_strategy2_queue_lease(reference,str(queue_token))
             else:reference.set({"leaseUntil":datetime.now(timezone.utc)},merge=True)
+            _release_aster_account_coordination(uid,str(account_token))
 
     strategy2_uids=[item.id for item in strategy2_controls[:100]]
     if strategy2_uids:
@@ -6543,9 +7181,19 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
         with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="s2-scheduler") as pool:
             futures=[pool.submit(run_strategy2_account,uid) for uid in strategy2_uids]
             for future in as_completed(futures):strategy2_results.append(future.result())
-    # Strategy 1 and Strategy 3 are retired app-wide. Production Aster
-    # scheduling is Strategy-2-only.
-    return {"processed":len(strategy2_results),"strategy2":strategy2_results,"strategy2Only":True}
+    sniper_results=[]
+    sniper_controls=list(db.collection("asterSniper").where("monitor","==",True).stream())
+    for item in sniper_controls[:50]:
+        try:
+            sniper_results.append({"uid":item.id,**_run_aster_sniper_tick(item.id)})
+        except Exception as exc:
+            aster_sniper_reference(item.id).set({"phase":"DATA_HOLD","lastReason":f"Veilige Sniper-schedulerfout: {str(exc)[:300]}",
+                "lastTickAt":datetime.now(timezone.utc)},merge=True)
+            sniper_results.append({"uid":item.id,"status":"data-hold","reason":str(exc)[:300]})
+    # Strategy 1 and Strategy 3 remain retired. Strategy 2 and SNIPER are the
+    # only live Aster engines scheduled here, with independent state/ownership.
+    return {"processed":len(strategy2_results)+len(sniper_results),"strategy2":strategy2_results,"sniper":sniper_results,
+        "strategy2Only":False,"sniperEnabled":True}
 
 
 @app.post("/internal/aster-strategy2/{uid}/simulate")
