@@ -4,12 +4,14 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("Home is the first mobile tab without removing Markets, News or existing tabs", async () => {
+test("Home is first and Sniper is inserted without removing Markets, News or existing tabs", async () => {
   const [home, markets, news, page] = await Promise.all([
     read("components/home-navigation-bridge.tsx"), read("components/markets-navigation-bridge.tsx"),
     read("components/news-navigation-bridge.tsx"), read("app/page.tsx"),
   ]);
-  assert.match(home, /insertBefore\(button, first \|\| null\)/);
+  assert.ok(home.includes("nav.insertBefore(home, first || null)"));
+  assert.ok(home.includes("nav.insertBefore(home, first || null)"));
+  assert.match(home, /data-destination="aster"/);
   assert.match(markets, /NAV_DESTINATIONS = \["home", \.\.\.MOBILE_DESTINATIONS\]/);
   assert.match(news, /NAV_DESTINATIONS = \["home", \.\.\.MOBILE_DESTINATIONS\]/);
   assert.match(page, /<HomeNavigationBridge \/><TradeMentorHome \/>/);
