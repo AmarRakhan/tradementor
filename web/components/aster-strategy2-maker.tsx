@@ -226,12 +226,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   };
   const commitTotal = () => { const raw = String(totalDraft ?? v.positions).trim(); setTotalDraft(null); if (raw) setTotal(raw); };
   const setLong = (raw: string) => {
-    const slots = applyLongSlots(v.positions, raw);
+    const slots = applyLongSlots(v.shortSlots, raw);
     change({ ...v, positions: String(slots.total), longSlots: String(slots.long), shortSlots: String(slots.short) });
   };
   const commitLong = () => { const raw = String(longDraft ?? v.longSlots).trim(); setLongDraft(null); if (raw) setLong(raw); };
   const setShort = (raw: string) => {
-    const slots = applyShortSlots(v.positions, raw);
+    const slots = applyShortSlots(v.longSlots, raw);
     change({ ...v, positions: String(slots.total), longSlots: String(slots.long), shortSlots: String(slots.short) });
   };
   const commitShort = () => { const raw = String(shortDraft ?? v.shortSlots).trim(); setShortDraft(null); if (raw) setShort(raw); };

@@ -15,14 +15,14 @@ export function splitTotalPositions(value: unknown): PositionSlotState {
   return { total, long, short: total - long };
 }
 
-export function applyLongSlots(totalValue: unknown, longValue: unknown): PositionSlotState {
-  const total = clampInteger(totalValue, 1, MAX_TOTAL_POSITIONS);
-  const long = clampInteger(longValue, 0, Math.min(total, MAX_SIDE_SLOTS));
-  return { total, long, short: total - long };
+export function applyLongSlots(shortValue: unknown, longValue: unknown): PositionSlotState {
+  const short = clampInteger(shortValue, 0, MAX_SIDE_SLOTS);
+  const long = clampInteger(longValue, 0, Math.min(MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS - short));
+  return { total: long + short, long, short };
 }
 
-export function applyShortSlots(totalValue: unknown, shortValue: unknown): PositionSlotState {
-  const total = clampInteger(totalValue, 1, MAX_TOTAL_POSITIONS);
-  const short = clampInteger(shortValue, 0, Math.min(total, MAX_SIDE_SLOTS));
-  return { total, long: total - short, short };
+export function applyShortSlots(longValue: unknown, shortValue: unknown): PositionSlotState {
+  const long = clampInteger(longValue, 0, MAX_SIDE_SLOTS);
+  const short = clampInteger(shortValue, 0, Math.min(MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS - long));
+  return { total: long + short, long, short };
 }

@@ -52,3 +52,8 @@ test("Portfolio mode adds a portfolio exit while OFF alone disables individual T
   assert.match(maker, /disabled=\{v\.tpMode === "OFF"\}/);
   assert.match(maker, /Automatische TP uit\. DCA en overige strategie blijven actief/);
 });
+
+test("changing one side keeps the other side untouched and lets total follow the sum", () => {
+  assert.match(maker, /applyLongSlots\(v\.shortSlots,\s*raw\)/);
+  assert.match(maker, /applyShortSlots\(v\.longSlots,\s*raw\)/);
+});
