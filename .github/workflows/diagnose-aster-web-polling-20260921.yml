@@ -1,0 +1,30 @@
+name: Diagnose Aster web polling source 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-aster-web-polling-20260921.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find Aster status consumers and refresh logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Aster web polling/source scan'
+            echo
+            echo '```text'
+            grep -R -n -C 8 --exclude-dir=node_modules --exclude-dir=.next -E '/api/exchanges/aster|setInterval|refresh|poll|cache: "no-store"|cache: '\''no-store'\''' web 2>/dev/null | head -n 900 || true
+            echo '```'
+          } > "$RUNNER_TEMP/result.md"
+          GH_TOKEN="${{ github.token }}" gh issue comment 209 --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
