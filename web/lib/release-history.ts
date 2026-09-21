@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   releasedAt: "2026-09-21",
   title: "Portfolio winstknoppen gelijkgetrokken + fixes zichtbaar",
   newItems: [
-    "Productiefixes worden voortaan ook als afzonderlijke, zichtbare release-notitie in Versiegeschiedenis opgenomen.",
+    "Alle productiefixes worden voortaan ook als afzonderlijke, zichtbare release-notitie in Versiegeschiedenis opgenomen.",
     "Deze release documenteert de live backendfix waardoor Portfolio Snapshot en Tradecentrum dezelfde Multi BB-winstposities herkennen.",
   ],
   problems: [
