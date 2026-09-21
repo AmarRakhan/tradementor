@@ -1,0 +1,166 @@
+name: Diagnose targeted LONG refill 2026-09-21
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-target-long-refill-20260921.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-target-long-refill-readonly
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run targeted read-only account diagnosis
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t SERVICE_VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${SERVICE_VALUES[0]}"
+          RUNTIME_SA="${SERVICE_VALUES[1]}"
+          JOB="tm-target-long-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json
+          from datetime import datetime,timezone,timedelta
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+
+          PROJECT='tradementor-production'
+          TARGET_DIGEST='1736185e83bf4d709f2d772a03c45f61682e848841e54109f3f054011ba05f16'
+          if not firebase_admin._apps:
+              firebase_admin.initialize_app(options={'projectId':PROJECT})
+          db=firestore.Client(project=PROJECT)
+
+          uid=None
+          page=auth.list_users()
+          while page and uid is None:
+              for u in page.users:
+                  normalized=str(u.email or '').strip().lower()
+                  if normalized and hashlib.sha256(normalized.encode()).hexdigest()==TARGET_DIGEST:
+                      uid=u.uid
+                      break
+              if uid is None:
+                  page=page.get_next_page()
+          if not uid:
+              print('TARGET_LONG_REFILL_DIAG '+json.dumps({'readOnly':True,'ordersSent':0,'status':'USER_NOT_FOUND'},sort_keys=True),flush=True)
+              raise SystemExit(0)
+
+          snap=db.collection('asterStrategy2').document(uid).get()
+          raw=snap.to_dict() or {}
+          s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          report=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          state=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+          now=datetime.now(timezone.utc)
+
+          def iso(v):
+              if isinstance(v,datetime):
+                  if v.tzinfo is None: v=v.replace(tzinfo=timezone.utc)
+                  return v.astimezone(timezone.utc).isoformat()
+              return str(v or '')
+
+          actions=[]
+          for row in report.get('actions',[]) if isinstance(report.get('actions'),list) else []:
+              if not isinstance(row,dict): continue
+              actions.append({k:row.get(k) for k in (
+                  'kind','symbol','side','reason','stage','leverage','notionalUsd',
+                  'marginUsd','requiredMargin','bollingerEntryFilter15m'
+              ) if k in row})
+
+          audit=[]
+          for a in snap.reference.collection('audit').stream():
+              row=a.to_dict() or {}; ts=row.get('timestamp')
+              if isinstance(ts,datetime) and ts >= now-timedelta(minutes=120):
+                  audit.append({
+                      'timestamp':iso(ts),'event':str(row.get('event','')),
+                      'symbol':str(row.get('symbol','')).upper(),
+                      'side':str(row.get('side','')).upper(),
+                      'leverage':row.get('leverage'),
+                      'reason':str(row.get('reason',''))[:220],
+                  })
+          audit.sort(key=lambda x:x['timestamp'],reverse=True)
+
+          hist=[]
+          for h in snap.reference.collection('configHistory').stream():
+              row=h.to_dict() or {}; ts=row.get('timestamp')
+              if isinstance(ts,datetime) and ts >= now-timedelta(hours=12):
+                  new=row.get('newValue') if isinstance(row.get('newValue'),dict) else {}
+                  hist.append({
+                      'timestamp':iso(ts),'version':row.get('version'),
+                      'universeTopN':new.get('universeTopN'),
+                      'maximumPositions':new.get('maximumPositions'),
+                      'longSlots':new.get('longSlots'),'shortSlots':new.get('shortSlots'),
+                      'minimumLeverage':new.get('minimumLeverage'),'maximumLeverage':new.get('maximumLeverage'),
+                      'bollingerEntryFilter15mEnabled':new.get('bollingerEntryFilter15mEnabled'),
+                      'bollingerEntryFilterTimeframe':new.get('bollingerEntryFilterTimeframe'),
+                  })
+          hist.sort(key=lambda x:x['timestamp'],reverse=True)
+
+          safe={
+              'readOnly':True,'ordersSent':0,'status':'OK','enabled':bool(raw.get('enabled')),
+              'monitor':bool(raw.get('monitor')),'configVersion':raw.get('configVersion'),
+              'settings':{k:s.get(k) for k in (
+                  'universeTopN','maximumPositions','longSlots','shortSlots',
+                  'minimumLeverage','maximumLeverage','entrySizingMode',
+                  'entryMarginUsd','entryMarginLongUsd','entryMarginShortUsd',
+                  'entryNotionalUsd','bollingerEntryFilter15mEnabled',
+                  'bollingerEntryFilterTimeframe','shortRequiresLongEnabled',
+                  'asymmetricHedgeModeEnabled','manualSymbolSelectionEnabled'
+              )},
+              'report':{k:report.get(k) for k in (
+                  'status','action','entryStatus','entryReason',
+                  'activeLong','activeShort','remainingLong','remainingShort',
+                  'accountPositionCount','accountRemainingCapacity',
+                  'candidateCount','scannedCandidateCount','executableCandidateCount',
+                  'executableCandidates','ordersSent','entrySkipReasons','updatedAtMs'
+              )},
+              'latestActions':actions[-80:],
+              'recentAudit':audit[:120],
+              'recentConfigHistory':hist[:20],
+              'managedPositionCount':len(state),
+          }
+          print('TARGET_LONG_REFILL_DIAG '+json.dumps(safe,sort_keys=True,separators=(',',':'),default=str),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+          gcloud logging read             "resource.type=cloud_run_job AND resource.labels.job_name=$JOB"             --project "$GCP_PROJECT_ID" --freshness=20m --limit=200 --order=asc             --format='value(textPayload)' | grep 'TARGET_LONG_REFILL_DIAG ' | tail -1
+
+          cleanup
+          trap - EXIT
