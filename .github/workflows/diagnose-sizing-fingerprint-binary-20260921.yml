@@ -56,6 +56,20 @@ jobs:
               if i(s.get('longSlots'))==35 and i(s.get('shortSlots'))==30 and i(s.get('universeTopN'))==350:
                   matches.append((raw,s))
           check=os.environ.get('CHECK','unique')
+          # Coarse shape checks help locate which visible field changed after the earlier diagnosis.
+          shapes=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw0=snap.to_dict() or {}; s0=raw0.get('settings') if isinstance(raw0.get('settings'),dict) else {}
+              shapes.append((raw0,s0))
+          shape_tests={
+            'hasLong35': any(i(s0.get('longSlots'))==35 for _,s0 in shapes),
+            'hasShort30': any(i(s0.get('shortSlots'))==30 for _,s0 in shapes),
+            'hasTop350': any(i(s0.get('universeTopN'))==350 for _,s0 in shapes),
+            'hasLong35Short30': any(i(s0.get('longSlots'))==35 and i(s0.get('shortSlots'))==30 for _,s0 in shapes),
+            'hasLong35Top350': any(i(s0.get('longSlots'))==35 and i(s0.get('universeTopN'))==350 for _,s0 in shapes),
+            'hasShort30Top350': any(i(s0.get('shortSlots'))==30 and i(s0.get('universeTopN'))==350 for _,s0 in shapes),
+          }
+          if check in shape_tests: raise SystemExit(0 if shape_tests[check] else 1)
           if check=='unique': raise SystemExit(0 if len(matches)==1 else 1)
           if len(matches)!=1: raise SystemExit(2)
           raw,s=matches[0]
@@ -74,7 +88,7 @@ jobs:
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 90s --quiet
           : > "$RUNNER_TEMP/vals.txt"
-          for CHECK in unique maxpos65 bbEnabled timeframe1m portfolioTp modeNotional modeMargin enabled monitor; do
+          for CHECK in hasLong35 hasShort30 hasTop350 hasLong35Short30 hasLong35Top350 hasShort30Top350 unique maxpos65 bbEnabled timeframe1m portfolioTp modeNotional modeMargin enabled monitor; do
             set +e
             gcloud beta run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --update-env-vars "CHECK=$CHECK" --wait >/dev/null 2>&1
             RC=$?
@@ -88,7 +102,7 @@ jobs:
           for line in open(sys.argv[1]):
               k,v=line.strip().split('=',1); vals[k]=v
           print('## Live 35L/30S Top-350 fingerprint · binaire runtimecheck')
-          labels=[('unique','Unieke accountmatch'),('maxpos65','maximumPositions = 65'),('bbEnabled','Bollinger filter enabled'),('timeframe1m','Bollinger timeframe = 1m'),('portfolioTp','Take Profit = PORTFOLIO'),('modeNotional','entrySizingMode = notional'),('modeMargin','entrySizingMode = margin'),('enabled','Bot enabled'),('monitor','Monitor enabled')]
+          labels=[('hasLong35','Er bestaat een config met LONG slots = 35'),('hasShort30','Er bestaat een config met SHORT slots = 30'),('hasTop350','Er bestaat een config met Top-N = 350'),('hasLong35Short30','35L + 30S komt samen voor'),('hasLong35Top350','35L + Top-350 komt samen voor'),('hasShort30Top350','30S + Top-350 komt samen voor'),('unique','Exact 35L/30S/Top-350 is uniek'),('maxpos65','maximumPositions = 65'),('bbEnabled','Bollinger filter enabled'),('timeframe1m','Bollinger timeframe = 1m'),('portfolioTp','Take Profit = PORTFOLIO'),('modeNotional','entrySizingMode = notional'),('modeMargin','entrySizingMode = margin'),('enabled','Bot enabled'),('monitor','Monitor enabled')]
           for k,label in labels: print(f'- {label}: **{vals.get(k,"false")}**')
           print('\n_Read-only runtimecheck; geen settings, posities of orders gewijzigd._')
           PY
