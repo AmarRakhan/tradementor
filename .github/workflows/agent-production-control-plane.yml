@@ -205,3 +205,40 @@ jobs:
                   if step.get('conclusion')=='failure': print(f'  - FAILED: {step.get("name")}')
           PY
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
+
+  dispatch-aster-status-sync-backend-v2:
+    if: github.event.issue.title == '[AGENT-CONTROL] deploy aster status sync fa9275d v2' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch and prove new backend run exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_COMMIT='fa9275d69f15ff30f306b2457de47a4678f1e29f'
+          STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/dispatches" \
+            -f ref="$TARGET_BRANCH" \
+            -f 'inputs[confirmation]=DEPLOY_PRODUCTION_BACKEND' \
+            -f "inputs[source_commit]=$SOURCE_COMMIT" \
+            -f 'inputs[request_issue]=209'
+          RUN_ID=''
+          for N in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 3
+            RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?event=workflow_dispatch&per_page=50" --jq --arg started "$STARTED_AT" '[.workflow_runs[] | select(.created_at >= $started)] | sort_by(.created_at) | reverse | .[0].id // empty')"
+            [ -n "$RUN_ID" ] && break
+          done
+          test -n "$RUN_ID"
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          CREATED="$(python -c 'import json,sys;print(json.loads(sys.argv[1])["created_at"])' "$RUN_JSON")"
+          STATUS="$(python -c 'import json,sys;print(json.loads(sys.argv[1])["status"])' "$RUN_JSON")"
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend production run created: $RUN_ID · created $CREATED · status $STATUS · exact requested source $SOURCE_COMMIT."
+
+      - name: Report dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'Explicit backend dispatch did not produce a verifiable new Actions run. No production promotion was claimed.'
