@@ -274,8 +274,8 @@ def _write_cycle(ref: Any, cycle: dict[str, Any], *, phase: str | None = None,
 def assert_order_allowed(ref: Any, intent: Any, *, client: Any | None = None) -> None:
     """Last-millisecond race guard for stale workers.
 
-    The durable cycle state wins over any worker-local snapshot.  Per-trade TP
-    closes are also rejected immediately after a mode switch to PORTFOLIO/OFF.
+    The durable cycle state wins over any worker-local snapshot. Pair-level TP
+    remains valid in PORTFOLIO mode and is blocked only when Take Profit is OFF.
     """
     latest = ref.get().to_dict() or {}
     cycle = latest.get("multiBbCycle") if isinstance(latest.get("multiBbCycle"), dict) else {}
@@ -286,8 +286,8 @@ def assert_order_allowed(ref: Any, intent: Any, *, client: Any | None = None) ->
         raise PortfolioCycleOrderBlocked(f"{status}: normale Strategy-2 order geblokkeerd")
     settings = latest.get("settings") if isinstance(latest.get("settings"), dict) else {}
     mode = str(settings.get("takeProfitMode", "PER_TRADE")).upper()
-    if intent_id.startswith("mbb-tp-") and mode != "PER_TRADE":
-        raise PortfolioCycleOrderBlocked(f"Take Profit Mode {mode}: individuele TP geblokkeerd")
+    if intent_id.startswith("mbb-tp-") and mode == "OFF":
+        raise PortfolioCycleOrderBlocked("Take Profit Mode OFF: individuele TP geblokkeerd")
     if action == "OPEN" and mode == "PORTFOLIO" and client is not None:
         current = exchange_equity(client.account_information())
         start = _f(cycle.get("cycleStartEquity"))
