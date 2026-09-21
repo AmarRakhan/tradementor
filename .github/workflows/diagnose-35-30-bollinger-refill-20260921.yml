@@ -1,6 +1,7 @@
 name: Read-only diagnose 35-30 Bollinger refill 20260921
 
 on:
+  workflow_dispatch:
   push:
     branches: [amar-crypto-bot-2026-cloud]
     paths:
