@@ -53,6 +53,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Aangepast in web/lib/aster-strategy2-server-status.mjs en web/components/aster-strategy2-maker.tsx.",
     "De publieke Aster-controle vond tijdens diagnose 44 actuele LONG-signalen binnen Top-350 op 1m; de marktvoorwaarde zelf was dus niet de primaire blokkade.",
     "Geen backend tradingformule, Bollingerberekening, leverage-resolver of order-executionpad is door deze webrelease aangepast.",
+    "Build 390 is in één atomische releasecommit verpakt zodat buildnummer en versiegeschiedenis samen door de V46 release-gate worden gevalideerd.",
   ],
   confidence: "confirmed",
 };
