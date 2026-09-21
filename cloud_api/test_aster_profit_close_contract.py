@@ -46,18 +46,16 @@ def test_bulk_close_is_sequential_and_holds_strategy_queue_lease():
     assert "BULK_PROFIT_CLOSE_COMPLETED" in route
 
 
-def test_profit_preview_and_bulk_close_use_full_uid_scoped_aster_account_truth():
+def test_multi_bb_runtime_ownership_is_included_in_safe_profit_close_scope():
     source = Path(__file__).with_name("main.py").read_text()
-    preview_start = source.index('@app.get("/v1/me/aster/positions/profitable-close-preview")')
-    close_start = source.index('@app.post("/v1/me/aster/positions/close-profitable")')
-    close_end = source.index('@app.post("/v1/me/aster/positions/{symbol}/close")')
-    preview = source[preview_start:close_start]
-    route = source[close_start:close_end]
+    helper_start = source.index("def _aster_strategy2_owned_keys")
+    helper_end = source.index("def _sniper_live_gate_enabled", helper_start)
+    helper = source[helper_start:helper_end]
+    route = route_source()
 
-    # Portfolio Snapshot and Tradecentrum must be driven by the same live Aster
-    # account truth. Strategy ownership may not hide a real open position from
-    # the explicitly confirmed profit-close workflow.
-    assert "rows = client.position_risk()" in preview
-    assert "_aster_strategy2_owned_keys" not in preview
-    assert "initial = profitable_positions(client.position_risk())" in route
-    assert "_aster_strategy2_owned_keys" not in route
+    assert 'raw.get("multiBbPositions")' in helper
+    assert 'str(raw_key).upper().split("|",1)' in helper
+    assert 'side in {"LONG","SHORT"}' in helper
+    assert "keys.add((symbol,side))" in helper
+    assert "_aster_strategy2_owned_keys(uid)" in route
+    assert "in owned_keys" in route
