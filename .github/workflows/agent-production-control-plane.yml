@@ -141,28 +141,3 @@ jobs:
 
 
 
-
-  dispatch-long-min-notional:
-    if: github.event.issue.title == '[AGENT-CONTROL] diagnose long min notional' && github.event.issue.user.login == 'AmarRakhan'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      GH_TOKEN: ${{ github.token }}
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
-    steps:
-      - name: Dispatch read-only LONG minimum notional diagnosis
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh workflow run diagnose-long-min-notional-20260921.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$TARGET_BRANCH"
-      - name: Confirm dispatch
-        shell: bash
-        run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Read-only LONG minimum-notional diagnosis dispatched. Result will be posted to issue #209."
-      - name: Report dispatch failure
-        if: failure()
-        shell: bash
-        run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Diagnosis dispatch failed before production inspection. No settings or orders changed."
