@@ -1,0 +1,94 @@
+name: Compare Aster counts binary 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/compare-aster-counts-binary-20260921.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: '209'
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [exchangegt17, snapshot17, exchangeeqsnapshot, managedeqexchange, managedgt17, snapshotshort30, exchangeshorteqsnapshot]
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Probe ${{ matrix.check }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); s=d['spec']['template']['spec']
+          print(s['containers'][0]['image']); print(s['serviceAccountName'])
+          PY
+          )
+          IMAGE="${V[0]}"; RUNTIME_SA="${V[1]}"; CHECK="${{ matrix.check }}"; JOB="tm-cmp-${CHECK:0:10}-${GITHUB_RUN_ID: -5}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import os
+          from google.cloud import firestore
+          from main import load_aster_secret, AsterV3Client, local_eip712_signer
+          db=firestore.Client(project='tradementor-production')
+          def i(v,d=-1):
+              try:return int(round(float(v)))
+              except:return d
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}; s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if i(s.get('longSlots'))==35 and i(s.get('shortSlots'))==30 and i(s.get('universeTopN'))==350:
+                  matches.append((snap,raw))
+          if len(matches)!=1: raise SystemExit(2)
+          snap,raw=matches[0]; uid=snap.id
+          secret=load_aster_secret({'uid':uid})
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+          rows=[r for r in client.position_risk() if abs(float(r.get('positionAmt') or 0))>0]
+          exl=sum(1 for r in rows if str(r.get('positionSide','')).upper()=='LONG')
+          exs=sum(1 for r in rows if str(r.get('positionSide','')).upper()=='SHORT')
+          managed=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+          ml=sum(1 for k in managed if str(k).endswith('|LONG')); ms=sum(1 for k in managed if str(k).endswith('|SHORT'))
+          auto=db.collection('asterAutomation').document(uid).get().to_dict() or {}
+          snap0=auto.get('accountSnapshot') if isinstance(auto.get('accountSnapshot'),dict) else {}
+          app=snap0.get('positions') if isinstance(snap0.get('positions'),list) else []
+          al=sum(1 for r in app if str(r.get('side','')).upper()=='LONG'); aS=sum(1 for r in app if str(r.get('side','')).upper()=='SHORT')
+          tests={
+            'exchangegt17': exl>17,
+            'snapshot17': al==17,
+            'exchangeeqsnapshot': exl==al,
+            'managedeqexchange': ml==exl and ms==exs,
+            'managedgt17': ml>17,
+            'snapshotshort30': aS==30,
+            'exchangeshorteqsnapshot': exs==aS,
+          }
+          raise SystemExit(0 if tests.get(os.environ.get('CHECK',''),False) else 1)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "CHECK=$CHECK" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 90s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then V=true; else V=false; fi
+          GH_TOKEN="${{ github.token }}" gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "COUNT_PROBE $CHECK=$V · read-only"
