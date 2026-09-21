@@ -44,7 +44,7 @@ jobs:
           print(s['containers'][0]['image']); print(s['serviceAccountName'])
           PY
           )
-          IMAGE="${V[0]}"; RUNTIME_SA="${V[1]}"; CHECK="${{ matrix.check }}"; JOB="tm-exact-${CHECK:0:8}-${GITHUB_RUN_ID: -5}"
+          IMAGE="${V[0]}"; RUNTIME_SA="${V[1]}"; CHECK="${{ matrix.check }}"; CHECK_SLUG="$(printf \"%s\" \"$CHECK\" | tr \"[:upper:]\" \"[:lower:]\")"; JOB="tm-exact-${CHECK_SLUG:0:8}-${GITHUB_RUN_ID: -5}"
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           SCRIPT_B64="$(base64 -w0 <<'PY'
