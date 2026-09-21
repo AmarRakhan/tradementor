@@ -1,0 +1,105 @@
+name: Diagnose current sizing fingerprint 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-current-sizing-fingerprint-20260921.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: '209'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run read-only fingerprint probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); s=d['spec']['template']['spec']
+          print(s['containers'][0]['image']); print(s['serviceAccountName'])
+          PY
+          )
+          IMAGE="${V[0]}"; RUNTIME_SA="${V[1]}"; JOB="tm-szdiag-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          from google.cloud import firestore
+          db=firestore.Client(project='tradementor-production')
+          def i(v,d=-1):
+              try:return int(round(float(v)))
+              except:return d
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}; s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if i(s.get('longSlots'))==35 and i(s.get('shortSlots'))==30 and i(s.get('universeTopN'))==350:
+                  matches.append((raw,s))
+          if len(matches)!=1:
+              raise SystemExit(min(249,200+len(matches)))
+          raw,s=matches[0]
+          mode=str(s.get('entrySizingMode','')).lower(); bits=0
+          if mode=='notional': bits|=1
+          if mode=='margin': bits|=2
+          if s.get('bollingerEntryFilter15mEnabled') is True: bits|=4
+          if str(s.get('bollingerEntryFilterTimeframe','')).lower()=='1m': bits|=8
+          if str(s.get('takeProfitMode','')).upper()=='PORTFOLIO': bits|=16
+          if i(s.get('maximumPositions'))==65: bits|=32
+          if bool(raw.get('enabled')): bits|=64
+          if bool(raw.get('monitor')): bits|=128
+          raise SystemExit(bits)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait > "$RUNNER_TEMP/exec.txt" 2>&1
+          set -e
+          EXEC="$(sed -nE 's/.*Execution \[([^]]+)\].*/\1/p' "$RUNNER_TEMP/exec.txt" | tail -1)"
+          TOKEN="$(gcloud auth print-access-token)"
+          curl --silent --show-error -H "Authorization: Bearer $TOKEN" "https://run.googleapis.com/v2/projects/$GCP_PROJECT_ID/locations/$GCP_REGION/jobs/$JOB/executions/$EXEC/tasks?pageSize=20" > "$RUNNER_TEMP/tasks.json"
+          python - "$RUNNER_TEMP/tasks.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); tasks=d.get('tasks',[])
+          code=None
+          if tasks:
+              r=tasks[0].get('lastAttemptResult') or {}
+              code=r.get('exitCode')
+          print('## Actuele 35L/30S Top-350 sizing fingerprint')
+          if code is None:
+              print('- Resultaat: exitcode niet beschikbaar')
+          else:
+              code=int(code); print(f'- Probe-code: **{code}**')
+              if code>=200:
+                  print(f'- Unieke 35L/30S/Top-350 match: **nee** · matchCount={code-200}')
+              else:
+                  print('- Unieke 35L/30S/Top-350 match: **ja**')
+                  print(f'- entrySizingMode notional: **{bool(code&1)}**')
+                  print(f'- entrySizingMode margin: **{bool(code&2)}**')
+                  print(f'- Bollinger filter enabled: **{bool(code&4)}**')
+                  print(f'- timeframe exact 1m: **{bool(code&8)}**')
+                  print(f'- Portfolio TP: **{bool(code&16)}**')
+                  print(f'- maximumPositions 65: **{bool(code&32)}**')
+                  print(f'- enabled: **{bool(code&64)}**')
+                  print(f'- monitor: **{bool(code&128)}**')
+          print('\n_Read-only probe; geen settings of orders gewijzigd._')
+          PY
+          GH_TOKEN="${{ github.token }}" gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
