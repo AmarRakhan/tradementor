@@ -43,8 +43,10 @@ test("portfolio mode warns before saving when current equity already meets targe
   assert.match(maker, /na opslaan kan de bestaande Portfolio TP-cycle direct uitvoeren/i);
 });
 
-test("individual LONG SHORT TP stays stored but is visibly inactive in PORTFOLIO or OFF", () => {
-  assert.match(maker, /disabled=\{v\.tpMode !== "PER_TRADE"\}/);
+test("individual LONG SHORT TP stays active in PORTFOLIO and is disabled only in OFF", () => {
+  assert.match(maker, /disabled=\{v\.tpMode === "OFF"\}/);
+  assert.match(maker, /v\.smartRescueEnabled \|\| v\.tpMode === "OFF"/);
+  assert.doesNotMatch(maker, /disabled=\{v\.tpMode !== "PER_TRADE"\}/);
   assert.match(maker, /Automatische TP uit\. DCA en overige strategie blijven actief\./);
 });
 
