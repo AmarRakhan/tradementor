@@ -261,8 +261,11 @@ class MultiBbConfig(_core.MultiBbConfig):
         portfolio_tp_input_mode = _normalize_portfolio_tp_input_mode(source.get("portfolioTpInputMode"))
         portfolio_tp_value = _finite(source.get("portfolioTpValue"), legacy_portfolio_tp if portfolio_tp_input_mode == "PERCENT" else 5.0)
         portfolio_tp_base_mode = _normalize_portfolio_tp_base_mode(source.get("portfolioTpBaseMode"))
+        take_profit_mode = _normalize_mode(source.get("takeProfitMode"), legacy_enabled=base.take_profit_enabled)
         values.update({
-            "take_profit_mode": _normalize_mode(source.get("takeProfitMode"), legacy_enabled=base.take_profit_enabled),
+            "take_profit_mode": take_profit_mode,
+            # Portfolio TP is additive: pair-level TP remains enabled until the user selects OFF.
+            "take_profit_enabled": take_profit_mode != "OFF",
             "entry_margin_long_usd": _positive_ratio(source,("entryMarginLongUsd","entryMarginLong"),legacy_entry),
             "entry_margin_short_usd": _positive_ratio(source,("entryMarginShortUsd","entryMarginShort"),legacy_entry),
             "entry_notional_long_usd": _positive_ratio(source,("entryNotionalLongUsd","entryNotionalLong","entryNotionalUsd"),base.entry_notional_usd),
@@ -454,8 +457,9 @@ class _PairAwareSettings:
             if name=="entry_margin_usd": return base.entry_margin_long_usd
             if name=="entry_notional_usd": return base.entry_notional_long_usd
         if name=="take_profit_enabled":
-            if base.take_profit_mode!="PER_TRADE": return False
-            return bool(override.get("takeProfitEnabled",base.take_profit_enabled))
+            if base.take_profit_mode=="OFF": return False
+            # PORTFOLIO adds a portfolio-wide exit target; it does not suppress the pair TP.
+            return bool(override.get("takeProfitEnabled",True))
         key=_SHARED_ATTR_TO_KEY.get(name)
         if key and key in override: return override[key]
         return getattr(base,name)
@@ -478,7 +482,7 @@ def effective_pair_settings(settings:MultiBbConfig,symbol:str)->dict[str,Any]:
         "maxDcaShort":_side_value(settings,override,"SHORT","max_dca"),
         "longTakeProfitValue":_side_value(settings,override,"LONG","take_profit"),
         "shortTakeProfitValue":_side_value(settings,override,"SHORT","take_profit"),
-        "individualTpActive":settings.take_profit_mode=="PER_TRADE" and not settings.profit_lock_ladder_enabled and bool(override.get("takeProfitEnabled",settings.take_profit_enabled)),
+        "individualTpActive":settings.take_profit_mode!="OFF" and not settings.profit_lock_ladder_enabled and bool(override.get("takeProfitEnabled",True)),
     })
     return result
 
