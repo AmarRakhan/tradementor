@@ -99,6 +99,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [sizingModeTouched, setSizingModeTouched] = useState(false);
   const [readiness, setReadiness] = useState<Record<string, unknown> | null>(null);
   const [confirmedState, setConfirmedState] = useState<Record<string, unknown> | null>(null);
   const [markets, setMarkets] = useState<string[]>([]);
@@ -161,6 +162,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     setTotalDraft(null);
     setLongDraft(null);
     setShortDraft(null);
+    setSizingModeTouched(false);
   }, [persisted, dirty]);
 
   const change = (next: Values) => { setV(next); setDirty(true); setMessage(""); };
@@ -268,10 +270,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const setSymbolSide = (symbol: string, side: ManualSide) => change({ ...v, manualSymbols: v.manualSymbols.map((row) => row.symbol === symbol ? { ...row, side } : row) });
   const removeSymbol = (symbol: string) => change({ ...v, manualSymbols: v.manualSymbols.filter((row) => row.symbol !== symbol) });
 
-  async function withLatestProfitLockSettings(draft: Record<string, unknown>) {
-    // Profit Lock is edited by its own bridge. A stale maker snapshot must never
-    // turn it off, restore old levels, or alter its primary-side marker when a
-    // normal Bot Settings save/start happens afterwards.
+  async function withLatestProtectedSettings(draft: Record<string, unknown>) {
+    // Some settings can be changed by their own server-side flow or another
+    // client. Always reconcile those fields against a fresh server snapshot
+    // before a normal save/start so stale browser state cannot write them back.
     const latest = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
     const latestStrategy2 = latest.strategy2 && typeof latest.strategy2 === "object" ? latest.strategy2 as Record<string, unknown> : {};
     const latestSettings = latestStrategy2.settings && typeof latestStrategy2.settings === "object" ? latestStrategy2.settings as Record<string, unknown> : {};
@@ -279,12 +281,21 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     for (const key of ["profitLockLadderEnabled", "profitLockLevels", "profitLockPrimarySide"] as const) {
       if (Object.prototype.hasOwnProperty.call(latestSettings, key)) merged[key] = latestSettings[key];
     }
+    // Vaste positieomvang is a destructive semantic switch: margin means the
+    // input is collateral, notional means the input is total order value. A
+    // seat/TP/timeframe edit must never flip this mode. Preserve the latest
+    // server mode unless the user explicitly touched this switch in this draft.
+    if (!sizingModeTouched && Object.prototype.hasOwnProperty.call(latestSettings, "entrySizingMode")) {
+      merged.entrySizingMode = String(latestSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
+    }
     return merged;
   }
 
   async function action(kind: "save" | "simulate" | "start" | "stop") {
     setBusy(true); setMessage("");
     try {
+      const outgoingSettings = kind === "stop" ? settings : await withLatestProtectedSettings(settings);
+      const outgoingSizingMode = String(outgoingSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
       if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
       // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
       // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
@@ -292,9 +303,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       // Null Maximum leverage deliberately preserves the established pair-maximum behavior.
       if (settings.maximumLeverage !== null && settings.maximumLeverage < settings.minimumLeverage) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage.");
       if (settings.stopLossEnabled && (settings.stopLossLong <= 0 || settings.stopLossShort <= 0)) throw new Error("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat.");
-      if (settings.entrySizingMode === "notional") {
-        if (settings.longSlots > 0 && settings.entryNotionalLongUsd <= 0) throw new Error("Vul Vaste positie LONG expliciet in. De bestaande LONG-margin wordt niet automatisch omgerekend.");
-        if (settings.shortSlots > 0 && settings.entryNotionalShortUsd <= 0) throw new Error("Vul Vaste positie SHORT expliciet in. De bestaande SHORT-margin wordt niet automatisch omgerekend.");
+      if (outgoingSizingMode === "notional") {
+        if (settings.longSlots > 0 && finiteOr(outgoingSettings.entryNotionalLongUsd, settings.entryNotionalLongUsd) <= 0) throw new Error("Vul Vaste positie LONG expliciet in. De bestaande LONG-margin wordt niet automatisch omgerekend.");
+        if (settings.shortSlots > 0 && finiteOr(outgoingSettings.entryNotionalShortUsd, settings.entryNotionalShortUsd) <= 0) throw new Error("Vul Vaste positie SHORT expliciet in. De bestaande SHORT-margin wordt niet automatisch omgerekend.");
       } else {
         if (settings.longSlots > 0 && settings.entryMarginLongUsd <= 0) throw new Error("Instapmargin LONG moet groter dan 0 USDT zijn.");
         if (settings.shortSlots > 0 && settings.entryMarginShortUsd <= 0) throw new Error("Instapmargin SHORT moet groter dan 0 USDT zijn.");
@@ -316,7 +327,6 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       }
       if (v.manualEnabled && !v.manualSymbols.length) throw new Error("Selecteer minimaal één Aster USDT perpetual of zet handmatige selectie uit.");
       if (kind === "start" && v.manualEnabled) { const blocked = v.manualSymbols.map((row) => tierPreviews[row.symbol]).filter((row) => row?.entryOrderValid === false); if (blocked.length) throw new Error(`${blocked[0].symbol}: instapmargin voldoet niet aan de actuele Aster minimumorder.`); }
-      const outgoingSettings = kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
       const route = kind === "save" ? "settings" : kind; const method = kind === "save" ? "PUT" : "POST"; const body = kind === "start" ? { confirm: true, settings: outgoingSettings } : kind === "stop" ? { confirm: true } : { settings: outgoingSettings };
       const result = await authenticatedRequest(`/api/exchanges/aster/strategy2/${route}`, { method, body: JSON.stringify(body) }) as Record<string, unknown>;
       const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null; if (confirmed) { setConfirmedState(confirmed); onConfirmed(confirmed); }
@@ -326,7 +336,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         const savedMax = savedSettings.maximumLeverage === null || savedSettings.maximumLeverage === undefined ? null : Number(savedSettings.maximumLeverage);
         if (savedMax !== settings.maximumLeverage) throw new Error("Maximum leverage is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
         const savedSizing = String(savedSettings.entrySizingMode || "margin").toLowerCase();
-        if (savedSizing !== settings.entrySizingMode) throw new Error("Positieomvang-modus is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
+        if (savedSizing !== outgoingSizingMode) throw new Error("Positieomvang-modus is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
         if (v.tpMode === "PORTFOLIO") {
           const savedTpInput = portfolioTpInputModeFrom(savedSettings.portfolioTpInputMode);
           const savedTpBase = portfolioTpBaseModeFrom(savedSettings.portfolioTpBaseMode);
@@ -339,6 +349,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
           }
         }
         setV((current) => ({ ...current, maxLeverage: savedMax === null ? "" : String(savedMax), fixedPositionSize: savedSizing === "notional" }));
+        setSizingModeTouched(false);
         setDirty(false); setMessage("Instellingen server-side opgeslagen en bevestigd. Actieve posities, fills, avg entry, DCA-counts en Portfolio TP-cycle zijn intact gebleven.");
       }
       else if (kind === "simulate") setMessage("Configuratie veilig gesimuleerd: 0 orders verzonden.");
@@ -469,7 +480,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
 
     <div className={"strategy-power-control entry-sizing-control " + (v.fixedPositionSize ? "enabled" : "ready")}>
       <span className="pair-icon">◎</span><span><b>Vaste positieomvang</b><small>Aan: gebruikt een aparte vaste positie in USDT. Je bestaande LONG/SHORT-margin blijft exact ongewijzigd. Uit: instapbedrag = margin.</small></span>
-      <button type="button" role="switch" aria-checked={v.fixedPositionSize} onClick={() => change({ ...v, fixedPositionSize: !v.fixedPositionSize })}><i />{v.fixedPositionSize ? "Aan" : "Uit"}</button>
+      <button type="button" role="switch" aria-checked={v.fixedPositionSize} onClick={() => { setSizingModeTouched(true); change({ ...v, fixedPositionSize: !v.fixedPositionSize }); }}><i />{v.fixedPositionSize ? "Aan" : "Uit"}</button>
     </div>
 
     <div className="maker-input compact-settings-grid">
