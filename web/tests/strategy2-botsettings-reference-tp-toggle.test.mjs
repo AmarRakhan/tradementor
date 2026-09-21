@@ -7,8 +7,8 @@ const maker = readFileSync(new URL("../components/aster-strategy2-maker.tsx", im
 test("Botinstellingen keeps real controls and three mutually exclusive TP modes inline", () => {
   for (const text of ["Aster live bot", "Instellingen opslaan", "Veilig simuleren", "Readiness controleren", "Zelf munten kiezen", "Per trade", "Portfolio", "Uit"]) assert.match(maker, new RegExp(text));
   assert.match(maker, /takeProfitMode:\s*v\.tpMode/);
-  assert.match(maker, /takeProfitEnabled:\s*v\.tpMode === "PER_TRADE"/);
-  assert.match(maker, /disabled=\{v\.tpMode !== "PER_TRADE"\}/);
+  assert.match(maker, /takeProfitEnabled:\s*v\.tpMode !== "OFF"/);
+  assert.match(maker, /disabled=\{v\.tpMode === "OFF"\}/);
 });
 
 test("Botinstellingen reference styling is compact mobile-safe dark green and gold", () => {
