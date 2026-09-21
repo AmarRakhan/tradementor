@@ -1,0 +1,75 @@
+name: Diagnose actual Aster tick trigger 20260921
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-actual-aster-tick-trigger-20260921.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: '209'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Discover scheduler jobs across locations and recent tick requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "$RUNNER_TEMP/schedulers.txt"
+          for LOC in $(gcloud scheduler locations list --project "$GCP_PROJECT_ID" --format='value(locationId)' 2>/dev/null || true); do
+            gcloud scheduler jobs list --project "$GCP_PROJECT_ID" --location "$LOC" --format=json 2>/dev/null | python - "$LOC" >> "$RUNNER_TEMP/schedulers.txt" <<'PY'
+          import json,sys
+          loc=sys.argv[1]
+          try: rows=json.load(sys.stdin)
+          except: rows=[]
+          for row in rows if isinstance(rows,list) else []:
+              http=row.get('httpTarget') or {}; uri=str(http.get('uri') or '')
+              name=str(row.get('name') or '').split('/')[-1]
+              if 'aster' in name.lower() or 'aster-automation/tick' in uri:
+                  print(f'{loc}|{name}|{row.get("state")}|{row.get("schedule")}|{uri.split("?",1)[0]}|{row.get("lastAttemptTime","")}')
+          PY
+          done
+
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.requestUrl:"/internal/aster-automation/tick"' \
+            --project "$GCP_PROJECT_ID" --freshness=90m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/logs.json" || echo '[]' > "$RUNNER_TEMP/logs.json"
+
+          python - "$RUNNER_TEMP/schedulers.txt" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys,urllib.parse
+          print('## Werkelijke Aster tick-trigger · read-only')
+          rows=[]
+          try:
+              rows=[x.strip().split('|',5) for x in open(sys.argv[1],encoding='utf-8') if x.strip()]
+          except: pass
+          print(f'- Aster schedulerjobs over alle locaties: **{len(rows)}**')
+          for r in rows:
+              loc,name,state,schedule,uri,last=r
+              path=urllib.parse.urlparse(uri).path
+              print(f'- `{name}` · location=**{loc}** · state=**{state}** · schedule=**{schedule}** · target=**{path}** · lastAttempt=**{last or "onbekend"}**')
+          try: logs=json.load(open(sys.argv[2],encoding='utf-8'))
+          except: logs=[]
+          print(f'- Backend requests naar `/internal/aster-automation/tick` in laatste 90 min: **{len(logs)}**')
+          for row in logs[:8]:
+              h=row.get('httpRequest') or {}; ts=row.get('timestamp','')
+              print(f'- request {ts} · status=**{h.get("status")}** · latency=**{h.get("latency")}**')
+          print('\n_Read-only; niets aan scheduler, settings of orders gewijzigd._')
+          PY
+          GH_TOKEN="${{ github.token }}" gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
