@@ -24,40 +24,78 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-21",
-  title: "Portfolio TP behoudt per-trade Take Profit",
+  title: "Strategy-2 sizingmodus beschermd tegen oude UI-state",
   newItems: [
-    "Portfolio Take Profit werkt nu aanvullend op de bestaande LONG/SHORT Take Profit per positie.",
-    "De portfolio-doelwaarde sluit nog steeds alle posities zodra het portfoliodoel wordt bereikt.",
+    "Botinstellingen vergelijken bevestigde UI-state voortaan met de nieuwste server-configVersion voordat instellingen opnieuw worden geladen.",
+    "Opslaan en Starten lezen vlak vóór verzending de actuele serverinstellingen en bewaren de server-side positieomvangmodus tenzij de gebruiker de schakelaar Vaste positieomvang expliciet heeft gewijzigd.",
   ],
   problems: [
-    "Wanneer Take Profit op Portfolio stond, werd de normale pair-level Take Profit volledig uitgeschakeld.",
-    "Daardoor konden winstgevende individuele LONG/SHORT-posities hun eigen ingestelde TP passeren zonder automatisch te sluiten.",
+    "Een eerder bevestigde browserstate kon nieuwer serverherstel blijven overschrijven en daardoor entrySizingMode opnieuw op notional zetten.",
+    "Bij Top-350 en vrije LONG-stoelen kon dit geldige 1m Bollinger-kandidaten alsnog blokkeren doordat een kleine vaste notional tegen de minimale Aster-order botste.",
   ],
   causes: [
-    "De webapp schreef takeProfitEnabled=false zodra de modus niet PER_TRADE was.",
-    "De Multi BB runtime en de portfolio-orderguard behandelden PORTFOLIO ten onrechte als een exclusieve TP-modus en blokkeerden individuele mbb-tp closes.",
+    "strategy2ServerStatus gaf iedere lokale confirmedState onbeperkt voorrang, ook wanneer de server inmiddels een hogere configVersion had.",
+    "De Botinstellingen stuurden entrySizingMode bij iedere gewone save/start opnieuw mee vanuit die mogelijk verouderde schakelaarstate.",
   ],
   fixes: [
-    "PORTFOLIO houdt takeProfitEnabled nu actief; alleen OFF schakelt individuele TP uit.",
-    "De pair-aware runtime blijft in PORTFOLIO mode de LONG/SHORT TP-waarden toepassen.",
-    "De last-millisecond portfolio guard staat individuele TP-closes toe zolang de portfolio-exit zelf niet actief is; bij bereikt portfolio-doel behoudt de volledige portfolio-exit prioriteit.",
+    "Een server-snapshot met een hogere configVersion vervangt nu automatisch een oudere confirmedState.",
+    "De positieomvangmodus wordt bij save/start tegen een no-store server-snapshot gereconcilieerd; alleen een expliciete interactie met Vaste positieomvang mag margin/notional wijzigen.",
+    "Nieuwe regressietests bewaken zowel server-versiefreshness als isolatie van de sizingmodus bij overige instellingen.",
   ],
   now: [
-    "PER_TRADE: individuele LONG/SHORT TP actief.",
-    "PORTFOLIO: individuele LONG/SHORT TP actief én volledige portfolio-close op het ingestelde portfoliodoel.",
-    "OFF: individuele en portfolio Take Profit uit.",
+    "Wijzigingen aan slots, Top-N, Portfolio TP, Bollinger-timeframe of andere Botinstellingen kunnen een gerepareerde marginmodus niet meer stil terugzetten naar notional.",
+    "De schakelaar Vaste positieomvang blijft wel volledig bruikbaar wanneer de gebruiker hem bewust zelf aan- of uitzet.",
+    "Deze release verandert geen bestaande positie, order, DCA-state of actuele accountinstelling automatisch.",
   ],
-  before: "Portfolio mode schakelde de individuele pair Take Profit uit.",
-  after: "Portfolio mode is additief: pair TP blijft werken en het portfolio-doel sluit daarnaast alles zodra dat doel wordt bereikt.",
+  before: "Een stale browser-confirmatie kon een nieuwere serverconfig negeren en later opnieuw als notional opslaan.",
+  after: "De nieuwste serverconfig is leidend en sizing verandert alleen na een expliciete gebruikeractie op de sizing-schakelaar.",
   technicalDetails: [
-    "Aangepast in web/components/aster-strategy2-maker.tsx, cloud_api/aster_multi_bb.py en cloud_api/aster_multi_bb_portfolio.py.",
-    "Profit Lock Ladder behoudt zijn bestaande expliciete TP-suppressie; deze fix verandert die aparte strategie niet.",
-    "Geen DCA-, Bollinger-, leverage-, slot- of Stoploss-regel is door deze release gewijzigd.",
+    "Aangepast in web/lib/aster-strategy2-server-status.mjs en web/components/aster-strategy2-maker.tsx.",
+    "De publieke Aster-controle vond tijdens diagnose 44 actuele LONG-signalen binnen Top-350 op 1m; de marktvoorwaarde zelf was dus niet de primaire blokkade.",
+    "Geen backend tradingformule, Bollingerberekening, leverage-resolver of order-executionpad is door deze webrelease aangepast.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-389-portfolio-tp-additive",
+    version: "46",
+    build: "389",
+    releasedAt: "2026-09-21",
+    title: "Portfolio TP behoudt per-trade Take Profit",
+    newItems: [
+      "Portfolio Take Profit werkt nu aanvullend op de bestaande LONG/SHORT Take Profit per positie.",
+      "De portfolio-doelwaarde sluit nog steeds alle posities zodra het portfoliodoel wordt bereikt.",
+    ],
+    problems: [
+      "Wanneer Take Profit op Portfolio stond, werd de normale pair-level Take Profit volledig uitgeschakeld.",
+      "Daardoor konden winstgevende individuele LONG/SHORT-posities hun eigen ingestelde TP passeren zonder automatisch te sluiten.",
+    ],
+    causes: [
+      "De webapp schreef takeProfitEnabled=false zodra de modus niet PER_TRADE was.",
+      "De Multi BB runtime en de portfolio-orderguard behandelden PORTFOLIO ten onrechte als een exclusieve TP-modus en blokkeerden individuele mbb-tp closes.",
+    ],
+    fixes: [
+      "PORTFOLIO houdt takeProfitEnabled nu actief; alleen OFF schakelt individuele TP uit.",
+      "De pair-aware runtime blijft in PORTFOLIO mode de LONG/SHORT TP-waarden toepassen.",
+      "De last-millisecond portfolio guard staat individuele TP-closes toe zolang de portfolio-exit zelf niet actief is; bij bereikt portfolio-doel behoudt de volledige portfolio-exit prioriteit.",
+    ],
+    now: [
+      "PER_TRADE: individuele LONG/SHORT TP actief.",
+      "PORTFOLIO: individuele LONG/SHORT TP actief én volledige portfolio-close op het ingestelde portfoliodoel.",
+      "OFF: individuele en portfolio Take Profit uit.",
+    ],
+    before: "Portfolio mode schakelde de individuele pair Take Profit uit.",
+    after: "Portfolio mode is additief: pair TP blijft werken en het portfolio-doel sluit daarnaast alles zodra dat doel wordt bereikt.",
+    technicalDetails: [
+      "Aangepast in web/components/aster-strategy2-maker.tsx, cloud_api/aster_multi_bb.py en cloud_api/aster_multi_bb_portfolio.py.",
+      "Profit Lock Ladder behoudt zijn bestaande expliciete TP-suppressie; deze fix verandert die aparte strategie niet.",
+      "Geen DCA-, Bollinger-, leverage-, slot- of Stoploss-regel is door deze release gewijzigd.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-388-slot-capacity-release-history",
     version: "46",
