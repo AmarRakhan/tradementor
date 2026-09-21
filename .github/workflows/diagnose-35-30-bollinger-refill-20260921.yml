@@ -97,7 +97,15 @@ jobs:
                   else: out['other']+=n
               return out
 
-          docs=list_collection('asterStrategy2')
+          try:
+              docs=list_collection('asterStrategy2')
+          except Exception as exc:
+              print('## Read-only LONG refill diagnosis')
+              print()
+              print(f'- Result: **READ_FAILED** · {type(exc).__name__}: {str(exc)[:240]}')
+              print()
+              print('_No UID, email, wallet, credential, order payload or setting was emitted or changed._')
+              raise SystemExit(0)
           matches=[]
           for doc in docs:
               raw=fields(doc)
@@ -174,4 +182,15 @@ jobs:
           print()
           print('_Sanitized read-only inspection only. No UID, email, wallet, credential, order payload or setting was emitted or changed._')
           PY
-          gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
+
+      - name: Publish sanitized diagnosis
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -s "$RUNNER_TEMP/result.md" ]; then
+            gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
+          else
+            gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body "Read-only 35/30 diagnosis failed before a sanitized result was produced. No settings or orders were changed."
+          fi
