@@ -138,3 +138,34 @@ jobs:
           else
             gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Could not read the canonical V46 GitHub Actions deployment. No production mutation was attempted."
           fi
+
+  dispatch-aster-status-sync-backend:
+    if: github.event.issue.title == '[AGENT-CONTROL] deploy aster status sync fa9275d' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch exact-source production backend deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_COMMIT="fa9275d69f15ff30f306b2457de47a4678f1e29f"
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$SOURCE_COMMIT" \
+            -f request_issue=209
+
+      - name: Confirm backend deployment dispatch
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Exact-source backend deployment dispatched for fa9275d69f15ff30f306b2457de47a4678f1e29f. Canonical production workflow will rerun the complete backend pytest suite before candidate deployment and promotion."
+
+      - name: Report dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Backend deployment dispatch failed before production mutation. No Cloud Run revision was promoted."
