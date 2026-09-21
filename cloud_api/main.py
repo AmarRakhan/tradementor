@@ -1184,8 +1184,23 @@ def _aster_strategy2_owned_symbols(uid:str)->set[str]:
 def _aster_strategy2_owned_keys(uid:str)->set[tuple[str,str]]:
     raw=aster_strategy2_reference(uid).get().to_dict() or {}
     rows=proven_owned_rows(raw.get("ownedLegs",[]),strategy_id="aster-strategy-2",engine_type="strategy2")
-    return {(str(row.get("symbol","")).upper(),str(row.get("side","")).upper())
+    keys={(str(row.get("symbol","")).upper(),str(row.get("side","")).upper())
         for row in rows if str(row.get("symbol","")).strip() and str(row.get("side","")).upper() in {"LONG","SHORT"}}
+    # Multi BB is the active Strategy-2 engine, but its durable ownership lives
+    # in multiBbPositions instead of legacy ownedLegs. Include only well-formed
+    # managed leg keys; the caller still intersects these claims with fresh
+    # Aster position_risk(), so stale runtime rows cannot become close orders.
+    managed=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
+    for raw_key,row in managed.items():
+        if not isinstance(row,dict) or row.get("botManaged") is False:
+            continue
+        try:
+            symbol,side=str(raw_key).upper().split("|",1)
+        except ValueError:
+            continue
+        if symbol and side in {"LONG","SHORT"}:
+            keys.add((symbol,side))
+    return keys
 
 
 def _sniper_live_gate_enabled()->bool:
@@ -5342,11 +5357,9 @@ def preview_profitable_aster_positions(
     """Return a fresh, UID-scoped Aster preview; this endpoint never trades."""
     client = _portfolio_growth_client(user, live=False)
     try:
-        # Canonical account truth: Portfolio Snapshot and Tradecentrum must see
-        # the same currently-open Aster positions. Strategy-2 ownership is
-        # metadata for bot management, not an eligibility filter for an
-        # explicitly confirmed account-level profit close.
-        rows = client.position_risk()
+        owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
+        rows=[row for row in client.position_risk()
+            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
         preview = profit_preview_with_settings(rows, load_hedge_settings(user, user_reference))
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
@@ -5402,10 +5415,9 @@ def close_profitable_aster_positions(
     failed: list[dict[str, Any]] = []
     try:
         client = _portfolio_growth_client(user, live=True)
-        # Use the same account-level Aster truth as the preview and
-        # Tradecentrum. Every candidate is still re-read immediately before its
-        # CLOSE order and must remain >= the configured profit floor.
-        initial = profitable_positions(client.position_risk())
+        owned_keys=_aster_strategy2_owned_keys(uid)
+        initial = profitable_positions([row for row in client.position_risk()
+            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys])
         if scope != "ALL":
             initial = [candidate for candidate in initial if candidate["side"] == scope]
         for index, candidate in enumerate(initial, 1):
