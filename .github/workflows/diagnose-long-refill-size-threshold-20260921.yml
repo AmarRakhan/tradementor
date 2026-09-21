@@ -1,0 +1,154 @@
+name: Read-only diagnose LONG refill size threshold 20260921
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-readonly-long-refill-size-threshold
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  RESULT_ISSUE: '209'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read sanitized size threshold through exit codes
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
+          JOB="tm-size-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import os,re,math
+          from google.cloud import firestore
+          project='tradementor-production'
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
+          db=firestore.Client(project=project)
+
+          def num(v,default=0):
+              try:return float(v)
+              except:return default
+
+          matches=[]
+          for snap in db.collection('asterStrategy2').stream():
+              raw=snap.to_dict() or {}
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if round(num(s.get('longSlots'),-1))!=35: continue
+              if round(num(s.get('shortSlots'),-1))!=30: continue
+              if round(num(s.get('universeTopN'),-1))!=350: continue
+              if round(num(s.get('maximumPositions'),-1))!=65: continue
+              if round(num(s.get('minimumLeverage'),-1))!=20: continue
+              matches.append(raw)
+
+          if len(matches)!=1:
+              raise SystemExit(250)
+
+          raw=matches[0]
+          s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+          r=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+          reasons=r.get('entrySkipReasons') if isinstance(r.get('entrySkipReasons'),dict) else {}
+          minimums=[]
+          bb=False
+          for key in reasons:
+              text=str(key)
+              upper=text.upper()
+              if upper.startswith('BB_') or upper.startswith('PRICE_') or 'BOLLINGER' in upper:
+                  bb=True
+              m=re.search(r'minimale exchangeorder\s+([0-9]+(?:\.[0-9]+)?)\s+USD',text,re.I)
+              if m:
+                  minimums.append(float(m.group(1)))
+          configured=num(s.get('entryNotionalLongUsd',s.get('entryNotionalLong',s.get('entryNotionalUsd',0))),0)
+          minimum=min(minimums) if minimums else 0
+          executable=int(round(num(r.get('executableCandidateCount'),0)))
+          status=str(r.get('entryStatus') or '')
+
+          values={
+              0:1,
+              1:min(249,max(0,int(math.ceil(configured)))),
+              2:min(249,max(0,int(math.ceil(minimum)))),
+              3:1 if bb else 0,
+              4:1 if executable>0 else 0,
+              5:1 if status=='ORDER_REJECTED' else 0,
+              6:1 if status=='WAITING_BOLLINGER_ENTRY' else 0,
+          }
+          raise SystemExit(values.get(idx,0)+1)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 7 --parallelism 4 --max-retries 0 --task-timeout 180s --quiet
+
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          STATUS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index:.index,exitCode:([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
+          printf '%s\n' "$STATUS" > "$RUNNER_TEMP/status.json"
+          cleanup
+          trap - EXIT
+
+      - name: Publish sanitized threshold result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - "$RUNNER_TEMP/status.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys
+          try:
+              rows=json.load(open(sys.argv[1],encoding='utf-8'))
+              vals={int(r['index']):int(r['exitCode'])-1 for r in rows}
+          except Exception:
+              vals={}
+          print('## LONG refill maat-diagnose')
+          print()
+          if vals.get(0)!=1:
+              print('- Resultaat: **NIET UNIEK / NIET LEESBAAR**')
+          else:
+              print(f'- Ingestelde vaste LONG-positie (afgerond omhoog): **US$ {vals.get(1)}**')
+              print(f'- Laagste minimale exchange-order onder kandidaten die de kandidaatfase bereikten (afgerond omhoog): **US$ {vals.get(2)}**')
+              print(f'- Bollinger/price rejects komen óók voor: **{"JA" if vals.get(3)==1 else "NEE"}**')
+              print(f'- Er is minstens één volledig planbare kandidaat na kandidaatfilter: **{"JA" if vals.get(4)==1 else "NEE"}**')
+              print(f'- Entry status ORDER_REJECTED: **{"JA" if vals.get(5)==1 else "NEE"}**')
+              print(f'- Entry status WAITING_BOLLINGER_ENTRY: **{"JA" if vals.get(6)==1 else "NEE"}**')
+              print()
+              print('### Betekenis')
+              if vals.get(2,0)>vals.get(1,0)>0:
+                  print(f'Er zijn kandidaten die de Bollinger-kandidaatcheck bereiken maar vervolgens afvallen omdat US$ {vals.get(1)} te klein is. Vanaf ongeveer US$ {vals.get(2)} kan ten minste de laagste van die exchange-minima technisch worden gehaald; dit is geen garantie dat elke Top-350 markt dan open kan.')
+              else:
+                  print('De huidige minimum-orderinformatie geeft geen hogere drempel dan de ingestelde vaste LONG-positie.')
+          print()
+          print('_Read-only; geen instellingen of orders gewijzigd._')
+          PY
+          gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
