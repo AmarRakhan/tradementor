@@ -79,13 +79,17 @@ jobs:
           python - "$RUNNER_TEMP/tasks.json" > "$RUNNER_TEMP/result.md" <<'PY'
           import json,sys
           d=json.load(open(sys.argv[1])); tasks=d.get('tasks',[])
-          code=None
+          code=None; meta={}
           if tasks:
-              r=tasks[0].get('lastAttemptResult') or {}
-              code=r.get('exitCode')
+              t=tasks[0]
+              r=t.get('lastAttemptResult') or t.get('last_attempt_result') or {}
+              code=r.get('exitCode',r.get('exit_code'))
+              meta={'taskKeys':sorted(t.keys()),'attemptKeys':sorted(r.keys()),'attempt':r}
           print('## Actuele 35L/30S Top-350 sizing fingerprint')
           if code is None:
               print('- Resultaat: exitcode niet beschikbaar')
+              print(f'- Task metadata keys: **{meta.get("taskKeys",[])}**')
+              print(f'- Attempt metadata: **{meta.get("attempt",{})}**')
           else:
               code=int(code); print(f'- Probe-code: **{code}**')
               if code>=200:
