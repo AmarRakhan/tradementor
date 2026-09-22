@@ -96,7 +96,9 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(component.includes("priceToCoordinate(zone.upper)"));
   assert.ok(component.includes("priceToCoordinate(zone.lower)"));
   assert.ok(component.includes("layoutPortfolioKoersMarkers"));
-  assert.ok(component.includes("maxFull:5"));
+  assert.ok(component.includes("maxFull:3"));
+  assert.ok(component.includes("maxCompact:2"));
+  assert.ok(component.includes("primaryMarkerByTime"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
 });
@@ -106,4 +108,17 @@ test("Portfolio Koers timeframe context never invents a different zone timeframe
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("{timeframe} candles · {timeframe} zones · BB 20,2"));
   assert.equal(component.includes("4u zones"),false);
+});
+
+test("Portfolio Koers zone overlay renders above the opaque chart canvas",async()=>{
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(css.includes(".portfolio-koers-canvas{position:absolute;inset:0;z-index:2"));
+  assert.ok(css.includes(".portfolio-koers-zones{position:absolute;inset:0 70px 0 0;z-index:4"));
+});
+
+test("Portfolio Koers keeps event details while reducing default marker noise",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("primaryMarkerByTime"));
+  assert.ok(component.includes("payload.markers.filter((row)=>row.time===time)"));
+  assert.ok(component.includes("size:.46"));
 });
