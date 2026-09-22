@@ -93,8 +93,10 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(component.includes("Portfolio Koers"));
   assert.ok(component.includes("Totale portfolio waarde (USDT)"));
   assert.ok(component.includes("{timeframe} candles · {timeframe} zones · BB 20,2"));
+  assert.ok(component.includes("priceToCoordinate(zone.center)"));
   assert.ok(component.includes("priceToCoordinate(zone.upper)"));
   assert.ok(component.includes("priceToCoordinate(zone.lower)"));
+  assert.ok(component.includes("layoutPortfolioKoersZoneRegions"));
   assert.ok(component.includes("layoutPortfolioKoersMarkers"));
   assert.ok(component.includes("maxFull:3"));
   assert.ok(component.includes("maxCompact:2"));
@@ -120,7 +122,7 @@ test("Portfolio Koers uses icon-only standard events and keeps detail values in 
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.equal(component.includes("Entry L"),false);
   assert.equal(component.includes("Entry S"),false);
-  assert.ok(component.includes('glyph:"♟"'));
+  assert.ok(component.includes('glyph:"⚔"'));
   assert.ok(component.includes('glyph:"💰"'));
   assert.ok(component.includes('value:""'));
   assert.ok(component.includes("markerDetail(row)"));
@@ -158,4 +160,23 @@ test("standard chart event markup contains no event dollar value field",async()=
   assert.equal(layer.includes("compactUsd("),false);
   assert.ok(layer.includes("label.glyph"));
   assert.ok(layer.includes("label.multiplier"));
+});
+
+test("Portfolio Koers build 401 follows the approved sword-marker reference",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes('data-reference="file_00000000dd24820eaa6e54ec1054904f"'));
+  assert.ok(component.includes('glyph:"⚔"'));
+  assert.ok(component.includes('glyph:"💰"'));
+  assert.ok(css.includes(".portfolio-koers-event-icon"));
+  assert.ok(css.includes(".portfolio-koers-event-badge"));
+  assert.ok(css.includes(".portfolio-koers-connector"));
+});
+
+test("reference-style zone regions remain sourced from confirmed portfolio zones",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("payload.zones.map"));
+  assert.ok(component.includes("source:zone.source"));
+  assert.ok(component.includes("layoutPortfolioKoersZoneRegions(zoneCoordinates,height)"));
+  assert.equal(component.includes("staticZone"),false);
 });
