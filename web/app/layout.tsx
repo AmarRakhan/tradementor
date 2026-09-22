@@ -82,19 +82,21 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         </div>
         <PwaRegistration />
         <ZoomGuard />
-        <Strategy2ReferenceEnhancer />
-        <AsterPortfolioSnapshotEnhancer />
-        <AsterProfitPotSnapshotBridge />
-        <AsterProfitSweepSettingsBridge />
-        <AsterPortfolioEmergencyHedge />
-        <AsterPortfolioEmergencyReserveNote />
-        <AsterProfitLockLadderBridge />
-        <AuthProvider>{children}</AuthProvider>
-        <AsterSideTpSettings />
-        <AsterShortDcaSaveGuard />
-        <AsterPairSettingsOverlay />
-        <MarketsNavigationBridge />
-        <NewsNavigationBridge />
+        <AuthProvider>
+          <Strategy2ReferenceEnhancer />
+          <AsterPortfolioSnapshotEnhancer />
+          <AsterProfitPotSnapshotBridge />
+          <AsterProfitSweepSettingsBridge />
+          <AsterPortfolioEmergencyHedge />
+          <AsterPortfolioEmergencyReserveNote />
+          <AsterProfitLockLadderBridge />
+          {children}
+          <AsterSideTpSettings />
+          <AsterShortDcaSaveGuard />
+          <AsterPairSettingsOverlay />
+          <MarketsNavigationBridge />
+          <NewsNavigationBridge />
+        </AuthProvider>
       </body>
     </html>
   );
