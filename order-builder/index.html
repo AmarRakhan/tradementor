@@ -1,28 +1,8 @@
-<!doctype html>
-<html lang="nl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Amar Order Builder</title>
-<style>body{font-family:Segoe UI,Arial,sans-serif;background:#f4f7fb;color:#173b5f;padding:32px} .box{max-width:520px;margin:10vh auto;background:#fff;border:1px solid #dbe4ef;border-radius:14px;padding:28px;box-shadow:0 8px 24px rgba(16,44,84,.08)}</style>
-</head>
-<body>
-<div class="box"><h2>Order Builder laden…</h2><p>De testapp wordt geopend.</p></div>
-<script>
-(async()=>{
-  try{
-    const files=["_0.b64","_1.b64","_2.b64","_3.b64","_4.b64","_5.b64","_6.b64"];
-    const parts=await Promise.all(files.map(f=>fetch(f+"?v=1").then(r=>{if(!r.ok)throw new Error("Kon "+f+" niet laden");return r.text()})));
-    const bin=atob(parts.join("").replace(/\s/g,""));
-    const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
-    const page=new TextDecoder("utf-8").decode(bytes);
-    document.open();
-    document.write(page);
-    document.close();
-  }catch(e){
-    document.body.innerHTML='<div class="box"><h2>Order Builder kon niet laden</h2><p>Ververs de pagina. Fout: '+String(e.message||e)+'</p></div>';
-  }
-})();
-</script>
-</body>
-</html>
+<!doctype html><html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AMAR Order Builder</title><link rel="stylesheet" href="style.css"></head><body>
+<header class="top"><div class="logo"><b>AMAR</b> | Order Builder</div><div class="subtitle">Artikelen selecteren · kopiëren · plakken in Dynamics 365 F&O</div><div class="spacer"></div><button class="topbtn" onclick="openAdmin()">⚙ Beheer</button></header>
+<div class="layout"><aside class="side"><div class="nav active">🛒 Nieuwe order</div><div class="nav" onclick="openAdmin('packages')">▣ Pakketten</div><div class="nav" onclick="openAdmin('articles')">☷ Artikelen</div><div class="version">Testversie 0.1<br>Bron: Dynamics klikbestand</div></aside>
+<main class="main"><section class="packbar"><div class="packtitle">Kies een pakket <span style="font-weight:400;color:#62748a">(optioneel)</span></div><div class="packs" id="packs"></div></section>
+<section class="workspace"><div class="card"><div class="cardhead">Zoek en voeg artikelen toe <span id="count" style="font-size:12px;color:#62748a;font-weight:600"></span></div><div class="tools"><input class="field" id="search" placeholder="Zoek op artikelnummer of omschrijving…"><select class="field" id="category"><option value="">Alle categorieën</option></select><select class="field" id="status"><option value="">Alle statussen</option><option>Nieuw</option><option>Refurb</option></select></div><div class="tablewrap"><table><thead><tr><th>Artikelnummer</th><th>Omschrijving</th><th>Categorie</th><th>Status</th><th></th></tr></thead><tbody id="articles"></tbody></table></div></div>
+<div class="card order"><div class="cardhead">Geselecteerde orderregels <button class="smallbtn" style="color:#d92d20" onclick="clearOrder()">Alles verwijderen</button></div><div class="orderlist"><table><thead><tr><th>#</th><th>Artikelnummer</th><th>Omschrijving</th><th>Aantal</th><th></th></tr></thead><tbody id="order"></tbody></table><div id="empty" class="empty">Nog geen artikelen geselecteerd.</div></div><div class="summary"><div class="sumrow"><b>Totaal verschillende artikelen</b><b id="lines">0</b></div><div class="sumrow"><b>Totaal aantal stuks</b><b id="pieces">0</b></div></div><div class="actions"><textarea id="note" placeholder="Opmerking (optioneel), bijvoorbeeld naam eindgebruiker of locatie"></textarea><div class="actionrow"><button class="primary" onclick="copyDynamics()">▣ Kopiëren voor Dynamics</button><button class="secondary" onclick="clearOrder()">↻ Leegmaken</button></div><div class="hint">Kopieert artikelnummer + voorraadstatus, in dezelfde richting als jullie huidige Excelproces.</div></div></div></section></main></div>
+<div class="modal" id="admin"><div class="modalbox"><div class="modalhead"><span>Beheer</span><button class="smallbtn" onclick="closeAdmin()">✕ Sluiten</button></div><div class="modalbody"><div class="tabs"><button class="tab on" id="ta" onclick="adminTab('articles')">Artikelen</button><button class="tab" id="tp" onclick="adminTab('packages')">Pakketten</button><button class="tab" onclick="resetData()">Herstel Excel-startdata</button></div><div id="adminContent"></div></div></div></div><div class="toast" id="toast"></div>
+<script src="data1.js"></script><script src="data2.js"></script><script src="data3.js"></script><script src="packs.js"></script><script src="app.js"></script></body></html>
