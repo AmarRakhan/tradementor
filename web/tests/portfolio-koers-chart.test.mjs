@@ -92,6 +92,18 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("Portfolio Koers"));
   assert.ok(component.includes("Totale portfolio waarde (USDT)"));
+  assert.ok(component.includes("{timeframe} candles · {timeframe} zones · BB 20,2"));
+  assert.ok(component.includes("priceToCoordinate(zone.upper)"));
+  assert.ok(component.includes("priceToCoordinate(zone.lower)"));
+  assert.ok(component.includes("layoutPortfolioKoersMarkers"));
+  assert.ok(component.includes("maxFull:5"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
+});
+
+
+test("Portfolio Koers timeframe context never invents a different zone timeframe",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("{timeframe} candles · {timeframe} zones · BB 20,2"));
+  assert.equal(component.includes("4u zones"),false);
 });
