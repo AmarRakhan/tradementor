@@ -243,8 +243,8 @@ function Icon({ name }: { name: "wallet" | "coins" | "capital" | "positions" | "
   return <svg {...common}><path d="M12 3 5 6v5c0 4.7 2.8 8.2 7 10 4.2-1.8 7-5.3 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>;
 }
 
-function MetricCard({ icon, label, value, tone = "normal" }: { icon: Parameters<typeof Icon>[0]["name"]; label: string; value: string; tone?: "normal" | "positive" | "negative" }) {
-  return <article className={`aps-metric aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong></div></article>;
+function MetricCard({ icon, label, value, tone = "normal", detail, detailTone = "muted" }: { icon: Parameters<typeof Icon>[0]["name"]; label: string; value: string; tone?: "normal" | "positive" | "negative"; detail?: string; detailTone?: "muted" | "positive" | "negative" }) {
+  return <article className={`aps-metric aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong>{detail ? <em className={`aps-metric-detail aps-detail-${detailTone}`}>{detail}</em> : null}</div></article>;
 }
 
 function GrowthCard({ icon, label, value, tone }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone }) {
@@ -563,12 +563,12 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
       </div>
     </header>
     <div className="aps-grid">
-      <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} />
+      <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
       <MetricCard icon="capital" label="ACTIEF TRADE CAPITAL" value={values.activeCapital} />
-      <MetricCard icon="positions" label="ACTIEVE POSITIES" value={values.activePositions} />
-      <MetricCard icon="result" label="GESLOTEN RESULTAAT" value={values.realized} tone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "normal"} />
-      <MetricCard icon="trades" label="TRADES GESLOTEN" value={values.tradesClosed} />
+      <MetricCard icon="positions" label="ACTIEVE POSITIES" value={values.activePositions} detail={values.longs !== "—" && values.shorts !== "—" ? `${values.longs} Long  ${values.shorts} Short` : undefined} />
+      <MetricCard icon="result" label="GESLOTEN RESULTAAT" value={values.realized} tone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "normal"} detail="Vandaag" detailTone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "muted"} />
+      <MetricCard icon="trades" label="TRADES GESLOTEN" value={values.tradesClosed} detail="Vandaag" />
     </div>
     <HedgeSummary preview={profitPreview} onOpen={onOpenHedge} />
     <div className="aps-health-grid">
