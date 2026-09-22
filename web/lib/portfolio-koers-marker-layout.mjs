@@ -16,8 +16,8 @@ function intersects(a,b,padding=4) {
 }
 
 function fullRect(candidate,left,top) {
-  const width=Math.max(24,Math.min(52,finite(candidate.width,36)));
-  const height=Math.max(18,Math.min(26,finite(candidate.height,22)));
+  const width=Math.max(34,Math.min(58,finite(candidate.width,46)));
+  const height=Math.max(38,Math.min(50,finite(candidate.height,44)));
   return {left:left-width/2,right:left+width/2,top:top-height/2,bottom:top+height/2,width,height};
 }
 
@@ -52,11 +52,11 @@ function preferredTop(candidate,height) {
   const boundary=envelopeBoundary(candidate,position);
   if(boundary!==null){
     return position==="below"
-      ? boundary+8+height/2
-      : boundary-8-height/2;
+      ? boundary+7+height/2
+      : boundary-7-height/2;
   }
   const y=finite(candidate?.y);
-  return y+(position==="below"?1:-1)*(22+height/2);
+  return y+(position==="below"?1:-1)*(20+height/2);
 }
 
 export function eventPriority(row) {
@@ -211,6 +211,31 @@ export function markerRectInsideBollinger(label,gap=0) {
   const top=maybeFinite(label.bandTop),bottom=maybeFinite(label.bandBottom);
   if(top===null||bottom===null)return false;
   return !(label.rect.bottom<=top-gap || label.rect.top>=bottom+gap);
+}
+
+
+export function layoutPortfolioKoersZoneRegions(zoneCoordinates,height) {
+  const limit=Math.max(1,finite(height,1));
+  const ordered=(Array.isArray(zoneCoordinates)?zoneCoordinates:[])
+    .filter((row)=>row&&Number.isFinite(Number(row.centerY)))
+    .map((row)=>({...row,centerY:finite(row.centerY),upperY:finite(row.upperY,row.centerY),lowerY:finite(row.lowerY,row.centerY)}))
+    .sort((a,b)=>a.centerY-b.centerY);
+  const total=ordered.length;
+  if(!total)return [];
+  return ordered.map((row,index)=>{
+    const previous=ordered[index-1],next=ordered[index+1];
+    const ownTop=Math.min(row.upperY,row.lowerY,row.centerY);
+    const ownBottom=Math.max(row.upperY,row.lowerY,row.centerY);
+    const top=index===0?Math.max(0,ownTop):Math.max(0,(previous.centerY+row.centerY)/2);
+    const bottom=index===total-1?Math.min(limit,ownBottom):Math.min(limit,(row.centerY+next.centerY)/2);
+    return {
+      ...row,
+      top,
+      height:Math.max(2,bottom-top),
+      tone:zoneToneForRank(index,total),
+      regionSource:"confirmed-zone-centers",
+    };
+  }).filter((row)=>row.height>1&&row.top<limit);
 }
 
 export function zoneToneForRank(rank,total) {
