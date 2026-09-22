@@ -40,6 +40,13 @@ test("Locale portfolio equity text is parsed without changing its value",()=>{
   assert.equal(parsePortfolioEquityText("—"),null);
 });
 
+test("Portfolio Koers keeps the visible Portfolio Snapshot equity authoritative over the chart backend",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.equal(component.includes("if(normalized.currentEquity) setLiveEquity(normalized.currentEquity)"),false);
+  assert.ok(component.includes("liveEquityTextRef.current=liveEquityText"));
+  assert.ok(component.includes("mergeRealtimeEquitySample(payload.candles,observedEquity"));
+});
+
 test("Cashflows remain visually distinct from trading performance markers",()=>{
   assert.equal(markerVisual({kind:"cashflow",label:"TRANSFER +50.00 USD"}).tone,"cashflow");
   assert.equal(markerVisual({kind:"entry",side:"LONG"}).tone,"long");

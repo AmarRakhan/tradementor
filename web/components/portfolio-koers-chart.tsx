@@ -23,6 +23,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const bbRefs=useRef<{upper:ISeriesApi<any>|null;middle:ISeriesApi<any>|null;lower:ISeriesApi<any>|null}>({upper:null,middle:null,lower:null});
   const candleDataRef=useRef<Candle[]>([]);
   const syncZonesRef=useRef<()=>void>(()=>{});
+  const liveEquityTextRef=useRef(liveEquityText);
   const [timeframe,setTimeframe]=useState(PORTFOLIO_KOERS_DEFAULT_TIMEFRAME);
   const [payload,setPayload]=useState<Payload>(EMPTY);
   const [error,setError]=useState("");
@@ -30,6 +31,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const [zoneLayout,setZoneLayout]=useState<ZoneLayout[]>([]);
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
+  liveEquityTextRef.current=liveEquityText;
 
   useEffect(()=>{
     try{
@@ -45,7 +47,6 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       const normalized=normalizePortfolioKoersPayload(response) as Payload;
       setPayload(normalized);
       setError("");
-      if(normalized.currentEquity) setLiveEquity(normalized.currentEquity);
     }catch(reason){
       setError(reason instanceof Error?reason.message:"Portfolio Koers kon niet worden geladen.");
     }finally{setLoading(false)}
@@ -83,8 +84,9 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
 
   useEffect(()=>{
     const container=canvasRef.current;
-    if(!container||!payload.candles.length){candleDataRef.current=[];setZoneLayout([]);return}
-    const candles=payload.candles;
+    const observedEquity=parsePortfolioEquityText(liveEquityTextRef.current);
+    const candles=(observedEquity?mergeRealtimeEquitySample(payload.candles,observedEquity,Date.now(),timeframe):payload.candles) as Candle[];
+    if(!container||!candles.length){candleDataRef.current=[];setZoneLayout([]);return}
     candleDataRef.current=candles.map((row)=>({...row}));
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(300,container.clientHeight),
@@ -165,7 +167,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       if(chartRef.current===chart)chartRef.current=null;
       candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncZonesRef.current=()=>{};
     };
-  },[payload.candles,payload.markers,payload.zones,payload.cycleStartEquity]);
+  },[payload.candles,payload.markers,payload.zones,payload.cycleStartEquity,timeframe]);
 
   const fullscreen=async()=>{
     if(!shellRef.current)return;
