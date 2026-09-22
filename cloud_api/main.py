@@ -145,6 +145,15 @@ from portfolio_risk import (
     ExchangeRiskSnapshot, PortfolioRiskLimits, evaluate_risk_increase,
 )
 from portfolio_growth import PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
+from aster_portfolio_equity_chart import (
+    aggregate_ohlc as aggregate_portfolio_equity_ohlc,
+    bollinger_bands as portfolio_equity_bollinger_bands,
+    bollinger_events as portfolio_equity_bollinger_events,
+    cashflow_adjusted_samples as cashflow_adjusted_portfolio_samples,
+    derive_price_zones as derive_portfolio_price_zones,
+    normalize_timeframe as normalize_portfolio_timeframe,
+    walk_forward_backtest as portfolio_equity_walk_forward_backtest,
+)
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from reliability_monitor import event_key as reliability_event_key, event_payload as reliability_event_payload, counts as reliability_counts, overall as reliability_overall
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
@@ -222,6 +231,7 @@ _aster_universe_cache: AsterUniverseSnapshot | None = None
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
 _bot_health_platform_cache: tuple[float, dict[str, int]] = (0.0, {})
+_aster_portfolio_cashflow_cache: dict[str, tuple[float, int, list[dict[str, Any]], bool]] = {}
 
 
 class WalletLinkRequest(BaseModel):
@@ -1273,6 +1283,203 @@ def portfolio_growth_reference(uid: str):
     return db.collection("users").document(uid).collection("portfolioGrowth").document("aster")
 
 
+PORTFOLIO_EQUITY_SAMPLE_BUCKET_MS = 10_000
+PORTFOLIO_EQUITY_SAMPLE_LIMIT = 20_000
+
+
+def _portfolio_equity_samples_reference(uid: str):
+    return portfolio_growth_reference(uid).collection("equitySamples")
+
+
+def _portfolio_equity_chart_state_reference(uid: str):
+    return portfolio_growth_reference(uid).collection("equityChart").document("state")
+
+
+def _record_aster_portfolio_equity_sample(uid: str, equity: float, captured_at: datetime | None = None) -> None:
+    """Persist observed Aster account equity without touching execution state."""
+    value = safe_float(equity)
+    if value <= 0:
+        return
+    captured = captured_at or datetime.now(timezone.utc)
+    captured = captured.replace(tzinfo=timezone.utc) if captured.tzinfo is None else captured.astimezone(timezone.utc)
+    at_ms = int(captured.timestamp() * 1000)
+    bucket_ms = (at_ms // PORTFOLIO_EQUITY_SAMPLE_BUCKET_MS) * PORTFOLIO_EQUITY_SAMPLE_BUCKET_MS
+    _portfolio_equity_samples_reference(uid).document(str(bucket_ms)).set({
+        "at": captured,
+        "atMs": at_ms,
+        "equity": value,
+        "source": "ASTER_TOTAL_MARGIN_BALANCE",
+        "updatedAt": datetime.now(timezone.utc),
+    }, merge=True)
+
+
+def _load_portfolio_equity_samples(uid: str, maximum: int = PORTFOLIO_EQUITY_SAMPLE_LIMIT) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    stream = (
+        _portfolio_equity_samples_reference(uid)
+        .order_by("atMs", direction=firestore.Query.DESCENDING)
+        .limit(max(60, min(PORTFOLIO_EQUITY_SAMPLE_LIMIT, int(maximum))))
+        .stream()
+    )
+    for doc in stream:
+        row = doc.to_dict() or {}
+        at_ms = int(safe_float(row.get("atMs")))
+        equity = safe_float(row.get("equity"))
+        if at_ms > 0 and equity > 0:
+            rows.append({"atMs": at_ms, "equity": equity, "source": str(row.get("source", ""))})
+    rows.sort(key=lambda row: int(row["atMs"]))
+    return rows
+
+
+def _portfolio_equity_cashflows(uid: str, client: AsterV3Client, since_ms: int) -> tuple[list[dict[str, Any]], bool]:
+    """Read complete external-cashflow history with a monotonic time cursor."""
+    now = time.monotonic()
+    with _cache_lock:
+        cached = _aster_portfolio_cashflow_cache.get(uid)
+        if cached and now - cached[0] < 60 and cached[1] <= since_ms:
+            return list(cached[2]), bool(cached[3])
+    rows: list[dict[str, Any]] = []
+    complete = True
+    seen: set[str] = set()
+    for income_type in ("TRANSFER", "WELCOME_BONUS", "INSURANCE_CLEAR"):
+        cursor = since_ms
+        for _ in range(100):
+            batch = client.income_history(income_type=income_type, start_time=cursor, limit=1000)
+            valid = [dict(row) for row in batch if isinstance(row, dict)]
+            for row in valid:
+                identity = str(row.get("tranId", row.get("id", ""))).strip()
+                fallback = f"{row.get('time', row.get('timestamp', ''))}|{income_type}|{row.get('income', '')}"
+                key = identity or fallback
+                if key not in seen:
+                    seen.add(key)
+                    rows.append(row)
+            if len(valid) < 1000:
+                break
+            times = [int(safe_float(row.get("time", row.get("timestamp", 0)))) for row in valid]
+            times = [value for value in times if value > 0]
+            if not times:
+                complete = False
+                break
+            next_cursor = max(times) + 1
+            if next_cursor <= cursor:
+                complete = False
+                break
+            cursor = next_cursor
+        else:
+            complete = False
+    rows.sort(key=lambda row: int(safe_float(row.get("time", row.get("timestamp", 0)))))
+    with _cache_lock:
+        _aster_portfolio_cashflow_cache[uid] = (now, since_ms, list(rows), complete)
+    return rows, complete
+
+
+def _portfolio_equity_payload(user: dict[str, Any], timeframe: str, limit: int, *, include_backtest: bool = False) -> dict[str, Any]:
+    uid = str(user["uid"])
+    interval = normalize_portfolio_timeframe(timeframe)
+    secret = load_aster_secret(user)
+    client = AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),
+        live_authorized=False,
+    )
+    account = client.account_information()
+    equity, wallet_balance, available_balance, unrealized_pnl, _ = aster_account_information_values(account)
+    if equity <= 0:
+        raise HTTPException(409, "Actuele Aster portfolio-equity is niet betrouwbaar beschikbaar")
+    captured = datetime.now(timezone.utc)
+    _record_aster_portfolio_equity_sample(uid, equity, captured)
+
+    samples = _load_portfolio_equity_samples(uid)
+    if not samples:
+        raise HTTPException(409, "Portfolio-historie is nog niet beschikbaar")
+    cashflows, cashflow_complete = _portfolio_equity_cashflows(uid, client, int(samples[0]["atMs"]))
+    adjusted = cashflow_adjusted_portfolio_samples(samples, cashflows)
+    all_candles = aggregate_portfolio_equity_ohlc(adjusted, interval)
+    analysis_candles = all_candles[-max(240, int(limit)):]
+    visible_candles = analysis_candles[-int(limit):]
+
+    state_ref = _portfolio_equity_chart_state_reference(uid)
+    state = state_ref.get().to_dict() or {}
+    anchor_equity = safe_float(state.get("anchorEquity"))
+    if anchor_equity <= 0 and adjusted:
+        anchor_equity = safe_float(adjusted[0].get("adjustedEquity"))
+        state_ref.set({
+            "anchorEquity": anchor_equity,
+            "anchorAtMs": int(adjusted[0]["atMs"]),
+            "anchorSource": "FIRST_RELIABLE_PORTFOLIO_SAMPLE",
+            "updatedAt": captured,
+        }, merge=True)
+
+    bands = portfolio_equity_bollinger_bands(analysis_candles)
+    zones = derive_portfolio_price_zones(analysis_candles, anchor_equity=anchor_equity)
+    bb_events = portfolio_equity_bollinger_events(analysis_candles, bands)
+    active_zone = zones.get("activeZone") if isinstance(zones, dict) else None
+
+    shadow_payload = {
+        "timeframe": interval,
+        "equity": round(equity, 8),
+        "activeZone": active_zone,
+        "updatedAt": captured,
+        "ordersSent": 0,
+        "mode": "SHADOW_READ_ONLY",
+    }
+    previous_label = str(state.get("activeZoneLabel", ""))
+    current_label = str(active_zone.get("label", "")) if isinstance(active_zone, dict) else ""
+    if current_label and current_label != previous_label:
+        state_ref.collection("events").add({
+            "event": "PORTFOLIO_ZONE_CHANGED",
+            "timestamp": captured,
+            "timestampMs": int(captured.timestamp() * 1000),
+            "timeframe": interval,
+            "zoneBefore": previous_label or None,
+            "zoneAfter": current_label,
+            "support": safe_float(active_zone.get("lower")) if isinstance(active_zone, dict) else 0,
+            "resistance": safe_float(active_zone.get("upper")) if isinstance(active_zone, dict) else 0,
+            "equity": equity,
+            "reason": "CONFIRMED_MARKET_STRUCTURE",
+            "ordersSent": 0,
+        })
+    state_ref.set({
+        "activeZoneLabel": current_label or None,
+        "activeZoneLower": safe_float(active_zone.get("lower")) if isinstance(active_zone, dict) else None,
+        "activeZoneUpper": safe_float(active_zone.get("upper")) if isinstance(active_zone, dict) else None,
+        "shadowMode": True,
+        "ordersSent": 0,
+        "lastTimeframe": interval,
+        "lastEquity": equity,
+        "updatedAt": captured,
+    }, merge=True)
+
+    first_ms = int(adjusted[0]["atMs"]) if adjusted else None
+    result = {
+        "reliable": True,
+        "readOnly": True,
+        "ordersSent": 0,
+        "currency": "USDT",
+        "equitySource": "ASTER_TOTAL_MARGIN_BALANCE",
+        "equityDefinition": "Aster totalMarginBalance; externe TRANSFER/WELCOME_BONUS/INSURANCE_CLEAR cashflows worden uit de chartserie geneutraliseerd wanneer compleet aantoonbaar.",
+        "rawEquity": round(equity, 8),
+        "walletBalance": round(wallet_balance, 8),
+        "availableBalance": round(available_balance, 8),
+        "unrealizedPnl": round(unrealized_pnl, 8),
+        "cashflowAdjusted": True,
+        "cashflowComplete": cashflow_complete,
+        "timeframe": interval,
+        "sampleCadenceSeconds": PORTFOLIO_EQUITY_SAMPLE_BUCKET_MS // 1000,
+        "historyStartMs": first_ms,
+        "historyCoverageNote": "Officiële serverhistorie start bij het eerste betrouwbare opgeslagen datapunt; ontbrekende candles worden niet verzonnen.",
+        "anchorEquity": round(anchor_equity, 8) if anchor_equity > 0 else None,
+        "candles": visible_candles,
+        "bollinger": [row for row in bands if visible_candles and int(row["timeMs"]) >= int(visible_candles[0]["timeMs"])],
+        "bollingerEvents": [row for row in bb_events if visible_candles and int(row["timeMs"]) >= int(visible_candles[0]["timeMs"])],
+        "zones": zones,
+        "shadow": shadow_payload,
+    }
+    if include_backtest:
+        result["backtest"] = portfolio_equity_walk_forward_backtest(adjusted, interval)
+    return result
+
+
 def _aster_close_all_active(uid: str) -> bool:
     value=portfolio_growth_reference(uid).get().to_dict() or {};lock=value.get("closeLock")
     if not isinstance(lock,dict) or not bool(lock.get("active")):return False
@@ -1793,6 +2000,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         "activePairs":len({x.symbol for x in owned}),"accountPositionCount":len(active_position_map(positions)),
         "provenStrategy2LegCount":len(owned),"capturedAt":now}
     ref.set({"accountSnapshot":snapshot,"adjustedHighWaterMark":portfolio.adjusted_high_water_mark,"ownedLegs":[owned_to_mapping(x) for x in owned],"lastTickAt":now},merge=True)
+    # Read-only portfolio chart evidence. Failure here must never affect trading.
+    try:
+        _record_aster_portfolio_equity_sample(uid, portfolio.equity, now)
+    except Exception:
+        pass
     # Money Grabber scheduler integration starts in mandatory shadow mode. It
     # is account-scoped, only exists after explicit round activation, and can
     # never submit through this path. The separate execution gate remains OFF.
@@ -5205,6 +5417,41 @@ def _portfolio_growth_estimate(user:dict[str,Any],*,persist_quote:bool=True)->di
         payload={**payload,"quoteId":quote_id,"quoteExpiresAt":expires.isoformat()}
     return payload
 
+
+
+@app.get("/v1/me/aster/portfolio-equity/chart")
+def get_aster_portfolio_equity_chart(
+    timeframe: str = Query("15m"),
+    limit: int = Query(180, ge=60, le=800),
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Read-only live portfolio OHLC, Bollinger evidence and structural zones."""
+    try:
+        return _portfolio_equity_payload(user, timeframe, limit, include_backtest=False)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/v1/me/aster/portfolio-equity/backtest")
+def get_aster_portfolio_equity_backtest(
+    timeframe: str = Query("15m"),
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Walk-forward shadow diagnostics. Never submits an order."""
+    try:
+        payload = _portfolio_equity_payload(user, timeframe, 800, include_backtest=True)
+        return {
+            "reliable": payload["reliable"],
+            "readOnly": True,
+            "ordersSent": 0,
+            "timeframe": payload["timeframe"],
+            "historyStartMs": payload["historyStartMs"],
+            "cashflowComplete": payload["cashflowComplete"],
+            "backtest": payload.get("backtest", {}),
+            "shadow": payload.get("shadow", {}),
+        }
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/v1/me/aster/portfolio-growth/daily")

@@ -27,6 +27,8 @@ import { PullToRefresh } from "@/components/pull-to-refresh";
 import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
 import { PortfolioImpactBattle } from "@/components/portfolio-impact-battle";
+import { AsterPortfolioEquityChart } from "@/components/aster-portfolio-equity-chart";
+import type { RecentTradeActivity } from "@/lib/portfolio-equity-chart";
 import { HomeNavigationBridge } from "@/components/home-navigation-bridge";
 import { effectiveAsterDcaCount } from "@/lib/aster-dca-count.mjs";
 
@@ -382,6 +384,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   const netOpenPnl = longPnl + shortPnl;
   const displayedPositions = sortPositions(view.positions, positionFilter);
   const realizedEvents = Array.isArray(snapshot.data?.realizedEvents) ? snapshot.data.realizedEvents as Array<Record<string, unknown>> : [];
+  const recentTradeActivity = destination === "aster" && snapshot.data?.recentTradeActivity && typeof snapshot.data.recentTradeActivity === "object" ? snapshot.data.recentTradeActivity as RecentTradeActivity : null;
   const asterActionsEnabled = destination !== "aster" || asterActionsAreFresh(snapshot, cloudReady);
   const strategy2Snapshot = destination === "aster" && snapshot.data?.strategy2 && typeof snapshot.data.strategy2 === "object"
     ? snapshot.data.strategy2 as Record<string, unknown> : null;
@@ -437,6 +440,8 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <DirectionBalanceCell label="NETTO OPEN PNL" value={view.accountDataAvailable ? netOpenPnl : null} center />
         <DirectionBalanceCell label="SHORT" count={view.accountDataAvailable ? shortPositions.length : null} value={view.accountDataAvailable ? shortPnl : null} />
       </section>}
+
+      {!positionsOnly && destination === "aster" && <AsterPortfolioEquityChart activity={recentTradeActivity} refreshKey={snapshot.updatedAt} />}
 
       {!positionsOnly && <section className="metric-strip" aria-label="Portefeuilleoverzicht">
         <Metric label="PORTFOLIOWAARDE" value={view.equity} detail={view.metricDetail} />
