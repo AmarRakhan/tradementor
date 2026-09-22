@@ -98,7 +98,7 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(component.includes("layoutPortfolioKoersMarkers"));
   assert.ok(component.includes("maxFull:3"));
   assert.ok(component.includes("maxCompact:2"));
-  assert.ok(component.includes("primaryMarkerByTime"));
+  assert.ok(component.includes("PRICE_AXIS_WIDTH=48"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
 });
@@ -113,12 +113,49 @@ test("Portfolio Koers timeframe context never invents a different zone timeframe
 test("Portfolio Koers zone overlay renders above the opaque chart canvas",async()=>{
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   assert.ok(css.includes(".portfolio-koers-canvas{position:absolute;inset:0;z-index:2"));
-  assert.ok(css.includes(".portfolio-koers-zones{position:absolute;inset:0 70px 0 0;z-index:4"));
+  assert.ok(css.includes(".portfolio-koers-zones{position:absolute;inset:0 48px 0 0;z-index:4"));
 });
 
-test("Portfolio Koers keeps event details while reducing default marker noise",async()=>{
+test("Portfolio Koers uses icon-only standard events and keeps detail values in the tooltip",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("primaryMarkerByTime"));
+  assert.equal(component.includes("Entry L"),false);
+  assert.equal(component.includes("Entry S"),false);
+  assert.ok(component.includes('glyph:"♟"'));
+  assert.ok(component.includes('glyph:"💰"'));
+  assert.ok(component.includes('value:""'));
+  assert.ok(component.includes("markerDetail(row)"));
   assert.ok(component.includes("payload.markers.filter((row)=>row.time===time)"));
-  assert.ok(component.includes("size:.46"));
+});
+
+test("Portfolio Koers explicitly feeds Bollinger boundaries into marker layout",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("bbUpperByTime"));
+  assert.ok(component.includes("bbLowerByTime"));
+  assert.ok(component.includes("bandTop:upperY===null?null:Number(upperY)"));
+  assert.ok(component.includes("bandBottom:lowerY===null?null:Number(lowerY)"));
+});
+
+test("Portfolio Koers always opens from the approved 15m default instead of restoring a stale saved timeframe",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.equal(component.includes("tradementor.portfolio-koers.timeframe.v1"),false);
+  assert.ok(component.includes('TIMEFRAME_VIEW["15m"]'));
+  assert.ok(component.includes("setVisibleLogicalRange"));
+  assert.equal(component.includes("fitContent()"),false);
+});
+
+test("Portfolio Koers mobile plot reserves only 48px for the price axis and matching overlays",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes("const PRICE_AXIS_WIDTH=48"));
+  assert.ok(component.includes("minimumWidth:PRICE_AXIS_WIDTH"));
+  assert.ok(css.includes(".portfolio-koers-event-layer{position:absolute;inset:0 48px 0 0"));
+});
+
+test("standard chart event markup contains no event dollar value field",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const layer=component.slice(component.indexOf('className="portfolio-koers-event-layer"'),component.indexOf("{loading&&!baseCandles.length"));
+  assert.equal(layer.includes("label.value"),false);
+  assert.equal(layer.includes("compactUsd("),false);
+  assert.ok(layer.includes("label.glyph"));
+  assert.ok(layer.includes("label.multiplier"));
 });
