@@ -21,8 +21,13 @@ test("webapp version 46 and the current canonical build stay visible throughout 
   assert.match(layout, /<AppVersionControl \/>/);
   assert.match(layout, /<PwaRegistration \/>/);
   assert.match(layout, /<ReleaseHistoryControl \/>/);
-  assert.match(layout, /<AuthProvider>\{children\}<\/AuthProvider>/);
-  assert.ok(layout.indexOf("<ReleaseHistoryControl />") < layout.indexOf("<AuthProvider>"));
+  const providerStart = layout.indexOf("<AuthProvider>");
+  const providerEnd = layout.indexOf("</AuthProvider>");
+  const chartEnhancer = layout.indexOf("<AsterPortfolioSnapshotEnhancer />");
+  assert.ok(providerStart > 0 && providerEnd > providerStart);
+  assert.ok(chartEnhancer > providerStart && chartEnhancer < providerEnd);
+  assert.ok(layout.indexOf("{children}") > providerStart && layout.indexOf("{children}") < providerEnd);
+  assert.ok(layout.indexOf("<ReleaseHistoryControl />") < providerStart);
   assert.match(layout, /STRATEGY 2-RUNTIME/);
   assert.doesNotMatch(layout, /STRATEGY 3-RUNTIME LIVE/);
   assert.match(layout, /manifest\.webmanifest\?v=\$\{WEBAPP_VERSION\}&build=\$\{WEBAPP_BUILD_NUMBER\}/);
