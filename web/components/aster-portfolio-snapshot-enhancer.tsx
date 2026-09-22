@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterHedgeManager } from "./aster-hedge-manager";
+import { PortfolioKoersChart } from "./portfolio-koers-chart";
 import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
 
 type Tone = "positive" | "negative" | "neutral";
@@ -812,6 +813,7 @@ export function AsterPortfolioSnapshotEnhancer() {
 
   return host ? createPortal(
     <>
+      <PortfolioKoersChart liveEquityText={values.equity} />
       <Snapshot
         values={values}
         profitPreview={profitPreview}
