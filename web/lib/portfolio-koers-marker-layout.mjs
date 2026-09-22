@@ -1,4 +1,5 @@
-export const MAX_FULL_EVENT_LABELS = 5;
+export const MAX_FULL_EVENT_LABELS = 3;
+export const MAX_COMPACT_EVENT_CLUSTERS = 2;
 
 function finite(value, fallback=0) {
   const number=Number(value);
@@ -10,8 +11,8 @@ function intersects(a,b,padding=4) {
 }
 
 function fullRect(candidate,left,top) {
-  const width=Math.max(62,Math.min(94,finite(candidate.width,78)));
-  const height=Math.max(28,Math.min(42,finite(candidate.height,34)));
+  const width=Math.max(58,Math.min(90,finite(candidate.width,76)));
+  const height=Math.max(26,Math.min(40,finite(candidate.height,32)));
   return {left:left-width/2,right:left+width/2,top:top-height/2,bottom:top+height/2,width,height};
 }
 
@@ -26,7 +27,7 @@ export function eventPriority(row) {
   return base+Math.min(25,Math.log10(1+notional)*5);
 }
 
-export function layoutPortfolioKoersMarkers(candidates,viewport,{maxFull=MAX_FULL_EVENT_LABELS,priceAxisWidth=70}={}) {
+export function layoutPortfolioKoersMarkers(candidates,viewport,{maxFull=MAX_FULL_EVENT_LABELS,maxCompact=MAX_COMPACT_EVENT_CLUSTERS,priceAxisWidth=70}={}) {
   const width=Math.max(1,finite(viewport?.width,1));
   const height=Math.max(1,finite(viewport?.height,1));
   const bounds={left:42,right:Math.max(43,width-priceAxisWidth-4),top:12,bottom:height-14};
@@ -38,12 +39,12 @@ export function layoutPortfolioKoersMarkers(candidates,viewport,{maxFull=MAX_FUL
   const full=[];
   const compactPool=[];
   const occupied=[];
-  const offsets=[[0,0],[0,-20],[0,20],[22,0],[-22,0],[20,-16],[-20,16],[32,0],[-32,0]];
+  const offsets=[[0,0],[0,-18],[0,18],[20,0],[-20,0],[18,-14],[-18,14],[28,0],[-28,0]];
 
   for(const candidate of ordered){
-    if(full.length>=maxFull){compactPool.push(candidate);continue}
+    if(full.length>=Math.max(0,maxFull)){compactPool.push(candidate);continue}
     const direction=String(candidate.position)==="below"?1:-1;
-    const anchorY=finite(candidate.y)+direction*28;
+    const anchorY=finite(candidate.y)+direction*25;
     let placed=null;
     for(const [dx,dy] of offsets){
       const left=finite(candidate.x)+dx;
@@ -54,32 +55,51 @@ export function layoutPortfolioKoersMarkers(candidates,viewport,{maxFull=MAX_FUL
       placed={...candidate,left,top,rect,compact:false};
       break;
     }
-    if(placed){
-      full.push(placed);
-      occupied.push(placed.rect);
-    }else compactPool.push(candidate);
+    if(placed){full.push(placed);occupied.push(placed.rect)}
+    else compactPool.push(candidate);
   }
 
   const clusterMap=new Map();
   for(const candidate of compactPool){
     const x=Math.max(bounds.left,Math.min(bounds.right,finite(candidate.x)));
     const y=Math.max(bounds.top+10,Math.min(bounds.bottom-10,finite(candidate.y)));
-    const key=`${Math.round(x/72)}:${Math.round(y/56)}`;
-    const existing=clusterMap.get(key)||{xTotal:0,yTotal:0,rows:[],eventCount:0};
+    const key=`${Math.round(x/96)}:${Math.round(y/72)}`;
+    const existing=clusterMap.get(key)||{xTotal:0,yTotal:0,rows:[],eventCount:0,priority:0,latestTime:0};
     existing.xTotal+=x;
     existing.yTotal+=y;
     existing.rows.push(candidate);
     existing.eventCount+=Math.max(1,Math.floor(finite(candidate.eventCount,1)));
+    existing.priority=Math.max(existing.priority,finite(candidate.priority,eventPriority(candidate)));
+    existing.latestTime=Math.max(existing.latestTime,finite(candidate.time));
     clusterMap.set(key,existing);
   }
 
-  const compact=[...clusterMap.values()].map((cluster,index)=>{
-    const count=cluster.rows.length;
-    const left=cluster.xTotal/count;
-    const top=cluster.yTotal/count;
+  const clusters=[...clusterMap.values()].sort((a,b)=>b.priority-a.priority||b.latestTime-a.latestTime);
+  const kept=clusters.slice(0,Math.max(0,maxCompact));
+  for(const overflow of clusters.slice(kept.length)){
+    if(!kept.length){kept.push(overflow);continue}
+    const overflowX=overflow.xTotal/Math.max(1,overflow.rows.length);
+    let target=kept[0];
+    let distance=Math.abs(target.xTotal/Math.max(1,target.rows.length)-overflowX);
+    for(const candidate of kept.slice(1)){
+      const nextDistance=Math.abs(candidate.xTotal/Math.max(1,candidate.rows.length)-overflowX);
+      if(nextDistance<distance){target=candidate;distance=nextDistance}
+    }
+    target.xTotal+=overflow.xTotal;
+    target.yTotal+=overflow.yTotal;
+    target.rows.push(...overflow.rows);
+    target.eventCount+=overflow.eventCount;
+    target.priority=Math.max(target.priority,overflow.priority);
+    target.latestTime=Math.max(target.latestTime,overflow.latestTime);
+  }
+
+  const compact=kept.map((cluster,index)=>{
+    const count=Math.max(1,cluster.rows.length);
     return {
       id:`cluster-${index}-${cluster.rows.map((row)=>row.id).join("-")}`,
-      left,top,compact:true,
+      left:cluster.xTotal/count,
+      top:cluster.yTotal/count,
+      compact:true,
       eventCount:cluster.eventCount,
       rows:cluster.rows,
       tone:"cluster",
