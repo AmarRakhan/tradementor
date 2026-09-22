@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Amar Order Builder</title>
+<style>body{font-family:Segoe UI,Arial,sans-serif;background:#f4f7fb;color:#173b5f;padding:32px} .box{max-width:520px;margin:10vh auto;background:#fff;border:1px solid #dbe4ef;border-radius:14px;padding:28px;box-shadow:0 8px 24px rgba(16,44,84,.08)}</style>
+</head>
+<body>
+<div class="box"><h2>Order Builder laden…</h2><p>De testapp wordt geopend.</p></div>
+<script>
+(async()=>{
+  try{
+    const files=["_0.b64","_1.b64","_2.b64","_3.b64","_4.b64","_5.b64","_6.b64"];
+    const parts=await Promise.all(files.map(f=>fetch(f+"?v=1").then(r=>{if(!r.ok)throw new Error("Kon "+f+" niet laden");return r.text()})));
+    const bin=atob(parts.join("").replace(/\s/g,""));
+    const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
+    const page=new TextDecoder("utf-8").decode(bytes);
+    document.open();
+    document.write(page);
+    document.close();
+  }catch(e){
+    document.body.innerHTML='<div class="box"><h2>Order Builder kon niet laden</h2><p>Ververs de pagina. Fout: '+String(e.message||e)+'</p></div>';
+  }
+})();
+</script>
+</body>
+</html>
