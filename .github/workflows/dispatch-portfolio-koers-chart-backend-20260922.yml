@@ -1,0 +1,26 @@
+name: Dispatch Portfolio Koers Chart Backend Production
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/dispatch-portfolio-koers-chart-backend-20260922.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    if: github.event.head_commit.message == 'Add persistent Portfolio Koers chart backend'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch guarded exact-source backend deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$GITHUB_SHA"

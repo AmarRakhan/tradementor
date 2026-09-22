@@ -72,6 +72,7 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -221,6 +222,7 @@ _info_cache: dict[str, tuple[float, Any]] = {}
 _aster_universe_cache: AsterUniverseSnapshot | None = None
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
+_aster_portfolio_chart_cashflow_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _bot_health_platform_cache: tuple[float, dict[str, int]] = (0.0, {})
 
 
@@ -4163,6 +4165,157 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         # Credential replacement never preserves an enabled switch.
         "liveEnabled": bool(control.get("liveEnabled", False)),
         "ordersEnabled": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
+    }
+
+
+
+
+def _portfolio_chart_timestamp_ms(value: Any) -> int:
+    if isinstance(value, datetime):
+        stamp = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return int(stamp.timestamp() * 1000)
+    if hasattr(value, "timestamp"):
+        try:
+            return int(value.timestamp() * 1000)
+        except (TypeError, ValueError):
+            return 0
+    numeric = int(safe_float(value))
+    return numeric * 1000 if 0 < numeric < 10_000_000_000 else numeric
+
+
+def _persist_portfolio_chart_sample(user: dict[str, Any], *, equity: float, source_at_ms: int) -> None:
+    """Persist only exchange-confirmed equity. This path is display-only."""
+    if equity <= 0 or source_at_ms <= 0:
+        return
+    root = user_reference(user)
+    now = datetime.now(timezone.utc)
+
+    def merge_one(timeframe: str) -> None:
+        collection = portfolio_chart_collection(timeframe)
+        bucket_ms = source_at_ms // PORTFOLIO_CHART_TIMEFRAME_MS[timeframe] * PORTFOLIO_CHART_TIMEFRAME_MS[timeframe]
+        reference = root.collection(collection).document(str(bucket_ms))
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def apply(txn):
+            snapshot = reference.get(transaction=txn)
+            existing = (snapshot.to_dict() or {}) if snapshot.exists else {}
+            merged = merge_portfolio_equity_sample(existing, equity=equity, source_at_ms=source_at_ms, timeframe=timeframe)
+            txn.set(reference, {**merged, "updatedAt": now}, merge=True)
+
+        apply(transaction)
+
+    for timeframe in PORTFOLIO_CHART_TIMEFRAME_MS:
+        merge_one(timeframe)
+
+
+def _read_portfolio_chart_candles(user: dict[str, Any], timeframe: str, limit: int) -> list[dict[str, Any]]:
+    rows = []
+    collection = user_reference(user).collection(portfolio_chart_collection(timeframe))
+    for document in collection.order_by("bucketMs", direction=firestore.Query.DESCENDING).limit(limit).stream():
+        candle = public_portfolio_chart_candle(document.to_dict() or {})
+        if candle:
+            rows.append(candle)
+    rows.sort(key=lambda row: int(row["atMs"]))
+    return rows
+
+
+def _portfolio_chart_cashflows(user: dict[str, Any], client: AsterV3Client | None = None) -> list[dict[str, Any]]:
+    uid = str(user["uid"])
+    now = time.monotonic()
+    with _cache_lock:
+        cached = _aster_portfolio_chart_cashflow_cache.get(uid)
+    if cached and now - cached[0] < 120.0:
+        return cached[1]
+    previous = cached[1] if cached else []
+    try:
+        if client is None:
+            secret = load_aster_secret(user)
+            client = AsterV3Client(
+                signer_address=secret.signer_address,
+                sign_message=local_eip712_signer(secret),
+                live_authorized=False,
+            )
+        since = int((datetime.now(timezone.utc) - timedelta(days=35)).timestamp() * 1000)
+        income = client.income_history(start_time=since, limit=1000)
+        rows = [row for row in income if isinstance(row, dict)]
+        with _cache_lock:
+            _aster_portfolio_chart_cashflow_cache[uid] = (now, rows)
+        return rows
+    except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, HTTPException, ValueError):
+        return previous
+
+
+@app.get("/v1/me/aster/portfolio-chart")
+def aster_portfolio_chart(
+    timeframe: str = Query(default="15m", pattern=r"^(1m|5m|15m|1u|4u|24u)$"),
+    limit: int = Query(default=260, ge=30, le=600),
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Read-only persistent Portfolio Koers OHLC, markers and display zones.
+
+    It never submits, closes, cancels or sizes an order. Live trading state is
+    only read as evidence for the chart.
+    """
+    uid = str(user["uid"])
+    automation_ref = aster_automation_reference(uid)
+    automation = automation_ref.get().to_dict() or {}
+    snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
+    now_utc = datetime.now(timezone.utc)
+    now_ms = int(now_utc.timestamp() * 1000)
+    captured_ms = _portfolio_chart_timestamp_ms(snapshot.get("capturedAt"))
+    client: AsterV3Client | None = None
+
+    if captured_ms <= 0 or now_ms - captured_ms > 45_000:
+        try:
+            secret = load_aster_secret(user)
+            client = AsterV3Client(
+                signer_address=secret.signer_address,
+                sign_message=local_eip712_signer(secret),
+                live_authorized=False,
+            )
+            current = aster_dashboard_snapshot(client.account_information(), client.position_risk())
+            snapshot = {**snapshot, **current, "capturedAt": now_utc}
+            captured_ms = now_ms
+            automation_ref.set({"accountSnapshot": snapshot}, merge=True)
+        except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, HTTPException, ValueError):
+            pass
+
+    equity = safe_float(snapshot.get("equity", snapshot.get("marginBalance", snapshot.get("totalMarginBalance"))))
+    snapshot_fresh = bool(equity > 0 and captured_ms > 0 and 0 <= now_ms - captured_ms <= 120_000)
+    if snapshot_fresh:
+        _persist_portfolio_chart_sample(user, equity=equity, source_at_ms=captured_ms)
+
+    candles = _read_portfolio_chart_candles(user, timeframe, limit)
+    strategy_state = aster_strategy2_reference(uid).get().to_dict() or {}
+    cycle = strategy_state.get("multiBbCycle") if isinstance(strategy_state.get("multiBbCycle"), dict) else {}
+    cycle_start = safe_float(cycle.get("cycleStartEquity"))
+
+    with _cache_lock:
+        history_cache = _aster_closed_trades_cache.get(uid)
+    recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
+    trade_markers = portfolio_chart_trade_markers(recent_activity, timeframe)
+    cashflow_markers = portfolio_chart_cashflow_markers(_portfolio_chart_cashflows(user, client), timeframe)
+    zones = derive_equity_zones(candles, cycle_start)
+    latest_close = safe_float(candles[-1].get("close")) if candles else equity
+    current_zone = active_portfolio_zone(zones, latest_close)
+
+    return {
+        "timeframe": timeframe,
+        "candles": candles,
+        "markers": [*trade_markers, *cashflow_markers],
+        "zones": zones,
+        "currentZone": current_zone,
+        "cycleStartEquity": cycle_start if cycle_start > 0 else None,
+        "currentEquity": equity if equity > 0 else None,
+        "snapshotAtMs": captured_ms if captured_ms > 0 else None,
+        "live": snapshot_fresh,
+        "persistent": True,
+        "externalCashflowsSeparated": True,
+        "zoneBacktest": zone_shadow_backtest(candles, cycle_start),
+        "readOnly": True,
+        "ordersSent": 0,
+        "source": "Aster account equity + confirmed fills + income ledger",
     }
 
 
