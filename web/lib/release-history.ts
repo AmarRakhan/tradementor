@@ -55,6 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Frontend: web/components/portfolio-koers-chart.tsx + portfolio-koers-chart.css + pure regressiehelpers.",
     "Backend: account-scoped Firestore OHLC-buckets per timeframe en /v1/me/aster/portfolio-chart.",
     "Geen Strategy-2 scanner-, leverage-, DCA-, hedge-, TP- of order-executionlogica gewijzigd.",
+    "Release regression gate controleert de daadwerkelijke JSX-mount van Portfolio Koers vóór Portfolio Snapshot, zonder TypeScript-generic false positive.",
   ],
   confidence: "confirmed",
 };

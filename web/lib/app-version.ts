@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 393: persistent live Portfolio Koers chart above the unchanged Portfolio Snapshot.
+// Build 393: persistent live Portfolio Koers chart above the unchanged Portfolio Snapshot; release regression gate corrected.
 export const WEBAPP_BUILD_NUMBER = "393";
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
