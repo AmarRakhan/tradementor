@@ -17,23 +17,20 @@ test("service worker uses Samsung Internet native installation without an in-app
   const worker = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
   const registration = await readFile(new URL("../components/pwa-registration.tsx", import.meta.url), "utf8");
   assert.match(worker, /skipWaiting/);
-  assert.match(worker, /clients\.claim/);
+  assert.doesNotMatch(worker, /clients\.claim/);
   assert.match(worker, /respondWith/);
   assert.match(worker, /offline\.html/);
+  assert.match(worker, /amar-bot-shell-v46-stable-update-2/);
+  assert.match(worker, /request\.url\.includes\("\/api\/"\)/);
   assert.doesNotMatch(registration, /beforeinstallprompt/);
   assert.match(registration, /serviceWorker\.register/);
   assert.match(registration, /updateViaCache: "none"/);
-  assert.match(registration, /appVersion=\$\{WEBAPP_VERSION\}/);
-  assert.match(registration, /declaredVersion && declaredVersion !== WEBAPP_VERSION/);
-  assert.match(registration, /versionCheck=\$\{Date\.now\(\)\}/);
   assert.match(registration, /visibilitychange/);
-  assert.match(registration, /setInterval\(.*60_000/);
-  assert.match(registration, /window\.location\.replace/);
-  assert.doesNotMatch(registration, /addEventListener\(["\']controllerchange/);
-  assert.doesNotMatch(registration, /window\.location\.reload\(/);
-  assert.match(registration, /amar-pwa-canonical-refresh-v/);
-  assert.match(worker, /amar-bot-shell-v46-auto-update-1/);
-  assert.match(worker, /request\.url\.includes\("\/api\/"\)/);
+  assert.match(registration, /5 \* 60_000/);
+  assert.doesNotMatch(registration, /window\.location\.(?:reload|replace)/);
+  assert.doesNotMatch(registration, /controllerchange/);
+  assert.doesNotMatch(registration, /versionCheck=/);
+  assert.doesNotMatch(registration, /SKIP_WAITING/);
 });
 
 test("private staging fetches its manifest with the signed-in session", async () => {
