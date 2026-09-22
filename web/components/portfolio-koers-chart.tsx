@@ -125,7 +125,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#b8c8d2",attributionLogo:false} as any,
-      grid:{vertLines:{color:"rgba(75,133,160,.12)"},horzLines:{color:"rgba(75,133,160,.16)"}},
+      grid:{vertLines:{color:"rgba(75,133,160,.075)"},horzLines:{color:"rgba(75,133,160,.095)"}},
       crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"},horzLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"}},
       rightPriceScale:{borderColor:"rgba(85,160,190,.35)",minimumWidth:70,scaleMargins:{top:.08,bottom:.08}},
       timeScale:{borderColor:"rgba(85,160,190,.3)",timeVisible:true,secondsVisible:false,rightOffset:3,barSpacing:timeframe==="1m"?7:timeframe==="5m"?8:timeframe==="15m"?10:timeframe==="1u"?12:timeframe==="4u"?15:18,minBarSpacing:4,tickMarkFormatter:(time:unknown)=>{
@@ -160,10 +160,15 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
 
     const candleByTime=new Map(candles.map((row)=>[row.time,row]));
     const markerRows=payload.markers.filter((row)=>candleByTime.has(row.time));
-    const visualMarkers=markerRows.map((row)=>{
+    const primaryMarkerByTime=new Map<number,Marker>();
+    for(const row of markerRows){
+      const current=primaryMarkerByTime.get(row.time);
+      if(!current||eventPriority(row)>eventPriority(current))primaryMarkerByTime.set(row.time,row);
+    }
+    const visualMarkers=[...primaryMarkerByTime.values()].map((row)=>{
       const visual=markerVisual(row);
-      const color=visual.tone==="long"?"#23e6a0":visual.tone==="short"?"#ff566f":visual.tone==="cashflow"?"#62c8ff":"#edbe48";
-      return {time:row.time as UTCTimestamp,position:visual.position as any,shape:visual.shape as any,color,text:"",size:.72};
+      const color=visual.tone==="long"?"rgba(35,230,160,.82)":visual.tone==="short"?"rgba(255,86,111,.82)":visual.tone==="cashflow"?"rgba(98,200,255,.76)":"rgba(237,190,72,.78)";
+      return {time:row.time as UTCTimestamp,position:visual.position as any,shape:visual.shape as any,color,text:"",size:.46};
     });
     if(visualMarkers.length) createSeriesMarkers(series,visualMarkers);
 
@@ -201,7 +206,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
           width:copy.value?82:70,height:copy.value?34:28,
         });
       }
-      const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{maxFull:5,priceAxisWidth:70});
+      const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{maxFull:3,maxCompact:2,priceAxisWidth:70});
       setEventLabels(markerLayout.all as EventLabel[]);
     };
     syncOverlaysRef.current=()=>requestAnimationFrame(syncOverlays);
