@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { eventPriority, layoutPortfolioKoersMarkers, markerRectsOverlap, MAX_FULL_EVENT_LABELS, zoneToneForRank } from "../lib/portfolio-koers-marker-layout.mjs";
+import { eventPriority, layoutPortfolioKoersMarkers, markerRectsOverlap, MAX_COMPACT_EVENT_CLUSTERS, MAX_FULL_EVENT_LABELS, zoneToneForRank } from "../lib/portfolio-koers-marker-layout.mjs";
 
 function candidate(index,{x=80+index*18,y=120,kind="entry",time=1_700_000_000+index,eventCount=1}={}) {
   return {id:`e${index}`,x,y,position:index%2?"below":"above",kind,time,eventCount,priority:eventPriority({kind}),tone:kind==="tp"?"tp":"long",title:`E${index}`,value:"$ 1,00"};
 }
 
-test("20 visible events never produce more than five full labels",()=>{
+test("20 visible events never produce more than three full labels or two compact clusters",()=>{
   const rows=Array.from({length:20},(_,index)=>candidate(index,{x:70+(index%10)*28,y:80+(index%3)*36,kind:index%3===0?"tp":"entry"}));
   const layout=layoutPortfolioKoersMarkers(rows,{width:620,height:260});
   assert.ok(layout.full.length<=MAX_FULL_EVENT_LABELS);
-  assert.equal(layout.full.length,5);
+  assert.equal(layout.full.length,3);
   assert.ok(layout.compact.length>0);
+  assert.ok(layout.compact.length<=MAX_COMPACT_EVENT_CLUSTERS);
 });
 
 test("collision layout never leaves full label rectangles overlapping",()=>{
@@ -23,7 +24,7 @@ test("collision layout never leaves full label rectangles overlapping",()=>{
 
 test("cluster keeps all hidden event counts without inventing events",()=>{
   const rows=Array.from({length:7},(_,index)=>candidate(index,{x:120+index,y:100+index,eventCount:index===0?2:1}));
-  const layout=layoutPortfolioKoersMarkers(rows,{width:360,height:210},{maxFull:1});
+  const layout=layoutPortfolioKoersMarkers(rows,{width:360,height:210},{maxFull:1,maxCompact:2});
   const hiddenCount=layout.compact.reduce((sum,row)=>sum+row.eventCount,0);
   const fullCount=layout.full.reduce((sum,row)=>sum+row.eventCount,0);
   assert.equal(hiddenCount+fullCount,8);
@@ -40,4 +41,13 @@ test("zone palette follows top red, amber, green, bottom blue order",()=>{
   assert.equal(zoneToneForRank(1,4),"amber");
   assert.equal(zoneToneForRank(2,4),"green");
   assert.equal(zoneToneForRank(3,4),"blue");
+});
+
+test("compact overflow merges without losing hidden event counts",()=>{
+  const rows=Array.from({length:30},(_,index)=>candidate(index,{x:50+(index%15)*30,y:45+(index%5)*32,eventCount:index%7===0?2:1}));
+  const layout=layoutPortfolioKoersMarkers(rows,{width:620,height:260},{maxFull:2,maxCompact:2});
+  const shown=layout.full.reduce((sum,row)=>sum+row.eventCount,0)+layout.compact.reduce((sum,row)=>sum+row.eventCount,0);
+  const expected=rows.reduce((sum,row)=>sum+row.eventCount,0);
+  assert.equal(shown,expected);
+  assert.ok(layout.compact.length<=2);
 });
