@@ -67,6 +67,7 @@ def merge_equity_sample(existing: dict[str, Any] | None, *, equity: float, sourc
     low = _number(current.get("low")) or value
     close = _number(current.get("close")) or value
     samples = max(0, int(_number(current.get("sampleCount"))))
+    duplicate = bool(current and stamp == last and abs(value - close) <= 1e-12)
 
     if stamp < first:
         first, opened = stamp, value
@@ -82,7 +83,7 @@ def merge_equity_sample(existing: dict[str, Any] | None, *, equity: float, sourc
         "close": close,
         "firstSampleAtMs": first,
         "lastSampleAtMs": last,
-        "sampleCount": samples + 1,
+        "sampleCount": samples if duplicate else samples + 1,
         "source": "aster-account-equity",
     }
 
@@ -224,9 +225,14 @@ def _confirmed_swings(candles: list[dict[str, Any]], wing: int = 2) -> list[dict
         left_lows = [_number(row.get("low")) for row in left]
         right_lows = [_number(row.get("low")) for row in right]
         right_closes = [_number(row.get("close")) for row in right]
-        if high > max(left_highs + right_highs) and any(0 < close < high for close in right_closes):
+        # Equal neighbouring highs/lows form real market plateaus. Treat the
+        # plateau edge as a confirmed swing when it still dominates one side;
+        # subsequent ATR clustering collapses duplicate touches into one zone.
+        high_is_local = high >= max(left_highs + right_highs) and (high > max(left_highs) or high > max(right_highs))
+        low_is_local = low <= min(left_lows + right_lows) and (low < min(left_lows) or low < min(right_lows))
+        if high_is_local and any(0 < close < high for close in right_closes):
             result.append({"price": high, "kind": "resistance", "index": index, "atMs": int(_number(candle.get("atMs")))})
-        if low < min(left_lows + right_lows) and any(close > low for close in right_closes):
+        if low_is_local and any(close > low for close in right_closes):
             result.append({"price": low, "kind": "support", "index": index, "atMs": int(_number(candle.get("atMs")))})
     return result
 

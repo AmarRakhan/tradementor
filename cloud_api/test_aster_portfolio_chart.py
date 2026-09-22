@@ -97,3 +97,10 @@ def test_zones_require_confirmed_swings_and_use_cycle_reference_for_zone_zero():
 def test_no_fixed_zone_grid_when_market_has_no_confirmed_structure():
     flat = [candle((index + 1) * 900_000, 100, 100, 100, 100) for index in range(30)]
     assert derive_equity_zones(flat, 100.0) == []
+
+
+def test_duplicate_confirmed_sample_does_not_inflate_ohlc_sample_count():
+    first = merge_equity_sample(None, equity=100.0, source_at_ms=61_000, timeframe="1m")
+    duplicate = merge_equity_sample(first, equity=100.0, source_at_ms=61_000, timeframe="1m")
+    assert duplicate["sampleCount"] == 1
+    assert duplicate["open"] == duplicate["high"] == duplicate["low"] == duplicate["close"] == 100.0
