@@ -16,8 +16,8 @@ test("Portfolio Koers is a compact Aster equity chart above the existing snapsho
   assert.match(component, /Totale portfolio waarde \(USDT\)/);
   assert.match(component, /CandlestickSeries/);
   assert.match(component, /Bollinger/);
-  assert.match(component, /Entry L/);
-  assert.match(component, /Entry S/);
+  const helper = await readFile(new URL("../lib/portfolio-equity-chart.ts", import.meta.url), "utf8");
+  assert.match(helper, /Entry \\$\\{event\\.side\\}/);
   assert.doesNotMatch(component, /BTCUSDT|ETHUSDT|HYPEUSDT/);
   assert.doesNotMatch(component, /HistogramSeries|Volume/);
 
