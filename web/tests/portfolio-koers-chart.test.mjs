@@ -71,6 +71,16 @@ test("Active zone follows the confirmed zone bands or the nearest confirmed cent
   assert.equal(portfolioZoneForPrice(zones,97),0);
 });
 
+test("Portfolio Koers lifecycle is mounted inside AuthProvider",async()=>{
+  const layout=await readFile(new URL("../app/layout.tsx",import.meta.url),"utf8");
+  const providerStart=layout.indexOf("<AuthProvider>");
+  const providerEnd=layout.indexOf("</AuthProvider>");
+  const enhancer=layout.indexOf("<AsterPortfolioSnapshotEnhancer />");
+  assert.ok(providerStart>0);
+  assert.ok(enhancer>providerStart);
+  assert.ok(providerEnd>enhancer);
+});
+
 test("Portfolio Koers is mounted before the existing Portfolio Snapshot and remains read-only",async()=>{
   const source=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
   const portalStart=source.indexOf("return host ? createPortal");
