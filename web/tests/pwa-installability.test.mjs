@@ -8,6 +8,7 @@ test("Crypto Bot 2026 has a standalone installable manifest", async () => {
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.scope, "/");
   assert.match(manifest.start_url, /source=pwa/);
+  assert.match(manifest.start_url, /appVersion=46/);
   assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192" && icon.purpose.includes("any")));
   assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose.includes("maskable")));
 });
@@ -23,10 +24,14 @@ test("service worker uses Samsung Internet native installation without an in-app
   assert.match(registration, /serviceWorker\.register/);
   assert.match(registration, /updateViaCache: "none"/);
   assert.match(registration, /appVersion=\$\{WEBAPP_VERSION\}/);
+  assert.match(registration, /declaredVersion && declaredVersion !== WEBAPP_VERSION/);
   assert.match(registration, /versionCheck=\$\{Date\.now\(\)\}/);
   assert.match(registration, /visibilitychange/);
   assert.match(registration, /setInterval\(.*60_000/);
   assert.match(registration, /window\.location\.replace/);
+  assert.doesNotMatch(registration, /addEventListener\(["\']controllerchange/);
+  assert.doesNotMatch(registration, /window\.location\.reload\(/);
+  assert.match(registration, /amar-pwa-canonical-refresh-v/);
   assert.match(worker, /amar-bot-shell-v46-auto-update-1/);
   assert.match(worker, /request\.url\.includes\("\/api\/"\)/);
 });
