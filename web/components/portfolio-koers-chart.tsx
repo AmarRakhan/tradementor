@@ -6,7 +6,7 @@ import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioZoneForPrice } from "@/lib/portfolio-koers-chart.mjs";
-import { eventPriority, layoutPortfolioKoersMarkers, zoneToneForRank } from "@/lib/portfolio-koers-marker-layout.mjs";
+import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
@@ -34,10 +34,23 @@ const compactUsd=(value:number|null|undefined)=>{
 
 function markerPresentation(row:Marker) {
   const kind=String(row.kind||"").toLowerCase(),side=String(row.side||"").toUpperCase(),count=Math.max(1,Number(row.count)||1);
-  const multiplier=count>1?`×${count}`:"";
-  if(kind==="cashflow")return {tone:"cashflow" as const,glyph:"↕",multiplier,title:String(row.cashflowType||"Transfer").replaceAll("_"," "),value:""};
-  if(kind==="entry")return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:"♟",multiplier,title:side==="SHORT"?"SHORT":"LONG",value:""};
-  return {tone:"tp" as const,glyph:"💰",multiplier,title:"Take Profit",value:""};
+  if(kind==="cashflow")return {tone:"cashflow" as const,glyph:"↕",multiplier:count>1?`×${count}`:"",title:String(row.cashflowType||"Transfer").replaceAll("_"," "),value:""};
+  if(kind==="entry")return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:"⚔",multiplier:`×${count}`,title:side==="SHORT"?"SHORT":"LONG",value:""};
+  return {tone:"tp" as const,glyph:"💰",multiplier:count>1?`TP ×${count}`:"TP",title:"Take Profit",value:""};
+}
+
+function connectorStyle(label:EventLabel) {
+  if(!Number.isFinite(label.anchorLeft)||!Number.isFinite(label.anchorTop))return undefined;
+  const startX=Number(label.anchorLeft),startY=Number(label.anchorTop);
+  const dx=label.left-startX,dy=label.top-startY;
+  const length=Math.hypot(dx,dy);
+  if(length<5)return undefined;
+  return {
+    left:`${startX}px`,
+    top:`${startY}px`,
+    width:`${length}px`,
+    transform:`rotate(${Math.atan2(dy,dx)}rad)`,
+  };
 }
 
 function markerDetail(row:Marker) {
@@ -174,16 +187,18 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     const syncOverlays=()=>{
       if(candleSeriesRef.current!==series||!container.isConnected)return;
       const height=Math.max(1,container.clientHeight),width=Math.max(1,container.clientWidth);
-      const orderedZones=[...payload.zones].sort((a,b)=>b.center-a.center);
-      const zones:ZoneLayout[]=[];
-      for(let rank=0;rank<orderedZones.length;rank+=1){
-        const zone=orderedZones[rank];
-        const upperY=series.priceToCoordinate(zone.upper),lowerY=series.priceToCoordinate(zone.lower);
-        if(upperY===null||lowerY===null)continue;
-        const top=Math.max(0,Math.min(Number(upperY),Number(lowerY))),bottom=Math.min(height,Math.max(Number(upperY),Number(lowerY)));
-        if(bottom<=0||top>=height||bottom-top<1)continue;
-        zones.push({index:zone.index,label:zone.label,top,height:Math.max(2,bottom-top),tone:zoneToneForRank(rank,orderedZones.length) as ZoneLayout["tone"]});
-      }
+      const zoneCoordinates=payload.zones.map((zone)=>{
+        const centerY=series.priceToCoordinate(zone.center);
+        const upperY=series.priceToCoordinate(zone.upper);
+        const lowerY=series.priceToCoordinate(zone.lower);
+        if(centerY===null||upperY===null||lowerY===null)return null;
+        return {
+          index:zone.index,label:zone.label,
+          centerY:Number(centerY),upperY:Number(upperY),lowerY:Number(lowerY),
+          source:zone.source,
+        };
+      }).filter(Boolean);
+      const zones=layoutPortfolioKoersZoneRegions(zoneCoordinates,height) as ZoneLayout[];
       setZoneLayout(zones);
 
       const candidates:any[]=[];
@@ -213,7 +228,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
           tone:copy.tone,title:copy.title,value:"",glyph:copy.glyph,multiplier:copy.multiplier,
           anchorLeft:Number(x),anchorTop:Number(y),
           bandTop:upperY===null?null:Number(upperY),bandBottom:lowerY===null?null:Number(lowerY),
-          width:copy.multiplier?40:26,height:22,
+          width:copy.multiplier?48:42,height:44,
         });
       }
       const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{maxFull:3,maxCompact:2,priceAxisWidth:PRICE_AXIS_WIDTH});
@@ -258,7 +273,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   };
   const latest=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
 
-  return <section ref={shellRef} className="portfolio-koers-card" aria-label="Portfolio Koers" data-reference="file_00000000c7ec820ab9697735bb027326">
+  return <section ref={shellRef} className="portfolio-koers-card" aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f">
     <header className="portfolio-koers-header">
       <div className="portfolio-koers-heading">
         <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={payload.live?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{payload.live?"Live":"Sync"}</span></div>
@@ -272,7 +287,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     <div className="portfolio-koers-stage">
       <div ref={canvasRef} className="portfolio-koers-canvas"/>
       <div className="portfolio-koers-zones" aria-hidden="true">{zoneLayout.map((zone)=><div key={zone.index} className={`portfolio-koers-zone zone-${zone.tone} ${zone.index===activeZone?"active":""}`} style={{top:`${zone.top}px`,height:`${zone.height}px`}}><span>{zone.label}</span></div>)}</div>
-      <div className="portfolio-koers-event-layer" aria-hidden="true">{eventLabels.map((label)=><div key={label.id} className="portfolio-koers-event-group">{!label.compact&&Number.isFinite(label.anchorLeft)&&Number.isFinite(label.anchorTop)?<i className={`portfolio-koers-anchor ${label.tone}`} style={{left:`${label.anchorLeft}px`,top:`${label.anchorTop}px`}}/>:null}<div className={`portfolio-koers-event ${label.tone} ${label.position} ${label.compact?"compact":""}`} style={{left:`${label.left}px`,top:`${label.top}px`}}>{label.compact?<b>{label.multiplier||`+${label.eventCount}`}</b>:<><b className="portfolio-koers-event-glyph">{label.glyph}</b>{label.multiplier?<small>{label.multiplier}</small>:null}</>}</div></div>)}</div>
+      <div className="portfolio-koers-event-layer" aria-hidden="true">{eventLabels.map((label)=><div key={label.id} className="portfolio-koers-event-group">{!label.compact&&connectorStyle(label)?<i className={`portfolio-koers-connector ${label.tone}`} style={connectorStyle(label)}/>:null}{!label.compact&&Number.isFinite(label.anchorLeft)&&Number.isFinite(label.anchorTop)?<i className={`portfolio-koers-anchor ${label.tone}`} style={{left:`${label.anchorLeft}px`,top:`${label.anchorTop}px`}}/>:null}<div className={`portfolio-koers-event ${label.tone} ${label.position} ${label.compact?"compact":""}`} style={{left:`${label.left}px`,top:`${label.top}px`}}>{label.compact?<b>{label.multiplier||`+${label.eventCount}`}</b>:<><span className="portfolio-koers-event-icon"><b className="portfolio-koers-event-glyph">{label.glyph}</b></span>{label.multiplier?<small className="portfolio-koers-event-badge">{label.multiplier}</small>:null}</>}</div></div>)}</div>
       {loading&&!baseCandles.length?<div className="portfolio-koers-state"><i/>Portfoliohistorie laden…</div>:null}
       {!loading&&!baseCandles.length&&!error?<div className="portfolio-koers-state"><strong>Historie wordt opgebouwd</strong><span>Nieuwe candles gebruiken bevestigde Aster-equity; bestaande bevestigde browserhistorie wordt veilig hergebruikt als die beschikbaar is.</span></div>:null}
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
