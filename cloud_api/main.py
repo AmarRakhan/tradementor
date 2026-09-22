@@ -1332,6 +1332,7 @@ def _load_portfolio_equity_samples(uid: str, maximum: int = PORTFOLIO_EQUITY_SAM
 
 
 def _portfolio_equity_cashflows(uid: str, client: AsterV3Client, since_ms: int) -> tuple[list[dict[str, Any]], bool]:
+    """Read complete external-cashflow history with a monotonic time cursor."""
     now = time.monotonic()
     with _cache_lock:
         cached = _aster_portfolio_cashflow_cache.get(uid)
@@ -1339,12 +1340,33 @@ def _portfolio_equity_cashflows(uid: str, client: AsterV3Client, since_ms: int) 
             return list(cached[2]), bool(cached[3])
     rows: list[dict[str, Any]] = []
     complete = True
+    seen: set[str] = set()
     for income_type in ("TRANSFER", "WELCOME_BONUS", "INSURANCE_CLEAR"):
-        batch = client.income_history(income_type=income_type, start_time=since_ms, limit=1000)
-        valid = [dict(row) for row in batch if isinstance(row, dict)]
-        if len(valid) >= 1000:
+        cursor = since_ms
+        for _ in range(100):
+            batch = client.income_history(income_type=income_type, start_time=cursor, limit=1000)
+            valid = [dict(row) for row in batch if isinstance(row, dict)]
+            for row in valid:
+                identity = str(row.get("tranId", row.get("id", ""))).strip()
+                fallback = f"{row.get('time', row.get('timestamp', ''))}|{income_type}|{row.get('income', '')}"
+                key = identity or fallback
+                if key not in seen:
+                    seen.add(key)
+                    rows.append(row)
+            if len(valid) < 1000:
+                break
+            times = [int(safe_float(row.get("time", row.get("timestamp", 0)))) for row in valid]
+            times = [value for value in times if value > 0]
+            if not times:
+                complete = False
+                break
+            next_cursor = max(times) + 1
+            if next_cursor <= cursor:
+                complete = False
+                break
+            cursor = next_cursor
+        else:
             complete = False
-        rows.extend(valid)
     rows.sort(key=lambda row: int(safe_float(row.get("time", row.get("timestamp", 0)))))
     with _cache_lock:
         _aster_portfolio_cashflow_cache[uid] = (now, since_ms, list(rows), complete)
