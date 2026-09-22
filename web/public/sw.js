@@ -16,8 +16,8 @@ self.addEventListener("activate", (event) => event.waitUntil(
 ));
 
 self.addEventListener("message", (event) => {
-  // Explicit user-driven update only. Activation happens without clients.claim,
-  // so the current document remains untouched until its next navigation.
+  // Explicit user-driven update only. Activation does not take control of
+  // the current document; it stays untouched until its next navigation.
   if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
