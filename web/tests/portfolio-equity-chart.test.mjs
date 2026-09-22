@@ -37,7 +37,7 @@ test("Portfolio Koers keeps compact event semantics without fake volume", async 
   const helper = await readFile(new URL("../lib/portfolio-equity-chart.ts", import.meta.url), "utf8");
   assert.match(helper, /💰 \$\{side\} ×\$\{cluster\.length\}/);
   assert.match(helper, /profit-dot/);
-  assert.match(helper, /Entry \$\{event\.side\}/);
+  assert.match(helper, /Entry \\$\\{event\\.side\\}/);
   assert.match(helper, /bb_upper/);
   assert.match(helper, /bb_lower/);
   assert.match(helper, /formatPortfolioUsd\(event\.equity\)/);
