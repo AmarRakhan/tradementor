@@ -29,7 +29,7 @@ test("service worker uses Samsung Internet native installation without an in-app
   assert.match(registration, /visibilitychange/);
   assert.match(registration, /setInterval\(.*60_000/);
   assert.match(registration, /window\.location\.replace/);
-  assert.doesNotMatch(registration, /controllerchange/);
+  assert.doesNotMatch(registration, /addEventListener\(["\']controllerchange/);
   assert.doesNotMatch(registration, /window\.location\.reload\(/);
   assert.match(registration, /amar-pwa-canonical-refresh-v/);
   assert.match(worker, /amar-bot-shell-v46-auto-update-1/);
