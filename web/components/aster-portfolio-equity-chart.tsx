@@ -337,6 +337,14 @@ export function AsterPortfolioEquityChart({ activity, refreshKey }: Props) {
     tapRef.current = { at: now, x: event.clientX, y: event.clientY };
   };
 
+  const railZones = useMemo(() => {
+    if (zoneRects.length <= 7) return zoneRects;
+    const activeIndex = zoneRects.findIndex((row) => row.active);
+    const center = activeIndex >= 0 ? activeIndex : Math.floor(zoneRects.length / 2);
+    const start = Math.max(0, Math.min(zoneRects.length - 7, center - 3));
+    return zoneRects.slice(start, start + 7);
+  }, [zoneRects]);
+
   const activeZone = payload?.zones?.activeZone;
   const latest = payload?.candles.at(-1);
   const coverageMessage = payload && payload.candles.length < 20
@@ -387,7 +395,7 @@ export function AsterPortfolioEquityChart({ activity, refreshKey }: Props) {
         </div>
 
         <aside className="apez-zone-rail" aria-label="Structurele prijszones">
-          {zoneRects.map((zone) => (
+          {railZones.map((zone) => (
             <div
               key={`rail:${zone.label}:${zone.lower}`}
               className={`apez-zone-pill zone-${zoneClass(zone.index, zone.active)}`}
