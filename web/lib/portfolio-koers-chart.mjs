@@ -80,6 +80,44 @@ export function parsePortfolioEquityText(text) {
   return Number.isFinite(value)&&value>0?value:null;
 }
 
+export function aggregatePortfolioEquityHistory(rows, timeframe, limit=320) {
+  const step=PORTFOLIO_KOERS_TIMEFRAME_SECONDS[String(timeframe)];
+  if(!step) return [];
+  const buckets=new Map();
+  for(const raw of Array.isArray(rows)?rows:[]) {
+    if(!raw || typeof raw!=="object") continue;
+    const stamp=Math.floor(finite(raw.at));
+    const value=finite(raw.aster);
+    if(stamp<=0 || value<=0) continue;
+    const time=Math.floor(stamp/1000/step)*step;
+    const previous=buckets.get(time);
+    if(!previous) {
+      buckets.set(time,{time,atMs:time*1000,open:value,high:value,low:value,close:value,samples:1,sourceAtMs:stamp});
+      continue;
+    }
+    previous.high=Math.max(previous.high,value);
+    previous.low=Math.min(previous.low,value);
+    previous.close=value;
+    previous.samples+=1;
+    previous.sourceAtMs=Math.max(previous.sourceAtMs,stamp);
+  }
+  return [...buckets.values()].sort((a,b)=>a.time-b.time).slice(-Math.max(1,Math.floor(finite(limit))||320));
+}
+
+export function mergePortfolioKoersCandles(browserCandles, serverCandles, limit=320) {
+  const byTime=new Map();
+  for(const source of [browserCandles,serverCandles]) {
+    for(const raw of Array.isArray(source)?source:[]) {
+      if(!raw || typeof raw!=="object") continue;
+      const time=Math.floor(finite(raw.time));
+      const open=finite(raw.open),high=finite(raw.high),low=finite(raw.low),close=finite(raw.close);
+      if(time<=0 || Math.min(open,high,low,close)<=0 || high<low) continue;
+      byTime.set(time,{...raw,time,atMs:Math.floor(finite(raw.atMs))||time*1000,open,high,low,close});
+    }
+  }
+  return [...byTime.values()].sort((a,b)=>a.time-b.time).slice(-Math.max(1,Math.floor(finite(limit))||320));
+}
+
 export function mergeRealtimeEquitySample(candles, equity, atMs, timeframe) {
   const rows=(Array.isArray(candles)?candles:[]).map((row)=>({...row}));
   const value=finite(equity), stamp=Math.floor(finite(atMs)), step=PORTFOLIO_KOERS_TIMEFRAME_SECONDS[String(timeframe)];

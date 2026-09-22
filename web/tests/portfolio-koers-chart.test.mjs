@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, markerVisual, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioZoneForPrice } from "../lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioZoneForPrice } from "../lib/portfolio-koers-chart.mjs";
 
 test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",()=>{
   assert.deepEqual([...PORTFOLIO_KOERS_TIMEFRAMES],["1m","5m","15m","1u","4u","24u"]);
@@ -28,6 +28,16 @@ test("Bollinger Bands are exactly period 20 multiplier 2",()=>{
   assert.ok(bb.lower[0].value<bb.middle[0].value);
 });
 
+test("Existing confirmed browser Aster equity history can fill the visual chart without inventing values",()=>{
+  const rows=[{at:1_800_000,aster:100,total:100},{at:1_860_000,aster:102,total:102},{at:1_980_000,aster:99,total:99}];
+  const candles=aggregatePortfolioEquityHistory(rows,"5m",320);
+  assert.equal(candles.length,1);
+  assert.deepEqual({open:candles[0].open,high:candles[0].high,low:candles[0].low,close:candles[0].close},{open:100,high:102,low:99,close:99});
+  const merged=mergePortfolioKoersCandles(candles,[{time:0,open:1,high:1,low:1,close:1},{time:candles[0].time,open:101,high:103,low:98,close:102}],320);
+  assert.equal(merged.length,1);
+  assert.equal(merged[0].close,102);
+});
+
 test("Realtime portfolio samples use only the observed equity value for a new candle",()=>{
   const next=mergeRealtimeEquitySample([{time:60,open:100,high:100,low:99,close:99,atMs:60_000}],105,301_000,"5m");
   assert.equal(next.length,2);
@@ -44,7 +54,7 @@ test("Portfolio Koers keeps the visible Portfolio Snapshot equity authoritative 
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.equal(component.includes("if(normalized.currentEquity) setLiveEquity(normalized.currentEquity)"),false);
   assert.ok(component.includes("liveEquityTextRef.current=liveEquityText"));
-  assert.ok(component.includes("mergeRealtimeEquitySample(payload.candles,observedEquity"));
+  assert.ok(component.includes("mergeRealtimeEquitySample(baseCandles,observedEquity"));
 });
 
 test("Cashflows remain visually distinct from trading performance markers",()=>{
@@ -70,7 +80,8 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(chartMount>portalStart);
   assert.ok(snapshotMount>chartMount);
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("Bollinger 20,2"));
-  assert.ok(component.includes("Transfers apart"));
+  assert.ok(component.includes("Portfolio Koers"));
+  assert.ok(component.includes("Totale portfolio waarde (USDT)"));
+  assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
 });
