@@ -56,8 +56,12 @@ test("Active zone follows the confirmed zone bands or the nearest confirmed cent
 
 test("Portfolio Koers is mounted before the existing Portfolio Snapshot and remains read-only",async()=>{
   const source=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
-  assert.ok(source.indexOf("<PortfolioKoersChart")>0);
-  assert.ok(source.indexOf("<PortfolioKoersChart")<source.indexOf("<Snapshot"));
+  const portalStart=source.indexOf("return host ? createPortal");
+  const chartMount=source.indexOf("<PortfolioKoersChart",portalStart);
+  const snapshotMount=source.indexOf("\n      <Snapshot\n",portalStart);
+  assert.ok(portalStart>0);
+  assert.ok(chartMount>portalStart);
+  assert.ok(snapshotMount>chartMount);
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("Bollinger 20,2"));
   assert.ok(component.includes("Transfers apart"));
