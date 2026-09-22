@@ -29,7 +29,7 @@ test("Bollinger Bands are exactly period 20 multiplier 2",()=>{
 });
 
 test("Existing confirmed browser Aster equity history can fill the visual chart without inventing values",()=>{
-  const rows=[{at:60_000,aster:100,total:100},{at:120_000,aster:102,total:102},{at:240_000,aster:99,total:99}];
+  const rows=[{at:1_800_000,aster:100,total:100},{at:1_860_000,aster:102,total:102},{at:1_980_000,aster:99,total:99}];
   const candles=aggregatePortfolioEquityHistory(rows,"5m",320);
   assert.equal(candles.length,1);
   assert.deepEqual({open:candles[0].open,high:candles[0].high,low:candles[0].low,close:candles[0].close},{open:100,high:102,low:99,close:99});
@@ -54,7 +54,7 @@ test("Portfolio Koers keeps the visible Portfolio Snapshot equity authoritative 
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.equal(component.includes("if(normalized.currentEquity) setLiveEquity(normalized.currentEquity)"),false);
   assert.ok(component.includes("liveEquityTextRef.current=liveEquityText"));
-  assert.ok(component.includes("mergeRealtimeEquitySample(payload.candles,observedEquity"));
+  assert.ok(component.includes("mergeRealtimeEquitySample(baseCandles,observedEquity"));
 });
 
 test("Cashflows remain visually distinct from trading performance markers",()=>{
