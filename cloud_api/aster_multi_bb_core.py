@@ -549,6 +549,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                       before_order: Any = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
+    exposure_refill = _exposure_refill_context(settings, positions, raw_state)
     # Pairing mode must make every seat/orphan decision from Aster exchange truth,
     # never from a caller/UI/cache snapshot that may be one reconciliation tick old.
     # Refresh before state reconciliation so an actually-open orphan SHORT cannot
@@ -1079,7 +1080,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # first and could starve a valid SHORT-above-upper-band entry forever.
         def candidate_bb_pass(candidate_side: str) -> bool:
             try:
-                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=settings.bollinger_entry_filter_timeframe,
+                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
                                         live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
@@ -1258,7 +1259,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             def entry_before_submit(intent: Any) -> None:
                 require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
-                                        timeframe=settings.bollinger_entry_filter_timeframe, live_price=None, force_refresh=True, stage="pre_order")
+                                        timeframe=_effective_entry_timeframe(settings, side, exposure_refill), live_price=None, force_refresh=True, stage="pre_order")
                 if before_order is not None:
                     before_order(intent)
             try:
