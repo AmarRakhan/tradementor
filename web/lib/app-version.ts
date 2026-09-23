@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 404: Botconfigurator V2 seat bars show live occupied/capacity per side instead of configured share of total.
-export const WEBAPP_BUILD_NUMBER = "404";
+// Build 405: owner-only BETA Portfolio Koers gets stronger zones plus a functional soldier seat-capacity instruction bar.
+export const WEBAPP_BUILD_NUMBER = "405";
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
   return `Webapp versie ${WEBAPP_VERSION} · build ${buildNumber}`;

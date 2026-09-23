@@ -7,6 +7,7 @@ import { useAuthSession } from "@/components/auth-provider";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioZoneForPrice } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
+import { derivePortfolioZoneInstruction } from "@/lib/portfolio-zone-advisor.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
@@ -14,8 +15,11 @@ type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;cou
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number};
+type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;settings:Record<string,unknown>};
 
 const EMPTY=normalizePortfolioKoersPayload({}) as Payload;
+const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null,activeShort:null,settings:{}};
+const ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32";
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
   "1m":{visibleBars:72,barSpacing:5.2,rightOffset:1.2},
@@ -31,6 +35,32 @@ const compactUsd=(value:number|null|undefined)=>{
   const number=Number(value),sign=number<0?"-":"";
   return `${sign}$ ${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}`;
 };
+const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"?value as Record<string,unknown>:{};
+const integerOrNull=(value:unknown)=>{
+  if(value===null||value===undefined||value==="")return null;
+  const number=Number(value);
+  return Number.isFinite(number)?Math.max(0,Math.round(number)):null;
+};
+function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
+  const root=record(payload);
+  const sources=[root,record(root.data),record(root.snapshot),record(root.account)];
+  let strategy2:Record<string,unknown>={};
+  for(const source of sources){
+    const candidate=record(source.strategy2);
+    if(Object.keys(candidate).length){strategy2=candidate;break}
+  }
+  const settings=record(strategy2.settings);
+  const primaryReport=record(strategy2.multiBb);
+  const report=Object.keys(primaryReport).length?primaryReport:record(strategy2.multiBbReport);
+  return {
+    longSlots:integerOrNull(settings.longSlots),
+    shortSlots:integerOrNull(settings.shortSlots),
+    activeLong:integerOrNull(report.activeLong),
+    activeShort:integerOrNull(report.activeShort),
+    settings,
+  };
+}
+const signedZone=(value:number|null)=>value===null?"—":value===0?"0":value>0?`+${value}`:`${value}`;
 
 function markerPresentation(row:Marker) {
   const kind=String(row.kind||"").toLowerCase(),side=String(row.side||"").toUpperCase(),count=Math.max(1,Number(row.count)||1);
@@ -79,6 +109,10 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const [eventLabels,setEventLabels]=useState<EventLabel[]>([]);
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
+  const [advisorEnabled,setAdvisorEnabled]=useState(false);
+  const [advisorSeats,setAdvisorSeats]=useState<AdvisorSeats>(EMPTY_ADVISOR);
+  const [advisorBusy,setAdvisorBusy]=useState(false);
+  const [advisorMessage,setAdvisorMessage]=useState("");
   liveEquityTextRef.current=liveEquityText;
 
   const loadBrowserHistory=useCallback(()=>{
@@ -92,6 +126,29 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   },[timeframe,user?.uid]);
 
   useEffect(()=>{loadBrowserHistory()},[loadBrowserHistory,payload.snapshotAtMs]);
+
+  const loadAdvisor=useCallback(async()=>{
+    try{
+      const release=record(await authenticatedRequest("/api/releases/me",{cache:"no-store"}));
+      const features=record(release.features);
+      const betaFeature=record(features.bot_configurator_v2);
+      const enabled=String(release.channel||"").toUpperCase()==="BETA"&&betaFeature.enabled===true;
+      setAdvisorEnabled(enabled);
+      if(!enabled){setAdvisorSeats(EMPTY_ADVISOR);setAdvisorMessage("");return}
+      const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
+      setAdvisorSeats(advisorSeatsFromPayload(account));
+    }catch(reason){
+      setAdvisorEnabled(false);
+      setAdvisorSeats(EMPTY_ADVISOR);
+      setAdvisorMessage(reason instanceof Error?reason.message:"Koersinstructie kon niet worden geladen.");
+    }
+  },[]);
+
+  useEffect(()=>{
+    void loadAdvisor();
+    const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void loadAdvisor()},45_000);
+    return()=>window.clearInterval(timer);
+  },[loadAdvisor]);
 
   const load=useCallback(async()=>{
     try{
@@ -134,6 +191,13 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
 
   const baseCandles=useMemo(()=>mergePortfolioKoersCandles(browserCandles,payload.candles,320) as Candle[],[browserCandles,payload.candles]);
   const activeZone=useMemo(()=>portfolioZoneForPrice(payload.zones,liveEquity??payload.currentEquity??baseCandles.at(-1)?.close),[payload.zones,payload.currentEquity,baseCandles,liveEquity]);
+  const advisorInstruction=useMemo(()=>advisorEnabled?derivePortfolioZoneInstruction({
+    zoneIndex:activeZone,
+    longSlots:advisorSeats.longSlots,
+    shortSlots:advisorSeats.shortSlots,
+    activeLong:advisorSeats.activeLong,
+    activeShort:advisorSeats.activeShort,
+  }):null,[advisorEnabled,activeZone,advisorSeats.longSlots,advisorSeats.shortSlots,advisorSeats.activeLong,advisorSeats.activeShort]);
 
   useEffect(()=>{
     const container=canvasRef.current;
@@ -271,9 +335,69 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     if(!shellRef.current)return;
     try{if(document.fullscreenElement)await document.exitFullscreen();else await shellRef.current.requestFullscreen()}catch{/* unsupported */}
   };
-  const latest=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
 
-  return <section ref={shellRef} className="portfolio-koers-card" aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f">
+  const applySoldierInstruction=async()=>{
+    if(!advisorEnabled||advisorBusy||!advisorInstruction)return;
+    if(!["ADD","PARTIAL_ADD","REMOVE"].includes(String(advisorInstruction.status)))return;
+    setAdvisorBusy(true);setAdvisorMessage("");
+    try{
+      const release=record(await authenticatedRequest("/api/releases/me",{cache:"no-store"}));
+      const betaFeature=record(record(release.features).bot_configurator_v2);
+      if(String(release.channel||"").toUpperCase()!=="BETA"||betaFeature.enabled!==true)throw new Error("Deze koersinstructie is niet actief voor dit account.");
+      const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
+      const fresh=advisorSeatsFromPayload(account);
+      if(!Object.keys(fresh.settings).length)throw new Error("Actuele botinstellingen ontbreken; er is niets gewijzigd.");
+      const instruction=derivePortfolioZoneInstruction({
+        zoneIndex:activeZone,
+        longSlots:fresh.longSlots,
+        shortSlots:fresh.shortSlots,
+        activeLong:fresh.activeLong,
+        activeShort:fresh.activeShort,
+      });
+      if(!["ADD","PARTIAL_ADD","REMOVE"].includes(String(instruction.status)))throw new Error("De live situatie is veranderd; de koersinstructie is opnieuw berekend.");
+      const targetLong=Math.max(Number(instruction.activeLong)||0,Number(instruction.targetLongSlots)||0);
+      const targetShort=Math.max(Number(instruction.activeShort)||0,Number(instruction.targetShortSlots)||0);
+      if(targetLong+targetShort>100)throw new Error("Maximaal 100 totale stoelen toegestaan.");
+      const nextSettings={...fresh.settings,longSlots:targetLong,shortSlots:targetShort,maximumPositions:targetLong+targetShort};
+      const result=await authenticatedRequest("/api/exchanges/aster/strategy2/settings",{method:"PUT",body:JSON.stringify({settings:nextSettings})});
+      const confirmed=advisorSeatsFromPayload(result);
+      if(confirmed.longSlots!==targetLong||confirmed.shortSlots!==targetShort){
+        throw new Error("Server heeft de nieuwe LONG/SHORT-stoelverdeling niet bevestigd.");
+      }
+      setAdvisorSeats(confirmed);
+      const verb=String(instruction.status)==="REMOVE"?"naar huis geroepen":"gestuurd";
+      setAdvisorMessage(`${instruction.amount} ${instruction.side}-soldaten ${verb} · nu ${targetLong}L / ${targetShort}S.`);
+      await loadAdvisor();
+    }catch(reason){
+      setAdvisorMessage(reason instanceof Error?reason.message:"Soldaten aanpassen is mislukt.");
+      await loadAdvisor();
+    }finally{setAdvisorBusy(false)}
+  };
+
+  const latest=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
+  const instructionStatus=String(advisorInstruction?.status||"UNAVAILABLE");
+  const instructionSide=String(advisorInstruction?.side||"");
+  const instructionAmount=Math.max(0,Number(advisorInstruction?.amount)||0);
+  const instructionActionable=["ADD","PARTIAL_ADD","REMOVE"].includes(instructionStatus);
+  const instructionTitle=instructionStatus==="ADD"||instructionStatus==="PARTIAL_ADD"
+    ? `Stuur ${instructionAmount} extra ${instructionSide}-soldaten`
+    : instructionStatus==="REMOVE"
+      ? `Roep ${instructionAmount} ${instructionSide}-soldaten naar huis`
+      : instructionStatus==="BLOCKED"
+        ? `${instructionAmount} extra ${instructionSide}-soldaten nodig`
+        : instructionStatus==="OK"
+          ? "Formatie klopt · geen actie nodig"
+          : "Live stoelbezetting wordt geladen";
+  const actionLabel=advisorBusy?"OPSLAAN…":instructionStatus==="REMOVE"
+    ? `−${instructionAmount} ${instructionSide}`
+    : instructionStatus==="ADD"||instructionStatus==="PARTIAL_ADD"
+      ? `+${instructionAmount} ${instructionSide}`
+      : instructionStatus==="BLOCKED"?"LIMIET 100":"✓ GEREED";
+  const biasLabel=activeZone===null?"ZONE":activeZone>0?"SHORT BIAS":activeZone<0?"LONG BIAS":"BALANS";
+  const desiredLong=integerOrNull(advisorInstruction?.desiredLongSlots??advisorSeats.longSlots);
+  const desiredShort=integerOrNull(advisorInstruction?.desiredShortSlots??advisorSeats.shortSlots);
+
+  return <section ref={shellRef} className={advisorEnabled?"portfolio-koers-card beta-zone-advisor":"portfolio-koers-card"} aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f" data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
     <header className="portfolio-koers-header">
       <div className="portfolio-koers-heading">
         <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={payload.live?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{payload.live?"Live":"Sync"}</span></div>
@@ -286,6 +410,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     </header>
     <div className="portfolio-koers-stage">
       <div ref={canvasRef} className="portfolio-koers-canvas"/>
+      {advisorEnabled&&advisorInstruction?<div className={`portfolio-koers-bias ${activeZone&&activeZone>0?"short":activeZone&&activeZone<0?"long":"neutral"}`} aria-hidden="true"><b>{biasLabel}</b><span>{Number.isFinite(desiredLong)?desiredLong:"—"}L / {Number.isFinite(desiredShort)?desiredShort:"—"}S</span></div>:null}
       <div className="portfolio-koers-zones" aria-hidden="true">{zoneLayout.map((zone)=><div key={zone.index} className={`portfolio-koers-zone zone-${zone.tone} ${zone.index===activeZone?"active":""}`} style={{top:`${zone.top}px`,height:`${zone.height}px`}}><span>{zone.label}</span></div>)}</div>
       <div className="portfolio-koers-event-layer" aria-hidden="true">{eventLabels.map((label)=><div key={label.id} className="portfolio-koers-event-group">{!label.compact&&connectorStyle(label)?<i className={`portfolio-koers-connector ${label.tone}`} style={connectorStyle(label)}/>:null}{!label.compact&&Number.isFinite(label.anchorLeft)&&Number.isFinite(label.anchorTop)?<i className={`portfolio-koers-anchor ${label.tone}`} style={{left:`${label.anchorLeft}px`,top:`${label.anchorTop}px`}}/>:null}<div className={`portfolio-koers-event ${label.tone} ${label.position} ${label.compact?"compact":""}`} style={{left:`${label.left}px`,top:`${label.top}px`}}>{label.compact?<b>{label.multiplier||`+${label.eventCount}`}</b>:<><span className="portfolio-koers-event-icon"><b className="portfolio-koers-event-glyph">{label.glyph}</b></span>{label.multiplier?<small className="portfolio-koers-event-badge">{label.multiplier}</small>:null}</>}</div></div>)}</div>
       {loading&&!baseCandles.length?<div className="portfolio-koers-state"><i/>Portfoliohistorie laden…</div>:null}
@@ -293,6 +418,16 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
       {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b>{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
     </div>
+    {advisorEnabled?<div className={`portfolio-koers-instruction ${instructionStatus.toLowerCase()}`} data-reference={ZONE_ADVISOR_REFERENCE}>
+      <span className="portfolio-koers-instruction-icon" aria-hidden="true">⌖</span>
+      <div className="portfolio-koers-instruction-copy" aria-live="polite">
+        <small>KOERSINSTRUCTIE · ZONE {signedZone(activeZone)}</small>
+        <strong>{instructionTitle}</strong>
+        <span>Gewenst: <b className="long">{Number.isFinite(desiredLong)?desiredLong:"—"}L</b> / <b className="short">{Number.isFinite(desiredShort)?desiredShort:"—"}S</b> · Huidig: <b className="long">{advisorSeats.longSlots??"—"}L</b> / <b className="short">{advisorSeats.shortSlots??"—"}S</b></span>
+        {advisorMessage?<em>{advisorMessage}</em>:null}
+      </div>
+      <button type="button" className={instructionSide==="LONG"?"long":instructionSide==="SHORT"?"short":"neutral"} disabled={!instructionActionable||advisorBusy} onClick={()=>void applySoldierInstruction()}>{actionLabel}</button>
+    </div>:null}
     <span className="portfolio-koers-current-sr">Actuele portfolio waarde {latest===null?"onbekend":compactUsd(latest)}</span>
   </section>;
 }
