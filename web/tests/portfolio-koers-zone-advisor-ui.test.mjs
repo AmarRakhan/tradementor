@@ -162,3 +162,14 @@ test("Build 409 keeps all seven signed zones separately styled",async()=>{
     assert.ok(matches.length>=1,level+" must have its own fill");
   }
 });
+
+
+test("Build 410 explains exactly what determines the signed zone",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes("Zonebasis: portfolio-equity · 15m support/resistance"));
+  assert.ok(component.includes("Netto exposure is geen verliesbedrag."));
+  assert.ok(component.includes("zoneBandSummary"));
+  assert.ok(component.includes("portfolio-koers-zone-basis"));
+  assert.ok(css.includes(".portfolio-koers-instruction-copy>.portfolio-koers-zone-basis"));
+});
