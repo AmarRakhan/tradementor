@@ -1586,6 +1586,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
     raw_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    raw_settings=_strip_unreleased_beta_settings_for_uid(raw_settings, uid)
     if str(raw_settings.get("engine",raw_settings.get("strategyKind","")))!=MULTI_BB_ENGINE:
         if bool(raw.get("enabled")) or bool(raw.get("monitor")):
             ref.set({"enabled":False,"monitor":False,"phase":"CONFIG_REQUIRED","lastReason":"Legacy strategie verwijderd; nieuwe Multi BB-configuratie vereist","updatedAt":now},merge=True)
