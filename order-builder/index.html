@@ -38,6 +38,11 @@
         <button class="filter-pill" data-filter="Refurb" type="button">Refurb <span id="refurbCount"></span></button>
       </div>
 
+      <div id="itemAdminActions" class="item-admin-actions hidden">
+        <button id="addArticleButton" class="admin-action primary-admin" type="button">＋ Artikel toevoegen</button>
+        <button id="manageArticlesButton" class="admin-action" type="button">Artikelen beheren</button>
+      </div>
+
       <div class="toolbar-spacer"></div>
       <div class="sort-wrap"><span>Sorteren op</span><select id="sortSelect"><option value="az">Naam (A → Z)</option><option value="za">Naam (Z → A)</option></select></div>
       <button class="view-toggle active" type="button" aria-label="Rasterweergave">⊞</button>
@@ -87,6 +92,39 @@
       </aside>
     </section>
   </main>
+
+  <div id="articleModal" class="article-modal hidden" aria-modal="true" role="dialog">
+    <div class="article-modal-backdrop" data-close-article-modal></div>
+    <div class="article-modal-card">
+      <div class="article-modal-head">
+        <div>
+          <div id="articleModalTitle" class="article-modal-title">Artikel toevoegen</div>
+          <div class="article-modal-sub">Artikelcodes zijn alleen hier zichtbaar en blijven verborgen in de catalogus.</div>
+        </div>
+        <button class="modal-close" type="button" data-close-article-modal>×</button>
+      </div>
+
+      <div id="addArticleSection" class="article-modal-section">
+        <div class="article-form-grid">
+          <label><span>Artikelcode voor Dynamics</span><input id="newArticleCode" type="text" placeholder="Bijv. ABC123" autocomplete="off"></label>
+          <label class="wide-field"><span>Naam voor gebruikers</span><input id="newArticleName" type="text" placeholder="Bijv. HP USB-C Dock G5" autocomplete="off"></label>
+          <label><span>Categorie</span><select id="newArticleCategory"></select></label>
+          <label><span>Standaardstatus</span><select id="newArticleStatus"><option>Nieuw</option><option>Refurb</option></select></label>
+        </div>
+        <div class="modal-actions">
+          <button id="saveNewArticle" class="save-article-button" type="button">Artikel toevoegen</button>
+        </div>
+      </div>
+
+      <div id="manageArticleSection" class="article-modal-section hidden">
+        <div class="manage-toolbar">
+          <input id="manageArticleSearch" type="search" placeholder="Zoek artikel of code..." autocomplete="off">
+          <span id="manageArticleCount"></span>
+        </div>
+        <div id="manageArticleList" class="manage-article-list"></div>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast" role="status"></div>
   <script src="data.js"></script>
