@@ -1,0 +1,58 @@
+/* Botconfigurator V2 — BETA-only visual layer.
+   Reference: file_000000003e34820a9d0c8dc22b84ac47 */
+.botconfig-v2-shell{width:100%;display:grid;gap:12px}
+#strategy-2-maker.botconfig-v2{
+  --v2-bg:#020b08;--v2-panel:#06130f;--v2-panel2:#091b15;--v2-line:rgba(84,123,106,.34);
+  --v2-gold:#e4b84b;--v2-green:#27e7a5;--v2-short:#ff587b;--v2-text:#eff8f3;--v2-muted:#8fa39a;
+  display:flex;flex-direction:column;gap:10px;padding:10px;border:1px solid rgba(71,116,95,.38);
+  border-radius:18px;background:
+    radial-gradient(circle at 10% 0%,rgba(32,218,153,.07),transparent 30%),
+    linear-gradient(180deg,#04110c,#020806 76%);
+  box-shadow:0 22px 55px rgba(0,0,0,.28);overflow:visible
+}
+#strategy-2-maker.botconfig-v2>.strategy-title-row{display:none}
+.botconfig-v2-top{display:grid;gap:8px;padding:4px 2px 0}
+.botconfig-v2-badge{justify-self:start;padding:5px 9px;border:1px solid rgba(228,184,75,.48);border-radius:999px;background:rgba(228,184,75,.09);color:#f4cf72;font-size:9px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}
+.botconfig-v2-title{display:grid;gap:2px}
+.botconfig-v2-title>span{font-size:8px;letter-spacing:.16em;color:var(--v2-gold);font-weight:850}
+.botconfig-v2-title h2{margin:0;color:var(--v2-text);font-size:20px;letter-spacing:-.03em}
+.botconfig-v2-title p{margin:0;color:var(--v2-muted);font-size:9px;line-height:1.35}
+.botconfig-v2-steps{position:sticky;top:0;z-index:18;display:grid;grid-template-columns:repeat(8,minmax(52px,1fr));gap:4px;padding:7px;border:1px solid rgba(228,184,75,.22);border-radius:14px;background:rgba(2,10,7,.94);backdrop-filter:blur(16px);overflow:auto;scrollbar-width:none}
+.botconfig-v2-steps::-webkit-scrollbar{display:none}
+.botconfig-v2-steps a{min-width:52px;display:grid;justify-items:center;gap:3px;padding:5px 3px;border-radius:9px;color:#85978e;text-decoration:none;font-size:7px;font-weight:750}
+.botconfig-v2-steps a b{display:grid;place-items:center;width:21px;height:21px;border-radius:50%;border:1px solid rgba(228,184,75,.42);color:#e8c364;background:#0b1712;font-size:8px}
+.botconfig-v2-steps a:focus,.botconfig-v2-steps a:hover{background:rgba(34,222,157,.07);color:#d8eee3}
+.botconfig-v2-card{display:grid;gap:10px;padding:11px;border:1px solid var(--v2-line);border-radius:15px;background:linear-gradient(180deg,rgba(8,24,18,.97),rgba(3,12,9,.98));box-shadow:inset 0 1px rgba(255,255,255,.02)}
+.botconfig-v2-card>header{display:grid;grid-template-columns:30px 1fr;gap:8px;align-items:center}
+.botconfig-v2-stepno{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;border:1px solid rgba(228,184,75,.55);background:rgba(228,184,75,.07);color:#f2ca66;font-size:11px;font-weight:900}
+.botconfig-v2-card header>div{display:grid;gap:1px}.botconfig-v2-card header b{font-size:12px;color:#edf8f2}.botconfig-v2-card header small{font-size:7.5px;color:#879a90;line-height:1.3}
+.botconfig-v2-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0;padding:8px 9px;border:1px solid rgba(58,111,88,.32);border-radius:11px;background:rgba(0,0,0,.16)}
+.botconfig-v2-toggle>span{display:grid;gap:1px}.botconfig-v2-toggle b{font-size:10px;color:#e7f6ee}.botconfig-v2-toggle small{font-size:7.5px;color:#81948a;line-height:1.25}
+.botconfig-v2-toggle input{width:38px;height:21px;accent-color:#26daa0}
+.botconfig-v2-sidegrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.botconfig-v2-side{display:grid;gap:7px;padding:9px;border-radius:12px;border:1px solid rgba(39,231,165,.20);background:linear-gradient(180deg,rgba(18,79,56,.24),rgba(3,14,10,.28))}
+.botconfig-v2-side.short{border-color:rgba(255,88,123,.24);background:linear-gradient(180deg,rgba(101,29,48,.18),rgba(16,5,9,.25))}
+.botconfig-v2-side>b{font-size:9px;letter-spacing:.12em;color:#49eab2}.botconfig-v2-side.short>b{color:#ff7893}
+.botconfig-v2-timeframe{display:grid;gap:4px;margin:0}.botconfig-v2-timeframe>span{font-size:7.5px;color:#95a79f}.botconfig-v2-timeframe select{height:36px;border:1px solid rgba(76,123,103,.42);border-radius:10px;background:#07110d;color:#eef7f2;padding:0 9px;font-size:11px;font-weight:750;outline:none}
+.botconfig-v2-thresholds{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#strategy-2-maker.botconfig-v2 .slot-overview,#strategy-2-maker.botconfig-v2 .live-settings-card,#strategy-2-maker.botconfig-v2 .side-settings-block,#strategy-2-maker.botconfig-v2 .stop-loss-card,#strategy-2-maker.botconfig-v2 .smart-rescue-card{
+  border-radius:15px!important;border-color:rgba(70,116,96,.32)!important;background:linear-gradient(180deg,rgba(7,22,16,.97),rgba(3,11,8,.99))!important
+}
+#strategy-2-maker.botconfig-v2 .slot-overview:before{content:"2 · POSITIES  —  Hoe wil je je portfolio verdelen?";display:block;margin:0 0 8px;color:#e9c566;font-size:8px;font-weight:900;letter-spacing:.09em}
+#strategy-2-maker.botconfig-v2 .live-settings-card:before{content:"1 · MARKT  —  Waar mag de bot handelen?";display:block;margin:0 0 8px;color:#e9c566;font-size:8px;font-weight:900;letter-spacing:.09em}
+#strategy-2-maker.botconfig-v2 .entry-sizing-control:before{content:"4 · GROOTTE";margin-right:7px;color:#e9c566;font-size:8px;font-weight:900;letter-spacing:.08em}
+#strategy-2-maker.botconfig-v2 .side-settings-block:before{content:"5 · DCA  /  6 · WINST";display:block;margin-bottom:7px;color:#e9c566;font-size:8px;font-weight:900;letter-spacing:.08em}
+#strategy-2-maker.botconfig-v2 .stop-loss-card:before{content:"7 · BESCHERMING";display:block;margin:0 0 7px;color:#e9c566;font-size:8px;font-weight:900;letter-spacing:.08em}
+#strategy-2-maker.botconfig-v2 .maker-nav:before{content:"8 · CONTROLE  —  Controleer alles en sla daarna pas op.";grid-column:1/-1;color:#e9c566;font-size:8px;font-weight:900;letter-spacing:.08em;padding:4px 2px}
+#strategy-2-maker.botconfig-v2 .maker-nav{position:relative;border:1px solid rgba(228,184,75,.25);border-radius:13px;padding:9px;background:rgba(228,184,75,.035)}
+.botconfig-v2-loading,.botconfig-v2-fallback{padding:16px;border:1px solid rgba(228,184,75,.28);border-radius:16px;background:#07110d;color:#dcebe4}
+.botconfig-v2-fallback{display:grid;gap:8px}.botconfig-v2-fallback>span{color:#e9c566;font-size:9px;font-weight:900}.botconfig-v2-fallback h3,.botconfig-v2-fallback p{margin:0}.botconfig-v2-fallback p{font-size:9px;color:#91a49a}
+.release-center{display:grid;gap:10px;padding:12px;border:1px solid rgba(228,184,75,.30);border-radius:16px;background:linear-gradient(180deg,#071711,#030b08);box-shadow:0 18px 40px rgba(0,0,0,.22)}
+.release-center>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.release-center>header>div{display:grid;gap:2px}.release-center>header span{font-size:8px;letter-spacing:.14em;color:#e8c15d;font-weight:850}.release-center h3{margin:0;color:#eef8f3;font-size:15px}.release-center p{margin:0;color:#879b91;font-size:8px}.release-center>header button{width:32px;height:32px;border-radius:10px;border:1px solid rgba(49,211,151,.30);background:#081a13;color:#79e9bb}
+.release-center-list{display:grid;gap:6px}.release-row{display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:center;padding:9px;border:1px solid rgba(83,120,104,.25);border-radius:11px;background:rgba(0,0,0,.16)}.release-row>div:first-child{display:grid;gap:1px}.release-row strong{font-size:9px;color:#e8f4ee}.release-row small{font-size:7px;color:#7f9188}.release-row>em{padding:4px 7px;border-radius:999px;background:rgba(63,119,94,.16);font-size:7px;font-style:normal;font-weight:850;color:#a8cabb}.release-row.status-akkoord>em{color:#f0ce72;background:rgba(228,184,75,.12)}.release-row.status-live>em{color:#62ebba;background:rgba(35,221,154,.12)}
+.release-actions{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap}.release-actions button{min-height:29px;border-radius:8px;border:1px solid rgba(46,211,151,.34);background:rgba(19,88,62,.28);color:#c9f5e3;padding:0 9px;font-size:7.5px;font-weight:800}.release-actions .rollback{border-color:rgba(255,114,139,.32);background:rgba(107,30,49,.20);color:#ffb0c0}.release-message{padding:7px;border-radius:8px;background:rgba(255,97,126,.08);color:#ffadc0!important}
+@media(max-width:640px){
+  .botconfig-v2-steps{grid-template-columns:repeat(8,58px)}
+  .botconfig-v2-sidegrid,.botconfig-v2-thresholds{grid-template-columns:1fr 1fr}
+}
+@media(max-width:360px){.botconfig-v2-sidegrid,.botconfig-v2-thresholds{grid-template-columns:1fr}}
