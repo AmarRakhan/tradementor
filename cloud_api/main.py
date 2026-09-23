@@ -2529,6 +2529,14 @@ def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, An
 
 
 def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) -> dict[str, Any]:
+    beta_keys = {
+        "directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe",
+        "exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
+        "exposureRefillTriggerPercent", "exposureRefillReleasePercent",
+        "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
+    }
+    if not any(key in settings for key in beta_keys):
+        return dict(settings)
     profile = user_reference({"uid": uid}).get().to_dict() or {}
     beta_owner = str(profile.get("releaseChannel") or "STABLE").upper() == "BETA"
     out = dict(settings)
