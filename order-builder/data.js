@@ -20,6 +20,54 @@ window.BASE_PACKAGES=[{"name":"standaard iPhone REF","items":[{"code":"MMXF3ZD/A
     "Accessoires":"Accessoires",
     "Verouderd":"Verouderd"
   };
+  function displayCategory(x){
+    const raw=String(x.category||"");
+    const base=catMap[raw]||raw||"Accessoires";
+    if(base!=="Telefoons / iPads") return base;
+
+    const s=String(x.description||"").toLowerCase();
+
+    // Eerst accessoires en laders afvangen, zodat een iPad-hoes of iPhone-lader
+    // niet bij de apparaten zelf terechtkomt.
+    if(
+      s.includes("screenprotector") ||
+      s.includes("tempered glass") ||
+      s.includes("nuglas") ||
+      s.includes("case") ||
+      s.includes("hoes") ||
+      s.includes("rugged") ||
+      s.includes("folio") ||
+      s.includes("pencil") ||
+      s.includes("datacable") ||
+      s.includes("chargecable") ||
+      s.includes("lightning") ||
+      s.includes("usb-c to usb-c") ||
+      s.includes("keyboard")
+    ) return "Accessoires";
+
+    if(
+      s.includes("adapter") ||
+      s.includes("charger") ||
+      s.includes("travel charger") ||
+      s.includes("power adapter")
+    ) return "Opladers";
+
+    if(
+      s.includes("ipad") ||
+      s.includes("tab a9") ||
+      s.includes("tablet")
+    ) return "iPads";
+
+    if(
+      s.includes("iphone") ||
+      s.includes("xcover") ||
+      s.includes("pm90") ||
+      s.includes("pm95")
+    ) return "Telefoons";
+
+    return "Accessoires";
+  }
+
   const seen=new Set();
   const items=(window.BASE_ITEMS||[]).filter(x=>{
     if(!x||!x.code||!x.description) return false;
@@ -32,7 +80,7 @@ window.BASE_PACKAGES=[{"name":"standaard iPhone REF","items":[{"code":"MMXF3ZD/A
   }).map(x=>({
     code:String(x.code),
     name:String(x.description).trim(),
-    category:catMap[String(x.category||"")]||String(x.category||"Accessoires"),
+    category:displayCategory(x),
     defaultStatus:"Nieuw"
   }));
 
@@ -84,7 +132,7 @@ window.BASE_PACKAGES=[{"name":"standaard iPhone REF","items":[{"code":"MMXF3ZD/A
     const preview=[...agg.entries()].slice(0,4).map(([label,qty])=>label+(qty>1?" ("+qty+"x)":""));
     const name=String(p.name||"Pakket");
     const ln=name.toLowerCase();
-    const iconCategory=(ln.includes("ipad")||ln.includes("iphone")||ln.includes("samsung"))?"Telefoons / iPads":(ln.includes("werkplek")?"Monitoren":"Laptops");
+    const iconCategory=ln.includes("ipad")?"iPads":((ln.includes("iphone")||ln.includes("samsung"))?"Telefoons":(ln.includes("werkplek")?"Monitoren":"Laptops"));
     return {
       name,
       items,
