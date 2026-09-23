@@ -9,7 +9,8 @@
     items: [],
     itemStatuses: {},
     catalogAdditions: [],
-    deletedItemCodes: []
+    deletedItemCodes: [],
+    learnedAliases: {}
   };
 
   const categoryOrder = ['Laptops','Telefoons','iPads','Monitoren','Docks','Opladers','Toetsenbord / muizen','Tassen','Headsets','Telefoonaccessoires','iPad-accessoires','Accessoires','Verouderd'];
@@ -31,7 +32,8 @@
         items:state.items,
         itemStatuses:state.itemStatuses,
         catalogAdditions:state.catalogAdditions,
-        deletedItemCodes:state.deletedItemCodes
+        deletedItemCodes:state.deletedItemCodes,
+        learnedAliases:state.learnedAliases
       }));
     }catch{}
   }
@@ -44,6 +46,7 @@
         state.itemStatuses = saved.itemStatuses && typeof saved.itemStatuses==='object' ? saved.itemStatuses : {};
         state.catalogAdditions = Array.isArray(saved.catalogAdditions)?saved.catalogAdditions:[];
         state.deletedItemCodes = Array.isArray(saved.deletedItemCodes)?saved.deletedItemCodes:[];
+        state.learnedAliases = saved.learnedAliases && typeof saved.learnedAliases==='object' ? saved.learnedAliases : {};
       }
     }catch{}
   }
@@ -243,8 +246,7 @@
   const smartAliasRules=[
     {code:'671R3AA#ABB', patterns:['65w usb-c lader','65w usb c lader','usb-c 65w','usb c 65w','65w lader','usb-c lader 65w']},
     {code:'75615', patterns:['rj45','usb-c rj45','usb c rj45','netwerkadapter','netwerk adapter','ethernet adapter']},
-    {code:'D31429-RPET', patterns:['rugtas','rugzak','backpack','laptop rugtas','laptoprugtas']},
-    {code:'3B4Q5UT', patterns:['muis','mouse','draadloze muis','wireless mouse']}
+    {code:'D31429-RPET', patterns:['rugtas','rugzak','backpack','laptop rugtas','laptoprugtas']}
   ];
 
   function normalizeSmartText(s){
@@ -258,6 +260,7 @@
       .replace(/\bbackpack\b/g,'rugtas')
       .replace(/\brugzak\b/g,'rugtas')
       .replace(/\bkeyboard\b/g,'toetsenbord')
+      .replace(/\bheadset\b/g,'koptelefoon')
       .replace(/[^a-z0-9]+/g,' ')
       .replace(/\s+/g,' ')
       .trim();
@@ -268,7 +271,7 @@
       .split(/\r?\n|;/)
       .map(x=>x.trim())
       .filter(Boolean)
-      .map(raw=>{
+      .map((raw,index)=>{
         let line=raw.replace(/^[-•*]+\s*/,'').trim();
         let qty=1;
         let m=line.match(/^(\d+)\s*[x×]\s*(.+)$/i);
@@ -281,12 +284,12 @@
             if(m){ line=m[1].trim(); qty=Math.max(1,Number(m[2])); }
           }
         }
-        return {raw,query:line,qty};
+        return {id:index,raw,query:line,qty};
       });
   }
 
   function tokenSet(s){
-    const stop=new Set(['een','de','het','voor','van','met','en','nieuw','refurb','artikel','stuks','stuk']);
+    const stop=new Set(['een','de','het','voor','van','met','en','nieuw','refurb','artikel','artikelen','stuks','stuk','x']);
     return new Set(normalizeSmartText(s).split(' ').filter(x=>x.length>1&&!stop.has(x)));
   }
 
@@ -298,92 +301,153 @@
     let overlap=0;
     q.forEach(t=>{ if(ct.has(t)) overlap+=1; });
     let score=overlap/q.size;
+
     const nq=normalizeSmartText(query);
     const nn=normalizeSmartText(item.name);
-    if(nn.includes(nq)||nq.includes(nn)) score+=0.45;
-    if(nq.includes('lader') && nn.includes('65w')) score+=0.2;
-    if(nq.includes('rj45') && nn.includes('rj45')) score+=0.35;
-    if(nq.includes('rugtas') && (nn.includes('backpack')||normalizeSmartText(item.category).includes('tassen'))) score+=0.3;
-    if(nq.includes('muis') && (nn.includes('muis')||nn.includes('mouse'))) score+=0.3;
+    const nc=normalizeSmartText(item.category);
+
+    if(nn===nq) score+=0.7;
+    else if(nn.includes(nq)||nq.includes(nn)) score+=0.38;
+
+    if(nq.includes('lader') && (nn.includes('lader')||nn.includes('adapter'))) score+=0.22;
+    if(nq.includes('rj45') && nn.includes('rj45')) score+=0.45;
+    if(nq.includes('rugtas') && (nn.includes('rugtas')||nc.includes('tassen'))) score+=0.35;
+    if(nq.includes('muis') && (nn.includes('muis')||nc.includes('muizen'))) score+=0.35;
+    if(nq.includes('toetsenbord') && (nn.includes('toetsenbord')||nc.includes('muizen'))) score+=0.3;
+    if(nq.includes('monitor') && nc.includes('monitor')) score+=0.3;
+    if(nq.includes('dock') && nc.includes('docks')) score+=0.3;
+    if((nq.includes('iphone')||nq.includes('telefoon')) && nc.includes('telefoon')) score+=0.25;
+    if((nq.includes('ipad')||nq.includes('tablet')) && nc.includes('ipad')) score+=0.25;
+    if(nq.includes('headset')||nq.includes('koptelefoon')){ if(nc.includes('headsets')) score+=0.3; }
+
     return score;
   }
 
-  function findSmartMatch(query){
+  function rankSmartMatches(query){
     const nq=normalizeSmartText(query);
+
+    const learnedCode=state.learnedAliases[nq];
+    if(learnedCode){
+      const learnedItem=getCatalogItem(learnedCode);
+      if(learnedItem) return [{item:learnedItem,confidence:2,reason:'geleerde keuze'}];
+    }
+
     for(const rule of smartAliasRules){
       if(rule.patterns.some(p=>{
         const np=normalizeSmartText(p);
         return nq===np || nq.includes(np) || np.includes(nq);
       })){
         const exact=getCatalogItem(rule.code);
-        if(exact) return {item:exact,confidence:1,reason:'vaste herkenning'};
+        if(exact) return [{item:exact,confidence:1.8,reason:'vaste herkenning'}];
       }
     }
-    let best=null,second=null;
-    for(const item of catalogItems()){
-      const score=scoreCandidate(query,item);
-      const rec={item,confidence:score,reason:'catalogusmatch'};
-      if(!best||score>best.confidence){ second=best; best=rec; }
-      else if(!second||score>second.confidence) second=rec;
-    }
-    if(!best || best.confidence<0.48) return null;
-    if(second && best.confidence-second.confidence<0.08 && best.confidence<0.8) return null;
-    return best;
+
+    return catalogItems()
+      .map(item=>({item,confidence:scoreCandidate(query,item),reason:'catalogusmatch'}))
+      .filter(x=>x.confidence>=0.25)
+      .sort((a,b)=>b.confidence-a.confidence)
+      .slice(0,5);
   }
 
   function analyzeTicketText(text){
     return parseTicketLines(text).map(line=>{
-      const match=findSmartMatch(line.query);
-      return {...line,match};
+      const suggestions=rankSmartMatches(line.query);
+      const first=suggestions[0]||null;
+      const second=suggestions[1]||null;
+
+      let selectedCode=null;
+      let auto=false;
+      if(first){
+        const gap=second ? first.confidence-second.confidence : first.confidence;
+        if(first.confidence>=1.35 || (first.confidence>=0.85 && gap>=0.28)){
+          selectedCode=first.item.code;
+          auto=true;
+        }
+      }
+
+      return {...line,suggestions,selectedCode,auto};
     });
   }
 
   function renderTicketPreview(results){
-    if(!$('ticketMatchPreview')) return;
-    $('ticketMatchPreview').classList.remove('hidden');
-    $('ticketMatchPreview').innerHTML=`<div class="ticket-preview-head">${results.filter(x=>x.match).length} van ${results.length} regels herkend</div>`+
+    const box=$('ticketMatchPreview'); if(!box)return;
+    box.classList.remove('hidden');
+    const resolved=results.filter(x=>x.selectedCode).length;
+    box.innerHTML=`<div class="ticket-preview-head">${resolved} van ${results.length} regels gekozen · klik een suggestie bij twijfel</div>`+
       results.map(r=>{
-        const ok=!!r.match;
-        const conf=ok?r.match.confidence:0;
-        const cls=!ok?'bad':conf>=.8?'good':'warn';
-        const label=!ok?'Niet herkend':conf>=.8?'Hoge match':'Controleren';
-        return `<div class="ticket-match-row ${ok?'':'ticket-unmatched'}">
-          <div class="ticket-source">${esc(r.query)}</div>
-          <div class="ticket-qty">${r.qty}×</div>
-          <div class="ticket-result">${ok?esc(r.match.item.name):'—'}</div>
-          <div class="ticket-confidence ${cls}">${label}</div>
+        const chosen=r.selectedCode ? getCatalogItem(r.selectedCode) : null;
+        const sugg=r.suggestions.slice(0,4);
+        return `<div class="ticket-line-block" data-ticket-line="${r.id}">
+          <div class="ticket-line-main">
+            <div class="ticket-source">${esc(r.query)}</div>
+            <div class="ticket-qty">${r.qty}×</div>
+            <div class="ticket-result">${chosen?esc(chosen.name):(sugg.length?'Kies hieronder':'Geen suggesties gevonden')}</div>
+            <div class="ticket-confidence ${chosen?'good':'warn'}">${chosen?(r.auto?'Automatisch':'Gekozen'):'Keuze nodig'}</div>
+          </div>
+          <div class="ticket-suggestions">
+            ${sugg.map(s=>`<button type="button" class="ticket-suggestion ${r.selectedCode===s.item.code?'selected':''}" data-ticket-pick-line="${r.id}" data-ticket-pick-code="${esc(s.item.code)}">
+              <span class="ticket-suggestion-name">${esc(s.item.name)}</span>
+              <span class="ticket-suggestion-cat">${esc(s.item.category)}</span>
+            </button>`).join('')}
+          </div>
         </div>`;
       }).join('');
+
+    document.querySelectorAll('[data-ticket-pick-line]').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const id=Number(btn.dataset.ticketPickLine);
+        const code=btn.dataset.ticketPickCode;
+        const row=window.__ticketResults?.find(x=>x.id===id);
+        if(!row)return;
+        row.selectedCode=code;
+        row.auto=false;
+        state.learnedAliases[normalizeSmartText(row.query)]=code;
+        save();
+        renderTicketPreview(window.__ticketResults);
+      });
+    });
   }
 
   function previewTicket(){
     const text=$('ticketPasteInput')?.value||'';
     if(!text.trim()){toast('Plak eerst de tickettekst');return;}
-    renderTicketPreview(analyzeTicketText(text));
+    window.__ticketResults=analyzeTicketText(text);
+    renderTicketPreview(window.__ticketResults);
   }
 
   function applyTicket(){
     const text=$('ticketPasteInput')?.value||'';
     if(!text.trim()){toast('Plak eerst de tickettekst');return;}
-    const results=analyzeTicketText(text);
+
+    const currentText=window.__ticketText||'';
+    if(!window.__ticketResults || currentText!==text){
+      window.__ticketResults=analyzeTicketText(text);
+      window.__ticketText=text;
+    }
+    const results=window.__ticketResults;
     renderTicketPreview(results);
-    let added=0,unmatched=0;
+
+    const unresolved=results.filter(r=>!r.selectedCode);
+    if(unresolved.length){
+      toast(`${unresolved.length} regel(s) hebben nog een keuze nodig`);
+      return;
+    }
+
+    let added=0;
     results.forEach(r=>{
-      if(!r.match){unmatched++;return;}
-      const code=r.match.item.code;
-      let sel=itemSelected(code);
-      const status=state.itemStatuses[code]||r.match.item.defaultStatus||'Nieuw';
+      const item=getCatalogItem(r.selectedCode); if(!item)return;
+      let sel=itemSelected(item.code);
+      const status=state.itemStatuses[item.code]||item.defaultStatus||'Nieuw';
       if(sel) sel.qty+=r.qty;
-      else state.items.push({code,qty:r.qty,status});
+      else state.items.push({code:item.code,qty:r.qty,status});
+      state.learnedAliases[normalizeSmartText(r.query)]=item.code;
       added+=r.qty;
     });
+
     save();
     render();
-    if(unmatched) toast(`${added} stuks toegevoegd · ${unmatched} regel(s) niet herkend`);
-    else {
-      toast(`${added} stuks toegevoegd aan de order`);
-      closeTicketModal();
-    }
+    toast(`${added} stuks toegevoegd aan de order`);
+    closeTicketModal();
   }
 
   function openTicketModal(){
@@ -392,6 +456,8 @@
     $('ticketPasteInput').value='';
     $('ticketMatchPreview').classList.add('hidden');
     $('ticketMatchPreview').innerHTML='';
+    window.__ticketResults=null;
+    window.__ticketText='';
     setTimeout(()=>$('ticketPasteInput').focus(),0);
   }
   function closeTicketModal(){ $('ticketPasteModal')?.classList.add('hidden'); }
