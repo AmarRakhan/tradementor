@@ -292,12 +292,12 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
           if(coordinate===null)return null;
           const top=Number(coordinate);
           if(top<0||top>height)return null;
-          const kind:ZoneBoundaryLayout["kind"]=zone.index===activeZone
+          const kind:ZoneBoundaryLayout["kind"]=activeZone!==null&&zone.index===activeZone
             ? "next-up"
-            : zone.index===Number(activeZone)-1
+            : activeZone!==null&&zone.index===activeZone-1
               ? "next-down"
               : "regular";
-          return {price,top,kind,targetIndex:kind==="next-up"?Number(activeZone)+1:kind==="next-down"?Number(activeZone)-1:null};
+          return {price,top,kind,targetIndex:kind==="next-up"&&activeZone!==null?activeZone+1:kind==="next-down"&&activeZone!==null?activeZone-1:null};
         }).filter(Boolean) as ZoneBoundaryLayout[];
         setZoneBoundaries(boundaries);
       }else{
