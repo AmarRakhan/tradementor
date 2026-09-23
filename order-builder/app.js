@@ -240,6 +240,162 @@
     $('sumRefurb').textContent=refurbCount;
   }
 
+  const smartAliasRules=[
+    {code:'671R3AA#ABB', patterns:['65w usb-c lader','65w usb c lader','usb-c 65w','usb c 65w','65w lader','usb-c lader 65w']},
+    {code:'75615', patterns:['rj45','usb-c rj45','usb c rj45','netwerkadapter','netwerk adapter','ethernet adapter']},
+    {code:'D31429-RPET', patterns:['rugtas','rugzak','backpack','laptop rugtas','laptoprugtas']},
+    {code:'3B4Q5UT', patterns:['muis','mouse','draadloze muis','wireless mouse']}
+  ];
+
+  function normalizeSmartText(s){
+    return String(s||'')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .toLowerCase()
+      .replace(/usb\s*[-_/]?\s*c/g,'usbc')
+      .replace(/rj\s*[-_]?\s*45/g,'rj45')
+      .replace(/\bcharger\b/g,'lader')
+      .replace(/\bmouse\b/g,'muis')
+      .replace(/\bbackpack\b/g,'rugtas')
+      .replace(/\brugzak\b/g,'rugtas')
+      .replace(/\bkeyboard\b/g,'toetsenbord')
+      .replace(/[^a-z0-9]+/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  function parseTicketLines(text){
+    return String(text||'')
+      .split(/\r?\n|;/)
+      .map(x=>x.trim())
+      .filter(Boolean)
+      .map(raw=>{
+        let line=raw.replace(/^[-•*]+\s*/,'').trim();
+        let qty=1;
+        let m=line.match(/^(\d+)\s*[x×]\s*(.+)$/i);
+        if(m){ qty=Math.max(1,Number(m[1])); line=m[2].trim(); }
+        else{
+          m=line.match(/^x\s*(\d+)\s+(.+)$/i);
+          if(m){ qty=Math.max(1,Number(m[1])); line=m[2].trim(); }
+          else{
+            m=line.match(/^(.+?)\s+[x×]\s*(\d+)$/i);
+            if(m){ line=m[1].trim(); qty=Math.max(1,Number(m[2])); }
+          }
+        }
+        return {raw,query:line,qty};
+      });
+  }
+
+  function tokenSet(s){
+    const stop=new Set(['een','de','het','voor','van','met','en','nieuw','refurb','artikel','stuks','stuk']);
+    return new Set(normalizeSmartText(s).split(' ').filter(x=>x.length>1&&!stop.has(x)));
+  }
+
+  function scoreCandidate(query,item){
+    const q=tokenSet(query);
+    const candidateText=normalizeSmartText(item.name+' '+item.category);
+    const ct=tokenSet(candidateText);
+    if(!q.size) return 0;
+    let overlap=0;
+    q.forEach(t=>{ if(ct.has(t)) overlap+=1; });
+    let score=overlap/q.size;
+    const nq=normalizeSmartText(query);
+    const nn=normalizeSmartText(item.name);
+    if(nn.includes(nq)||nq.includes(nn)) score+=0.45;
+    if(nq.includes('lader') && nn.includes('65w')) score+=0.2;
+    if(nq.includes('rj45') && nn.includes('rj45')) score+=0.35;
+    if(nq.includes('rugtas') && (nn.includes('backpack')||normalizeSmartText(item.category).includes('tassen'))) score+=0.3;
+    if(nq.includes('muis') && (nn.includes('muis')||nn.includes('mouse'))) score+=0.3;
+    return score;
+  }
+
+  function findSmartMatch(query){
+    const nq=normalizeSmartText(query);
+    for(const rule of smartAliasRules){
+      if(rule.patterns.some(p=>{
+        const np=normalizeSmartText(p);
+        return nq===np || nq.includes(np) || np.includes(nq);
+      })){
+        const exact=getCatalogItem(rule.code);
+        if(exact) return {item:exact,confidence:1,reason:'vaste herkenning'};
+      }
+    }
+    let best=null,second=null;
+    for(const item of catalogItems()){
+      const score=scoreCandidate(query,item);
+      const rec={item,confidence:score,reason:'catalogusmatch'};
+      if(!best||score>best.confidence){ second=best; best=rec; }
+      else if(!second||score>second.confidence) second=rec;
+    }
+    if(!best || best.confidence<0.48) return null;
+    if(second && best.confidence-second.confidence<0.08 && best.confidence<0.8) return null;
+    return best;
+  }
+
+  function analyzeTicketText(text){
+    return parseTicketLines(text).map(line=>{
+      const match=findSmartMatch(line.query);
+      return {...line,match};
+    });
+  }
+
+  function renderTicketPreview(results){
+    if(!$('ticketMatchPreview')) return;
+    $('ticketMatchPreview').classList.remove('hidden');
+    $('ticketMatchPreview').innerHTML=`<div class="ticket-preview-head">${results.filter(x=>x.match).length} van ${results.length} regels herkend</div>`+
+      results.map(r=>{
+        const ok=!!r.match;
+        const conf=ok?r.match.confidence:0;
+        const cls=!ok?'bad':conf>=.8?'good':'warn';
+        const label=!ok?'Niet herkend':conf>=.8?'Hoge match':'Controleren';
+        return `<div class="ticket-match-row ${ok?'':'ticket-unmatched'}">
+          <div class="ticket-source">${esc(r.query)}</div>
+          <div class="ticket-qty">${r.qty}×</div>
+          <div class="ticket-result">${ok?esc(r.match.item.name):'—'}</div>
+          <div class="ticket-confidence ${cls}">${label}</div>
+        </div>`;
+      }).join('');
+  }
+
+  function previewTicket(){
+    const text=$('ticketPasteInput')?.value||'';
+    if(!text.trim()){toast('Plak eerst de tickettekst');return;}
+    renderTicketPreview(analyzeTicketText(text));
+  }
+
+  function applyTicket(){
+    const text=$('ticketPasteInput')?.value||'';
+    if(!text.trim()){toast('Plak eerst de tickettekst');return;}
+    const results=analyzeTicketText(text);
+    renderTicketPreview(results);
+    let added=0,unmatched=0;
+    results.forEach(r=>{
+      if(!r.match){unmatched++;return;}
+      const code=r.match.item.code;
+      let sel=itemSelected(code);
+      const status=state.itemStatuses[code]||r.match.item.defaultStatus||'Nieuw';
+      if(sel) sel.qty+=r.qty;
+      else state.items.push({code,qty:r.qty,status});
+      added+=r.qty;
+    });
+    save();
+    render();
+    if(unmatched) toast(`${added} stuks toegevoegd · ${unmatched} regel(s) niet herkend`);
+    else {
+      toast(`${added} stuks toegevoegd aan de order`);
+      closeTicketModal();
+    }
+  }
+
+  function openTicketModal(){
+    if(!$('ticketPasteModal')) return;
+    $('ticketPasteModal').classList.remove('hidden');
+    $('ticketPasteInput').value='';
+    $('ticketMatchPreview').classList.add('hidden');
+    $('ticketMatchPreview').innerHTML='';
+    setTimeout(()=>$('ticketPasteInput').focus(),0);
+  }
+  function closeTicketModal(){ $('ticketPasteModal')?.classList.add('hidden'); }
+
   function populateCategorySelect(){
     $('newArticleCategory').innerHTML=categoryOrder.map(cat=>`<option>${esc(cat)}</option>`).join('');
   }
@@ -345,12 +501,20 @@
   document.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.packageFilter=el.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===el));renderPackages();}));
   $('clearOrder').addEventListener('click',clearOrder);
   $('copyButton').addEventListener('click',copyDynamics);
+  $('ticketPasteButton')?.addEventListener('click',openTicketModal);
+  $('previewTicketButton')?.addEventListener('click',previewTicket);
+  $('applyTicketButton')?.addEventListener('click',applyTicket);
+  document.querySelectorAll('[data-close-ticket-modal]').forEach(el=>el.addEventListener('click',closeTicketModal));
   $('addArticleButton')?.addEventListener('click',()=>openArticleModal('add'));
   $('manageArticlesButton')?.addEventListener('click',()=>openArticleModal('manage'));
   $('saveNewArticle')?.addEventListener('click',addCatalogArticle);
   $('manageArticleSearch')?.addEventListener('input',renderManageArticles);
   document.querySelectorAll('[data-close-article-modal]').forEach(el=>el.addEventListener('click',closeArticleModal));
-  document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('articleModal').classList.contains('hidden')) closeArticleModal(); });
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape') return;
+    if($('ticketPasteModal')&&!$('ticketPasteModal').classList.contains('hidden')) closeTicketModal();
+    if($('articleModal')&&!$('articleModal').classList.contains('hidden')) closeArticleModal();
+  });
   const initial = new URLSearchParams(location.search).get('view')==='items' ? 'items' : 'packages';
   restore(); setView(initial);
 })();
