@@ -45,7 +45,7 @@ test("reference instruction text exposes desired and current formation with one 
 
 test("Build 406 uses the extrapolated ladder for BETA active zone instead of nearest confirmed center",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("derivePortfolioZoneLadder(payload.zones)"));
+  assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
   assert.ok(component.includes("portfolioZoneFromLadder(advisorZoneLadder,currentZonePrice)"));
   assert.ok(component.includes("advisorEnabled?portfolioZoneFromLadder"));
 });
@@ -61,4 +61,22 @@ test("BETA semantic zone colors are no longer swapped",async()=>{
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone.zone-green{border-color:rgba(28,224,154"));
   assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone.zone-blue{border-color:rgba(45,157,232"));
+});
+
+
+test("Build 407 uses one canonical 15m zone source for every BETA chart timeframe",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=320'));
+  assert.ok(component.includes("setAdvisorZones(canonical.zones)"));
+  assert.ok(component.includes("advisorEnabled&&advisorZones.length?advisorZones:payload.zones"));
+  assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
+});
+
+test("canonical zone fetch is BETA-only and can fall back without disabling seat controls",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const betaGate=component.indexOf('if(!enabled){setAdvisorSeats(EMPTY_ADVISOR);setAdvisorZones([])');
+  const canonicalFetch=component.indexOf('/portfolio-chart?timeframe=15m&limit=320');
+  assert.ok(betaGate>0);
+  assert.ok(canonicalFetch>betaGate);
+  assert.ok(component.includes("catch{\n        setAdvisorZones([]);\n      }"));
 });
