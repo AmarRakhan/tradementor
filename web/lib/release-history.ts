@@ -24,7 +24,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-23",
-  title: "Botconfigurator V2 · BETA-only en blokgewijze release",
+  title: "Botconfigurator V2 · BETA UI en geïsoleerde blokrelease",
   newItems: [
     "Nieuwe één-pagina Botconfigurator V2 met acht logische stappen en live samenvatting.",
     "BETA-owner kan LONG en SHORT afzonderlijke Bollinger-timeframes geven en exposure-refill testen.",
@@ -44,12 +44,12 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Directional Bollinger en exposure-refill zijn server-side afgeschermd en standaard uit voor STABLE.",
   ],
   now: [
-    "Owner/BETA kan Build 402 testen zonder de instellingen of execution-route van overige gebruikers te wijzigen.",
+    "Owner/BETA kan Build 403 testen zonder de instellingen of execution-route van overige gebruikers te wijzigen.",
     "Exposure-refill verandert uitsluitend de Bollinger-timeframe voor toegestane nieuwe entries; DCA en TP blijven afzonderlijke bestaande mechanismen.",
     "Price zones blijven IN BOUW en zijn nog niet functioneel geactiveerd in deze release.",
   ],
-  before: "Build 401 was de goedgekeurde Portfolio Koers display-release.",
-  after: "Build 402 voegt een geïsoleerde BETA-configurator en blokgewijze releasecontrole toe.",
+  before: "Build 402 legde de server-side BETA/releasefundering en execution-isolatie vast.",
+  after: "Build 403 voegt de nieuwe BETA-configurator, lazy-load foutisolatie en het Releasecentrum toe.",
   technicalDetails: [
     "Primaire visuele referentie: file_000000003e34820a9d0c8dc22b84ac47.",
     "Feature flags zijn account-/server-side afgedwongen; frontend verbergen alleen is niet de beveiliging.",
@@ -59,6 +59,19 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-402-botconfigurator-beta-backend",
+    version: "46",
+    build: "402",
+    releasedAt: "2026-09-23",
+    title: "Botconfigurator V2 BETA-releasefundering",
+    newItems: ["Server-side BETA/STABLE releasekanalen, directional Bollinger en exposure-refill configuratiecontract."],
+    problems: ["Nieuwe functies moesten per account functioneel testbaar worden zonder stable gebruikers te raken."],
+    causes: ["De bestaande releaseflow was buildgericht en niet blok-/accountgericht."],
+    fixes: ["Feature-entitlements en BETA-only settings stripping toegevoegd; stable execution blijft legacy zolang een feature niet gepubliceerd is."],
+    now: ["Build 403 levert de bijbehorende BETA UI en blokgewijze releasebediening."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-401-portfolio-koers-crossed-swords",
     version: "46",
