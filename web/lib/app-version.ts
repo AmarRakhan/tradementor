@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 408: owner-only BETA Portfolio Koers becomes a clear zone decision map with explicit boundaries and next-level triggers.
-export const WEBAPP_BUILD_NUMBER = "408";
+// Build 409: owner-only BETA Portfolio Koers gives every signed zone a clearly distinct fill and neutralizes non-active boundary lines.
+export const WEBAPP_BUILD_NUMBER = "409";
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
   return `Webapp versie ${WEBAPP_VERSION} · build ${buildNumber}`;

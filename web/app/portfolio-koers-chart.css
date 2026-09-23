@@ -41,16 +41,16 @@
 
 /* Build 408 · owner-only BETA zone decision map */
 .beta-zone-advisor .portfolio-koers-zone{border:0;box-shadow:none}
-.beta-zone-advisor .portfolio-koers-zone.level-n3{background:linear-gradient(90deg,rgba(2,67,48,.62),rgba(2,45,34,.50))}
-.beta-zone-advisor .portfolio-koers-zone.level-n2{background:linear-gradient(90deg,rgba(4,84,60,.54),rgba(3,57,43,.44))}
-.beta-zone-advisor .portfolio-koers-zone.level-n1{background:linear-gradient(90deg,rgba(7,101,73,.45),rgba(4,67,51,.37))}
-.beta-zone-advisor .portfolio-koers-zone.level-0{background:linear-gradient(90deg,rgba(5,59,103,.50),rgba(3,42,76,.40))}
-.beta-zone-advisor .portfolio-koers-zone.level-p1{background:linear-gradient(90deg,rgba(100,72,13,.42),rgba(69,49,8,.34))}
-.beta-zone-advisor .portfolio-koers-zone.level-p2{background:linear-gradient(90deg,rgba(123,77,12,.48),rgba(82,46,8,.39))}
-.beta-zone-advisor .portfolio-koers-zone.level-p3{background:linear-gradient(90deg,rgba(116,13,35,.56),rgba(73,8,24,.46))}
+.beta-zone-advisor .portfolio-koers-zone.level-n3{background:linear-gradient(90deg,rgba(2,45,38,.76),rgba(1,31,27,.66))}
+.beta-zone-advisor .portfolio-koers-zone.level-n2{background:linear-gradient(90deg,rgba(3,82,76,.68),rgba(2,55,53,.58))}
+.beta-zone-advisor .portfolio-koers-zone.level-n1{background:linear-gradient(90deg,rgba(5,111,66,.62),rgba(3,72,45,.52))}
+.beta-zone-advisor .portfolio-koers-zone.level-0{background:linear-gradient(90deg,rgba(6,59,120,.68),rgba(4,38,88,.56))}
+.beta-zone-advisor .portfolio-koers-zone.level-p1{background:linear-gradient(90deg,rgba(111,78,13,.58),rgba(76,51,7,.48))}
+.beta-zone-advisor .portfolio-koers-zone.level-p2{background:linear-gradient(90deg,rgba(133,58,10,.64),rgba(88,36,6,.53))}
+.beta-zone-advisor .portfolio-koers-zone.level-p3{background:linear-gradient(90deg,rgba(125,11,38,.70),rgba(78,6,25,.58))}
 .beta-zone-advisor .portfolio-koers-zone.active{filter:saturate(1.22) brightness(1.14);box-shadow:inset 0 0 0 1px rgba(247,205,83,.34),inset 0 0 42px rgba(245,202,75,.115)}
 .portfolio-koers-zone-boundaries{position:absolute;inset:0 48px 0 0;z-index:5;pointer-events:none}
-.portfolio-koers-zone-boundary{position:absolute;left:0;right:0;height:0;border-top:1px solid rgba(154,177,186,.28);box-shadow:0 1px 0 rgba(0,0,0,.22)}
+.portfolio-koers-zone-boundary{position:absolute;left:0;right:0;height:0;border-top:1px solid rgba(205,218,222,.16);box-shadow:none}
 .portfolio-koers-zone-boundary.next-up{border-top:2px solid rgba(242,195,64,.92);box-shadow:0 0 10px rgba(242,195,64,.24)}
 .portfolio-koers-zone-boundary.next-down{border-top:2px solid rgba(42,225,163,.82);box-shadow:0 0 10px rgba(42,225,163,.20)}
 .portfolio-koers-zone-boundary>span{position:absolute;right:5px;top:0;transform:translateY(-50%);padding:3px 6px;border:1px solid currentColor;border-radius:7px;background:rgba(2,13,18,.90);font:900 6.8px/1 system-ui;letter-spacing:.025em;white-space:nowrap;box-shadow:0 3px 9px rgba(0,0,0,.30)}
@@ -64,3 +64,13 @@
 .portfolio-koers-next-levels b{padding:2px 5px;border:1px solid rgba(128,154,160,.22);border-radius:6px;background:rgba(7,20,24,.62);color:#dce5e5;font-weight:900}
 @media(max-width:560px){.portfolio-koers-zone-boundary>span{right:3px;padding:2px 4px;font-size:6px}.portfolio-koers-instruction-copy>.portfolio-koers-instruction-reason{font-size:6.4px}.portfolio-koers-next-levels{gap:3px;font-size:6.2px}.portfolio-koers-next-levels i{display:none}.portfolio-koers-next-levels b{padding:1px 3px}.beta-zone-advisor .portfolio-koers-bias{min-width:82px}}
 @media(max-width:385px){.portfolio-koers-zone-boundary>span{font-size:5.7px}.portfolio-koers-next-levels{font-size:5.8px}.portfolio-koers-instruction-copy>.portfolio-koers-instruction-reason{font-size:6px}}
+
+/* Build 409 · each strategic zone must read as a different block, never as one green mass. */
+.beta-zone-advisor .portfolio-koers-zone.level-n3,
+.beta-zone-advisor .portfolio-koers-zone.level-n2,
+.beta-zone-advisor .portfolio-koers-zone.level-n1,
+.beta-zone-advisor .portfolio-koers-zone.level-0,
+.beta-zone-advisor .portfolio-koers-zone.level-p1,
+.beta-zone-advisor .portfolio-koers-zone.level-p2,
+.beta-zone-advisor .portfolio-koers-zone.level-p3{background-blend-mode:normal}
+.portfolio-koers-zone-boundary.regular{border-top-color:rgba(205,218,222,.13);opacity:.72}
