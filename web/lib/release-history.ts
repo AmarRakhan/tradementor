@@ -56,6 +56,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Legacy defaults voor directional Bollinger en exposure-refill blijven false.",
     "De bestaande AsterStrategy2Entry-gate blijft de enige V2 lazy-load grens.",
     "De V2 regressietest volgt dezelfde bestaande AsterStrategy2Entry-gate als productie.",
+    "Een tijdelijke dubbele regressietest uit de UI-pass is verwijderd; de bestaande release-test blijft leidend.",
   ],
   confidence: "confirmed",
 };
