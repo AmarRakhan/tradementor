@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AMAR Order Builder</title>
-  <link rel="stylesheet" href="style.css?v=20260923-11" />
+  <link rel="stylesheet" href="style.css?v=20260923-12" />
 </head>
 <body class="mode-packages">
   <header class="app-header">
@@ -39,7 +39,7 @@
       </div>
 
       <div id="itemAdminActions" class="item-admin-actions">
-        <button id="ticketPasteButton" class="admin-action smart-paste-admin" type="button">✦ Plak uit ticket</button>
+        <button id="ticketPasteButton" class="admin-action smart-paste-admin" type="button" onclick="window.openTicketPasteFallback && window.openTicketPasteFallback()">✦ Plak uit ticket</button>
         <button id="addArticleButton" class="admin-action primary-admin" type="button">＋ Artikel toevoegen</button>
         <button id="manageArticlesButton" class="admin-action" type="button">Artikelen beheren</button>
       </div>
@@ -155,7 +155,15 @@
   </div>
 
   <div id="toast" class="toast" role="status"></div>
-  <script src="data.js?v=20260923-11"></script>
-  <script src="app.js?v=20260923-11"></script>
+  <script>
+    window.openTicketPasteFallback=function(){
+      var m=document.getElementById('ticketPasteModal');
+      if(m){m.classList.remove('hidden');}
+      var i=document.getElementById('ticketPasteInput');
+      if(i){setTimeout(function(){i.focus();},0);}
+    };
+  </script>
+  <script src="data.js?v=20260923-12"></script>
+  <script src="app.js?v=20260923-12"></script>
 </body>
 </html>
