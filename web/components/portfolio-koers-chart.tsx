@@ -111,6 +111,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
   const [advisorEnabled,setAdvisorEnabled]=useState(false);
   const [advisorSeats,setAdvisorSeats]=useState<AdvisorSeats>(EMPTY_ADVISOR);
+  const [advisorZones,setAdvisorZones]=useState<Zone[]>([]);
   const [advisorBusy,setAdvisorBusy]=useState(false);
   const [advisorMessage,setAdvisorMessage]=useState("");
   liveEquityTextRef.current=liveEquityText;
@@ -134,12 +135,19 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       const betaFeature=record(features.bot_configurator_v2);
       const enabled=String(release.channel||"").toUpperCase()==="BETA"&&betaFeature.enabled===true;
       setAdvisorEnabled(enabled);
-      if(!enabled){setAdvisorSeats(EMPTY_ADVISOR);setAdvisorMessage("");return}
+      if(!enabled){setAdvisorSeats(EMPTY_ADVISOR);setAdvisorZones([]);setAdvisorMessage("");return}
       const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
       setAdvisorSeats(advisorSeatsFromPayload(account));
+      try{
+        const canonical=normalizePortfolioKoersPayload(await authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=320",{cache:"no-store"})) as Payload;
+        setAdvisorZones(canonical.zones);
+      }catch{
+        setAdvisorZones([]);
+      }
     }catch(reason){
       setAdvisorEnabled(false);
       setAdvisorSeats(EMPTY_ADVISOR);
+      setAdvisorZones([]);
       setAdvisorMessage(reason instanceof Error?reason.message:"Koersinstructie kon niet worden geladen.");
     }
   },[]);
@@ -192,7 +200,8 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const baseCandles=useMemo(()=>mergePortfolioKoersCandles(browserCandles,payload.candles,320) as Candle[],[browserCandles,payload.candles]);
   const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
   const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(payload.zones,currentZonePrice),[payload.zones,currentZonePrice]);
-  const advisorZoneLadder=useMemo(()=>advisorEnabled?derivePortfolioZoneLadder(payload.zones):null,[advisorEnabled,payload.zones]);
+  const advisorZoneSource=useMemo(()=>advisorEnabled&&advisorZones.length?advisorZones:payload.zones,[advisorEnabled,advisorZones,payload.zones]);
+  const advisorZoneLadder=useMemo(()=>advisorEnabled?derivePortfolioZoneLadder(advisorZoneSource):null,[advisorEnabled,advisorZoneSource]);
   const activeZone=useMemo(()=>advisorEnabled?portfolioZoneFromLadder(advisorZoneLadder,currentZonePrice):confirmedActiveZone,[advisorEnabled,advisorZoneLadder,currentZonePrice,confirmedActiveZone]);
   const advisorInstruction=useMemo(()=>advisorEnabled?derivePortfolioZoneInstruction({
     zoneIndex:activeZone,
