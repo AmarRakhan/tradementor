@@ -341,6 +341,9 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     if(!["ADD","PARTIAL_ADD","REMOVE"].includes(String(advisorInstruction.status)))return;
     setAdvisorBusy(true);setAdvisorMessage("");
     try{
+      const release=record(await authenticatedRequest("/api/releases/me",{cache:"no-store"}));
+      const betaFeature=record(record(release.features).bot_configurator_v2);
+      if(String(release.channel||"").toUpperCase()!=="BETA"||betaFeature.enabled!==true)throw new Error("Deze koersinstructie is niet actief voor dit account.");
       const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
       const fresh=advisorSeatsFromPayload(account);
       if(!Object.keys(fresh.settings).length)throw new Error("Actuele botinstellingen ontbreken; er is niets gewijzigd.");
