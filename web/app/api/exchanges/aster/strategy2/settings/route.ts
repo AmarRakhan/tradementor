@@ -38,6 +38,18 @@ const preserveKeys = [
   "stopLossMode",
   "stopLossLong",
   "stopLossShort",
+  "directionalBollingerEnabled",
+  "bollingerLongTimeframe",
+  "bollingerShortTimeframe",
+  "exposureRefillEnabled",
+  "exposureRefillLongTimeframe",
+  "exposureRefillShortTimeframe",
+  "exposureRefillTriggerPercent",
+  "exposureRefillReleasePercent",
+  "priceZonesEnabled",
+  "priceZoneMode",
+  "priceZoneStepPercent",
+  "priceZoneSeatGrowth",
 ] as const;
 
 async function preserveExistingPairOverrides(request: Request) {
