@@ -136,9 +136,14 @@ window.BASE_PACKAGES=[{"name":"standaard iPhone REF","items":[{"code":"MMXF3ZD/A
       qty:Math.max(1,Number(it.qty||1)),
       label:friendly(String(it.code))
     }));
-    const agg=new Map();
-    items.forEach(it=>agg.set(it.label,(agg.get(it.label)||0)+it.qty));
-    const preview=[...agg.entries()].slice(0,4).map(([label,qty])=>label+(qty>1?" ("+qty+"x)":""));
+    // Pakketweergave moet de Excel-inhoud volledig volgen.
+    // Niet op generieke labels samenvoegen en niet na vier regels afkappen.
+    // Aantallen worden als afzonderlijke regels getoond, zodat de gebruiker
+    // dezelfde pakketopbouw ziet als in het klikbestand.
+    const preview=[];
+    items.forEach(it=>{
+      for(let q=0;q<(it.qty||1);q++) preview.push(it.label);
+    });
     const name=String(p.name||"Pakket");
     const ln=name.toLowerCase();
     const iconCategory=ln.includes("ipad")?"iPads":((ln.includes("iphone")||ln.includes("samsung"))?"Telefoons":(ln.includes("werkplek")?"Monitoren":"Laptops"));
