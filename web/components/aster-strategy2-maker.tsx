@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { AsterBotConfiguratorGate } from "@/components/aster-bot-configurator-gate";
 import { strategy2ServerStatus } from "@/lib/aster-strategy2-server-status.mjs";
 import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, splitTotalPositions } from "@/lib/position-slot-input";
 
@@ -94,7 +95,19 @@ function buildSmartPreview(startMargin: number, leverage: number, range: number,
 }
 function money(value: number) { return Number.isFinite(value) ? `$${value >= 1000000 ? value.toLocaleString("nl-NL", { maximumFractionDigits: 0 }) : value.toFixed(value < 10 ? 2 : 0)}` : "—"; }
 
-export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void }) {
+type AsterStrategy2MakerProps = { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void };
+
+export function AsterStrategy2Maker(props: AsterStrategy2MakerProps) {
+  return <AsterBotConfiguratorGate
+    snapshot={props.snapshot}
+    serverConfirmed={props.serverConfirmed}
+    onConfirmed={props.onConfirmed}
+    onChanged={props.onChanged}
+    legacy={<LegacyAsterStrategy2Maker {...props} />}
+  />;
+}
+
+function LegacyAsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged }: AsterStrategy2MakerProps) {
   const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
