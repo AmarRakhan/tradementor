@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 410 release-contract sync: paired with app-version.ts in the same canonical commit.
+// Build 410 release-contract sync: paired with app-version.ts and the corrected regression test.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 

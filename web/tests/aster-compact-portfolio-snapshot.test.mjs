@@ -97,9 +97,9 @@ test("Portfolio Snapshot shows active versus configured LONG and SHORT slot capa
 
 test("Build 410 labels net exposure as exposure instead of a profit-loss amount",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
-  const hedgeSummary=component.match(/function HedgeSummary[\\s\\S]*?function HedgeDetail/)?.[0]||"";
-  assert.match(hedgeSummary,/NETTO EXPOSURE/);
-  assert.doesNotMatch(hedgeSummary,/NETTO OPEN/);
-  assert.match(hedgeSummary,/exposureMoney\\(exposure\\.netExposureUsd\\)/);
-  assert.doesNotMatch(hedgeSummary,/exposureMoney\\(exposure\\.netExposureUsd, true\\)/);
+  const hedgeSummary=component.match(/function HedgeSummary[\s\S]*?function HedgeDetail/)?.[0]||"";
+  assert.ok(hedgeSummary.includes("NETTO EXPOSURE"));
+  assert.equal(hedgeSummary.includes("NETTO OPEN"),false);
+  assert.ok(hedgeSummary.includes("exposureMoney(exposure.netExposureUsd)"));
+  assert.equal(hedgeSummary.includes("exposureMoney(exposure.netExposureUsd, true)"),false);
 });
