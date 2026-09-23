@@ -192,3 +192,6 @@ button{cursor:pointer}
 @media(max-width:1380px){
   .ticket-line-main{grid-template-columns:1fr 30px 1.2fr 80px}
 }
+
+.ticket-package-intent{margin:10px 10px 0;padding:10px 12px;border:1px solid #9ec9f6;border-radius:8px;background:#eef7ff;color:#0a4f9f;font-size:12.5px}
+.ticket-package-intent strong{font-weight:800}
