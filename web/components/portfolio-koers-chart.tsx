@@ -417,12 +417,14 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
         ? `${instructionAmount} extra ${instructionSide}-soldaten nodig`
         : instructionStatus==="OK"
           ? "Formatie klopt · geen actie nodig"
-          : "Live stoelbezetting wordt geladen";
+          : activeZone===null&&advisorSeats.longSlots!==null&&advisorSeats.shortSlots!==null
+            ? "Prijszones worden gesynchroniseerd"
+            : "Live stoelbezetting wordt geladen";
   const actionLabel=advisorBusy?"OPSLAAN…":instructionStatus==="REMOVE"
     ? `−${instructionAmount} ${instructionSide}`
     : instructionStatus==="ADD"||instructionStatus==="PARTIAL_ADD"
       ? `+${instructionAmount} ${instructionSide}`
-      : instructionStatus==="BLOCKED"?"LIMIET 100":"✓ GEREED";
+      : instructionStatus==="BLOCKED"?"LIMIET 100":activeZone===null?"WACHTEN":"✓ GEREED";
   const biasLabel=activeZone===null?"ZONE":activeZone>0?"SHORT BIAS":activeZone<0?"LONG BIAS":"BALANS";
   const desiredLong=integerOrNull(advisorInstruction?.desiredLongSlots??advisorSeats.longSlots);
   const desiredShort=integerOrNull(advisorInstruction?.desiredShortSlots??advisorSeats.shortSlots);
