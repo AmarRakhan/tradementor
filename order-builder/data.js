@@ -26,24 +26,30 @@ window.BASE_PACKAGES=[{"name":"standaard iPhone REF","items":[{"code":"MMXF3ZD/A
     if(base!=="Telefoons / iPads") return base;
 
     const s=String(x.description||"").toLowerCase();
-
-    // Eerst accessoires en laders afvangen, zodat een iPad-hoes of iPhone-lader
-    // niet bij de apparaten zelf terechtkomt.
-    if(
+    const isIpad=s.includes("ipad")||s.includes("tab a9")||s.includes("tablet");
+    const isPhone=s.includes("iphone")||s.includes("xcover");
+    const isProtection=
       s.includes("screenprotector") ||
+      s.includes("screenprotect") ||
       s.includes("tempered glass") ||
       s.includes("nuglas") ||
       s.includes("case") ||
       s.includes("hoes") ||
       s.includes("rugged") ||
-      s.includes("folio") ||
-      s.includes("pencil") ||
-      s.includes("datacable") ||
-      s.includes("chargecable") ||
+      s.includes("folio");
+    const isIpadAccessory=
+      isIpad && (
+        isProtection ||
+        s.includes("pencil") ||
+        s.includes("keyboard")
+      );
+    const isPhoneAccessory=
+      isPhone && isProtection ||
       s.includes("lightning") ||
-      s.includes("usb-c to usb-c") ||
-      s.includes("keyboard")
-    ) return "Accessoires";
+      s.includes("chargecable");
+
+    if(isIpadAccessory) return "iPad-accessoires";
+    if(isPhoneAccessory) return "Telefoonaccessoires";
 
     if(
       s.includes("adapter") ||
@@ -52,18 +58,21 @@ window.BASE_PACKAGES=[{"name":"standaard iPhone REF","items":[{"code":"MMXF3ZD/A
       s.includes("power adapter")
     ) return "Opladers";
 
-    if(
-      s.includes("ipad") ||
-      s.includes("tab a9") ||
-      s.includes("tablet")
-    ) return "iPads";
+    if(s.includes("pencil")) return "iPad-accessoires";
+    if(isIpad) return "iPads";
 
     if(
-      s.includes("iphone") ||
-      s.includes("xcover") ||
+      isPhone ||
       s.includes("pm90") ||
       s.includes("pm95")
     ) return "Telefoons";
+
+    if(
+      s.includes("datacable") ||
+      s.includes("usb-c to usb-c") ||
+      s.includes("cable") ||
+      s.includes("kabel")
+    ) return "Accessoires";
 
     return "Accessoires";
   }
