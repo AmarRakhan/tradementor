@@ -2935,6 +2935,41 @@ def bootstrap_user(user: dict[str, Any] = Depends(authenticated_user)) -> dict[s
     return {"uid": uid, "accountReady": True, "ordersEnabled": False}
 
 
+@app.get("/v1/me/releases")
+def my_release_features(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    return _release_snapshot(user)
+
+
+@app.get("/v1/admin/releases")
+def admin_release_features(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    require_admin(user)
+    return _release_snapshot(user)
+
+
+@app.put("/v1/admin/releases/{feature_key}")
+def update_release_feature(feature_key: str, request: ReleaseFeatureUpdateRequest,
+                           user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    require_admin(user)
+    if feature_key not in _RELEASE_FEATURE_DEFAULTS:
+        raise HTTPException(404, "Onbekende release-feature")
+    current = _release_feature_record(feature_key)
+    beta = bool(current.get("beta")) if request.beta is None else bool(request.beta)
+    stable = bool(current.get("stable")) if request.stable is None else bool(request.stable)
+    if stable != bool(current.get("stable")) and not request.confirm:
+        raise HTTPException(422, "Bevestiging is verplicht voor publiceren of terugtrekken")
+    if stable and request.status != "LIVE":
+        raise HTTPException(422, "Een STABLE-feature moet status LIVE hebben")
+    now = datetime.now(timezone.utc)
+    db.collection("releaseFeatures").document(feature_key).set({
+        "status": request.status,
+        "beta": beta,
+        "stable": stable,
+        "updatedAt": now,
+        "updatedBy": str(user["uid"]),
+    }, merge=True)
+    return {"updated": True, "feature": _release_feature_record(feature_key), "channel": "BETA"}
+
+
 @app.get("/v1/me/preferences/interface")
 def get_interface_preference(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     value = user_reference(user).collection("preferences").document("interface").get().to_dict() or {}
