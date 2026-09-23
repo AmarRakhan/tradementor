@@ -39,6 +39,7 @@
       </div>
 
       <div id="itemAdminActions" class="item-admin-actions">
+        <button id="ticketPasteButton" class="admin-action smart-paste-admin" type="button">✦ Plak uit ticket</button>
         <button id="addArticleButton" class="admin-action primary-admin" type="button">＋ Artikel toevoegen</button>
         <button id="manageArticlesButton" class="admin-action" type="button">Artikelen beheren</button>
       </div>
@@ -92,6 +93,33 @@
       </aside>
     </section>
   </main>
+
+  <div id="ticketPasteModal" class="article-modal hidden" aria-modal="true" role="dialog">
+    <div class="article-modal-backdrop" data-close-ticket-modal></div>
+    <div class="article-modal-card ticket-modal-card">
+      <div class="article-modal-head">
+        <div>
+          <div class="article-modal-title">Plak artikelen uit ticket</div>
+          <div class="article-modal-sub">Plak de tekst van de medewerker. De Order Builder zoekt zelf de best passende artikelen en aantallen.</div>
+        </div>
+        <button class="modal-close" type="button" data-close-ticket-modal>×</button>
+      </div>
+      <div class="article-modal-section">
+        <label class="ticket-label" for="ticketPasteInput">Tickettekst</label>
+        <textarea id="ticketPasteInput" class="ticket-paste-input" placeholder="Bijvoorbeeld:
+65w usb-c lader
+1x rj45
+1x rugtas
+1x muis"></textarea>
+        <div class="ticket-example-hint">Aantallen zoals 2x, 3 x of x2 worden automatisch herkend.</div>
+        <div id="ticketMatchPreview" class="ticket-match-preview hidden"></div>
+        <div class="modal-actions ticket-actions">
+          <button id="previewTicketButton" class="admin-action" type="button">Controleren</button>
+          <button id="applyTicketButton" class="save-article-button" type="button">Herken en toevoegen</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="articleModal" class="article-modal hidden" aria-modal="true" role="dialog">
     <div class="article-modal-backdrop" data-close-article-modal></div>
