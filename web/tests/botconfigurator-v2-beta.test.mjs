@@ -9,7 +9,7 @@ const page = fs.readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8"
 test("stable path keeps the legacy configurator and beta is lazy loaded", () => {
   assert.match(shell, /if \(!betaEnabled\) return <AsterStrategy2Maker/);
   assert.match(shell, /lazy\(\(\) => import\("@\/components\/aster-bot-configurator-v2"\)/);
-  assert.match(page, /AsterStrategy2Entry/);
+  assert.match(page, /AsterStrategy2Entry as AsterStrategy2Maker/);
 });
 
 test("V2 uses the approved visual reference and one-page step structure", () => {
