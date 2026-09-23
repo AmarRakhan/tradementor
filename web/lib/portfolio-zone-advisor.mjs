@@ -246,3 +246,39 @@ export function portfolioZoneFromLadder(ladder, price) {
   const nearest=rows.reduce((best,row)=>Math.abs(Number(row.center)-value)<Math.abs(Number(best.center)-value)?row:best);
   return Number.isInteger(Number(nearest.index))?Number(nearest.index):null;
 }
+
+
+export function portfolioZoneContextFromLadder(ladder, price) {
+  const activeIndex=portfolioZoneFromLadder(ladder,price);
+  const rows=Array.isArray(ladder?.zones)?ladder.zones:[];
+  if(activeIndex===null||!rows.length){
+    return {
+      activeIndex:null,
+      activeZone:null,
+      lowerBoundary:null,
+      upperBoundary:null,
+      nextDownIndex:null,
+      nextUpIndex:null,
+    };
+  }
+  const activeZone=rows.find((row)=>Number(row.index)===activeIndex)||null;
+  if(!activeZone){
+    return {
+      activeIndex:null,
+      activeZone:null,
+      lowerBoundary:null,
+      upperBoundary:null,
+      nextDownIndex:null,
+      nextUpIndex:null,
+    };
+  }
+  const lower=Number(activeZone.lower),upper=Number(activeZone.upper);
+  return {
+    activeIndex,
+    activeZone,
+    lowerBoundary:Number.isFinite(lower)&&lower>0?lower:null,
+    upperBoundary:Number.isFinite(upper)&&upper>0?upper:null,
+    nextDownIndex:rows.some((row)=>Number(row.index)===activeIndex-1)?activeIndex-1:null,
+    nextUpIndex:rows.some((row)=>Number(row.index)===activeIndex+1)?activeIndex+1:null,
+  };
+}
