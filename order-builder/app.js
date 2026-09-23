@@ -183,7 +183,10 @@
     const rows=[];
     state.packages.forEach(sel=>{
       const p=data.packages[sel.index];
-      p.items.forEach(it=>{ for(let q=0;q<sel.qty*(it.qty||1);q++) rows.push({code:it.code,status:it.status,label:it.label,source:p.name}); });
+      const excluded=new Set(sel.excludedCodes||[]);
+      p.items.filter(it=>!excluded.has(it.code)).forEach(it=>{
+        for(let q=0;q<sel.qty*(it.qty||1);q++) rows.push({code:it.code,status:it.status,label:it.label,source:p.name});
+      });
     });
     state.items.forEach(sel=>{
       const it=getCatalogItem(sel.code); if(!it)return;
@@ -206,7 +209,7 @@
       const p=data.packages[sel.index];
       cards.push(`<div class="order-card">
         <div class="order-thumb"><img src="${pkgThumb(p)}" alt=""></div>
-        <div class="order-meta"><div class="order-name">${esc(p.name)}</div><div class="order-sub">Pakket</div>
+        <div class="order-meta"><div class="order-name">${esc(p.name)}</div><div class="order-sub">Pakket${(sel.excludedCodes||[]).length?' · '+(sel.excludedCodes||[]).map(code=>code==='MD3J4ZM/A'?'zonder 20W-lader':'zonder '+code).join(', '):''}</div>
           <div class="order-controls"><span class="status-badge ${p.badge==='Refurb'?'refurb':''}">${esc(p.badge)}</span>
           <span class="qty"><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="1">+</button></span></div>
         </div>
@@ -244,6 +247,11 @@
   }
 
   const smartAliasRules=[
+    {code:'54337282#ABH', patterns:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
+    {code:'54337265#ABH', patterns:['monteur laptop','management laptop','managementlaptop','monteurlaptop']},
+    {code:'54337313#ABH', patterns:['tekenlaptop','teken laptop','cad laptop','cad-laptop']},
+    {code:'9X3V1UT#ABB', patterns:['standaard docking','standaard dock','standaard dockingstation']},
+    {code:'AW5M5UT#ABB', patterns:['cad docking','cad dock','tekendocking','teken docking','teken dock','cad dockingstation']},
     {code:'671R3AA#ABB', patterns:['65w usb-c lader','65w usb c lader','usb-c 65w','usb c 65w','65w lader','usb-c lader 65w']},
     {code:'75615', patterns:['rj45','usb-c rj45','usb c rj45','netwerkadapter','netwerk adapter','ethernet adapter']},
     {code:'D31429-RPET', patterns:['rugtas','rugzak','backpack','laptop rugtas','laptoprugtas']}
@@ -255,6 +263,8 @@
       .toLowerCase()
       .replace(/usb\s*[-_/]?\s*c/g,'usbc')
       .replace(/rj\s*[-_]?\s*45/g,'rj45')
+      .replace(/iphone\s*16\s*e/g,'iphone16e')
+      .replace(/20\s*w/g,'20w')
       .replace(/\bcharger\b/g,'lader')
       .replace(/\bmouse\b/g,'muis')
       .replace(/\bbackpack\b/g,'rugtas')
@@ -266,11 +276,44 @@
       .trim();
   }
 
+  function isNoiseTicketLine(line){
+    const n=normalizeSmartText(line);
+    if(!n) return true;
+    if(n==='nog verwerken in dynamics' || n==='verwerken in dynamics') return true;
+    if(n.startsWith('serienummer ') || n.startsWith('serial ') || n.startsWith('serialnummer ')) return true;
+    if(/^(geen|zonder)\b/.test(n)) return true;
+    if(n.includes('niet geleverd') || n.includes('niet meegeleverd') || n.includes('ontbreekt')) return true;
+    return false;
+  }
+
+  function findIphone16ePackageIndex(){
+    return data.packages.findIndex(p=>normalizeSmartText(p.name)==='iphone16e nieuw');
+  }
+
+  function detectTicketPackageIntent(text){
+    const n=normalizeSmartText(text);
+    if(!n.includes('iphone16e')) return null;
+    const index=findIphone16ePackageIndex();
+    if(index<0) return null;
+
+    const excludedCodes=[];
+    const no20w=
+      /\bgeen\s+20w\b/.test(n) ||
+      /\bzonder\s+20w\b/.test(n) ||
+      /\bgeen\s+(20w\s+)?(lader|blokje|adapter)\b/.test(n) ||
+      /\bzonder\s+(20w\s+)?(lader|blokje|adapter)\b/.test(n) ||
+      /\b(lader|blokje|adapter)\b.{0,25}\b(niet geleverd|niet meegeleverd|ontbreekt)\b/.test(n);
+    if(no20w) excludedCodes.push('MD3J4ZM/A');
+
+    return {index,qty:1,excludedCodes,label:'iPhone 16e nieuw'};
+  }
+
   function parseTicketLines(text){
     return String(text||'')
       .split(/\r?\n|;/)
       .map(x=>x.trim())
       .filter(Boolean)
+      .filter(line=>!isNoiseTicketLine(line))
       .map((raw,index)=>{
         let line=raw.replace(/^[-•*]+\s*/,'').trim();
         let qty=1;
@@ -450,8 +493,17 @@
     const text=$('ticketPasteInput')?.value||'';
     if(!text.trim()){toast('Plak eerst de tickettekst');return;}
     window.__ticketResults=analyzeTicketText(text);
+    window.__ticketPackageIntent=detectTicketPackageIntent(text);
     window.__ticketText=text;
     renderTicketPreview(window.__ticketResults);
+    if(window.__ticketPackageIntent){
+      const p=data.packages[window.__ticketPackageIntent.index];
+      const exclusions=window.__ticketPackageIntent.excludedCodes||[];
+      const msg=document.createElement('div');
+      msg.className='ticket-package-intent';
+      msg.innerHTML='<strong>Pakket herkend:</strong> '+esc(p.name)+(exclusions.includes('MD3J4ZM/A')?' · zonder 20W-lader':'');
+      $('ticketMatchPreview').prepend(msg);
+    }
   }
 
   function applyTicket(){
@@ -461,11 +513,13 @@
     const currentText=window.__ticketText||'';
     if(!window.__ticketResults || currentText!==text){
       window.__ticketResults=analyzeTicketText(text);
+      window.__ticketPackageIntent=detectTicketPackageIntent(text);
       window.__ticketText=text;
     }
     const results=window.__ticketResults;
     renderTicketPreview(results);
 
+    const packageIntent=window.__ticketPackageIntent;
     const unresolved=results.filter(r=>!r.selectedCode);
     if(unresolved.length){
       toast(`${unresolved.length} regel(s) hebben nog een keuze nodig`);
@@ -473,6 +527,20 @@
     }
 
     let added=0;
+    if(packageIntent){
+      const existing=state.packages.find(x=>x.index===packageIntent.index);
+      if(existing){
+        existing.qty=Math.max(existing.qty,packageIntent.qty||1);
+        existing.excludedCodes=[...new Set([...(existing.excludedCodes||[]),...(packageIntent.excludedCodes||[])])];
+      }else{
+        state.packages.push({
+          index:packageIntent.index,
+          qty:packageIntent.qty||1,
+          excludedCodes:[...(packageIntent.excludedCodes||[])]
+        });
+      }
+      added+=expandedRows().filter(r=>r.source===data.packages[packageIntent.index].name).length;
+    }
     results.forEach(r=>{
       const item=getCatalogItem(r.selectedCode); if(!item)return;
       let sel=itemSelected(item.code);
@@ -496,6 +564,7 @@
     $('ticketMatchPreview').classList.add('hidden');
     $('ticketMatchPreview').innerHTML='';
     window.__ticketResults=null;
+    window.__ticketPackageIntent=null;
     window.__ticketText='';
     setTimeout(()=>$('ticketPasteInput').focus(),0);
   }
