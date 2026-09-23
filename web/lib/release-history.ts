@@ -54,6 +54,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Primaire visuele referentie: file_000000003e34820a9d0c8dc22b84ac47.",
     "Feature flags zijn account-/server-side afgedwongen; frontend verbergen alleen is niet de beveiliging.",
     "Legacy defaults voor directional Bollinger en exposure-refill blijven false.",
+    "De bestaande AsterStrategy2Entry-gate blijft de enige V2 lazy-load grens.",
   ],
   confidence: "confirmed",
 };
