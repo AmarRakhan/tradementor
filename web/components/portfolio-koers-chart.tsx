@@ -464,6 +464,16 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     upperTrigger!==null&&nextUpIndex!==null?`↑ ${levelUsd(upperTrigger)} → Z${signedZone(nextUpIndex)}`:"",
     lowerTrigger!==null&&nextDownIndex!==null?`↓ ${levelUsd(lowerTrigger)} → Z${signedZone(nextDownIndex)}`:"",
   ].filter(Boolean);
+  const zoneBandSummary=lowerTrigger!==null&&upperTrigger!==null
+    ? `${levelUsd(lowerTrigger)}–${levelUsd(upperTrigger)}`
+    : lowerTrigger!==null
+      ? `vanaf ${levelUsd(lowerTrigger)}`
+      : upperTrigger!==null
+        ? `tot ${levelUsd(upperTrigger)}`
+        : "—";
+  const zoneBasisSummary=activeZone===null
+    ? "Zonebasis: portfolio-equity · 15m support/resistance"
+    : `Zonebasis: portfolio-equity · 15m support/resistance · huidig ${levelUsd(currentZonePrice)} · Z${signedZone(activeZone)}: ${zoneBandSummary}. Netto exposure is geen verliesbedrag.`;
 
   return <section ref={shellRef} className={advisorEnabled?"portfolio-koers-card beta-zone-advisor":"portfolio-koers-card"} aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f" data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
     <header className="portfolio-koers-header">
@@ -493,6 +503,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
         <small>KOERSINSTRUCTIE · ZONE {signedZone(activeZone)}</small>
         <strong>{instructionTitle}</strong>
         <span>Gewenst: <b className="long">{Number.isFinite(desiredLong)?desiredLong:"—"}L</b> / <b className="short">{Number.isFinite(desiredShort)?desiredShort:"—"}S</b> · Huidig: <b className="long">{advisorSeats.longSlots??"—"}L</b> / <b className="short">{advisorSeats.shortSlots??"—"}S</b></span>
+        <span className="portfolio-koers-zone-basis">{zoneBasisSummary}</span>
         {instructionReason?<span className="portfolio-koers-instruction-reason">{instructionReason}</span>:null}
         {nextTriggerSummary.length?<span className="portfolio-koers-next-levels"><i>VOLGENDE LEVEL</i>{nextTriggerSummary.map((item,index)=><b key={index}>{item}</b>)}</span>:null}
         {advisorMessage?<em>{advisorMessage}</em>:null}
