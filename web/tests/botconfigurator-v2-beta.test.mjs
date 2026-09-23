@@ -25,3 +25,13 @@ test("release center keeps approval separate from publish and supports rollback"
   assert.match(v2, /Vrijgeven aan alle gebruikers/);
   assert.match(v2, /Terug naar BETA/);
 });
+
+test("V2 seat bars show live occupancy against each side capacity", () => {
+  assert.match(v2, /report\.activeLong/);
+  assert.match(v2, /report\.activeShort/);
+  assert.match(v2, /slotFill\(activeLong, totals\.longSlots\)/);
+  assert.match(v2, /slotFill\(activeShort, totals\.shortSlots\)/);
+  assert.match(v2, /Bezet \/ capaciteit/);
+  assert.doesNotMatch(v2, /totals\.longSlots \/ totals\.totalSlots/);
+  assert.doesNotMatch(v2, /totals\.shortSlots \/ totals\.totalSlots/);
+});
