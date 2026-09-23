@@ -343,6 +343,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     try{
       const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
       const fresh=advisorSeatsFromPayload(account);
+      if(!Object.keys(fresh.settings).length)throw new Error("Actuele botinstellingen ontbreken; er is niets gewijzigd.");
       const instruction=derivePortfolioZoneInstruction({
         zoneIndex:activeZone,
         longSlots:fresh.longSlots,
@@ -390,8 +391,8 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       ? `+${instructionAmount} ${instructionSide}`
       : instructionStatus==="BLOCKED"?"LIMIET 100":"✓ GEREED";
   const biasLabel=activeZone===null?"ZONE":activeZone>0?"SHORT BIAS":activeZone<0?"LONG BIAS":"BALANS";
-  const desiredLong=Number(advisorInstruction?.desiredLongSlots??advisorSeats.longSlots);
-  const desiredShort=Number(advisorInstruction?.desiredShortSlots??advisorSeats.shortSlots);
+  const desiredLong=integerOrNull(advisorInstruction?.desiredLongSlots??advisorSeats.longSlots);
+  const desiredShort=integerOrNull(advisorInstruction?.desiredShortSlots??advisorSeats.shortSlots);
 
   return <section ref={shellRef} className={advisorEnabled?"portfolio-koers-card beta-zone-advisor":"portfolio-koers-card"} aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f" data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
     <header className="portfolio-koers-header">
