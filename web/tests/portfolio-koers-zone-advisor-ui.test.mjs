@@ -43,11 +43,11 @@ test("reference instruction text exposes desired and current formation with one 
 });
 
 
-test("Build 406 uses the extrapolated ladder for BETA active zone instead of nearest confirmed center",async()=>{
+test("Build 406/408 uses the extrapolated ladder context for BETA active zone instead of nearest confirmed center",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
-  assert.ok(component.includes("portfolioZoneFromLadder(advisorZoneLadder,currentZonePrice)"));
-  assert.ok(component.includes("advisorEnabled?portfolioZoneFromLadder"));
+  assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice)"));
+  assert.ok(component.includes("advisorEnabled?zoneContext?.activeIndex??null:confirmedActiveZone"));
 });
 
 test("BETA ladder fills the complete chart height including the outer zones",async()=>{
@@ -116,9 +116,11 @@ test("Build 408 explains no-action state and shows exact next upper and lower tr
 
 test("Build 408 bias badge summarizes active zone and desired formation without loose chart zone labels",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   assert.ok(component.includes("Z{signedZone(activeZone)}"));
   assert.ok(component.includes("zoneLevelClass(zone.index)"));
-  assert.equal(component.includes("<span>{zone.label}</span></div>)}</div>") && component.includes("portfolio-koers-zone span{display:none!important}"),true);
+  assert.ok(component.includes("<span>{zone.label}</span>"));
+  assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone span{display:none!important}"));
 });
 
 test("Build 408 re-confirms canonical zone before a functional soldier write",async()=>{
