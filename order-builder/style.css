@@ -149,3 +149,7 @@ button{cursor:pointer}
   .item-admin-actions .admin-action{padding:0 10px;font-size:12px}
   .article-form-grid{grid-template-columns:1fr 1fr}
 }
+
+/* Robust tab visibility: do not depend on a cached JS bundle */
+.mode-packages .item-admin-actions{display:none!important}
+.mode-items .item-admin-actions{display:flex!important}
