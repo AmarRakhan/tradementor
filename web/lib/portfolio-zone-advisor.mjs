@@ -2,6 +2,7 @@ export const PORTFOLIO_ZONE_SEATS_PER_STEP = 5;
 export const PORTFOLIO_ZONE_MAX_TOTAL_SLOTS = 100;
 
 function count(value) {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, Math.round(number)) : null;
 }
