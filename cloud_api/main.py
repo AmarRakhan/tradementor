@@ -346,6 +346,13 @@ class AsterStrategySettingsRequest(BaseModel):
     settings: dict[str, Any]
 
 
+class ReleaseFeatureUpdateRequest(BaseModel):
+    status: str = Field(pattern="^(IN_BOUW|TESTEN|AKKOORD|LIVE)$")
+    beta: bool | None = None
+    stable: bool | None = None
+    confirm: bool = False
+
+
 class AsterStrategyStartRequest(BaseModel):
     confirm: bool
     settings: dict[str, Any]
