@@ -59,10 +59,11 @@
 .beta-zone-advisor .portfolio-koers-bias{min-width:100px}
 .beta-zone-advisor .portfolio-koers-bias span{font-size:7.4px;letter-spacing:.015em}
 .portfolio-koers-instruction-copy>.portfolio-koers-instruction-reason{color:#9fb3ad;font-size:7.3px;line-height:1.25;white-space:normal}
+.portfolio-koers-instruction-copy>.portfolio-koers-zone-basis{color:#b7c5c1;font-size:7px;line-height:1.25;white-space:normal}
 .portfolio-koers-next-levels{display:flex;align-items:center;gap:6px;min-width:0;color:#b9c5c5;font-size:7.2px;line-height:1.2;white-space:nowrap}
 .portfolio-koers-next-levels i{color:#d8b95a;font-style:normal;font-weight:950;letter-spacing:.04em}
 .portfolio-koers-next-levels b{padding:2px 5px;border:1px solid rgba(128,154,160,.22);border-radius:6px;background:rgba(7,20,24,.62);color:#dce5e5;font-weight:900}
-@media(max-width:560px){.portfolio-koers-zone-boundary>span{right:3px;padding:2px 4px;font-size:6px}.portfolio-koers-instruction-copy>.portfolio-koers-instruction-reason{font-size:6.4px}.portfolio-koers-next-levels{gap:3px;font-size:6.2px}.portfolio-koers-next-levels i{display:none}.portfolio-koers-next-levels b{padding:1px 3px}.beta-zone-advisor .portfolio-koers-bias{min-width:82px}}
+@media(max-width:560px){.portfolio-koers-zone-boundary>span{right:3px;padding:2px 4px;font-size:6px}.portfolio-koers-instruction-copy>.portfolio-koers-instruction-reason{font-size:6.4px}.portfolio-koers-instruction-copy>.portfolio-koers-zone-basis{font-size:6.2px}.portfolio-koers-next-levels{gap:3px;font-size:6.2px}.portfolio-koers-next-levels i{display:none}.portfolio-koers-next-levels b{padding:1px 3px}.beta-zone-advisor .portfolio-koers-bias{min-width:82px}}
 @media(max-width:385px){.portfolio-koers-zone-boundary>span{font-size:5.7px}.portfolio-koers-next-levels{font-size:5.8px}.portfolio-koers-instruction-copy>.portfolio-koers-instruction-reason{font-size:6px}}
 
 /* Build 409 · each strategic zone must read as a different block, never as one green mass. */
