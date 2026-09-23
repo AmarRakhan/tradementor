@@ -276,6 +276,19 @@
       .trim();
   }
 
+  function ticketIntentText(s){
+    let raw=String(s||'').trim();
+
+    // Asset-/serienummer achter een dubbele punt hoort niet bij de artikelbetekenis.
+    raw=raw.replace(/\s*:\s*[A-Z0-9][A-Z0-9._-]{5,}\s*$/i,'');
+    raw=raw.replace(/\b(nieuw|refurb)\s*$/i,'').trim();
+
+    return normalizeSmartText(raw)
+      .replace(/\b(nieuw|refurb)\b/g,' ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
   function isNoiseTicketLine(line){
     const n=normalizeSmartText(line);
     if(!n) return true;
@@ -375,22 +388,23 @@
   }
 
   function rankSmartMatches(query){
-    const nq=normalizeSmartText(query);
+    const nq=ticketIntentText(query);
+
+    // Harde bedrijfsregels winnen altijd van fuzzy matching of eerder geleerde keuzes.
+    for(const rule of smartAliasRules){
+      if(rule.patterns.some(p=>{
+        const np=ticketIntentText(p);
+        return nq===np || nq.startsWith(np+' ') || nq.includes(' '+np+' ');
+      })){
+        const exact=getCatalogItem(rule.code);
+        if(exact) return [{item:exact,confidence:3,reason:'vaste bedrijfsregel'}];
+      }
+    }
 
     const learnedCode=state.learnedAliases[nq];
     if(learnedCode){
       const learnedItem=getCatalogItem(learnedCode);
       if(learnedItem) return [{item:learnedItem,confidence:2,reason:'geleerde keuze'}];
-    }
-
-    for(const rule of smartAliasRules){
-      if(rule.patterns.some(p=>{
-        const np=normalizeSmartText(p);
-        return nq===np || nq.includes(np) || np.includes(nq);
-      })){
-        const exact=getCatalogItem(rule.code);
-        if(exact) return [{item:exact,confidence:1.8,reason:'vaste herkenning'}];
-      }
     }
 
     // Generieke muisvraag: toon bewust alle echte muismodellen, inclusief
@@ -435,7 +449,7 @@
 
       let selectedCode=null;
       let auto=false;
-      const nq=normalizeSmartText(line.query);
+      const nq=ticketIntentText(line.query);
       const genericTerms=new Set(['muis','toetsenbord','monitor','headset','koptelefoon','dock','lader','oplader','telefoon','iphone','ipad','tablet','rugtas','tas','screenprotector','hoes','case']);
       const genericAmbiguous=genericTerms.has(nq) && suggestions.length>1;
       if(first && !genericAmbiguous){
@@ -482,7 +496,7 @@
         if(!row)return;
         row.selectedCode=code;
         row.auto=false;
-        state.learnedAliases[normalizeSmartText(row.query)]=code;
+        state.learnedAliases[ticketIntentText(row.query)]=code;
         save();
         renderTicketPreview(window.__ticketResults);
       });
@@ -547,7 +561,7 @@
       const status=state.itemStatuses[item.code]||item.defaultStatus||'Nieuw';
       if(sel) sel.qty+=r.qty;
       else state.items.push({code:item.code,qty:r.qty,status});
-      state.learnedAliases[normalizeSmartText(r.query)]=item.code;
+      state.learnedAliases[ticketIntentText(r.query)]=item.code;
       added+=r.qty;
     });
 
