@@ -41,3 +41,24 @@ test("reference instruction text exposes desired and current formation with one 
   assert.ok(component.includes("Huidig:"));
   assert.ok(component.includes("applySoldierInstruction()"));
 });
+
+
+test("Build 406 uses the extrapolated ladder for BETA active zone instead of nearest confirmed center",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("derivePortfolioZoneLadder(payload.zones)"));
+  assert.ok(component.includes("portfolioZoneFromLadder(advisorZoneLadder,currentZonePrice)"));
+  assert.ok(component.includes("advisorEnabled?portfolioZoneFromLadder"));
+});
+
+test("BETA ladder fills the complete chart height including the outer zones",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("zone.upper===Infinity?0"));
+  assert.ok(component.includes("zone.lower===-Infinity?height"));
+  assert.ok(component.includes("Math.max(0,bottom-top)"));
+});
+
+test("BETA semantic zone colors are no longer swapped",async()=>{
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone.zone-green{border-color:rgba(28,224,154"));
+  assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone.zone-blue{border-color:rgba(45,157,232"));
+});
