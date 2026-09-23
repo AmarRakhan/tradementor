@@ -413,7 +413,7 @@ function HedgeSummary({ preview, onOpen }: { preview: ProfitPreview | null; onOp
     <div className="aps-exposure-strip" aria-label="Portfolio exposure">
       <article className="aps-exposure aps-exposure-long"><small>LONG EXPOSURE</small><strong>{exposure?.reliable ? exposureMoney(exposure.longExposureUsd) : "—"}</strong><span>LONG</span></article>
       <article className="aps-exposure aps-exposure-short"><small>SHORT EXPOSURE</small><strong>{exposure?.reliable ? exposureMoney(exposure.shortExposureUsd) : "—"}</strong><span>SHORT</span></article>
-      <article className={`aps-exposure aps-exposure-net aps-net-${exposure?.netSide?.toLowerCase() || "flat"}`}><small>NETTO OPEN</small><strong>{exposure?.reliable ? exposureMoney(exposure.netExposureUsd, true) : "—"}</strong><span>{exposure?.reliable ? netExposureLabel(exposure) : "—"}</span></article>
+      <article className={`aps-exposure aps-exposure-net aps-net-${exposure?.netSide?.toLowerCase() || "flat"}`}><small>NETTO EXPOSURE</small><strong>{exposure?.reliable ? exposureMoney(exposure.netExposureUsd) : "—"}</strong><span>{exposure?.reliable ? netExposureLabel(exposure) : "—"}</span></article>
     </div>
   </div>;
 }
