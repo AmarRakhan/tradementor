@@ -42,6 +42,14 @@ class MultiBbConfig:
     maximum_leverage: int | None = None
     bollinger_entry_filter_15m_enabled: bool = False
     bollinger_entry_filter_timeframe: str = DEFAULT_TIMEFRAME
+    directional_bollinger_enabled: bool = False
+    bollinger_long_timeframe: str = DEFAULT_TIMEFRAME
+    bollinger_short_timeframe: str = DEFAULT_TIMEFRAME
+    exposure_refill_enabled: bool = False
+    exposure_refill_long_timeframe: str = "1m"
+    exposure_refill_short_timeframe: str = "1m"
+    exposure_refill_trigger_percent: float = 20.0
+    exposure_refill_release_percent: float = 8.0
     entry_margin_usd: float = 5.0
     entry_notional_usd: float = 250.0
     entry_sizing_mode: str = "notional"
