@@ -12,7 +12,7 @@ from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execu
 from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 
-ENGINE = "multi_bb_v1"
+ENGINE = "multi_bb_v1"\n# Botconfigurator V2 beta keeps legacy defaults unless explicitly enabled.
 
 
 def _f(value: Any, default: float = 0.0) -> float:
