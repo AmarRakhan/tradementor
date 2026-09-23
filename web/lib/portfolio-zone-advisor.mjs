@@ -8,7 +8,8 @@ function count(value) {
 }
 
 export function derivePortfolioZoneInstruction(input = {}) {
-  const zone = Number.isInteger(Number(input.zoneIndex)) ? Number(input.zoneIndex) : null;
+  const rawZone = input.zoneIndex;
+  const zone = rawZone === null || rawZone === undefined || rawZone === "" ? null : Number.isInteger(Number(rawZone)) ? Number(rawZone) : null;
   const longSlots = count(input.longSlots);
   const shortSlots = count(input.shortSlots);
   const activeLong = count(input.activeLong);
