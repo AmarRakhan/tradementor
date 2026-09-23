@@ -6,7 +6,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { ConnectionManager } from "@/components/connection-manager";
 import { ExchangeLiveControl } from "@/components/exchange-live-control";
 import { HyperliquidStrategyControl } from "@/components/hyperliquid-strategy-control";
-import { AsterStrategy2Maker } from "@/components/aster-strategy2-maker";
+import { AsterStrategy2Entry } from "@/components/aster-strategy2-entry";
 import { AsterRecentTrades } from "@/components/aster-recent-trades";
 import { PortfolioGrowthCard } from "@/components/portfolio-growth-card";
 import { PositionCloseControl } from "@/components/position-close-control";
@@ -476,7 +476,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         </article>}
 
         {!positionsOnly && <aside className="side-stack">
-          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Maker snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></fieldset>}
+          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Entry snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></fieldset>}
           {destination !== "aster" && <ExchangeLiveControl exchange={destination} cloudReady={cloudReady} snapshot={snapshot.data} onChanged={onRefresh} />}
         </aside>}
       </section>
@@ -663,7 +663,7 @@ function PremiumBotCreator({ cloudReady, snapshots, onRefresh, onStrategy2Confir
     <PremiumPageHeading eyebrow="BOT CREATOR" title="Een krachtige bot, stap voor stap" detail="Bestaande strategie-instellingen blijven volledig beschikbaar; ingewikkelde keuzes krijgen uitleg op het moment dat je ze nodig hebt." />
     <div className="creator-progress"><span>1</span><i className="active" /><span>2</span><i /><span>3</span><i /><span>4</span><i /><span>5</span><small>Exchange en strategie kiezen</small></div>
     <section className="creator-layout"><article className="creator-question"><span className="creator-step">STAP 1 VAN 5</span><h2>Welke bot wil je instellen?</h2><p>Kies eerst de exchange. Daarna gebruikt TradeMentor exact de bestaande veilige Strategy Maker.</p><div className="creator-choices"><button type="button" className={creatorExchange === "aster" ? "active" : ""} onClick={() => setCreatorExchange("aster")}><strong>Aster</strong><small>Dual Profit Harvest & Strategy Maker</small></button><button type="button" className={creatorExchange === "hyperliquid" ? "active" : ""} onClick={() => setCreatorExchange("hyperliquid")}><strong>Hyperliquid</strong><small>DCA Pulse multipair scanner</small></button></div><div className="creator-help"><strong>Waarom deze keuze?</strong><span>Iedere exchange gebruikt zijn eigen bestaande instellingen en veiligheidscontroles. Er wordt geen nieuwe trading-engine gemaakt.</span></div></article><aside className="creator-live-summary"><span>JOUW STRATEGIE</span><h3>{creatorExchange === "aster" ? "Aster Strategy Maker" : "DCA Pulse"}</h3><dl><div><dt>Exchange</dt><dd>{creatorExchange === "aster" ? "Aster" : "Hyperliquid"}</dd></div><div><dt>Data</dt><dd>Live gekoppeld</dd></div><div><dt>Uitvoering</dt><dd>Huidige veilige flow</dd></div><div><dt>Instellingen</dt><dd>Volledig behouden</dd></div></dl></aside></section>
-    <section className="creator-existing-engine">{creatorExchange === "aster" ? <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Maker snapshot={snapshots.aster.data} serverConfirmed={snapshots.aster.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={() => onRefresh("aster")} /></fieldset> : <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={() => onRefresh("hyperliquid")} />}</section>
+    <section className="creator-existing-engine">{creatorExchange === "aster" ? <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Entry snapshot={snapshots.aster.data} serverConfirmed={snapshots.aster.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={() => onRefresh("aster")} /></fieldset> : <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={() => onRefresh("hyperliquid")} />}</section>
   </>;
 }
 
