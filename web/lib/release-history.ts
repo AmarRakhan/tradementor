@@ -55,6 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Feature flags zijn account-/server-side afgedwongen; frontend verbergen alleen is niet de beveiliging.",
     "Legacy defaults voor directional Bollinger en exposure-refill blijven false.",
     "De bestaande AsterStrategy2Entry-gate blijft de enige V2 lazy-load grens.",
+    "De V2 regressietest volgt dezelfde bestaande AsterStrategy2Entry-gate als productie.",
   ],
   confidence: "confirmed",
 };
