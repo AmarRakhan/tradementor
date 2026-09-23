@@ -35,6 +35,7 @@ import "./home-transfer.css";
 import "./tradecentrum-responsive.css";
 import "./release-history.css";
 import "./sniper-bridge.css";
+import "./bot-configurator-v2.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
