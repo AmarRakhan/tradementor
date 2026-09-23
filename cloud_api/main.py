@@ -4934,7 +4934,7 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}; old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
     # Established Multi BB settings updates are patch-like. Older/main forms still
     # submit shared fields only; absent LONG/SHORT fields must retain their stored values.
-    merged_settings = {**old, **request.settings}
+    merged_settings = _strip_unreleased_beta_settings({**old, **request.settings}, user)
     try: candidate=MultiBbConfig.from_mapping(merged_settings)
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
@@ -5127,7 +5127,7 @@ def reset_aster_strategy2_portfolio_cycle(request: AsterStrategy2PortfolioCycleR
 
 @app.post("/v1/me/aster/strategy2/simulate")
 def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    try: settings=MultiBbConfig.from_mapping({**request.settings,"mode":"paper"})
+    try: settings=MultiBbConfig.from_mapping({**_strip_unreleased_beta_settings(request.settings, user),"mode":"paper"})
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     example_pair_max=300
     example_effective=example_pair_max if settings.maximum_leverage is None else min(example_pair_max,settings.maximum_leverage)
