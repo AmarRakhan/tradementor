@@ -394,7 +394,9 @@
     for(const rule of smartAliasRules){
       if(rule.patterns.some(p=>{
         const np=ticketIntentText(p);
-        return nq===np || nq.startsWith(np+' ') || nq.includes(' '+np+' ');
+        // Voor nu telt alleen de betekenis van het artikel/pakket.
+        // Extra tekst zoals serienummers, assetnummers, namen en opmerkingen negeren we.
+        return np && nq.includes(np);
       })){
         const exact=getCatalogItem(rule.code);
         if(exact) return [{item:exact,confidence:3,reason:'vaste bedrijfsregel'}];
