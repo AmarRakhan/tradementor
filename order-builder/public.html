@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AMAR Order Builder</title>
+  <link rel="stylesheet" href="style.css?v=20260923-8" />
+</head>
+<body class="mode-packages public-viewer">
+  <header class="app-header">
+    <div class="brand-mark" aria-hidden="true"><span></span></div>
+    <div class="brand-copy">
+      <div class="brand-title">AMAR Order Builder</div>
+      <div class="brand-subtitle">Klaarzetten voor Dynamics 365 F&amp;O</div>
+    </div>
+    <div class="header-spacer"></div>
+    <button class="header-link" type="button">ⓘ <span>Help</span></button>
+    <div class="header-divider"></div>
+    <div class="user-badge">AK</div>
+    <div class="user-name">Amar Klant⌄</div>
+  </header>
+
+  <main class="app-shell">
+    <section class="toolbar" aria-label="Navigatie en zoeken">
+      <label class="search-box">
+        <span class="search-icon">⌕</span>
+        <input id="searchInput" type="search" placeholder="Zoek een pakket..." autocomplete="off" />
+      </label>
+
+      <nav class="main-tabs" aria-label="Hoofdtabs">
+        <button id="tabPackages" class="tab-btn active" type="button"><span class="tab-icon">◇</span>Pakketten</button>
+        <button id="tabItems" class="tab-btn" type="button"><span class="tab-icon">◇</span>Overige artikelen</button>
+      </nav>
+
+      <div id="packageFilters" class="package-filters">
+        <button class="filter-pill active" data-filter="all" type="button">Alle pakketten <span id="allCount"></span></button>
+        <button class="filter-pill" data-filter="Nieuw" type="button">Nieuw <span id="newCount"></span></button>
+        <button class="filter-pill" data-filter="Refurb" type="button">Refurb <span id="refurbCount"></span></button>
+      </div>
+
+      <div id="itemAdminActions" class="item-admin-actions hidden" aria-hidden="true"></div>
+      <div class="toolbar-spacer"></div>
+      <div class="sort-wrap"><span>Sorteren op</span><select id="sortSelect"><option value="az">Naam (A → Z)</option><option value="za">Naam (Z → A)</option></select></div>
+      <button class="view-toggle active" type="button" aria-label="Rasterweergave">⊞</button>
+    </section>
+
+    <section class="workspace">
+      <div class="content-pane">
+        <div id="packagesView" class="view-panel">
+          <div id="packagesGrid" class="packages-grid"></div>
+          <div id="packagesEmpty" class="empty-state hidden">Geen pakketten gevonden.</div>
+        </div>
+
+        <div id="itemsView" class="view-panel hidden">
+          <div id="categoriesGrid" class="categories-grid"></div>
+          <div id="itemsEmpty" class="empty-state hidden">Geen artikelen gevonden.</div>
+        </div>
+      </div>
+
+      <aside class="order-panel" aria-label="Geselecteerde order">
+        <div class="order-head">
+          <div class="order-title"><span class="cart-icon">🛒</span>Geselecteerde order</div>
+          <button id="clearOrder" class="clear-link" type="button">♙ Alles wissen</button>
+        </div>
+        <div id="orderCountLabel" class="order-count-label">Nog niets geselecteerd</div>
+        <div id="orderList" class="order-list"></div>
+        <div id="orderEmpty" class="order-empty">
+          <div class="order-empty-icon">＋</div>
+          <strong>Selecteer een pakket of artikel</strong>
+          <span>Je selectie verschijnt hier.</span>
+        </div>
+
+        <div id="packageContents" class="package-contents hidden">
+          <div class="section-title">Gecombineerde inhoud <span id="expandedCount"></span></div>
+          <div id="combinedRows" class="combined-rows"></div>
+        </div>
+
+        <div class="order-summary">
+          <div class="summary-title">Samenvatting</div>
+          <div class="summary-row"><span>Totaal aantal artikelen</span><strong id="sumArticles">0</strong></div>
+          <div class="summary-row"><span>Totaal aantal stuks</span><strong id="sumPieces">0</strong></div>
+          <div class="summary-row"><span>Nieuw</span><strong id="sumNew">0</strong></div>
+          <div class="summary-row"><span>Refurb</span><strong id="sumRefurb">0</strong></div>
+        </div>
+
+        <button id="copyButton" class="copy-button" type="button"><span class="copy-icon">▣</span>Kopiëren voor Dynamics</button>
+        <div class="copy-help">Kopieert de technische artikelcodes + status naar het klembord voor gebruik in Dynamics 365 F&amp;O.</div>
+      </aside>
+    </section>
+  </main>
+
+  <div id="articleModal" class="article-modal hidden" aria-hidden="true"></div>
+  <div id="toast" class="toast" role="status"></div>
+  <script src="data.js?v=20260923-8"></script>
+  <script src="app.js?v=20260923-8"></script>
+</body>
+</html>
