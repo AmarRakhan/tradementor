@@ -4976,6 +4976,7 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
         # no clearing of recovery/asymmetric state.
         update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"settingsChangedAt":now,
             "lastReason":"Multi DCA-instellingen live bijgewerkt; actieve positie-, DCA- en cycle-state behouden"}
+    update["releaseChannel"] = "BETA" if _is_beta_owner(user) else "STABLE"
     # Portfolio TP base selection is server-authoritative. CURRENT_VALUE is
     # captured exactly once at Save time, even while the bot is off, so the
     # target can never chase subsequent live-equity updates. Existing cycle
@@ -5316,7 +5317,8 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
     now=datetime.now(timezone.utc); version=max(int(safe_float(existing.get("configVersion"))),settings.version)
     settings=MultiBbConfig.from_mapping({**settings.public_dict(),"version":version})
     ref.set({"settings":settings.public_dict(),"phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
-        "enabled":True,"monitor":True,"pendingReopens":[],"multiBbAdoptionPending":True,"multiBbReport":{},
+        "enabled":True,"monitor":True,"releaseChannel":"BETA" if _is_beta_owner(user) else "STABLE",
+        "pendingReopens":[],"multiBbAdoptionPending":True,"multiBbReport":{},
         "lastReason":"Strategy 2 start: verse exchange-evaluatie","startedAt":now,"updatedAt":now},merge=True)
     first=_run_aster_strategy2_tick(uid,dry_run=settings.mode!="live")
     return {"started":True,"mode":settings.mode,"firstTick":first,**aster_strategy2_public(uid)}
