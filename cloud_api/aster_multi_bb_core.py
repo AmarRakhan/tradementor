@@ -492,6 +492,57 @@ def _close_evidence(client: Any, uid: str, state: dict[str, Any], row: dict[str,
                          ownership_reliable=True, fills_reliable=True, prices_reliable=True, costs_reliable=True)
 
 
+def _notional_by_side(positions: list[dict[str, Any]]) -> tuple[float, float]:
+    long_notional = 0.0
+    short_notional = 0.0
+    for row in positions:
+        side = str(row.get("positionSide", "")).upper()
+        qty = abs(_f(row.get("positionAmt")))
+        mark = _f(row.get("markPrice"), _f(row.get("entryPrice")))
+        notional = qty * mark if qty > 0 and mark > 0 else abs(_f(row.get("notionalUsd", row.get("notional"))))
+        if side == "LONG":
+            long_notional += notional
+        elif side == "SHORT":
+            short_notional += notional
+    return long_notional, short_notional
+
+
+def _exposure_refill_context(settings: MultiBbConfig, positions: list[dict[str, Any]], raw_state: dict[str, Any]) -> dict[str, Any]:
+    long_notional, short_notional = _notional_by_side(positions)
+    gross = long_notional + short_notional
+    net = long_notional - short_notional
+    imbalance_pct = abs(net) / gross * 100.0 if gross > 0 else 0.0
+    previous = str(raw_state.get("exposureRefillSide") or "").upper()
+    if previous not in {"LONG", "SHORT"}:
+        previous = ""
+    underweight = "LONG" if net < 0 else "SHORT" if net > 0 else ""
+    active_side = ""
+    if settings.exposure_refill_enabled and underweight:
+        if previous == underweight and imbalance_pct > settings.exposure_refill_release_percent:
+            active_side = previous
+        elif imbalance_pct >= settings.exposure_refill_trigger_percent:
+            active_side = underweight
+    return {
+        "longNotional": long_notional,
+        "shortNotional": short_notional,
+        "grossExposure": gross,
+        "netExposure": net,
+        "imbalancePercent": imbalance_pct,
+        "activeSide": active_side,
+    }
+
+
+def _effective_entry_timeframe(settings: MultiBbConfig, side: str, exposure: dict[str, Any]) -> str:
+    normalized_side = str(side).upper()
+    if settings.directional_bollinger_enabled:
+        normal = settings.bollinger_long_timeframe if normalized_side == "LONG" else settings.bollinger_short_timeframe
+    else:
+        normal = settings.bollinger_entry_filter_timeframe
+    if settings.exposure_refill_enabled and str(exposure.get("activeSide") or "").upper() == normalized_side:
+        return settings.exposure_refill_long_timeframe if normalized_side == "LONG" else settings.exposure_refill_short_timeframe
+    return normal
+
+
 def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: MultiBbConfig, uid: str,
                       account: dict[str, Any], positions: list[dict[str, Any]], open_orders: list[dict[str, Any]],
                       timestamp_ms: int, dry_run: bool = False, order_budget: int | None = None,
