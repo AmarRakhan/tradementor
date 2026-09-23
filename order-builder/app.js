@@ -345,10 +345,10 @@
   document.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.packageFilter=el.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===el));renderPackages();}));
   $('clearOrder').addEventListener('click',clearOrder);
   $('copyButton').addEventListener('click',copyDynamics);
-  $('addArticleButton').addEventListener('click',()=>openArticleModal('add'));
-  $('manageArticlesButton').addEventListener('click',()=>openArticleModal('manage'));
-  $('saveNewArticle').addEventListener('click',addCatalogArticle);
-  $('manageArticleSearch').addEventListener('input',renderManageArticles);
+  $('addArticleButton')?.addEventListener('click',()=>openArticleModal('add'));
+  $('manageArticlesButton')?.addEventListener('click',()=>openArticleModal('manage'));
+  $('saveNewArticle')?.addEventListener('click',addCatalogArticle);
+  $('manageArticleSearch')?.addEventListener('input',renderManageArticles);
   document.querySelectorAll('[data-close-article-modal]').forEach(el=>el.addEventListener('click',closeArticleModal));
   document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('articleModal').classList.contains('hidden')) closeArticleModal(); });
   const initial = new URLSearchParams(location.search).get('view')==='items' ? 'items' : 'packages';
