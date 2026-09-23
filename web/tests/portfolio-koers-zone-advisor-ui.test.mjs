@@ -43,11 +43,11 @@ test("reference instruction text exposes desired and current formation with one 
 });
 
 
-test("Build 406 uses the extrapolated ladder for BETA active zone instead of nearest confirmed center",async()=>{
+test("Build 406/408 uses the extrapolated ladder context for BETA active zone instead of nearest confirmed center",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
-  assert.ok(component.includes("portfolioZoneFromLadder(advisorZoneLadder,currentZonePrice)"));
-  assert.ok(component.includes("advisorEnabled?portfolioZoneFromLadder"));
+  assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice)"));
+  assert.ok(component.includes("advisorEnabled?zoneContext?.activeIndex??null:confirmedActiveZone"));
 });
 
 test("BETA ladder fills the complete chart height including the outer zones",async()=>{
@@ -79,4 +79,62 @@ test("canonical zone fetch is BETA-only and can fall back without disabling seat
   assert.ok(betaGate>0);
   assert.ok(canonicalFetch>betaGate);
   assert.ok(component.includes("catch{\n        setAdvisorZones([]);\n      }"));
+});
+
+
+test("Build 408 renders unique structural boundaries instead of borders on every zone block",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes("portfolio-koers-zone-boundaries"));
+  assert.ok(component.includes("portfolio-koers-zone-boundary"));
+  assert.ok(component.includes('"next-up"'));
+  assert.ok(component.includes('"next-down"'));
+  assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone{border:0"));
+  assert.ok(css.includes(".portfolio-koers-zone-boundary.next-up"));
+  assert.ok(css.includes(".portfolio-koers-zone-boundary.next-down"));
+});
+
+test("Build 408 gives adjacent signed zones visibly different fills and a stronger active zone",async()=>{
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  for(const level of ["level-n3","level-n2","level-n1","level-0","level-p1","level-p2","level-p3"]){
+    assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone."+level));
+  }
+  assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone.active"));
+  assert.ok(css.includes("brightness(1.14)"));
+});
+
+test("Build 408 explains no-action state and shows exact next upper and lower triggers",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("instructionReason"));
+  assert.ok(component.includes("portfolio-koers-instruction-reason"));
+  assert.ok(component.includes("VOLGENDE LEVEL"));
+  assert.ok(component.includes("upperTrigger"));
+  assert.ok(component.includes("lowerTrigger"));
+  assert.ok(component.includes("nextUpIndex"));
+  assert.ok(component.includes("nextDownIndex"));
+});
+
+test("Build 408 bias badge summarizes active zone and desired formation without loose chart zone labels",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes("Z{signedZone(activeZone)}"));
+  assert.ok(component.includes("zoneLevelClass(zone.index)"));
+  assert.ok(component.includes("<span>{zone.label}</span>"));
+  assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone span{display:none!important}"));
+});
+
+test("Build 408 re-confirms canonical zone before a functional soldier write",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const actionStart=component.indexOf("const applySoldierInstruction");
+  const actionSource=component.slice(actionStart,component.indexOf("const latest=",actionStart));
+  assert.ok(actionSource.includes("/portfolio-chart?timeframe=15m&limit=320"));
+  assert.ok(actionSource.includes("derivePortfolioZoneLadder(canonical.zones)"));
+  assert.ok(actionSource.includes("portfolioZoneFromLadder(freshLadder,freshPrice)"));
+  assert.ok(actionSource.includes("if(freshZone===null)"));
+});
+
+test("Build 408 makes ordinary chart grid quieter only for the BETA decision map",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('advisorEnabled?"rgba(75,133,160,.025)"'));
+  assert.ok(component.includes('advisorEnabled?"rgba(75,133,160,.032)"'));
 });
