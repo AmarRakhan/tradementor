@@ -58,7 +58,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   confidence: "confirmed",
 };
 
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
     id: "v46-build-401-portfolio-koers-crossed-swords",
     version: "46",
@@ -71,7 +71,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[
     fixes: ["Alleen de displaylaag van Portfolio Koers is verfijnd; trading- en datalogica bleef ongewijzigd."],
     now: ["Build 401 blijft de visuele Portfolio Koers-basis waarop Build 402 verder bouwt."],
     confidence: "confirmed",
-  },] = [
+  },
   {
     id: "v46-build-400-portfolio-koers-icon-markers",
     version: "46",
