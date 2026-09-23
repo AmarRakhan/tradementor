@@ -312,8 +312,16 @@
     if(nq.includes('lader') && (nn.includes('lader')||nn.includes('adapter'))) score+=0.22;
     if(nq.includes('rj45') && nn.includes('rj45')) score+=0.45;
     if(nq.includes('rugtas') && (nn.includes('rugtas')||nc.includes('tassen'))) score+=0.35;
-    if(nq.includes('muis') && (nn.includes('muis')||nc.includes('muizen'))) score+=0.35;
-    if(nq.includes('toetsenbord') && (nn.includes('toetsenbord')||nc.includes('muizen'))) score+=0.3;
+    if(nq.includes('muis')){
+      if(nn.includes('muis')||nn.includes('lift')) score+=0.65;
+      else if(nc.includes('muizen')) score+=0.22;
+      if(nn.includes('toetsenbord')||nn.includes('keyboard')||nn.includes('kbd')) score-=0.55;
+    }
+    if(nq.includes('toetsenbord')){
+      if(nn.includes('toetsenbord')||nn.includes('keyboard')||nn.includes('kbd')) score+=0.6;
+      else if(nc.includes('muizen')) score+=0.18;
+      if(nn.includes('muis')||nn.includes('lift')) score-=0.5;
+    }
     if(nq.includes('monitor') && nc.includes('monitor')) score+=0.3;
     if(nq.includes('dock') && nc.includes('docks')) score+=0.3;
     if((nq.includes('iphone')||nq.includes('telefoon')) && nc.includes('telefoon')) score+=0.25;
@@ -357,7 +365,10 @@
 
       let selectedCode=null;
       let auto=false;
-      if(first){
+      const nq=normalizeSmartText(line.query);
+      const genericTerms=new Set(['muis','toetsenbord','monitor','headset','koptelefoon','dock','lader','oplader','telefoon','iphone','ipad','tablet','rugtas','tas','screenprotector','hoes','case']);
+      const genericAmbiguous=genericTerms.has(nq) && suggestions.length>1;
+      if(first && !genericAmbiguous){
         const gap=second ? first.confidence-second.confidence : first.confidence;
         if(first.confidence>=1.35 || (first.confidence>=0.85 && gap>=0.28)){
           selectedCode=first.item.code;
@@ -412,6 +423,7 @@
     const text=$('ticketPasteInput')?.value||'';
     if(!text.trim()){toast('Plak eerst de tickettekst');return;}
     window.__ticketResults=analyzeTicketText(text);
+    window.__ticketText=text;
     renderTicketPreview(window.__ticketResults);
   }
 
