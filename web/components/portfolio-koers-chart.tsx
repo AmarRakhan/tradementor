@@ -7,7 +7,7 @@ import { useAuthSession } from "@/components/auth-provider";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioZoneForPrice } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
-import { derivePortfolioZoneInstruction } from "@/lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneInstruction, derivePortfolioZoneLadder, portfolioZoneFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
@@ -190,7 +190,10 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   },[liveEquityText,timeframe]);
 
   const baseCandles=useMemo(()=>mergePortfolioKoersCandles(browserCandles,payload.candles,320) as Candle[],[browserCandles,payload.candles]);
-  const activeZone=useMemo(()=>portfolioZoneForPrice(payload.zones,liveEquity??payload.currentEquity??baseCandles.at(-1)?.close),[payload.zones,payload.currentEquity,baseCandles,liveEquity]);
+  const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
+  const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(payload.zones,currentZonePrice),[payload.zones,currentZonePrice]);
+  const advisorZoneLadder=useMemo(()=>advisorEnabled?derivePortfolioZoneLadder(payload.zones):null,[advisorEnabled,payload.zones]);
+  const activeZone=useMemo(()=>advisorEnabled?portfolioZoneFromLadder(advisorZoneLadder,currentZonePrice):confirmedActiveZone,[advisorEnabled,advisorZoneLadder,currentZonePrice,confirmedActiveZone]);
   const advisorInstruction=useMemo(()=>advisorEnabled?derivePortfolioZoneInstruction({
     zoneIndex:activeZone,
     longSlots:advisorSeats.longSlots,
@@ -251,19 +254,37 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     const syncOverlays=()=>{
       if(candleSeriesRef.current!==series||!container.isConnected)return;
       const height=Math.max(1,container.clientHeight),width=Math.max(1,container.clientWidth);
-      const zoneCoordinates=payload.zones.map((zone)=>{
-        const centerY=series.priceToCoordinate(zone.center);
-        const upperY=series.priceToCoordinate(zone.upper);
-        const lowerY=series.priceToCoordinate(zone.lower);
-        if(centerY===null||upperY===null||lowerY===null)return null;
-        return {
-          index:zone.index,label:zone.label,
-          centerY:Number(centerY),upperY:Number(upperY),lowerY:Number(lowerY),
-          source:zone.source,
-        };
-      }).filter(Boolean);
-      const zones=layoutPortfolioKoersZoneRegions(zoneCoordinates,height) as ZoneLayout[];
-      setZoneLayout(zones);
+      if(advisorEnabled&&advisorZoneLadder?.zones?.length){
+        const zones=advisorZoneLadder.zones.map((zone:any)=>{
+          const upperY=zone.upper===Infinity?0:series.priceToCoordinate(zone.upper);
+          const lowerY=zone.lower===-Infinity?height:series.priceToCoordinate(zone.lower);
+          if(upperY===null||lowerY===null)return null;
+          const rawTop=Math.min(Number(upperY),Number(lowerY));
+          const rawBottom=Math.max(Number(upperY),Number(lowerY));
+          const top=Math.max(0,Math.min(height,rawTop));
+          const bottom=Math.max(0,Math.min(height,rawBottom));
+          return {
+            index:Number(zone.index),label:String(zone.label||""),
+            top,height:Math.max(0,bottom-top),
+            tone:zone.tone as ZoneLayout["tone"],
+          };
+        }).filter((zone:any)=>zone&&zone.height>1&&zone.top<height) as ZoneLayout[];
+        setZoneLayout(zones);
+      }else{
+        const zoneCoordinates=payload.zones.map((zone)=>{
+          const centerY=series.priceToCoordinate(zone.center);
+          const upperY=series.priceToCoordinate(zone.upper);
+          const lowerY=series.priceToCoordinate(zone.lower);
+          if(centerY===null||upperY===null||lowerY===null)return null;
+          return {
+            index:zone.index,label:zone.label,
+            centerY:Number(centerY),upperY:Number(upperY),lowerY:Number(lowerY),
+            source:zone.source,
+          };
+        }).filter(Boolean);
+        const zones=layoutPortfolioKoersZoneRegions(zoneCoordinates,height) as ZoneLayout[];
+        setZoneLayout(zones);
+      }
 
       const candidates:any[]=[];
       for(let index=0;index<markerRows.length;index+=1){
@@ -329,7 +350,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       if(chartRef.current===chart)chartRef.current=null;
       candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncOverlaysRef.current=()=>{};setEventLabels([]);
     };
-  },[baseCandles,payload.markers,payload.zones,payload.cycleStartEquity,timeframe]);
+  },[baseCandles,payload.markers,payload.zones,payload.cycleStartEquity,timeframe,advisorEnabled,advisorZoneLadder]);
 
   const fullscreen=async()=>{
     if(!shellRef.current)return;
