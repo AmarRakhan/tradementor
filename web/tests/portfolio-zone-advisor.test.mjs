@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { derivePortfolioZoneInstruction, PORTFOLIO_ZONE_SEATS_PER_STEP } from "../lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneInstruction, derivePortfolioZoneLadder, portfolioZoneFromLadder, zoneToneForSignedIndex, PORTFOLIO_ZONE_SEATS_PER_STEP } from "../lib/portfolio-zone-advisor.mjs";
 
 test("zone +2 asks for ten free SHORT soldiers exactly like the approved reference",()=>{
   assert.equal(PORTFOLIO_ZONE_SEATS_PER_STEP,5);
@@ -55,4 +55,58 @@ test("advisor refuses to invent zone zero when the current zone is missing",()=>
   const row=derivePortfolioZoneInstruction({zoneIndex:null,longSlots:60,shortSlots:30,activeLong:60,activeShort:30});
   assert.equal(row.status,"UNAVAILABLE");
   assert.equal(row.zoneIndex,null);
+});
+
+
+test("confirmed zone centers are extended to a complete -3 through +3 ladder",()=>{
+  const ladder=derivePortfolioZoneLadder([
+    {index:-1,center:100,atr:3},
+    {index:0,center:105,atr:3},
+  ]);
+  assert.deepEqual(ladder.zones.map((row)=>row.index),[-3,-2,-1,0,1,2,3]);
+  assert.equal(ladder.step,5);
+  assert.equal(ladder.anchor,105);
+  assert.equal(ladder.zones.find((row)=>row.index===1)?.center,110);
+  assert.equal(ladder.zones.find((row)=>row.index===3)?.upper,Infinity);
+});
+
+test("price far above the highest confirmed zone becomes a positive extrapolated zone instead of zone zero",()=>{
+  const ladder=derivePortfolioZoneLadder([
+    {index:-1,center:100,atr:3},
+    {index:0,center:105,atr:3},
+  ]);
+  assert.equal(portfolioZoneFromLadder(ladder,141.18),3);
+  assert.equal(portfolioZoneFromLadder(ladder,111),1);
+  assert.equal(portfolioZoneFromLadder(ladder,106),0);
+});
+
+test("price below the lowest confirmed zone extrapolates toward LONG zones",()=>{
+  const ladder=derivePortfolioZoneLadder([
+    {index:0,center:105,atr:3},
+    {index:1,center:110,atr:3},
+  ]);
+  assert.equal(portfolioZoneFromLadder(ladder,86),-3);
+  assert.equal(portfolioZoneFromLadder(ladder,101),-1);
+});
+
+test("signed zone tones match the approved high-to-low visual hierarchy",()=>{
+  assert.equal(zoneToneForSignedIndex(3),"red");
+  assert.equal(zoneToneForSignedIndex(2),"amber");
+  assert.equal(zoneToneForSignedIndex(1),"amber");
+  assert.equal(zoneToneForSignedIndex(0),"blue");
+  assert.equal(zoneToneForSignedIndex(-1),"green");
+  assert.equal(zoneToneForSignedIndex(-3),"green");
+});
+
+test("single confirmed zone can safely use ATR fallback spacing",()=>{
+  const ladder=derivePortfolioZoneLadder([{index:0,center:100,atr:4}]);
+  assert.equal(ladder.source,"atr-fallback-spacing");
+  assert.equal(ladder.step,6);
+  assert.equal(portfolioZoneFromLadder(ladder,119),3);
+});
+
+test("missing zone evidence stays unavailable and does not invent a ladder",()=>{
+  const ladder=derivePortfolioZoneLadder([]);
+  assert.deepEqual(ladder.zones,[]);
+  assert.equal(portfolioZoneFromLadder(ladder,141),null);
 });
