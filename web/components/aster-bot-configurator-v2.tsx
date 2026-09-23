@@ -197,6 +197,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
     return () => observers.forEach((observer) => observer.disconnect());
   }, []);
 
+  const ownerBeta = releases.channel === "BETA";
   const feature = (key: string) => releases.features?.[key] ?? release.features?.[key] ?? {};
   const directionalAvailable = feature("directional_bollinger").enabled === true;
   const exposureAvailable = feature("exposure_refill").enabled === true;
@@ -378,7 +379,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
 
   return <article id="bot-configurator-v2" data-reference={VISUAL_REFERENCE}>
     <header className="v2-hero">
-      <div><span className="v2-beta">BETA · alleen zichtbaar voor jou</span><h2>Botconfigurator V2</h2><p>Bouw je Aster-bot stap voor stap. STABLE-gebruikers blijven op de bestaande configurator en bestaande trade-logica.</p></div>
+      <div>{ownerBeta && <span className="v2-beta">BETA · alleen zichtbaar voor jou</span>}<h2>Botconfigurator V2</h2><p>{ownerBeta ? "Bouw en test nieuwe blokken op jouw account. STABLE-gebruikers blijven op hun vrijgegeven logica." : "Bouw je Aster-bot stap voor stap met alleen vrijgegeven functies."}</p></div>
       <div className={"v2-live " + (enabled ? "on" : "")}><i /><span><small>Aster live bot</small><b>{enabled ? "AAN" : "UIT"}</b></span>{enabled && <button type="button" disabled={busy} onClick={stopBot}>Uitschakelen</button>}</div>
     </header>
 
@@ -456,11 +457,11 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       {available > 0 && totals.theoretical > available && <p className="v2-warning">Waarschuwing: theoretische volledige ingestelde belasting is hoger dan de huidige available. Dit is een configuratiecheck, geen voorspelling dat alle DCA's tegelijk worden uitgevoerd.</p>}
       <div className="v2-account-strip"><span><small>Equity</small><b>{equity > 0 ? money(equity) : "—"}</b></span><span><small>Serverstatus</small><b>{serverConfirmed ? "Bevestigd" : "Wachten"}</b></span><span><small>Wijzigingen</small><b>{dirty ? "Niet opgeslagen" : "Opgeslagen"}</b></span></div>
 
-      <details className="v2-release-center" open>
+      {ownerBeta && <details className="v2-release-center" open>
         <summary>Releasecentrum · alleen BETA-owner</summary>
         <p>Een vinkje/akkoord publiceert niets automatisch. Publiceren en terugtrekken gebeurt per blok.</p>
         <div className="v2-release-list">{Object.entries(releases.features ?? {}).map(([key, row]) => <article key={key}><div><b>{releaseLabel(key)}</b><small>{row.status || "TESTEN"} · BETA {row.beta ? "AAN" : "UIT"} · STABLE {row.stable ? "AAN" : "UIT"}</small></div><span>{row.status !== "AKKOORD" && row.status !== "LIVE" && <button disabled={busy} onClick={() => changeRelease(key, { status: "AKKOORD", beta: true, stable: false })}>✓ Getest en akkoord</button>}{row.status === "AKKOORD" && !row.stable && <button disabled={busy} onClick={() => changeRelease(key, { status: "LIVE", beta: true, stable: true, confirm: true })}>Vrijgeven aan alle gebruikers</button>}{row.stable && <button className="rollback" disabled={busy} onClick={() => changeRelease(key, { status: "TESTEN", beta: true, stable: false, confirm: true })}>Terug naar BETA</button>}</span></article>)}</div>
-      </details>
+      </details>}
     </section>
 
     <footer className="v2-footer"><button className="secondary" type="button" disabled={busy || !dirty} onClick={save}>Instellingen opslaan</button><button className="primary" type="button" disabled={busy || !serverConfirmed} onClick={bottomAction}>{busy ? "Bezig…" : enabled ? "Instellingen opslaan" : "Bot activeren"}</button>{message && <p>{message}</p>}</footer>
