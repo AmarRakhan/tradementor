@@ -1415,7 +1415,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
     elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
     elif entry_wait and all(str(a.get("reason", "")).startswith(("PRICE_", "BB_")) for a in entry_wait):
-        entry_status = "WAITING_BOLLINGER_ENTRY"; entry_reason = f"Geen kandidaat voldoet nu aan het optionele {settings.bollinger_entry_filter_timeframe} Bollinger-instapfilter; vrije stoel blijft leeg en wordt opnieuw gescand"
+        entry_status = "WAITING_BOLLINGER_ENTRY"; entry_reason = "Geen kandidaat voldoet nu aan de actieve Bollinger-instapfilter; vrije stoel blijft leeg en wordt opnieuw gescand"
     elif entry_wait: entry_status = "ORDER_REJECTED"; entry_reason = str(entry_wait[0].get("reason", "Aster ordercheck afgewezen"))
     else: entry_status = "READY_FOR_ENTRY"; entry_reason = "verse exchange snapshot; geselecteerde munt is opnieuw entry-kandidaat"
     report = {"engine": ENGINE, "configVersion": settings.version,
@@ -1434,6 +1434,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                   if a.get("kind") == "ENTRY_SKIP" and a.get("orphanShortPriority") is True
               ][-10:],
               "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled, "bollingerEntryFilterTimeframe": settings.bollinger_entry_filter_timeframe,
+              "directionalBollingerEnabled": settings.directional_bollinger_enabled,
+              "bollingerLongTimeframe": settings.bollinger_long_timeframe, "bollingerShortTimeframe": settings.bollinger_short_timeframe,
+              "exposureRefillEnabled": settings.exposure_refill_enabled,
+              "exposureRefillLongTimeframe": settings.exposure_refill_long_timeframe, "exposureRefillShortTimeframe": settings.exposure_refill_short_timeframe,
+              "exposureRefillTriggerPercent": settings.exposure_refill_trigger_percent, "exposureRefillReleasePercent": settings.exposure_refill_release_percent,
+              "exposureRefillSide": exposure_refill.get("activeSide") or None,
+              "longExposureNotional": exposure_refill.get("longNotional"), "shortExposureNotional": exposure_refill.get("shortNotional"),
+              "netExposureNotional": exposure_refill.get("netExposure"), "grossExposureNotional": exposure_refill.get("grossExposure"),
+              "exposureImbalancePercent": exposure_refill.get("imbalancePercent"),
               "shortRequiresLongEnabled": settings.short_requires_long_enabled,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
               "asymmetricHedgeActivePairs": active_pair_count, "remainingPairs": pair_need if settings.asymmetric_hedge_enabled else None,
@@ -1454,6 +1463,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "entrySkipReasons": skip_reasons, "updatedAtMs": timestamp_ms}
     if not dry_run:
         ref.set({"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
+                 "exposureRefillSide": exposure_refill.get("activeSide") or None,
                  "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
                  "lastReason": f"{entry_status}: {entry_reason}"}, merge=True)
     return {"status": "simulated" if dry_run else "running", "action": "MULTI_BB", **report}
