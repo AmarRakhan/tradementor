@@ -350,6 +350,33 @@
       }
     }
 
+    // Generieke muisvraag: toon bewust alle echte muismodellen, inclusief
+    // Logitech Lift links/rechts, maar filter toetsenborden uit dezelfde Excelcategorie weg.
+    if(nq==='muis' || nq==='muizen' || nq==='mouse' || nq.includes('ergonomische muis')){
+      const mouseItems=catalogItems().filter(item=>{
+        const n=normalizeSmartText(item.name);
+        const cat=normalizeSmartText(item.category);
+        const looksMouse=
+          n.includes('muis') ||
+          n.includes('mouse') ||
+          n.includes('logitech lift') ||
+          n.includes('lift right') ||
+          n.includes('lift left');
+        const looksKeyboard=
+          n.includes('toetsenbord') ||
+          n.includes('keyboard') ||
+          n.includes('kbd');
+        return !looksKeyboard && (looksMouse || (cat.includes('muizen') && n.includes('lift')));
+      });
+      if(mouseItems.length){
+        return mouseItems.map((item,index)=>({
+          item,
+          confidence:1.15-(index*.02),
+          reason:'muismodellen'
+        })).slice(0,6);
+      }
+    }
+
     return catalogItems()
       .map(item=>({item,confidence:scoreCandidate(query,item),reason:'catalogusmatch'}))
       .filter(x=>x.confidence>=0.25)
