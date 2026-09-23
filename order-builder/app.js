@@ -10,8 +10,8 @@
     itemStatuses: {}
   };
 
-  const categoryOrder = ['Laptops','Telefoons / iPads','Monitoren','Docks','Opladers','Toetsenbord / muizen','Tassen','Headsets','Accessoires','Verouderd'];
-  const iconEmoji = {'Laptops':'💻','Telefoons / iPads':'📱','Monitoren':'🖥️','Docks':'▰','Opladers':'🔌','Toetsenbord / muizen':'⌨️','Tassen':'💼','Headsets':'🎧','Accessoires':'📷','Verouderd':'📦'};
+  const categoryOrder = ['Laptops','Telefoons','iPads','Monitoren','Docks','Opladers','Toetsenbord / muizen','Tassen','Headsets','Accessoires','Verouderd'];
+  const iconEmoji = {'Laptops':'💻','Telefoons':'📱','iPads':'▤','Monitoren':'🖥️','Docks':'▰','Opladers':'🔌','Toetsenbord / muizen':'⌨️','Tassen':'💼','Headsets':'🎧','Accessoires':'🔗','Verouderd':'📦'};
   const iconFor = c => {
     const emoji=iconEmoji[c]||'📦';
     const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="180" height="120" viewBox="0 0 180 120"><rect width="180" height="120" rx="12" fill="white"/><text x="90" y="79" text-anchor="middle" font-size="64" font-family="Segoe UI Emoji,Apple Color Emoji,sans-serif">${emoji}</text></svg>`;
@@ -113,7 +113,7 @@
     return list;
   }
   function sectionClass(category,count){
-    if(count>8 || category==='Telefoons / iPads') return 'wide';
+    if(count>10) return 'wide';
     if(category==='Monitoren') return 'span5';
     if(category==='Docks'||category==='Opladers') return 'span3';
     if(['Toetsenbord / muizen','Tassen','Headsets'].includes(category)) return 'span4';
