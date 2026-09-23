@@ -5306,7 +5306,7 @@ def run_aster_strategy2_canary(request:AsterStrategy2CanaryRequest,user:dict[str
 @app.post("/v1/me/aster/strategy2/start")
 def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Persoonlijke bevestiging ontbreekt")
-    try: settings=MultiBbConfig.from_mapping(request.settings)
+    try: settings=MultiBbConfig.from_mapping(_strip_unreleased_beta_settings(request.settings, user))
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}
     if settings.mode=="live":
