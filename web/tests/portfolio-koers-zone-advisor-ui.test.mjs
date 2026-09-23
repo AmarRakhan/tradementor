@@ -138,3 +138,27 @@ test("Build 408 makes ordinary chart grid quieter only for the BETA decision map
   assert.ok(component.includes('advisorEnabled?"rgba(75,133,160,.025)"'));
   assert.ok(component.includes('advisorEnabled?"rgba(75,133,160,.032)"'));
 });
+
+
+test("Build 409 makes the three lower zones visibly different instead of one green mass",async()=>{
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(css.includes("level-n3{background:linear-gradient(90deg,rgba(2,45,38,.76)"));
+  assert.ok(css.includes("level-n2{background:linear-gradient(90deg,rgba(3,82,76,.68)"));
+  assert.ok(css.includes("level-n1{background:linear-gradient(90deg,rgba(5,111,66,.62)"));
+  assert.ok(css.includes("level-0{background:linear-gradient(90deg,rgba(6,59,120,.68)"));
+});
+
+test("Build 409 keeps ordinary structural boundaries neutral so lower levels cannot look like random green lines",async()=>{
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(css.includes(".portfolio-koers-zone-boundary.regular{border-top-color:rgba(205,218,222,.13);opacity:.72}"));
+  assert.ok(css.includes(".portfolio-koers-zone-boundary.next-up{border-top:2px solid rgba(242,195,64,.92)"));
+  assert.ok(css.includes(".portfolio-koers-zone-boundary.next-down{border-top:2px solid rgba(42,225,163,.82)"));
+});
+
+test("Build 409 keeps all seven signed zones separately styled",async()=>{
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  for(const level of ["level-n3","level-n2","level-n1","level-0","level-p1","level-p2","level-p3"]){
+    const matches=css.match(new RegExp("\\."+level.replace("-","\\-")+"\\{background:","g"))||[];
+    assert.ok(matches.length>=1,level+" must have its own fill");
+  }
+});
