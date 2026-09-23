@@ -11,6 +11,7 @@ type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
 type PortfolioTpInputMode = "PERCENT" | "USD";
 type PortfolioTpBaseMode = "CYCLE_START" | "CURRENT_VALUE" | "CUSTOM";
 type StopLossMode = "USD" | "PERCENT";
+type EntryTimeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 const BOT_SETTINGS_REFERENCE = "file_00000000d2ec81f4b0c6fe6b9befe97c";
 const PORTFOLIO_TP_REFERENCE = "file_00000000f6e08210b726c694adc15111";
 type TierPreview = {
@@ -32,6 +33,9 @@ type Values = {
   portfolioTpInputMode: PortfolioTpInputMode; portfolioTpBaseMode: PortfolioTpBaseMode; portfolioTpCustomBase: string;
   mode: "paper" | "live"; manualEnabled: boolean; manualSymbols: ManualSymbol[]; shortRequiresLongEnabled: boolean;
   smartRescueEnabled: boolean; smartRescueRange: string; smartRescueCount: string; smartRescueGrowth: string; smartRescueRecovery: string;
+  directionalBollingerEnabled: boolean; bollingerLongTimeframe: EntryTimeframe; bollingerShortTimeframe: EntryTimeframe;
+  exposureRefillEnabled: boolean; exposureRefillLongTimeframe: EntryTimeframe; exposureRefillShortTimeframe: EntryTimeframe;
+  exposureRefillTriggerPercent: string; exposureRefillReleasePercent: string;
 };
 
 const initial: Values = {
@@ -43,6 +47,9 @@ const initial: Values = {
   tpMode: "PER_TRADE", portfolioTp: "20", portfolioTpInputMode: "PERCENT", portfolioTpBaseMode: "CYCLE_START", portfolioTpCustomBase: "",
   mode: "live", manualEnabled: false, manualSymbols: [], shortRequiresLongEnabled: false,
   smartRescueEnabled: false, smartRescueRange: "10", smartRescueCount: "10", smartRescueGrowth: "1.35", smartRescueRecovery: "0.30",
+  directionalBollingerEnabled: false, bollingerLongTimeframe: "15m", bollingerShortTimeframe: "15m",
+  exposureRefillEnabled: false, exposureRefillLongTimeframe: "1m", exposureRefillShortTimeframe: "1m",
+  exposureRefillTriggerPercent: "20", exposureRefillReleasePercent: "8",
 };
 const MAX_DCA = 500;
 const n = (value: string) => Number(value.replace(",", ".")) || 0;
@@ -94,7 +101,7 @@ function buildSmartPreview(startMargin: number, leverage: number, range: number,
 }
 function money(value: number) { return Number.isFinite(value) ? `$${value >= 1000000 ? value.toLocaleString("nl-NL", { maximumFractionDigits: 0 }) : value.toFixed(value < 10 ? 2 : 0)}` : "—"; }
 
-export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void }) {
+export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged, betaV2 = false }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void; betaV2?: boolean }) {
   const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -158,6 +165,14 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       smartRescueEnabled: x.smartRescueEnabled === true, smartRescueRange: txt(x.smartRescueRangePercent, 10),
       smartRescueCount: txt(x.smartRescueDcaCount, 10), smartRescueGrowth: txt(x.smartRescueOrderGrowthMultiplier, 1.35),
       smartRescueRecovery: txt(x.smartRescueTrailingRecoveryPercent, .30),
+      directionalBollingerEnabled: x.directionalBollingerEnabled === true,
+      bollingerLongTimeframe: String(x.bollingerLongTimeframe || x.bollingerEntryFilterTimeframe || "15m") as EntryTimeframe,
+      bollingerShortTimeframe: String(x.bollingerShortTimeframe || x.bollingerEntryFilterTimeframe || "15m") as EntryTimeframe,
+      exposureRefillEnabled: x.exposureRefillEnabled === true,
+      exposureRefillLongTimeframe: String(x.exposureRefillLongTimeframe || "1m") as EntryTimeframe,
+      exposureRefillShortTimeframe: String(x.exposureRefillShortTimeframe || "1m") as EntryTimeframe,
+      exposureRefillTriggerPercent: txt(x.exposureRefillTriggerPercent, 20),
+      exposureRefillReleasePercent: txt(x.exposureRefillReleasePercent, 8),
     });
     setTotalDraft(null);
     setLongDraft(null);
@@ -217,6 +232,16 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       smartRescueEnabled: v.smartRescueEnabled, smartRescueVersion: 1, smartRescueRangePercent: n(v.smartRescueRange),
       smartRescueDcaCount: Math.round(n(v.smartRescueCount)), smartRescueOrderGrowthMultiplier: n(v.smartRescueGrowth),
       smartRescueTrailingRecoveryPercent: n(v.smartRescueRecovery), smartRescuePrimarySide: v.smartRescueEnabled ? "LONG" : null,
+      ...(betaV2 ? {
+        directionalBollingerEnabled: v.directionalBollingerEnabled,
+        bollingerLongTimeframe: v.bollingerLongTimeframe,
+        bollingerShortTimeframe: v.bollingerShortTimeframe,
+        exposureRefillEnabled: v.exposureRefillEnabled,
+        exposureRefillLongTimeframe: v.exposureRefillLongTimeframe,
+        exposureRefillShortTimeframe: v.exposureRefillShortTimeframe,
+        exposureRefillTriggerPercent: n(v.exposureRefillTriggerPercent),
+        exposureRefillReleasePercent: n(v.exposureRefillReleasePercent),
+      } : {}),
     };
   })();
 
@@ -318,6 +343,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         if (settings.portfolioTpValue <= 0) throw new Error("Portfolio TP moet groter dan 0 zijn.");
         if (settings.portfolioTpInputMode === "PERCENT" && settings.portfolioTpValue > 10000) throw new Error("Portfolio TP percentage mag maximaal 10.000% zijn.");
         if (settings.portfolioTpBaseMode === "CUSTOM" && settings.portfolioTpCustomBaseEquity <= 0) throw new Error("Vul bij Aangepast een geldige basiswaarde groter dan 0 in.");
+      }
+      if (betaV2 && v.exposureRefillEnabled) {
+        if (!(settings.exposureRefillTriggerPercent > 0 && settings.exposureRefillTriggerPercent <= 100)) throw new Error("Exposure refill startdrempel moet tussen 0 en 100% liggen.");
+        if (!(settings.exposureRefillReleasePercent >= 0 && settings.exposureRefillReleasePercent < settings.exposureRefillTriggerPercent)) throw new Error("Exposure refill stopdrempel moet lager zijn dan de startdrempel.");
       }
       if (v.smartRescueEnabled) {
         if (!(settings.smartRescueRangePercent > 0 && settings.smartRescueRangePercent < 100)) throw new Error("Smart Rescue bereik moet groter dan 0% en kleiner dan 100% zijn.");
@@ -453,7 +482,21 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const totalFill = totalCapacity > 0 ? Math.min(100, totalActive / totalCapacity * 100) : 0;
   async function toggleLive() { if (status.pending || busy) return; if (dirty) { setMessage("Sla eerst de gewijzigde instellingen op; daarna kun je de bot direct aan- of uitzetten."); return; } if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(true); }
 
-  return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref" data-reference={BOT_SETTINGS_REFERENCE}>
+  return <article id="strategy-2-maker" className={`strategy-card strategy-two-card botsettings-ref ${betaV2 ? "botconfig-v2" : ""}`} data-reference={BOT_SETTINGS_REFERENCE} data-beta-v2={betaV2 ? "true" : "false"}>
+    {betaV2 && <>
+      <div className="botconfig-v2-top"><span className="botconfig-v2-badge">BETA · alleen zichtbaar voor jou</span><div className="botconfig-v2-title"><span>ASTER BOT</span><h2>Botconfigurator V2</h2><p>Bouw de bot logisch van markt tot controle. Bestaande posities en state blijven intact tot je expliciet opslaat.</p></div></div>
+      <nav className="botconfig-v2-steps" aria-label="Botconfigurator stappen">{[["markt","1","Markt"],["posities","2","Posities"],["instap","3","Instap"],["grootte","4","Grootte"],["dca","5","DCA"],["winst","6","Winst"],["bescherming","7","Bescherming"],["controle","8","Controle"]].map(([id,no,label]) => <a key={id} href={`#botconfig-v2-${id}`}><b>{no}</b><span>{label}</span></a>)}</nav>
+      <section id="botconfig-v2-instap" className="botconfig-v2-card botconfig-v2-entry">
+        <header><span className="botconfig-v2-stepno">3</span><div><b>Wanneer mag een nieuwe positie openen?</b><small>Normale entry per richting + snelle exposure-refill. DCA blijft volledig apart.</small></div></header>
+        <label className="botconfig-v2-toggle"><span><b>Directional Bollinger</b><small>LONG en SHORT krijgen ieder hun eigen normale timeframe.</small></span><input type="checkbox" checked={v.directionalBollingerEnabled} onChange={(e)=>change({...v,directionalBollingerEnabled:e.target.checked})}/></label>
+        <div className="botconfig-v2-sidegrid">
+          <div className="botconfig-v2-side long"><b>LONG</b><TimeframeField label="Normale Bollinger" value={v.bollingerLongTimeframe} set={(value)=>change({...v,bollingerLongTimeframe:value})}/><TimeframeField label="Snelle refill" value={v.exposureRefillLongTimeframe} set={(value)=>change({...v,exposureRefillLongTimeframe:value})}/></div>
+          <div className="botconfig-v2-side short"><b>SHORT</b><TimeframeField label="Normale Bollinger" value={v.bollingerShortTimeframe} set={(value)=>change({...v,bollingerShortTimeframe:value})}/><TimeframeField label="Snelle refill" value={v.exposureRefillShortTimeframe} set={(value)=>change({...v,exposureRefillShortTimeframe:value})}/></div>
+        </div>
+        <label className="botconfig-v2-toggle"><span><b>Automatische exposure-refill</b><small>Alleen de ondervertegenwoordigde kant versnelt tijdelijk. Geen extra DCA en nooit buiten slots.</small></span><input type="checkbox" checked={v.exposureRefillEnabled} onChange={(e)=>change({...v,exposureRefillEnabled:e.target.checked})}/></label>
+        {v.exposureRefillEnabled && <div className="botconfig-v2-thresholds"><Field label="Snelle refill vanaf" value={v.exposureRefillTriggerPercent} set={(value)=>change({...v,exposureRefillTriggerPercent:value})} suffix="%"/><Field label="Terug naar normaal onder" value={v.exposureRefillReleasePercent} set={(value)=>change({...v,exposureRefillReleasePercent:value})} suffix="%"/></div>}
+      </section>
+    </>}
     <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
 
     <section className="slot-overview" aria-label="Slot-overzicht">
@@ -606,6 +649,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       @media(max-width:350px){#strategy-2-maker.botsettings-ref .side-columns{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .maker-nav{grid-template-columns:1fr}#strategy-2-maker.botsettings-ref .portfolio-input-grid{grid-template-columns:1fr;gap:22px}#strategy-2-maker.botsettings-ref .portfolio-target-flow{grid-template-columns:1fr;gap:5px}#strategy-2-maker.botsettings-ref .target-arrow{transform:rotate(90deg);line-height:1}#strategy-2-maker.botsettings-ref .portfolio-status-strip{grid-template-columns:1fr 1fr}#strategy-2-maker.botsettings-ref .portfolio-status-strip>span:nth-child(2){border-right:0}#strategy-2-maker.botsettings-ref .portfolio-status-strip>span:nth-child(-n+2){border-bottom:1px solid rgba(37,211,147,.16)}}
     `}</style>
   </article>;
+}
+
+function TimeframeField({ label, value, set }: { label: string; value: EntryTimeframe; set: (value: EntryTimeframe) => void }) {
+  const values: EntryTimeframe[] = ["1m","5m","15m","1h","4h","1d"];
+  return <label className="botconfig-v2-timeframe"><span>{label}</span><select value={value} onChange={(event)=>set(event.target.value as EntryTimeframe)}>{values.map((item)=><option key={item} value={item}>{item}</option>)}</select></label>;
 }
 
 function SmartRescueChart({ rows, current, breakEven, recovery }: { rows: SmartPreviewRow[]; current: number; breakEven: number; recovery: number }) {
