@@ -126,7 +126,7 @@
   function catalogItems(){
     const deleted=new Set(state.deletedItemCodes);
     const base=data.items.filter(x=>!deleted.has(x.code));
-    const extra=state.catalogAdditions.filter(x=>!deleted.has(x.code));
+    const extra=state.catalogAdditions.slice();
     return [...base,...extra];
   }
   function getCatalogItem(code){ return catalogItems().find(x=>x.code===code); }
@@ -273,9 +273,19 @@
     const existing=catalogItems().find(x=>lower(x.code)===lower(code));
     if(existing){ toast('Deze artikelcode bestaat al'); return; }
 
+    const baseExisting=data.items.find(x=>lower(x.code)===lower(code));
+    if(baseExisting && state.deletedItemCodes.includes(baseExisting.code)){
+      state.deletedItemCodes=state.deletedItemCodes.filter(x=>x!==baseExisting.code);
+      state.itemStatuses[baseExisting.code]=status;
+      save();
+      closeArticleModal();
+      render();
+      toast('Bestaand artikel hersteld');
+      return;
+    }
+
     state.catalogAdditions.push({code,name,category,defaultStatus:status,custom:true});
     state.itemStatuses[code]=status;
-    state.deletedItemCodes=state.deletedItemCodes.filter(x=>x!==code);
     save();
     closeArticleModal();
     render();
