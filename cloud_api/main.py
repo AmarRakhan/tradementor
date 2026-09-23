@@ -4964,7 +4964,8 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}; old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
     # Established Multi BB settings updates are patch-like. Older/main forms still
     # submit shared fields only; absent LONG/SHORT fields must retain their stored values.
-    merged_settings = _strip_unreleased_beta_settings({**old, **request.settings}, user)
+    merged_settings = {**old, **request.settings}
+    merged_settings = _strip_unreleased_beta_settings(merged_settings, user)
     try: candidate=MultiBbConfig.from_mapping(merged_settings)
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
