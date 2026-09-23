@@ -2527,6 +2527,26 @@ def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, An
     return out
 
 
+def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) -> dict[str, Any]:
+    profile = user_reference({"uid": uid}).get().to_dict() or {}
+    beta_owner = str(profile.get("releaseChannel") or "STABLE").upper() == "BETA"
+    out = dict(settings)
+    directional = _release_feature_record("directional_bollinger")
+    refill = _release_feature_record("exposure_refill")
+    zones = _release_feature_record("price_zones")
+    if not (bool(directional.get("beta")) if beta_owner else bool(directional.get("stable"))):
+        for key in ("directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe"):
+            out.pop(key, None)
+    if not (bool(refill.get("beta")) if beta_owner else bool(refill.get("stable"))):
+        for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
+                    "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
+            out.pop(key, None)
+    if not (bool(zones.get("beta")) if beta_owner else bool(zones.get("stable"))):
+        for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
+            out.pop(key, None)
+    return out
+
+
 def _admin_device_reference(user:dict[str,Any]):
     return user_reference(user).collection("security").document("adminDevice")
 
@@ -2928,11 +2948,12 @@ def bootstrap_user(user: dict[str, Any] = Depends(authenticated_user)) -> dict[s
     reference = db.collection("users").document(uid)
     snapshot = reference.get()
     now = datetime.now(timezone.utc)
+    release_channel = "BETA" if _is_beta_owner(user) else "STABLE"
     if not snapshot.exists:
-        reference.set({"createdAt": now, "updatedAt": now, "schemaVersion": 1})
+        reference.set({"createdAt": now, "updatedAt": now, "schemaVersion": 1, "releaseChannel": release_channel})
     else:
-        reference.update({"updatedAt": now})
-    return {"uid": uid, "accountReady": True, "ordersEnabled": False}
+        reference.set({"updatedAt": now, "releaseChannel": release_channel}, merge=True)
+    return {"uid": uid, "accountReady": True, "ordersEnabled": False, "releaseChannel": release_channel}
 
 
 @app.get("/v1/me/releases")
