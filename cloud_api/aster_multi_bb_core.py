@@ -13,6 +13,7 @@ from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 
 ENGINE = "multi_bb_v1"
+# Botconfigurator V2 beta keeps legacy defaults unless explicitly enabled.
 
 
 def _f(value: Any, default: float = 0.0) -> float:
@@ -42,6 +43,14 @@ class MultiBbConfig:
     maximum_leverage: int | None = None
     bollinger_entry_filter_15m_enabled: bool = False
     bollinger_entry_filter_timeframe: str = DEFAULT_TIMEFRAME
+    directional_bollinger_enabled: bool = False
+    bollinger_long_timeframe: str = DEFAULT_TIMEFRAME
+    bollinger_short_timeframe: str = DEFAULT_TIMEFRAME
+    exposure_refill_enabled: bool = False
+    exposure_refill_long_timeframe: str = "1m"
+    exposure_refill_short_timeframe: str = "1m"
+    exposure_refill_trigger_percent: float = 20.0
+    exposure_refill_release_percent: float = 8.0
     entry_margin_usd: float = 5.0
     entry_notional_usd: float = 250.0
     entry_sizing_mode: str = "notional"
@@ -90,6 +99,14 @@ class MultiBbConfig:
             maximum_leverage=maximum_leverage,
             bollinger_entry_filter_15m_enabled=bool(raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False))),
             bollinger_entry_filter_timeframe=normalize_bollinger_timeframe(raw.get("bollingerEntryFilterTimeframe", raw.get("bollinger_entry_filter_timeframe", DEFAULT_TIMEFRAME))),
+            directional_bollinger_enabled=bool(raw.get("directionalBollingerEnabled", False)),
+            bollinger_long_timeframe=normalize_bollinger_timeframe(raw.get("bollingerLongTimeframe", raw.get("bollingerEntryFilterTimeframe", DEFAULT_TIMEFRAME))),
+            bollinger_short_timeframe=normalize_bollinger_timeframe(raw.get("bollingerShortTimeframe", raw.get("bollingerEntryFilterTimeframe", DEFAULT_TIMEFRAME))),
+            exposure_refill_enabled=bool(raw.get("exposureRefillEnabled", False)),
+            exposure_refill_long_timeframe=normalize_bollinger_timeframe(raw.get("exposureRefillLongTimeframe", "1m")),
+            exposure_refill_short_timeframe=normalize_bollinger_timeframe(raw.get("exposureRefillShortTimeframe", "1m")),
+            exposure_refill_trigger_percent=_f(raw.get("exposureRefillTriggerPercent"), 20.0),
+            exposure_refill_release_percent=_f(raw.get("exposureRefillReleasePercent"), 8.0),
             entry_margin_usd=entry_margin_usd,
             entry_notional_usd=entry_notional_usd,
             entry_sizing_mode=entry_sizing_mode,
@@ -117,6 +134,8 @@ class MultiBbConfig:
         if self.maximum_leverage is not None and not 1 <= self.maximum_leverage <= 300: raise ValueError("Maximum leverage moet tussen 1x en 300x liggen")
         if self.maximum_leverage is not None and self.maximum_leverage < self.minimum_leverage: raise ValueError("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage")
         if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-bedrag en DCA-margin moeten positief zijn")
+        if not 0 < self.exposure_refill_trigger_percent <= 100: raise ValueError("Exposure refill startdrempel moet tussen 0 en 100% liggen")
+        if not 0 <= self.exposure_refill_release_percent < self.exposure_refill_trigger_percent: raise ValueError("Exposure refill stopdrempel moet lager zijn dan de startdrempel")
         if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
@@ -137,6 +156,14 @@ class MultiBbConfig:
             "shortRequiresLongEnabled": self.short_requires_long_enabled,
             "bollingerEntryFilter15mEnabled": self.bollinger_entry_filter_15m_enabled,
             "bollingerEntryFilterTimeframe": self.bollinger_entry_filter_timeframe,
+            "directionalBollingerEnabled": self.directional_bollinger_enabled,
+            "bollingerLongTimeframe": self.bollinger_long_timeframe,
+            "bollingerShortTimeframe": self.bollinger_short_timeframe,
+            "exposureRefillEnabled": self.exposure_refill_enabled,
+            "exposureRefillLongTimeframe": self.exposure_refill_long_timeframe,
+            "exposureRefillShortTimeframe": self.exposure_refill_short_timeframe,
+            "exposureRefillTriggerPercent": self.exposure_refill_trigger_percent,
+            "exposureRefillReleasePercent": self.exposure_refill_release_percent,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit, "takeProfitEnabled": self.take_profit_enabled,
             "asymmetricHedgeModeEnabled": self.asymmetric_hedge_enabled, "shortStartMultiplier": self.short_start_multiplier,
@@ -466,12 +493,64 @@ def _close_evidence(client: Any, uid: str, state: dict[str, Any], row: dict[str,
                          ownership_reliable=True, fills_reliable=True, prices_reliable=True, costs_reliable=True)
 
 
+def _notional_by_side(positions: list[dict[str, Any]]) -> tuple[float, float]:
+    long_notional = 0.0
+    short_notional = 0.0
+    for row in positions:
+        side = str(row.get("positionSide", "")).upper()
+        qty = abs(_f(row.get("positionAmt")))
+        mark = _f(row.get("markPrice"), _f(row.get("entryPrice")))
+        notional = qty * mark if qty > 0 and mark > 0 else abs(_f(row.get("notionalUsd", row.get("notional"))))
+        if side == "LONG":
+            long_notional += notional
+        elif side == "SHORT":
+            short_notional += notional
+    return long_notional, short_notional
+
+
+def _exposure_refill_context(settings: MultiBbConfig, positions: list[dict[str, Any]], raw_state: dict[str, Any]) -> dict[str, Any]:
+    long_notional, short_notional = _notional_by_side(positions)
+    gross = long_notional + short_notional
+    net = long_notional - short_notional
+    imbalance_pct = abs(net) / gross * 100.0 if gross > 0 else 0.0
+    previous = str(raw_state.get("exposureRefillSide") or "").upper()
+    if previous not in {"LONG", "SHORT"}:
+        previous = ""
+    underweight = "LONG" if net < 0 else "SHORT" if net > 0 else ""
+    active_side = ""
+    if settings.exposure_refill_enabled and underweight:
+        if previous == underweight and imbalance_pct > settings.exposure_refill_release_percent:
+            active_side = previous
+        elif imbalance_pct >= settings.exposure_refill_trigger_percent:
+            active_side = underweight
+    return {
+        "longNotional": long_notional,
+        "shortNotional": short_notional,
+        "grossExposure": gross,
+        "netExposure": net,
+        "imbalancePercent": imbalance_pct,
+        "activeSide": active_side,
+    }
+
+
+def _effective_entry_timeframe(settings: MultiBbConfig, side: str, exposure: dict[str, Any]) -> str:
+    normalized_side = str(side).upper()
+    if settings.directional_bollinger_enabled:
+        normal = settings.bollinger_long_timeframe if normalized_side == "LONG" else settings.bollinger_short_timeframe
+    else:
+        normal = settings.bollinger_entry_filter_timeframe
+    if settings.exposure_refill_enabled and str(exposure.get("activeSide") or "").upper() == normalized_side:
+        return settings.exposure_refill_long_timeframe if normalized_side == "LONG" else settings.exposure_refill_short_timeframe
+    return normal
+
+
 def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: MultiBbConfig, uid: str,
                       account: dict[str, Any], positions: list[dict[str, Any]], open_orders: list[dict[str, Any]],
                       timestamp_ms: int, dry_run: bool = False, order_budget: int | None = None,
                       before_order: Any = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
+    exposure_refill = _exposure_refill_context(settings, positions, raw_state)
     # Pairing mode must make every seat/orphan decision from Aster exchange truth,
     # never from a caller/UI/cache snapshot that may be one reconciliation tick old.
     # Refresh before state reconciliation so an actually-open orphan SHORT cannot
@@ -927,6 +1006,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     orphan_long_reserved_slots = 0
     orphan_long_rescue_filled = 0
 
+    # Beta exposure-refill must react to the exchange truth AFTER any TP/DCA
+    # management executed earlier in this tick. Stable/legacy accounts skip this
+    # extra read because exposure_refill_enabled defaults to False.
+    if settings.exposure_refill_enabled and not dry_run:
+        try:
+            exposure_refill = _exposure_refill_context(settings, client.position_risk(), raw_state)
+        except Exception as exc:
+            actions.append({"kind": "EXPOSURE_REFILL_DATA_HOLD", "reason": str(exc)})
+
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
     scanned_candidates = 0
     executable_candidates = 0
@@ -1002,7 +1090,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # first and could starve a valid SHORT-above-upper-band entry forever.
         def candidate_bb_pass(candidate_side: str) -> bool:
             try:
-                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=settings.bollinger_entry_filter_timeframe,
+                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
                                         live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
@@ -1181,7 +1269,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             def entry_before_submit(intent: Any) -> None:
                 require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
-                                        timeframe=settings.bollinger_entry_filter_timeframe, live_price=None, force_refresh=True, stage="pre_order")
+                                        timeframe=_effective_entry_timeframe(settings, side, exposure_refill), live_price=None, force_refresh=True, stage="pre_order")
                 if before_order is not None:
                     before_order(intent)
             try:
@@ -1337,7 +1425,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
     elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
     elif entry_wait and all(str(a.get("reason", "")).startswith(("PRICE_", "BB_")) for a in entry_wait):
-        entry_status = "WAITING_BOLLINGER_ENTRY"; entry_reason = f"Geen kandidaat voldoet nu aan het optionele {settings.bollinger_entry_filter_timeframe} Bollinger-instapfilter; vrije stoel blijft leeg en wordt opnieuw gescand"
+        entry_status = "WAITING_BOLLINGER_ENTRY"; entry_reason = "Geen kandidaat voldoet nu aan de actieve Bollinger-instapfilter; vrije stoel blijft leeg en wordt opnieuw gescand"
     elif entry_wait: entry_status = "ORDER_REJECTED"; entry_reason = str(entry_wait[0].get("reason", "Aster ordercheck afgewezen"))
     else: entry_status = "READY_FOR_ENTRY"; entry_reason = "verse exchange snapshot; geselecteerde munt is opnieuw entry-kandidaat"
     report = {"engine": ENGINE, "configVersion": settings.version,
@@ -1356,6 +1444,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                   if a.get("kind") == "ENTRY_SKIP" and a.get("orphanShortPriority") is True
               ][-10:],
               "bollingerEntryFilter15mEnabled": settings.bollinger_entry_filter_15m_enabled, "bollingerEntryFilterTimeframe": settings.bollinger_entry_filter_timeframe,
+              "directionalBollingerEnabled": settings.directional_bollinger_enabled,
+              "bollingerLongTimeframe": settings.bollinger_long_timeframe, "bollingerShortTimeframe": settings.bollinger_short_timeframe,
+              "exposureRefillEnabled": settings.exposure_refill_enabled,
+              "exposureRefillLongTimeframe": settings.exposure_refill_long_timeframe, "exposureRefillShortTimeframe": settings.exposure_refill_short_timeframe,
+              "exposureRefillTriggerPercent": settings.exposure_refill_trigger_percent, "exposureRefillReleasePercent": settings.exposure_refill_release_percent,
+              "exposureRefillSide": exposure_refill.get("activeSide") or None,
+              "longExposureNotional": exposure_refill.get("longNotional"), "shortExposureNotional": exposure_refill.get("shortNotional"),
+              "netExposureNotional": exposure_refill.get("netExposure"), "grossExposureNotional": exposure_refill.get("grossExposure"),
+              "exposureImbalancePercent": exposure_refill.get("imbalancePercent"),
               "shortRequiresLongEnabled": settings.short_requires_long_enabled,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
               "asymmetricHedgeActivePairs": active_pair_count, "remainingPairs": pair_need if settings.asymmetric_hedge_enabled else None,
@@ -1376,6 +1473,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "entrySkipReasons": skip_reasons, "updatedAtMs": timestamp_ms}
     if not dry_run:
         ref.set({"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
+                 "exposureRefillSide": exposure_refill.get("activeSide") or None,
                  "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
                  "lastReason": f"{entry_status}: {entry_reason}"}, merge=True)
     return {"status": "simulated" if dry_run else "running", "action": "MULTI_BB", **report}

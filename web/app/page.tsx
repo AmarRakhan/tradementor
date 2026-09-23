@@ -6,7 +6,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { ConnectionManager } from "@/components/connection-manager";
 import { ExchangeLiveControl } from "@/components/exchange-live-control";
 import { HyperliquidStrategyControl } from "@/components/hyperliquid-strategy-control";
-import { AsterStrategy2Maker } from "@/components/aster-strategy2-maker";
+import { AsterStrategy2Entry as AsterStrategy2Maker } from "@/components/aster-strategy2-entry";
 import { AsterRecentTrades } from "@/components/aster-recent-trades";
 import { PortfolioGrowthCard } from "@/components/portfolio-growth-card";
 import { PositionCloseControl } from "@/components/position-close-control";

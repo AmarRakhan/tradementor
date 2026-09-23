@@ -346,6 +346,13 @@ class AsterStrategySettingsRequest(BaseModel):
     settings: dict[str, Any]
 
 
+class ReleaseFeatureUpdateRequest(BaseModel):
+    status: str = Field(pattern="^(IN_BOUW|TESTEN|AKKOORD|LIVE)$")
+    beta: bool | None = None
+    stable: bool | None = None
+    confirm: bool = False
+
+
 class AsterStrategyStartRequest(BaseModel):
     confirm: bool
     settings: dict[str, Any]
@@ -1579,6 +1586,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
     raw_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    raw_settings=_strip_unreleased_beta_settings_for_uid(raw_settings, uid)
     if str(raw_settings.get("engine",raw_settings.get("strategyKind","")))!=MULTI_BB_ENGINE:
         if bool(raw.get("enabled")) or bool(raw.get("monitor")):
             ref.set({"enabled":False,"monitor":False,"phase":"CONFIG_REQUIRED","lastReason":"Legacy strategie verwijderd; nieuwe Multi BB-configuratie vereist","updatedAt":now},merge=True)
@@ -2470,6 +2478,84 @@ def require_admin(user: dict[str, Any]) -> None:
         raise HTTPException(403, "Alleen geautoriseerd TradeMentor-beheer heeft toegang")
 
 
+_RELEASE_FEATURE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "bot_configurator_v2": {"status": "TESTEN", "beta": True, "stable": False},
+    "directional_bollinger": {"status": "TESTEN", "beta": True, "stable": False},
+    "exposure_refill": {"status": "TESTEN", "beta": True, "stable": False},
+    "price_zones": {"status": "IN_BOUW", "beta": False, "stable": False},
+    "margin_summary": {"status": "TESTEN", "beta": True, "stable": False},
+}
+
+
+def _is_beta_owner(user: dict[str, Any]) -> bool:
+    expected = os.getenv("TRADEMENTOR_ADMIN_EMAIL", "amar_rakhan@hotmail.com").strip().lower()
+    return str(user.get("email", "")).strip().lower() == expected
+
+
+def _release_feature_record(key: str) -> dict[str, Any]:
+    if key not in _RELEASE_FEATURE_DEFAULTS:
+        raise HTTPException(404, "Onbekende release-feature")
+    stored = db.collection("releaseFeatures").document(key).get().to_dict() or {}
+    return {**_RELEASE_FEATURE_DEFAULTS[key], **stored, "key": key}
+
+
+def _release_feature_enabled(user: dict[str, Any], key: str) -> bool:
+    row = _release_feature_record(key)
+    return bool(row.get("beta")) if _is_beta_owner(user) else bool(row.get("stable"))
+
+
+def _release_snapshot(user: dict[str, Any]) -> dict[str, Any]:
+    beta_owner = _is_beta_owner(user)
+    features: dict[str, Any] = {}
+    for key in _RELEASE_FEATURE_DEFAULTS:
+        row = _release_feature_record(key)
+        features[key] = {**row, "enabled": bool(row.get("beta")) if beta_owner else bool(row.get("stable"))}
+    return {"channel": "BETA" if beta_owner else "STABLE", "features": features}
+
+
+def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    out = dict(settings)
+    if not _release_feature_enabled(user, "directional_bollinger"):
+        for key in ("directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe"):
+            out.pop(key, None)
+    if not _release_feature_enabled(user, "exposure_refill"):
+        for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
+                    "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
+            out.pop(key, None)
+    if not _release_feature_enabled(user, "price_zones"):
+        for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
+            out.pop(key, None)
+    return out
+
+
+def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) -> dict[str, Any]:
+    beta_keys = {
+        "directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe",
+        "exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
+        "exposureRefillTriggerPercent", "exposureRefillReleasePercent",
+        "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
+    }
+    if not any(key in settings for key in beta_keys):
+        return dict(settings)
+    profile = user_reference({"uid": uid}).get().to_dict() or {}
+    beta_owner = str(profile.get("releaseChannel") or "STABLE").upper() == "BETA"
+    out = dict(settings)
+    directional = _release_feature_record("directional_bollinger")
+    refill = _release_feature_record("exposure_refill")
+    zones = _release_feature_record("price_zones")
+    if not (bool(directional.get("beta")) if beta_owner else bool(directional.get("stable"))):
+        for key in ("directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe"):
+            out.pop(key, None)
+    if not (bool(refill.get("beta")) if beta_owner else bool(refill.get("stable"))):
+        for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
+                    "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
+            out.pop(key, None)
+    if not (bool(zones.get("beta")) if beta_owner else bool(zones.get("stable"))):
+        for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
+            out.pop(key, None)
+    return out
+
+
 def _admin_device_reference(user:dict[str,Any]):
     return user_reference(user).collection("security").document("adminDevice")
 
@@ -2871,11 +2957,47 @@ def bootstrap_user(user: dict[str, Any] = Depends(authenticated_user)) -> dict[s
     reference = db.collection("users").document(uid)
     snapshot = reference.get()
     now = datetime.now(timezone.utc)
+    release_channel = "BETA" if _is_beta_owner(user) else "STABLE"
     if not snapshot.exists:
-        reference.set({"createdAt": now, "updatedAt": now, "schemaVersion": 1})
+        reference.set({"createdAt": now, "updatedAt": now, "schemaVersion": 1, "releaseChannel": release_channel})
     else:
-        reference.update({"updatedAt": now})
-    return {"uid": uid, "accountReady": True, "ordersEnabled": False}
+        reference.set({"updatedAt": now, "releaseChannel": release_channel}, merge=True)
+    return {"uid": uid, "accountReady": True, "ordersEnabled": False, "releaseChannel": release_channel}
+
+
+@app.get("/v1/me/releases")
+def my_release_features(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    return _release_snapshot(user)
+
+
+@app.get("/v1/admin/releases")
+def admin_release_features(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    require_admin(user)
+    return _release_snapshot(user)
+
+
+@app.put("/v1/admin/releases/{feature_key}")
+def update_release_feature(feature_key: str, request: ReleaseFeatureUpdateRequest,
+                           user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    require_admin(user)
+    if feature_key not in _RELEASE_FEATURE_DEFAULTS:
+        raise HTTPException(404, "Onbekende release-feature")
+    current = _release_feature_record(feature_key)
+    beta = bool(current.get("beta")) if request.beta is None else bool(request.beta)
+    stable = bool(current.get("stable")) if request.stable is None else bool(request.stable)
+    if stable != bool(current.get("stable")) and not request.confirm:
+        raise HTTPException(422, "Bevestiging is verplicht voor publiceren of terugtrekken")
+    if stable and request.status != "LIVE":
+        raise HTTPException(422, "Een STABLE-feature moet status LIVE hebben")
+    now = datetime.now(timezone.utc)
+    db.collection("releaseFeatures").document(feature_key).set({
+        "status": request.status,
+        "beta": beta,
+        "stable": stable,
+        "updatedAt": now,
+        "updatedBy": str(user["uid"]),
+    }, merge=True)
+    return {"updated": True, "feature": _release_feature_record(feature_key), "channel": "BETA"}
 
 
 @app.get("/v1/me/preferences/interface")
@@ -4843,6 +4965,7 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     # Established Multi BB settings updates are patch-like. Older/main forms still
     # submit shared fields only; absent LONG/SHORT fields must retain their stored values.
     merged_settings = {**old, **request.settings}
+    merged_settings = _strip_unreleased_beta_settings(merged_settings, user)
     try: candidate=MultiBbConfig.from_mapping(merged_settings)
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
@@ -4862,6 +4985,7 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
         # no clearing of recovery/asymmetric state.
         update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"settingsChangedAt":now,
             "lastReason":"Multi DCA-instellingen live bijgewerkt; actieve positie-, DCA- en cycle-state behouden"}
+    update["releaseChannel"] = "BETA" if _is_beta_owner(user) else "STABLE"
     # Portfolio TP base selection is server-authoritative. CURRENT_VALUE is
     # captured exactly once at Save time, even while the bot is off, so the
     # target can never chase subsequent live-equity updates. Existing cycle
@@ -5035,7 +5159,7 @@ def reset_aster_strategy2_portfolio_cycle(request: AsterStrategy2PortfolioCycleR
 
 @app.post("/v1/me/aster/strategy2/simulate")
 def simulate_aster_strategy2(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-    try: settings=MultiBbConfig.from_mapping({**request.settings,"mode":"paper"})
+    try: settings=MultiBbConfig.from_mapping({**_strip_unreleased_beta_settings(request.settings, user),"mode":"paper"})
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     example_pair_max=300
     example_effective=example_pair_max if settings.maximum_leverage is None else min(example_pair_max,settings.maximum_leverage)
@@ -5192,7 +5316,7 @@ def run_aster_strategy2_canary(request:AsterStrategy2CanaryRequest,user:dict[str
 @app.post("/v1/me/aster/strategy2/start")
 def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     if not request.confirm: raise HTTPException(422,"Persoonlijke bevestiging ontbreekt")
-    try: settings=MultiBbConfig.from_mapping(request.settings)
+    try: settings=MultiBbConfig.from_mapping(_strip_unreleased_beta_settings(request.settings, user))
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}
     if settings.mode=="live":
@@ -5202,7 +5326,8 @@ def start_aster_strategy2(request: AsterStrategyStartRequest, user: dict[str, An
     now=datetime.now(timezone.utc); version=max(int(safe_float(existing.get("configVersion"))),settings.version)
     settings=MultiBbConfig.from_mapping({**settings.public_dict(),"version":version})
     ref.set({"settings":settings.public_dict(),"phase":"START_PENDING" if settings.mode=="live" else "PAPER_RUNNING",
-        "enabled":True,"monitor":True,"pendingReopens":[],"multiBbAdoptionPending":True,"multiBbReport":{},
+        "enabled":True,"monitor":True,"releaseChannel":"BETA" if _is_beta_owner(user) else "STABLE",
+        "pendingReopens":[],"multiBbAdoptionPending":True,"multiBbReport":{},
         "lastReason":"Strategy 2 start: verse exchange-evaluatie","startedAt":now,"updatedAt":now},merge=True)
     first=_run_aster_strategy2_tick(uid,dry_run=settings.mode!="live")
     return {"started":True,"mode":settings.mode,"firstTick":first,**aster_strategy2_public(uid)}
