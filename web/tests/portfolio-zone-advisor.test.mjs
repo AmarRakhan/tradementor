@@ -49,3 +49,10 @@ test("advisor refuses to invent an instruction when live occupancy is missing",(
   const row=derivePortfolioZoneInstruction({zoneIndex:2,longSlots:60,shortSlots:30,activeLong:null,activeShort:30});
   assert.equal(row.status,"UNAVAILABLE");
 });
+
+
+test("advisor refuses to invent zone zero when the current zone is missing",()=>{
+  const row=derivePortfolioZoneInstruction({zoneIndex:null,longSlots:60,shortSlots:30,activeLong:60,activeShort:30});
+  assert.equal(row.status,"UNAVAILABLE");
+  assert.equal(row.zoneIndex,null);
+});
