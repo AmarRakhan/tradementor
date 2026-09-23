@@ -7,7 +7,9 @@
     sort: 'az',
     packages: [],
     items: [],
-    itemStatuses: {}
+    itemStatuses: {},
+    catalogAdditions: [],
+    deletedItemCodes: []
   };
 
   const categoryOrder = ['Laptops','Telefoons','iPads','Monitoren','Docks','Opladers','Toetsenbord / muizen','Tassen','Headsets','Telefoonaccessoires','iPad-accessoires','Accessoires','Verouderd'];
@@ -23,12 +25,26 @@
   const lower = s => String(s ?? '').toLocaleLowerCase('nl');
 
   function save(){
-    try{ localStorage.setItem('amar-order-builder-v2', JSON.stringify({packages:state.packages,items:state.items,itemStatuses:state.itemStatuses})); }catch{}
+    try{
+      localStorage.setItem('amar-order-builder-v2', JSON.stringify({
+        packages:state.packages,
+        items:state.items,
+        itemStatuses:state.itemStatuses,
+        catalogAdditions:state.catalogAdditions,
+        deletedItemCodes:state.deletedItemCodes
+      }));
+    }catch{}
   }
   function restore(){
     try{
       const saved = JSON.parse(localStorage.getItem('amar-order-builder-v2') || 'null');
-      if(saved){ state.packages = Array.isArray(saved.packages)?saved.packages:[]; state.items = Array.isArray(saved.items)?saved.items:[]; state.itemStatuses = saved.itemStatuses && typeof saved.itemStatuses==='object' ? saved.itemStatuses : {}; }
+      if(saved){
+        state.packages = Array.isArray(saved.packages)?saved.packages:[];
+        state.items = Array.isArray(saved.items)?saved.items:[];
+        state.itemStatuses = saved.itemStatuses && typeof saved.itemStatuses==='object' ? saved.itemStatuses : {};
+        state.catalogAdditions = Array.isArray(saved.catalogAdditions)?saved.catalogAdditions:[];
+        state.deletedItemCodes = Array.isArray(saved.deletedItemCodes)?saved.deletedItemCodes:[];
+      }
     }catch{}
   }
   function toast(message){ const el=$('toast'); el.textContent=message; el.classList.add('show'); clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove('show'),1900); }
@@ -42,6 +58,7 @@
     $('packagesView').classList.toggle('hidden',view!=='packages');
     $('itemsView').classList.toggle('hidden',view!=='items');
     $('packageFilters').classList.toggle('hidden',view!=='packages');
+    $('itemAdminActions').classList.toggle('hidden',view!=='items');
     $('searchInput').placeholder=view==='packages'?'Zoek een pakket...':'Zoek een artikel...';
     $('searchInput').value=''; state.query='';
     render();
@@ -106,8 +123,16 @@
     document.querySelectorAll('[data-package]').forEach(el=>el.addEventListener('click',()=>togglePackage(+el.dataset.package)));
   }
 
+  function catalogItems(){
+    const deleted=new Set(state.deletedItemCodes);
+    const base=data.items.filter(x=>!deleted.has(x.code));
+    const extra=state.catalogAdditions.filter(x=>!deleted.has(x.code));
+    return [...base,...extra];
+  }
+  function getCatalogItem(code){ return catalogItems().find(x=>x.code===code); }
+
   function filteredItems(){
-    let list=data.items.slice();
+    let list=catalogItems().slice();
     if(state.query) list=list.filter(x=>lower(x.name+' '+x.category).includes(lower(state.query)));
     list.sort((a,b)=>state.sort==='az'?a.name.localeCompare(b.name,'nl'):b.name.localeCompare(a.name,'nl'));
     return list;
@@ -158,7 +183,7 @@
       p.items.forEach(it=>{ for(let q=0;q<sel.qty*(it.qty||1);q++) rows.push({code:it.code,status:it.status,label:it.label,source:p.name}); });
     });
     state.items.forEach(sel=>{
-      const it=data.items.find(x=>x.code===sel.code); if(!it)return;
+      const it=getCatalogItem(sel.code); if(!it)return;
       for(let q=0;q<sel.qty;q++) rows.push({code:it.code,status:sel.status,label:it.name,source:'Los artikel'});
     });
     return rows;
@@ -186,7 +211,7 @@
       </div>`);
     });
     state.items.forEach(sel=>{
-      const it=data.items.find(x=>x.code===sel.code); if(!it)return;
+      const it=getCatalogItem(sel.code); if(!it)return;
       cards.push(`<div class="order-card">
         <div class="order-thumb"><img src="${iconFor(it.category)}" alt=""></div>
         <div class="order-meta"><div class="order-name">${esc(it.name)}</div><div class="order-sub">${esc(it.category)}</div>
@@ -215,6 +240,80 @@
     $('sumRefurb').textContent=refurbCount;
   }
 
+  function populateCategorySelect(){
+    $('newArticleCategory').innerHTML=categoryOrder.map(cat=>`<option>${esc(cat)}</option>`).join('');
+  }
+  function openArticleModal(mode){
+    const manage=mode==='manage';
+    $('articleModal').classList.remove('hidden');
+    $('addArticleSection').classList.toggle('hidden',manage);
+    $('manageArticleSection').classList.toggle('hidden',!manage);
+    $('articleModalTitle').textContent=manage?'Artikelen beheren':'Artikel toevoegen';
+    if(manage){
+      $('manageArticleSearch').value='';
+      renderManageArticles();
+      setTimeout(()=>$('manageArticleSearch').focus(),0);
+    }else{
+      populateCategorySelect();
+      $('newArticleCode').value='';
+      $('newArticleName').value='';
+      $('newArticleStatus').value='Nieuw';
+      setTimeout(()=>$('newArticleCode').focus(),0);
+    }
+  }
+  function closeArticleModal(){ $('articleModal').classList.add('hidden'); }
+
+  function addCatalogArticle(){
+    const code=$('newArticleCode').value.trim();
+    const name=$('newArticleName').value.trim();
+    const category=$('newArticleCategory').value;
+    const status=$('newArticleStatus').value;
+    if(!code){ toast('Vul een artikelcode in'); $('newArticleCode').focus(); return; }
+    if(!name){ toast('Vul een artikelnaam in'); $('newArticleName').focus(); return; }
+    const existing=catalogItems().find(x=>lower(x.code)===lower(code));
+    if(existing){ toast('Deze artikelcode bestaat al'); return; }
+
+    state.catalogAdditions.push({code,name,category,defaultStatus:status,custom:true});
+    state.itemStatuses[code]=status;
+    state.deletedItemCodes=state.deletedItemCodes.filter(x=>x!==code);
+    save();
+    closeArticleModal();
+    render();
+    toast('Artikel toegevoegd');
+  }
+
+  function deleteCatalogArticle(code){
+    const it=getCatalogItem(code); if(!it)return;
+    if(!confirm(`Artikel "${it.name}" verwijderen uit de catalogus?`)) return;
+
+    state.catalogAdditions=state.catalogAdditions.filter(x=>x.code!==code);
+    if(data.items.some(x=>x.code===code) && !state.deletedItemCodes.includes(code)) state.deletedItemCodes.push(code);
+    state.items=state.items.filter(x=>x.code!==code);
+    delete state.itemStatuses[code];
+    save();
+    render();
+    renderManageArticles();
+    toast('Artikel verwijderd');
+  }
+
+  function renderManageArticles(){
+    const q=lower($('manageArticleSearch').value.trim());
+    let list=catalogItems().filter(x=>!q||lower(x.name+' '+x.code+' '+x.category).includes(q));
+    list.sort((a,b)=>a.name.localeCompare(b.name,'nl'));
+    $('manageArticleCount').textContent=`${list.length} artikelen`;
+    $('manageArticleList').innerHTML=list.length?list.map(it=>`
+      <div class="manage-article-row">
+        <div class="manage-article-main">
+          <div class="manage-article-name">${esc(it.name)}</div>
+          <div class="manage-article-code">${esc(it.code)}</div>
+        </div>
+        <div class="manage-article-category">${esc(it.category)}</div>
+        <div class="manage-article-status">${esc(state.itemStatuses[it.code]||it.defaultStatus||'Nieuw')}</div>
+        <button class="delete-article-button" type="button" data-delete-code="${esc(it.code)}">Verwijderen</button>
+      </div>`).join(''):`<div class="manage-empty">Geen artikelen gevonden.</div>`;
+    document.querySelectorAll('[data-delete-code]').forEach(el=>el.addEventListener('click',()=>deleteCatalogArticle(el.dataset.deleteCode)));
+  }
+
   async function copyDynamics(){
     const rows=expandedRows(); if(!rows.length){toast('Selecteer eerst een pakket of artikel');return;}
     const txt=rows.map(r=>`${r.code}\t${r.status}`).join('\n');
@@ -236,6 +335,12 @@
   document.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.packageFilter=el.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===el));renderPackages();}));
   $('clearOrder').addEventListener('click',clearOrder);
   $('copyButton').addEventListener('click',copyDynamics);
+  $('addArticleButton').addEventListener('click',()=>openArticleModal('add'));
+  $('manageArticlesButton').addEventListener('click',()=>openArticleModal('manage'));
+  $('saveNewArticle').addEventListener('click',addCatalogArticle);
+  $('manageArticleSearch').addEventListener('input',renderManageArticles);
+  document.querySelectorAll('[data-close-article-modal]').forEach(el=>el.addEventListener('click',closeArticleModal));
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&!$('articleModal').classList.contains('hidden')) closeArticleModal(); });
   const initial = new URLSearchParams(location.search).get('view')==='items' ? 'items' : 'packages';
   restore(); setView(initial);
 })();
