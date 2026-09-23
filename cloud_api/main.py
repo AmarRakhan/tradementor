@@ -2477,6 +2477,56 @@ def require_admin(user: dict[str, Any]) -> None:
         raise HTTPException(403, "Alleen geautoriseerd TradeMentor-beheer heeft toegang")
 
 
+_RELEASE_FEATURE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "bot_configurator_v2": {"status": "TESTEN", "beta": True, "stable": False},
+    "directional_bollinger": {"status": "TESTEN", "beta": True, "stable": False},
+    "exposure_refill": {"status": "TESTEN", "beta": True, "stable": False},
+    "price_zones": {"status": "IN_BOUW", "beta": False, "stable": False},
+    "margin_summary": {"status": "TESTEN", "beta": True, "stable": False},
+}
+
+
+def _is_beta_owner(user: dict[str, Any]) -> bool:
+    expected = os.getenv("TRADEMENTOR_ADMIN_EMAIL", "amar_rakhan@hotmail.com").strip().lower()
+    return str(user.get("email", "")).strip().lower() == expected
+
+
+def _release_feature_record(key: str) -> dict[str, Any]:
+    if key not in _RELEASE_FEATURE_DEFAULTS:
+        raise HTTPException(404, "Onbekende release-feature")
+    stored = db.collection("releaseFeatures").document(key).get().to_dict() or {}
+    return {**_RELEASE_FEATURE_DEFAULTS[key], **stored, "key": key}
+
+
+def _release_feature_enabled(user: dict[str, Any], key: str) -> bool:
+    row = _release_feature_record(key)
+    return bool(row.get("beta")) if _is_beta_owner(user) else bool(row.get("stable"))
+
+
+def _release_snapshot(user: dict[str, Any]) -> dict[str, Any]:
+    beta_owner = _is_beta_owner(user)
+    features: dict[str, Any] = {}
+    for key in _RELEASE_FEATURE_DEFAULTS:
+        row = _release_feature_record(key)
+        features[key] = {**row, "enabled": bool(row.get("beta")) if beta_owner else bool(row.get("stable"))}
+    return {"channel": "BETA" if beta_owner else "STABLE", "features": features}
+
+
+def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    out = dict(settings)
+    if not _release_feature_enabled(user, "directional_bollinger"):
+        for key in ("directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe"):
+            out.pop(key, None)
+    if not _release_feature_enabled(user, "exposure_refill"):
+        for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
+                    "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
+            out.pop(key, None)
+    if not _release_feature_enabled(user, "price_zones"):
+        for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
+            out.pop(key, None)
+    return out
+
+
 def _admin_device_reference(user:dict[str,Any]):
     return user_reference(user).collection("security").document("adminDevice")
 
