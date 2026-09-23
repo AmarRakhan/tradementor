@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AMAR Order Builder</title>
-  <link rel="stylesheet" href="style.css?v=20260923-16" />
+  <link rel="stylesheet" href="style.css?v=20260923-18" />
 </head>
 <body class="mode-packages">
   <header class="app-header">
@@ -163,7 +163,20 @@
       if(i){setTimeout(function(){i.focus();},0);}
     };
   </script>
-  <script src="data.js?v=20260923-16"></script>
-  <script src="app-v17.js"></script>
+  <script src="data.js?v=20260923-18"></script>
+  <script src="app-v17.js?v=20260923-18"></script>
+  <script>
+    // Beheerapp moet ALTIJD starten in het plakscherm.
+    // Dit staat bewust los van app.js zodat caching of een latere JS-fout
+    // het openen van de startmodal niet kan blokkeren.
+    window.addEventListener('load', function(){
+      setTimeout(function(){
+        var modal=document.getElementById('ticketPasteModal');
+        if(modal) modal.classList.remove('hidden');
+        var input=document.getElementById('ticketPasteInput');
+        if(input) input.focus();
+      }, 40);
+    });
+  </script>
 </body>
 </html>
