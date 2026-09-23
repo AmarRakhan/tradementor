@@ -133,6 +133,8 @@ class MultiBbConfig:
         if self.maximum_leverage is not None and not 1 <= self.maximum_leverage <= 300: raise ValueError("Maximum leverage moet tussen 1x en 300x liggen")
         if self.maximum_leverage is not None and self.maximum_leverage < self.minimum_leverage: raise ValueError("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage")
         if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-bedrag en DCA-margin moeten positief zijn")
+        if not 0 < self.exposure_refill_trigger_percent <= 100: raise ValueError("Exposure refill startdrempel moet tussen 0 en 100% liggen")
+        if not 0 <= self.exposure_refill_release_percent < self.exposure_refill_trigger_percent: raise ValueError("Exposure refill stopdrempel moet lager zijn dan de startdrempel")
         if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
@@ -153,6 +155,14 @@ class MultiBbConfig:
             "shortRequiresLongEnabled": self.short_requires_long_enabled,
             "bollingerEntryFilter15mEnabled": self.bollinger_entry_filter_15m_enabled,
             "bollingerEntryFilterTimeframe": self.bollinger_entry_filter_timeframe,
+            "directionalBollingerEnabled": self.directional_bollinger_enabled,
+            "bollingerLongTimeframe": self.bollinger_long_timeframe,
+            "bollingerShortTimeframe": self.bollinger_short_timeframe,
+            "exposureRefillEnabled": self.exposure_refill_enabled,
+            "exposureRefillLongTimeframe": self.exposure_refill_long_timeframe,
+            "exposureRefillShortTimeframe": self.exposure_refill_short_timeframe,
+            "exposureRefillTriggerPercent": self.exposure_refill_trigger_percent,
+            "exposureRefillReleasePercent": self.exposure_refill_release_percent,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit, "takeProfitEnabled": self.take_profit_enabled,
             "asymmetricHedgeModeEnabled": self.asymmetric_hedge_enabled, "shortStartMultiplier": self.short_start_multiplier,
