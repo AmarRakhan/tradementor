@@ -1005,6 +1005,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     orphan_long_reserved_slots = 0
     orphan_long_rescue_filled = 0
 
+    # Beta exposure-refill must react to the exchange truth AFTER any TP/DCA
+    # management executed earlier in this tick. Stable/legacy accounts skip this
+    # extra read because exposure_refill_enabled defaults to False.
+    if settings.exposure_refill_enabled and not dry_run:
+        try:
+            exposure_refill = _exposure_refill_context(settings, client.position_risk(), raw_state)
+        except Exception as exc:
+            actions.append({"kind": "EXPOSURE_REFILL_DATA_HOLD", "reason": str(exc)})
+
     # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
     scanned_candidates = 0
     executable_candidates = 0
