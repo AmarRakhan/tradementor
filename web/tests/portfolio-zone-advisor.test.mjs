@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { derivePortfolioZoneInstruction, derivePortfolioZoneLadder, portfolioZoneFromLadder, zoneToneForSignedIndex, PORTFOLIO_ZONE_SEATS_PER_STEP } from "../lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneInstruction, derivePortfolioZoneLadder, portfolioZoneFromLadder, portfolioZoneContextFromLadder, zoneToneForSignedIndex, PORTFOLIO_ZONE_SEATS_PER_STEP } from "../lib/portfolio-zone-advisor.mjs";
 
 test("zone +2 asks for ten free SHORT soldiers exactly like the approved reference",()=>{
   assert.equal(PORTFOLIO_ZONE_SEATS_PER_STEP,5);
@@ -109,4 +109,28 @@ test("missing zone evidence stays unavailable and does not invent a ladder",()=>
   const ladder=derivePortfolioZoneLadder([]);
   assert.deepEqual(ladder.zones,[]);
   assert.equal(portfolioZoneFromLadder(ladder,141),null);
+});
+
+
+test("zone decision context exposes the exact next upper and lower trigger",()=>{
+  const ladder=derivePortfolioZoneLadder([
+    {index:-1,center:100,atr:3},
+    {index:0,center:110,atr:3},
+    {index:1,center:120,atr:3},
+  ]);
+  const context=portfolioZoneContextFromLadder(ladder,111);
+  assert.equal(context.activeIndex,0);
+  assert.equal(context.lowerBoundary,105);
+  assert.equal(context.upperBoundary,115);
+  assert.equal(context.nextDownIndex,-1);
+  assert.equal(context.nextUpIndex,1);
+});
+
+test("outer zone context leaves missing next boundary explicit instead of inventing a level",()=>{
+  const ladder=derivePortfolioZoneLadder([{index:0,center:100,atr:4}]);
+  const context=portfolioZoneContextFromLadder(ladder,500);
+  assert.equal(context.activeIndex,3);
+  assert.equal(context.upperBoundary,null);
+  assert.equal(context.nextUpIndex,null);
+  assert.equal(context.nextDownIndex,2);
 });
