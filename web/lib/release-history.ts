@@ -66,7 +66,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   confidence: "confirmed",
 };
 
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
     id: "v46-build-422-soldier-activity-chart-events",
     version: "46",
@@ -90,7 +90,6 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[
     ],
     confidence: "confirmed",
   },
-] = [
   {
     id: "v46-build-421-owner-strategy-command-center",
     version: "46",
