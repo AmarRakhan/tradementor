@@ -19,7 +19,7 @@ export function parsePortfolioMoney(value) {
   if(typeof value==="number")return Number.isFinite(value)?value:null;
   const raw=String(value??"").trim();
   if(!raw||raw==="—")return null;
-  const cleaned=raw.replace(/[^d,.-+]/g,"");
+  const cleaned=raw.replace(/[^-0-9,.+]/g,"");
   if(!cleaned)return null;
   const comma=cleaned.lastIndexOf(",");
   const dot=cleaned.lastIndexOf(".");
