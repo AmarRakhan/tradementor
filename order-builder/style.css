@@ -200,3 +200,12 @@ button{cursor:pointer}
 .ticket-package-check{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#dff6e5;color:#158347;font-weight:900}
 .ticket-package-name{font-size:12.5px;color:#173a61}
 .ticket-package-name strong{font-size:13px}
+
+/* Global admin action: ticket paste is available on every tab */
+.global-ticket-action{display:flex;align-items:center;flex:0 0 auto}
+.global-ticket-action .admin-action{white-space:nowrap}
+.mode-packages .global-ticket-action,
+.mode-items .global-ticket-action{display:flex!important}
+@media(max-width:1380px){
+  .global-ticket-action .admin-action{padding:0 10px;font-size:12px}
+}
