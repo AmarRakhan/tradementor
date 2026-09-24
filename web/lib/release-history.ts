@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 410 release-contract sync: paired with app-version.ts and the corrected regression test.
+// Build 411 release-contract sync: continuity safety, live-candle follow and server sampling ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,41 +26,79 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "Portfolio Koers · zonebasis en netto exposure verduidelijkt",
+  title: "Portfolio Koers · tijdlijncontinuïteit en veilige soldatensturing",
   newItems: [
-    "De koersinstructie toont nu expliciet dat de zone uit portfolio-equity en de canonieke 15m support/resistance-ladder komt.",
-    "De actuele equity en de onder-/bovengrens van de actieve zone worden direct in de instructiebalk uitgelegd.",
-    "NETTO OPEN is hernoemd naar NETTO EXPOSURE en wordt niet meer met een misleidend minteken als verliesbedrag getoond.",
+    "De grafiek volgt nu automatisch de nieuw geopende live candle, zodat een oude 00:15-candle niet zichtbaar blijft terwijl de actuele candle al 07:30 is.",
+    "Ontbrekende portfoliohistorie wordt expliciet als historiegat gemeld; er worden geen fictieve candles of equitywaarden ingevuld.",
+    "Koersinstructies en de soldatenknop gaan fail-closed wanneer de canonieke 15m-zonehistorie niet aaneengesloten en voldoende hersteld is.",
+    "De backend bewaart tijdens de actieve Strategy-2 scheduler iedere minuut een bevestigde Aster-equitysample, onafhankelijk van een open browsertab.",
   ],
   problems: [
-    "Een bedrag zoals -US$ 492 SHORT kon logisch worden gelezen als een verlies van 492 dollar, terwijl het netto directionele exposure was.",
-    "Daardoor leek een zone zoals Z-1 onmogelijk of fout, omdat de kaart niet uitlegde welke grootheid de zone werkelijk bepaalt.",
+    "Na uren zonder geopende webapp kon de persistente chart een sprong tonen van bijvoorbeeld 00:15 naar 07:30.",
+    "Een realtime equitysample kon wel als nieuwe candle worden toegevoegd terwijl de zichtbare chart nog op de oude logical range bleef staan.",
+    "De 15m zoneberekening kon support/resistance en ATR over een onwaargenomen tijdsgat heen berekenen.",
   ],
   causes: [
-    "De exposure-tegel gebruikte signed money-formatting terwijl SHORT al apart als richting werd getoond.",
-    "De koersinstructie toonde zone, gewenste stoelen en volgende grenzen, maar niet de bron van de zoneberekening.",
+    "Portfolio-equity werd voor de chart vooral opgeslagen wanneer de chart-API werd gelezen; een gesloten of slapende browser leverde dus geen continue samples.",
+    "De realtime series-update schoof de viewport niet expliciet naar de nieuwste candle.",
+    "De zonebron maakte nog geen onderscheid tussen aaneengesloten candles en een reeks met ontbrekende tijdvakken.",
   ],
   fixes: [
-    "Netto exposure wordt als absolute exposurewaarde met LONG/SHORT-richting getoond, niet als winst/verlies.",
-    "De koersinstructie vermeldt portfolio-equity, 15m support/resistance, de actuele equity en de band van de actieve zone.",
-    "Geen zone-, order-, DCA-, TP- of stoelberekening gewijzigd; alleen semantiek en uitleg zijn aangescherpt.",
+    "Nieuwe candles roepen scrollToRealTime aan en wissen een achtergebleven crosshair-tooltip wanneer de candle-tijd vooruitgaat.",
+    "De UI detecteert 15m-gaten en blokkeert elke ADD/REMOVE soldatenactie totdat minimaal veertien opeenvolgende actuele 15m-candles bevestigd zijn.",
+    "De knop hercontroleert direct vóór opslaan opnieuw de actuele 15m-continuïteit; bij een gat worden longSlots, shortSlots en maximumPositions niet gewijzigd.",
+    "Server-side zoneberekening gebruikt uitsluitend het nieuwste aaneengesloten candlesegment en verzint nooit ontbrekende candles.",
+    "De actieve Strategy-2 scheduler schrijft maximaal één chart-equitysample per minuut naar de persistente Portfolio Koers-reeks.",
   ],
   now: [
-    "Een gebruiker kan direct zien waarom de app bijvoorbeeld Z-1 toont en welke equitygrenzen daarbij horen.",
-    "Een SHORT netto exposure van US$ 492 kan niet meer worden verward met -US$ 492 PnL.",
-    "De wijziging blijft onderdeel van de huidige BETA Portfolio Koers-weergave.",
+    "Een historisch gat blijft zichtbaar als ontbrekende data in plaats van een schijnbaar normale koersbeweging.",
+    "De tijd/crosshair op de chart kan niet meer stil op een oude candle blijven staan nadat een nieuwe live candle is aangemaakt.",
+    "Soldatensturing gebruikt pas weer een zone wanneer de recente 15m-basis voldoende aaneengesloten is; tot die tijd staat de knop op WACHTEN.",
   ],
-  before: "Build 409 maakte de zonekleuren duidelijker, maar de betekenis van de zonebasis en netto exposure bleef te makkelijk verkeerd te lezen.",
-  after: "Build 410 maakt de zoneberekening uitlegbaar zonder het tradinggedrag te wijzigen.",
+  before: "Build 410 legde de zonebasis uit, maar beschermde de instructie nog niet tegen een onvolledige tijdreeks en de viewport kon een oude candle blijven tonen.",
+  after: "Build 411 maakt tijdcontinuïteit onderdeel van de safety chain vóór een soldatenwijziging en bouwt toekomstige chart-historie server-side door.",
   technicalDetails: [
-    "Portfolio Koers blijft dezelfde canonieke 15m zonebron en portfolio-equity gebruiken.",
-    "Snapshot netto exposure gebruikt dezelfde exposuredata; uitsluitend label en signed presentatie zijn gewijzigd.",
-    "Regressietests bewaken de zonebasisuitleg en dat netto exposure niet meer als signed PnL wordt gerenderd.",
+    "Geen ontbrekende historische equity wordt achteraf gereconstrueerd of vlak doorgetrokken.",
+    "Canonieke BETA-zonebron blijft 15m portfolio-equity; de broncandles moeten nu aaneengesloten zijn voor actie.",
+    "De soldatenknop blijft capaciteit wijzigen, niet rechtstreeks exchange-posities openen of sluiten.",
+    "Regressietests bewaken gapdetectie, live-candle-follow en fail-closed soldatensturing.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-410-zone-basis-exposure",
+    version: "46",
+    build: "410",
+    releasedAt: "2026-09-24",
+    title: "Portfolio Koers · zonebasis en netto exposure verduidelijkt",
+    newItems: [
+      "De koersinstructie toont expliciet dat de zone uit portfolio-equity en de canonieke 15m support/resistance-ladder komt.",
+      "De actuele equity en de onder-/bovengrens van de actieve zone worden direct in de instructiebalk uitgelegd.",
+      "NETTO OPEN is hernoemd naar NETTO EXPOSURE en wordt niet meer met een misleidend minteken als verliesbedrag getoond.",
+    ],
+    problems: [
+      "Een bedrag zoals -US$ 492 SHORT kon logisch worden gelezen als een verlies van 492 dollar, terwijl het netto directionele exposure was.",
+      "Daardoor leek een zone zoals Z-1 onmogelijk of fout, omdat de kaart niet uitlegde welke grootheid de zone werkelijk bepaalt.",
+    ],
+    causes: [
+      "De exposure-tegel gebruikte signed money-formatting terwijl SHORT al apart als richting werd getoond.",
+      "De koersinstructie toonde zone, gewenste stoelen en volgende grenzen, maar niet de bron van de zoneberekening.",
+    ],
+    fixes: [
+      "Netto exposure wordt als absolute exposurewaarde met LONG/SHORT-richting getoond, niet als winst/verlies.",
+      "De koersinstructie vermeldt portfolio-equity, 15m support/resistance, de actuele equity en de band van de actieve zone.",
+      "Geen zone-, order-, DCA-, TP- of stoelberekening gewijzigd; alleen semantiek en uitleg zijn aangescherpt.",
+    ],
+    now: [
+      "Een gebruiker kan direct zien waarom de app bijvoorbeeld Z-1 toont en welke equitygrenzen daarbij horen.",
+      "Een SHORT netto exposure van US$ 492 kan niet meer worden verward met -US$ 492 PnL.",
+      "Build 411 voegt hierna tijdlijncontinuïteit en fail-closed soldatensturing toe.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-409-zone-colors",
     version: "46",
