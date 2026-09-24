@@ -1,0 +1,148 @@
+name: Deploy Dharma Thuis Separate PWA
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/deploy-dharma-thuis-separate-pwa.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: dharma-thuis-separate-pwa
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: dharma-thuis-pwa
+  ARTIFACT_REPOSITORY: tradementor
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  SOURCE_BRANCH: dharma-thuis-pwa-preview
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Verify isolated target and approved identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$CLOUD_RUN_SERVICE" = "dharma-thuis-pwa"
+          for protected in amar-bot-v44-direct-install tradementor-api tradementor-api-staging aavansh-trading-v1; do
+            test "$CLOUD_RUN_SERVICE" != "$protected"
+          done
+
+      - name: Checkout Dharma source only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_BRANCH }}
+
+      - name: Verify proven PWA contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dharma-thuis-pwa/index.html
+          test -f dharma-thuis-pwa/manifest.webmanifest
+          test -f dharma-thuis-pwa/sw.js
+          test -f dharma-thuis-pwa/offline.html
+          test -f dharma-thuis-pwa/icon.svg
+          test -f dharma-thuis-pwa/Dockerfile
+          grep -q '"name": "Dharma Thuis"' dharma-thuis-pwa/manifest.webmanifest
+          grep -q '"start_url": "/?source=pwa"' dharma-thuis-pwa/manifest.webmanifest
+          grep -q '"scope": "/"' dharma-thuis-pwa/manifest.webmanifest
+          grep -q '"display": "standalone"' dharma-thuis-pwa/manifest.webmanifest
+          grep -q '"sizes": "192x192"' dharma-thuis-pwa/manifest.webmanifest
+          grep -q '"sizes": "512x512"' dharma-thuis-pwa/manifest.webmanifest
+          grep -q '"purpose": "maskable"' dharma-thuis-pwa/manifest.webmanifest
+          grep -q 'cache.add("/offline.html")' dharma-thuis-pwa/sw.js
+          grep -q "serviceWorker.register('/sw.js" dharma-thuis-pwa/index.html
+          ! grep -q 'beforeinstallprompt' dharma-thuis-pwa/index.html
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push isolated Dharma image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/dharma-thuis-pwa:${GITHUB_SHA}"
+          docker build --tag "$IMAGE" dharma-thuis-pwa
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy new separate Cloud Run service
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --port 8080 \
+            --min-instances 0 \
+            --max-instances 2 \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Verify live PWA install surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          test -n "$SERVICE_URL"
+          echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+
+          curl --fail --silent --show-error --retry 10 --retry-delay 3 "$SERVICE_URL/" > "$RUNNER_TEMP/root.html"
+          grep -q 'Dharma Thuis' "$RUNNER_TEMP/root.html"
+
+          curl --fail --silent --show-error "$SERVICE_URL/manifest.webmanifest" > "$RUNNER_TEMP/manifest.json"
+          grep -q '"name": "Dharma Thuis"' "$RUNNER_TEMP/manifest.json"
+          grep -q '"display": "standalone"' "$RUNNER_TEMP/manifest.json"
+          grep -q '"purpose": "maskable"' "$RUNNER_TEMP/manifest.json"
+
+          curl --fail --silent --show-error "$SERVICE_URL/sw.js" | grep -q 'dharma-thuis-shell-v1'
+          curl --fail --silent --show-error "$SERVICE_URL/offline.html" | grep -q 'Dharma Thuis'
+
+          curl --fail --silent --show-error "$SERVICE_URL/icon-192.png" > "$RUNNER_TEMP/icon-192.png"
+          curl --fail --silent --show-error "$SERVICE_URL/icon-512.png" > "$RUNNER_TEMP/icon-512.png"
+          file "$RUNNER_TEMP/icon-192.png" | grep -q '192 x 192'
+          file "$RUNNER_TEMP/icon-512.png" | grep -q '512 x 512'
+
+          MANIFEST_CT="$(curl -sI "$SERVICE_URL/manifest.webmanifest" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^content-type:/{print $2}' | tail -1)"
+          ICON192_CT="$(curl -sI "$SERVICE_URL/icon-192.png" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^content-type:/{print $2}' | tail -1)"
+          SW_CT="$(curl -sI "$SERVICE_URL/sw.js" | tr -d '\r' | awk 'BEGIN{IGNORECASE=1} /^content-type:/{print $2}' | tail -1)"
+          echo "manifest content-type=$MANIFEST_CT"
+          echo "icon content-type=$ICON192_CT"
+          echo "service-worker content-type=$SW_CT"
+          test "$MANIFEST_CT" = "application/manifest+json"
+          test "$ICON192_CT" = "image/png"
+          case "$SW_CT" in application/javascript|text/javascript) ;; *) exit 1 ;; esac
+
+          echo "DIRECT_INSTALL_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## Dharma Thuis — separate installable PWA"
+            echo ""
+            echo "- Direct install URL: $DIRECT_INSTALL_URL"
+            echo "- Separate Cloud Run service: $CLOUD_RUN_SERVICE"
+            echo "- Existing TradeMentor service: untouched"
+            echo "- Aavansh service: untouched"
+          } >> "$GITHUB_STEP_SUMMARY"
