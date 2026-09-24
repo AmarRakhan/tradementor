@@ -8,6 +8,7 @@ import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
+import { buildStrategyStatusCommandCenter, formatCommandMoney } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
@@ -122,8 +123,76 @@ function markerDetail(row:Marker) {
   return `💰${count>1?` ×${count}`:""} ${compactUsd(row.realizedPnlUsd)}`.trim();
 }
 
-export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
-  const { user }=useAuthSession();
+
+function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string}) {
+  const zoneCapacityPercent=vm.totalZoneSeats>0?Math.max(0,Math.min(100,(vm.freeZoneSeats/vm.totalZoneSeats)*100)):0;
+  const runwayPercent=vm.dcaCoveragePercent??0;
+  const healthClass=String(vm.healthState||"RUIM").toLowerCase();
+  const botStatus=vm.actionExecutable
+    ? "BOT KOOPT AUTOMATISCH"
+    : vm.strategyEnabled&&vm.zoneSafe
+      ? "BOT WACHT AUTOMATISCH"
+      : "GEEN NIEUWE ORDERS";
+  return <section
+    className={`portfolio-command-center cc-${vm.actionMode} cc-health-${healthClass}`}
+    data-reference="file_00000000d9b0820e8eacdecb418c95aa"
+    data-account-only="beta-owner"
+    aria-label="Zone-Soldaten Strategiestatus Command Center"
+    aria-live="polite"
+  >
+    <header className="pcc-head">
+      <span className="pcc-head-icon" aria-hidden="true">⌖</span>
+      <div><small>ZONE-SOLDATEN</small><strong>Strategiestatus</strong></div>
+      <span className="pcc-live"><i/>Live</span>
+      <span className="pcc-command-badge">COMMAND CENTER<em>{vm.strategyEnabled?"BOT ACTIEF · 24/7":"STRATEGY UIT"}</em></span>
+    </header>
+
+    <div className={`pcc-action ${vm.actionMode}`}>
+      <span className="pcc-action-icon" aria-hidden="true">{vm.pendingSide==="SHORT"?"⇊":vm.pendingSide==="LONG"?"⇈":vm.actionMode==="complete"?"✓":"⌖"}</span>
+      <div className="pcc-action-copy">
+        <small>NU ACTIE</small>
+        <strong>{vm.actionTitle}</strong>
+        <em>{vm.actionDetail}</em>
+      </div>
+      <div className="pcc-bot-state"><span aria-hidden="true">🤖</span><b>{botStatus}</b></div>
+    </div>
+
+    <div className="pcc-grid pcc-zone-row">
+      <article><span className="pcc-icon">⌖</span><div><small>ACTIEVE ZONE</small><strong>{vm.activeZone}</strong><em>{vm.currentZoneRange}</em></div></article>
+      <article><span className="pcc-icon gold">↗</span><div><small>VOLGENDE ZONE</small><strong>{vm.nextZone}</strong><em>{vm.nextZoneDisplay}</em></div></article>
+      <article><span className="pcc-icon red">↘</span><div><small>VORIGE ZONE</small><strong>{vm.previousZone}</strong><em>{vm.previousZoneDisplay}</em></div></article>
+    </div>
+
+    <div className="pcc-grid">
+      <article><span className="pcc-icon gold">⚔</span><div><small>FORMATIE PER ZONE</small><strong>{vm.desiredLong}L · {vm.desiredShort}S</strong><em>doel per zone</em></div></article>
+      <article><span className="pcc-icon">♟</span><div><small>ACTIEVE SOLDATEN</small><strong>{vm.totalActiveSoldiers??"—"}</strong><em><b className="long">{vm.actualLong??"—"} Long</b> / <b className="short">{vm.actualShort??"—"} Short</b></em></div></article>
+      <article className="pcc-balance-card"><span className="pcc-icon">◐</span><div><small>BALANS LONG / SHORT</small><strong>{vm.longPercent===null?"—":vm.longPercent.toFixed(1)+"%"} / {vm.shortPercent===null?"—":vm.shortPercent.toFixed(1)+"%"}</strong><em>{vm.actualLong??"—"} L · {vm.actualShort??"—"} S</em><i className="pcc-balance-bar"><b style={{width:`${vm.longPercent??0}%`}}/><span style={{width:`${vm.shortPercent??0}%`}}/></i></div></article>
+    </div>
+
+    <div className="pcc-grid pcc-runway-row">
+      <article><span className="pcc-icon gold">◉</span><div><small>RESERVE / AVAILABLE</small><strong>{vm.availableDisplay}</strong><em>{vm.estimatedAffordableSoldiers===null?"betaalbaarheid niet berekenbaar":`Nog ± ${vm.estimatedAffordableSoldiers} soldaten mogelijk`}</em></div></article>
+      <article><span className="pcc-icon">♟+</span><div><small>GESCHATTE EXTRA SOLDATEN</small><strong>{vm.estimatedAffordableSoldiers===null?"—":`± ${vm.estimatedAffordableSoldiers}`}</strong><em>{vm.estimatedSoldierCost===null?"sizingdata ontbreekt":`≈ ${formatCommandMoney(vm.estimatedSoldierCost)} per soldaat`}</em></div></article>
+      <article className="pcc-dca-card"><span className="pcc-icon">◫</span><div><small>DCA-RUNWAY</small><strong>{vm.estimatedDcaRounds===null?"—":`~ ${vm.estimatedDcaRounds} DCA`}</strong><em>{vm.estimatedDcaCost===null?"DCA-kost niet beschikbaar":`≈ ${formatCommandMoney(vm.estimatedDcaCost)} per ronde`}</em><i className="pcc-mini-progress"><b style={{width:`${runwayPercent}%`}}/></i></div></article>
+    </div>
+
+    <div className="pcc-bottom-grid">
+      <article className="pcc-inventory"><span className="pcc-icon">◇</span><div><small>ZONE-VOORRAAD</small><strong>{vm.freeZoneSeats} / {vm.totalZoneSeats}</strong><em>vrije stoelen in {vm.activeZone}</em><i className="pcc-segmented"><b style={{width:`${zoneCapacityPercent}%`}}/></i></div></article>
+      <article className={`pcc-health ${healthClass}`}><span className="pcc-icon">◷</span><div><small>HOE LANG HOUDEN WE DIT VOL?</small><strong>{vm.healthState}</strong><em>{vm.estimatedDcaRounds===null?"Runway onbekend":`~${vm.estimatedDcaRounds} DCA-rondes · ±${vm.estimatedAffordableSoldiers??"—"} soldaten`}</em></div></article>
+    </div>
+
+    <footer className="pcc-footer">
+      <span className="pcc-info-icon" aria-hidden="true">i</span>
+      <div><strong>{vm.footerTitle}</strong><em>{vm.footerDetail}</em>{advisorMessage?<small>{advisorMessage}</small>:null}</div>
+    </footer>
+    <span className="portfolio-koers-cockpit-sr">
+      Account-only Command Center. {vm.actionTitle}. Actieve zone {vm.activeZone}. Formatie {vm.desiredLong} long en {vm.desiredShort} short. Actief {vm.totalActiveSoldiers??"onbekend"} soldaten: {vm.actualLong??"onbekend"} long en {vm.actualShort??"onbekend"} short. Available {vm.availableDisplay}. Geschat nog {vm.estimatedAffordableSoldiers??"onbekend"} soldaten of {vm.estimatedDcaRounds??"onbekend"} DCA-rondes.
+    </span>
+  </section>;
+}
+
+export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongText,liveShortText}:{liveEquityText:string;liveAvailableText:string;liveLongText:string;liveShortText:string}) {
+  const { user, betaOwner }=useAuthSession();
+  const commandCenterTester=betaOwner===true;
   const shellRef=useRef<HTMLElement>(null);
   const canvasRef=useRef<HTMLDivElement>(null);
   const chartRef=useRef<IChartApi|null>(null);
@@ -556,6 +625,42 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       ? `↓ ${percent2(lowerDistancePercent,false)}`
       : "—";
 
+  const commandCenterVm=buildStrategyStatusCommandCenter({
+    strategyEnabled:zoneSoldierEnabled,
+    zoneSafe:zoneEntriesSafe,
+    activeZone,
+    nextZone:nextUpIndex,
+    previousZone:nextDownIndex,
+    currentZoneLower:lowerTrigger,
+    currentZoneUpper:upperTrigger,
+    nextZonePrice:upperTrigger,
+    previousZonePrice:lowerTrigger,
+    currentEquity:currentZonePrice,
+    baseLong:zoneBaseLong,
+    baseShort:zoneBaseShort,
+    actualLong:liveLongText,
+    actualShort:liveShortText,
+    totalActive:zoneTotalActive,
+    zoneFreeLong,
+    zoneFreeShort,
+    balancerFree:zoneBalancer.freeCount,
+    balancerDesired,
+    balancerOpen,
+    balancerSide,
+    pendingSide:balancerSide,
+    pendingCount:balancerPending,
+    availableText:liveAvailableText,
+    activeZoneEntryUsd:zoneEntrySizing.activeZoneEntryUsd,
+    entrySizingMode:zoneEntrySizing.mode??advisorSeats.settings.entrySizingMode,
+    minimumLeverage:advisorSeats.settings.minimumLeverage,
+    entryFeeBufferUsd:advisorSeats.settings.entryFeeBufferUsd,
+    minimumOrderMarginUsd:advisorSeats.settings.minimumOrderMarginUsd,
+    dcaMarginUsd:advisorSeats.settings.dcaMarginUsd,
+    dcaFeeBufferUsd:advisorSeats.settings.dcaFeeBufferUsd,
+    maxDca:advisorSeats.settings.maxDca,
+    unlimitedDca:advisorSeats.settings.unlimitedDca===true,
+  });
+
   return <section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f" data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
     <header className="portfolio-koers-header">
       <div className="portfolio-koers-heading">
@@ -579,7 +684,8 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
       {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b>{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
     </div>
-    {(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle==="DRAINING")?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
+    {commandCenterTester&&(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle==="DRAINING")?<StrategyCommandCenter vm={commandCenterVm} advisorMessage={advisorMessage}/>:null}
+    {!commandCenterTester&&(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle==="DRAINING")?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
       <header className="portfolio-strategy-head">
         <span className="portfolio-strategy-mark" aria-hidden="true">{zoneSoldierEnabled?"⌖":"◎"}</span>
         <div className="portfolio-strategy-heading">
