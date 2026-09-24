@@ -18,13 +18,13 @@ test("editing SHORT preserves LONG and recalculates total", () => {
   assert.deepEqual(applyShortSlots("45", "20"), { total: 65, long: 45, short: 20 });
 });
 
-test("editing one side never pushes the combined total above the hard limit", () => {
-  assert.deepEqual(applyLongSlots("30", "90"), { total: 100, long: 70, short: 30 });
-  assert.deepEqual(applyShortSlots("45", "90"), { total: 100, long: 45, short: 55 });
+test("editing one side preserves the other side above the retired 100-seat ceiling", () => {
+  assert.deepEqual(applyLongSlots("30", "90"), { total: 120, long: 90, short: 30 });
+  assert.deepEqual(applyShortSlots("45", "90"), { total: 135, long: 45, short: 90 });
 });
 
-test("100 positions are accepted and values above the limit are clamped", () => {
-  assert.equal(MAX_TOTAL_POSITIONS, 100);
-  assert.deepEqual(splitTotalPositions("100"), { total: 100, long: 50, short: 50 });
-  assert.deepEqual(splitTotalPositions("101"), { total: 100, long: 50, short: 50 });
+test("400 positions are accepted and values above the platform limit are clamped", () => {
+  assert.equal(MAX_TOTAL_POSITIONS, 400);
+  assert.deepEqual(splitTotalPositions("400"), { total: 400, long: 200, short: 200 });
+  assert.deepEqual(splitTotalPositions("401"), { total: 400, long: 200, short: 200 });
 });
