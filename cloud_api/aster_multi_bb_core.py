@@ -59,6 +59,8 @@ class MultiBbConfig:
     zone_base_long_soldiers: int = 3
     zone_base_short_soldiers: int = 3
     zone_exposure_balancer_enabled: bool = True
+    zone_entry_growth_percent: float = 2.0
+    zone_entry_max_multiplier: float = 1.20
     entry_margin_usd: float = 5.0
     entry_notional_usd: float = 250.0
     entry_sizing_mode: str = "notional"
@@ -119,6 +121,8 @@ class MultiBbConfig:
             zone_base_long_soldiers=_i(raw.get("zoneBaseLongSoldiers"), 3),
             zone_base_short_soldiers=_i(raw.get("zoneBaseShortSoldiers"), 3),
             zone_exposure_balancer_enabled=bool(raw.get("zoneExposureBalancerEnabled", True)),
+            zone_entry_growth_percent=_f(raw.get("zoneEntryGrowthPercent"), 2.0),
+            zone_entry_max_multiplier=_f(raw.get("zoneEntryMaxMultiplier"), 1.20),
             entry_margin_usd=entry_margin_usd,
             entry_notional_usd=entry_notional_usd,
             entry_sizing_mode=entry_sizing_mode,
@@ -150,6 +154,10 @@ class MultiBbConfig:
         if not 0 <= self.exposure_refill_release_percent < self.exposure_refill_trigger_percent: raise ValueError("Exposure refill stopdrempel moet lager zijn dan de startdrempel")
         if not 1 <= self.zone_base_long_soldiers <= 100 or not 1 <= self.zone_base_short_soldiers <= 100:
             raise ValueError("Zoneformatie LONG/SHORT moet tussen 1 en 100 soldaten liggen")
+        if not 0 <= self.zone_entry_growth_percent <= 20:
+            raise ValueError("Zone-inzetgroei moet tussen 0% en 20% per zone liggen")
+        if not 1.0 <= self.zone_entry_max_multiplier <= 3.0:
+            raise ValueError("Maximale zone-inzetfactor moet tussen 1,00x en 3,00x liggen")
         if self.zone_soldiers_enabled and self.asymmetric_hedge_enabled:
             raise ValueError("Zone-soldaten en Asymmetrische Hedge kunnen niet tegelijk actief zijn")
         if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
@@ -184,6 +192,7 @@ class MultiBbConfig:
             "zoneBaseLongSoldiers": self.zone_base_long_soldiers,
             "zoneBaseShortSoldiers": self.zone_base_short_soldiers,
             "zoneExposureBalancerEnabled": self.zone_exposure_balancer_enabled,
+            "zoneEntryGrowthPercent": self.zone_entry_growth_percent, "zoneEntryMaxMultiplier": self.zone_entry_max_multiplier,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit, "takeProfitEnabled": self.take_profit_enabled,
             "asymmetricHedgeModeEnabled": self.asymmetric_hedge_enabled, "shortStartMultiplier": self.short_start_multiplier,
@@ -260,6 +269,17 @@ def rank_top_volume(tickers: list[dict[str, Any]], exchange_info: dict[str, Any]
         if volume > 0: ranked.append({"symbol": symbol, "quoteVolume": volume})
     ranked.sort(key=lambda x: (-x["quoteVolume"], x["symbol"]))
     return ranked[:top_n]
+
+
+def _zone_entry_multiplier(zone: Any, growth_percent: float, max_multiplier: float) -> float:
+    """Gentle monotone sizing: farther from Z0 never means a smaller base entry."""
+    try:
+        distance = abs(int(zone))
+    except (TypeError, ValueError):
+        distance = 0
+    growth = max(0.0, _f(growth_percent)) / 100.0
+    cap = max(1.0, _f(max_multiplier, 1.0))
+    return min(cap, 1.0 + distance * growth)
 
 
 def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str, minimum_leverage: int, maximum_leverage: int | None = None) -> tuple[PairExecutionPlan, dict[str, Any]]:
@@ -947,13 +967,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     zone_state: dict[str, Any] | None = None
     zone_report: dict[str, Any] | None = None
     zone_mode = bool(getattr(settings, "zone_soldiers_enabled", False))
+    zone_entry_multiplier = 1.0
+    zone_entry_margin_usd = float(settings.entry_margin_usd)
+    zone_entry_notional_usd = float(settings.entry_notional_usd)
     if zone_mode:
         context = zone_context if isinstance(zone_context, dict) else {}
-        fallback_long = _f(getattr(settings, "entry_notional_long_usd", 0.0), _f(settings.entry_notional_usd))
-        fallback_short = _f(getattr(settings, "entry_notional_short_usd", 0.0), _f(settings.entry_notional_usd))
+        zone_entry_multiplier = _zone_entry_multiplier(
+            context.get("activeZone"), settings.zone_entry_growth_percent, settings.zone_entry_max_multiplier
+        )
+        zone_entry_margin_usd *= zone_entry_multiplier
+        zone_entry_notional_usd *= zone_entry_multiplier
+        fallback_long = _f(getattr(settings, "entry_notional_long_usd", 0.0), _f(settings.entry_notional_usd)) * zone_entry_multiplier
+        fallback_short = _f(getattr(settings, "entry_notional_short_usd", 0.0), _f(settings.entry_notional_usd)) * zone_entry_multiplier
         if settings.entry_sizing_mode == "margin":
-            fallback_long = _f(getattr(settings, "entry_margin_long_usd", 0.0), _f(settings.entry_margin_usd)) * max(1, settings.minimum_leverage)
-            fallback_short = _f(getattr(settings, "entry_margin_short_usd", 0.0), _f(settings.entry_margin_usd)) * max(1, settings.minimum_leverage)
+            fallback_long = _f(getattr(settings, "entry_margin_long_usd", 0.0), _f(settings.entry_margin_usd)) * zone_entry_multiplier * max(1, settings.minimum_leverage)
+            fallback_short = _f(getattr(settings, "entry_margin_short_usd", 0.0), _f(settings.entry_margin_usd)) * zone_entry_multiplier * max(1, settings.minimum_leverage)
         fallback_unit = (fallback_long + fallback_short) / 2.0 if fallback_long > 0 and fallback_short > 0 else max(fallback_long, fallback_short, 1.0)
         zone_state, state, zone_report = prepare_zone_runtime(
             raw_zone_state=raw_state.get("zoneSoldierState"),
@@ -970,6 +998,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             timestamp_ms=timestamp_ms,
         )
         zone_migration_hold = bool(_i((zone_report or {}).get("legacyMigratedThisTick")) > 0)
+        if zone_report is not None:
+            base_entry = float(settings.entry_margin_usd if settings.entry_sizing_mode == "margin" else settings.entry_notional_usd)
+            zone_report["entrySizing"] = {
+                "mode": settings.entry_sizing_mode,
+                "growthPercentPerZone": float(settings.zone_entry_growth_percent),
+                "maxMultiplier": float(settings.zone_entry_max_multiplier),
+                "activeZoneMultiplier": float(zone_entry_multiplier),
+                "baseEntryUsd": base_entry,
+                "activeZoneEntryUsd": base_entry * zone_entry_multiplier,
+            }
         if not dry_run:
             ref.set({
                 "multiBbPositions": state,
@@ -1293,7 +1331,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         "orphanContractLeverage": existing_leverage}
                 short_plan = None; short_tier = None
             else:
-                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=settings.entry_margin_usd, entry_notional_usd=settings.entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage, maximum_leverage=settings.maximum_leverage)
+                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=zone_entry_margin_usd, entry_notional_usd=zone_entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage, maximum_leverage=settings.maximum_leverage)
                 short_plan = None; short_tier = None
         except Exception as exc:
             reason = str(exc)
@@ -1335,7 +1373,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
         if planned_soldier is not None:
             entry_action.update({"originZone": planned_soldier.get("originZone"), "originZoneCycleId": planned_soldier.get("originZoneCycleId"),
-                "soldierId": planned_soldier.get("soldierId"), "soldierRole": planned_soldier.get("role")})
+                "soldierId": planned_soldier.get("soldierId"), "soldierRole": planned_soldier.get("role"),
+                "zoneEntryMultiplier": float(zone_entry_multiplier)})
         if orphan_priority:
             entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
@@ -1428,6 +1467,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     "originZone": zone_claim.get("originZone"), "originZoneCycleId": zone_claim.get("originZoneCycleId"),
                     "soldierId": zone_claim.get("soldierId"), "soldierRole": zone_claim.get("role"),
                     "soldierStatus": zone_claim.get("status"), "entryPortfolioEquity": zone_claim.get("entryPortfolioEquity"),
+                    "zoneEntryMultiplier": float(zone_entry_multiplier),
                 })
             write_payload = {"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING", "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}
             if zone_mode:

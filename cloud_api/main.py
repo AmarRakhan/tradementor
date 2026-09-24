@@ -2550,6 +2550,9 @@ _RELEASE_FEATURE_DEFAULTS: dict[str, dict[str, Any]] = {
     "margin_summary": {"status": "TESTEN", "beta": True, "stable": False},
 }
 
+# Build 416: zone-owned trade behavior stays hard owner-only until explicit rollout approval.
+_OWNER_ONLY_RELEASE_FEATURES = {"zone_soldiers"}
+
 
 def _is_beta_owner(user: dict[str, Any]) -> bool:
     expected = os.getenv("TRADEMENTOR_ADMIN_EMAIL", "amar_rakhan@hotmail.com").strip().lower()
@@ -2565,6 +2568,8 @@ def _release_feature_record(key: str) -> dict[str, Any]:
 
 def _release_feature_enabled(user: dict[str, Any], key: str) -> bool:
     row = _release_feature_record(key)
+    if key in _OWNER_ONLY_RELEASE_FEATURES:
+        return bool(_is_beta_owner(user) and row.get("beta"))
     return bool(row.get("beta")) if _is_beta_owner(user) else bool(row.get("stable"))
 
 
@@ -2573,7 +2578,9 @@ def _release_snapshot(user: dict[str, Any]) -> dict[str, Any]:
     features: dict[str, Any] = {}
     for key in _RELEASE_FEATURE_DEFAULTS:
         row = _release_feature_record(key)
-        features[key] = {**row, "enabled": bool(row.get("beta")) if beta_owner else bool(row.get("stable"))}
+        owner_only = key in _OWNER_ONLY_RELEASE_FEATURES
+        enabled = bool(beta_owner and row.get("beta")) if owner_only else (bool(row.get("beta")) if beta_owner else bool(row.get("stable")))
+        features[key] = {**row, "enabled": enabled, "ownerOnly": owner_only}
     return {"channel": "BETA" if beta_owner else "STABLE", "features": features}
 
 
@@ -2591,8 +2598,11 @@ def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, An
         out.setdefault("zoneBaseLongSoldiers", 3)
         out.setdefault("zoneBaseShortSoldiers", 3)
         out.setdefault("zoneExposureBalancerEnabled", True)
+        out.setdefault("zoneEntryGrowthPercent", 2.0)
+        out.setdefault("zoneEntryMaxMultiplier", 1.20)
     else:
-        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled"):
+        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
+                    "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier"):
             out.pop(key, None)
     if not _release_feature_enabled(user, "price_zones"):
         for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
@@ -2606,14 +2616,13 @@ def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) 
         "exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
         "exposureRefillTriggerPercent", "exposureRefillReleasePercent",
         "zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
+        "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier",
         "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
     }
-    # Zone-owned soldiers are a rollout feature that may not exist in older
-    # stored settings yet. Always resolve the account release channel so the
-    # feature can be enabled safely without requiring the user to resave legacy
-    # Botconfigurator settings first.
+    # Background ticks require an explicit owner marker written from the authenticated
+    # admin-email check. A generic BETA label is never sufficient for live zone behavior.
     profile = user_reference({"uid": uid}).get().to_dict() or {}
-    beta_owner = str(profile.get("releaseChannel") or "STABLE").upper() == "BETA"
+    beta_owner = profile.get("betaOwner") is True
     out = dict(settings)
     directional = _release_feature_record("directional_bollinger")
     refill = _release_feature_record("exposure_refill")
@@ -2626,13 +2635,17 @@ def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) 
         for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
                     "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
             out.pop(key, None)
-    if bool(zone_soldiers.get("beta")) if beta_owner else bool(zone_soldiers.get("stable")):
+    zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))
+    if zone_owner_only:
         out.setdefault("zoneSoldiersEnabled", True)
         out.setdefault("zoneBaseLongSoldiers", 3)
         out.setdefault("zoneBaseShortSoldiers", 3)
         out.setdefault("zoneExposureBalancerEnabled", True)
+        out.setdefault("zoneEntryGrowthPercent", 2.0)
+        out.setdefault("zoneEntryMaxMultiplier", 1.20)
     else:
-        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled"):
+        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
+                    "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier"):
             out.pop(key, None)
     if not (bool(zones.get("beta")) if beta_owner else bool(zones.get("stable"))):
         for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
@@ -3041,12 +3054,13 @@ def bootstrap_user(user: dict[str, Any] = Depends(authenticated_user)) -> dict[s
     reference = db.collection("users").document(uid)
     snapshot = reference.get()
     now = datetime.now(timezone.utc)
-    release_channel = "BETA" if _is_beta_owner(user) else "STABLE"
+    beta_owner = _is_beta_owner(user)
+    release_channel = "BETA" if beta_owner else "STABLE"
     if not snapshot.exists:
-        reference.set({"createdAt": now, "updatedAt": now, "schemaVersion": 1, "releaseChannel": release_channel})
+        reference.set({"createdAt": now, "updatedAt": now, "schemaVersion": 1, "releaseChannel": release_channel, "betaOwner": beta_owner})
     else:
-        reference.set({"updatedAt": now, "releaseChannel": release_channel}, merge=True)
-    return {"uid": uid, "accountReady": True, "ordersEnabled": False, "releaseChannel": release_channel}
+        reference.set({"updatedAt": now, "releaseChannel": release_channel, "betaOwner": beta_owner}, merge=True)
+    return {"uid": uid, "accountReady": True, "ordersEnabled": False, "releaseChannel": release_channel, "betaOwner": beta_owner}
 
 
 @app.get("/v1/me/releases")

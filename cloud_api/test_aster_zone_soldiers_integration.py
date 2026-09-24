@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aster_multi_bb import MultiBbConfig
+from aster_multi_bb_core import _zone_entry_multiplier
 
 
 ROOT = Path(__file__).resolve().parent
@@ -91,3 +92,28 @@ def test_zone_change_is_not_an_exit_trigger():
     assert "OPEN soldiers remain OPEN when their origin zone becomes inactive" in zone_source
     assert "zone leaving" not in core_source.lower()
     assert "ZONE_CHANGE_CLOSE" not in core_source
+
+
+def test_zone_owned_rollout_is_hard_owner_only_not_generic_beta_or_stable():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert '_OWNER_ONLY_RELEASE_FEATURES = {"zone_soldiers"}' in source
+    assert 'if key in _OWNER_ONLY_RELEASE_FEATURES:' in source
+    assert 'return bool(_is_beta_owner(user) and row.get("beta"))' in source
+    assert 'beta_owner = profile.get("betaOwner") is True' in source
+    assert '"betaOwner": beta_owner' in source
+    assert 'zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))' in source
+
+def test_zone_entry_size_grows_gently_and_monotonically_with_zone_distance():
+    values = [_zone_entry_multiplier(zone, 2.0, 1.20) for zone in (0, 1, 2, 3)]
+    assert values == [1.0, 1.02, 1.04, 1.06]
+    assert _zone_entry_multiplier(-3, 2.0, 1.20) == values[-1]
+    assert _zone_entry_multiplier(50, 2.0, 1.20) == 1.20
+
+def test_zone_entry_growth_is_configurable_and_used_by_the_real_entry_planner():
+    cfg = MultiBbConfig.from_mapping({"engine":"multi_bb_v1","universeTopN":30,"maximumPositions":12,"longSlots":6,"shortSlots":6,"minimumLeverage":50,"zoneSoldiersEnabled":True,"zoneEntryGrowthPercent":2.5,"zoneEntryMaxMultiplier":1.15})
+    assert cfg.zone_entry_growth_percent == 2.5
+    assert cfg.zone_entry_max_multiplier == 1.15
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert "entry_margin_usd=zone_entry_margin_usd" in source
+    assert "entry_notional_usd=zone_entry_notional_usd" in source
+    assert '"entrySizing"' in source
