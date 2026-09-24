@@ -35,3 +35,19 @@ test("V2 seat bars show live occupancy against each side capacity", () => {
   assert.doesNotMatch(v2, /totals\.longSlots \/ totals\.totalSlots/);
   assert.doesNotMatch(v2, /totals\.shortSlots \/ totals\.totalSlots/);
 });
+
+test("Build 417 makes Zone-Soldatenstrategie an explicit persistent owner-only opt-in", () => {
+  assert.match(v2, /zoneSoldiersEnabled: settings\.zoneSoldiersEnabled === true && n\(settings\.zoneSoldiersOptInVersion, 0\) >= 1/);
+  assert.match(v2, /Zone-Soldatenstrategie/);
+  assert.match(v2, /Expliciete opt-in/);
+  assert.match(v2, /zoneSoldiersOptInVersion: draft\.zoneSoldiersEnabled \? 1 : 0/);
+  assert.match(v2, /STRATEGIE · TRADITIONEEL/);
+  assert.match(v2, /ZONE DRAINING/);
+});
+
+test("Build 417 shows the active Aster strategy outside settings", () => {
+  assert.match(page, /aster-strategy-mode/);
+  assert.match(page, /STRATEGIE · ZONE SOLDATEN/);
+  assert.match(page, /STRATEGIE · TRADITIONEEL/);
+  assert.match(page, /Portfolio Koers is informatief/);
+});

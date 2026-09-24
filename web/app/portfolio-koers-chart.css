@@ -156,3 +156,19 @@
 @media(max-width:385px){
   .portfolio-koers-old-zones,.portfolio-koers-exposure-line{font-size:5.7px!important}
 }
+
+/* Build 417 · Portfolio Koers signed zones are informative for every account. */
+.portfolio-zone-map .portfolio-koers-zone{border:0;box-shadow:none}
+.portfolio-zone-map .portfolio-koers-zone.level-n3{background:linear-gradient(90deg,rgba(2,45,38,.76),rgba(1,31,27,.66))}
+.portfolio-zone-map .portfolio-koers-zone.level-n2{background:linear-gradient(90deg,rgba(3,82,76,.68),rgba(2,55,53,.58))}
+.portfolio-zone-map .portfolio-koers-zone.level-n1{background:linear-gradient(90deg,rgba(5,111,66,.62),rgba(3,72,45,.52))}
+.portfolio-zone-map .portfolio-koers-zone.level-0{background:linear-gradient(90deg,rgba(6,59,120,.68),rgba(4,38,88,.56))}
+.portfolio-zone-map .portfolio-koers-zone.level-p1{background:linear-gradient(90deg,rgba(111,78,13,.58),rgba(76,51,7,.48))}
+.portfolio-zone-map .portfolio-koers-zone.level-p2{background:linear-gradient(90deg,rgba(133,58,10,.64),rgba(88,36,6,.53))}
+.portfolio-zone-map .portfolio-koers-zone.level-p3{background:linear-gradient(90deg,rgba(125,11,38,.70),rgba(78,6,25,.58))}
+.portfolio-zone-map .portfolio-koers-zone.active{filter:saturate(1.18) brightness(1.12);box-shadow:inset 0 0 0 1px rgba(247,205,83,.32),inset 0 0 36px rgba(245,202,75,.10)}
+.portfolio-koers-instruction.informational{grid-template-columns:42px minmax(0,1fr);border-color:rgba(89,150,180,.38);background:linear-gradient(105deg,rgba(4,25,34,.96),rgba(5,15,18,.99))}
+.portfolio-koers-instruction.informational .portfolio-koers-instruction-icon{border-color:#58a9ce;color:#6bc2eb}
+.portfolio-koers-instruction.draining{grid-template-columns:42px minmax(0,1fr);border-color:rgba(238,188,73,.48);background:linear-gradient(105deg,rgba(55,39,8,.32),rgba(5,15,13,.99))}
+.portfolio-koers-formation-primary.informational{display:grid;gap:3px}
+.portfolio-koers-formation-primary.informational>span{color:#9db0a8;font-size:7.5px}

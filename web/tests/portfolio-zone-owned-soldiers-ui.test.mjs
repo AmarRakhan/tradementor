@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Build 415 Formation Dashboard reads persistent zone-owned runtime state",async()=>{
+
+test("Build 417 Formation Dashboard reads persistent zone-owned runtime state only when explicitly active",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("zoneSoldiers"));
   assert.ok(component.includes("zoneSoldierEnabled"));
   assert.ok(component.includes("signedIntegerOrNull(zoneSoldierReport.activeZone)"));
-  assert.ok(component.includes("ZONE-OWNED"));
+  assert.ok(component.includes("ZONE-STURING ACTIEF"));
   assert.ok(component.includes("ZONEFORMATIE"));
   assert.ok(component.includes("IN ZONE OPEN"));
   assert.ok(component.includes("IN ZONE VRIJ"));
@@ -16,12 +17,14 @@ test("Build 415 Formation Dashboard reads persistent zone-owned runtime state",a
   assert.ok(component.includes("Exposure:"));
 });
 
-test("Build 415 disables the old global seat write while zone-owned automation is active",async()=>{
+
+test("Build 417 has no old global seat write in traditional or zone-owned mode",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('const actionLabel=zoneSoldierEnabled?(zoneEntriesSafe?"AUTO":"WACHTEN")'));
-  assert.ok(component.includes("disabled={zoneSoldierEnabled||!instructionActionable||advisorBusy}"));
-  assert.ok(component.includes("if(!zoneSoldierEnabled)void applySoldierInstruction()"));
-  assert.ok(component.includes("advisorEnabled&&!zoneSoldierEnabled?derivePortfolioZoneInstruction"));
+  assert.equal(component.includes("applySoldierInstruction"),false);
+  assert.equal(component.includes("derivePortfolioZoneInstruction"),false);
+  assert.equal(component.includes('method:"PUT"'),false);
+  assert.ok(component.includes("ZONE-STURING ACTIEF"));
+  assert.ok(component.includes("INFORMATIEF"));
 });
 
 test("Build 415 keeps percentage zone navigation and compact zone-owned styles",async()=>{
@@ -42,4 +45,11 @@ test("Build 416 shows gentle monotone zone entry sizing in the owner-only format
   assert.ok(component.includes("zoneEntrySizing"));
   assert.ok(component.includes("Inzet zone:"));
   assert.ok(component.includes("per zoneafstand"));
+});
+
+test("Build 417 exposes safe draining without new zone entries",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('zoneSoldierLifecycle==="DRAINING"'));
+  assert.ok(component.includes("drainingOpenCount"));
+  assert.ok(component.includes("geen nieuwe zone-entrys"));
 });

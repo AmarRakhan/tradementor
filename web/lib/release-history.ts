@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 416 release-contract sync: hard owner-only zone runtime plus gentle monotone zone-distance entry sizing.
+// Build 417 release-contract sync: Portfolio Koers is informational by default and zone trading requires explicit opt-in.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,57 +26,61 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "BETA · owner-only zonesoldaten + rustige inzetgroei",
+  title: "BETA · Portfolio Koers informatief + expliciete Zone-Soldatenstrategie",
   newItems: [
-    "Zone-owned tradegedrag is hard owner-only: alleen het expliciet geauthenticeerde beheeraccount kan deze testlogica gebruiken.",
-    "De basisinzet groeit standaard rustig met 2,0% per zoneafstand vanaf Z0, symmetrisch omhoog en omlaag, met een configureerbare cap van 1,20x.",
-    "Het Formation Dashboard toont de actieve zone-inzetfactor en het actuele basisbedrag.",
-    "Iedere bevestigde Portfolio Koers-zone krijgt een eigen persistente LONG- en SHORT-pool; de BETA-startformatie is 3 LONG + 3 SHORT per zone en is configureerbaar.",
-    "Alleen de bevestigde actuele 15m-zone mag nieuwe zone-soldaten inzetten. Vrije soldaten uit oude zones worden dormant; open trades blijven normaal beheerd.",
-    "Nieuwe entries bewaren originZone, originZoneCycleId, soldierId en soldierRole zodat restart/recovery de zoneherkomst kan reconstrueren.",
-    "Een notional-gebaseerde exposure-balancer gebruikt de bestaande trigger/release-deadband en maakt uitsluitend extra entrycapaciteit aan de ondervertegenwoordigde kant.",
-    "Het Formation Dashboard toont de actuele zoneformatie, open/vrije soldaten in die zone, oude zones die nog open staan, totale managed exposure en balancerstatus.",
+    "Portfolio Koers en de 15m-zones zijn nu informatief beschikbaar zonder dat ze slots, orders of position sizing wijzigen.",
+    "Zone-Soldatenstrategie heeft een expliciete AAN/UIT-keuze in Botconfigurator V2 en is standaard UIT, ook voor de BETA-owner.",
+    "Een opt-in-marker voorkomt dat oude Build-416 state of alleen BETA-toegang als toestemming voor zone-trading telt.",
+    "ASTER, Botconfigurator en Portfolio Koers tonen duidelijk TRADITIONEEL, ZONE SOLDATEN of ZONE DRAINING.",
+    "Uitschakelen met open zone-posities gaat veilig naar ZONE_DRAINING: geen nieuwe zone-soldaten, bestaande TP/DCA/SL-management blijft intact.",
   ],
   problems: [
-    "De vorige zone-advisor stuurde één globale LONG/SHORT-capaciteit en kon daardoor capaciteit over zonewissels laten ratelen.",
-    "Een negatieve zone werd vooral als LONG-bias en een positieve zone als SHORT-bias behandeld, terwijl de bedoelde strategie in iedere zone beide kanten bezit.",
-    "Bestaande globale posities hadden geen betrouwbare historische originZone en mochten daarom niet willekeurig aan een prijszone worden toegewezen.",
+    "Build 416 koppelde feature-beschikbaarheid nog impliciet aan zoneSoldiersEnabled=true.",
+    "Portfolio Koers bevatte nog een legacy pad dat globale LONG/SHORT-slots kon aanpassen.",
+    "De actieve handelsstrategie was niet op ieder relevant scherm onmiddellijk zichtbaar.",
   ],
   causes: [
-    "Multi BB kende tot nu toe globale longSlots/shortSlots als strategische bron van waarheid en geen persistente soldier pool per portfolio-zone.",
-    "De exposure-refill kon wel notional-scheefstand meten, maar was niet gekoppeld aan expliciete zone-owned basis- en balancer-soldaten.",
+    "Availability, user consent en runtime lifecycle waren nog niet als drie afzonderlijke states gemodelleerd.",
+    "De oude zone-advisor UI stamde van vóór de zone-owned strategie en had nog een settings-writepad.",
   ],
   fixes: [
-    "De releasegate en de geïsoleerde test-scheduler zijn hard owner-only; de test-scheduler selecteert exact één betaOwner en faalt dicht bij nul of meerdere matches.",
-    "Nieuwe zone-entries schalen margin of notional lineair met |zone|; bestaande open posities en DCA-state worden niet herschaald.",
-    "Nieuwe pure zoneSoldierState met deterministische pools/soldier IDs, één actieve pool voor nieuwe entries en idempotente zoneactivatie.",
-    "Open oude-zone trades blijven OPEN; een zonewisseling bevat geen close-pad. DCA/TP/SL blijven bij de bestaande position-managementlogica.",
-    "Legacy Multi-BB-posities worden expliciet LEGACY_UNASSIGNED: niet herverdeeld, niet gesloten, wel meegenomen in managed exposure en na sluiting niet opnieuw geopend als zonesoldaat.",
-    "De eerste migratietick houdt nieuwe zone-entries tegen, persistenteert eerst de legacy-markering en laat pas een volgende veilige tick nieuwe zone-owned entries toe.",
-    "De backend gebruikt dezelfde geëxtrapoleerde signed -3..+3 ladderlogica als de BETA-weergave zodat serversturing en dashboard niet over Z-1/Z0/Z+1 kunnen verschillen.",
+    "BETA/owner bepaalt alleen beschikbaarheid; zoneSoldiersEnabled vereist zoneSoldiersOptInVersion >= 1 en een expliciet opgeslagen gebruikerskeuze.",
+    "STABLE of niet-geautoriseerde accounts worden server-side altijd naar zoneSoldiersEnabled=false gedwongen.",
+    "Portfolio Koers bevat geen PUT/order/slotmutatiepad meer en toont traditionele modus expliciet als INFORMATIEF.",
+    "Zone sizing en exposure-balancer worden alleen opgebouwd wanneer de server-authoritatieve zone_mode waar is.",
+    "Open zone-owned posities blijven bij uitschakelen beheerd via DRAINING totdat ze flat zijn.",
   ],
   now: [
-    "Z0, Z+1, Z-1 enzovoort hebben ieder hun eigen LONG én SHORT-peloton; terugkeren naar een bestaande zone hergebruikt dezelfde pool zonder duplicatie.",
-    "Vrijgekomen soldaten uit een inactieve zone slapen totdat hun eigen zone terugkomt; vastzittende oude trades mogen over meerdere zones blijven bestaan.",
-    "LONG-overexposure kan extra SHORT-balancers toestaan en SHORT-overexposure extra LONG-balancers, maar daadwerkelijke entries blijven door bestaande Bollinger-, margin-, leverage-, ownership- en risicogates lopen.",
-    "De oude handmatige +LONG/+SHORT zoneknop is in zone-owned modus uitgeschakeld; globale seat-capacity is daar niet langer de strategiebron.",
+    "Traditionele strategie: Portfolio Koers toont zone, afstand en niveaus maar stuurt geen trades.",
+    "Zone-Soldatenstrategie: pas na expliciet AAN + Opslaan gebruikt de runtime de bevestigde 15m-zone voor nieuwe zone-owned entries.",
+    "Deploy, login, bootstrap of restart kan een uitgeschakelde zone-strategie niet automatisch inschakelen.",
   ],
-  before: "Build 414 maakte het Formation Dashboard duidelijker, maar de achterliggende sturing gebruikte nog globale LONG/SHORT-slots en directionele zone-bias.",
-  after: "Build 416 houdt de volledige zone-owned strategie owner-only en voegt de afgesproken rustige, nooit-afnemende inzetgroei per zoneafstand toe.",
+  before: "Build 416 maakte zone trading owner-only, maar BETA-beschikbaarheid kon nog impliciet als activatie werken.",
+  after: "Build 417 scheidt informatie, beschikbaarheid en trading-consent volledig en maakt de actieve strategie overal zichtbaar.",
   technicalDetails: [
-    "Rolloutfeature: zone_soldiers is hard owner-only; een STABLE- of generieke BETA-status kan dit gedrag voor een ander account niet activeren.",
-    "Default zoneEntryGrowthPercent = 2.0 en zoneEntryMaxMultiplier = 1.20; multiplier = min(cap, 1 + abs(zone) × growth/100).",
-    "Rolloutfeature: zone_soldiers = BETA true / STABLE false.",
-    "Standaard zoneformatie: 3 LONG + 3 SHORT; backendvelden zoneBaseLongSoldiers en zoneBaseShortSoldiers zijn configureerbaar.",
-    "Balancer-deadband hergebruikt exposureRefillTriggerPercent / exposureRefillReleasePercent; geen nieuw willekeurig financieel threshold.",
-    "Geen directe balancer-market-order toegevoegd; de gewone Multi-BB entrypipeline blijft verantwoordelijk voor kandidaat, Bollinger, margin, leverage, symbol ownership en execution guards.",
-    "Global capacity is in zone-owned modus afgeleid en blijft onder de bestaande platformveiligheidsgrens; oude globale side slots bepalen niet meer hoeveel nieuwe zone-soldaten bestaan.",
-    "Bestaande UI-regressietests zijn aangepast zodat de legacy zone-advisor fallback bewaakt blijft zonder de nieuwe zone-owned bron van waarheid als regressie te markeren.",
+    "zoneSoldiersOptInVersion=1 is vereist naast zoneSoldiersEnabled=true.",
+    "zoneSoldierLifecycle is ACTIVE, DRAINING of OFF.",
+    "Portfolio Koers heeft geen Strategy-2 settings-writepad meer.",
+    "Owner-only availability blijft behouden; STABLE krijgt geen zone-tradinggedrag.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-416-owner-only-zone-sizing",
+    version: "46",
+    build: "416",
+    releasedAt: "2026-09-24",
+    title: "BETA · owner-only zonesoldaten + rustige inzetgroei",
+    newItems: ["Owner-only zone-owned soldaten, persistente zoneherkomst, exposure-balancer en rustige lineaire inzetgroei per zoneafstand."],
+    problems: ["Feature-beschikbaarheid en expliciete gebruikersactivatie waren nog niet volledig gescheiden."],
+    causes: ["Build 416 gebruikte de BETA-releasegate nog om ontbrekende zoneSoldiersEnabled-state impliciet aan te vullen."],
+    fixes: ["Owner-only runtimebeveiliging en monotone zone sizing werden toegevoegd; Build 417 maakt de opt-in daarna expliciet."],
+    now: ["Historische basis voor de expliciete strategie-keuze van Build 417."],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-414-aster-cold-start-formation-dashboard",
     version: "46",
