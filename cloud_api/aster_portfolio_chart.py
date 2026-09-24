@@ -163,8 +163,24 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
             group["count"] += 1
             group["notionalUsd"] += abs(_number(raw.get("executedNotionalUsd", raw.get("notionalUsd"))))
             group["realizedPnlUsd"] += _number(raw.get("realizedPnlUsd"))
+            if kind == "entry":
+                origin = raw.get("originZone")
+                if isinstance(origin, int) or (isinstance(origin, str) and origin.lstrip("-+").isdigit()):
+                    group.setdefault("originZones", [])
+                    value = int(origin)
+                    if value not in group["originZones"]:
+                        group["originZones"].append(value)
+                role = str(raw.get("soldierRole", "")).upper().strip()
+                if role:
+                    group.setdefault("soldierRoles", [])
+                    if role not in group["soldierRoles"]:
+                        group["soldierRoles"].append(role)
     result = []
     for group in groups.values():
+        if isinstance(group.get("originZones"), list):
+            group["originZones"].sort()
+        if isinstance(group.get("soldierRoles"), list):
+            group["soldierRoles"].sort()
         if group["kind"] == "entry":
             side_letter = "L" if group["side"] == "LONG" else "S"
             amount = group["notionalUsd"]

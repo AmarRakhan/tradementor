@@ -100,6 +100,7 @@ from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
+from aster_zone_soldiers import confirmed_zone_from_display_zones
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -1437,6 +1438,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "lastTickAt":raw.get("lastTickAt"),"activePairs":len({str(k).split("|",1)[0] for k in managed}),"activeLegs":len(managed),
             "longLegs":long_count,"shortLegs":short_count,"positionCounts":{"uniqueMarketCount":len({str(k).split("|",1)[0] for k in managed}),
                 "positionLegCount":len(managed),"longLegs":long_count,"shortLegs":short_count},"multiBb":report,"multiBbPositions":managed,
+            "zoneSoldiers": raw.get("zoneSoldierReport") if isinstance(raw.get("zoneSoldierReport"),dict) else report.get("zoneSoldiers"),
             "universe":{"topN":int(settings.get("universeTopN",30)),"ranking":report.get("rankedTopN",[])},
             "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "directe slotvulling + Top-N + leveragefilter"},
                 "existingPositionManagement":{"reason":"Exchange truth + TP/DCA beheer"}},"candidateScan":{"checked":len(report.get("rankedTopN",[])),"reasons":[]},
@@ -1578,6 +1580,46 @@ def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:
         return failure
 
 
+def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """Return one confirmed 15m Portfolio Koers zone for NEW-entry gating.
+
+    Existing position management never depends on this result. Missing/stale or
+    discontinuous chart evidence therefore fails closed only for new zone-owned
+    entries and can never close an existing position.
+    """
+    try:
+        candles = _read_portfolio_chart_candles({"uid": uid}, "15m", 320)
+        contiguous = portfolio_chart_latest_contiguous_candles(candles, "15m")
+        current_bucket = int(now.timestamp() * 1000) // PORTFOLIO_CHART_TIMEFRAME_MS["15m"] * PORTFOLIO_CHART_TIMEFRAME_MS["15m"]
+        latest_bucket = int(safe_float(contiguous[-1].get("atMs"))) if contiguous else 0
+        continuity_ok = len(contiguous) >= 14 and latest_bucket >= current_bucket
+        cycle = raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"), dict) else {}
+        cycle_start = safe_float(cycle.get("cycleStartEquity"))
+        zones = derive_equity_zones(contiguous, cycle_start) if continuity_ok else []
+        equity = multi_bb_exchange_equity(account)
+        active = confirmed_zone_from_display_zones(zones, equity) if equity > 0 and zones else None
+        safe = bool(continuity_ok and active is not None)
+        return {
+            "safeForEntries": safe,
+            "activeZone": active,
+            "currentEquity": equity if equity > 0 else None,
+            "contiguousBars": len(contiguous),
+            "requiredContiguousBars": 14,
+            "latestBucketMs": latest_bucket or None,
+            "currentBucketMs": current_bucket,
+            "reason": "ZONE_CONFIRMED" if safe else "15M_ZONE_CONTINUITY_UNAVAILABLE",
+        }
+    except (google_exceptions.GoogleAPICallError, TypeError, ValueError) as exc:
+        return {
+            "safeForEntries": False,
+            "activeZone": None,
+            "currentEquity": None,
+            "contiguousBars": 0,
+            "requiredContiguousBars": 14,
+            "reason": f"ZONE_CONTEXT_UNAVAILABLE: {exc}",
+        }
+
+
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
                               before_order:Any=None,management_only:bool=False,event_symbol:str="",
                               event_mark_price:float|None=None)->dict[str,Any]:
@@ -1638,6 +1680,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
+    zone_context = _strategy2_zone_runtime_context(uid, raw, account, now) if bool(getattr(settings, "zone_soldiers_enabled", False)) else None
     # Realtime Strategy-2 management must evaluate the triggering symbol with
     # the exact websocket mark that caused this tick. Keep all exchange truth
     # (qty, entry, leverage) unchanged and override only markPrice in a local
@@ -1679,11 +1722,12 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
             return None
         report=run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=runtime_settings,uid=uid,account=account,positions=decision_positions,
             open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=dynamic_before_order,
-            dynamic_hedge_blocked_side=blocked_side)
+            dynamic_hedge_blocked_side=blocked_side,zone_context=zone_context)
         report["dynamicHedge"]={**dynamic,"blockedStrategySide":blocked_side or None,"portfolioTpSuppressed":str(getattr(settings,"take_profit_mode",""))=="PORTFOLIO"}
         return report
     return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=decision_positions,
-        open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
+        open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order,
+        zone_context=zone_context)
     # Realtime Simple Mode legacy runtime below is intentionally unreachable;
     # Multi BB is the only scheduler dispatch above this compatibility boundary.
     _run_focus_shadow_scheduler_step(uid,ref,raw,settings,now)
@@ -2501,6 +2545,7 @@ _RELEASE_FEATURE_DEFAULTS: dict[str, dict[str, Any]] = {
     "bot_configurator_v2": {"status": "TESTEN", "beta": True, "stable": False},
     "directional_bollinger": {"status": "TESTEN", "beta": True, "stable": False},
     "exposure_refill": {"status": "TESTEN", "beta": True, "stable": False},
+    "zone_soldiers": {"status": "TESTEN", "beta": True, "stable": False},
     "price_zones": {"status": "IN_BOUW", "beta": False, "stable": False},
     "margin_summary": {"status": "TESTEN", "beta": True, "stable": False},
 }
@@ -2541,6 +2586,14 @@ def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, An
         for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
                     "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
             out.pop(key, None)
+    if _release_feature_enabled(user, "zone_soldiers"):
+        out.setdefault("zoneSoldiersEnabled", True)
+        out.setdefault("zoneBaseLongSoldiers", 3)
+        out.setdefault("zoneBaseShortSoldiers", 3)
+        out.setdefault("zoneExposureBalancerEnabled", True)
+    else:
+        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled"):
+            out.pop(key, None)
     if not _release_feature_enabled(user, "price_zones"):
         for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
             out.pop(key, None)
@@ -2552,15 +2605,19 @@ def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) 
         "directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe",
         "exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
         "exposureRefillTriggerPercent", "exposureRefillReleasePercent",
+        "zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
         "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
     }
-    if not any(key in settings for key in beta_keys):
-        return dict(settings)
+    # Zone-owned soldiers are a rollout feature that may not exist in older
+    # stored settings yet. Always resolve the account release channel so the
+    # feature can be enabled safely without requiring the user to resave legacy
+    # Botconfigurator settings first.
     profile = user_reference({"uid": uid}).get().to_dict() or {}
     beta_owner = str(profile.get("releaseChannel") or "STABLE").upper() == "BETA"
     out = dict(settings)
     directional = _release_feature_record("directional_bollinger")
     refill = _release_feature_record("exposure_refill")
+    zone_soldiers = _release_feature_record("zone_soldiers")
     zones = _release_feature_record("price_zones")
     if not (bool(directional.get("beta")) if beta_owner else bool(directional.get("stable"))):
         for key in ("directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe"):
@@ -2568,6 +2625,14 @@ def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) 
     if not (bool(refill.get("beta")) if beta_owner else bool(refill.get("stable"))):
         for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
                     "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
+            out.pop(key, None)
+    if bool(zone_soldiers.get("beta")) if beta_owner else bool(zone_soldiers.get("stable")):
+        out.setdefault("zoneSoldiersEnabled", True)
+        out.setdefault("zoneBaseLongSoldiers", 3)
+        out.setdefault("zoneBaseShortSoldiers", 3)
+        out.setdefault("zoneExposureBalancerEnabled", True)
+    else:
+        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled"):
             out.pop(key, None)
     if not (bool(zones.get("beta")) if beta_owner else bool(zones.get("stable"))):
         for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
@@ -4435,7 +4500,31 @@ def aster_portfolio_chart(
     with _cache_lock:
         history_cache = _aster_closed_trades_cache.get(uid)
     recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
-    trade_markers = portfolio_chart_trade_markers(recent_activity, timeframe)
+    # New zone-owned entries retain their origin in the compact chart tooltip.
+    # Work on a copy of the cached fill activity; never rewrite historical fills.
+    managed_positions = strategy_state.get("multiBbPositions") if isinstance(strategy_state.get("multiBbPositions"), dict) else {}
+    attributed_entries = []
+    for raw_entry in recent_activity.get("entries", []) if isinstance(recent_activity.get("entries"), list) else []:
+        if not isinstance(raw_entry, dict):
+            continue
+        entry = dict(raw_entry)
+        key = f"{str(entry.get('symbol','')).upper()}|{str(entry.get('side','')).upper()}"
+        ownership = managed_positions.get(key) if isinstance(managed_positions.get(key), dict) else {}
+        entry_ms = _portfolio_chart_timestamp_ms(entry.get("timestampMs", entry.get("time")))
+        cycle_start_ms = int(safe_float(ownership.get("cycleStartedAtMs")))
+        if ownership and (cycle_start_ms <= 0 or entry_ms <= 0 or entry_ms >= cycle_start_ms - 300_000):
+            if ownership.get("originZone") is not None:
+                entry["originZone"] = ownership.get("originZone")
+            if str(ownership.get("soldierRole", "")).strip():
+                entry["soldierRole"] = str(ownership.get("soldierRole"))
+        attributed_entries.append(entry)
+    marker_activity = {
+        **recent_activity,
+        "entries": attributed_entries,
+        "exits": [dict(row) for row in recent_activity.get("exits", []) if isinstance(row, dict)]
+            if isinstance(recent_activity.get("exits"), list) else [],
+    }
+    trade_markers = portfolio_chart_trade_markers(marker_activity, timeframe)
     cashflow_markers = portfolio_chart_cashflow_markers(_portfolio_chart_cashflows(user, client), timeframe)
     zone_candles = portfolio_chart_latest_contiguous_candles(candles, timeframe)
     zones = derive_equity_zones(zone_candles, cycle_start)

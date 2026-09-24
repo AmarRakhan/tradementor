@@ -11,6 +11,10 @@ from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRA
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
+from aster_zone_soldiers import (
+    ROLE_EXPOSURE_BALANCER, ROLE_LEGACY_UNASSIGNED, ROLE_ZONE_BASE,
+    available_soldiers, claim_soldier, prepare_zone_runtime,
+)
 
 ENGINE = "multi_bb_v1"
 # Botconfigurator V2 beta keeps legacy defaults unless explicitly enabled.
@@ -51,6 +55,10 @@ class MultiBbConfig:
     exposure_refill_short_timeframe: str = "1m"
     exposure_refill_trigger_percent: float = 20.0
     exposure_refill_release_percent: float = 8.0
+    zone_soldiers_enabled: bool = False
+    zone_base_long_soldiers: int = 3
+    zone_base_short_soldiers: int = 3
+    zone_exposure_balancer_enabled: bool = True
     entry_margin_usd: float = 5.0
     entry_notional_usd: float = 250.0
     entry_sizing_mode: str = "notional"
@@ -107,6 +115,10 @@ class MultiBbConfig:
             exposure_refill_short_timeframe=normalize_bollinger_timeframe(raw.get("exposureRefillShortTimeframe", "1m")),
             exposure_refill_trigger_percent=_f(raw.get("exposureRefillTriggerPercent"), 20.0),
             exposure_refill_release_percent=_f(raw.get("exposureRefillReleasePercent"), 8.0),
+            zone_soldiers_enabled=bool(raw.get("zoneSoldiersEnabled", False)),
+            zone_base_long_soldiers=_i(raw.get("zoneBaseLongSoldiers"), 3),
+            zone_base_short_soldiers=_i(raw.get("zoneBaseShortSoldiers"), 3),
+            zone_exposure_balancer_enabled=bool(raw.get("zoneExposureBalancerEnabled", True)),
             entry_margin_usd=entry_margin_usd,
             entry_notional_usd=entry_notional_usd,
             entry_sizing_mode=entry_sizing_mode,
@@ -136,6 +148,10 @@ class MultiBbConfig:
         if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-bedrag en DCA-margin moeten positief zijn")
         if not 0 < self.exposure_refill_trigger_percent <= 100: raise ValueError("Exposure refill startdrempel moet tussen 0 en 100% liggen")
         if not 0 <= self.exposure_refill_release_percent < self.exposure_refill_trigger_percent: raise ValueError("Exposure refill stopdrempel moet lager zijn dan de startdrempel")
+        if not 1 <= self.zone_base_long_soldiers <= 100 or not 1 <= self.zone_base_short_soldiers <= 100:
+            raise ValueError("Zoneformatie LONG/SHORT moet tussen 1 en 100 soldaten liggen")
+        if self.zone_soldiers_enabled and self.asymmetric_hedge_enabled:
+            raise ValueError("Zone-soldaten en Asymmetrische Hedge kunnen niet tegelijk actief zijn")
         if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
@@ -164,6 +180,10 @@ class MultiBbConfig:
             "exposureRefillShortTimeframe": self.exposure_refill_short_timeframe,
             "exposureRefillTriggerPercent": self.exposure_refill_trigger_percent,
             "exposureRefillReleasePercent": self.exposure_refill_release_percent,
+            "zoneSoldiersEnabled": self.zone_soldiers_enabled,
+            "zoneBaseLongSoldiers": self.zone_base_long_soldiers,
+            "zoneBaseShortSoldiers": self.zone_base_short_soldiers,
+            "zoneExposureBalancerEnabled": self.zone_exposure_balancer_enabled,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
             "dcaMarginUsd": self.dca_margin_usd, "maxDca": self.max_dca, "unlimitedDca": self.unlimited_dca, "takeProfit": self.take_profit, "takeProfitEnabled": self.take_profit_enabled,
             "asymmetricHedgeModeEnabled": self.asymmetric_hedge_enabled, "shortStartMultiplier": self.short_start_multiplier,
@@ -547,7 +567,7 @@ def _effective_entry_timeframe(settings: MultiBbConfig, side: str, exposure: dic
 def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], settings: MultiBbConfig, uid: str,
                       account: dict[str, Any], positions: list[dict[str, Any]], open_orders: list[dict[str, Any]],
                       timestamp_ms: int, dry_run: bool = False, order_budget: int | None = None,
-                      before_order: Any = None) -> dict[str, Any]:
+                      before_order: Any = None, zone_context: dict[str, Any] | None = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
     exposure_refill = _exposure_refill_context(settings, positions, raw_state)
@@ -923,6 +943,43 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     active = _position_map(client.position_risk()) if sent and not dry_run else pmap
     active_symbols = {k.split("|", 1)[0] for k in active}
     account_position_count = len(active)
+
+    zone_state: dict[str, Any] | None = None
+    zone_report: dict[str, Any] | None = None
+    zone_mode = bool(getattr(settings, "zone_soldiers_enabled", False))
+    if zone_mode:
+        context = zone_context if isinstance(zone_context, dict) else {}
+        fallback_long = _f(getattr(settings, "entry_notional_long_usd", 0.0), _f(settings.entry_notional_usd))
+        fallback_short = _f(getattr(settings, "entry_notional_short_usd", 0.0), _f(settings.entry_notional_usd))
+        if settings.entry_sizing_mode == "margin":
+            fallback_long = _f(getattr(settings, "entry_margin_long_usd", 0.0), _f(settings.entry_margin_usd)) * max(1, settings.minimum_leverage)
+            fallback_short = _f(getattr(settings, "entry_margin_short_usd", 0.0), _f(settings.entry_margin_usd)) * max(1, settings.minimum_leverage)
+        fallback_unit = (fallback_long + fallback_short) / 2.0 if fallback_long > 0 and fallback_short > 0 else max(fallback_long, fallback_short, 1.0)
+        zone_state, state, zone_report = prepare_zone_runtime(
+            raw_zone_state=raw_state.get("zoneSoldierState"),
+            managed_state=state,
+            positions=list(active.values()),
+            confirmed_zone=context.get("activeZone"),
+            zone_safe=bool(context.get("safeForEntries", False)),
+            base_long=max(1, int(getattr(settings, "zone_base_long_soldiers", 3))),
+            base_short=max(1, int(getattr(settings, "zone_base_short_soldiers", 3))),
+            balancer_enabled=bool(getattr(settings, "zone_exposure_balancer_enabled", True)),
+            trigger_percent=settings.exposure_refill_trigger_percent,
+            release_percent=settings.exposure_refill_release_percent,
+            fallback_unit_notional=fallback_unit,
+            timestamp_ms=timestamp_ms,
+        )
+        zone_migration_hold = bool(_i((zone_report or {}).get("legacyMigratedThisTick")) > 0)
+        if not dry_run:
+            ref.set({
+                "multiBbPositions": state,
+                "zoneSoldierState": zone_state,
+                "zoneSoldierReport": {**(zone_report or {}), "migrationHold": zone_migration_hold},
+                "zoneSoldierUpdatedAt": datetime.now(timezone.utc),
+            }, merge=True)
+    else:
+        zone_migration_hold = False
+
     strategy_active_keys = {key for key in active if key in state or (settings.manual_symbol_selection_enabled and key in selected_keys)}
     # maximumPositions is the Strategy-2 seat cap, not a cap on every position
     # that happens to be open in the same Aster account. Manual/untracked Aster
@@ -943,7 +1000,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     long_count = sum(1 for k in strategy_active_keys if k.endswith("|LONG")); short_count = sum(1 for k in strategy_active_keys if k.endswith("|SHORT"))
     active_pair_count = sum(1 for key, row in state.items() if key.endswith("|LONG") and row.get("asymmetricHedge") and key in active)
     legacy_position_count = max(0, len(strategy_active_keys) - active_pair_count * 2) if settings.asymmetric_hedge_enabled else 0
-    if settings.asymmetric_hedge_enabled:
+    if zone_mode:
+        pair_need = 0
+        long_need = 0 if zone_migration_hold else len(available_soldiers(zone_state or {}, "LONG"))
+        short_need = 0 if zone_migration_hold else len(available_soldiers(zone_state or {}, "SHORT"))
+        # Zone-owned capacity is derived from old OPEN soldiers plus the current
+        # zone's free base/balancer soldiers. maximumPositions is no longer the
+        # strategy source of truth in this mode; a platform hard ceiling remains.
+        zone_platform_ceiling = min(400, max(2, settings.universe_top_n * 2))
+        account_remaining_capacity = max(0, zone_platform_ceiling - account_position_count)
+    elif settings.asymmetric_hedge_enabled:
         # Existing asymmetric LONG cycles keep occupying their pair slot even
         # after their paired SHORT has been released.  However, configured
         # LONG/SHORT slots are absolute side caps for NEW exposure: legacy
@@ -1061,13 +1127,19 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if side == "SHORT" and short_need <= 0: continue
             if side not in {"LONG", "SHORT"}: continue
         else:
-            # Respect the effective needs after exchange-truth side-cap clamping.
-            # _next_entry_side() balances tracked Strategy-2 ownership and must
-            # never resurrect a side whose real Aster count already hit its cap.
+            # Zone-owned mode balances the CURRENT zone pool only.  Old-zone
+            # OPEN soldiers remain managed but never consume the new zone's
+            # normal LONG/SHORT formation.
             if long_need <= 0:
                 side = "SHORT" if short_need > 0 else ""
             elif short_need <= 0:
                 side = "LONG"
+            elif zone_mode and zone_report:
+                current = zone_report.get("currentZone") if isinstance(zone_report.get("currentZone"), dict) else {}
+                current_long = _i(current.get("openLong")) + (_i(current.get("balancerOpen")) if str((zone_report.get("balancer") or {}).get("activeSide") or "") == "LONG" else 0)
+                current_short = _i(current.get("openShort")) + (_i(current.get("balancerOpen")) if str((zone_report.get("balancer") or {}).get("activeSide") or "") == "SHORT" else 0)
+                side = _next_entry_side(long_count=current_long, short_count=current_short,
+                    long_slots=current_long + long_need, short_slots=current_short + short_need)
             else:
                 side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
@@ -1172,7 +1244,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     "activeShort": fresh_short_count, "shortSlots": settings.short_slots,
                 })
                 continue
-            if not paired:
+            if not paired and not zone_mode:
                 fresh_side_count = fresh_long_count if side == "LONG" else fresh_short_count
                 side_slots = settings.long_slots if side == "LONG" else settings.short_slots
                 if fresh_side_count >= side_slots:
@@ -1250,8 +1322,20 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=margin_wait available={available} required={total_required}", flush=True)
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
+        planned_soldier = None
+        if zone_mode:
+            candidates_for_side = available_soldiers(zone_state or {}, side)
+            if not candidates_for_side:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": "NO_ACTIVE_ZONE_SOLDIER"})
+                if side == "LONG": long_need = 0
+                else: short_need = 0
+                continue
+            planned_soldier = candidates_for_side[0]
         entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
             "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
+        if planned_soldier is not None:
+            entry_action.update({"originZone": planned_soldier.get("originZone"), "originZoneCycleId": planned_soldier.get("originZoneCycleId"),
+                "soldierId": planned_soldier.get("soldierId"), "soldierRole": planned_soldier.get("role")})
         if orphan_priority:
             entry_action.update({"orphanShortPriority": True, "pairedContractLeverage": plan.leverage})
         short_action = ({"kind": "ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "leverage": short_plan.leverage, "notionalUsd": float(short_plan.notional_per_leg), "marginUsd": short_required, "multiplier": settings.short_start_multiplier} if paired and short_plan is not None else None)
@@ -1262,6 +1346,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 continue
         if dry_run:
             actions.append(entry_action)
+            if zone_mode:
+                simulated_key = f"SIM:{symbol}|{side}|{index}"
+                claimed = claim_soldier(zone_state or {}, side, trade_key=simulated_key, symbol=symbol,
+                    entry_price=prices[symbol], entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),
+                    timestamp_ms=timestamp_ms)
+                if claimed is None:
+                    actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": "NO_ACTIVE_ZONE_SOLDIER_AFTER_PLAN"})
+                    continue
             if short_action is not None and not defer_paired_short:
                 actions.append(short_action)
             elif short_action is not None and defer_paired_short:
@@ -1323,11 +1415,28 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=entry_filled side={side} leverage={plan.leverage} fillPrice={fill_price} fillQty={fill_qty}", flush=True)
             key = f"{symbol}|{side}"; cycle_id = hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16]
+            zone_claim = claim_soldier(zone_state or {}, side, trade_key=key, symbol=symbol,
+                entry_price=fill_price, entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),
+                timestamp_ms=timestamp_ms) if zone_mode else None
+            if zone_mode and zone_claim is None:
+                raise RuntimeError(f"{key}: bevestigde entry heeft geen zone-soldier ownership")
             state[key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": fill_price, "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,
                 "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True,
                 "asymmetricHedge": paired, "pairedShortKey": f"{symbol}|SHORT" if paired else "", "pairedShortPending": paired, "pairedShortOpened": False, "longTpBlocked": paired}
-            ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING", "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}, merge=True)
-            ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "cycleId": cycle_id, "timestamp": datetime.now(timezone.utc)})
+            if zone_claim is not None:
+                state[key].update({
+                    "originZone": zone_claim.get("originZone"), "originZoneCycleId": zone_claim.get("originZoneCycleId"),
+                    "soldierId": zone_claim.get("soldierId"), "soldierRole": zone_claim.get("role"),
+                    "soldierStatus": zone_claim.get("status"), "entryPortfolioEquity": zone_claim.get("entryPortfolioEquity"),
+                })
+            write_payload = {"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING", "lastReason": f"Multi DCA actief; nieuwe {side} geopend op {symbol}"}
+            if zone_mode:
+                write_payload["zoneSoldierState"] = zone_state
+            ref.set(write_payload, merge=True)
+            ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "cycleId": cycle_id,
+                "originZone": state[key].get("originZone"), "originZoneCycleId": state[key].get("originZoneCycleId"),
+                "soldierId": state[key].get("soldierId"), "soldierRole": state[key].get("soldierRole"),
+                "timestamp": datetime.now(timezone.utc)})
             actions.append(entry_action)
             if paired and short_plan is not None and short_action is not None and defer_paired_short:
                 pending = dict(state[key]); pending.update({"pairedShortPending": True, "pairedShortLastError": "SHORT_REQUIRES_PREEXISTING_LONG", "updatedAtMs": timestamp_ms}); state[key] = pending
@@ -1370,21 +1479,55 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         else:
             strategy_position_count += consumed
             seat_capacity_position_count += consumed
-            account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
             if side == "LONG":
                 long_count += 1
                 exchange_long_count += 1
             else:
                 short_count += 1
                 exchange_short_count += 1
-            strategy_long_need = max(0, settings.long_slots - long_count)
-            strategy_short_need = max(0, settings.short_slots - short_count)
-            exchange_long_spare = max(0, settings.long_slots - exchange_long_count)
-            exchange_short_spare = max(0, settings.short_slots - exchange_short_count)
-            long_need = min(strategy_long_need, exchange_long_spare)
-            short_need = min(strategy_short_need, exchange_short_spare)
+            if zone_mode:
+                zone_platform_ceiling = min(400, max(2, settings.universe_top_n * 2))
+                account_remaining_capacity = max(0, zone_platform_ceiling - account_position_count)
+                long_need = len(available_soldiers(zone_state or {}, "LONG"))
+                short_need = len(available_soldiers(zone_state or {}, "SHORT"))
+            else:
+                account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
+                strategy_long_need = max(0, settings.long_slots - long_count)
+                strategy_short_need = max(0, settings.short_slots - short_count)
+                exchange_long_spare = max(0, settings.long_slots - exchange_long_count)
+                exchange_short_spare = max(0, settings.short_slots - exchange_short_count)
+                long_need = min(strategy_long_need, exchange_long_spare)
+                short_need = min(strategy_short_need, exchange_short_spare)
         available -= total_required if consumed == 2 else required; sent += consumed
         if orphan_priority and side == "LONG": orphan_long_rescue_filled += 1
+
+    if zone_mode:
+        # One final exchange-truth reconciliation keeps the persisted report and
+        # pool occupancy exact after this tick's NEW entries.  It never changes
+        # ownership metadata or triggers an exit.
+        final_positions = list(active.values())
+        if sent and not dry_run:
+            final_positions = list(_position_map(client.position_risk()).values())
+        zone_state, state, zone_report = prepare_zone_runtime(
+            raw_zone_state=zone_state,
+            managed_state=state,
+            positions=final_positions,
+            confirmed_zone=(zone_context or {}).get("activeZone"),
+            zone_safe=bool((zone_context or {}).get("safeForEntries", False)),
+            base_long=max(1, int(getattr(settings, "zone_base_long_soldiers", 3))),
+            base_short=max(1, int(getattr(settings, "zone_base_short_soldiers", 3))),
+            balancer_enabled=bool(getattr(settings, "zone_exposure_balancer_enabled", True)),
+            trigger_percent=settings.exposure_refill_trigger_percent,
+            release_percent=settings.exposure_refill_release_percent,
+            fallback_unit_notional=max(
+                1.0,
+                (_f(getattr(settings, "entry_notional_long_usd", 0.0), _f(settings.entry_notional_usd))
+                 + _f(getattr(settings, "entry_notional_short_usd", 0.0), _f(settings.entry_notional_usd))) / 2.0,
+            ),
+            timestamp_ms=timestamp_ms,
+        )
+        long_need = len(available_soldiers(zone_state or {}, "LONG"))
+        short_need = len(available_soldiers(zone_state or {}, "SHORT"))
 
     managed_long = sum(1 for key in state if key.endswith("|LONG") and key in active)
     managed_short = sum(1 for key in state if key.endswith("|SHORT") and key in active)
@@ -1453,6 +1596,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "longExposureNotional": exposure_refill.get("longNotional"), "shortExposureNotional": exposure_refill.get("shortNotional"),
               "netExposureNotional": exposure_refill.get("netExposure"), "grossExposureNotional": exposure_refill.get("grossExposure"),
               "exposureImbalancePercent": exposure_refill.get("imbalancePercent"),
+              "zoneSoldiersEnabled": zone_mode,
+              "zoneMigrationHold": zone_migration_hold,
+              "zoneSoldiers": ({**(zone_report or {}), "migrationHold": zone_migration_hold} if zone_mode else zone_report),
               "shortRequiresLongEnabled": settings.short_requires_long_enabled,
               "asymmetricHedgeModeEnabled": settings.asymmetric_hedge_enabled, "shortStartMultiplier": settings.short_start_multiplier,
               "asymmetricHedgeActivePairs": active_pair_count, "remainingPairs": pair_need if settings.asymmetric_hedge_enabled else None,
@@ -1465,15 +1611,26 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "capacityOwnershipFallback": capacity_ownership_fallback,
               "untrackedAccountPositionCount": max(0, account_position_count - strategy_position_count),
               "managedLong": managed_long, "managedShort": managed_short, "manualLong": manual_long, "manualShort": manual_short,
-              "nextEntrySide": _next_entry_side(long_count=long_count, short_count=short_count, long_slots=settings.long_slots, short_slots=settings.short_slots),
+              "nextEntrySide": (
+                  _next_entry_side(
+                      long_count=_i((zone_report or {}).get("currentZone", {}).get("openLong")) if zone_mode else long_count,
+                      short_count=_i((zone_report or {}).get("currentZone", {}).get("openShort")) if zone_mode else short_count,
+                      long_slots=(_i((zone_report or {}).get("currentZone", {}).get("openLong")) + long_need) if zone_mode else settings.long_slots,
+                      short_slots=(_i((zone_report or {}).get("currentZone", {}).get("openShort")) + short_need) if zone_mode else settings.short_slots,
+                  )
+              ),
               "candidateCount": len(candidates), "scannedCandidateCount": scanned_candidates,
               "executableCandidateCount": executable_candidates,
               "minimumOrderRejectedCount": len(minimum_margin_rejections),
               "nextRequiredEntryMarginUsd": next_required_margin,
               "entrySkipReasons": skip_reasons, "updatedAtMs": timestamp_ms}
     if not dry_run:
-        ref.set({"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
+        final_payload = {"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
                  "exposureRefillSide": exposure_refill.get("activeSide") or None,
                  "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                 "lastReason": f"{entry_status}: {entry_reason}"}, merge=True)
+                 "lastReason": f"{entry_status}: {entry_reason}"}
+        if zone_mode:
+            final_payload["zoneSoldierState"] = zone_state
+            final_payload["zoneSoldierReport"] = zone_report
+        ref.set(final_payload, merge=True)
     return {"status": "simulated" if dry_run else "running", "action": "MULTI_BB", **report}

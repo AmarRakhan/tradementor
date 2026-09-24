@@ -136,3 +136,23 @@
   .portfolio-koers-formation-meta i{font-size:4.7px}
   .portfolio-koers-formation-meta b{font-size:5.5px}
 }
+
+
+/* Build 415 · zone-owned soldier formation dashboard. */
+.portfolio-koers-formation-meta.zone-owned>span{justify-content:space-between}
+.portfolio-koers-old-zones,.portfolio-koers-exposure-line{display:flex!important;align-items:center;gap:4px;min-width:0;color:#98aaa6!important;font:760 6.8px/1.12 system-ui!important;white-space:nowrap!important;overflow:hidden;text-overflow:ellipsis}
+.portfolio-koers-old-zones>b,.portfolio-koers-exposure-line>b{font-weight:920;color:#d6dfdc}
+.portfolio-koers-old-zones b.long,.portfolio-koers-exposure-line b.long{color:#25e9a5}
+.portfolio-koers-old-zones b.short,.portfolio-koers-exposure-line b.short{color:#ff667d}
+.portfolio-koers-instruction.zone_active{border-color:rgba(33,226,158,.48)}
+.portfolio-koers-instruction.zone_wait{border-color:rgba(244,184,67,.58)}
+.portfolio-koers-instruction.zone_active>button.neutral{color:#2ce9a8;background:linear-gradient(180deg,rgba(8,78,57,.64),rgba(3,34,26,.92))}
+.portfolio-koers-instruction.zone_wait>button.neutral{color:#e4c567}
+@media(max-width:560px){
+  .portfolio-koers-old-zones,.portfolio-koers-exposure-line{font-size:6.1px!important;gap:3px}
+  .portfolio-koers-formation-meta.zone-owned i{font-size:4.7px}
+  .portfolio-koers-formation-meta.zone-owned b{font-size:5.7px}
+}
+@media(max-width:385px){
+  .portfolio-koers-old-zones,.portfolio-koers-exposure-line{font-size:5.7px!important}
+}

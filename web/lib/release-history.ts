@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 414 release-contract sync: ASTER cold start, tighter zone focus, Formation Dashboard and the corrected focus regression fixture ship together.
+// Build 415 release-contract sync: BETA zone-owned soldiers, safe legacy migration and exposure-balancer UI ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,46 +26,93 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "ASTER cold start · zonefocus · Formation Dashboard",
+  title: "BETA · zone-owned soldaten en exposure-balancer",
   newItems: [
-    "De PWA en root-start openen direct op ASTER met Portfolio Koers bovenaan; HOME blijft via de onderste navigatie bereikbaar.",
-    "Portfolio Koers gebruikt een compactere zone-aware openingswindow zodat de actuele equity en aangrenzende zones centraal leesbaar zijn.",
-    "Koersinstructie is omgebouwd tot Formation Dashboard met actieve soldaten, LONG/SHORT-verdeling, stoelcapaciteit, vrije stoelen, doelcapaciteit en verschil/actie.",
-    "Procentuele zonebadges zijn groter gemaakt en de absolute prijsas is visueel teruggenomen.",
+    "Iedere bevestigde Portfolio Koers-zone krijgt een eigen persistente LONG- en SHORT-pool; de BETA-startformatie is 3 LONG + 3 SHORT per zone en is configureerbaar.",
+    "Alleen de bevestigde actuele 15m-zone mag nieuwe zone-soldaten inzetten. Vrije soldaten uit oude zones worden dormant; open trades blijven normaal beheerd.",
+    "Nieuwe entries bewaren originZone, originZoneCycleId, soldierId en soldierRole zodat restart/recovery de zoneherkomst kan reconstrueren.",
+    "Een notional-gebaseerde exposure-balancer gebruikt de bestaande trigger/release-deadband en maakt uitsluitend extra entrycapaciteit aan de ondervertegenwoordigde kant.",
+    "Het Formation Dashboard toont de actuele zoneformatie, open/vrije soldaten in die zone, oude zones die nog open staan, totale managed exposure en balancerstatus.",
   ],
   problems: [
-    "Een volledig afgesloten app kon opnieuw op de algemene HOME/Overboeken-landingspagina starten.",
-    "Build 413 kon op 15m nog voldoende oude candles in de openingswindow houden om de actuele equity bovenin de grafiek samen te drukken.",
-    "De oude koersinstructie vermengde huidige stoelcapaciteit met actieve posities en maakte vrije capaciteit niet expliciet zichtbaar.",
+    "De vorige zone-advisor stuurde één globale LONG/SHORT-capaciteit en kon daardoor capaciteit over zonewissels laten ratelen.",
+    "Een negatieve zone werd vooral als LONG-bias en een positieve zone als SHORT-bias behandeld, terwijl de bedoelde strategie in iedere zone beide kanten bezit.",
+    "Bestaande globale posities hadden geen betrouwbare historische originZone en mochten daarom niet willekeurig aan een prijszone worden toegewezen.",
   ],
   causes: [
-    "HomeNavigationBridge synthetiseerde bij een root-start expliciet tmView=home en de hoofdpage initialiseerde vóór routing nog op Hyperliquid.",
-    "De minimale zone-focuswindow van Build 413 was nog te groot voor een tijdreeks met een recente sprong of historiegat.",
-    "De instructiekaart was ontstaan als actie-uitleg en niet als operationeel overzicht van actief, capaciteit, vrij en doel.",
+    "Multi BB kende tot nu toe globale longSlots/shortSlots als strategische bron van waarheid en geen persistente soldier pool per portfolio-zone.",
+    "De exposure-refill kon wel notional-scheefstand meten, maar was niet gekoppeld aan expliciete zone-owned basis- en balancer-soldaten.",
   ],
   fixes: [
-    "Manifest start_url wijst naar #/aster; de runtime root-fallback zet eveneens ASTER en de eerste React-state is ASTER zodat er geen HOME-flash nodig is.",
-    "De focuswindow is per timeframe verder verkleind en mag na zes recente relevante candles al stoppen vóór een oude candle ver buiten de actieve zone.",
-    "De kaart onderscheidt actieve LONG/SHORT-posities, ingestelde capaciteit, vrije stoelen en gewenste zonecapaciteit expliciet.",
-    "De bestaande actieknop blijft uitsluitend longSlots, shortSlots en maximumPositions opslaan; er is geen directe exchange-order toegevoegd.",
+    "Nieuwe pure zoneSoldierState met deterministische pools/soldier IDs, één actieve pool voor nieuwe entries en idempotente zoneactivatie.",
+    "Open oude-zone trades blijven OPEN; een zonewisseling bevat geen close-pad. DCA/TP/SL blijven bij de bestaande position-managementlogica.",
+    "Legacy Multi-BB-posities worden expliciet LEGACY_UNASSIGNED: niet herverdeeld, niet gesloten, wel meegenomen in managed exposure en na sluiting niet opnieuw geopend als zonesoldaat.",
+    "De eerste migratietick houdt nieuwe zone-entries tegen, persistenteert eerst de legacy-markering en laat pas een volgende veilige tick nieuwe zone-owned entries toe.",
+    "De backend gebruikt dezelfde geëxtrapoleerde signed -3..+3 ladderlogica als de BETA-weergave zodat serversturing en dashboard niet over Z-1/Z0/Z+1 kunnen verschillen.",
   ],
   now: [
-    "Cold start → ASTER → Portfolio Koers → Portfolio Snapshot.",
-    "De actuele koers staat bij openen dichter bij het midden van het relevante zonegebied en handmatig uitzoomen blijft mogelijk omdat geen historische candle wordt verwijderd.",
-    "De gebruiker leest in één kaart: zone/bias, actief totaal, LONG/SHORT actief, capaciteit, vrij, doel, verschil, zoneafstanden en de bestaande seat-capacity actie.",
+    "Z0, Z+1, Z-1 enzovoort hebben ieder hun eigen LONG én SHORT-peloton; terugkeren naar een bestaande zone hergebruikt dezelfde pool zonder duplicatie.",
+    "Vrijgekomen soldaten uit een inactieve zone slapen totdat hun eigen zone terugkomt; vastzittende oude trades mogen over meerdere zones blijven bestaan.",
+    "LONG-overexposure kan extra SHORT-balancers toestaan en SHORT-overexposure extra LONG-balancers, maar daadwerkelijke entries blijven door bestaande Bollinger-, margin-, leverage-, ownership- en risicogates lopen.",
+    "De oude handmatige +LONG/+SHORT zoneknop is in zone-owned modus uitgeschakeld; globale seat-capacity is daar niet langer de strategiebron.",
   ],
-  before: "Build 413 maakte de zoneafstanden percentage-first, maar startte nog niet direct op ASTER en de openingsfocus kon bij recente grote historieverschillen nog te ruim zijn.",
-  after: "Build 414 maakt ASTER de operationele cold-start, verkleint de initiële chartcamera verder en maakt de koersinstructie een Formation Dashboard.",
+  before: "Build 414 maakte het Formation Dashboard duidelijker, maar de achterliggende sturing gebruikte nog globale LONG/SHORT-slots en directionele zone-bias.",
+  after: "Build 415 introduceert voor het BETA-account persistente zone-owned soldaten met symmetrische LONG/SHORT-pools, legacy-safe migratie en een aparte exposure-balancer.",
   technicalDetails: [
-    "Geen candle-, zone-, Bollinger-, DCA-, TP/SL-, entry- of orderlogica gewijzigd.",
-    "Alle volledige historische candles blijven in de dataset en worden zichtbaar bij handmatig uitzoomen.",
-    "Actief = multiBb.activeLong/activeShort; capaciteit = settings.longSlots/shortSlots; vrij = max(0, capaciteit - actief); doel = zone-advisor desiredLongSlots/desiredShortSlots.",
-    "De zone-focus regressietest gebruikt recente candles binnen het relevante zonevenster en bevestigt dat een oudere, verre candle buiten de initiële camera kan blijven.",
+    "Rolloutfeature: zone_soldiers = BETA true / STABLE false.",
+    "Standaard zoneformatie: 3 LONG + 3 SHORT; backendvelden zoneBaseLongSoldiers en zoneBaseShortSoldiers zijn configureerbaar.",
+    "Balancer-deadband hergebruikt exposureRefillTriggerPercent / exposureRefillReleasePercent; geen nieuw willekeurig financieel threshold.",
+    "Geen directe balancer-market-order toegevoegd; de gewone Multi-BB entrypipeline blijft verantwoordelijk voor kandidaat, Bollinger, margin, leverage, symbol ownership en execution guards.",
+    "Global capacity is in zone-owned modus afgeleid en blijft onder de bestaande platformveiligheidsgrens; oude globale side slots bepalen niet meer hoeveel nieuwe zone-soldaten bestaan.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-414-aster-cold-start-formation-dashboard",
+    version: "46",
+    build: "414",
+    releasedAt: "2026-09-24",
+    title: "ASTER cold start · zonefocus · Formation Dashboard",
+    newItems: [
+      "De PWA en root-start openen direct op ASTER met Portfolio Koers bovenaan; HOME blijft via de onderste navigatie bereikbaar.",
+      "Portfolio Koers gebruikt een compactere zone-aware openingswindow zodat de actuele equity en aangrenzende zones centraal leesbaar zijn.",
+      "Koersinstructie is omgebouwd tot Formation Dashboard met actieve soldaten, LONG/SHORT-verdeling, stoelcapaciteit, vrije stoelen, doelcapaciteit en verschil/actie.",
+      "Procentuele zonebadges zijn groter gemaakt en de absolute prijsas is visueel teruggenomen.",
+    ],
+    problems: [
+      "Een volledig afgesloten app kon opnieuw op de algemene HOME/Overboeken-landingspagina starten.",
+      "Build 413 kon op 15m nog voldoende oude candles in de openingswindow houden om de actuele equity bovenin de grafiek samen te drukken.",
+      "De oude koersinstructie vermengde huidige stoelcapaciteit met actieve posities en maakte vrije capaciteit niet expliciet zichtbaar.",
+    ],
+    causes: [
+      "HomeNavigationBridge synthetiseerde bij een root-start expliciet tmView=home en de hoofdpage initialiseerde vóór routing nog op Hyperliquid.",
+      "De minimale zone-focuswindow van Build 413 was nog te groot voor een tijdreeks met een recente sprong of historiegat.",
+      "De instructiekaart was ontstaan als actie-uitleg en niet als operationeel overzicht van actief, capaciteit, vrij en doel.",
+    ],
+    fixes: [
+      "Manifest start_url wijst naar #/aster; de runtime root-fallback zet eveneens ASTER en de eerste React-state is ASTER zodat er geen HOME-flash nodig is.",
+      "De focuswindow is per timeframe verder verkleind en mag na zes recente relevante candles al stoppen vóór een oude candle ver buiten de actieve zone.",
+      "De kaart onderscheidt actieve LONG/SHORT-posities, ingestelde capaciteit, vrije stoelen en gewenste zonecapaciteit expliciet.",
+      "De bestaande actieknop blijft uitsluitend longSlots, shortSlots en maximumPositions opslaan; er is geen directe exchange-order toegevoegd.",
+    ],
+    now: [
+      "Cold start → ASTER → Portfolio Koers → Portfolio Snapshot.",
+      "De actuele koers staat bij openen dichter bij het midden van het relevante zonegebied en handmatig uitzoomen blijft mogelijk omdat geen historische candle wordt verwijderd.",
+      "De gebruiker leest in één kaart: zone/bias, actief totaal, LONG/SHORT actief, capaciteit, vrij, doel, verschil, zoneafstanden en de bestaande seat-capacity actie.",
+    ],
+    before: "Build 413 maakte de zoneafstanden percentage-first, maar startte nog niet direct op ASTER en de openingsfocus kon bij recente grote historieverschillen nog te ruim zijn.",
+    after: "Build 414 maakt ASTER de operationele cold-start, verkleint de initiële chartcamera verder en maakt de koersinstructie een Formation Dashboard.",
+    technicalDetails: [
+      "Geen candle-, zone-, Bollinger-, DCA-, TP/SL-, entry- of orderlogica gewijzigd.",
+      "Alle volledige historische candles blijven in de dataset en worden zichtbaar bij handmatig uitzoomen.",
+      "Actief = multiBb.activeLong/activeShort; capaciteit = settings.longSlots/shortSlots; vrij = max(0, capaciteit - actief); doel = zone-advisor desiredLongSlots/desiredShortSlots.",
+      "De zone-focus regressietest gebruikt recente candles binnen het relevante zonevenster en bevestigt dat een oudere, verre candle buiten de initiële camera kan blijven.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-413-portfolio-koers-percent-focus",
     version: "46",
