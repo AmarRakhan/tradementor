@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 417 final release-contract: informational Portfolio Koers, explicit zone opt-in and safe draining.
+// Build 418 release-contract: owner-only continuity monitor on top of Build 417 explicit zone opt-in.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -25,6 +25,50 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
+  releasedAt: "2026-09-24",
+  title: "BETA · App continuïteitsbewaker + Bybit betaalreserve",
+  newItems: [
+    "Nieuwe owner-only kaart App kosten & betalingen op HOME met live status van ChatGPT, GitHub, Google Cloud en Bybit betaalreserve.",
+    "Nieuwe mobiele continuïteitspagina met bekende betalingen, bekende maandkosten, providerstatus, veiligheidsbuffer en afhankelijkheden.",
+    "Bybit krijgt een volledig aparte read-only Funding-walletkoppeling; de backend accepteert uitsluitend een sleutel waarvoor Bybit readOnly=1 bevestigt.",
+    "Kritieke continuiteitsmeldingen kunnen bij appstart verschijnen en worden bewust bevestigd zonder trading state te wijzigen.",
+  ],
+  problems: [
+    "Een gemiste betaling of uitgezette billing kon de app onverwacht raken zonder één centraal overzicht.",
+    "Kosten, providerstatus en betaalreserve moesten verspreid over leveranciers handmatig worden onthouden.",
+  ],
+  causes: [
+    "Er bestond nog geen gescheiden read-only continuiteitsdomein naast de trading runtime.",
+    "Providerdata had nog geen uniform onderscheid tussen live, handmatig, berekend en onbekend.",
+  ],
+  fixes: [
+    "Continuity Dashboard is hard owner-only op een immutable UID-claim en andere accounts starten geen continuity-providercalls.",
+    "Een dedicated Secret Manager secret bewaart uitsluitend de aparte read-only Bybit continuïteitssleutel.",
+    "Google Cloud billing wordt fail-closed gecontroleerd: uitgeschakelde billing is KRITIEK en ontbrekend leesrecht blijft zichtbaar als niet geverifieerd.",
+    "ChatGPT-consumentenbilling blijft handmatig zolang geen ondersteunde live billinginterface beschikbaar is; onbekende bedragen en vervaldatums worden niet verzonnen.",
+  ],
+  now: [
+    "HOME toont de continuïteitskaart alleen aan het BETA-owneraccount.",
+    "Bybit kan vanuit de app worden getest en gekoppeld; het API-secret komt na opslag niet terug in browserresponses.",
+    "Providerkaarten tonen hun databron en afhankelijkheid, zodat groen alleen uit bevestigde controles komt.",
+    "De module bevat geen order-, DCA-, TP/SL-, zone-, soldier-, scanner-, leverage- of Close All-mutatiepad.",
+  ],
+  before: "Build 417 maakte Portfolio Koers informatief by default en vereiste expliciete owner opt-in voor de Zone-Soldatenstrategie.",
+  after: "Build 418 voegt daar een volledig losstaande owner-only continuïteitslaag aan toe voor providerstatus, betalingen en read-only betaalreserve.",
+  technicalDetails: [
+    "Webroutes: /api/continuity, /refresh, /bybit/test, /bybit, /settings en /alerts/ack.",
+    "Cloudroutes gebruiken dezelfde Firebase sessie en daarboven een aparte continuity owner-UID gate.",
+    "Bybit V5 wordt uitsluitend gelezen via query-api en Funding balance endpoints; er bestaat geen muterende Bybit methode in de continuity client.",
+    "Providerwaarden gebruiken LIVE_API, MANUAL, CALCULATED of UNKNOWN en onbekende due dates worden niet hardcoded.",
+  ],
+  confidence: "confirmed",
+};
+
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-417-explicit-zone-opt-in",
+  version: "46",
+  build: "417",
   releasedAt: "2026-09-24",
   title: "BETA · Portfolio Koers informatief + expliciete Zone-Soldatenstrategie",
   newItems: [
@@ -65,9 +109,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Web- en backendcontracten bewaken expliciet dat Portfolio Koers geen Strategy-2 settings kan muteren.",
   ],
   confidence: "confirmed",
-};
-
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
   {
     id: "v46-build-416-owner-only-zone-sizing",
     version: "46",
