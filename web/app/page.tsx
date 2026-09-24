@@ -33,7 +33,7 @@ import { effectiveAsterDcaCount } from "@/lib/aster-dca-count.mjs";
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
 type InterfaceMode = "legacy" | "premium";
-type AppSkin = "original" | "suriname-heritage";
+type AppSkin = "original" | "suriname-heritage" | "ultra-rivalry";
 type ChartScope = TradingExchange | "portfolio";
 type PremiumSection = "dashboard" | "screener" | "bots" | "risk" | "portfolio" | "exchanges" | "wallet" | "academy" | "settings";
 
@@ -152,7 +152,7 @@ function TradeMentorHome() {
     if (route !== initial) window.history.replaceState({ destination: initial }, "", destinationHref(initial));
     if (initial === "aster") requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
     const savedSkin = window.localStorage.getItem("tradementor.appSkin");
-    const skin = savedSkin === "suriname-heritage" ? "suriname-heritage" : "original";
+    const skin: AppSkin = savedSkin === "suriname-heritage" || savedSkin === "ultra-rivalry" ? savedSkin : "original";
     setAppSkin(skin);
     document.documentElement.dataset.appSkin = skin;
   }, []);
@@ -708,6 +708,7 @@ function AppSkinSelector({ skin, onChange }: { skin: AppSkin; onChange: (skin: A
     <div className="app-skin-options">
       <button type="button" className={skin === "original" ? "active" : ""} aria-pressed={skin === "original"} onClick={() => onChange("original")}><span className="skin-preview original" /><strong>TradeMentor Original</strong><small>De vertrouwde blauw-donkere stijl.</small></button>
       <button type="button" className={skin === "suriname-heritage" ? "active" : ""} aria-pressed={skin === "suriname-heritage"} onClick={() => onChange("suriname-heritage")}><span className="skin-preview heritage" /><strong>Suriname Heritage</strong><small>Diep groen, warm goud en tropische diepte.</small></button>
+      <button type="button" className={skin === "ultra-rivalry" ? "active" : ""} aria-pressed={skin === "ultra-rivalry"} onClick={() => onChange("ultra-rivalry")}><span className="skin-preview rivalry" /><strong>Ultra Rivalry</strong><small>ASTER-only · Goku LONG · Vegeta SHORT · Zeno balance.</small></button>
     </div>
     <small className="interface-mode-message">De keuze wordt direct toegepast en op dit apparaat onthouden.</small>
   </section>;
