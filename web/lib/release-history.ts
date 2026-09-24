@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 418 release-contract: owner-only continuity monitor on top of Build 417 explicit zone opt-in.
+// Build 419 release-contract: first Zone-Soldaten opt-in preserves safe defaults.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,45 +26,79 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "BETA · App continuïteitsbewaker + Bybit betaalreserve",
+  title: "Zone-Soldatenstrategie · eerste opt-in veilig opslaan",
   newItems: [
-    "Nieuwe owner-only kaart App kosten & betalingen op HOME met live status van ChatGPT, GitHub, Google Cloud en Bybit betaalreserve.",
-    "Nieuwe mobiele continuïteitspagina met bekende betalingen, bekende maandkosten, providerstatus, veiligheidsbuffer en afhankelijkheden.",
-    "Bybit krijgt een volledig aparte read-only Funding-walletkoppeling; de backend accepteert uitsluitend een sleutel waarvoor Bybit readOnly=1 bevestigt.",
-    "Kritieke continuiteitsmeldingen kunnen bij appstart verschijnen en worden bewust bevestigd zonder trading state te wijzigen.",
+    "Een account zonder eerder opgeslagen zonevelden gebruikt bij de eerste expliciete opt-in nu de bedoelde veilige defaults.",
+    "Standaard zoneformatie blijft 3 LONG + 3 SHORT, inzetgroei 2% per zoneafstand en maximale zone-inzetfactor 1,20x.",
   ],
   problems: [
-    "Een gemiste betaling of uitgezette billing kon de app onverwacht raken zonder één centraal overzicht.",
-    "Kosten, providerstatus en betaalreserve moesten verspreid over leveranciers handmatig worden onthouden.",
+    "Bij de eerste opt-in kon een ontbrekende zoneEntryMaxMultiplier in de webconfigurator als 0,00x worden verstuurd, waardoor de backend Opslaan terecht weigerde.",
+    "Dezelfde lege-waardeconversie kon de nog niet opgeslagen 3/3-zoneformatie stil terugbrengen naar 1/1 en de inzetgroei naar 0%.",
   ],
   causes: [
-    "Er bestond nog geen gescheiden read-only continuiteitsdomein naast de trading runtime.",
-    "Providerdata had nog geen uniform onderscheid tussen live, handmatig, berekend en onbekend.",
+    "De algemene numerieke helper behandelde een lege of ontbrekende waarde via Number(\"\") als geldige nul voordat de bedoelde fallback werd toegepast.",
   ],
   fixes: [
-    "Continuity Dashboard is hard owner-only op een immutable UID-claim en andere accounts starten geen continuity-providercalls.",
-    "Een dedicated Secret Manager secret bewaart uitsluitend de aparte read-only Bybit continuïteitssleutel.",
-    "Google Cloud billing wordt fail-closed gecontroleerd: uitgeschakelde billing is KRITIEK en ontbrekend leesrecht blijft zichtbaar als niet geverifieerd.",
-    "ChatGPT-consumentenbilling blijft handmatig zolang geen ondersteunde live billinginterface beschikbaar is; onbekende bedragen en vervaldatums worden niet verzonnen.",
+    "Een aparte nDefault-helper behandelt null, undefined en lege strings nu als ontbrekend en gebruikt dan expliciet de veilige fallback.",
+    "Alle vier nieuwe zone-defaults gebruiken die helper: base LONG, base SHORT, inzetgroei en maximale inzetfactor.",
+    "Regressietests bewaken dat een legacy account bij de eerste Zone-Soldaten-save 3/3, 2% en 1,20x behoudt.",
   ],
   now: [
-    "HOME toont de continuïteitskaart alleen aan het BETA-owneraccount.",
-    "Bybit kan vanuit de app worden getest en gekoppeld; het API-secret komt na opslag niet terug in browserresponses.",
-    "Providerkaarten tonen hun databron en afhankelijkheid, zodat groen alleen uit bevestigde controles komt.",
-    "De module bevat geen order-, DCA-, TP/SL-, zone-, soldier-, scanner-, leverage- of Close All-mutatiepad.",
+    "De owner-BETA kan Zone-Soldatenstrategie expliciet AAN zetten en Opslaan zonder de fout over een maximale zone-inzetfactor van 0,00x.",
+    "De backend-validatie 1,00x–3,00x blijft ongewijzigd en beschermt tegen werkelijk ongeldige waarden.",
   ],
-  before: "Build 417 maakte Portfolio Koers informatief by default en vereiste expliciete owner opt-in voor de Zone-Soldatenstrategie.",
-  after: "Build 418 voegt daar een volledig losstaande owner-only continuïteitslaag aan toe voor providerstatus, betalingen en read-only betaalreserve.",
+  before: "Build 418 kon bij een eerste zone-opt-in zonder bestaande zonevelden onbedoeld 0,00x naar de backend sturen.",
+  after: "Build 419 migreert ontbrekende zonevelden tijdens de save naar de bedoelde veilige defaults zonder bestaande expliciete waarden te overschrijven.",
   technicalDetails: [
-    "Webroutes: /api/continuity, /refresh, /bybit/test, /bybit, /settings en /alerts/ack.",
-    "Cloudroutes gebruiken dezelfde Firebase sessie en daarboven een aparte continuity owner-UID gate.",
-    "Bybit V5 wordt uitsluitend gelezen via query-api en Funding balance endpoints; er bestaat geen muterende Bybit methode in de continuity client.",
-    "Providerwaarden gebruiken LIVE_API, MANUAL, CALCULATED of UNKNOWN en onbekende due dates worden niet hardcoded.",
+    "Web-only fix in Botconfigurator V2; geen order-, DCA-, TP/SL-, exchange- of bestaande positie-state gewijzigd.",
+    "Expliciete zone-opt-in uit Build 417 blijft vereist.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-418-continuity-monitor",
+    version: "46",
+    build: "418",
+    releasedAt: "2026-09-24",
+    title: "BETA · App continuïteitsbewaker + Bybit betaalreserve",
+    newItems: [
+      "Nieuwe owner-only kaart App kosten & betalingen op HOME met live status van ChatGPT, GitHub, Google Cloud en Bybit betaalreserve.",
+      "Nieuwe mobiele continuïteitspagina met bekende betalingen, bekende maandkosten, providerstatus, veiligheidsbuffer en afhankelijkheden.",
+      "Bybit krijgt een volledig aparte read-only Funding-walletkoppeling; de backend accepteert uitsluitend een sleutel waarvoor Bybit readOnly=1 bevestigt.",
+      "Kritieke continuiteitsmeldingen kunnen bij appstart verschijnen en worden bewust bevestigd zonder trading state te wijzigen.",
+    ],
+    problems: [
+      "Een gemiste betaling of uitgezette billing kon de app onverwacht raken zonder één centraal overzicht.",
+      "Kosten, providerstatus en betaalreserve moesten verspreid over leveranciers handmatig worden onthouden.",
+    ],
+    causes: [
+      "Er bestond nog geen gescheiden read-only continuïteitsdomein naast de trading runtime.",
+      "Providerdata had nog geen uniform onderscheid tussen live, handmatig, berekend en onbekend.",
+    ],
+    fixes: [
+      "Continuity Dashboard is hard owner-only op een immutable UID-claim en andere accounts starten geen continuity-providercalls.",
+      "Een dedicated Secret Manager secret bewaart uitsluitend de aparte read-only Bybit continuïteitssleutel.",
+      "Google Cloud billing wordt fail-closed gecontroleerd: uitgeschakelde billing is KRITIEK en ontbrekend leesrecht blijft zichtbaar als niet geverifieerd.",
+      "ChatGPT-consumentenbilling blijft handmatig zolang geen ondersteunde live billinginterface beschikbaar is; onbekende bedragen en vervaldatums worden niet verzonnen.",
+    ],
+    now: [
+      "HOME toont de continuïteitskaart alleen aan het BETA-owneraccount.",
+      "Bybit kan vanuit de app worden getest en gekoppeld; het API-secret komt na opslag niet terug in browserresponses.",
+      "Providerkaarten tonen hun databron en afhankelijkheid, zodat groen alleen uit bevestigde controles komt.",
+      "De module bevat geen order-, DCA-, TP/SL-, zone-, soldier-, scanner-, leverage- of Close All-mutatiepad.",
+    ],
+    before: "Build 417 maakte Portfolio Koers informatief by default en vereiste expliciete owner opt-in voor de Zone-Soldatenstrategie.",
+    after: "Build 418 voegt daar een volledig losstaande owner-only continuïteitslaag aan toe voor providerstatus, betalingen en read-only betaalreserve.",
+    technicalDetails: [
+      "Webroutes: /api/continuity, /refresh, /bybit/test, /bybit, /settings en /alerts/ack.",
+      "Cloudroutes gebruiken dezelfde Firebase sessie en daarboven een aparte continuity owner-UID gate.",
+      "Bybit V5 wordt uitsluitend gelezen via query-api en Funding balance endpoints; er bestaat geen muterende Bybit methode in de continuity client.",
+      "Providerwaarden gebruiken LIVE_API, MANUAL, CALCULATED of UNKNOWN en onbekende due dates worden niet hardcoded.",
+    ],
+    confidence: "confirmed",
+  },
   {
   id: "v46-build-417-explicit-zone-opt-in",
   version: "46",

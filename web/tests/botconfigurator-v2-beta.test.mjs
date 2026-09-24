@@ -51,3 +51,13 @@ test("Build 417 shows the active Aster strategy outside settings", () => {
   assert.match(page, /STRATEGIE · TRADITIONEEL/);
   assert.match(page, /Portfolio Koers is informatief/);
 });
+
+
+test("Build 419 keeps safe zone defaults when legacy settings do not contain zone fields", () => {
+  assert.match(v2, /const nDefault = \(value: unknown, fallback: number\)/);
+  assert.match(v2, /if \(!raw\) return fallback/);
+  assert.match(v2, /zoneBaseLongSoldiers: Math\.max\(1, Math\.round\(nDefault\(persisted\.zoneBaseLongSoldiers, 3\)\)\)/);
+  assert.match(v2, /zoneBaseShortSoldiers: Math\.max\(1, Math\.round\(nDefault\(persisted\.zoneBaseShortSoldiers, 3\)\)\)/);
+  assert.match(v2, /zoneEntryGrowthPercent: nDefault\(persisted\.zoneEntryGrowthPercent, 2\)/);
+  assert.match(v2, /zoneEntryMaxMultiplier: nDefault\(persisted\.zoneEntryMaxMultiplier, 1\.2\)/);
+});
