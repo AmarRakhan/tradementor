@@ -151,7 +151,7 @@ test("Portfolio Koers uses icon-only standard events and keeps detail values in 
   assert.ok(component.includes('glyph:"💰"'));
   assert.ok(component.includes('value:""'));
   assert.ok(component.includes("markerDetail(row)"));
-  assert.ok(component.includes("payload.markers.filter((row)=>row.time===time)"));
+  assert.ok(component.includes("markerRowsRef.current.filter((row)=>row.time===time)"));
 });
 
 test("Portfolio Koers explicitly feeds Bollinger boundaries into marker layout",async()=>{
