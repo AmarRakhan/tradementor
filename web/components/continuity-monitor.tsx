@@ -362,6 +362,12 @@ function BybitConnectModal({ onClose, onSnapshot }: { onClose: () => void; onSna
       <div className="tm-continuity-modal-head"><div><span>BYBIT · READ-ONLY</span><h3>Bybit verbinden</h3></div><button type="button" onClick={onClose}>×</button></div>
       <p>Maak een aparte read-only API-sleutel aan. Hiermee kan Amar alleen je betaalreserve controleren.</p>
       <div className="tm-bybit-security-note"><strong>Veiligheidsgrens</strong><span>Schrijfrechten, orders, transfers en withdrawals worden geweigerd. Gebruik niet je trading-key.</span></div>
+      <ol className="tm-bybit-connect-steps">
+        <li>Open Bybit in je browser en ga via je profiel naar <strong>API Management</strong>.</li>
+        <li>Kies <strong>Create New Key</strong> en maak een aparte sleutel voor deze continuïteitsmonitor.</li>
+        <li>Zet de sleutel op <strong>Read-Only</strong>. Geef geen Trade-, Transfer- of Withdrawal-rechten.</li>
+        <li>Kopieer de API Key en het API Secret hieronder. Het secret blijft alleen lang genoeg in dit formulier om de verbinding te testen en veilig op te slaan.</li>
+      </ol>
       <label>API Key<input ref={keyRef} autoComplete="off" autoCapitalize="none" spellCheck={false} /></label>
       <label>API Secret<input ref={secretRef} type="password" autoComplete="new-password" autoCapitalize="none" spellCheck={false} /></label>
       <label className="tm-continuity-checkbox"><input ref={confirmRef} type="checkbox" /><span>Ik heb uitsluitend read-only rechten ingesteld.</span></label>
