@@ -20,7 +20,7 @@ from typing import Any
 import hashlib
 import math
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ROLE_ZONE_BASE = "ZONE_BASE"
 ROLE_EXPOSURE_BALANCER = "EXPOSURE_BALANCER"
 ROLE_LEGACY_UNASSIGNED = "LEGACY_UNASSIGNED"
@@ -101,6 +101,12 @@ def _clean_soldier(raw: Any) -> dict[str, Any] | None:
 
 
 def _clean_homecoming_events(raw: Any) -> list[dict[str, Any]]:
+    """Keep only proven old-zone profitable returns.
+
+    Build 423 wrote TP_WIN for every profitable zone TP and did not persist the
+    close-time active zone. Those legacy rows are intentionally ignored unless
+    the origin and close zones are both known and different.
+    """
     rows = raw if isinstance(raw, list) else []
     by_id: dict[str, dict[str, Any]] = {}
     for item in rows:
@@ -110,22 +116,34 @@ def _clean_homecoming_events(raw: Any) -> list[dict[str, Any]]:
         side = str(item.get("side", "")).upper()
         role = str(item.get("soldierRole", item.get("role", ""))).upper()
         soldier_id = str(item.get("soldierId", "")).strip()
-        if closed_at <= 0 or side not in {"LONG", "SHORT"} or role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}:
+        reason = str(item.get("reason", "")).upper()
+        if (
+            closed_at <= 0
+            or side not in {"LONG", "SHORT"}
+            or role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}
+            or not soldier_id
+            or reason != "TP_WIN_OUTSIDE_ORIGIN_ZONE"
+        ):
             continue
-        origin_raw = item.get("originZone")
         try:
-            origin_zone = int(origin_raw) if origin_raw is not None else None
+            origin_zone = int(item.get("originZone"))
+            current_zone = int(item.get("currentZoneAtClose"))
         except (TypeError, ValueError):
-            origin_zone = None
-        event_id = str(item.get("eventId", "")).strip() or f"{soldier_id or side}:{closed_at}"
+            continue
+        if origin_zone == current_zone:
+            continue
+        event_id = str(item.get("eventId", "")).strip()
+        if not event_id:
+            continue
         by_id[event_id] = {
             "eventId": event_id,
             "closedAtMs": closed_at,
             "side": side,
             "originZone": origin_zone,
+            "currentZoneAtClose": current_zone,
             "soldierId": soldier_id,
             "soldierRole": role,
-            "reason": "TP_WIN",
+            "reason": "TP_WIN_OUTSIDE_ORIGIN_ZONE",
         }
     return sorted(by_id.values(), key=lambda row: (row["closedAtMs"], row["eventId"]))[-512:]
 
@@ -563,29 +581,113 @@ def claim_soldier(zone_state: dict[str, Any], side: str, *, trade_key: str, symb
 
 
 def record_soldier_homecoming(zone_state: dict[str, Any], managed_row: dict[str, Any], *,
-                               side: str, timestamp_ms: int) -> bool:
-    """Record one exchange-confirmed profitable zone-soldier TP close."""
+                               side: str, current_zone_at_close: int | None,
+                               timestamp_ms: int) -> bool:
+    """Record one proven profitable return from outside the soldier's origin zone."""
     role = str((managed_row or {}).get("soldierRole", "")).upper()
     soldier_id = str((managed_row or {}).get("soldierId", "")).strip()
     normalized_side = str(side or "").upper()
     if role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER} or not soldier_id or normalized_side not in {"LONG", "SHORT"}:
         return False
-    origin_raw = (managed_row or {}).get("originZone")
     try:
-        origin_zone = int(origin_raw) if origin_raw is not None else None
+        origin_zone = int((managed_row or {}).get("originZone"))
+        current_zone = int(current_zone_at_close)
     except (TypeError, ValueError):
-        origin_zone = None
-    event_id = f"{soldier_id}:{int(timestamp_ms)}"
+        return False
+    if origin_zone == current_zone:
+        return False
+
+    close_identity = str(
+        (managed_row or {}).get("cycleId")
+        or (managed_row or {}).get("cycleStartedAtMs")
+        or (managed_row or {}).get("openedAtMs")
+        or timestamp_ms
+    )
+    event_id = hashlib.sha256(
+        f"{soldier_id}|{close_identity}|{origin_zone}|{current_zone}|TP_WIN_OUTSIDE_ORIGIN_ZONE".encode()
+    ).hexdigest()[:24]
     events = _clean_homecoming_events(zone_state.get("homecomingEvents"))
     if any(row.get("eventId") == event_id for row in events):
         return False
     events.append({
-        "eventId": event_id, "closedAtMs": int(timestamp_ms), "side": normalized_side,
-        "originZone": origin_zone, "soldierId": soldier_id, "soldierRole": role, "reason": "TP_WIN",
+        "eventId": event_id,
+        "closedAtMs": int(timestamp_ms),
+        "side": normalized_side,
+        "originZone": origin_zone,
+        "currentZoneAtClose": current_zone,
+        "soldierId": soldier_id,
+        "soldierRole": role,
+        "reason": "TP_WIN_OUTSIDE_ORIGIN_ZONE",
     })
     zone_state["homecomingEvents"] = _clean_homecoming_events(events)
     zone_state["updatedAtMs"] = max(_integer(zone_state.get("updatedAtMs")), int(timestamp_ms))
     return True
+
+
+def settle_soldier_after_profitable_tp(zone_state: dict[str, Any], managed_row: dict[str, Any], *,
+                                       side: str, timestamp_ms: int) -> dict[str, Any]:
+    """Release a confirmed-flat zone soldier without destroying its zone capacity.
+
+    Same-zone TP -> AVAILABLE again.
+    Old-zone TP  -> DORMANT plus one proven homecoming event.
+    A legacy balancer is never made reusable.
+    """
+    role = str((managed_row or {}).get("soldierRole", "")).upper()
+    soldier_id = str((managed_row or {}).get("soldierId", "")).strip()
+    normalized_side = str(side or "").upper()
+    try:
+        origin_zone = int((managed_row or {}).get("originZone"))
+    except (TypeError, ValueError):
+        origin_zone = None
+    active_raw = zone_state.get("activeZone")
+    try:
+        current_zone = int(active_raw) if active_raw is not None else None
+    except (TypeError, ValueError):
+        current_zone = None
+
+    result = {
+        "released": False,
+        "homecoming": False,
+        "soldierId": soldier_id,
+        "originZone": origin_zone,
+        "currentZoneAtClose": current_zone,
+        "status": None,
+    }
+    if (
+        role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}
+        or not soldier_id
+        or normalized_side not in {"LONG", "SHORT"}
+        or origin_zone is None
+    ):
+        return result
+
+    pool = (zone_state.get("pools") or {}).get(_zone_key(origin_zone))
+    soldiers = pool.get("soldiers") if isinstance(pool, dict) else None
+    soldier = soldiers.get(soldier_id) if isinstance(soldiers, dict) else None
+    if not isinstance(soldier, dict):
+        return result
+
+    reusable_here = bool(role == ROLE_ZONE_BASE and current_zone is not None and origin_zone == current_zone)
+    next_status = STATUS_AVAILABLE if reusable_here else STATUS_DORMANT
+    soldier.update({
+        "status": next_status,
+        "tradeKey": "",
+        "symbol": "",
+        "openedAtMs": 0,
+        "entryPrice": 0.0,
+        "entryPortfolioEquity": 0.0,
+        "updatedAtMs": int(timestamp_ms),
+    })
+    is_homecoming = record_soldier_homecoming(
+        zone_state,
+        managed_row,
+        side=normalized_side,
+        current_zone_at_close=current_zone,
+        timestamp_ms=timestamp_ms,
+    )
+    zone_state["updatedAtMs"] = max(_integer(zone_state.get("updatedAtMs")), int(timestamp_ms))
+    result.update({"released": True, "homecoming": is_homecoming, "status": next_status})
+    return result
 
 
 def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any],
