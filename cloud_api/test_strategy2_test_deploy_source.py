@@ -238,3 +238,21 @@ def test_multi_bb_readiness_uses_current_managed_position_ownership():
     assert 'managed=raw.get("multiBbPositions")' in readiness
     assert 'OwnedLeg(strategy_id="aster-strategy-2",engine_type="strategy2"' in readiness
     assert 'strategy2_keys.add(managed_key)' in readiness
+
+
+def test_shared_test_scheduler_is_hard_owner_only_and_never_enumerates_strategy_accounts():
+    source = TEST_ENTRYPOINT.read_text(encoding="utf-8")
+    start = source.index("def _owner_only_strategy2_target")
+    end = source.index('@app.post("/internal/aster-strategy2/queue-canary/tick")', start)
+    block = source[start:end]
+    assert 'db.collection("users").where("betaOwner", "==", True).limit(2).stream()' in block
+    assert 'len(owners) != 1' in block
+    assert '"owner-binding-ambiguous"' in block
+    assert 'profile.get("releaseChannel")' in block
+    assert 'aster_strategy2_reference(uid).get()' in block
+    assert 'strategy.get("monitor", False)' in block
+    assert 'target_uid, target_status = _owner_only_strategy2_target()' in block
+    assert '_run_aster_strategy2_tick(target_uid)' in block
+    assert 'collection("asterStrategy2").where("monitor", "==", True)' not in block
+    assert 'controls[:100]' not in block
+    assert '"ownerOnly": True' in block

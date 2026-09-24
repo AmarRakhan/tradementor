@@ -507,6 +507,10 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const zoneOld=record(zoneSoldierReport.oldZonesOpen);
   const zoneExposure=record(zoneSoldierReport.exposure);
   const zoneBalancer=record(zoneSoldierReport.balancer);
+  const zoneEntrySizing=record(zoneSoldierReport.entrySizing);
+  const zoneEntryMultiplier=Number(zoneEntrySizing.activeZoneMultiplier);
+  const zoneEntryGrowthPercent=Number(zoneEntrySizing.growthPercentPerZone);
+  const zoneEntryActiveUsd=Number(zoneEntrySizing.activeZoneEntryUsd);
   const zoneBaseLong=integerOrNull(zoneFormation.baseLongSoldiers);
   const zoneBaseShort=integerOrNull(zoneFormation.baseShortSoldiers);
   const zoneOpenLong=integerOrNull(zoneCurrent.openLong);
@@ -636,6 +640,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
             <span><i>IN ZONE VRIJ</i><b>{zoneFreeLong??"—"}L · {zoneFreeShort??"—"}S</b></span>
           </div>
           <span className="portfolio-koers-old-zones">Oude zones nog open: <b>{oldOpenTotal??"—"}</b> · <b className="long">{oldOpenLong??"—"}L</b> / <b className="short">{oldOpenShort??"—"}S</b>{legacyUnassignedOpen>0?<em> · {legacyUnassignedOpen} legacy</em>:null}</span>
+          <span className="portfolio-koers-exposure-line">Inzet zone: <b>{Number.isFinite(zoneEntryMultiplier)?"×"+zoneEntryMultiplier.toFixed(2):"—"}</b>{Number.isFinite(zoneEntryGrowthPercent)?" · +"+zoneEntryGrowthPercent.toFixed(1)+"% per zoneafstand":""}{Number.isFinite(zoneEntryActiveUsd)?" · "+levelUsd(zoneEntryActiveUsd)+" "+(String(zoneEntrySizing.mode||"").toLowerCase()==="margin"?"margin":"notional"):""}</span>
           <span className="portfolio-koers-exposure-line">Exposure: <b className="long">L {Number.isFinite(longExposureUsd)?levelUsd(longExposureUsd):"—"}</b> · <b className="short">S {Number.isFinite(shortExposureUsd)?levelUsd(shortExposureUsd):"—"}</b> · netto <b>{Number.isFinite(netExposureUsd)?levelUsd(Math.abs(netExposureUsd)):"—"} {netExposureSide}</b></span>
           <strong className={`portfolio-koers-formation-action ${zoneEntriesSafe?"ok":"blocked"}`}>{instructionTitle}</strong>
         </>:<>

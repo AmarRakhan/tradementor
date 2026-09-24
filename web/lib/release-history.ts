@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 415 release-contract sync: BETA zone-owned soldiers, safe legacy migration, exposure-balancer UI and updated zone-advisor regressions ship together.
+// Build 416 release-contract sync: hard owner-only zone runtime plus gentle monotone zone-distance entry sizing.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,8 +26,11 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "BETA · zone-owned soldaten en exposure-balancer",
+  title: "BETA · owner-only zonesoldaten + rustige inzetgroei",
   newItems: [
+    "Zone-owned tradegedrag is hard owner-only: alleen het expliciet geauthenticeerde beheeraccount kan deze testlogica gebruiken.",
+    "De basisinzet groeit standaard rustig met 2,0% per zoneafstand vanaf Z0, symmetrisch omhoog en omlaag, met een configureerbare cap van 1,20x.",
+    "Het Formation Dashboard toont de actieve zone-inzetfactor en het actuele basisbedrag.",
     "Iedere bevestigde Portfolio Koers-zone krijgt een eigen persistente LONG- en SHORT-pool; de BETA-startformatie is 3 LONG + 3 SHORT per zone en is configureerbaar.",
     "Alleen de bevestigde actuele 15m-zone mag nieuwe zone-soldaten inzetten. Vrije soldaten uit oude zones worden dormant; open trades blijven normaal beheerd.",
     "Nieuwe entries bewaren originZone, originZoneCycleId, soldierId en soldierRole zodat restart/recovery de zoneherkomst kan reconstrueren.",
@@ -44,6 +47,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De exposure-refill kon wel notional-scheefstand meten, maar was niet gekoppeld aan expliciete zone-owned basis- en balancer-soldaten.",
   ],
   fixes: [
+    "De releasegate en de geïsoleerde test-scheduler zijn hard owner-only; de test-scheduler selecteert exact één betaOwner en faalt dicht bij nul of meerdere matches.",
+    "Nieuwe zone-entries schalen margin of notional lineair met |zone|; bestaande open posities en DCA-state worden niet herschaald.",
     "Nieuwe pure zoneSoldierState met deterministische pools/soldier IDs, één actieve pool voor nieuwe entries en idempotente zoneactivatie.",
     "Open oude-zone trades blijven OPEN; een zonewisseling bevat geen close-pad. DCA/TP/SL blijven bij de bestaande position-managementlogica.",
     "Legacy Multi-BB-posities worden expliciet LEGACY_UNASSIGNED: niet herverdeeld, niet gesloten, wel meegenomen in managed exposure en na sluiting niet opnieuw geopend als zonesoldaat.",
@@ -57,8 +62,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De oude handmatige +LONG/+SHORT zoneknop is in zone-owned modus uitgeschakeld; globale seat-capacity is daar niet langer de strategiebron.",
   ],
   before: "Build 414 maakte het Formation Dashboard duidelijker, maar de achterliggende sturing gebruikte nog globale LONG/SHORT-slots en directionele zone-bias.",
-  after: "Build 415 introduceert voor het BETA-account persistente zone-owned soldaten met symmetrische LONG/SHORT-pools, legacy-safe migratie en een aparte exposure-balancer.",
+  after: "Build 416 houdt de volledige zone-owned strategie owner-only en voegt de afgesproken rustige, nooit-afnemende inzetgroei per zoneafstand toe.",
   technicalDetails: [
+    "Rolloutfeature: zone_soldiers is hard owner-only; een STABLE- of generieke BETA-status kan dit gedrag voor een ander account niet activeren.",
+    "Default zoneEntryGrowthPercent = 2.0 en zoneEntryMaxMultiplier = 1.20; multiplier = min(cap, 1 + abs(zone) × growth/100).",
     "Rolloutfeature: zone_soldiers = BETA true / STABLE false.",
     "Standaard zoneformatie: 3 LONG + 3 SHORT; backendvelden zoneBaseLongSoldiers en zoneBaseShortSoldiers zijn configureerbaar.",
     "Balancer-deadband hergebruikt exposureRefillTriggerPercent / exposureRefillReleasePercent; geen nieuw willekeurig financieel threshold.",

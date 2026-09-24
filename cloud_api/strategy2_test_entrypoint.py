@@ -335,45 +335,61 @@ def _acquire_or_renew_strategy2_canary_handoff(
     return acquire_or_renew(transaction)
 
 
+def _owner_only_strategy2_target() -> tuple[str | None, str]:
+    """Resolve exactly one explicitly bootstrapped beta owner; otherwise fail closed."""
+    owners = list(
+        control_plane.db.collection("users").where("betaOwner", "==", True).limit(2).stream()
+    )
+    if len(owners) != 1:
+        return None, "owner-binding-missing" if not owners else "owner-binding-ambiguous"
+    profile = owners[0].to_dict() or {}
+    if str(profile.get("releaseChannel") or "").upper() != "BETA":
+        return None, "owner-channel-invalid"
+    uid = str(owners[0].id)
+    strategy_snapshot = control_plane.aster_strategy2_reference(uid).get()
+    if not strategy_snapshot.exists:
+        return None, "owner-strategy2-missing"
+    strategy = strategy_snapshot.to_dict() or {}
+    if not bool(strategy.get("monitor", False)):
+        return None, "owner-monitor-disabled"
+    return uid, "ok"
+
+
 @app.post("/internal/aster-strategy2/tick")
 def run_aster_strategy2_scheduler(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """Run only Strategy 2 in its isolated shared-test runtime."""
+    """Run Strategy 2 for exactly one explicitly marked beta owner in shared-test."""
     control_plane.verify_internal_cloud_request(authorization)
     if not _live_gates_open():
-        return {"processed": 0, "status": "centrally-disabled", "strategy2": [], "strategy3": []}
+        return {"processed": 0, "status": "centrally-disabled", "strategy2": [], "strategy3": [], "ownerOnly": True}
 
-    controls = list(
-        control_plane.db.collection("asterStrategy2").where("monitor", "==", True).stream()
-    )
-    strategy2_results = []
-    for item in controls[:100]:
-        reference = control_plane.aster_strategy2_reference(item.id)
-        if not control_plane._acquire_mexc_automation_lease(reference):
-            strategy2_results.append({"uid": item.id, "status": "lease-busy"})
-            continue
-        try:
-            strategy2_results.append({
-                "uid": item.id,
-                **control_plane._run_aster_strategy2_tick(item.id),
-            })
-        except Exception as exc:
-            message = f"Veilige Strategy-2-schedulerfout: {exc}"
-            reference.set({
-                "phase": "DATA_HOLD",
-                "lastReason": message,
-                "lastTickAt": datetime.now(timezone.utc),
-            }, merge=True)
-            strategy2_results.append({"uid": item.id, "status": "data-hold", "reason": message})
-        finally:
-            reference.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
+    target_uid, target_status = _owner_only_strategy2_target()
+    if target_uid is None:
+        return {"processed": 0, "status": target_status, "strategy2": [], "strategy3": [], "ownerOnly": True}
+
+    reference = control_plane.aster_strategy2_reference(target_uid)
+    if not control_plane._acquire_mexc_automation_lease(reference):
+        return {"processed": 0, "status": "lease-busy", "strategy2": [], "strategy3": [], "ownerOnly": True}
+    try:
+        result = {"uid": target_uid, **control_plane._run_aster_strategy2_tick(target_uid)}
+    except Exception as exc:
+        message = f"Veilige Strategy-2-schedulerfout: {exc}"
+        reference.set({
+            "phase": "DATA_HOLD",
+            "lastReason": message,
+            "lastTickAt": datetime.now(timezone.utc),
+        }, merge=True)
+        result = {"uid": target_uid, "status": "data-hold", "reason": message}
+    finally:
+        reference.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
     return {
-        "processed": len(strategy2_results),
+        "processed": 1,
         "status": "ok",
-        "strategy2": strategy2_results,
+        "strategy2": [result],
         "strategy3": [],
         "strategy3Isolated": True,
+        "ownerOnly": True,
     }
 
 

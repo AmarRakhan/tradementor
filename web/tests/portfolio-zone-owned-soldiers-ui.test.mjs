@@ -35,3 +35,11 @@ test("Build 415 keeps percentage zone navigation and compact zone-owned styles",
   assert.ok(css.includes(".portfolio-koers-old-zones"));
   assert.ok(css.includes(".portfolio-koers-exposure-line"));
 });
+
+
+test("Build 416 shows gentle monotone zone entry sizing in the owner-only formation dashboard",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("zoneEntrySizing"));
+  assert.ok(component.includes("Inzet zone:"));
+  assert.ok(component.includes("per zoneafstand"));
+});
