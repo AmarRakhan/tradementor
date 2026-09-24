@@ -209,3 +209,25 @@ button{cursor:pointer}
 @media(max-width:1380px){
   .global-ticket-action .admin-action{padding:0 10px;font-size:12px}
 }
+
+
+.package-admin-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.mode-items .package-admin-actions{display:none!important}
+.mode-packages .package-admin-actions{display:flex!important}
+
+.package-modal-card{width:min(980px,94vw)}
+.package-form-top{display:grid;grid-template-columns:1fr 180px;gap:12px;margin-bottom:18px}
+.package-form-top label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:750;color:#3d5a7d}
+.package-form-top input,.package-form-top select,.package-row select,.package-row input{height:40px;border:1px solid #cbd9e7;border-radius:8px;background:#fff;padding:0 10px;outline:0;color:#102e59}
+.package-form-top input:focus,.package-form-top select:focus,.package-row select:focus,.package-row input:focus{border-color:#0b7cff;box-shadow:0 0 0 3px rgba(11,124,255,.10)}
+.package-builder-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.package-builder-rows{border:1px solid #dce6ef;border-radius:9px;overflow:hidden}
+.package-builder-empty{padding:24px;text-align:center;color:#7a8ea8;font-size:12.5px}
+.package-row{display:grid;grid-template-columns:minmax(0,1fr) 120px 85px 42px;gap:8px;align-items:center;padding:9px 10px;border-top:1px solid #e8eef5}
+.package-row:first-child{border-top:0}
+.package-row .remove-package-row{height:36px;border:1px solid #efbbbb;border-radius:7px;background:#fff7f7;color:#c62828;font-size:18px;line-height:1}
+.package-row .remove-package-row:hover{background:#ffecec}
+
+@media(max-width:1380px){
+  .package-admin-actions .admin-action{padding:0 10px;font-size:12px}
+}
