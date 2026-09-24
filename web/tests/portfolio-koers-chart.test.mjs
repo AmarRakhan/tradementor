@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioZoneForPrice } from "../lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersTimelineHealth, portfolioZoneForPrice } from "../lib/portfolio-koers-chart.mjs";
 
 test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",()=>{
   assert.deepEqual([...PORTFOLIO_KOERS_TIMEFRAMES],["1m","5m","15m","1u","4u","24u"]);
@@ -42,6 +42,28 @@ test("Realtime portfolio samples use only the observed equity value for a new ca
   const next=mergeRealtimeEquitySample([{time:60,open:100,high:100,low:99,close:99,atMs:60_000}],105,301_000,"5m");
   assert.equal(next.length,2);
   assert.deepEqual({open:next[1].open,high:next[1].high,low:next[1].low,close:next[1].close},{open:105,high:105,low:105,close:105});
+});
+
+test("Portfolio Koers detects a missing 15m run and blocks zone advice until the recent run is long enough",()=>{
+  const step=900;
+  const broken=[
+    {time:step,open:100,high:100,low:100,close:100},
+    {time:step*2,open:100,high:100,low:100,close:100},
+    {time:step*5,open:101,high:101,low:101,close:101},
+    {time:step*6,open:101,high:101,low:101,close:101},
+  ];
+  const unsafe=portfolioKoersTimelineHealth(broken,"15m",step*6*1000+1_000,14);
+  assert.equal(unsafe.gaps.length,1);
+  assert.equal(unsafe.gaps[0].missingBars,2);
+  assert.equal(unsafe.contiguousBars,2);
+  assert.equal(unsafe.safeForAdvisor,false);
+
+  const recovered=[...broken.slice(0,2),...Array.from({length:14},(_,index)=>({
+    time:step*(5+index),open:101,high:101,low:101,close:101,
+  }))];
+  const safe=portfolioKoersTimelineHealth(recovered,"15m",step*18*1000+1_000,14);
+  assert.equal(safe.contiguousBars,14);
+  assert.equal(safe.safeForAdvisor,true);
 });
 
 test("Locale portfolio equity text is parsed without changing its value",()=>{
@@ -135,6 +157,14 @@ test("Portfolio Koers explicitly feeds Bollinger boundaries into marker layout",
   assert.ok(component.includes("bbLowerByTime"));
   assert.ok(component.includes("bandTop:upperY===null?null:Number(upperY)"));
   assert.ok(component.includes("bandBottom:lowerY===null?null:Number(lowerY)"));
+});
+
+test("Portfolio Koers follows a newly opened live candle and fails closed before changing soldiers on gappy 15m history",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("scrollToRealTime()"));
+  assert.ok(component.includes("portfolioKoersTimelineHealth(canonical.candles,\"15m\",Date.now(),14)"));
+  assert.ok(component.includes("Soldaten worden niet aangepast zolang de 15m-zonebasis niet aaneengesloten is."));
+  assert.ok(component.includes("portfolio-koers-gap-warning"));
 });
 
 test("Portfolio Koers always opens from the approved 15m default instead of restoring a stale saved timeframe",async()=>{
