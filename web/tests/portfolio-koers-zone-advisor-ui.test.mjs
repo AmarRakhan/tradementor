@@ -36,13 +36,14 @@ test("zone labels stay hidden while BETA zone contrast is visibly stronger",asyn
 });
 
 
-test("Build 417 formation dashboard separates informative zones from explicit zone steering",async()=>{
+test("Build 420 strategy cockpit separates informative zones from explicit zone steering",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("ZONE-STURING ACTIEF"));
-  assert.ok(component.includes("HUIDIGE ZONE"));
   assert.ok(component.includes("PORTFOLIOZONE"));
-  assert.ok(component.includes("Traditionele strategie · geen automatische zone-acties"));
-  assert.ok(component.includes("SOLDATEN ACTIEF"));
+  assert.ok(component.includes("portfolio-strategy-cockpit"));
+  assert.ok(component.includes("Strategiestatus"));
+  assert.ok(component.includes("ACTIEVE ZONE"));
+  assert.ok(component.includes("FORMATIE"));
   assert.ok(component.includes("ZONEFORMATIE"));
   assert.ok(component.includes("IN ZONE OPEN"));
   assert.ok(component.includes("IN ZONE VRIJ"));
@@ -121,7 +122,7 @@ test("Build 417 informational state shows next upper and lower zone triggers wit
   assert.ok(component.includes("lowerTrigger"));
   assert.ok(component.includes("nextUpIndex"));
   assert.ok(component.includes("nextDownIndex"));
-  assert.ok(component.includes("geen automatische zone-acties"));
+  assert.ok(component.includes("Geen automatische zone-acties"));
 });
 
 test("Build 408 bias badge summarizes active zone and desired formation without loose chart zone labels",async()=>{
@@ -175,15 +176,17 @@ test("Build 409 keeps all seven signed zones separately styled",async()=>{
 
 
 
-test("Build 417 explains signed zone basis and whether it is informational or trading input",async()=>{
+test("Build 420 keeps the signed zone basis available while the visible cockpit stays compact",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   assert.ok(component.includes("Zonebasis: portfolio-equity · 15m support/resistance"));
   assert.ok(component.includes("handelssturing expliciet actief"));
   assert.ok(component.includes("informatief; geen orders of slotwijzigingen"));
   assert.ok(component.includes("zoneBandSummary"));
-  assert.ok(component.includes("portfolio-koers-zone-basis"));
-  assert.ok(css.includes(".portfolio-koers-instruction-copy>.portfolio-koers-zone-basis"));
+  assert.ok(component.includes("portfolio-strategy-foot"));
+  assert.ok(component.includes("portfolio-koers-cockpit-sr"));
+  assert.ok(css.includes(".portfolio-strategy-foot"));
+  assert.ok(css.includes(".portfolio-koers-cockpit-sr"));
 });
 
 test("Build 413 replaces ambiguous VOLGENDE price labels with directional zone percentages",async()=>{
