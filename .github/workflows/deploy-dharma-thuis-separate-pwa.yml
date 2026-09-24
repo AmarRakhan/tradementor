@@ -85,7 +85,7 @@ jobs:
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
-      - name: Deploy new separate Cloud Run service
+      - name: Deploy public separate Cloud Run service
         shell: bash
         run: |
           set -euo pipefail
@@ -96,7 +96,7 @@ jobs:
             --port 8080 \
             --min-instances 0 \
             --max-instances 2 \
-            --allow-unauthenticated \
+            --no-invoker-iam-check \
             --quiet
 
       - name: Verify live PWA install surface
