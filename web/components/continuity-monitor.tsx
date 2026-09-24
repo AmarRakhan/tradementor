@@ -425,6 +425,13 @@ function ContinuitySettingsModal({ snapshot, onClose, onSnapshot }: { snapshot: 
   </div>;
 }
 
+export function ContinuityStartupGuard({ enabled, onOpen }: { enabled: boolean; onOpen: () => void }) {
+  const continuity = useContinuityMonitor(enabled);
+  const alert = continuity.snapshot?.alert;
+  if (!alert?.showStartupAlert) return null;
+  return <ContinuityAlertModal alert={alert} onAcknowledge={continuity.acknowledge} onOpen={onOpen} />;
+}
+
 export function useContinuityMonitor(enabled: boolean) {
   const [snapshot, setSnapshot] = useState<ContinuitySnapshot | null>(null);
   const [available, setAvailable] = useState<boolean | null>(null);
