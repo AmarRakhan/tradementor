@@ -4456,7 +4456,7 @@ def aster_portfolio_chart(
         "live": snapshot_fresh,
         "persistent": True,
         "externalCashflowsSeparated": True,
-        "zoneBacktest": zone_shadow_backtest(candles, cycle_start),
+        "zoneBacktest": zone_shadow_backtest(zone_candles, cycle_start),
         "readOnly": True,
         "ordersSent": 0,
         "source": "Aster account equity + confirmed fills + income ledger",
