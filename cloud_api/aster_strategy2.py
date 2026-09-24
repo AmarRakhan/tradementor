@@ -261,7 +261,7 @@ class Strategy2Config:
         if self.dca_mode not in {"fixed", "progressive", "custom"}: raise ValueError("Ongeldige DCA-modus")
         if not 1 <= self.base_notional <= 100_000: raise ValueError("Base Order moet tussen 1 en 100.000 USD liggen")
         if not .001 <= self.take_profit <= .20: raise ValueError("Take Profit moet tussen 0,1% en 20% liggen")
-        if not 1 <= self.maximum_pairs <= 100: raise ValueError("Max Active Pairs moet tussen 1 en 100 liggen")
+        if not 1 <= self.maximum_pairs <= 400: raise ValueError("Max Active Pairs moet tussen 1 en 400 liggen")
         if (self.maximum_long_positions is None) != (self.maximum_short_positions is None): raise ValueError("LONG- en SHORT-stoeldoelen moeten samen worden ingesteld")
         if self.maximum_long_positions is not None:
             if self.maximum_long_positions < 0 or self.maximum_short_positions < 0 or self.maximum_long_positions + self.maximum_short_positions != self.maximum_pairs:
