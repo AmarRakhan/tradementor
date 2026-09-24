@@ -43,6 +43,30 @@ def bucket_start_ms(timestamp_ms: int, timeframe: str) -> int:
     return stamp // interval * interval
 
 
+def latest_contiguous_candles(candles: list[dict[str, Any]] | None, timeframe: str) -> list[dict[str, Any]]:
+    """Return only the newest uninterrupted candle run.
+
+    Missing equity buckets are never fabricated. A zone calculation must not
+    bridge an unobserved time gap because that would turn one discontinuity into
+    artificial ATR/support/resistance evidence.
+    """
+    interval = TIMEFRAME_MS.get(str(timeframe))
+    if not interval:
+        raise ValueError("Onbekend Portfolio Koers-timeframe")
+    rows = [dict(row) for row in candles or [] if isinstance(row, dict)]
+    rows.sort(key=lambda row: int(_number(row.get("atMs"))) or int(_number(row.get("time"))) * 1000)
+    if not rows:
+        return []
+    start = 0
+    previous_ms = int(_number(rows[0].get("atMs"))) or int(_number(rows[0].get("time"))) * 1000
+    for index in range(1, len(rows)):
+        current_ms = int(_number(rows[index].get("atMs"))) or int(_number(rows[index].get("time"))) * 1000
+        if previous_ms > 0 and current_ms - previous_ms > interval:
+            start = index
+        previous_ms = current_ms
+    return rows[start:]
+
+
 def collection_for_timeframe(timeframe: str) -> str:
     try:
         return COLLECTION_BY_TIMEFRAME[str(timeframe)]
