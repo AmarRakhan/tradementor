@@ -56,8 +56,12 @@ test("fixed-formation mobile grid matches approved three-by-two reference",async
   assert.ok(css.includes("@media(max-width:380px)"));
 });
 
-test("existing advisor refresh remains no faster than 45 seconds",async()=>{
+test("existing advisor refresh remains no faster than 45 seconds while live markers use their own lightweight feed",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  const timers=[...component.matchAll(/setInterval\([^,]+,\s*([0-9_]+)/g)].map((match)=>Number(match[1].replaceAll("_","")));
-  assert.ok(timers.every((value)=>value>=45_000));
+  const advisorStart=component.indexOf("const loadAdvisor=useCallback");
+  const liveEventStart=component.indexOf("const loadRecentEvents=useCallback",advisorStart);
+  const advisorBlock=component.slice(advisorStart,liveEventStart);
+  assert.ok(advisorBlock.includes("},45_000);"));
+  assert.ok(component.includes("/api/exchanges/aster/portfolio-chart/events?timeframe="));
+  assert.ok(component.includes("},5_000);"));
 });
