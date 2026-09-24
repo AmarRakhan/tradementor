@@ -133,6 +133,44 @@ export function mergeRealtimeEquitySample(candles, equity, atMs, timeframe) {
   return rows;
 }
 
+export function portfolioKoersTimelineHealth(candles, timeframe, nowMs=Date.now(), requiredContiguousBars=14) {
+  const step=PORTFOLIO_KOERS_TIMEFRAME_SECONDS[String(timeframe)];
+  const required=Math.max(1,Math.floor(finite(requiredContiguousBars))||14);
+  const rows=(Array.isArray(candles)?candles:[])
+    .filter((row)=>row&&typeof row==="object"&&finite(row.time)>0)
+    .map((row)=>({...row,time:Math.floor(finite(row.time))}))
+    .sort((a,b)=>a.time-b.time);
+  if(!step||!rows.length){
+    return {healthy:false,safeForAdvisor:false,stepSeconds:step||0,requiredContiguousBars:required,contiguousBars:0,latestTime:null,currentBucketTime:null,gaps:[]};
+  }
+  const gaps=[];
+  let contiguousStart=0;
+  for(let index=1;index<rows.length;index+=1){
+    const previous=rows[index-1].time,current=rows[index].time,delta=current-previous;
+    if(delta>step){
+      const missingBars=Math.max(1,Math.ceil(delta/step)-1);
+      gaps.push({afterTime:previous,beforeTime:current,fromTime:previous+step,toTime:current-step,missingBars});
+      contiguousStart=index;
+    }
+  }
+  const latestTime=rows.at(-1).time;
+  const stamp=Math.floor(finite(nowMs));
+  const currentBucketTime=stamp>0?Math.floor(stamp/1000/step)*step:latestTime;
+  const contiguousBars=rows.length-contiguousStart;
+  const latestFresh=latestTime>=currentBucketTime;
+  const safeForAdvisor=latestFresh&&contiguousBars>=required;
+  return {
+    healthy:latestFresh&&gaps.length===0,
+    safeForAdvisor,
+    stepSeconds:step,
+    requiredContiguousBars:required,
+    contiguousBars,
+    latestTime,
+    currentBucketTime,
+    gaps,
+  };
+}
+
 export function portfolioZoneForPrice(zones, price) {
   const rows=Array.isArray(zones)?zones:[], value=finite(price);
   if(value<=0||!rows.length) return null;

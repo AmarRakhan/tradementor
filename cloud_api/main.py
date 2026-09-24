@@ -72,7 +72,7 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, zone_shadow_backtest
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -223,6 +223,7 @@ _aster_universe_cache: AsterUniverseSnapshot | None = None
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
 _aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
 _aster_portfolio_chart_cashflow_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_aster_portfolio_chart_runtime_bucket_cache: dict[str, int] = {}
 _bot_health_platform_cache: tuple[float, dict[str, int]] = (0.0, {})
 
 
@@ -1616,6 +1617,24 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     try: hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True);return {"status":"data-hold","reason":str(exc)}
+    # The Portfolio Koers is server-persistent, not browser-persistent. Record one
+    # exchange-confirmed equity sample per scheduler minute so closing/backgrounding
+    # the webapp can never create multi-hour chart holes. Realtime websocket ticks
+    # carry event_symbol and deliberately skip this sampler to avoid write storms.
+    if not dry_run and not str(event_symbol).strip():
+        source_at_ms=int(now.timestamp()*1000); minute_bucket=source_at_ms//60_000*60_000
+        should_persist=False
+        with _cache_lock:
+            if _aster_portfolio_chart_runtime_bucket_cache.get(uid)!=minute_bucket:
+                _aster_portfolio_chart_runtime_bucket_cache[uid]=minute_bucket;should_persist=True
+        if should_persist:
+            try:
+                runtime_equity=multi_bb_exchange_equity(account)
+                if runtime_equity>0:_persist_portfolio_chart_sample({"uid":uid},equity=runtime_equity,source_at_ms=source_at_ms)
+            except (google_exceptions.GoogleAPICallError,TypeError,ValueError):
+                with _cache_lock:
+                    if _aster_portfolio_chart_runtime_bucket_cache.get(uid)==minute_bucket:
+                        _aster_portfolio_chart_runtime_bucket_cache.pop(uid,None)
     if not hedge:
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
@@ -4418,7 +4437,8 @@ def aster_portfolio_chart(
     recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
     trade_markers = portfolio_chart_trade_markers(recent_activity, timeframe)
     cashflow_markers = portfolio_chart_cashflow_markers(_portfolio_chart_cashflows(user, client), timeframe)
-    zones = derive_equity_zones(candles, cycle_start)
+    zone_candles = portfolio_chart_latest_contiguous_candles(candles, timeframe)
+    zones = derive_equity_zones(zone_candles, cycle_start)
     latest_close = safe_float(candles[-1].get("close")) if candles else equity
     current_zone = active_portfolio_zone(zones, latest_close)
 
@@ -4427,6 +4447,8 @@ def aster_portfolio_chart(
         "candles": candles,
         "markers": [*trade_markers, *cashflow_markers],
         "zones": zones,
+        "zoneSourceCandles": len(zone_candles),
+        "zoneTimelineContiguous": len(zone_candles) == len(candles),
         "currentZone": current_zone,
         "cycleStartEquity": cycle_start if cycle_start > 0 else None,
         "currentEquity": equity if equity > 0 else None,
@@ -4434,7 +4456,7 @@ def aster_portfolio_chart(
         "live": snapshot_fresh,
         "persistent": True,
         "externalCashflowsSeparated": True,
-        "zoneBacktest": zone_shadow_backtest(candles, cycle_start),
+        "zoneBacktest": zone_shadow_backtest(zone_candles, cycle_start),
         "readOnly": True,
         "ordersSent": 0,
         "source": "Aster account equity + confirmed fills + income ledger",
