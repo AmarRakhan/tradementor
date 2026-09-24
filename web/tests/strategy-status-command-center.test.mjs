@@ -91,7 +91,7 @@ test("soldier activity extracts only confirmed zone-owned opened positions and i
     "XRPUSDT|LONG":{cycleStartedAtMs:1_030_000,soldierId:"recover",soldierRole:"ZONE_BASE",recoveredFromSelectedOpenPosition:true},
   });
   assert.equal(events.length,2);
-  assert.deepEqual(events.map((row)=>row.id),["s2","s1"]);
+  assert.deepEqual(events.map((row)=>row.id),["s2:1010000","s1:1000000"]);
   assert.equal(events[0].side,"SHORT");
   assert.equal(events[1].side,"LONG");
   assert.equal(events[1].originZone,-1);
