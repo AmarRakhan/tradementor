@@ -159,11 +159,14 @@ test("Portfolio Koers explicitly feeds Bollinger boundaries into marker layout",
   assert.ok(component.includes("bandBottom:lowerY===null?null:Number(lowerY)"));
 });
 
-test("Portfolio Koers follows a newly opened live candle and fails closed before changing soldiers on gappy 15m history",async()=>{
+test("Portfolio Koers follows a newly opened live candle and keeps gappy 15m history read-only",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("scrollToRealTime()"));
   assert.ok(component.includes("portfolioKoersTimelineHealth(canonical.candles,\"15m\",Date.now(),14)"));
-  assert.ok(component.includes("Soldaten worden niet aangepast zolang de 15m-zonebasis niet aaneengesloten is."));
+  assert.ok(component.includes("zone-entrys worden geblokkeerd zolang de Zone-Soldatenstrategie actief is."));
+  assert.ok(component.includes("Portfolio Koers blijft informatief"));
+  assert.equal(component.includes("applySoldierInstruction"),false);
+  assert.equal(component.includes('method:"PUT"'),false);
   assert.ok(component.includes("portfolio-koers-gap-warning"));
 });
 
