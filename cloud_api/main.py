@@ -4050,7 +4050,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         # Dashboard compatibility only: Multi BB is the live engine. The old
         # Strategy2Config shape is still consumed by legacy presentation helpers,
         # so project the current settings without re-validating Multi BB TP limits.
-        dashboard_max_pairs=min(100,max(1,multi_status_settings.maximum_positions))
+        dashboard_max_pairs=min(400,max(1,multi_status_settings.maximum_positions))
         strategy2_settings=Strategy2Config.from_mapping({
             "mode":multi_status_settings.mode,
             # Legacy Strategy2Config requires Base Order >= $1. Multi BB may persist
