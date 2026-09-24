@@ -11,6 +11,7 @@ from aster_zone_soldiers import (
     available_soldiers,
     claim_soldier,
     prepare_zone_runtime,
+    record_soldier_homecoming,
 )
 
 
@@ -154,29 +155,32 @@ def test_multiple_zone_positions_are_aggregated_into_managed_exposure():
     assert report["exposure"]["totalShortNotional"] == 100
 
 
-def test_long_overexposure_creates_short_balancer_capacity():
+def test_long_overexposure_sets_short_priority_without_creating_extra_capacity():
     managed = dict([
         owned("A", "LONG", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("B", "LONG", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("C", "SHORT", soldierRole=ROLE_LEGACY_UNASSIGNED),
     ])
     state, _, report = prepare({}, managed, [pos("A", "LONG", 150), pos("B", "LONG", 150), pos("C", "SHORT", 100)], 1)
-    assert report["balancer"]["activeSide"] == "SHORT"
-    assert report["balancer"]["desiredCount"] >= 1
-    assert any(row["role"] == ROLE_EXPOSURE_BALANCER for row in available_soldiers(state, "SHORT"))
+    assert report["entryPriority"] == "SHORT"
+    assert report["balancer"]["mode"] == "PRIORITY_ONLY"
+    assert report["balancer"]["desiredCount"] == 0
+    assert report["currentZone"]["balancerFree"] == 0
+    assert len(available_soldiers(state, "LONG")) == 3
+    assert len(available_soldiers(state, "SHORT")) == 3
+    assert all(row["role"] == ROLE_ZONE_BASE for row in available_soldiers(state, "SHORT"))
 
-
-def test_short_overexposure_creates_long_balancer_capacity_symmetrically():
+def test_short_overexposure_sets_long_priority_symmetrically_without_extra_capacity():
     managed = dict([
         owned("A", "SHORT", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("B", "SHORT", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("C", "LONG", soldierRole=ROLE_LEGACY_UNASSIGNED),
     ])
     state, _, report = prepare({}, managed, [pos("A", "SHORT", 150), pos("B", "SHORT", 150), pos("C", "LONG", 100)], -1)
-    assert report["balancer"]["activeSide"] == "LONG"
-    assert report["balancer"]["desiredCount"] >= 1
-    assert any(row["role"] == ROLE_EXPOSURE_BALANCER for row in available_soldiers(state, "LONG"))
-
+    assert report["entryPriority"] == "LONG"
+    assert report["balancer"]["desiredCount"] == 0
+    assert len(available_soldiers(state, "LONG")) == 3
+    assert len(available_soldiers(state, "SHORT")) == 3
 
 def test_dead_band_releases_balancer_without_closing_open_balancer_trade():
     z0, managed, _ = prepare({}, {}, [], 0, balancer=False)
@@ -318,3 +322,42 @@ def test_claimed_soldier_carries_persistent_zone_ownership_fields():
     assert soldier["soldierId"].startswith("n1:short:base:")
     assert soldier["role"] == ROLE_ZONE_BASE
     assert soldier["status"] == STATUS_OPEN
+
+
+def test_confirmed_tp_records_one_winning_homecoming_without_creating_capacity():
+    state, _, _ = prepare({}, {}, [], -1, balancer=False)
+    soldier = claim_soldier(
+        state, "LONG", trade_key="BTCUSDT|LONG", symbol="BTCUSDT",
+        entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000,
+    )
+    managed_row = {"originZone": -1, "soldierId": soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE}
+    assert record_soldier_homecoming(state, managed_row, side="LONG", timestamp_ms=20_000) is True
+    assert record_soldier_homecoming(state, managed_row, side="LONG", timestamp_ms=20_000) is False
+    next_state, _, report = prepare(state, {}, [], -1, balancer=False, at=30_000)
+    assert report["homecomings"]["total"] == 1
+    event = report["homecomings"]["events"][0]
+    assert event["reason"] == "TP_WIN"
+    assert event["originZone"] == -1
+    assert event["side"] == "LONG"
+    assert len(available_soldiers(next_state, "LONG")) == 3
+
+
+def test_stale_non_open_balancer_capacity_is_pruned_on_restart():
+    raw = {
+        "activeZone": 0,
+        "pools": {
+            "0": {
+                "zone": 0, "originZoneCycleId": "z0-cycle", "createdAtMs": 1,
+                "soldiers": {
+                    "z0:long:bal:1": {
+                        "soldierId": "z0:long:bal:1", "side": "LONG", "role": ROLE_EXPOSURE_BALANCER,
+                        "status": STATUS_AVAILABLE, "originZone": 0, "originZoneCycleId": "z0-cycle",
+                    },
+                },
+            },
+        },
+    }
+    state, _, report = prepare(raw, {}, [], 0)
+    assert "z0:long:bal:1" not in state["pools"]["0"]["soldiers"]
+    assert report["currentZone"]["balancerFree"] == 0
+    assert len(available_soldiers(state, "LONG")) == 3

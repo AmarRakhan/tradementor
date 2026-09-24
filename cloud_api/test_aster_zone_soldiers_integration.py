@@ -144,3 +144,23 @@ def test_build417_unavailable_accounts_force_zone_mode_off_server_side():
     assert 'zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))' in source
     assert 'out["zoneSoldiersEnabled"] = False' in source
     assert 'out["zoneSoldiersOptInVersion"] = 0' in source
+
+
+def test_build423_balancer_is_priority_only_and_fixed_formation_is_the_only_new_entry_capacity():
+    zone_source = (ROOT / "aster_zone_soldiers.py").read_text(encoding="utf-8")
+    core_source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert '"mode": "PRIORITY_ONLY"' in zone_source
+    assert '"desiredCount": 0' in zone_source
+    assert 'soldier.get("role") == ROLE_ZONE_BASE' in zone_source
+    assert '\n        _ensure_balancers(' not in zone_source
+    assert 'priority = str(zone_report.get("entryPriority")' in core_source
+    assert 'Do not worsen a live imbalance' in core_source
+
+
+def test_build423_tp_homecoming_is_recorded_only_after_exchange_flat_confirmation():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    flat_index = source.index('if key in fresh: raise RuntimeError(f"{key}: TP-close niet flat bevestigd")')
+    home_index = source.index("record_soldier_homecoming(", flat_index)
+    pop_index = source.index("state.pop(key, None)", home_index)
+    assert flat_index < home_index < pop_index
+    assert '"homecoming": bool(zone_mode and st0.get("soldierId"))' in source

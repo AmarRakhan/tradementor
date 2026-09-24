@@ -8,7 +8,7 @@ import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
-import { buildStrategyStatusCommandCenter, formatCommandMoney, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
+import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
@@ -127,20 +127,23 @@ function markerDetail(row:Marker) {
 }
 
 
-const activityClock=(atMs:number)=>new Date(atMs).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+function FormationArmy({longCount,shortCount}:{longCount:number;shortCount:number}) {
+  const render=(count:number,side:"long"|"short")=>{
+    const visible=Math.min(6,Math.max(0,Number(count)||0));
+    return <span className={`pcc-army-line ${side}`}>
+      {Array.from({length:visible},(_,index)=><i key={index} aria-hidden="true">♟</i>)}
+      {count>visible?<b>+{count-visible}</b>:null}
+    </span>;
+  };
+  return <span className="pcc-army" aria-hidden="true">{render(longCount,"long")}{render(shortCount,"short")}</span>;
+}
 
 function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string}) {
-  const zoneCapacityPercent=vm.totalZoneSeats>0?Math.max(0,Math.min(100,(vm.freeZoneSeats/vm.totalZoneSeats)*100)):0;
-  const runwayPercent=vm.dcaCoveragePercent??0;
-  const healthClass=String(vm.healthState||"RUIM").toLowerCase();
-  const botStatus=vm.actionExecutable
-    ? "BOT KOOPT AUTOMATISCH"
-    : vm.strategyEnabled&&vm.zoneSafe
-      ? "BOT WACHT AUTOMATISCH"
-      : "GEEN NIEUWE ORDERS";
+  const exposureClass=String(vm.netExposureSide||"NEUTRAAL").toLowerCase();
+  const priorityClass=String(vm.entryPriority||"GEEN").toLowerCase();
   return <section
-    className={`portfolio-command-center cc-${vm.actionMode} cc-health-${healthClass}`}
-    data-reference="file_00000000d9b0820e8eacdecb418c95aa"
+    className={`portfolio-command-center pcc-homecoming cc-${vm.actionMode}`}
+    data-reference="file_000000009e0081f4b88f4b415de68c71"
     data-account-only="beta-owner"
     aria-label="Zone-Soldaten Strategiestatus Command Center"
     aria-live="polite"
@@ -148,65 +151,57 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
     <header className="pcc-head">
       <span className="pcc-head-icon" aria-hidden="true">⌖</span>
       <div><small>ZONE-SOLDATEN</small><strong>Strategiestatus</strong></div>
-      <span className="pcc-live"><i/>Live</span>
       <span className="pcc-command-badge">COMMAND CENTER<em>{vm.strategyEnabled?"BOT ACTIEF · 24/7":"STRATEGY UIT"}</em></span>
     </header>
 
-    <div className={`pcc-action ${vm.actionMode}`}>
-      <span className="pcc-action-icon" aria-hidden="true">{vm.pendingSide==="SHORT"?"⇊":vm.pendingSide==="LONG"?"⇈":vm.actionMode==="complete"?"✓":"⌖"}</span>
-      <div className="pcc-action-copy">
-        <small>NU ACTIE</small>
-        <strong>{vm.actionTitle}</strong>
-        <em>{vm.actionDetail}</em>
+    <section className="pcc-formation-hero">
+      <FormationArmy longCount={vm.desiredLong} shortCount={vm.desiredShort}/>
+      <div className="pcc-formation-copy">
+        <small>ACTIEVE FORMATIE</small>
+        <strong><b>{vm.activeZone}</b> · <span className="long">{vm.desiredLong} LONG</span> <i>/</i> <span className="short">{vm.desiredShort} SHORT</span></strong>
+        <em>Vaste zoneformatie · geen extra soldaten</em>
       </div>
-      <div className="pcc-bot-state"><span aria-hidden="true">🤖</span><b>{botStatus}</b></div>
-    </div>
-
-    <section className="pcc-activity" aria-label="Soldatenactiviteit">
-      <header><div><small>BEVESTIGDE OPENINGEN</small><strong>SOLDATENACTIVITEIT</strong></div><em>actief ≠ historisch</em></header>
-      <div className="pcc-activity-windows">
-        {["15m","1u","4u","24u"].map((key)=>{
-          const row=vm.soldierActivity.windows[key];
-          return <article key={key}><small>{row.label}</small><strong>+{row.total}</strong><em><b className="long">{row.long}L</b><span>/</span><b className="short">{row.short}S</b></em></article>;
-        })}
-      </div>
-      <div className="pcc-recent-activity">
-        <small>LAATSTE TOEVOEGINGEN</small>
-        {vm.soldierActivity.recent.length
-          ? <div>{vm.soldierActivity.recent.map((row:any)=><span key={row.id}><time>{activityClock(row.atMs)}</time><b className={row.side==="LONG"?"long":"short"}>+{row.count} {row.side}</b><em>{row.originZone===null?"":`· Z${signedZone(row.originZone)}`}</em></span>)}</div>
-          : <em>Geen nieuwe soldiers in deze periode.</em>}
+      <div className={`pcc-exposure ${exposureClass}`}>
+        <span aria-hidden="true">⚖</span>
+        <div><small>NETTO EXPOSURE:</small><strong>{vm.netExposureSide}</strong><em>PRIORITEIT: <b className={priorityClass}>{vm.entryPriority}</b></em></div>
       </div>
     </section>
 
-    <div className="pcc-grid pcc-zone-row">
-      <article><span className="pcc-icon">⌖</span><div><small>ACTIEVE ZONE</small><strong>{vm.activeZone}</strong><em>{vm.currentZoneRange}</em></div></article>
-      <article><span className="pcc-icon gold">↗</span><div><small>VOLGENDE ZONE</small><strong>{vm.nextZone}</strong><em>{vm.nextZoneDisplay}</em></div></article>
-      <article><span className="pcc-icon red">↘</span><div><small>VORIGE ZONE</small><strong>{vm.previousZone}</strong><em>{vm.previousZoneDisplay}</em></div></article>
+    <div className="pcc-status-grid">
+      <article>
+        <span className="pcc-status-icon home" aria-hidden="true">⌂</span>
+        <div><small>THUIS / BESCHIKBAAR</small><strong><b className="long">{vm.zoneFreeLong}L</b> · <b className="short">{vm.zoneFreeShort}S</b></strong><em>klaar voor nieuwe entry</em></div>
+      </article>
+      <article>
+        <span className="pcc-status-icon field" aria-hidden="true">♟</span>
+        <div><small>IN HET VELD</small><strong><b className="long">{vm.zoneOpenLong}L</b> · <b className="short">{vm.zoneOpenShort}S</b></strong><em>actief in {vm.activeZone}</em></div>
+      </article>
+      <article>
+        <span className="pcc-status-icon map" aria-hidden="true">◇</span>
+        <div><small>OUDE ZONES NOG BUITEN</small><strong>{vm.oldZonesOpenTotal}</strong><em>blijven buiten tot winst</em></div>
+      </article>
+      <article>
+        <span className="pcc-status-icon trophy" aria-hidden="true">♛</span>
+        <div><small>WINST THUISGEKOMEN</small><strong>{vm.winningHomeToday}</strong><em>vandaag gesloten met winst</em></div>
+      </article>
+      <article className={`priority ${priorityClass}`}>
+        <span className="pcc-status-icon arrow" aria-hidden="true">↑</span>
+        <div><small>ENTRY-PRIORITEIT</small><strong>{vm.entryPriority}</strong><em>balancer stuurt keuze, niet extra soldaten</em></div>
+      </article>
+      <article className={`inflow ${String(vm.nextPossibleSide||"none").toLowerCase()}`}>
+        <span className="pcc-status-icon clock" aria-hidden="true">◷</span>
+        <div><small>VOLGENDE MOGELIJKE INSTROOM</small><strong>{vm.nextPossibleInflow}</strong><em>{vm.nextPossibleDetail}</em></div>
+      </article>
     </div>
 
-    <div className="pcc-grid">
-      <article><span className="pcc-icon gold">⚔</span><div><small>FORMATIE PER ZONE</small><strong>{vm.desiredLong}L · {vm.desiredShort}S</strong><em>doel per zone</em></div></article>
-      <article><span className="pcc-icon">♟</span><div><small>ACTIEVE SOLDATEN</small><strong>{vm.totalActiveSoldiers??"—"}</strong><em><b className="long">{vm.actualLong??"—"} Long</b> / <b className="short">{vm.actualShort??"—"} Short</b></em></div></article>
-      <article className="pcc-balance-card"><span className="pcc-icon">◐</span><div><small>BALANS LONG / SHORT</small><strong>{vm.longPercent===null?"—":vm.longPercent.toFixed(1)+"%"} / {vm.shortPercent===null?"—":vm.shortPercent.toFixed(1)+"%"}</strong><em>{vm.actualLong??"—"} L · {vm.actualShort??"—"} S</em><i className="pcc-balance-bar"><b style={{width:`${vm.longPercent??0}%`}}/><span style={{width:`${vm.shortPercent??0}%`}}/></i></div></article>
-    </div>
-
-    <div className="pcc-grid pcc-runway-row">
-      <article><span className="pcc-icon gold">◉</span><div><small>RESERVE / AVAILABLE</small><strong>{vm.availableDisplay}</strong><em>{vm.estimatedAffordableSoldiers===null?"betaalbaarheid niet berekenbaar":`Nog ± ${vm.estimatedAffordableSoldiers} soldaten mogelijk`}</em></div></article>
-      <article><span className="pcc-icon">♟+</span><div><small>GESCHATTE EXTRA SOLDATEN</small><strong>{vm.estimatedAffordableSoldiers===null?"—":`± ${vm.estimatedAffordableSoldiers}`}</strong><em>{vm.estimatedSoldierCost===null?"sizingdata ontbreekt":`≈ ${formatCommandMoney(vm.estimatedSoldierCost)} per soldaat`}</em></div></article>
-      <article className="pcc-dca-card"><span className="pcc-icon">◫</span><div><small>DCA-RUNWAY</small><strong>{vm.estimatedDcaRounds===null?"—":`~ ${vm.estimatedDcaRounds} DCA`}</strong><em>{vm.estimatedDcaCost===null?"DCA-kost niet beschikbaar":`≈ ${formatCommandMoney(vm.estimatedDcaCost)} per ronde`}</em><i className="pcc-mini-progress"><b style={{width:`${runwayPercent}%`}}/></i></div></article>
-    </div>
-
-    <div className="pcc-bottom-grid">
-      <article className="pcc-inventory"><span className="pcc-icon">◇</span><div><small>ZONE-VOORRAAD</small><strong>{vm.freeZoneSeats} / {vm.totalZoneSeats}</strong><em>vrije stoelen in {vm.activeZone}</em><i className="pcc-segmented"><b style={{width:`${zoneCapacityPercent}%`}}/></i></div></article>
-      <article className={`pcc-health ${healthClass}`}><span className="pcc-icon">◷</span><div><small>HOE LANG HOUDEN WE DIT VOL?</small><strong>{vm.healthState}</strong><em>{vm.estimatedDcaRounds===null?"Runway onbekend":`~${vm.estimatedDcaRounds} DCA-rondes · ±${vm.estimatedAffordableSoldiers??"—"} soldaten`}</em></div></article>
-    </div>
-
-    <footer className="pcc-footer">
+    <footer className="pcc-homecoming-footer">
       <span className="pcc-info-icon" aria-hidden="true">i</span>
-      <div><strong>{vm.footerTitle}</strong><em>{vm.footerDetail}</em>{advisorMessage?<small>{advisorMessage}</small>:null}</div>
+      <div><strong>{vm.footerTitle}</strong><em>{vm.footerDetail}</em></div>
+      <span className="pcc-return-flow" aria-hidden="true"><b>♟</b><i>→</i><b>⌂</b><i>◉</i></span>
     </footer>
+
     <span className="portfolio-koers-cockpit-sr">
-      Account-only Command Center. {vm.actionTitle}. Actieve zone {vm.activeZone}. Formatie {vm.desiredLong} long en {vm.desiredShort} short. Actief {vm.totalActiveSoldiers??"onbekend"} soldaten: {vm.actualLong??"onbekend"} long en {vm.actualShort??"onbekend"} short. Available {vm.availableDisplay}. Geschat nog {vm.estimatedAffordableSoldiers??"onbekend"} soldaten of {vm.estimatedDcaRounds??"onbekend"} DCA-rondes.
+      Vaste formatie {vm.activeZone}: {vm.desiredLong} long en {vm.desiredShort} short. Thuis beschikbaar {vm.zoneFreeLong} long en {vm.zoneFreeShort} short. In het veld {vm.zoneOpenLong} long en {vm.zoneOpenShort} short. Oude zones nog buiten {vm.oldZonesOpenTotal}. Vandaag met winst thuisgekomen {vm.winningHomeToday}. Netto exposure {vm.netExposureSide}. Entry-prioriteit {vm.entryPriority}. Volgende mogelijke instroom {vm.nextPossibleInflow}. {advisorMessage}
     </span>
   </section>;
 }
@@ -582,6 +577,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const zoneOld=record(zoneSoldierReport.oldZonesOpen);
   const zoneExposure=record(zoneSoldierReport.exposure);
   const zoneBalancer=record(zoneSoldierReport.balancer);
+  const zoneHomecomings=record(zoneSoldierReport.homecomings);
   const zoneEntrySizing=record(zoneSoldierReport.entrySizing);
   const zoneEntryMultiplier=Number(zoneEntrySizing.activeZoneMultiplier);
   const zoneEntryGrowthPercent=Number(zoneEntrySizing.growthPercentPerZone);
@@ -691,14 +687,16 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     actualLong:liveLongText,
     actualShort:liveShortText,
     totalActive:zoneTotalActive,
+    zoneOpenLong,
+    zoneOpenShort,
     zoneFreeLong,
     zoneFreeShort,
-    balancerFree:zoneBalancer.freeCount,
-    balancerDesired,
-    balancerOpen,
-    balancerSide,
-    pendingSide:balancerSide,
-    pendingCount:balancerPending,
+    oldZonesOpenTotal:oldOpenTotal,
+    oldZonesOpenLong:oldOpenLong,
+    oldZonesOpenShort:oldOpenShort,
+    netExposureSide,
+    entryPriority:zoneSoldierReport.entryPriority??zoneBalancer.prioritySide??zoneBalancer.activeSide,
+    homecomingEvents:Array.isArray(zoneHomecomings.events)?zoneHomecomings.events:[],
     availableText:liveAvailableText,
     activeZoneEntryUsd:zoneEntrySizing.activeZoneEntryUsd,
     entrySizingMode:zoneEntrySizing.mode??advisorSeats.settings.entrySizingMode,

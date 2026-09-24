@@ -170,6 +170,38 @@ function healthState({availableUsd,estimatedAffordableSoldiers,estimatedDcaRound
   return "RUIM";
 }
 
+function normalizedSide(value) {
+  const side=String(value||"").toUpperCase();
+  return side==="LONG"||side==="SHORT"?side:"";
+}
+
+function amsterdamDayKey(value) {
+  const date=new Date(Number(value));
+  if(!Number.isFinite(date.getTime()))return "";
+  const parts=new Intl.DateTimeFormat("en-GB",{
+    timeZone:"Europe/Amsterdam",year:"numeric",month:"2-digit",day:"2-digit",
+  }).formatToParts(date);
+  const read=(type)=>parts.find((part)=>part.type===type)?.value||"";
+  return `${read("year")}-${read("month")}-${read("day")}`;
+}
+
+export function countWinningHomecomingsToday(events,nowMs=Date.now()) {
+  const today=amsterdamDayKey(nowMs);
+  const seen=new Set();
+  let total=0;
+  for(const raw of Array.isArray(events)?events:[]){
+    if(!raw||typeof raw!=="object")continue;
+    const closedAtMs=Number(raw.closedAtMs);
+    const reason=String(raw.reason||"TP_WIN").toUpperCase();
+    if(!Number.isFinite(closedAtMs)||closedAtMs<=0||reason!=="TP_WIN"||amsterdamDayKey(closedAtMs)!==today)continue;
+    const id=String(raw.eventId||`${raw.soldierId||raw.side||"soldier"}:${closedAtMs}`);
+    if(seen.has(id))continue;
+    seen.add(id);
+    total+=1;
+  }
+  return total;
+}
+
 export function buildStrategyStatusCommandCenter(input={}) {
   const availableUsd=parsePortfolioMoney(input.availableText??input.availableUsd);
   const actualLong=integer(input.actualLong);
@@ -180,157 +212,87 @@ export function buildStrategyStatusCommandCenter(input={}) {
 
   const baseLong=integer(input.baseLong)??0;
   const baseShort=integer(input.baseShort)??0;
-  const zoneFreeLong=integer(input.zoneFreeLong)??0;
-  const zoneFreeShort=integer(input.zoneFreeShort)??0;
-  const balancerFree=integer(input.balancerFree)??0;
-  const balancerDesired=integer(input.balancerDesired)??0;
-  const balancerOpen=integer(input.balancerOpen)??0;
-  const pendingCount=Math.max(0,integer(input.pendingCount)??Math.max(0,balancerDesired-balancerOpen));
-  const pendingSide=["LONG","SHORT"].includes(String(input.pendingSide||"").toUpperCase())
-    ? String(input.pendingSide).toUpperCase()
-    : "";
-
-  const soldierCost=estimateSoldierCost(input);
-  const dcaCost=estimateDcaCost(input);
-  const estimatedAffordableSoldiers=affordable(availableUsd,soldierCost);
-  const estimatedDcaRounds=affordable(availableUsd,dcaCost);
-
-  const freeZoneSeats=zoneFreeLong+zoneFreeShort+balancerFree;
-  const totalZoneSeats=Math.max(
-    freeZoneSeats,
-    baseLong+baseShort+balancerDesired,
-  );
-  const relevantFreeSeats=pendingSide==="LONG"
-    ? zoneFreeLong+(String(input.balancerSide||"").toUpperCase()==="LONG"?balancerFree:0)
-    : pendingSide==="SHORT"
-      ? zoneFreeShort+(String(input.balancerSide||"").toUpperCase()==="SHORT"?balancerFree:0)
-      : freeZoneSeats;
+  const zoneFreeLong=Math.min(baseLong,integer(input.zoneFreeLong)??0);
+  const zoneFreeShort=Math.min(baseShort,integer(input.zoneFreeShort)??0);
+  const zoneOpenLong=Math.min(baseLong,integer(input.zoneOpenLong)??Math.max(0,baseLong-zoneFreeLong));
+  const zoneOpenShort=Math.min(baseShort,integer(input.zoneOpenShort)??Math.max(0,baseShort-zoneFreeShort));
+  const oldZonesOpenLong=integer(input.oldZonesOpenLong)??0;
+  const oldZonesOpenShort=integer(input.oldZonesOpenShort)??0;
+  const oldZonesOpenTotal=integer(input.oldZonesOpenTotal)??(oldZonesOpenLong+oldZonesOpenShort);
 
   const strategyEnabled=input.strategyEnabled===true;
   const zoneSafe=input.zoneSafe===true;
-  const hasEnoughForOne=soldierCost===null||availableUsd===null?availableUsd===null||availableUsd>0:availableUsd>=soldierCost;
-  const hasEnoughForPending=pendingCount<=0||estimatedAffordableSoldiers===null||estimatedAffordableSoldiers>=pendingCount;
-  const hasSeats=pendingCount<=0||relevantFreeSeats>0;
-  const actionExecutable=Boolean(strategyEnabled&&zoneSafe&&hasEnoughForOne&&hasEnoughForPending&&hasSeats);
+  const rawPriority=normalizedSide(input.entryPriority??input.balancerSide);
+  const entryPriority=strategyEnabled&&zoneSafe?rawPriority:"";
+  const exposureRaw=String(input.netExposureSide||"").toUpperCase();
+  const netExposureSide=exposureRaw==="LONG"||exposureRaw==="SHORT"?exposureRaw:"NEUTRAAL";
 
-  let actionTitle="Geen actie nodig";
-  let actionDetail="De strategie volgt de actieve zone.";
-  let actionMode="idle";
-  if(!strategyEnabled){
-    actionTitle="Geblokkeerd — strategy uit";
-    actionDetail="De Zone-Soldatenstrategie plaatst geen nieuwe orders.";
-    actionMode="blocked";
-  }else if(!zoneSafe){
-    actionTitle="Wachten op zone";
-    actionDetail="De 15m-zone is nog niet veilig bevestigd voor nieuwe entries.";
-    actionMode="waiting";
-  }else if(pendingCount>0&&pendingSide){
-    if(!hasEnoughForOne||!hasEnoughForPending){
-      actionTitle="Geblokkeerd — onvoldoende available";
-      actionDetail=estimatedAffordableSoldiers===null
-        ? `+${pendingCount} ${pendingSide} gewenst; betaalbaarheid kan niet betrouwbaar worden berekend.`
-        : `${estimatedAffordableSoldiers} van ${pendingCount} gewenste ${pendingSide}-soldaten zijn met huidig Available betaalbaar.`;
-      actionMode="blocked";
-    }else if(!hasSeats){
-      actionTitle="Geblokkeerd — geen vrije stoelen";
-      actionDetail=`+${pendingCount} ${pendingSide} gewenst, maar er is nu geen vrije zone-capaciteit.`;
-      actionMode="blocked";
-    }else{
-      actionTitle=`+${pendingCount} ${pendingSide} automatisch`;
-      actionDetail=`${zoneLabel(input.activeZone)} bevestigd · de bot verwerkt dit automatisch via het bestaande entrypad.`;
-      actionMode=pendingSide==="LONG"?"long":"short";
+  const soldierCost=estimateSoldierCost(input);
+  const enoughAvailable=availableUsd!==null&&soldierCost!==null&&availableUsd>=soldierCost*1.05;
+  let nextPossibleSide="";
+  if(strategyEnabled&&zoneSafe&&enoughAvailable){
+    if(entryPriority==="LONG"){
+      if(zoneFreeLong>0)nextPossibleSide="LONG";
+    }else if(entryPriority==="SHORT"){
+      if(zoneFreeShort>0)nextPossibleSide="SHORT";
+    }else if(zoneFreeLong>0||zoneFreeShort>0){
+      if(zoneFreeLong>0&&zoneFreeShort>0){
+        nextPossibleSide=zoneOpenLong<=zoneOpenShort?"LONG":"SHORT";
+      }else{
+        nextPossibleSide=zoneFreeLong>0?"LONG":"SHORT";
+      }
     }
-  }else if(freeZoneSeats>0){
-    actionTitle="Wachten op entry";
-    actionDetail=`${freeZoneSeats} zone-soldaat${freeZoneSeats===1?"":"en"} staan nog vrij en worden automatisch gebruikt bij geldige entries.`;
-    actionMode="waiting";
-  }else{
-    actionTitle="Formatie compleet";
-    actionDetail="De actieve zone heeft momenteel geen open formatie-tekort.";
-    actionMode="complete";
   }
 
-  const longPercent=totalActiveSoldiers&&actualLong!==null?(actualLong/totalActiveSoldiers)*100:null;
-  const shortPercent=totalActiveSoldiers&&actualShort!==null?(actualShort/totalActiveSoldiers)*100:null;
+  const homecomingEvents=Array.isArray(input.homecomingEvents)?input.homecomingEvents:[];
+  const winningHomeToday=countWinningHomecomingsToday(homecomingEvents,input.nowMs??Date.now());
+  const freeZoneSeats=zoneFreeLong+zoneFreeShort;
+  const totalZoneSeats=baseLong+baseShort;
 
-  const maxDca=integer(input.maxDca);
-  const unlimitedDca=input.unlimitedDca===true;
-  const runwayTarget=unlimitedDca
-    ? COMMAND_CENTER_HEALTH_THRESHOLDS.unlimitedReferenceRounds
-    : Math.max(1,maxDca??COMMAND_CENTER_HEALTH_THRESHOLDS.unlimitedReferenceRounds);
-  const dcaCoveragePercent=estimatedDcaRounds===null
-    ? null
-    : Math.max(0,Math.min(100,(estimatedDcaRounds/runwayTarget)*100));
-
-  const health=healthState({availableUsd,estimatedAffordableSoldiers,estimatedDcaRounds,pendingCount});
-  const currentLower=finite(input.currentZoneLower);
-  const currentUpper=finite(input.currentZoneUpper);
-  const currentZoneRange=currentLower!==null&&currentUpper!==null
-    ? `${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(currentLower)}–${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(currentUpper)}`
-    : "—";
-
-  let footerTitle="Bot koopt zelf bij zolang Available en vrije zone-soldaten beschikbaar zijn";
-  let footerDetail="De strategie gebruikt uitsluitend het bestaande automatische zone-entrypad. Geen handmatige actie nodig.";
-  if(!strategyEnabled){
-    footerTitle="Strategie staat uit — geen nieuwe zone-orders";
-    footerDetail="Bestaande posities blijven door hun bestaande beheerlogica afgehandeld.";
-  }else if(!zoneSafe){
-    footerTitle="Automatische zone-entry wacht";
-    footerDetail="Nieuwe entries blijven geblokkeerd totdat de bevestigde 15m-zone weer veilig is.";
-  }else if(actionMode==="blocked"){
-    footerTitle=actionTitle;
-    footerDetail=actionDetail;
-  }else if(freeZoneSeats<=0&&pendingCount<=0){
-    footerTitle="Actieve zone is gevuld";
-    footerDetail="De bot wacht op een geldige nieuwe zone of vrijgekomen zone-capaciteit.";
+  let nextPossibleDetail="alleen als entry geldig is";
+  if(!strategyEnabled)nextPossibleDetail="strategie staat uit";
+  else if(!zoneSafe)nextPossibleDetail="wacht op bevestigde zone";
+  else if(!enoughAvailable)nextPossibleDetail="wacht op voldoende Available";
+  else if(entryPriority&&((entryPriority==="LONG"?zoneFreeLong:zoneFreeShort)<=0)){
+    nextPossibleDetail=`${entryPriority} prioriteit · geen vrije ${entryPriority}-soldaat`;
+  }else if(!nextPossibleSide){
+    nextPossibleDetail="formatie is bezet";
   }
 
   return {
-    reference:"file_00000000d9b0820e8eacdecb418c95aa",
+    reference:"file_000000009e0081f4b88f4b415de68c71",
     strategyEnabled,
-    autoRefillEnabled:strategyEnabled,
     zoneSafe,
     activeZone:zoneLabel(input.activeZone),
-    nextZone:zoneLabel(input.nextZone),
-    previousZone:zoneLabel(input.previousZone),
-    currentZoneRange,
-    nextZonePrice:finite(input.nextZonePrice),
-    previousZonePrice:finite(input.previousZonePrice),
-    nextZoneDistancePercent:distancePercent(input.nextZonePrice,input.currentEquity),
-    previousZoneDistancePercent:distancePercent(input.previousZonePrice,input.currentEquity),
     desiredLong:baseLong,
     desiredShort:baseShort,
+    formationHardCap:true,
+    zoneOpenLong,
+    zoneOpenShort,
+    zoneFreeLong,
+    zoneFreeShort,
+    freeZoneSeats,
+    totalZoneSeats,
+    oldZonesOpenTotal,
+    oldZonesOpenLong,
+    oldZonesOpenShort,
     actualLong,
     actualShort,
     totalActiveSoldiers,
-    longPercent,
-    shortPercent,
-    pendingSide,
-    pendingCount,
-    actionTitle,
-    actionDetail,
-    actionMode,
-    actionExecutable,
+    netExposureSide,
+    entryPriority:entryPriority||"GEEN",
+    nextPossibleSide,
+    nextPossibleInflow:nextPossibleSide?`1 ${nextPossibleSide}`:"GEEN",
+    nextPossibleDetail,
+    winningHomeToday,
+    winningHomeTotal:homecomingEvents.length,
     availableUsd,
     availableDisplay:String(input.availableText||formatCommandMoney(availableUsd)),
     estimatedSoldierCost:soldierCost,
-    estimatedAffordableSoldiers,
-    estimatedDcaCost:dcaCost,
-    estimatedDcaRounds,
-    dcaCoveragePercent,
-    freeZoneSeats,
-    totalZoneSeats,
-    zoneFreeLong,
-    zoneFreeShort,
-    balancerFree,
-    healthState:health,
-    maxDca,
-    unlimitedDca,
-    footerTitle,
-    footerDetail,
-    nextZoneDisplay:finite(input.nextZonePrice)===null?"—":`${formatCommandMoney(input.nextZonePrice)} (${formatPercent(distancePercent(input.nextZonePrice,input.currentEquity))})`,
-    previousZoneDisplay:finite(input.previousZonePrice)===null?"—":`${formatCommandMoney(input.previousZonePrice)} (${formatPercent(distancePercent(input.previousZonePrice,input.currentEquity))})`,
-    estimateCaveat:"Schatting op basis van actuele sizing/configuratiemarge; niet-beschikbare fee- of marktminimumdata wordt niet verzonnen.",
+    actionExecutable:Boolean(nextPossibleSide),
+    actionMode:nextPossibleSide?nextPossibleSide.toLowerCase():strategyEnabled&&zoneSafe?"waiting":"blocked",
+    footerTitle:"Soldaten komen alleen thuis met winst",
+    footerDetail:"Verlies blijft buiten in beheer tot herstel of TP",
     soldierActivity:summarizeSoldierActivity(input.soldierActivity,input.nowMs??Date.now()),
   };
 }

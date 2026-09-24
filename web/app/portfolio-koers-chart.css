@@ -343,3 +343,64 @@
   .pcc-activity-windows article{padding:4px 2px}.pcc-activity-windows strong{font-size:10.4px}.pcc-activity-windows em{font-size:4.7px}
   .pcc-recent-activity>div>span{grid-template-columns:28px 54px minmax(0,1fr);font-size:4.7px}.pcc-recent-activity b{font-size:4.9px}
 }
+
+
+/* Build 423 · fixed-formation homecoming Command Center
+   Visual reference: file_000000009e0081f4b88f4b415de68c71
+   Placement reference: file_0000000010e48243aa4fa2fe0c6e6c20 */
+.portfolio-command-center.pcc-homecoming{
+  --pcc-gold:#e9b844;--pcc-green:#2af09a;--pcc-red:#ff687d;--pcc-muted:#a0b1aa;
+  display:grid;gap:10px;margin-top:10px;padding:12px;border:1px solid rgba(51,223,124,.44);
+  border-radius:22px;background:radial-gradient(circle at 89% 3%,rgba(37,239,145,.11),transparent 28%),linear-gradient(155deg,rgba(2,29,17,.995),rgba(1,14,9,.995));
+  box-shadow:0 18px 38px rgba(0,0,0,.36),0 0 26px rgba(35,238,143,.065),inset 0 1px rgba(147,255,194,.05);overflow:hidden
+}
+.pcc-homecoming .pcc-head{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:9px;padding:1px 3px 3px}
+.pcc-homecoming .pcc-head-icon{width:31px;height:31px;font-size:18px}
+.pcc-homecoming .pcc-head>div{display:grid;gap:2px}.pcc-homecoming .pcc-head>div small{font-size:7px}.pcc-homecoming .pcc-head>div strong{font-size:16px}
+.pcc-homecoming .pcc-command-badge{grid-column:auto;margin:0;padding:7px 12px;font-size:8px;border-color:rgba(232,184,61,.62);background:rgba(72,53,6,.18)}
+.pcc-homecoming .pcc-command-badge em{margin-top:2px;font-size:5.5px;color:#34e79a}
+.pcc-formation-hero{display:grid;grid-template-columns:132px minmax(0,1fr) 178px;align-items:center;gap:14px;min-height:104px;padding:15px 16px;border:1px solid rgba(40,240,143,.76);border-radius:19px;background:linear-gradient(145deg,rgba(3,55,32,.82),rgba(1,27,18,.88));box-shadow:inset 0 1px rgba(126,255,184,.07),0 0 18px rgba(33,235,135,.07)}
+.pcc-army{height:74px;display:grid;align-content:center;gap:3px;padding:8px 11px;border:1px solid rgba(45,214,127,.25);border-radius:15px;background:rgba(3,31,20,.62);box-shadow:inset 0 0 18px rgba(0,0,0,.26)}
+.pcc-army-line{display:flex;align-items:center;justify-content:center;gap:5px;min-height:22px}.pcc-army-line i{font:900 22px/1 system-ui;font-style:normal;text-shadow:0 0 10px currentColor}.pcc-army-line b{font:900 8px/1 system-ui}
+.pcc-army-line.long{color:var(--pcc-green)}.pcc-army-line.short{color:var(--pcc-red)}
+.pcc-formation-copy{min-width:0;display:grid;gap:5px}.pcc-formation-copy small,.pcc-exposure small{color:var(--pcc-gold);font:900 7px/1 system-ui;letter-spacing:.06em}
+.pcc-formation-copy>strong{display:flex;align-items:baseline;gap:5px;min-width:0;color:#f6f5ef;font:950 20px/1.05 system-ui;letter-spacing:-.025em;white-space:nowrap}
+.pcc-formation-copy>strong .long{color:var(--pcc-green)}.pcc-formation-copy>strong .short{color:var(--pcc-red)}.pcc-formation-copy>strong i{color:#d9ded9;font-style:normal}
+.pcc-formation-copy em{color:#b0bdb6;font:750 8px/1.2 system-ui;font-style:normal}
+.pcc-exposure{height:76px;display:grid;grid-template-columns:35px minmax(0,1fr);align-items:center;gap:8px;padding:9px 11px;border-left:1px solid rgba(232,184,61,.35);border-radius:0 12px 12px 0}
+.pcc-exposure>span{color:var(--pcc-gold);font-size:31px}.pcc-exposure>div{display:grid;gap:4px}.pcc-exposure strong{font:950 17px/1 system-ui}
+.pcc-exposure.short strong{color:var(--pcc-red)}.pcc-exposure.long strong{color:var(--pcc-green)}.pcc-exposure.neutraal strong{color:#e7d68c}
+.pcc-exposure em{color:#c0ccc5;font:800 7px/1 system-ui;font-style:normal}.pcc-exposure em b.long{color:var(--pcc-green)}.pcc-exposure em b.short{color:var(--pcc-red)}.pcc-exposure em b.geen{color:#c9d0cb}
+.pcc-status-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.pcc-status-grid article{min-width:0;min-height:102px;display:grid;grid-template-columns:44px minmax(0,1fr);align-items:center;gap:10px;padding:12px 11px;border:1px solid rgba(50,191,112,.25);border-radius:15px;background:linear-gradient(145deg,rgba(2,34,20,.84),rgba(1,18,12,.82));box-shadow:inset 0 1px rgba(255,255,255,.018)}
+.pcc-status-icon{display:grid;place-items:center;width:40px;height:40px;color:var(--pcc-green);font:950 29px/1 system-ui;text-shadow:0 0 12px rgba(42,240,154,.25)}
+.pcc-status-icon.trophy{color:var(--pcc-gold)}.pcc-status-icon.arrow{font-size:35px}.pcc-status-icon.clock{font-size:32px}
+.pcc-status-grid article>div{min-width:0}.pcc-status-grid small{display:block;color:var(--pcc-gold);font:900 6.6px/1.08 system-ui;letter-spacing:.035em}
+.pcc-status-grid strong{display:block;margin-top:7px;color:#f5f5ef;font:950 18px/1 system-ui;letter-spacing:-.025em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcc-status-grid strong .long,.pcc-status-grid article.priority.long strong,.pcc-status-grid article.inflow.long strong{color:var(--pcc-green)}
+.pcc-status-grid strong .short,.pcc-status-grid article.priority.short strong,.pcc-status-grid article.inflow.short strong{color:var(--pcc-red)}
+.pcc-status-grid em{display:block;margin-top:6px;color:#aab7b0;font:720 7px/1.18 system-ui;font-style:normal;white-space:normal}
+.pcc-status-grid article.priority.geen strong,.pcc-status-grid article.inflow.none strong{color:#d4d8d4}
+.pcc-homecoming-footer{min-height:62px;display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:11px;padding:10px 13px;border:1px solid rgba(232,184,61,.72);border-radius:16px;background:linear-gradient(145deg,rgba(63,48,8,.48),rgba(22,17,3,.64))}
+.pcc-homecoming-footer .pcc-info-icon{width:30px;height:30px;font-size:16px}.pcc-homecoming-footer>div{display:grid;gap:4px;min-width:0}
+.pcc-homecoming-footer strong{color:#efbd47;font:950 13px/1.05 system-ui}.pcc-homecoming-footer em{color:#c4ccc7;font:760 8px/1.15 system-ui;font-style:normal}
+.pcc-return-flow{display:flex;align-items:center;gap:8px;color:var(--pcc-green);font:950 24px/1 system-ui}.pcc-return-flow i{font-size:18px;font-style:normal}.pcc-return-flow b:last-child{color:var(--pcc-gold);font-size:18px}
+@media(max-width:560px){
+  .portfolio-command-center.pcc-homecoming{gap:7px;padding:9px;border-radius:17px}
+  .pcc-homecoming .pcc-head{grid-template-columns:27px minmax(0,1fr) auto;gap:6px}.pcc-homecoming .pcc-head-icon{width:25px;height:25px;font-size:15px}
+  .pcc-homecoming .pcc-head>div small{font-size:5.5px}.pcc-homecoming .pcc-head>div strong{font-size:12.6px}.pcc-homecoming .pcc-command-badge{padding:5px 8px;font-size:6.4px}.pcc-homecoming .pcc-command-badge em{font-size:4.7px}
+  .pcc-formation-hero{grid-template-columns:86px minmax(0,1fr) 110px;gap:8px;min-height:82px;padding:10px;border-radius:14px}
+  .pcc-army{height:59px;padding:6px;gap:1px;border-radius:11px}.pcc-army-line{gap:3px;min-height:18px}.pcc-army-line i{font-size:16px}.pcc-army-line b{font-size:6px}
+  .pcc-formation-copy{gap:3px}.pcc-formation-copy small,.pcc-exposure small{font-size:5.4px}.pcc-formation-copy>strong{gap:3px;font-size:13.5px}.pcc-formation-copy em{font-size:6.2px}
+  .pcc-exposure{height:58px;grid-template-columns:24px minmax(0,1fr);gap:5px;padding:6px}.pcc-exposure>span{font-size:21px}.pcc-exposure>div{gap:3px}.pcc-exposure strong{font-size:11.5px}.pcc-exposure em{font-size:5.4px}
+  .pcc-status-grid{gap:5px}.pcc-status-grid article{min-height:76px;grid-template-columns:29px minmax(0,1fr);gap:6px;padding:8px 7px;border-radius:11px}
+  .pcc-status-icon{width:27px;height:27px;font-size:20px}.pcc-status-icon.arrow{font-size:25px}.pcc-status-icon.clock{font-size:23px}
+  .pcc-status-grid small{font-size:4.8px}.pcc-status-grid strong{margin-top:5px;font-size:12px}.pcc-status-grid em{margin-top:4px;font-size:5.4px}
+  .pcc-homecoming-footer{min-height:51px;grid-template-columns:25px minmax(0,1fr) auto;gap:7px;padding:8px;border-radius:12px}.pcc-homecoming-footer .pcc-info-icon{width:22px;height:22px;font-size:12px}
+  .pcc-homecoming-footer strong{font-size:9.5px}.pcc-homecoming-footer em{font-size:6.2px}.pcc-return-flow{gap:5px;font-size:18px}.pcc-return-flow i{font-size:13px}.pcc-return-flow b:last-child{font-size:13px}
+}
+@media(max-width:380px){
+  .pcc-formation-hero{grid-template-columns:78px minmax(0,1fr) 98px;padding:8px 7px}.pcc-formation-copy>strong{font-size:12px}.pcc-exposure strong{font-size:10.4px}
+  .pcc-status-grid article{grid-template-columns:24px minmax(0,1fr);gap:4px;padding:7px 5px}.pcc-status-icon{width:23px;height:23px;font-size:17px}
+  .pcc-status-grid small{font-size:4.25px}.pcc-status-grid strong{font-size:10.4px}.pcc-status-grid em{font-size:4.8px}
+}
