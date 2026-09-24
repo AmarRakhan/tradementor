@@ -22,9 +22,55 @@ export type ReleaseHistoryEntry = {
 };
 
 export const CURRENT_RELEASE: ReleaseHistoryEntry = {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-continuity-monitor`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
+  releasedAt: "2026-09-24",
+  title: "BETA · App continuïteitsbewaker + Bybit betaalreserve",
+  newItems: [
+    "Nieuwe owner-only kaart App kosten & betalingen op HOME met live status van ChatGPT, GitHub, Google Cloud en Bybit betaalreserve.",
+    "Nieuwe mobiele continuïteitspagina met actieve diensten, bekende betalingen, bekende maandkosten, providerstatus en afhankelijkheden.",
+    "Bybit krijgt een volledig aparte read-only Funding-walletkoppeling; de backend weigert iedere API-key waarvoor Bybit readOnly niet expliciet als 1 bevestigt.",
+    "Google Cloud billing wordt fail-closed gelezen: uitgeschakelde billing is KRITIEK en ontbrekend Billing API-leesrecht wordt expliciet Niet geverifieerd in plaats van groen gegokt.",
+    "Kritieke continuiteitsmeldingen kunnen bij appstart verschijnen en worden bewust bevestigd zonder orders, posities of trading state te wijzigen.",
+  ],
+  problems: [
+    "Een gemiste betaling kon de app onverwacht onbereikbaar maken zonder één centraal operationeel overzicht.",
+    "Kosten, billingstatus en betaalreserve waren verspreid over losse leveranciers en moesten handmatig worden onthouden.",
+    "De betaalreserve van de Bybit Card kon niet los van tradingcredentials gecontroleerd worden.",
+  ],
+  causes: [
+    "Er bestond nog geen gescheiden read-only continuiteitsdomein naast de trading runtime.",
+    "Providerdata had nog geen uniform provenance-model voor LIVE_API, MANUAL, CALCULATED en UNKNOWN.",
+  ],
+  fixes: [
+    "Continuity Dashboard is hard owner-only op een immutable UID-claim en andere accounts starten geen continuity-calls.",
+    "Een dedicated tradementor-bybit-continuity-<uid> Secret Manager secret bewaart uitsluitend de aparte read-only Bybit sleutel.",
+    "Funding-balans, bekende verplichtingen en instelbare veiligheidsbuffer worden server-side vergeleken zonder ontbrekende koersen of betaaldatums te verzinnen.",
+    "ChatGPT-consumentenbilling blijft handmatig totdat een ondersteunde live interface beschikbaar is; GitHub accountbilling blijft UNKNOWN als de runtime daar geen geautoriseerde bron voor heeft.",
+  ],
+  now: [
+    "HOME toont de continuiteitskaart alleen aan het BETA-owneraccount.",
+    "Bybit kan vanuit de app worden getest en gekoppeld; de API-secret wordt niet in localStorage bewaard en komt niet terug in browserresponses.",
+    "Groen betekent alleen dat de betreffende controle echt bevestigd is; onbekende billingdata blijft zichtbaar als waarschuwing.",
+    "Geen order-, DCA-, TP/SL-, zone-, soldier-, scanner-, leverage- of Close All-logica is onderdeel van deze module.",
+  ],
+  before: "Build 416 leverde de owner-only zone-soldatenstrategie en rustige zone-afhankelijke inzetgroei.",
+  after: "Build 417 voegt een volledig losstaande owner-only continuiteitslaag toe voor providerstatus, betalingen en read-only betaalreserve.",
+  technicalDetails: [
+    "Webroutes: /api/continuity, /refresh, /bybit/test, /bybit, /settings en /alerts/ack.",
+    "Cloudroutes gebruiken dezelfde Firebase sessie en daarboven een aparte continuity owner-UID gate.",
+    "Bybit V5 wordt uitsluitend gelezen via query-api, Funding balances en desgewenst wallet-balance helpers; er bestaat geen muterende Bybit methode in de continuity client.",
+    "Providerwaarden dragen provenance; onbekende bedragen of due dates worden niet hardcoded.",
+  ],
+  confidence: "confirmed",
+};
+
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  version: WEBAPP_VERSION,
+  build: "416",
   releasedAt: "2026-09-24",
   title: "BETA · owner-only zonesoldaten + rustige inzetgroei",
   newItems: [
@@ -74,9 +120,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Bestaande UI-regressietests zijn aangepast zodat de legacy zone-advisor fallback bewaakt blijft zonder de nieuwe zone-owned bron van waarheid als regressie te markeren.",
   ],
   confidence: "confirmed",
-};
-
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
   {
     id: "v46-build-414-aster-cold-start-formation-dashboard",
     version: "46",
