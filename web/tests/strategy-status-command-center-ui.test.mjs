@@ -12,14 +12,17 @@ test("new Command Center remains hard betaOwner-only while non-owner keeps exist
 });
 
 test("owner Command Center uses approved homecoming visual reference",async()=>{
-  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const [component,viewModel]=await Promise.all([
+    readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../lib/strategy-status-command-center.mjs",import.meta.url),"utf8"),
+  ]);
   assert.ok(component.includes('data-reference="file_000000009e0081f4b88f4b415de68c71"'));
   for(const label of [
     "ACTIEVE FORMATIE","NETTO EXPOSURE:","THUIS / BESCHIKBAAR","IN HET VELD",
-    "OUDE ZONES NOG BUITEN","WINST THUISGEKOMEN","ENTRY-PRIORITEIT",
-    "VOLGENDE MOGELIJKE INSTROOM","Soldaten komen alleen thuis met winst",
-    "Verlies blijft buiten in beheer tot herstel of TP",
+    "OUDE ZONES NOG BUITEN","WINST THUISGEKOMEN","ENTRY-PRIORITEIT","VOLGENDE MOGELIJKE INSTROOM",
   ]) assert.ok(component.includes(label),label);
+  assert.ok(viewModel.includes('footerTitle:"Soldaten komen alleen thuis met winst"'));
+  assert.ok(viewModel.includes('footerDetail:"Verlies blijft buiten in beheer tot herstel of TP"'));
 });
 
 test("owner Command Center removes bulk-soldier messaging and mutation controls",async()=>{
