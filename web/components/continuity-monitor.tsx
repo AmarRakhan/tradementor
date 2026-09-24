@@ -49,6 +49,7 @@ export type ContinuitySnapshot = {
     activeServices: number;
     totalServices: number;
     upcomingPayments: number;
+    upcomingAmount: number;
     knownMonthlyCost: number;
     currency: string;
     overallStatus: "SAFE" | "WARNING" | "CRITICAL";
@@ -233,7 +234,7 @@ export function ContinuityDashboard({
 
     <div className="tm-continuity-summary-grid">
       <SummaryCard glyph="▱" label="Actieve diensten" value={snapshot ? `${snapshot.summary.activeServices} / ${snapshot.summary.totalServices}` : "—"} detail={loading ? "Controleren…" : "Live status"} />
-      <SummaryCard glyph="▤" label="Openstaande betaling" value={snapshot ? (snapshot.summary.upcomingPayments ? `${snapshot.summary.upcomingPayments}` : "0") : "—"} detail="binnen 30 dagen" />
+      <SummaryCard glyph="▤" label="Openstaande betaling" value={snapshot ? money(snapshot.summary.upcomingAmount, currency) : "—"} detail={snapshot ? `${snapshot.summary.upcomingPayments} bekende betaling${snapshot.summary.upcomingPayments === 1 ? "" : "en"} · 30 dagen` : "binnen 30 dagen"} />
       <SummaryCard glyph="▥" label="Bekende maandkosten" value={snapshot ? money(snapshot.summary.knownMonthlyCost, currency) : "—"} detail="excl. onbekend verbruik" />
     </div>
 
