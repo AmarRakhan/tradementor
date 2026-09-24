@@ -120,8 +120,11 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(component.includes("priceToCoordinate(zone.lower)"));
   assert.ok(component.includes("layoutPortfolioKoersZoneRegions"));
   assert.ok(component.includes("layoutPortfolioKoersMarkers"));
-  assert.ok(component.includes("maxFull:3"));
-  assert.ok(component.includes("maxCompact:2"));
+  assert.equal(component.includes("maxFull:3"),false);
+  assert.equal(component.includes("maxCompact:2"),false);
+  assert.ok(component.includes("getVisibleLogicalRange()"));
+  assert.ok(component.includes("visibleMarkerRows"));
+  assert.ok(component.includes("safetyCap:160"));
   assert.ok(component.includes("PRICE_AXIS_WIDTH=48"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
@@ -260,4 +263,25 @@ test("Build 414 reduces price-axis typography while keeping live equity as the l
   assert.ok(component.includes('textColor:"#9fb0ba",fontSize:10'));
   assert.ok(component.includes("lastValueVisible:true"));
   assert.ok(component.includes("scaleMargins:{top:.12,bottom:.12}"));
+});
+
+
+test("Build 422 filters chart markers by the actual visible logical range instead of a global top-three",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("const visibleRange=chart.timeScale().getVisibleLogicalRange()"));
+  assert.ok(component.includes("candleIndex>=Math.floor(visibleRange.from)-1"));
+  assert.ok(component.includes("candleIndex<=Math.ceil(visibleRange.to)+1"));
+  assert.equal(component.includes("maxFull:3"),false);
+  assert.equal(component.includes("maxCompact:2"),false);
+});
+
+test("Build 422 preserves event-to-candle identity while scrolling and adds no fetch on viewport change",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const syncStart=component.indexOf("const syncOverlays=()=>");
+  const syncEnd=component.indexOf("syncOverlaysRef.current=",syncStart);
+  const syncBlock=component.slice(syncStart,syncEnd);
+  assert.ok(syncBlock.includes("candleIndexByTime"));
+  assert.ok(syncBlock.includes("timeToCoordinate(row.time"));
+  assert.equal(syncBlock.includes("authenticatedRequest("),false);
+  assert.ok(component.includes("subscribeVisibleLogicalRangeChange(sync)"));
 });
