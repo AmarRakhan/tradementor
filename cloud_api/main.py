@@ -2827,14 +2827,34 @@ def _continuity_google_service() -> dict[str, Any]:
             response.raise_for_status()
             billing = response.json()
             enabled = bool(billing.get("billingEnabled"))
+            billing_account_name = str(billing.get("billingAccountName") or "")
             result.update({
                 "billingEnabled": enabled,
-                "billingAccountName": billing.get("billingAccountName"),
+                "billingAccountName": billing_account_name or None,
                 "billingSource": "LIVE_API",
                 "status": "ACTIVE" if enabled else "CRITICAL",
                 "statusLabel": "Actief" if enabled else "KRITIEK",
                 "note": "Google Cloud billing is actief." if enabled else "Google Cloud billing is niet actief. Productie kan uitvallen.",
             })
+            if enabled and billing_account_name:
+                try:
+                    budgets_response = httpx.get(
+                        f"https://billingbudgets.googleapis.com/v1/{billing_account_name}/budgets",
+                        headers={"Authorization": f"Bearer {credentials.token}"},
+                        params={"pageSize": "100"},
+                        timeout=8.0,
+                    )
+                    if budgets_response.status_code == 403:
+                        result["budgetStatus"] = "UNVERIFIED"
+                        result["budgetCount"] = None
+                    else:
+                        budgets_response.raise_for_status()
+                        budgets = (budgets_response.json() or {}).get("budgets") or []
+                        result["budgetStatus"] = "CONFIGURED" if budgets else "NONE"
+                        result["budgetCount"] = len(budgets)
+                except Exception:
+                    result["budgetStatus"] = "UNVERIFIED"
+                    result["budgetCount"] = None
     except Exception:
         result.update({
             "status": "WARNING",
