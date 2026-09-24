@@ -5,14 +5,14 @@ import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, t
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
-type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[]};
+type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];source?:string};
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
@@ -215,12 +215,14 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const candleSeriesRef=useRef<ISeriesApi<any>|null>(null);
   const bbRefs=useRef<{upper:ISeriesApi<any>|null;middle:ISeriesApi<any>|null;lower:ISeriesApi<any>|null}>({upper:null,middle:null,lower:null});
   const candleDataRef=useRef<Candle[]>([]);
+  const markerRowsRef=useRef<Marker[]>([]);
   const syncOverlaysRef=useRef<()=>void>(()=>{});
   const advisorZoneLadderRef=useRef<any>(null);
   const activeZoneRef=useRef<number|null>(null);
   const liveEquityTextRef=useRef(liveEquityText);
   const [timeframe,setTimeframe]=useState(PORTFOLIO_KOERS_DEFAULT_TIMEFRAME);
   const [payload,setPayload]=useState<Payload>(EMPTY);
+  const [recentMarkers,setRecentMarkers]=useState<Marker[]>([]);
   const [browserCandles,setBrowserCandles]=useState<Candle[]>([]);
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(true);
@@ -235,7 +237,12 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const [advisorTimeline,setAdvisorTimeline]=useState<any>(null);
   const [advisorMessage,setAdvisorMessage]=useState("");
   const [soldierActivity,setSoldierActivity]=useState<SoldierActivityEvent[]>([]);
+  const combinedMarkers=useMemo(
+    ()=>mergePortfolioKoersMarkers(payload.markers,recentMarkers) as Marker[],
+    [payload.markers,recentMarkers],
+  );
   liveEquityTextRef.current=liveEquityText;
+  markerRowsRef.current=combinedMarkers;
 
   const loadBrowserHistory=useCallback(()=>{
     if(!user?.uid){setBrowserCandles([]);return}
@@ -303,6 +310,36 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void loadAdvisor()},45_000);
     return()=>window.clearInterval(timer);
   },[loadAdvisor]);
+
+  const loadRecentEvents=useCallback(async()=>{
+    try{
+      const response=record(await authenticatedRequest(
+        `/api/exchanges/aster/portfolio-chart/events?timeframe=${encodeURIComponent(timeframe)}`,
+        {cache:"no-store"},
+      ));
+      const normalized=normalizePortfolioKoersPayload({timeframe,markers:Array.isArray(response.markers)?response.markers:[]}) as Payload;
+      setRecentMarkers(normalized.markers);
+    }catch{
+      // Keep the last confirmed live markers. The normal 45s chart refresh is
+      // still the durable fallback and no trading path depends on this feed.
+    }
+  },[timeframe]);
+
+  useEffect(()=>{
+    setRecentMarkers([]);
+    void loadRecentEvents();
+    const timer=window.setInterval(()=>{
+      if(document.visibilityState==="visible")void loadRecentEvents();
+    },5_000);
+    const visible=()=>{if(document.visibilityState==="visible")void loadRecentEvents()};
+    document.addEventListener("visibilitychange",visible);
+    return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
+  },[loadRecentEvents]);
+
+  useEffect(()=>{
+    markerRowsRef.current=combinedMarkers;
+    syncOverlaysRef.current();
+  },[combinedMarkers]);
 
   const load=useCallback(async()=>{
     try{
@@ -435,7 +472,6 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
 
     const candleByTime=new Map(candles.map((row)=>[row.time,row]));
     const candleIndexByTime=new Map(candles.map((row,index)=>[row.time,index]));
-    const markerRows=payload.markers.filter((row)=>candleByTime.has(row.time));
     const bbUpperByTime=new Map(bb.upper.map((row:any)=>[Number(row.time),Number(row.value)]));
     const bbMiddleByTime=new Map(bb.middle.map((row:any)=>[Number(row.time),Number(row.value)]));
     const bbLowerByTime=new Map(bb.lower.map((row:any)=>[Number(row.time),Number(row.value)]));
@@ -492,6 +528,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         setZoneLayout(zones);
       }
 
+      const markerRows=markerRowsRef.current.filter((row)=>candleByTime.has(row.time));
       const visibleRange=chart.timeScale().getVisibleLogicalRange();
       const visibleMarkerRows=markerRows.filter((row)=>{
         const candleIndex=candleIndexByTime.get(row.time);
@@ -537,7 +574,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       if(!param.time){setHover(null);return}
       const time=Number(param.time),candle=candleDataRef.current.find((row)=>row.time===time);
       if(!candle){setHover(null);return}
-      setHover({candle,markers:payload.markers.filter((row)=>row.time===time)});
+      setHover({candle,markers:markerRowsRef.current.filter((row)=>row.time===time)});
     };
     chart.subscribeCrosshairMove(onCrosshair);
     const sync=()=>syncOverlaysRef.current();
@@ -562,7 +599,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       if(chartRef.current===chart)chartRef.current=null;
       candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncOverlaysRef.current=()=>{};setZoneBoundaries([]);setEventLabels([]);
     };
-  },[baseCandles,payload.markers,payload.zones,payload.cycleStartEquity,timeframe]);
+  },[baseCandles,payload.zones,payload.cycleStartEquity,timeframe]);
 
   const fullscreen=async()=>{
     if(!shellRef.current)return;
