@@ -50,6 +50,11 @@ test("generic exposure refill remains explicit, optional and capacity-neutral in
   assert.ok(configurator.includes('exposureRuntimeLabel = !savedExposureRefillEnabled'));
   assert.ok(core.includes("exposure_refill_enabled: bool = False"));
   assert.ok(core.includes("if settings.exposure_refill_enabled and str(exposure.get(\"activeSide\") or \"\").upper() == normalized_side:"));
-  assert.ok(core.includes('long_need = 0 if zone_migration_hold else len(available_soldiers(zone_state or {}, "LONG"))'));
-  assert.ok(core.includes('short_need = 0 if zone_migration_hold else len(available_soldiers(zone_state or {}, "SHORT"))'));
+  assert.ok(core.includes('eligible_zone_long = ['));
+  assert.ok(core.includes('eligible_zone_short = ['));
+  assert.ok(core.includes('row for row in available_soldiers(zone_state or {}, "LONG")'));
+  assert.ok(core.includes('row for row in available_soldiers(zone_state or {}, "SHORT")'));
+  assert.ok(core.includes('not in zone_soldiers_released_this_tick'));
+  assert.ok(core.includes('long_need = 0 if zone_migration_hold else len(eligible_zone_long)'));
+  assert.ok(core.includes('short_need = 0 if zone_migration_hold else len(eligible_zone_short)'));
 });

@@ -69,24 +69,29 @@ test("old-zone open soldiers and winning homecomings are separate truths",()=>{
     zoneOpenLong:2,zoneOpenShort:1,zoneFreeLong:1,zoneFreeShort:2,
     oldZonesOpenLong:4,oldZonesOpenShort:3,
     homecomingEvents:[
-      {eventId:"a",closedAtMs:Date.parse("2026-09-24T08:00:00Z"),reason:"TP_WIN"},
-      {eventId:"b",closedAtMs:Date.parse("2026-09-24T19:00:00Z"),reason:"TP_WIN"},
-      {eventId:"old",closedAtMs:Date.parse("2026-09-23T08:00:00Z"),reason:"TP_WIN"},
+      {eventId:"a",closedAtMs:Date.parse("2026-09-24T08:00:00Z"),reason:"TP_WIN_OUTSIDE_ORIGIN_ZONE",originZone:0,currentZoneAtClose:-1},
+      {eventId:"b",closedAtMs:Date.parse("2026-09-24T19:00:00Z"),reason:"TP_WIN_OUTSIDE_ORIGIN_ZONE",originZone:1,currentZoneAtClose:-1},
+      {eventId:"same",closedAtMs:Date.parse("2026-09-24T19:30:00Z"),reason:"TP_WIN_OUTSIDE_ORIGIN_ZONE",originZone:-1,currentZoneAtClose:-1},
+      {eventId:"legacy",closedAtMs:Date.parse("2026-09-24T20:00:00Z"),reason:"TP_WIN",originZone:0},
+      {eventId:"old",closedAtMs:Date.parse("2026-09-23T08:00:00Z"),reason:"TP_WIN_OUTSIDE_ORIGIN_ZONE",originZone:0,currentZoneAtClose:-1},
     ],
     nowMs:now,
   });
   assert.equal(vm.oldZonesOpenTotal,7);
   assert.equal(vm.winningHomeToday,2);
-  assert.equal(vm.footerTitle,"Soldaten komen alleen thuis met winst");
+  assert.equal(vm.winningHomeTotal,3);
+  assert.equal(vm.footerTitle,"Alleen oude-zone soldaten tellen als thuiskomst");
 });
 
-test("homecoming count deduplicates and excludes non-win reasons",()=>{
+test("homecoming count accepts only proven outside-origin wins and deduplicates",()=>{
   const now=Date.parse("2026-09-24T12:00:00Z");
   const at=Date.parse("2026-09-24T10:00:00Z");
   assert.equal(countWinningHomecomingsToday([
-    {eventId:"one",closedAtMs:at,reason:"TP_WIN"},
-    {eventId:"one",closedAtMs:at,reason:"TP_WIN"},
-    {eventId:"loss",closedAtMs:at,reason:"STOP_LOSS"},
+    {eventId:"one",closedAtMs:at,reason:"TP_WIN_OUTSIDE_ORIGIN_ZONE",originZone:0,currentZoneAtClose:-1},
+    {eventId:"one",closedAtMs:at,reason:"TP_WIN_OUTSIDE_ORIGIN_ZONE",originZone:0,currentZoneAtClose:-1},
+    {eventId:"same",closedAtMs:at,reason:"TP_WIN_OUTSIDE_ORIGIN_ZONE",originZone:-1,currentZoneAtClose:-1},
+    {eventId:"legacy",closedAtMs:at,reason:"TP_WIN",originZone:0},
+    {eventId:"loss",closedAtMs:at,reason:"STOP_LOSS",originZone:0,currentZoneAtClose:-1},
   ],now),1);
 });
 

@@ -157,10 +157,42 @@ def test_build423_balancer_is_priority_only_and_fixed_formation_is_the_only_new_
     assert 'Do not worsen a live imbalance' in core_source
 
 
-def test_build423_tp_homecoming_is_recorded_only_after_exchange_flat_confirmation():
+def test_build425_tp_settlement_happens_only_after_exchange_flat_confirmation():
     source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
     flat_index = source.index('if key in fresh: raise RuntimeError(f"{key}: TP-close niet flat bevestigd")')
-    home_index = source.index("record_soldier_homecoming(", flat_index)
-    pop_index = source.index("state.pop(key, None)", home_index)
-    assert flat_index < home_index < pop_index
-    assert '"homecoming": bool(zone_mode and st0.get("soldierId"))' in source
+    settle_index = source.index("settle_soldier_after_profitable_tp(", flat_index)
+    pop_index = source.index("state.pop(key, None)", settle_index)
+    assert flat_index < settle_index < pop_index
+    assert '"homecoming": homecoming' in source
+    assert '"zoneMission": zone_mission' in source
+    assert '"currentZoneAtClose": settlement.get("currentZoneAtClose")' in source
+
+
+def test_build425_released_soldier_cannot_reenter_in_same_reconciliation_tick():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert "zone_soldiers_released_this_tick: set[str] = set()" in source
+    assert "zone_soldiers_released_this_tick.add(released_soldier_id)" in source
+    assert 'not in zone_soldiers_released_this_tick' in source
+    release_index = source.index("zone_soldiers_released_this_tick.add(released_soldier_id)")
+    need_index = source.index("eligible_zone_long = [", release_index)
+    candidate_index = source.index("candidates_for_side = [", need_index)
+    assert release_index < need_index < candidate_index
+
+
+def test_build425_zone_entries_keep_existing_bollinger_candidate_and_preorder_guards():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    candidate_guard = source.index("def candidate_bb_pass(candidate_side: str) -> bool:")
+    candidate_check = source.index("require_bollinger_entry(", candidate_guard)
+    planned_soldier = source.index("planned_soldier = None", candidate_check)
+    preorder = source.index("def entry_before_submit(intent: Any) -> None:", planned_soldier)
+    preorder_check = source.index("require_bollinger_entry(", preorder)
+    order = source.index("execute_leg_once(client, plan", preorder_check)
+    assert candidate_guard < candidate_check < planned_soldier < preorder < preorder_check < order
+
+
+def test_build425_true_homecoming_requires_different_known_close_zone():
+    source = (ROOT / "aster_zone_soldiers.py").read_text(encoding="utf-8")
+    assert 'reason != "TP_WIN_OUTSIDE_ORIGIN_ZONE"' in source
+    assert 'if origin_zone == current_zone:' in source
+    assert '"currentZoneAtClose": current_zone' in source
+    assert 'next_status = STATUS_AVAILABLE if reusable_here else STATUS_DORMANT' in source

@@ -12,6 +12,7 @@ from aster_zone_soldiers import (
     claim_soldier,
     prepare_zone_runtime,
     record_soldier_homecoming,
+    settle_soldier_after_profitable_tp,
 )
 
 
@@ -324,22 +325,135 @@ def test_claimed_soldier_carries_persistent_zone_ownership_fields():
     assert soldier["status"] == STATUS_OPEN
 
 
-def test_confirmed_tp_records_one_winning_homecoming_without_creating_capacity():
-    state, _, _ = prepare({}, {}, [], -1, balancer=False)
+def test_same_zone_tp_reuses_same_soldier_without_homecoming():
+    state, _, _ = prepare({}, {}, [], 0, balancer=False)
     soldier = claim_soldier(
         state, "LONG", trade_key="BTCUSDT|LONG", symbol="BTCUSDT",
         entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000,
     )
-    managed_row = {"originZone": -1, "soldierId": soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE}
-    assert record_soldier_homecoming(state, managed_row, side="LONG", timestamp_ms=20_000) is True
-    assert record_soldier_homecoming(state, managed_row, side="LONG", timestamp_ms=20_000) is False
-    next_state, _, report = prepare(state, {}, [], -1, balancer=False, at=30_000)
-    assert report["homecomings"]["total"] == 1
-    event = report["homecomings"]["events"][0]
-    assert event["reason"] == "TP_WIN"
-    assert event["originZone"] == -1
+    managed_row = {
+        "cycleId": "mission-1", "cycleStartedAtMs": 11_000,
+        "originZone": 0, "soldierId": soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+    }
+    settled = settle_soldier_after_profitable_tp(state, managed_row, side="LONG", timestamp_ms=20_000)
+    assert settled["released"] is True
+    assert settled["homecoming"] is False
+    assert settled["status"] == STATUS_AVAILABLE
+    assert state["homecomingEvents"] == []
+    same = state["pools"]["0"]["soldiers"][soldier["soldierId"]]
+    assert same["status"] == STATUS_AVAILABLE
+    assert same["tradeKey"] == ""
+    assert same["symbol"] == ""
+
+    claimed_again = claim_soldier(
+        state, "LONG", trade_key="ETHUSDT|LONG", symbol="ETHUSDT",
+        entry_price=101, entry_portfolio_equity=146, timestamp_ms=30_000,
+    )
+    assert claimed_again["soldierId"] == soldier["soldierId"]
+
+
+def test_same_zone_soldier_can_complete_repeated_profitable_missions():
+    state, _, _ = prepare({}, {}, [], 0, balancer=False)
+    soldier_id = None
+    for mission in range(1, 4):
+        soldier = claim_soldier(
+            state, "SHORT", trade_key=f"S{mission}|SHORT", symbol=f"S{mission}",
+            entry_price=100 + mission, entry_portfolio_equity=145 + mission, timestamp_ms=mission * 10_000,
+        )
+        if soldier_id is None:
+            soldier_id = soldier["soldierId"]
+        assert soldier["soldierId"] == soldier_id
+        settled = settle_soldier_after_profitable_tp(
+            state,
+            {
+                "cycleId": f"mission-{mission}",
+                "cycleStartedAtMs": mission * 10_000,
+                "originZone": 0,
+                "soldierId": soldier_id,
+                "soldierRole": ROLE_ZONE_BASE,
+            },
+            side="SHORT",
+            timestamp_ms=mission * 10_000 + 5_000,
+        )
+        assert settled["status"] == STATUS_AVAILABLE
+        assert settled["homecoming"] is False
+    assert state["homecomingEvents"] == []
+
+
+def test_old_zone_profitable_tp_creates_one_true_homecoming_and_goes_dormant():
+    state, _, _ = prepare({}, {}, [], 0, balancer=False)
+    soldier = claim_soldier(
+        state, "LONG", trade_key="BTCUSDT|LONG", symbol="BTCUSDT",
+        entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000,
+    )
+    managed_row = {
+        "cycleId": "old-zone-cycle", "cycleStartedAtMs": 11_000,
+        "originZone": 0, "soldierId": soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+    }
+    state, _, _ = prepare(
+        state, {"BTCUSDT|LONG": managed_row}, [pos("BTCUSDT", "LONG", 100)],
+        -1, balancer=False, at=15_000,
+    )
+    settled = settle_soldier_after_profitable_tp(state, managed_row, side="LONG", timestamp_ms=20_000)
+    assert settled["released"] is True
+    assert settled["homecoming"] is True
+    assert settled["status"] == STATUS_DORMANT
+    assert settled["originZone"] == 0
+    assert settled["currentZoneAtClose"] == -1
+    event = state["homecomingEvents"][0]
+    assert event["reason"] == "TP_WIN_OUTSIDE_ORIGIN_ZONE"
+    assert event["originZone"] == 0
+    assert event["currentZoneAtClose"] == -1
     assert event["side"] == "LONG"
-    assert len(available_soldiers(next_state, "LONG")) == 3
+    assert state["pools"]["0"]["soldiers"][soldier["soldierId"]]["status"] == STATUS_DORMANT
+
+
+def test_true_homecoming_is_idempotent_for_same_trade_identity():
+    state, _, _ = prepare({}, {}, [], 0, balancer=False)
+    soldier = claim_soldier(
+        state, "LONG", trade_key="BTCUSDT|LONG", symbol="BTCUSDT",
+        entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000,
+    )
+    managed_row = {
+        "cycleId": "stable-cycle-id", "cycleStartedAtMs": 11_000,
+        "originZone": 0, "soldierId": soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+    }
+    state, _, _ = prepare(
+        state, {"BTCUSDT|LONG": managed_row}, [pos("BTCUSDT", "LONG", 100)],
+        1, balancer=False, at=15_000,
+    )
+    assert record_soldier_homecoming(
+        state, managed_row, side="LONG", current_zone_at_close=1, timestamp_ms=20_000
+    ) is True
+    assert record_soldier_homecoming(
+        state, managed_row, side="LONG", current_zone_at_close=1, timestamp_ms=21_000
+    ) is False
+    assert len(state["homecomingEvents"]) == 1
+
+
+def test_same_zone_and_unproven_legacy_events_never_count_as_homecoming():
+    state, _, _ = prepare({}, {}, [], 0, balancer=False)
+    soldier = claim_soldier(
+        state, "LONG", trade_key="BTCUSDT|LONG", symbol="BTCUSDT",
+        entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000,
+    )
+    managed_row = {
+        "cycleId": "same-zone", "originZone": 0,
+        "soldierId": soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+    }
+    assert record_soldier_homecoming(
+        state, managed_row, side="LONG", current_zone_at_close=0, timestamp_ms=20_000
+    ) is False
+    state["homecomingEvents"] = [
+        {
+            "eventId": "legacy-build-423", "closedAtMs": 19_000, "side": "LONG",
+            "originZone": 0, "soldierId": soldier["soldierId"],
+            "soldierRole": ROLE_ZONE_BASE, "reason": "TP_WIN",
+        }
+    ]
+    normalized, _, report = prepare(state, {}, [], 0, balancer=False, at=30_000)
+    assert normalized["homecomingEvents"] == []
+    assert report["homecomings"]["total"] == 0
 
 
 def test_stale_non_open_balancer_capacity_is_pruned_on_restart():
