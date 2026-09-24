@@ -13,7 +13,7 @@ from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 from aster_zone_soldiers import (
     ROLE_EXPOSURE_BALANCER, ROLE_LEGACY_UNASSIGNED, ROLE_ZONE_BASE,
-    available_soldiers, claim_soldier, prepare_zone_runtime, record_soldier_homecoming,
+    available_soldiers, claim_soldier, prepare_zone_runtime, settle_soldier_after_profitable_tp,
 )
 
 ENGINE = "multi_bb_v1"
@@ -833,6 +833,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             except Exception as exc:
                 actions.append({"kind": "ASYM_SHORT_RECOVERY_WAIT", "symbol": symbol, "reason": str(exc)})
 
+    # A soldier released by TP becomes AVAILABLE immediately in persistent state,
+    # but it may not be reused again inside this same reconciliation tick.
+    zone_soldiers_released_this_tick: set[str] = set()
+
     # Management priority: max-LONG-DCA hedge release, then TP, then independent capped DCA.
     for key, st0 in list(state.items()):
         if sent >= budget: break
@@ -872,18 +876,41 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                                  close_evidence=evidence, before_submit=before_order)
                 fresh = _position_map(client.position_risk(symbol))
                 if key in fresh: raise RuntimeError(f"{key}: TP-close niet flat bevestigd")
+                settlement: dict[str, Any] = {}
                 if zone_mode:
-                    record_soldier_homecoming(zone_state or {}, st0, side=side, timestamp_ms=timestamp_ms)
+                    settlement = settle_soldier_after_profitable_tp(
+                        zone_state or {}, st0, side=side, timestamp_ms=timestamp_ms
+                    )
+                    released_soldier_id = str(settlement.get("soldierId") or "")
+                    if settlement.get("released") and released_soldier_id:
+                        zone_soldiers_released_this_tick.add(released_soldier_id)
                 state.pop(key, None); pmap.pop(key, None)
-                tp_write = {"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                            "lastReason": "Multi DCA actief; soldaat met winst thuis na TP"}
+                homecoming = bool(settlement.get("homecoming"))
+                zone_mission = bool(zone_mode and settlement.get("released") and not homecoming)
+                tp_write = {
+                    "multiBbPositions": state,
+                    "lastTickAt": datetime.now(timezone.utc),
+                    "phase": "RUNNING",
+                    "lastReason": (
+                        "Multi DCA actief; oude zone-soldaat met winst thuis"
+                        if homecoming
+                        else "Multi DCA actief; zone-missie met winst afgerond"
+                        if zone_mission
+                        else "Multi DCA actief; TP bevestigd"
+                    ),
+                }
                 if zone_mode:
                     tp_write["zoneSoldierState"] = zone_state
                 ref.set(tp_write, merge=True)
-                ref.collection("audit").add({"event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price,
-                                             "originZone": st0.get("originZone"), "soldierId": st0.get("soldierId"),
-                                             "soldierRole": st0.get("soldierRole"), "homecoming": bool(zone_mode and st0.get("soldierId")),
-                                             "timestamp": datetime.now(timezone.utc)})
+                ref.collection("audit").add({
+                    "event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price,
+                    "originZone": st0.get("originZone"), "soldierId": st0.get("soldierId"),
+                    "soldierRole": st0.get("soldierRole"), "homecoming": homecoming,
+                    "zoneMission": zone_mission,
+                    "currentZoneAtClose": settlement.get("currentZoneAtClose"),
+                    "soldierStatusAfterClose": settlement.get("status"),
+                    "timestamp": datetime.now(timezone.utc),
+                })
             sent += 1; continue
         if asym["active"] and side == "LONG" and st0.get("pairedShortPending"):
             actions.append({"kind": "ASYM_HEDGE_PENDING", "symbol": symbol, "side": side, "reason": "INITIAL_SHORT_NOT_CONFIRMED"}); continue
@@ -1077,8 +1104,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     legacy_position_count = max(0, len(strategy_active_keys) - active_pair_count * 2) if settings.asymmetric_hedge_enabled else 0
     if zone_mode:
         pair_need = 0
-        long_need = 0 if zone_migration_hold else len(available_soldiers(zone_state or {}, "LONG"))
-        short_need = 0 if zone_migration_hold else len(available_soldiers(zone_state or {}, "SHORT"))
+        eligible_zone_long = [
+            row for row in available_soldiers(zone_state or {}, "LONG")
+            if str(row.get("soldierId") or "") not in zone_soldiers_released_this_tick
+        ]
+        eligible_zone_short = [
+            row for row in available_soldiers(zone_state or {}, "SHORT")
+            if str(row.get("soldierId") or "") not in zone_soldiers_released_this_tick
+        ]
+        long_need = 0 if zone_migration_hold else len(eligible_zone_long)
+        short_need = 0 if zone_migration_hold else len(eligible_zone_short)
         # Zone-owned capacity is derived from old OPEN soldiers plus the current
         # zone's free base/balancer soldiers. maximumPositions is no longer the
         # strategy source of truth in this mode; a platform hard ceiling remains.
@@ -1411,7 +1446,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
         planned_soldier = None
         if zone_mode:
-            candidates_for_side = available_soldiers(zone_state or {}, side)
+            candidates_for_side = [
+                row for row in available_soldiers(zone_state or {}, side)
+                if str(row.get("soldierId") or "") not in zone_soldiers_released_this_tick
+            ]
             if not candidates_for_side:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": "NO_ACTIVE_ZONE_SOLDIER"})
                 if side == "LONG": long_need = 0
