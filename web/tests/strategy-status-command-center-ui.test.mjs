@@ -21,8 +21,9 @@ test("owner Command Center uses approved homecoming visual reference",async()=>{
     "ACTIEVE FORMATIE","NETTO EXPOSURE:","THUIS / BESCHIKBAAR","IN HET VELD",
     "OUDE ZONES NOG BUITEN","WINST THUISGEKOMEN","ENTRY-PRIORITEIT","VOLGENDE MOGELIJKE INSTROOM",
   ]) assert.ok(component.includes(label),label);
-  assert.ok(viewModel.includes('footerTitle:"Soldaten komen alleen thuis met winst"'));
-  assert.ok(viewModel.includes('footerDetail:"Verlies blijft buiten in beheer tot herstel of TP"'));
+  assert.ok(viewModel.includes('footerTitle:"Alleen oude-zone soldaten tellen als thuiskomst"'));
+  assert.ok(viewModel.includes('footerDetail:"Winst in de eigen actieve zone maakt dezelfde soldaat opnieuw beschikbaar"'));
+  assert.ok(component.includes("oude-zone soldaten terug met winst"));
 });
 
 test("owner Command Center removes bulk-soldier messaging and mutation controls",async()=>{
