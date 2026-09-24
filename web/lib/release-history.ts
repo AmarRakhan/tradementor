@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 411 release-contract sync: continuity safety, live-candle follow and server sampling ship together.
+// Build 412 release-contract sync: Portfolio Koers capacity and network-error safety ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,47 +26,60 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "Portfolio Koers · tijdlijncontinuïteit en veilige soldatensturing",
+  title: "Portfolio Koers · oude 100-stoelengrens verwijderd",
   newItems: [
-    "De grafiek volgt nu automatisch de nieuw geopende live candle, zodat een oude 00:15-candle niet zichtbaar blijft terwijl de actuele candle al 07:30 is.",
-    "Ontbrekende portfoliohistorie wordt expliciet als historiegat gemeld; er worden geen fictieve candles of equitywaarden ingevuld.",
-    "Koersinstructies en de soldatenknop gaan fail-closed wanneer de canonieke 15m-zonehistorie niet aaneengesloten en voldoende hersteld is.",
-    "De backend bewaart tijdens de actieve Strategy-2 scheduler iedere minuut een bevestigde Aster-equitysample, onafhankelijk van een open browsertab.",
+    "De BETA koersinstructie kan LONG + SHORT nu boven de oude grens van 100 stoelen brengen, met een platformveiligheidsgrens van 400.",
+    "De exacte 70L / 30S situatie met 28 actieve SHORT-posities is als regressietest vastgelegd: Zone +2 vraagt dan 8 extra SHORT-stoelen en kan naar 70L / 38S.",
+    "Een browser/netwerkfout wordt niet meer als rauwe tekst Failed to fetch getoond, maar als een duidelijke melding dat niets is gewijzigd.",
   ],
   problems: [
-    "Na uren zonder geopende webapp kon de persistente chart een sprong tonen van bijvoorbeeld 00:15 naar 07:30.",
-    "Een realtime equitysample kon wel als nieuwe candle worden toegevoegd terwijl de zichtbare chart nog op de oude logical range bleef staan.",
-    "De 15m zoneberekening kon support/resistance en ATR over een onwaargenomen tijdsgat heen berekenen.",
+    "Bij 70L / 30S en Zone +2 berekende de app correct dat 8 extra SHORT-soldaten nodig waren, maar blokkeerde dezelfde actie vervolgens met LIMIET 100.",
+    "De limiet was niet gekoppeld aan beschikbaar saldo of de actuele Multi-BB marktcapaciteit en was daardoor een kunstmatige blokkade.",
+    "Na een tijdelijke netwerkfout kon de technische browsermelding Failed to fetch onder de koersinstructie blijven staan.",
   ],
   causes: [
-    "Portfolio-equity werd voor de chart vooral opgeslagen wanneer de chart-API werd gelezen; een gesloten of slapende browser leverde dus geen continue samples.",
-    "De realtime series-update schoof de viewport niet expliciet naar de nieuwste candle.",
-    "De zonebron maakte nog geen onderscheid tussen aaneengesloten candles en een reeks met ontbrekende tijdvakken.",
+    "Een oude 100-stoelengrens stond dubbel in de zone-advisor, de Strategy-2 webguard, de configurator en de legacy backendcompatibiliteit.",
+    "De koersinstructie gaf een onbewerkte fetch-exception direct door aan de UI.",
   ],
   fixes: [
-    "Nieuwe candles roepen scrollToRealTime aan en wissen een achtergebleven crosshair-tooltip wanneer de candle-tijd vooruitgaat.",
-    "De UI detecteert 15m-gaten en blokkeert elke ADD/REMOVE soldatenactie totdat minimaal veertien opeenvolgende actuele 15m-candles bevestigd zijn.",
-    "De knop hercontroleert direct vóór opslaan opnieuw de actuele 15m-continuïteit; bij een gat worden longSlots, shortSlots en maximumPositions niet gewijzigd.",
-    "Server-side zoneberekening gebruikt uitsluitend het nieuwste aaneengesloten candlesegment en verzint nooit ontbrekende candles.",
-    "De actieve Strategy-2 scheduler schrijft maximaal één chart-equitysample per minuut naar de persistente Portfolio Koers-reeks.",
+    "De gedeelde webguards, zone-advisor en legacy Strategy-2 compatibiliteitsvalidatie zijn op de bestaande 400-stoelen platformgrens uitgelijnd.",
+    "De soldatenknop gebruikt dezelfde gedeelde platformgrens en schrijft bij 70L / 38S maximumPositions=108 in plaats van de actie op 100 te blokkeren.",
+    "Werkelijke nieuwe entries blijven afhankelijk van live beschikbare margin, marktcapaciteit, instapfilters en runtime-risicocontroles; de knop verhoogt alleen stoelcapaciteit.",
+    "Netwerkfouten blijven fail-closed: bij een mislukte fetch of save wordt geen stoelverdeling gewijzigd.",
   ],
   now: [
-    "Een historisch gat blijft zichtbaar als ontbrekende data in plaats van een schijnbaar normale koersbeweging.",
-    "De tijd/crosshair op de chart kan niet meer stil op een oude candle blijven staan nadat een nieuwe live candle is aangemaakt.",
-    "Soldatensturing gebruikt pas weer een zone wanneer de recente 15m-basis voldoende aaneengesloten is; tot die tijd staat de knop op WACHTEN.",
+    "De oude 100-grens kan een geldige +8 SHORT-instructie niet meer tegenhouden.",
+    "Als de live situatie bij opslaan nog steeds 70L / 30S met 28 actieve SHORT-posities en Zone +2 is, wordt de doelcapaciteit 70L / 38S.",
+    "Een echte veiligheids- of backendvalidatie blijft zichtbaar als concrete reden in plaats van een tegenstrijdige 100-limiet.",
   ],
-  before: "Build 410 legde de zonebasis uit, maar beschermde de instructie nog niet tegen een onvolledige tijdreeks en de viewport kon een oude candle blijven tonen.",
-  after: "Build 411 maakt tijdcontinuïteit onderdeel van de safety chain vóór een soldatenwijziging en bouwt toekomstige chart-historie server-side door.",
+  before: "Build 411 maakte de tijdlijn veilig en fail-closed, maar erfde nog de oude 100-stoelengrens uit eerdere configuratiecode.",
+  after: "Build 412 scheidt geld/entry-risico van stoelcapaciteit en verwijdert de kunstmatige 100-blokkade uit de BETA koersinstructie.",
   technicalDetails: [
-    "Geen ontbrekende historische equity wordt achteraf gereconstrueerd of vlak doorgetrokken.",
-    "Canonieke BETA-zonebron blijft 15m portfolio-equity; de broncandles moeten nu aaneengesloten zijn voor actie.",
-    "De soldatenknop blijft capaciteit wijzigen, niet rechtstreeks exchange-posities openen of sluiten.",
-    "Regressietests bewaken gapdetectie, live-candle-follow en fail-closed soldatensturing.",
+    "PORTFOLIO_ZONE_MAX_TOTAL_SLOTS = 400.",
+    "Web settings guard: maximumPositions, LONG en SHORT worden maximaal op 400 begrensd.",
+    "Legacy Strategy2Config accepteert maximumPairs tot 400; Multi BB houdt daarnaast zijn eigen universe-/marktcapaciteitsvalidatie.",
+    "De knop opent geen market order direct; hij past longSlots, shortSlots en maximumPositions aan.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-411-portfolio-koers-continuity",
+    version: "46",
+    build: "411",
+    releasedAt: "2026-09-24",
+    title: "Portfolio Koers · tijdlijncontinuïteit en veilige soldatensturing",
+    newItems: [
+      "Live candle follow, expliciete historiegaten en fail-closed soldatensturing bij onvolledige 15m historie.",
+      "Server-side equitysampling bouwt de Portfolio Koers ook zonder open browsertab verder op.",
+    ],
+    problems: ["De chart kon na uren zonder webapp een tijdsgat tonen en de viewport kon op een oude candle blijven staan."],
+    causes: ["Portfolio-equity werd voorheen onvoldoende continu server-side vastgelegd en zoneberekening maakte nog geen expliciet onderscheid tussen aaneengesloten en onderbroken tijdreeksen."],
+    fixes: ["Nieuwe candles volgen realtime, ontbrekende waarden worden niet verzonnen en de zone-advisor wacht op voldoende aaneengesloten bevestigde candles."],
+    now: ["Build 412 behoudt deze continuïteitsbeveiliging en corrigeert daarna de oude 100-stoelengrens."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-410-zone-basis-exposure",
     version: "46",
