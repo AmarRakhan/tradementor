@@ -29,7 +29,7 @@ export function soldierOpenEventsFromManagedPositions(rawPositions) {
     const originZone=Number.isInteger(originRaw)?originRaw:null;
     const stable=String(raw.soldierId||raw.cycleId||"").trim();
     result.push({
-      id:stable||`${key}:${atMs}`,
+      id:stable?`${stable}:${atMs}`:`${key}:${atMs}`,
       atMs,
       side,
       count:1,
