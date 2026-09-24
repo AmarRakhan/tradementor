@@ -44,6 +44,60 @@ export function normalizePortfolioKoersPayload(raw) {
   };
 }
 
+export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
+  const byKey=new Map();
+  const rows=[...(Array.isArray(baseMarkers)?baseMarkers:[]),...(Array.isArray(recentMarkers)?recentMarkers:[])];
+  for(const raw of rows){
+    if(!raw||typeof raw!=="object")continue;
+    const time=Math.floor(finite(raw.time));
+    const kind=String(raw.kind||"").toLowerCase();
+    const side=String(raw.side||"").toUpperCase();
+    if(time<=0||!kind)continue;
+    const cashflowType=String(raw.cashflowType||"").toUpperCase();
+    const key=`${time}|${kind}|${side}|${cashflowType}`;
+    const existing=byKey.get(key);
+    const originZones=Array.from(new Set([
+      ...((existing&&Array.isArray(existing.originZones))?existing.originZones:[]),
+      ...(Array.isArray(raw.originZones)?raw.originZones:[]),
+    ].map((value)=>Number(value)).filter((value)=>Number.isInteger(value)))).sort((a,b)=>a-b);
+    const soldierRoles=Array.from(new Set([
+      ...((existing&&Array.isArray(existing.soldierRoles))?existing.soldierRoles:[]),
+      ...(Array.isArray(raw.soldierRoles)?raw.soldierRoles:[]),
+    ].map((value)=>String(value).toUpperCase()).filter(Boolean))).sort();
+    const activityTypes=Array.from(new Set([
+      ...((existing&&Array.isArray(existing.activityTypes))?existing.activityTypes:[]),
+      ...(Array.isArray(raw.activityTypes)?raw.activityTypes:[]),
+    ].map((value)=>String(value).toUpperCase()).filter(Boolean))).sort();
+    if(!existing){
+      byKey.set(key,{
+        ...raw,time,
+        atMs:Math.floor(finite(raw.atMs))||time*1000,
+        count:Math.max(1,Math.floor(finite(raw.count))),
+        notionalUsd:finite(raw.notionalUsd),
+        realizedPnlUsd:finite(raw.realizedPnlUsd),
+        amountUsd:finite(raw.amountUsd),
+        originZones,soldierRoles,activityTypes,
+      });
+      continue;
+    }
+    const preferRaw=String(raw.source||"")==="aster-confirmed-fills"&&String(existing.source||"")!=="aster-confirmed-fills";
+    byKey.set(key,{
+      ...(preferRaw?existing:raw),
+      ...(preferRaw?raw:existing),
+      time,
+      atMs:Math.min(Number(existing.atMs)||time*1000,Math.floor(finite(raw.atMs))||time*1000),
+      count:Math.max(Math.max(1,Math.floor(finite(existing.count))),Math.max(1,Math.floor(finite(raw.count)))),
+      notionalUsd:Math.max(Math.abs(finite(existing.notionalUsd)),Math.abs(finite(raw.notionalUsd))),
+      realizedPnlUsd:Math.abs(finite(raw.realizedPnlUsd))>Math.abs(finite(existing.realizedPnlUsd))?finite(raw.realizedPnlUsd):finite(existing.realizedPnlUsd),
+      amountUsd:Math.abs(finite(raw.amountUsd))>Math.abs(finite(existing.amountUsd))?finite(raw.amountUsd):finite(existing.amountUsd),
+      originZones,soldierRoles,activityTypes,
+      source:preferRaw?String(raw.source||existing.source||""):String(existing.source||raw.source||""),
+      label:preferRaw?String(raw.label||existing.label||""):String(existing.label||raw.label||""),
+    });
+  }
+  return [...byKey.values()].sort((a,b)=>a.time-b.time||String(a.kind).localeCompare(String(b.kind))||String(a.side).localeCompare(String(b.side)));
+}
+
 export function bollinger20x2(candles) {
   const clean = Array.isArray(candles) ? candles : [];
   const period=20, multiplier=2, upper=[], middle=[], lower=[];
