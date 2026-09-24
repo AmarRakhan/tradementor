@@ -11,6 +11,7 @@ from aster_zone_soldiers import (
     available_soldiers,
     claim_soldier,
     prepare_zone_runtime,
+    record_soldier_homecoming,
 )
 
 
@@ -154,29 +155,32 @@ def test_multiple_zone_positions_are_aggregated_into_managed_exposure():
     assert report["exposure"]["totalShortNotional"] == 100
 
 
-def test_long_overexposure_creates_short_balancer_capacity():
+def test_long_overexposure_sets_short_priority_without_creating_extra_capacity():
     managed = dict([
         owned("A", "LONG", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("B", "LONG", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("C", "SHORT", soldierRole=ROLE_LEGACY_UNASSIGNED),
     ])
     state, _, report = prepare({}, managed, [pos("A", "LONG", 150), pos("B", "LONG", 150), pos("C", "SHORT", 100)], 1)
-    assert report["balancer"]["activeSide"] == "SHORT"
-    assert report["balancer"]["desiredCount"] >= 1
-    assert any(row["role"] == ROLE_EXPOSURE_BALANCER for row in available_soldiers(state, "SHORT"))
+    assert report["entryPriority"] == "SHORT"
+    assert report["balancer"]["mode"] == "PRIORITY_ONLY"
+    assert report["balancer"]["desiredCount"] == 0
+    assert report["currentZone"]["balancerFree"] == 0
+    assert len(available_soldiers(state, "LONG")) == 3
+    assert len(available_soldiers(state, "SHORT")) == 3
+    assert all(row["role"] == ROLE_ZONE_BASE for row in available_soldiers(state, "SHORT"))
 
-
-def test_short_overexposure_creates_long_balancer_capacity_symmetrically():
+def test_short_overexposure_sets_long_priority_symmetrically_without_extra_capacity():
     managed = dict([
         owned("A", "SHORT", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("B", "SHORT", soldierRole=ROLE_LEGACY_UNASSIGNED),
         owned("C", "LONG", soldierRole=ROLE_LEGACY_UNASSIGNED),
     ])
     state, _, report = prepare({}, managed, [pos("A", "SHORT", 150), pos("B", "SHORT", 150), pos("C", "LONG", 100)], -1)
-    assert report["balancer"]["activeSide"] == "LONG"
-    assert report["balancer"]["desiredCount"] >= 1
-    assert any(row["role"] == ROLE_EXPOSURE_BALANCER for row in available_soldiers(state, "LONG"))
-
+    assert report["entryPriority"] == "LONG"
+    assert report["balancer"]["desiredCount"] == 0
+    assert len(available_soldiers(state, "LONG")) == 3
+    assert len(available_soldiers(state, "SHORT")) == 3
 
 def test_dead_band_releases_balancer_without_closing_open_balancer_trade():
     z0, managed, _ = prepare({}, {}, [], 0, balancer=False)
