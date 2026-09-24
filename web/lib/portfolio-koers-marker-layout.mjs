@@ -1,5 +1,4 @@
-export const MAX_FULL_EVENT_LABELS = 3;
-export const MAX_COMPACT_EVENT_CLUSTERS = 2;
+export const EVENT_MARKER_SAFETY_CAP = 160;
 
 function finite(value, fallback=0) {
   const number=Number(value);
@@ -15,15 +14,13 @@ function intersects(a,b,padding=4) {
   return !(a.right+padding<=b.left || b.right+padding<=a.left || a.bottom+padding<=b.top || b.bottom+padding<=a.top);
 }
 
-function fullRect(candidate,left,top) {
-  const width=Math.max(34,Math.min(58,finite(candidate.width,46)));
-  const height=Math.max(38,Math.min(50,finite(candidate.height,44)));
-  return {left:left-width/2,right:left+width/2,top:top-height/2,bottom:top+height/2,width,height};
-}
-
-function compactRect(left,top,eventCount=1) {
-  const width=Math.max(28,Math.min(48,24+String(Math.max(1,eventCount)).length*6));
-  const height=18;
+function markerRect(candidate,left,top,compressed=false) {
+  const width=compressed
+    ? Math.max(28,Math.min(42,finite(candidate.width,36)-8))
+    : Math.max(34,Math.min(58,finite(candidate.width,46)));
+  const height=compressed
+    ? Math.max(26,Math.min(34,finite(candidate.height,44)-12))
+    : Math.max(38,Math.min(50,finite(candidate.height,44)));
   return {left:left-width/2,right:left+width/2,top:top-height/2,bottom:top+height/2,width,height};
 }
 
@@ -47,16 +44,56 @@ function outsideEnvelope(rect,candidate,gap=5) {
     : rect.bottom<=boundary-gap;
 }
 
-function preferredTop(candidate,height) {
+function preferredTop(candidate,height,stackIndex=0) {
   const position=String(candidate?.position)==="below"?"below":"above";
   const boundary=envelopeBoundary(candidate,position);
+  const direction=position==="below"?1:-1;
+  const stackOffset=stackIndex*(height+4);
   if(boundary!==null){
     return position==="below"
-      ? boundary+7+height/2
-      : boundary-7-height/2;
+      ? boundary+7+height/2+stackOffset
+      : boundary-7-height/2-stackOffset;
   }
   const y=finite(candidate?.y);
-  return y+(position==="below"?1:-1)*(20+height/2);
+  return y+direction*(20+height/2+stackOffset);
+}
+
+function clampedFallback(candidate,bounds,occupied,stackIndex=0) {
+  for(const compressed of [true,false]){
+    const sample=markerRect(candidate,finite(candidate.x),finite(candidate.y),compressed);
+    const direction=String(candidate.position)==="below"?1:-1;
+    const baseTop=preferredTop(candidate,sample.height,stackIndex);
+    for(const outward of [0,8,16,26,38,52,68,86,104]){
+      for(const dx of [0,12,-12,24,-24,36,-36,48,-48,60,-60,72,-72]){
+        const left=Math.max(bounds.left+sample.width/2,Math.min(bounds.right-sample.width/2,finite(candidate.x)+dx));
+        const top=Math.max(bounds.top+sample.height/2,Math.min(bounds.bottom-sample.height/2,baseTop+direction*outward));
+        const rect=markerRect(candidate,left,top,compressed);
+        if(!inside(rect,bounds))continue;
+        if(!outsideEnvelope(rect,candidate,4))continue;
+        if(occupied.some((other)=>intersects(rect,other,compressed?1:2)))continue;
+        return {...candidate,left,top,rect,compact:false,compressed};
+      }
+    }
+  }
+
+  // Never hide a normal visible event merely because the viewport is crowded.
+  // Last-resort placement stays deterministic and outside the Bollinger envelope
+  // when that geometry exists, even if a rare dense viewport must tolerate overlap.
+  const compressed=true;
+  const sample=markerRect(candidate,finite(candidate.x),finite(candidate.y),compressed);
+  const position=String(candidate.position)==="below"?"below":"above";
+  const direction=position==="below"?1:-1;
+  const boundary=envelopeBoundary(candidate,position);
+  let top=preferredTop(candidate,sample.height,stackIndex);
+  if(boundary!==null){
+    top=position==="below"
+      ? Math.max(top,boundary+4+sample.height/2)
+      : Math.min(top,boundary-4-sample.height/2);
+  }
+  top=Math.max(bounds.top+sample.height/2,Math.min(bounds.bottom-sample.height/2,top));
+  const left=Math.max(bounds.left+sample.width/2,Math.min(bounds.right-sample.width/2,finite(candidate.x)));
+  const rect=markerRect(candidate,left,top,compressed);
+  return {...candidate,left,top,rect,compact:false,compressed,collisionFallback:true};
 }
 
 export function eventPriority(row) {
@@ -66,134 +103,46 @@ export function eventPriority(row) {
   return base+Math.min(25,Math.log10(1+notional)*5);
 }
 
-export function layoutPortfolioKoersMarkers(candidates,viewport,{maxFull=MAX_FULL_EVENT_LABELS,maxCompact=MAX_COMPACT_EVENT_CLUSTERS,priceAxisWidth=48}={}) {
+export function layoutPortfolioKoersMarkers(candidates,viewport,{priceAxisWidth=48,safetyCap=EVENT_MARKER_SAFETY_CAP}={}) {
   const width=Math.max(1,finite(viewport?.width,1));
   const height=Math.max(1,finite(viewport?.height,1));
   const bounds={left:14,right:Math.max(15,width-priceAxisWidth-3),top:8,bottom:height-12};
-  const ordered=(Array.isArray(candidates)?candidates:[])
+  const clean=(Array.isArray(candidates)?candidates:[])
     .filter((row)=>row&&Number.isFinite(Number(row.x))&&Number.isFinite(Number(row.y)))
     .map((row,index)=>({...row,index,priority:finite(row.priority,eventPriority(row)),time:finite(row.time)}))
-    .sort((a,b)=>b.priority-a.priority || b.time-a.time || b.index-a.index);
+    .sort((a,b)=>a.time-b.time || b.priority-a.priority || a.index-b.index)
+    .slice(0,Math.max(1,Math.floor(finite(safetyCap,EVENT_MARKER_SAFETY_CAP))));
 
-  const full=[];
-  const compactPool=[];
+  const groups=new Map();
+  for(const candidate of clean){
+    const key=String(candidate.time);
+    if(!groups.has(key))groups.set(key,[]);
+    groups.get(key).push(candidate);
+  }
+
+  const placed=[];
   const occupied=[];
-  const horizontalOffsets=[0,18,-18,32,-32];
-  const outwardOffsets=[0,10,20,32];
-
-  for(const candidate of ordered){
-    if(full.length>=Math.max(0,maxFull)){compactPool.push(candidate);continue}
-    const sampleRect=fullRect(candidate,finite(candidate.x),finite(candidate.y));
-    const baseTop=preferredTop(candidate,sampleRect.height);
-    const direction=String(candidate.position)==="below"?1:-1;
-    let placed=null;
-    for(const outward of outwardOffsets){
-      for(const dx of horizontalOffsets){
-        const left=finite(candidate.x)+dx;
-        const top=baseTop+direction*outward;
-        const rect=fullRect(candidate,left,top);
-        if(!inside(rect,bounds))continue;
-        if(!outsideEnvelope(rect,candidate,5))continue;
-        if(occupied.some((other)=>intersects(rect,other,3)))continue;
-        placed={...candidate,left,top,rect,compact:false};
-        break;
+  for(const rows of groups.values()){
+    rows.sort((a,b)=>b.priority-a.priority || a.index-b.index);
+    const aboveRows=rows.filter((row)=>String(row.position)!=="below");
+    const belowRows=rows.filter((row)=>String(row.position)==="below");
+    for(const sideRows of [aboveRows,belowRows]){
+      for(let stackIndex=0;stackIndex<sideRows.length;stackIndex+=1){
+        const candidate=sideRows[stackIndex];
+        const label=clampedFallback(candidate,bounds,occupied,stackIndex);
+        placed.push(label);
+        occupied.push(label.rect);
       }
-      if(placed)break;
     }
-    if(placed){full.push(placed);occupied.push(placed.rect)}
-    else compactPool.push(candidate);
   }
 
-  const clusterMap=new Map();
-  for(const candidate of compactPool){
-    const position=String(candidate.position)==="below"?"below":"above";
-    const x=Math.max(bounds.left,Math.min(bounds.right,finite(candidate.x)));
-    const boundary=envelopeBoundary(candidate,position);
-    const y=boundary===null
-      ? Math.max(bounds.top+10,Math.min(bounds.bottom-10,finite(candidate.y)))
-      : boundary+(position==="below"?14:-14);
-    const key=`${position}:${Math.round(x/92)}:${Math.round(y/66)}`;
-    const existing=clusterMap.get(key)||{
-      xTotal:0,yTotal:0,rows:[],eventCount:0,priority:0,latestTime:0,position,
-      bandTop:position==="above"?Infinity:null,
-      bandBottom:position==="below"?-Infinity:null,
-    };
-    existing.xTotal+=x;
-    existing.yTotal+=y;
-    existing.rows.push(candidate);
-    existing.eventCount+=Math.max(1,Math.floor(finite(candidate.eventCount,1)));
-    existing.priority=Math.max(existing.priority,finite(candidate.priority,eventPriority(candidate)));
-    existing.latestTime=Math.max(existing.latestTime,finite(candidate.time));
-    const top=maybeFinite(candidate.bandTop),bottom=maybeFinite(candidate.bandBottom);
-    if(position==="above"&&top!==null)existing.bandTop=Math.min(existing.bandTop,top);
-    if(position==="below"&&bottom!==null)existing.bandBottom=Math.max(existing.bandBottom,bottom);
-    clusterMap.set(key,existing);
-  }
-
-  const clusters=[...clusterMap.values()].sort((a,b)=>b.priority-a.priority||b.latestTime-a.latestTime);
-  const kept=clusters.slice(0,Math.max(0,maxCompact));
-  for(const overflow of clusters.slice(kept.length)){
-    if(!kept.length){kept.push(overflow);continue}
-    const sameSide=kept.filter((row)=>row.position===overflow.position);
-    const targets=sameSide.length?sameSide:kept;
-    const overflowX=overflow.xTotal/Math.max(1,overflow.rows.length);
-    let target=targets[0];
-    let distance=Math.abs(target.xTotal/Math.max(1,target.rows.length)-overflowX);
-    for(const candidate of targets.slice(1)){
-      const nextDistance=Math.abs(candidate.xTotal/Math.max(1,candidate.rows.length)-overflowX);
-      if(nextDistance<distance){target=candidate;distance=nextDistance}
-    }
-    target.xTotal+=overflow.xTotal;
-    target.yTotal+=overflow.yTotal;
-    target.rows.push(...overflow.rows);
-    target.eventCount+=overflow.eventCount;
-    target.priority=Math.max(target.priority,overflow.priority);
-    target.latestTime=Math.max(target.latestTime,overflow.latestTime);
-    if(target.position==="above"&&Number.isFinite(overflow.bandTop))target.bandTop=Math.min(target.bandTop,overflow.bandTop);
-    if(target.position==="below"&&Number.isFinite(overflow.bandBottom))target.bandBottom=Math.max(target.bandBottom,overflow.bandBottom);
-  }
-
-  const compact=[];
-  for(let index=0;index<kept.length;index+=1){
-    const cluster=kept[index];
-    const count=Math.max(1,cluster.rows.length);
-    const baseLeft=cluster.xTotal/count;
-    const direction=cluster.position==="below"?1:-1;
-    const boundary=cluster.position==="below"&&Number.isFinite(cluster.bandBottom)
-      ? cluster.bandBottom
-      : cluster.position==="above"&&Number.isFinite(cluster.bandTop)
-        ? cluster.bandTop
-        : null;
-    const baseTop=boundary===null
-      ? cluster.yTotal/count
-      : boundary+direction*15;
-    let placed=null;
-    for(const outward of [0,10,20]){
-      for(const dx of [0,20,-20,34,-34]){
-        const left=Math.max(bounds.left,Math.min(bounds.right,baseLeft+dx));
-        const top=Math.max(bounds.top+9,Math.min(bounds.bottom-9,baseTop+direction*outward));
-        const rect=compactRect(left,top,cluster.eventCount);
-        const envelopeCandidate={position:cluster.position,bandTop:cluster.bandTop,bandBottom:cluster.bandBottom};
-        if(!inside(rect,bounds))continue;
-        if(!outsideEnvelope(rect,envelopeCandidate,4))continue;
-        if(occupied.some((other)=>intersects(rect,other,2)))continue;
-        placed={left,top,rect};
-        break;
-      }
-      if(placed)break;
-    }
-    if(!placed)continue;
-    occupied.push(placed.rect);
-    compact.push({
-      id:`cluster-${index}-${cluster.rows.map((row)=>row.id).join("-")}`,
-      left:placed.left,top:placed.top,rect:placed.rect,compact:true,
-      eventCount:cluster.eventCount,rows:cluster.rows,tone:"cluster",
-      glyph:"",multiplier:`+${cluster.eventCount}`,title:`+${cluster.eventCount} events`,
-      value:"",position:cluster.position,
-    });
-  }
-
-  return {full,compact,all:[...full,...compact]};
+  return {
+    full:placed,
+    compact:[],
+    all:placed,
+    visibleEventCount:clean.length,
+    safetyCapApplied:clean.length<(Array.isArray(candidates)?candidates.length:0),
+  };
 }
 
 export function markerRectsOverlap(labels) {
@@ -212,7 +161,6 @@ export function markerRectInsideBollinger(label,gap=0) {
   if(top===null||bottom===null)return false;
   return !(label.rect.bottom<=top-gap || label.rect.top>=bottom+gap);
 }
-
 
 export function layoutPortfolioKoersZoneRegions(zoneCoordinates,height) {
   const limit=Math.max(1,finite(height,1));
