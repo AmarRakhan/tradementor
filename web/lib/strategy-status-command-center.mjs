@@ -185,19 +185,38 @@ function amsterdamDayKey(value) {
   return `${read("year")}-${read("month")}-${read("day")}`;
 }
 
+function trueHomecomingIdentity(raw) {
+  if(!raw||typeof raw!=="object")return "";
+  const reason=String(raw.reason||"").toUpperCase();
+  const origin=Number(raw.originZone);
+  const current=Number(raw.currentZoneAtClose);
+  const closedAtMs=Number(raw.closedAtMs);
+  if(
+    reason!=="TP_WIN_OUTSIDE_ORIGIN_ZONE"||
+    !Number.isInteger(origin)||
+    !Number.isInteger(current)||
+    origin===current||
+    !Number.isFinite(closedAtMs)||
+    closedAtMs<=0
+  )return "";
+  return String(raw.eventId||`${raw.soldierId||raw.side||"soldier"}:${origin}:${current}:${closedAtMs}`);
+}
+
+function trueHomecomingEvents(events) {
+  const byId=new Map();
+  for(const raw of Array.isArray(events)?events:[]){
+    const id=trueHomecomingIdentity(raw);
+    if(!id)continue;
+    byId.set(id,raw);
+  }
+  return [...byId.values()];
+}
+
 export function countWinningHomecomingsToday(events,nowMs=Date.now()) {
   const today=amsterdamDayKey(nowMs);
-  const seen=new Set();
   let total=0;
-  for(const raw of Array.isArray(events)?events:[]){
-    if(!raw||typeof raw!=="object")continue;
-    const closedAtMs=Number(raw.closedAtMs);
-    const reason=String(raw.reason||"TP_WIN").toUpperCase();
-    if(!Number.isFinite(closedAtMs)||closedAtMs<=0||reason!=="TP_WIN"||amsterdamDayKey(closedAtMs)!==today)continue;
-    const id=String(raw.eventId||`${raw.soldierId||raw.side||"soldier"}:${closedAtMs}`);
-    if(seen.has(id))continue;
-    seen.add(id);
-    total+=1;
+  for(const raw of trueHomecomingEvents(events)){
+    if(amsterdamDayKey(Number(raw.closedAtMs))===today)total+=1;
   }
   return total;
 }
@@ -245,7 +264,8 @@ export function buildStrategyStatusCommandCenter(input={}) {
   }
 
   const homecomingEvents=Array.isArray(input.homecomingEvents)?input.homecomingEvents:[];
-  const winningHomeToday=countWinningHomecomingsToday(homecomingEvents,input.nowMs??Date.now());
+  const provenHomecomings=trueHomecomingEvents(homecomingEvents);
+  const winningHomeToday=countWinningHomecomingsToday(provenHomecomings,input.nowMs??Date.now());
   const freeZoneSeats=zoneFreeLong+zoneFreeShort;
   const totalZoneSeats=baseLong+baseShort;
 
@@ -285,14 +305,14 @@ export function buildStrategyStatusCommandCenter(input={}) {
     nextPossibleInflow:nextPossibleSide?`1 ${nextPossibleSide}`:"GEEN",
     nextPossibleDetail,
     winningHomeToday,
-    winningHomeTotal:homecomingEvents.length,
+    winningHomeTotal:provenHomecomings.length,
     availableUsd,
     availableDisplay:String(input.availableText||formatCommandMoney(availableUsd)),
     estimatedSoldierCost:soldierCost,
     actionExecutable:Boolean(nextPossibleSide),
     actionMode:nextPossibleSide?nextPossibleSide.toLowerCase():strategyEnabled&&zoneSafe?"waiting":"blocked",
-    footerTitle:"Soldaten komen alleen thuis met winst",
-    footerDetail:"Verlies blijft buiten in beheer tot herstel of TP",
+    footerTitle:"Alleen oude-zone soldaten tellen als thuiskomst",
+    footerDetail:"Winst in de eigen actieve zone maakt dezelfde soldaat opnieuw beschikbaar",
     soldierActivity:summarizeSoldierActivity(input.soldierActivity,input.nowMs??Date.now()),
   };
 }
