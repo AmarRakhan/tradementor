@@ -237,7 +237,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       : Math.min(100, Math.max(0, active / capacity * 100));
 
   function buildSettings() {
-    if (totals.totalSlots < 1 || totals.totalSlots > 100) throw new Error("LONG + SHORT moet tussen 1 en 100 posities liggen.");
+    if (totals.totalSlots < 1 || totals.totalSlots > 400) throw new Error("LONG + SHORT moet tussen 1 en 400 posities liggen.");
     const minLev = Math.max(1, Math.round(n(draft.minimumLeverage)));
     const maxLev = draft.maximumLeverage.trim() ? Math.max(1, Math.round(n(draft.maximumLeverage))) : null;
     if (maxLev !== null && maxLev < minLev) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan minimum leverage.");
