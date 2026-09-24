@@ -2559,6 +2559,16 @@ def _is_beta_owner(user: dict[str, Any]) -> bool:
     return str(user.get("email", "")).strip().lower() == expected
 
 
+def _is_beta_owner_uid(uid: str) -> bool:
+    """Verify the background-worker UID against Firebase identity, never just a stored channel label."""
+    expected = os.getenv("TRADEMENTOR_ADMIN_EMAIL", "amar_rakhan@hotmail.com").strip().lower()
+    try:
+        record = auth.get_user(str(uid), app=auth_app)
+    except Exception:
+        return False
+    return str(record.email or "").strip().lower() == expected
+
+
 def _release_feature_record(key: str) -> dict[str, Any]:
     if key not in _RELEASE_FEATURE_DEFAULTS:
         raise HTTPException(404, "Onbekende release-feature")
@@ -2619,10 +2629,12 @@ def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) 
         "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier",
         "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
     }
-    # Background ticks require an explicit owner marker written from the authenticated
-    # admin-email check. A generic BETA label is never sufficient for live zone behavior.
+    # Existing Build-415 owner profiles may only have releaseChannel=BETA. Treat that
+    # as a migration candidate, but authorize it only after a fresh Firebase UID/email
+    # identity check. A forged/stale BETA label can therefore never unlock live zones.
     profile = user_reference({"uid": uid}).get().to_dict() or {}
-    beta_owner = profile.get("betaOwner") is True
+    legacy_beta_candidate = profile.get("betaOwner") is True or str(profile.get("releaseChannel") or "").upper() == "BETA"
+    beta_owner = bool(legacy_beta_candidate and _is_beta_owner_uid(uid))
     out = dict(settings)
     directional = _release_feature_record("directional_bollinger")
     refill = _release_feature_record("exposure_refill")

@@ -99,7 +99,9 @@ def test_zone_owned_rollout_is_hard_owner_only_not_generic_beta_or_stable():
     assert '_OWNER_ONLY_RELEASE_FEATURES = {"zone_soldiers"}' in source
     assert 'if key in _OWNER_ONLY_RELEASE_FEATURES:' in source
     assert 'return bool(_is_beta_owner(user) and row.get("beta"))' in source
-    assert 'beta_owner = profile.get("betaOwner") is True' in source
+    assert 'record = auth.get_user(str(uid), app=auth_app)' in source
+    assert 'legacy_beta_candidate = profile.get("betaOwner") is True or str(profile.get("releaseChannel") or "").upper() == "BETA"' in source
+    assert 'beta_owner = bool(legacy_beta_candidate and _is_beta_owner_uid(uid))' in source
     assert '"betaOwner": beta_owner' in source
     assert 'zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))' in source
 
