@@ -152,6 +152,7 @@ from reliability_monitor import event_key as reliability_event_key, event_payloa
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
 from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
 from read_only_source import read_source_url
+from bybit_continuity import BybitContinuityClient, BybitContinuityCredentials, BybitContinuityError
 
 
 class Strategy2OrderBudgetExhausted(RuntimeError):
@@ -578,6 +579,26 @@ class AdminMfaVerifyRequest(BaseModel):
 
 class InterfacePreferenceRequest(BaseModel):
     mode: str = Field(pattern="^(legacy|premium)$")
+
+
+class ContinuityBybitCredentialsRequest(BaseModel):
+    api_key: str = Field(min_length=8, max_length=256)
+    api_secret: str = Field(min_length=8, max_length=256)
+    read_only_confirmed: bool = False
+
+
+class ContinuitySettingsRequest(BaseModel):
+    safety_buffer_amount: float | None = Field(default=None, ge=0, le=100_000)
+    safety_buffer_currency: str | None = Field(default=None, pattern="^(EUR|USD)$")
+    push_notifications_enabled: bool | None = None
+    chatgpt_plan: str | None = Field(default=None, max_length=80)
+    chatgpt_monthly_amount: float | None = Field(default=None, ge=0, le=100_000)
+    chatgpt_currency: str | None = Field(default=None, pattern="^(EUR|USD)$")
+    chatgpt_next_payment_date: str | None = Field(default=None, max_length=32)
+
+
+class ContinuityAlertAckRequest(BaseModel):
+    alert_id: str = Field(min_length=8, max_length=128)
 
 
 def user_reference(user: dict[str, Any]):
@@ -2616,6 +2637,497 @@ def _release_snapshot(user: dict[str, Any]) -> dict[str, Any]:
     return {"channel": "BETA" if beta_owner else "STABLE", "features": features}
 
 
+_CONTINUITY_PROVIDER_CACHE_SECONDS = 3600
+_CONTINUITY_RELEVANT_BYBIT_COINS = ("EUR", "USDT", "USDC", "BTC", "ETH")
+
+
+def continuity_owner_reference():
+    return db.collection("systemConfiguration").document("continuityDashboardV1")
+
+
+def require_continuity_owner(user: dict[str, Any]) -> str:
+    """Hard owner-only UID gate; email is used only for the one-time immutable UID claim."""
+    uid = str(user["uid"])
+    reference = continuity_owner_reference()
+    value = reference.get().to_dict() or {}
+    owner_uid = str(value.get("ownerUid") or "").strip()
+    if not owner_uid:
+        if not _is_beta_owner(user):
+            raise HTTPException(403, "Deze BETA-functionaliteit is niet beschikbaar voor dit account")
+        reference.set({
+            "ownerUid": uid,
+            "enabled": True,
+            "claimedAt": datetime.now(timezone.utc),
+            "feature": "continuityDashboardV1",
+        }, merge=True)
+        owner_uid = uid
+    if uid != owner_uid or value.get("enabled") is False:
+        raise HTTPException(403, "Deze BETA-functionaliteit is niet beschikbaar voor dit account")
+    return uid
+
+
+def continuity_settings_reference(uid: str):
+    return db.collection("users").document(uid).collection("continuity").document("settings")
+
+
+def continuity_snapshot_reference(uid: str):
+    return db.collection("users").document(uid).collection("continuity").document("snapshot")
+
+
+def continuity_connection_reference(uid: str):
+    return db.collection("users").document(uid).collection("continuity").document("bybit")
+
+
+def continuity_bybit_secret_name(uid: str) -> str:
+    project = os.getenv("GOOGLE_CLOUD_PROJECT", "tradementor-production")
+    return f"projects/{project}/secrets/tradementor-bybit-continuity-{uid}"
+
+
+def _iso(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    if value is None:
+        return None
+    return str(value)
+
+
+def _continuity_settings(uid: str) -> dict[str, Any]:
+    stored = continuity_settings_reference(uid).get().to_dict() or {}
+    return {
+        "safetyBufferAmount": float(stored.get("safetyBufferAmount", 50.0) or 0.0),
+        "safetyBufferCurrency": str(stored.get("safetyBufferCurrency") or "EUR").upper(),
+        "safetyBufferSource": "MANUAL" if "safetyBufferAmount" in stored else "DEFAULT",
+        "pushNotificationsEnabled": bool(stored.get("pushNotificationsEnabled", False)),
+        "chatgptPlan": str(stored.get("chatgptPlan") or "").strip(),
+        "chatgptMonthlyAmount": stored.get("chatgptMonthlyAmount"),
+        "chatgptCurrency": str(stored.get("chatgptCurrency") or "EUR").upper(),
+        "chatgptNextPaymentDate": str(stored.get("chatgptNextPaymentDate") or "").strip(),
+        "lastAcknowledgedFingerprint": str(stored.get("lastAcknowledgedFingerprint") or ""),
+        "lastAcknowledgedAt": _iso(stored.get("lastAcknowledgedAt")),
+    }
+
+
+def _parse_due_date(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _days_until(value: Any) -> int | None:
+    due = _parse_due_date(value)
+    if not due:
+        return None
+    today = datetime.now(timezone.utc).date()
+    return (due.date() - today).days
+
+
+def _continuity_chatgpt_service(settings: dict[str, Any]) -> dict[str, Any]:
+    amount = settings.get("chatgptMonthlyAmount")
+    due = settings.get("chatgptNextPaymentDate") or None
+    configured = bool(settings.get("chatgptPlan") or amount is not None or due)
+    return {
+        "id": "chatgpt",
+        "title": "ChatGPT / Agent",
+        "description": "Communicatie met de agent en ontwikkelondersteuning",
+        "status": "ACTIVE" if configured else "UNKNOWN",
+        "statusLabel": "Handmatig" if configured else "Instellen",
+        "dataSource": "MANUAL" if configured else "UNKNOWN",
+        "dependencyType": "developmentDependency",
+        "isRuntimeCritical": False,
+        "plan": settings.get("chatgptPlan") or None,
+        "monthlyEstimate": float(amount) if amount is not None else None,
+        "amountDue": float(amount) if amount is not None and due else None,
+        "currency": settings.get("chatgptCurrency") or "EUR",
+        "dueDate": due,
+        "daysUntilDue": _days_until(due),
+        "note": "ChatGPT-consumentenbilling is niet via een ondersteunde app-API gekoppeld; deze velden zijn handmatig.",
+    }
+
+
+def _continuity_github_service() -> dict[str, Any]:
+    repo = os.getenv("CONTINUITY_GITHUB_REPO", "AmarRakhan/tradementor").strip()
+    result: dict[str, Any] = {
+        "id": "github",
+        "title": "GitHub",
+        "description": "Code, versiebeheer en deploy-workflows",
+        "status": "UNKNOWN",
+        "statusLabel": "Controleren",
+        "dataSource": "LIVE_API",
+        "dependencyType": "deploymentDependency",
+        "isRuntimeCritical": False,
+        "repository": repo,
+        "plan": None,
+        "monthlyEstimate": None,
+        "amountDue": None,
+        "currency": "EUR",
+        "dueDate": None,
+        "daysUntilDue": None,
+    }
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "Amar-Crypto-Bot-Continuity/417"}
+    try:
+        with httpx.Client(timeout=8.0, headers=headers) as client:
+            repository = client.get(f"https://api.github.com/repos/{repo}")
+            repository.raise_for_status()
+            row = repository.json()
+            workflow = client.get(f"https://api.github.com/repos/{repo}/actions/runs", params={"per_page": "1"})
+            workflow.raise_for_status()
+            runs = (workflow.json() or {}).get("workflow_runs") or []
+        latest = runs[0] if runs else {}
+        result.update({
+            "status": "ACTIVE",
+            "statusLabel": "Actief",
+            "repositoryReachable": True,
+            "visibility": str(row.get("visibility") or ("private" if row.get("private") else "public")),
+            "latestWorkflowStatus": latest.get("status"),
+            "latestWorkflowConclusion": latest.get("conclusion"),
+            "latestWorkflowAt": latest.get("updated_at"),
+            "planStatus": "UNKNOWN",
+            "note": "Repository en Actions zijn live gecontroleerd. Account-billing/plan is via deze runtime niet geautoriseerd.",
+        })
+    except Exception:
+        result.update({
+            "status": "WARNING",
+            "statusLabel": "Niet geverifieerd",
+            "repositoryReachable": False,
+            "note": "GitHub kon tijdens deze continuiteitscheck niet betrouwbaar worden bereikt.",
+        })
+    return result
+
+
+def _continuity_google_service() -> dict[str, Any]:
+    project = os.getenv("GOOGLE_CLOUD_PROJECT", "tradementor-production").strip() or "tradementor-production"
+    result: dict[str, Any] = {
+        "id": "google_cloud",
+        "title": "Google Cloud",
+        "description": "Hosting, backend, scheduler en runtime",
+        "status": "WARNING",
+        "statusLabel": "Billing controleren",
+        "dataSource": "LIVE_API",
+        "dependencyType": "runtimeDependency",
+        "isRuntimeCritical": True,
+        "project": project,
+        "runtimeOnline": True,
+        "cloudRunService": os.getenv("K_SERVICE") or "tradementor-api",
+        "cloudRunRevision": os.getenv("K_REVISION") or None,
+        "billingEnabled": None,
+        "billingSource": "UNKNOWN",
+        "monthlyEstimate": None,
+        "amountDue": None,
+        "currency": "EUR",
+        "dueDate": None,
+        "daysUntilDue": None,
+        "note": "Runtime is online; billing wordt afzonderlijk en fail-closed gecontroleerd.",
+    }
+    try:
+        import google.auth as google_auth
+        credentials, _ = google_auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        credentials.refresh(google_auth_requests.Request())
+        response = httpx.get(
+            f"https://cloudbilling.googleapis.com/v1/projects/{project}/billingInfo",
+            headers={"Authorization": f"Bearer {credentials.token}"},
+            timeout=8.0,
+        )
+        if response.status_code == 403:
+            result.update({
+                "status": "WARNING",
+                "statusLabel": "Billing niet geverifieerd",
+                "billingSource": "UNKNOWN",
+                "note": "Runtime is online, maar de huidige read-only identiteit heeft geen Billing API-leesrecht.",
+            })
+        else:
+            response.raise_for_status()
+            billing = response.json()
+            enabled = bool(billing.get("billingEnabled"))
+            billing_account_name = str(billing.get("billingAccountName") or "")
+            result.update({
+                "billingEnabled": enabled,
+                "billingAccountName": billing_account_name or None,
+                "billingSource": "LIVE_API",
+                "status": "ACTIVE" if enabled else "CRITICAL",
+                "statusLabel": "Actief" if enabled else "KRITIEK",
+                "note": "Google Cloud billing is actief." if enabled else "Google Cloud billing is niet actief. Productie kan uitvallen.",
+            })
+            if enabled and billing_account_name:
+                try:
+                    budgets_response = httpx.get(
+                        f"https://billingbudgets.googleapis.com/v1/{billing_account_name}/budgets",
+                        headers={"Authorization": f"Bearer {credentials.token}"},
+                        params={"pageSize": "100"},
+                        timeout=8.0,
+                    )
+                    if budgets_response.status_code == 403:
+                        result["budgetStatus"] = "UNVERIFIED"
+                        result["budgetCount"] = None
+                    else:
+                        budgets_response.raise_for_status()
+                        budgets = (budgets_response.json() or {}).get("budgets") or []
+                        result["budgetStatus"] = "CONFIGURED" if budgets else "NONE"
+                        result["budgetCount"] = len(budgets)
+                except Exception:
+                    result["budgetStatus"] = "UNVERIFIED"
+                    result["budgetCount"] = None
+    except Exception:
+        result.update({
+            "status": "WARNING",
+            "statusLabel": "Billing niet geverifieerd",
+            "billingSource": "UNKNOWN",
+            "note": "Runtime is online; Billing API kon niet betrouwbaar worden uitgelezen.",
+        })
+    return result
+
+
+def _load_continuity_bybit_credentials(uid: str) -> BybitContinuityCredentials | None:
+    try:
+        response = secrets_client.access_secret_version(
+            request={"name": f"{continuity_bybit_secret_name(uid)}/versions/latest"}
+        )
+        value = json.loads(response.payload.data.decode("utf-8"))
+        return BybitContinuityCredentials.create(str(value["apiKey"]), str(value["apiSecret"]))
+    except Exception:
+        return None
+
+
+def _store_continuity_bybit_credentials(uid: str, credentials: BybitContinuityCredentials) -> str:
+    project = os.getenv("GOOGLE_CLOUD_PROJECT", "tradementor-production")
+    parent = f"projects/{project}"
+    secret_id = f"tradementor-bybit-continuity-{uid}"
+    secret_name = f"{parent}/secrets/{secret_id}"
+    try:
+        secrets_client.create_secret(
+            request={"parent": parent, "secret_id": secret_id, "secret": {"replication": {"automatic": {}}}}
+        )
+    except google_exceptions.AlreadyExists:
+        pass
+    payload = json.dumps({"apiKey": credentials.api_key, "apiSecret": credentials.api_secret}).encode("utf-8")
+    secrets_client.add_secret_version(request={"parent": secret_name, "payload": {"data": payload}})
+    return secret_name
+
+
+def _continuity_bybit_service(uid: str, settings: dict[str, Any], upcoming_amount: float) -> dict[str, Any]:
+    connection = continuity_connection_reference(uid).get().to_dict() or {}
+    credentials = _load_continuity_bybit_credentials(uid)
+    base_currency = str(settings.get("safetyBufferCurrency") or "EUR").upper()
+    safety_buffer = float(settings.get("safetyBufferAmount") or 0.0)
+    required = max(0.0, float(upcoming_amount)) + safety_buffer
+    result: dict[str, Any] = {
+        "id": "bybit",
+        "title": "Bybit betaalreserve",
+        "description": "Reserve voor automatische betalingen van app-diensten",
+        "status": "UNKNOWN",
+        "statusLabel": "Niet verbonden",
+        "dataSource": "UNKNOWN",
+        "dependencyType": "paymentDependency",
+        "isRuntimeCritical": True,
+        "connected": credentials is not None,
+        "readOnly": bool(connection.get("readOnly", False)),
+        "assets": [],
+        "currency": base_currency,
+        "safetyBuffer": safety_buffer,
+        "upcomingPayments30d": float(upcoming_amount),
+        "requiredReserve": required,
+        "availableReserve": None,
+        "reserveDifference": None,
+        "lastSuccessfulSync": _iso(connection.get("lastSuccessfulSync")),
+        "apiStatus": "NOT_CONNECTED" if credentials is None else "UNKNOWN",
+    }
+    if credentials is None:
+        return result
+    try:
+        client = BybitContinuityClient(
+            credentials,
+            base_url=os.getenv("BYBIT_API_BASE_URL", "https://api.bybit.com"),
+        )
+        info = client.require_read_only()
+        balances = client.funding_balances(list(_CONTINUITY_RELEVANT_BYBIT_COINS))
+        assets = []
+        comparable = 0.0
+        for row in balances:
+            coin = str(row.get("coin") or "").upper()
+            balance = safe_float(row.get("transferBalance", row.get("walletBalance")))
+            if balance <= 0:
+                continue
+            assets.append({
+                "coin": coin,
+                "walletBalance": safe_float(row.get("walletBalance")),
+                "transferBalance": balance,
+            })
+            if coin == base_currency:
+                comparable += reserve_balance
+            elif base_currency == "USD" and coin in {"USDT", "USDC"}:
+                comparable += balance
+        difference = comparable - required
+        if comparable < max(0.0, float(upcoming_amount)):
+            status, label = "CRITICAL", "Onvoldoende betaalreserve"
+        elif comparable < required:
+            status, label = "WARNING", "Aanvullen aanbevolen"
+        elif required > 0 and comparable < required * 1.25:
+            status, label = "WARNING", "Betaalreserve wordt laag"
+        else:
+            status, label = "ACTIVE", "Betaalreserve voldoende"
+        now = datetime.now(timezone.utc)
+        continuity_connection_reference(uid).set({
+            "connected": True,
+            "readOnly": True,
+            "apiKeySuffix": credentials.api_key[-6:],
+            "apiStatus": "OK",
+            "lastSuccessfulSync": now,
+            "updatedAt": now,
+            "permissions": info.get("permissions"),
+        }, merge=True)
+        result.update({
+            "status": status,
+            "statusLabel": label,
+            "dataSource": "LIVE_API",
+            "connected": True,
+            "readOnly": True,
+            "apiStatus": "OK",
+            "assets": assets,
+            "availableReserve": comparable,
+            "reserveDifference": difference,
+            "lastSuccessfulSync": now.isoformat(),
+            "estimateScope": f"Alleen direct vergelijkbare {base_currency}-reserve" if base_currency == "EUR" else "USD + USDT + USDC",
+            "estimateComplete": all(item["coin"] == base_currency or (base_currency == "USD" and item["coin"] in {"USDT", "USDC"}) for item in assets),
+        })
+    except (BybitContinuityError, ValueError) as exc:
+        result.update({
+            "status": "WARNING",
+            "statusLabel": "Verbinding controleren",
+            "dataSource": "LIVE_API",
+            "apiStatus": "ERROR",
+            "error": str(exc),
+        })
+    return result
+
+
+def _continuity_future_service() -> dict[str, Any]:
+    return {
+        "id": "future",
+        "title": "Toekomstige diensten",
+        "description": "Domeinnaam, e-mail, monitoring, back-ups, analytics, Stripe en overige uitbreidingen",
+        "status": "PLANNED",
+        "statusLabel": "Gepland",
+        "dataSource": "UNKNOWN",
+        "dependencyType": "future",
+        "isRuntimeCritical": False,
+        "monthlyEstimate": 0.0,
+        "amountDue": 0.0,
+        "currency": "EUR",
+        "dueDate": None,
+        "daysUntilDue": None,
+    }
+
+
+def _continuity_upcoming_amount(services: list[dict[str, Any]], currency: str) -> float:
+    total = 0.0
+    for service in services:
+        days = service.get("daysUntilDue")
+        amount = service.get("amountDue")
+        if service.get("currency") == currency and amount is not None and days is not None and 0 <= int(days) <= 30:
+            total += float(amount)
+    return round(total, 2)
+
+
+def _continuity_public_snapshot(value: dict[str, Any]) -> dict[str, Any]:
+    safe = dict(value)
+    updated = safe.get("updatedAt")
+    safe["updatedAt"] = _iso(updated)
+    return safe
+
+
+def _build_continuity_snapshot(user: dict[str, Any]) -> dict[str, Any]:
+    uid = require_continuity_owner(user)
+    settings = _continuity_settings(uid)
+    chatgpt = _continuity_chatgpt_service(settings)
+    github = _continuity_github_service()
+    google_cloud = _continuity_google_service()
+    pre_services = [chatgpt, github, google_cloud]
+    currency = str(settings.get("safetyBufferCurrency") or "EUR")
+    upcoming = _continuity_upcoming_amount(pre_services, currency)
+    bybit = _continuity_bybit_service(uid, settings, upcoming)
+    services = [chatgpt, github, google_cloud, bybit, _continuity_future_service()]
+    known_monthly = round(sum(float(item["monthlyEstimate"]) for item in services if item.get("monthlyEstimate") is not None and item.get("status") != "PLANNED"), 2)
+    active_count = sum(1 for item in services if item.get("status") in {"ACTIVE", "FREE"})
+    upcoming_count = sum(1 for item in services if item.get("daysUntilDue") is not None and 0 <= int(item["daysUntilDue"]) <= 30 and float(item.get("amountDue") or 0) > 0)
+    critical = [item for item in services if item.get("status") == "CRITICAL"]
+    warnings = [item for item in services if item.get("status") == "WARNING"]
+    overall = "CRITICAL" if critical else "WARNING" if warnings else "SAFE"
+    alert: dict[str, Any] | None = None
+    if any(item.get("id") == "google_cloud" for item in critical):
+        alert = {
+            "kind": "GOOGLE_BILLING",
+            "title": "Google Cloud billing probleem",
+            "message": "Google Cloud billing is niet actief. Productie kan uitvallen.",
+        }
+    elif bybit.get("status") == "CRITICAL":
+        alert = {
+            "kind": "BYBIT_LOW_RESERVE",
+            "title": "Let op: laag saldo op Bybit",
+            "message": "Het beschikbare saldo op je Bybit-account is laag. Mogelijk kunnen aankomende betalingen niet worden afgeschreven.",
+            "availableReserve": bybit.get("availableReserve"),
+            "requiredReserve": bybit.get("requiredReserve"),
+            "reserveDifference": bybit.get("reserveDifference"),
+            "currency": bybit.get("currency"),
+        }
+    fingerprint = ""
+    if alert:
+        fingerprint = hashlib.sha256(json.dumps({
+            "kind": alert.get("kind"),
+            "availableReserve": alert.get("availableReserve"),
+            "requiredReserve": alert.get("requiredReserve"),
+            "googleBilling": google_cloud.get("billingEnabled"),
+        }, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+        alert["id"] = f"{alert['kind'].lower()}-{fingerprint}"
+        alert["conditionFingerprint"] = fingerprint
+        alert["showStartupAlert"] = fingerprint != settings.get("lastAcknowledgedFingerprint")
+    now = datetime.now(timezone.utc)
+    snapshot = {
+        "enabled": True,
+        "ownerOnly": True,
+        "summary": {
+            "activeServices": active_count,
+            "totalServices": len(services),
+            "upcomingPayments": upcoming_count,
+            "upcomingAmount": upcoming,
+            "knownMonthlyCost": known_monthly,
+            "currency": currency,
+            "overallStatus": overall,
+            "allCriticalOperational": not critical,
+            "paymentReserveSufficient": bybit.get("status") == "ACTIVE" if bybit.get("connected") else None,
+        },
+        "services": services,
+        "settings": {
+            "safetyBufferAmount": settings.get("safetyBufferAmount"),
+            "safetyBufferCurrency": currency,
+            "safetyBufferSource": settings.get("safetyBufferSource"),
+            "pushNotificationsEnabled": settings.get("pushNotificationsEnabled"),
+        },
+        "alert": alert,
+        "lastUpdated": now.isoformat(),
+        "updatedAt": now,
+    }
+    continuity_snapshot_reference(uid).set(snapshot, merge=False)
+    return _continuity_public_snapshot(snapshot)
+
+
+def _cached_continuity_snapshot(uid: str) -> dict[str, Any] | None:
+    value = continuity_snapshot_reference(uid).get().to_dict() or {}
+    updated = value.get("updatedAt")
+    if isinstance(updated, datetime):
+        age = (datetime.now(timezone.utc) - updated.astimezone(timezone.utc)).total_seconds()
+        if 0 <= age <= _CONTINUITY_PROVIDER_CACHE_SECONDS:
+            return _continuity_public_snapshot(value)
+    return None
+
 def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     out = dict(settings)
     if not _release_feature_enabled(user, "directional_bollinger"):
@@ -3108,6 +3620,139 @@ def bootstrap_user(user: dict[str, Any] = Depends(authenticated_user)) -> dict[s
 @app.get("/v1/me/releases")
 def my_release_features(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     return _release_snapshot(user)
+
+
+@app.get("/v1/me/continuity")
+def get_continuity_dashboard(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    uid = require_continuity_owner(user)
+    cached = _cached_continuity_snapshot(uid)
+    if cached:
+        return cached
+    return _build_continuity_snapshot(user)
+
+
+@app.post("/v1/me/continuity/refresh")
+def refresh_continuity_dashboard(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    require_continuity_owner(user)
+    return _build_continuity_snapshot(user)
+
+
+@app.post("/v1/me/continuity/bybit/test")
+def test_continuity_bybit(request: ContinuityBybitCredentialsRequest,
+                          user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    require_continuity_owner(user)
+    if not request.read_only_confirmed:
+        raise HTTPException(422, "Bevestig eerst dat je een aparte read-only API-sleutel hebt gemaakt")
+    try:
+        credentials = BybitContinuityCredentials.create(request.api_key, request.api_secret)
+        client = BybitContinuityClient(credentials, base_url=os.getenv("BYBIT_API_BASE_URL", "https://api.bybit.com"))
+        info = client.require_read_only()
+        balances = client.funding_balances(list(_CONTINUITY_RELEVANT_BYBIT_COINS))
+    except (BybitContinuityError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "verified": True,
+        "readOnly": True,
+        "fundingWalletReachable": True,
+        "balanceRows": len(balances),
+        "apiKeySuffix": credentials.api_key[-6:],
+        "permissionsPresent": bool(info.get("permissions")),
+    }
+
+
+@app.put("/v1/me/continuity/bybit")
+def connect_continuity_bybit(request: ContinuityBybitCredentialsRequest,
+                             user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    uid = require_continuity_owner(user)
+    if not request.read_only_confirmed:
+        raise HTTPException(422, "Bevestig eerst dat je een aparte read-only API-sleutel hebt gemaakt")
+    try:
+        credentials = BybitContinuityCredentials.create(request.api_key, request.api_secret)
+        client = BybitContinuityClient(credentials, base_url=os.getenv("BYBIT_API_BASE_URL", "https://api.bybit.com"))
+        info = client.require_read_only()
+        client.funding_balances(list(_CONTINUITY_RELEVANT_BYBIT_COINS))
+        secret_name = _store_continuity_bybit_credentials(uid, credentials)
+    except (BybitContinuityError, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    now = datetime.now(timezone.utc)
+    continuity_connection_reference(uid).set({
+        "connected": True,
+        "readOnly": True,
+        "secretRef": secret_name,
+        "apiKeySuffix": credentials.api_key[-6:],
+        "connectedAt": now,
+        "updatedAt": now,
+        "apiStatus": "OK",
+        "permissions": info.get("permissions"),
+    }, merge=True)
+    snapshot = _build_continuity_snapshot(user)
+    return {"connected": True, "readOnly": True, "snapshot": snapshot}
+
+
+@app.put("/v1/me/continuity/settings")
+def save_continuity_settings(request: ContinuitySettingsRequest,
+                             user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    uid = require_continuity_owner(user)
+    updates: dict[str, Any] = {"updatedAt": datetime.now(timezone.utc)}
+    if request.safety_buffer_amount is not None:
+        updates["safetyBufferAmount"] = float(request.safety_buffer_amount)
+    if request.safety_buffer_currency is not None:
+        updates["safetyBufferCurrency"] = request.safety_buffer_currency
+    if request.push_notifications_enabled is not None:
+        updates["pushNotificationsEnabled"] = bool(request.push_notifications_enabled)
+    if request.chatgpt_plan is not None:
+        updates["chatgptPlan"] = request.chatgpt_plan.strip()
+    if request.chatgpt_monthly_amount is not None:
+        updates["chatgptMonthlyAmount"] = float(request.chatgpt_monthly_amount)
+    if request.chatgpt_currency is not None:
+        updates["chatgptCurrency"] = request.chatgpt_currency
+    if request.chatgpt_next_payment_date is not None:
+        due = request.chatgpt_next_payment_date.strip()
+        if due and _parse_due_date(due) is None:
+            raise HTTPException(422, "Ongeldige betaaldatum")
+        updates["chatgptNextPaymentDate"] = due
+    continuity_settings_reference(uid).set(updates, merge=True)
+    return {"saved": True, "snapshot": _build_continuity_snapshot(user)}
+
+
+@app.post("/v1/me/continuity/alerts/ack")
+def acknowledge_continuity_alert(request: ContinuityAlertAckRequest,
+                                 user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    uid = require_continuity_owner(user)
+    snapshot = continuity_snapshot_reference(uid).get().to_dict() or {}
+    alert = snapshot.get("alert") if isinstance(snapshot.get("alert"), dict) else {}
+    if str(alert.get("id") or "") != request.alert_id:
+        raise HTTPException(409, "Deze continuiteitsmelding is niet meer actueel")
+    continuity_settings_reference(uid).set({
+        "lastAcknowledgedFingerprint": str(alert.get("conditionFingerprint") or ""),
+        "lastAcknowledgedAt": datetime.now(timezone.utc),
+    }, merge=True)
+    if isinstance(snapshot.get("alert"), dict):
+        snapshot["alert"]["showStartupAlert"] = False
+        snapshot["updatedAt"] = datetime.now(timezone.utc)
+        continuity_snapshot_reference(uid).set(snapshot, merge=False)
+    return {"acknowledged": True, "alertId": request.alert_id}
+
+
+@app.post("/internal/continuity/check")
+def internal_continuity_check(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Isolated provider/billing refresh. This route has no trading mutation path."""
+    verify_internal_cloud_request(authorization)
+    config = continuity_owner_reference().get().to_dict() or {}
+    owner_uid = str(config.get("ownerUid") or "").strip()
+    if not owner_uid or config.get("enabled") is False:
+        return {"checked": False, "reason": "owner_not_configured"}
+    if not _is_beta_owner_uid(owner_uid):
+        raise HTTPException(403, "Continuity owner identity kon niet worden bevestigd")
+    record = auth.get_user(owner_uid, app=auth_app)
+    snapshot = _build_continuity_snapshot({"uid": owner_uid, "email": record.email or ""})
+    return {
+        "checked": True,
+        "ownerOnly": True,
+        "overallStatus": (snapshot.get("summary") or {}).get("overallStatus"),
+        "alert": snapshot.get("alert"),
+        "lastUpdated": snapshot.get("lastUpdated"),
+    }
 
 
 @app.get("/v1/admin/releases")
