@@ -22,7 +22,7 @@ export type ContinuityService = {
   connected?: boolean;
   readOnly?: boolean;
   apiStatus?: string;
-  assets?: Array<{ coin: string; walletBalance: number; transferBalance: number }>;
+  assets?: Array<{ coin: string; walletBalance: number; transferBalance: number; bonus?: number; availableForReserve?: number }>;
   safetyBuffer?: number;
   upcomingPayments30d?: number;
   requiredReserve?: number;
@@ -328,7 +328,7 @@ function BybitServiceDetails({ item, onConnect }: { item: ContinuityService; onC
       <span><small>Benodigd</small><strong>{money(item.requiredReserve, item.currency)}</strong></span>
       <span><small>Verschil</small><strong className={(item.reserveDifference || 0) < 0 ? "negative" : "positive"}>{money(item.reserveDifference, item.currency)}</strong></span>
     </div>
-    <div className="tm-bybit-assets">{(item.assets || []).map((asset) => <span key={asset.coin}>{asset.coin} <strong>{asset.transferBalance.toLocaleString("nl-NL", { maximumFractionDigits: 8 })}</strong></span>)}</div>
+    <div className="tm-bybit-assets">{(item.assets || []).map((asset) => <span key={asset.coin}>{asset.coin} <strong>{(asset.availableForReserve ?? asset.walletBalance).toLocaleString("nl-NL", { maximumFractionDigits: 8 })}</strong></span>)}</div>
     <p>Read-only: {item.readOnly ? "bevestigd" : "niet bevestigd"} · API: {item.apiStatus || "onbekend"} · Sync: {shortTime(item.lastSuccessfulSync)}</p>
     {item.estimateComplete === false && <small className="tm-continuity-note">De reservevergelijking telt alleen direct vergelijkbare {item.currency}-assets mee. Andere Funding-assets blijven zichtbaar maar worden niet gegokt of omgerekend.</small>}
   </div>;
