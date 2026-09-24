@@ -179,6 +179,44 @@ export function portfolioZoneForPrice(zones, price) {
   return Math.trunc(finite(rows.reduce((best,row)=>Math.abs(finite(row.center)-value)<Math.abs(finite(best.center)-value)?row:best).index));
 }
 
+export function portfolioZoneDistancePercent(boundaryPrice, currentPrice) {
+  const boundary=Number(boundaryPrice), current=Number(currentPrice);
+  if(!Number.isFinite(boundary)||!Number.isFinite(current)||current<=0) return null;
+  return ((boundary-current)/current)*100;
+}
+
+export function portfolioZoneProgress(currentPrice, lowerBoundary, upperBoundary) {
+  const current=Number(currentPrice), lower=Number(lowerBoundary), upper=Number(upperBoundary);
+  if(!Number.isFinite(current)||!Number.isFinite(lower)||!Number.isFinite(upper)||upper<=lower) return null;
+  return Math.max(0,Math.min(100,((current-lower)/(upper-lower))*100));
+}
+
+export function portfolioKoersFocusBars(candles, maxVisibleBars, currentPrice, lowerBoundary, upperBoundary) {
+  const rows=Array.isArray(candles)?candles:[];
+  const requested=Math.max(1,Math.floor(Number(maxVisibleBars))||rows.length||1);
+  const maxBars=Math.min(rows.length,requested);
+  if(maxBars<=1) return maxBars;
+
+  const current=Number(currentPrice), lower=Number(lowerBoundary), upper=Number(upperBoundary);
+  if(!Number.isFinite(current)||current<=0||!Number.isFinite(lower)||!Number.isFinite(upper)||lower<=0||upper<=lower) return maxBars;
+
+  const span=Math.max(upper-lower,current*0.006);
+  const padding=Math.max(span*0.65,current*0.004);
+  const focusFloor=Math.max(Number.EPSILON,lower-padding);
+  const focusCeiling=upper+padding;
+  const minBars=Math.min(maxBars,Math.max(10,Math.round(maxBars*0.5)));
+  let visible=0;
+
+  for(let index=rows.length-1;index>=0&&visible<maxBars;index-=1){
+    const row=rows[index]||{};
+    const low=Number(row.low),high=Number(row.high);
+    const outside=Number.isFinite(low)&&Number.isFinite(high)&&low>0&&high>0&&(low<focusFloor||high>focusCeiling);
+    if(visible>=minBars&&outside) break;
+    visible+=1;
+  }
+  return Math.max(1,Math.min(maxBars,Math.max(minBars,visible)));
+}
+
 export function markerVisual(row) {
   const kind=String(row?.kind||"").toLowerCase(), side=String(row?.side||"").toUpperCase();
   if(kind==="cashflow") return {position:"aboveBar",shape:"square",tone:"cashflow",text:String(row.label||"BALANS")};

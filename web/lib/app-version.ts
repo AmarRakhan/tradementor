@@ -1,7 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 412: retire the obsolete 100-seat Portfolio Koers ceiling and align capacity with the 400-seat platform guard.
-// Build 412 also turns raw network failures into an explicit no-change message; release packaging includes the clean regression source.
-export const WEBAPP_BUILD_NUMBER = "412";
+// Build 413: Portfolio Koers opens zone-focused and shows adjacent-zone distance primarily as live percentages.
+export const WEBAPP_BUILD_NUMBER = "413";
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
   return `Webapp versie ${WEBAPP_VERSION} · build ${buildNumber}`;

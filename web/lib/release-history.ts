@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 412 release-contract sync: Portfolio Koers capacity, network-error safety and the clean regression source ship together.
+// Build 413 release-contract sync: Portfolio Koers zone-focus and percentage-first navigation ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,44 +26,84 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "Portfolio Koers · oude 100-stoelengrens verwijderd",
+  title: "Portfolio Koers · zonefocus en procentuele afstanden",
   newItems: [
-    "De BETA koersinstructie kan LONG + SHORT nu boven de oude grens van 100 stoelen brengen, met een platformveiligheidsgrens van 400.",
-    "De exacte 70L / 30S situatie met 28 actieve SHORT-posities is als regressietest vastgelegd: Zone +2 vraagt dan 8 extra SHORT-stoelen en kan naar 70L / 38S.",
-    "Een browser/netwerkfout wordt niet meer als rauwe tekst Failed to fetch getoond, maar als een duidelijke melding dat niets is gewijzigd.",
+    "Portfolio Koers opent automatisch dichter op de actuele equity en de aangrenzende zonegrenzen, in plaats van een groot historisch prijsbereik samen te persen.",
+    "De eerstvolgende grens omhoog en omlaag worden primair als procentuele afstand tot de actuele portfolio-equity getoond.",
+    "De koersinstructie toont daarnaast compact hoeveel procent van de actieve zone al is doorlopen richting de bovengrens.",
   ],
   problems: [
-    "Bij 70L / 30S en Zone +2 berekende de app correct dat 8 extra SHORT-soldaten nodig waren, maar blokkeerde dezelfde actie vervolgens met LIMIET 100.",
-    "De limiet was niet gekoppeld aan beschikbaar saldo of de actuele Multi-BB marktcapaciteit en was daardoor een kunstmatige blokkade.",
-    "Na een tijdelijke netwerkfout kon de technische browsermelding Failed to fetch onder de koersinstructie blijven staan.",
+    "De standaardweergave kon oude, ver verwijderde candles meenemen waardoor de actuele zone op mobiel als een dunne strook bovenin verscheen.",
+    "Beide aangrenzende grenzen heetten VOLGENDE en toonden vooral absolute bedragen, waardoor een lagere grens als een tweede volgende zone kon worden gelezen.",
   ],
   causes: [
-    "Een oude 100-stoelengrens stond dubbel in de zone-advisor, de Strategy-2 webguard, de configurator en de legacy backendcompatibiliteit.",
-    "De koersinstructie gaf een onbewerkte fetch-exception direct door aan de UI.",
+    "De initiële viewport gebruikte per timeframe een relatief groot vast aantal candles en liet de prijs-as volledig door die historische range bepalen.",
+    "De grenslabels waren oorspronkelijk ontworpen als exacte triggerprijzen en maakten de richting omhoog/omlaag semantisch onvoldoende expliciet.",
   ],
   fixes: [
-    "De gedeelde webguards, zone-advisor en legacy Strategy-2 compatibiliteitsvalidatie zijn op de bestaande 400-stoelen platformgrens uitgelijnd.",
-    "De soldatenknop gebruikt dezelfde gedeelde platformgrens en schrijft bij 70L / 38S maximumPositions=108 in plaats van de actie op 100 te blokkeren.",
-    "Werkelijke nieuwe entries blijven afhankelijk van live beschikbare margin, marktcapaciteit, instapfilters en runtime-risicocontroles; de knop verhoogt alleen stoelcapaciteit.",
-    "Netwerkfouten blijven fail-closed: bij een mislukte fetch of save wordt geen stoelverdeling gewijzigd.",
+    "Per timeframe is de maximale openingswindow verkleind en een zone-aware focusfunctie stopt vóór oude candles die ver buiten het actuele zonegebied liggen.",
+    "Transparante autoscale-ankers houden de actuele lower/upper zonegrens met beperkte padding in beeld zonder koersdata te wijzigen of te verzinnen.",
+    "Grenslabels tonen nu richting, doelzone en live procentuele afstand; exacte prijzen blijven alleen secundair als detail/title beschikbaar.",
+    "De koersinstructie gebruikt dezelfde live percentages en toont een 0–100% zoneprogressie. Zone-, soldaten-, DCA-, TP- en orderlogica zijn niet gewijzigd.",
   ],
   now: [
-    "De oude 100-grens kan een geldige +8 SHORT-instructie niet meer tegenhouden.",
-    "Als de live situatie bij opslaan nog steeds 70L / 30S met 28 actieve SHORT-posities en Zone +2 is, wordt de doelcapaciteit 70L / 38S.",
-    "Een echte veiligheids- of backendvalidatie blijft zichtbaar als concrete reden in plaats van een tegenstrijdige 100-limiet.",
+    "Bij 144,85 met Z0 op 145,27 en Z-2 op 143,21 leest de gebruiker ongeveer ↑ Z0 · +0,29% en ↓ Z-2 · −1,13%.",
+    "De gebruiker ziet direct de huidige zone, de afstand omhoog en omlaag, de positie binnen de zone en de bestaande LONG/SHORT-soldatenactie.",
+    "Timeframewissels naar 1m, 5m, 15m, 1u, 4u en 24u krijgen dezelfde zonegerichte openingslogica.",
   ],
-  before: "Build 411 maakte de tijdlijn veilig en fail-closed, maar erfde nog de oude 100-stoelengrens uit eerdere configuratiecode.",
-  after: "Build 412 scheidt geld/entry-risico van stoelcapaciteit en verwijdert de kunstmatige 100-blokkade uit de BETA koersinstructie.",
+  before: "Build 412 verwijderde de oude 100-stoelengrens, maar de Portfolio Koers kon nog te ver uitgezoomd openen en absolute grensprijzen dominant tonen.",
+  after: "Build 413 maakt de Portfolio Koers percentage-first en opent automatisch op het relevante zonegebied, zonder tradinglogica te veranderen.",
   technicalDetails: [
-    "PORTFOLIO_ZONE_MAX_TOTAL_SLOTS = 400.",
-    "Web settings guard: maximumPositions, LONG en SHORT worden maximaal op 400 begrensd.",
-    "Legacy Strategy2Config accepteert maximumPairs tot 400; Multi BB houdt daarnaast zijn eigen universe-/marktcapaciteitsvalidatie.",
-    "De knop opent geen market order direct; hij past longSlots, shortSlots en maximumPositions aan.",
+    "afstand % = ((grens - actuele equity) / actuele equity) × 100.",
+    "zoneProgress = clamp(((equity - lowerBoundary) / (upperBoundary - lowerBoundary)) × 100, 0, 100).",
+    "Geen ontbrekende historische koerswaarden worden aangevuld of geïnterpoleerd.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-412-portfolio-koers-capacity",
+    version: "46",
+    build: "412",
+    releasedAt: "2026-09-24",
+    title: "Portfolio Koers · oude 100-stoelengrens verwijderd",
+    newItems: [
+      "De BETA koersinstructie kan LONG + SHORT nu boven de oude grens van 100 stoelen brengen, met een platformveiligheidsgrens van 400.",
+      "De exacte 70L / 30S situatie met 28 actieve SHORT-posities is als regressietest vastgelegd: Zone +2 vraagt dan 8 extra SHORT-stoelen en kan naar 70L / 38S.",
+      "Een browser/netwerkfout wordt niet meer als rauwe tekst Failed to fetch getoond, maar als een duidelijke melding dat niets is gewijzigd.",
+    ],
+    problems: [
+      "Bij 70L / 30S en Zone +2 berekende de app correct dat 8 extra SHORT-soldaten nodig waren, maar blokkeerde dezelfde actie vervolgens met LIMIET 100.",
+      "De limiet was niet gekoppeld aan beschikbaar saldo of de actuele Multi-BB marktcapaciteit en was daardoor een kunstmatige blokkade.",
+      "Na een tijdelijke netwerkfout kon de technische browsermelding Failed to fetch onder de koersinstructie blijven staan.",
+    ],
+    causes: [
+      "Een oude 100-stoelengrens stond dubbel in de zone-advisor, de Strategy-2 webguard, de configurator en de legacy backendcompatibiliteit.",
+      "De koersinstructie gaf een onbewerkte fetch-exception direct door aan de UI.",
+    ],
+    fixes: [
+      "De gedeelde webguards, zone-advisor en legacy Strategy-2 compatibiliteitsvalidatie zijn op de bestaande 400-stoelen platformgrens uitgelijnd.",
+      "De soldatenknop gebruikt dezelfde gedeelde platformgrens en schrijft bij 70L / 38S maximumPositions=108 in plaats van de actie op 100 te blokkeren.",
+      "Werkelijke nieuwe entries blijven afhankelijk van live beschikbare margin, marktcapaciteit, instapfilters en runtime-risicocontroles; de knop verhoogt alleen stoelcapaciteit.",
+      "Netwerkfouten blijven fail-closed: bij een mislukte fetch of save wordt geen stoelverdeling gewijzigd.",
+    ],
+    now: [
+      "De oude 100-grens kan een geldige +8 SHORT-instructie niet meer tegenhouden.",
+      "Als de live situatie bij opslaan nog steeds 70L / 30S met 28 actieve SHORT-posities en Zone +2 is, wordt de doelcapaciteit 70L / 38S.",
+      "Een echte veiligheids- of backendvalidatie blijft zichtbaar als concrete reden in plaats van een tegenstrijdige 100-limiet.",
+    ],
+    before: "Build 411 maakte de tijdlijn veilig en fail-closed, maar erfde nog de oude 100-stoelengrens uit eerdere configuratiecode.",
+    after: "Build 412 scheidt geld/entry-risico van stoelcapaciteit en verwijdert de kunstmatige 100-blokkade uit de BETA koersinstructie.",
+    technicalDetails: [
+      "PORTFOLIO_ZONE_MAX_TOTAL_SLOTS = 400.",
+      "Web settings guard: maximumPositions, LONG en SHORT worden maximaal op 400 begrensd.",
+      "Legacy Strategy2Config accepteert maximumPairs tot 400; Multi BB houdt daarnaast zijn eigen universe-/marktcapaciteitsvalidatie.",
+      "De knop opent geen market order direct; hij past longSlots, shortSlots en maximumPositions aan.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-411-portfolio-koers-continuity",
     version: "46",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersTimelineHealth, portfolioZoneForPrice } from "../lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "../lib/portfolio-koers-chart.mjs";
 
 test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",()=>{
   assert.deepEqual([...PORTFOLIO_KOERS_TIMEFRAMES],["1m","5m","15m","1u","4u","24u"]);
@@ -209,4 +209,38 @@ test("reference-style zone regions remain sourced from confirmed portfolio zones
   assert.ok(component.includes("source:zone.source"));
   assert.ok(component.includes("layoutPortfolioKoersZoneRegions(zoneCoordinates,height)"));
   assert.equal(component.includes("staticZone"),false);
+});
+
+
+test("Build 413 derives live percentage distance and clamped in-zone progress without changing zone prices",()=>{
+  const current=144.85,upper=145.27,lower=143.21;
+  assert.ok(Math.abs(portfolioZoneDistancePercent(upper,current)-0.2899551259924169)<1e-10);
+  assert.ok(Math.abs(portfolioZoneDistancePercent(lower,current)-(-1.1322057300655757))<1e-10);
+  assert.ok(Math.abs(portfolioZoneProgress(current,lower,upper)-79.61165048543614)<1e-10);
+  assert.equal(portfolioZoneProgress(200,lower,upper),100);
+  assert.equal(portfolioZoneProgress(100,lower,upper),0);
+});
+
+test("Build 413 initial focus drops old distant history while preserving recent candles around adjacent zones",()=>{
+  const old=Array.from({length:24},(_,index)=>({time:index+1,open:100,high:102,low:98,close:100}));
+  const recent=Array.from({length:20},(_,index)=>({time:25+index,open:144.1,high:145.1,low:143.6,close:144.8}));
+  const rows=[...old,...recent];
+  assert.equal(portfolioKoersFocusBars(rows,28,144.85,143.21,145.27),20);
+});
+
+test("Build 413 configures every approved timeframe for a closer initial viewport and keeps timeframe switching focused",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  for(const pair of [
+    '"1m":{visibleBars:36',
+    '"5m":{visibleBars:32',
+    '"15m":{visibleBars:28',
+    '"1u":{visibleBars:26',
+    '"4u":{visibleBars:24',
+    '"24u":{visibleBars:22',
+  ]) assert.ok(component.includes(pair),pair);
+  assert.ok(component.includes("portfolioKoersFocusBars(candles,view.visibleBars"));
+  assert.ok(component.includes("focusVisibleBars"));
+  assert.ok(component.includes("guideLow"));
+  assert.ok(component.includes("guideHigh"));
+  assert.equal(component.includes("fitContent()"),false);
 });

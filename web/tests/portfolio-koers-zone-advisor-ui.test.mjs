@@ -112,7 +112,8 @@ test("Build 408 explains no-action state and shows exact next upper and lower tr
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("instructionReason"));
   assert.ok(component.includes("portfolio-koers-instruction-reason"));
-  assert.ok(component.includes("VOLGENDE LEVEL"));
+  assert.equal(component.includes("VOLGENDE LEVEL"),false);
+  assert.ok(component.includes("portfolioZoneDistancePercent"));
   assert.ok(component.includes("upperTrigger"));
   assert.ok(component.includes("lowerTrigger"));
   assert.ok(component.includes("nextUpIndex"));
@@ -177,4 +178,23 @@ test("Build 410 explains exactly what determines the signed zone",async()=>{
   assert.ok(component.includes("zoneBandSummary"));
   assert.ok(component.includes("portfolio-koers-zone-basis"));
   assert.ok(css.includes(".portfolio-koers-instruction-copy>.portfolio-koers-zone-basis"));
+});
+
+
+test("Build 413 replaces ambiguous VOLGENDE price labels with directional zone percentages",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.equal(component.includes('"VOLGENDE ↑"'),false);
+  assert.equal(component.includes('"VOLGENDE ↓"'),false);
+  assert.ok(component.includes('boundary.kind==="next-up"?"↑":"↓"'));
+  assert.ok(component.includes("percent2(distance)"));
+  assert.ok(component.includes("↑ Nog ${percent2(upperDistancePercent)} tot Z"));
+  assert.ok(component.includes("↓ ${percent2(lowerDistancePercent,false)} tot Z"));
+  assert.ok(component.includes("portfolio-koers-zone-progress"));
+  assert.ok(component.includes("Math.round(zoneProgressPercent)"));
+});
+
+test("Build 413 keeps exact absolute zone prices secondary in title text instead of the primary labels",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("Exacte grens ${levelUsd(boundary.price)}"));
+  assert.ok(component.includes("Exacte zonegrenzen: ${zoneBandSummary}"));
 });
