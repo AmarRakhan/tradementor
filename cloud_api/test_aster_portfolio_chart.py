@@ -4,6 +4,7 @@ from aster_portfolio_chart import (
     bucket_start_ms,
     derive_equity_zones,
     external_cashflow_markers,
+    latest_contiguous_candles,
     merge_equity_sample,
     public_candle,
     zone_shadow_backtest,
@@ -104,3 +105,14 @@ def test_duplicate_confirmed_sample_does_not_inflate_ohlc_sample_count():
     duplicate = merge_equity_sample(first, equity=100.0, source_at_ms=61_000, timeframe="1m")
     assert duplicate["sampleCount"] == 1
     assert duplicate["open"] == duplicate["high"] == duplicate["low"] == duplicate["close"] == 100.0
+
+
+def test_latest_contiguous_candles_never_bridges_an_unobserved_gap():
+    rows = [
+        candle(900_000, 100, 101, 99, 100),
+        candle(1_800_000, 100, 102, 99, 101),
+        candle(4_500_000, 103, 104, 102, 103),
+        candle(5_400_000, 103, 105, 102, 104),
+    ]
+    recent = latest_contiguous_candles(rows, "15m")
+    assert [row["atMs"] for row in recent] == [4_500_000, 5_400_000]
