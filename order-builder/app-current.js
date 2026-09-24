@@ -238,7 +238,7 @@
       const p=data.packages[sel.index];
       cards.push(`<div class="order-card">
         <div class="order-thumb"><img src="${pkgThumb(p)}" alt=""></div>
-        <div class="order-meta"><div class="order-name">${esc(p.name)}</div><div class="order-sub">Pakket${(sel.excludedCodes||[]).length?' · '+(sel.excludedCodes||[]).map(code=>code==='MD3J4ZM/A'?'zonder 20W-lader':'zonder '+code).join(', '):''}${Object.values(sel.serialsByCode||{}).flat().filter(Boolean).length?' · SN: '+Object.values(sel.serialsByCode||{}).flat().filter(Boolean).join(', '):''}</div>
+        <div class="order-meta"><div class="order-name">${esc(p.name)}</div><div class="order-sub">Pakket${(sel.excludedCodes||[]).length?' · '+(sel.excludedCodes||[]).map(code=>(code==='MD3J4ZM/A'||code==='MHJE3ZM/A')?'zonder 20W-lader':'zonder '+code).join(', '):''}${Object.values(sel.serialsByCode||{}).flat().filter(Boolean).length?' · SN: '+Object.values(sel.serialsByCode||{}).flat().filter(Boolean).join(', '):''}</div>
           <div class="order-controls"><span class="status-badge ${p.badge==='Refurb'?'refurb':''}">${esc(p.badge)}</span>
           <span class="qty"><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="1">+</button></span></div>
         </div>
@@ -461,6 +461,31 @@
         continue;
       }
 
+      // Harde bedrijfsregel:
+      // "ref iphone 13", "iphone 13 ref" en "refurb iphone 13"
+      // betekenen altijd het bestaande pakket "iphone 13 REF".
+      if(
+        meaning.includes('ref iphone 13') ||
+        meaning.includes('iphone 13 ref') ||
+        meaning.includes('refurb iphone 13') ||
+        meaning.includes('iphone 13 refurb')
+      ){
+        const iphone13RefIndex=data.packages.findIndex(p=>normalizeSmartText(p.name)==='iphone 13 ref');
+        if(iphone13RefIndex>=0 && !found.some(x=>x.index===iphone13RefIndex)){
+          const serial=extractSerialNumber(line);
+          found.push({
+            index:iphone13RefIndex,
+            qty:1,
+            excludedCodes:[],
+            label:'iphone 13 REF',
+            // Dit Excelpakket bevat geen aparte REF-toestelregel; serienummer bewaren we
+            // daarom voorlopig als pakketmetadata zonder de pakketinhoud te wijzigen.
+            unassignedSerials:serial?[serial]:[]
+          });
+        }
+        continue;
+      }
+
       // Exacte pakketnamen uit onze catalogus winnen van losse artikelmatching.
       let bestIndex=-1;
       let bestLen=0;
@@ -500,8 +525,14 @@
       /\b(lader|blokje|adapter)\b.{0,25}\b(niet geleverd|niet meegeleverd|ontbreekt)\b/.test(all);
 
     if(no20w){
+      const charger20wCodes=new Set(['MD3J4ZM/A','MHJE3ZM/A']);
       found.forEach(x=>{
-        if(data.packages[x.index]?.items?.some(it=>it.code==='MD3J4ZM/A')) x.excludedCodes.push('MD3J4ZM/A');
+        const pkg=data.packages[x.index];
+        (pkg?.items||[]).forEach(it=>{
+          if(charger20wCodes.has(it.code) && !x.excludedCodes.includes(it.code)){
+            x.excludedCodes.push(it.code);
+          }
+        });
       });
     }
 
@@ -794,7 +825,7 @@
     const packageRows=packageIntents.map(intent=>{
       const p=data.packages[intent.index];
       const exclusions=intent.excludedCodes||[];
-      const extra=exclusions.includes('MD3J4ZM/A')?' · zonder 20W-lader':'';
+      const extra=(exclusions.includes('MD3J4ZM/A')||exclusions.includes('MHJE3ZM/A'))?' · zonder 20W-lader':'';
       return `<div class="ticket-package-row">
         <div class="ticket-package-check">✓</div>
         <div class="ticket-package-name"><strong>${esc(p.name)}</strong>${esc(extra)}</div>
@@ -919,12 +950,14 @@
         Object.entries(packageIntent.serialsByCode||{}).forEach(([code,serials])=>{
           existing.serialsByCode[code]=[...new Set([...(existing.serialsByCode[code]||[]),...serials])];
         });
+        existing.unassignedSerials=[...new Set([...(existing.unassignedSerials||[]),...(packageIntent.unassignedSerials||[])])];
       }else{
         state.packages.push({
           index:packageIntent.index,
           qty:packageIntent.qty||1,
           excludedCodes:[...(packageIntent.excludedCodes||[])],
-          serialsByCode:JSON.parse(JSON.stringify(packageIntent.serialsByCode||{}))
+          serialsByCode:JSON.parse(JSON.stringify(packageIntent.serialsByCode||{})),
+          unassignedSerials:[...(packageIntent.unassignedSerials||[])]
         });
       }
       added+=data.packages[packageIntent.index].items
