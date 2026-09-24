@@ -9,8 +9,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Dharma Thuis" />
-  <link rel="manifest" href="manifest.json" />
-  <link rel="apple-touch-icon" href="icon-192.svg" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
   <title>Dharma Thuis</title>
   <style>:root{--kids-bg:#fff8ed;--kids-ink:#3d241c;--kids-orange:#ff7a1a;--kids-pink:#ff6d7e;--kids-blue:#2d9bea;--adult-bg:#f5efe3;--adult-ink:#17372c;--adult-green:#0d4a36;--adult-gold:#c99a4b;--line:rgba(42,38,32,.12);--shadow:0 18px 50px rgba(68,43,17,.12)}
 *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--kids-bg);color:var(--kids-ink);padding-bottom:88px;transition:.25s ease} body.adult{background:var(--adult-bg);color:#17231e} button,input{font:inherit} button{cursor:pointer} img{display:block;max-width:100%}
@@ -31,11 +32,7 @@
 </head>
 <body>
   <div id="app"></div>
-  <script>let deferredInstallPrompt = null;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstallPrompt = e; });
-window.addEventListener('appinstalled', () => { deferredInstallPrompt = null; });
-
-const state = {
+  <script>const state = {
   mode: localStorage.getItem('dharma-mode') || 'kids',
   lang: localStorage.getItem('dharma-lang') || 'nl',
   page: 'home'
@@ -158,7 +155,7 @@ function settings(){
     <div class="modal-head"><div><span class="kicker">Dharma Thuis</span><h2>${t('settings')}</h2></div><button class="icon-btn" data-modal-close>✕</button></div>
     <div class="setting-group"><label>${t('experience')}</label><div class="segmented"><button data-mode="kids" class="${state.mode==='kids'?'active':''}">🪷 ${t('kids')}</button><button data-mode="adult" class="${state.mode==='adult'?'active':''}">📖 ${t('adult')}</button></div><p class="help">Je wisselt alleen de ervaring. Je account, taal en voortgang blijven hetzelfde.</p></div>
     <div class="setting-group"><label>${t('language')}</label><div class="segmented"><button data-lang="nl" class="${state.lang==='nl'?'active':''}">🇳🇱 Nederlands</button><button data-lang="en" class="${state.lang==='en'?'active':''}">🇬🇧 English</button></div></div>
-    <div class="setting-group"><label>App</label><button class="install-app-button" data-install>⬇ Installeer Dharma Thuis</button><p class="help">Installeer de webapp op je startscherm en open hem daarna als een gewone app.</p></div>
+    <div class="setting-group"><label>App</label><p class="help">Na installatie opent Dharma Thuis als een zelfstandige app via Samsung Internet of Chrome.</p></div>
     <div class="preview-switch ${state.mode}"><strong>${state.mode==='kids'?'Kindermodus actief':'Volwassen modus actief'}</strong><span>${state.mode==='kids'?'Speelser, visueler, kortere lessen en quizzen.':'Rustiger, diepere uitleg, context en praktische toepassing.'}</span></div>
   </section></div>`;
 }
@@ -188,11 +185,10 @@ function bind(){
 document.addEventListener('click',e=>{
   const mode=e.target.closest('[data-mode]'); if(mode){state.mode=mode.dataset.mode;state.page='home';localStorage.setItem('dharma-mode',state.mode);document.querySelector('.modal-backdrop')?.remove();render();}
   const lang=e.target.closest('[data-lang]'); if(lang){state.lang=lang.dataset.lang;localStorage.setItem('dharma-lang',state.lang);document.querySelector('.modal-backdrop')?.remove();render();}
-  const install=e.target.closest('[data-install]'); if(install){ if(deferredInstallPrompt){ deferredInstallPrompt.prompt(); deferredInstallPrompt.userChoice.finally(()=>{deferredInstallPrompt=null;}); } else { alert('Open het browsermenu en kies “App installeren” of “Toevoegen aan startscherm”.'); } }
-    if(e.target.matches('[data-modal-close]')) document.querySelector('.modal-backdrop')?.remove();
+  if(e.target.matches('[data-modal-close]')) document.querySelector('.modal-backdrop')?.remove();
 });
 render();
 </script>
-  <script>if ('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js',{scope:'./'}));</script>
+  <script>if ('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js?v=1',{scope:'/',updateViaCache:'none'}));</script>
 </body>
 </html>
