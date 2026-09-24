@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 418 release-contract: owner-only continuity monitor on top of Build 417 explicit zone opt-in.
+// Build 419 release-contract: first Zone-Soldaten opt-in preserves safe defaults.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -22,7 +22,7 @@ export type ReleaseHistoryEntry = {
 };
 
 export const CURRENT_RELEASE: ReleaseHistoryEntry = {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-zone-opt-in-default-fix`,
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
