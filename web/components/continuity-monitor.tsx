@@ -32,6 +32,8 @@ export type ContinuityService = {
   billingEnabled?: boolean | null;
   billingSource?: string;
   runtimeOnline?: boolean;
+  budgetStatus?: string;
+  budgetCount?: number | null;
   project?: string;
   cloudRunService?: string;
   repository?: string;
@@ -299,7 +301,7 @@ function ServiceCard({ item, onConnectBybit }: { item: ContinuityService; onConn
       </div>
       {item.id === "chatgpt" && <p>{item.plan ? `Plan: ${item.plan}` : "Plan: nog niet ingesteld"} <b>·</b> {item.monthlyEstimate != null ? `${money(item.monthlyEstimate, item.currency)} / maand` : "bedrag onbekend"} <b>·</b> {item.dueDate ? `volgende betaling: ${new Date(item.dueDate).toLocaleDateString("nl-NL")}` : "betaaldatum onbekend"}</p>}
       {item.id === "github" && <p>{item.repository || "Repository onbekend"} <b>·</b> {item.visibility || "zichtbaarheid onbekend"} <b>·</b> plan/billing: niet beschikbaar</p>}
-      {item.id === "google_cloud" && <p>Billing: <strong>{item.billingEnabled === true ? "Actief" : item.billingEnabled === false ? "Niet actief" : "Niet geverifieerd"}</strong> <b>·</b> Cloud Run: {item.runtimeOnline ? "Online" : "Onbekend"} <b>·</b> {item.project}</p>}
+      {item.id === "google_cloud" && <p>Billing: <strong>{item.billingEnabled === true ? "Actief" : item.billingEnabled === false ? "Niet actief" : "Niet geverifieerd"}</strong> <b>·</b> Cloud Run: {item.runtimeOnline ? "Online" : "Onbekend"} <b>·</b> Budget: {item.budgetStatus === "CONFIGURED" ? `${item.budgetCount ?? 0} actief` : item.budgetStatus === "NONE" ? "geen budget gevonden" : "niet geverifieerd"} <b>·</b> {item.project}</p>}
       {isBybit && <BybitServiceDetails item={item} onConnect={onConnectBybit} />}
       {planned && <div className="tm-future-tags">{["Domeinnaam","E-mailservice","Monitoring","Back-ups","Analytics","Stripe"].map((tag) => <span key={tag}>{tag}</span>)}</div>}
       {item.note && !isBybit && !planned && <small className="tm-continuity-note">{item.note}</small>}
