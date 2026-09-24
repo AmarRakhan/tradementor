@@ -415,6 +415,36 @@
   function detectTicketPackageIntents(text){
     const lines=String(text||'').split(/\r?\n|;/).map(x=>x.trim()).filter(Boolean);
     const found=[];
+    const whole=normalizeSmartText(text);
+
+    // Harde pakketregels over de VOLLEDIGE geplakte tekst.
+    // Deze draaien vóór regelparser, fuzzy matching en suggesties.
+    if(
+      whole.includes('ref iphone 13') ||
+      whole.includes('iphone 13 ref') ||
+      whole.includes('refurb iphone 13') ||
+      whole.includes('iphone 13 refurb')
+    ){
+      const iphone13RefIndex=data.packages.findIndex(p=>{
+        const n=normalizeSmartText(p.name);
+        return n==='iphone 13 ref' || n.includes('iphone 13 ref');
+      });
+
+      if(iphone13RefIndex>=0){
+        const serialLine=lines.find(line=>{
+          const n=normalizeSmartText(line);
+          return n.includes('ref iphone 13') || n.includes('iphone 13 ref') || n.includes('refurb iphone 13') || n.includes('iphone 13 refurb');
+        }) || '';
+        const serial=extractSerialNumber(serialLine);
+        found.push({
+          index:iphone13RefIndex,
+          qty:1,
+          excludedCodes:[],
+          label:'iphone 13 REF',
+          unassignedSerials:serial?[serial]:[]
+        });
+      }
+    }
 
     for(const line of lines){
       const meaning=ticketPackageText(line);
@@ -788,12 +818,22 @@
   }
 
   function analyzeTicketText(text){
-    const packageTexts=new Set(detectTicketPackageIntents(text).map(x=>normalizeSmartText(data.packages[x.index].name)));
+    const packageIntentsNow=detectTicketPackageIntents(text);
+    const packageTexts=new Set(packageIntentsNow.map(x=>normalizeSmartText(data.packages[x.index].name)));
+    const hardPackageAliases=[];
+    if(packageIntentsNow.some(x=>normalizeSmartText(data.packages[x.index].name).includes('iphone 13 ref'))){
+      hardPackageAliases.push('ref iphone 13','iphone 13 ref','refurb iphone 13','iphone 13 refurb');
+    }
     const scanned=scanWholeTicketFragments(text);
     const results=scanned.results.slice();
 
     parseTicketLines(text)
-      .filter(line=>!Array.from(packageTexts).some(pn=>ticketPackageText(line.query).includes(pn)))
+      .filter(line=>{
+        const q=ticketPackageText(line.query);
+        if(Array.from(packageTexts).some(pn=>q.includes(pn))) return false;
+        if(hardPackageAliases.some(a=>q.includes(a))) return false;
+        return true;
+      })
       .filter(line=>{
         const n=ticketIntentText(line.query);
         return !scanned.phrases.some(p=>p&&n.includes(p));
