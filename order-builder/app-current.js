@@ -328,7 +328,7 @@
     if(m) return m[1].toUpperCase();
 
     // Also allow: <artikelomschrijving> : <SERIAL>
-    m=raw.match(/\s:\s*([A-Z0-9][A-Z0-9._-]{5,})(?:\s|\(|$)/i);
+    m=raw.match(/\s*:\s*([A-Z0-9][A-Z0-9._-]{5,})(?:\s|\(|$)/i);
     if(m) return m[1].toUpperCase();
 
     return '';
