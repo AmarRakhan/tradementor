@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 416 release-contract sync: hard owner-only zone runtime plus gentle monotone zone-distance entry sizing.
+// Build 417: owner-only App Continuity Monitor and read-only Bybit reserve.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -68,8 +68,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
-  version: WEBAPP_VERSION,
+  id: "v46-build-416-zone-owned-soldiers",
+  version: "46",
   build: "416",
   releasedAt: "2026-09-24",
   title: "BETA · owner-only zonesoldaten + rustige inzetgroei",
