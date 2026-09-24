@@ -72,13 +72,15 @@ test("Build 407 uses one canonical 15m zone source for every BETA chart timefram
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
 });
 
-test("canonical zone fetch is BETA-only and can fall back without disabling seat controls",async()=>{
+test("canonical 15m zone fetch is BETA-only and fails closed when continuity evidence is unavailable",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const betaGate=component.indexOf('if(!enabled){setAdvisorSeats(EMPTY_ADVISOR);setAdvisorZones([])');
   const canonicalFetch=component.indexOf('/portfolio-chart?timeframe=15m&limit=320');
   assert.ok(betaGate>0);
   assert.ok(canonicalFetch>betaGate);
-  assert.ok(component.includes("catch{\n        setAdvisorZones([]);\n      }"));
+  assert.ok(component.includes("catch{\n        setAdvisorZones([]);\n        setAdvisorTimeline(null);\n      }"));
+  assert.ok(component.includes('const instructionActionable=advisorTimelineReady&&["ADD","PARTIAL_ADD","REMOVE"].includes(instructionStatus)'));
+  assert.ok(component.includes('!advisorTimelineReady?"WACHTEN"'));
 });
 
 
