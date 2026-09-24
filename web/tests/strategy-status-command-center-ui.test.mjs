@@ -61,3 +61,28 @@ test("Build 421 responsive Command Center covers 360 390 and 430 class of mobile
   assert.ok(css.includes("minmax(0,1fr)"));
   assert.equal(css.includes("overflow-x:scroll"),false);
 });
+
+
+test("Build 422 owner Command Center shows soldier activity windows and recent confirmed openings",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  for(const label of ["SOLDATENACTIVITEIT","15m","1u","4u","24u","LAATSTE TOEVOEGINGEN","BEVESTIGDE OPENINGEN"]){
+    assert.ok(component.includes(label),label);
+  }
+  assert.ok(component.includes("vm.soldierActivity.windows[key]"));
+  assert.ok(component.includes("vm.soldierActivity.recent"));
+});
+
+test("Build 422 activity reuses the existing advisor polling loop instead of adding an aggressive timer",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("nextAdvisor.soldierOpenEvents"));
+  assert.ok(component.includes("mergeSoldierActivityHistory(current,nextAdvisor.soldierOpenEvents,Date.now())"));
+  const timers=[...component.matchAll(/setInterval\([^,]+,\s*([0-9_]+)/g)].map((match)=>Number(match[1].replaceAll("_","")));
+  assert.ok(timers.every((value)=>value>=45_000));
+});
+
+test("Build 422 activity remains inside the betaOwner-only Command Center path",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("const commandCenterTester=betaOwner===true"));
+  assert.ok(component.includes("if(!commandCenterTester||!user?.uid){setSoldierActivity([]);return}"));
+  assert.ok(component.includes("commandCenterTester&&(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle===\"DRAINING\")?<StrategyCommandCenter"));
+});
