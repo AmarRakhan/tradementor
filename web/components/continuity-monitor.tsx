@@ -288,6 +288,7 @@ function FlowNode({ id, label, sub }: { id: string; label: string; sub: string }
 function ServiceCard({ item, onConnectBybit }: { item: ContinuityService; onConnectBybit: () => void }) {
   const isBybit = item.id === "bybit";
   const planned = item.id === "future";
+  const [expanded, setExpanded] = useState(false);
   return <article className={`tm-continuity-service ${tone(item.status)}`}>
     <div className="tm-continuity-service-icon">{iconFor(item.id)}</div>
     <div className="tm-continuity-service-main">
@@ -301,8 +302,17 @@ function ServiceCard({ item, onConnectBybit }: { item: ContinuityService; onConn
       {isBybit && <BybitServiceDetails item={item} onConnect={onConnectBybit} />}
       {planned && <div className="tm-future-tags">{["Domeinnaam","E-mailservice","Monitoring","Back-ups","Analytics","Stripe"].map((tag) => <span key={tag}>{tag}</span>)}</div>}
       {item.note && !isBybit && !planned && <small className="tm-continuity-note">{item.note}</small>}
+      {expanded && <div className="tm-continuity-provider-details">
+        <span>Bron <strong>{item.dataSource || "UNKNOWN"}</strong></span>
+        <span>Afhankelijkheid <strong>{item.dependencyType || "onbekend"}</strong></span>
+        <span>Runtime-kritiek <strong>{item.isRuntimeCritical ? "Ja" : "Nee"}</strong></span>
+        <span>Bedrag <strong>{item.amountDue != null ? money(item.amountDue, item.currency) : "Niet beschikbaar"}</strong></span>
+      </div>}
     </div>
-    {!planned && !isBybit && <span className={`tm-continuity-due ${tone(item.status)}`}>{daysLabel(item)}</span>}
+    <div className="tm-continuity-service-side">
+      {!planned && !isBybit && <span className={`tm-continuity-due ${tone(item.status)}`}>{daysLabel(item)}</span>}
+      <button type="button" aria-label={`Details ${item.title}`} aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>›</button>
+    </div>
   </article>;
 }
 
