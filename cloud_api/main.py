@@ -1425,10 +1425,24 @@ def _aster_owned_keys(uid: str) -> tuple[set[tuple[str, str]], set[tuple[str, st
 def aster_strategy2_public(uid: str) -> dict[str, Any]:
     ref = aster_strategy2_reference(uid)
     raw = ref.get().to_dict() or {}
-    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else MultiBbConfig().public_dict()
+    settings = dict(raw.get("settings")) if isinstance(raw.get("settings"), dict) else MultiBbConfig().public_dict()
     if str(settings.get("engine",settings.get("strategyKind","")))==MULTI_BB_ENGINE:
-        enabled=bool(raw.get("enabled",False)); monitor=bool(raw.get("monitor",False)); report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
         managed=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
+        stored_zone_opt_in = _explicit_zone_soldier_opt_in(settings)
+        zone_owner_channel = str(raw.get("releaseChannel") or "").upper() == "BETA"
+        zone_active = bool(zone_owner_channel and stored_zone_opt_in)
+        settings["zoneSoldiersEnabled"] = zone_active
+        settings["zoneSoldiersOptInVersion"] = 1 if zone_active else 0
+        zone_owned_open_count = sum(
+            1 for row in managed.values()
+            if isinstance(row, dict) and str(row.get("soldierRole") or "") in {"ZONE_BASE", "EXPOSURE_BALANCER"}
+        )
+        zone_lifecycle = "ACTIVE" if zone_active else ("DRAINING" if zone_owned_open_count > 0 else "OFF")
+        enabled=bool(raw.get("enabled",False)); monitor=bool(raw.get("monitor",False)); report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
+        raw_zone_report=raw.get("zoneSoldierReport") if isinstance(raw.get("zoneSoldierReport"),dict) else {}
+        zone_report={**raw_zone_report,"enabled":zone_active,"lifecycle":zone_lifecycle,
+            "drainingOpenCount":0 if zone_active else zone_owned_open_count,
+            "safeForNewEntries":bool(raw_zone_report.get("safeForNewEntries")) if zone_active else False}
         long_count=sum(1 for key in managed if str(key).endswith("|LONG")); short_count=sum(1 for key in managed if str(key).endswith("|SHORT"))
         runtime_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
         return {"strategy2":{"settings":settings,"engine":MULTI_BB_ENGINE,"phase":str(raw.get("phase","CONFIGURED")),
@@ -1438,7 +1452,8 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "lastTickAt":raw.get("lastTickAt"),"activePairs":len({str(k).split("|",1)[0] for k in managed}),"activeLegs":len(managed),
             "longLegs":long_count,"shortLegs":short_count,"positionCounts":{"uniqueMarketCount":len({str(k).split("|",1)[0] for k in managed}),
                 "positionLegCount":len(managed),"longLegs":long_count,"shortLegs":short_count},"multiBb":report,"multiBbPositions":managed,
-            "zoneSoldiers": raw.get("zoneSoldierReport") if isinstance(raw.get("zoneSoldierReport"),dict) else report.get("zoneSoldiers"),
+            "strategyMode":"ZONE_SOLDIERS" if zone_active else "TRADITIONAL","zoneSoldierLifecycle":zone_lifecycle,
+            "zoneSoldiers":zone_report,
             "universe":{"topN":int(settings.get("universeTopN",30)),"ranking":report.get("rankedTopN",[])},
             "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "directe slotvulling + Top-N + leveragefilter"},
                 "existingPositionManagement":{"reason":"Exchange truth + TP/DCA beheer"}},"candidateScan":{"checked":len(report.get("rankedTopN",[])),"reasons":[]},
@@ -2576,6 +2591,13 @@ def _release_feature_record(key: str) -> dict[str, Any]:
     return {**_RELEASE_FEATURE_DEFAULTS[key], **stored, "key": key}
 
 
+def _explicit_zone_soldier_opt_in(settings: dict[str, Any]) -> bool:
+    return bool(
+        settings.get("zoneSoldiersEnabled") is True
+        and int(safe_float(settings.get("zoneSoldiersOptInVersion"))) >= 1
+    )
+
+
 def _release_feature_enabled(user: dict[str, Any], key: str) -> bool:
     row = _release_feature_record(key)
     if key in _OWNER_ONLY_RELEASE_FEATURES:
@@ -2604,14 +2626,18 @@ def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, An
                     "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
             out.pop(key, None)
     if _release_feature_enabled(user, "zone_soldiers"):
-        out.setdefault("zoneSoldiersEnabled", True)
+        explicit_zone_opt_in = _explicit_zone_soldier_opt_in(out)
+        out["zoneSoldiersEnabled"] = explicit_zone_opt_in
+        out["zoneSoldiersOptInVersion"] = 1 if explicit_zone_opt_in else 0
         out.setdefault("zoneBaseLongSoldiers", 3)
         out.setdefault("zoneBaseShortSoldiers", 3)
         out.setdefault("zoneExposureBalancerEnabled", True)
         out.setdefault("zoneEntryGrowthPercent", 2.0)
         out.setdefault("zoneEntryMaxMultiplier", 1.20)
     else:
-        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
+        out["zoneSoldiersEnabled"] = False
+        out["zoneSoldiersOptInVersion"] = 0
+        for key in ("zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
                     "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier"):
             out.pop(key, None)
     if not _release_feature_enabled(user, "price_zones"):
@@ -2625,7 +2651,7 @@ def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) 
         "directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe",
         "exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
         "exposureRefillTriggerPercent", "exposureRefillReleasePercent",
-        "zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
+        "zoneSoldiersEnabled", "zoneSoldiersOptInVersion", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
         "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier",
         "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
     }
@@ -2649,14 +2675,18 @@ def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) 
             out.pop(key, None)
     zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))
     if zone_owner_only:
-        out.setdefault("zoneSoldiersEnabled", True)
+        explicit_zone_opt_in = _explicit_zone_soldier_opt_in(out)
+        out["zoneSoldiersEnabled"] = explicit_zone_opt_in
+        out["zoneSoldiersOptInVersion"] = 1 if explicit_zone_opt_in else 0
         out.setdefault("zoneBaseLongSoldiers", 3)
         out.setdefault("zoneBaseShortSoldiers", 3)
         out.setdefault("zoneExposureBalancerEnabled", True)
         out.setdefault("zoneEntryGrowthPercent", 2.0)
         out.setdefault("zoneEntryMaxMultiplier", 1.20)
     else:
-        for key in ("zoneSoldiersEnabled", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
+        out["zoneSoldiersEnabled"] = False
+        out["zoneSoldiersOptInVersion"] = 0
+        for key in ("zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
                     "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier"):
             out.pop(key, None)
     if not (bool(zones.get("beta")) if beta_owner else bool(zones.get("stable"))):
@@ -5107,6 +5137,10 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
     except ValueError as exc: raise HTTPException(422,str(exc)) from exc
     version=max(int(safe_float(existing.get("configVersion"))),candidate.version)+1
     saved=MultiBbConfig.from_mapping({**candidate.public_dict(),"version":version}); now=datetime.now(timezone.utc)
+    current_managed=existing.get("multiBbPositions") if isinstance(existing.get("multiBbPositions"),dict) else {}
+    zone_owned_open_count=sum(1 for row in current_managed.values()
+        if isinstance(row,dict) and str(row.get("soldierRole") or "") in {"ZONE_BASE","EXPOSURE_BALANCER"})
+    zone_lifecycle="ACTIVE" if saved.zone_soldiers_enabled else ("DRAINING" if zone_owned_open_count>0 else "OFF")
     switching=str(old.get("engine",old.get("strategyKind","")))!=MULTI_BB_ENGINE
     if switching:
         # Engine migration is the only settings save that is allowed to build a
@@ -5123,6 +5157,14 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
         update={"settings":saved.public_dict(),"configVersion":version,"updatedAt":now,"settingsChangedAt":now,
             "lastReason":"Multi DCA-instellingen live bijgewerkt; actieve positie-, DCA- en cycle-state behouden"}
     update["releaseChannel"] = "BETA" if _is_beta_owner(user) else "STABLE"
+    prior_zone_report=existing.get("zoneSoldierReport") if isinstance(existing.get("zoneSoldierReport"),dict) else {}
+    update["zoneSoldierLifecycle"]=zone_lifecycle
+    update["zoneSoldierReport"]={**prior_zone_report,"enabled":bool(saved.zone_soldiers_enabled),"lifecycle":zone_lifecycle,
+        "drainingOpenCount":0 if saved.zone_soldiers_enabled else zone_owned_open_count,
+        "safeForNewEntries":bool(prior_zone_report.get("safeForNewEntries")) if saved.zone_soldiers_enabled else False,
+        "message":("Zone-Soldatenstrategie expliciet actief" if saved.zone_soldiers_enabled else
+            (f"Zone-strategie uitgeschakeld · bestaande {zone_owned_open_count} positie(s) worden nog beheerd"
+             if zone_owned_open_count>0 else "Traditionele strategie actief · Portfolio Koers is alleen informatief"))}
     # Portfolio TP base selection is server-authoritative. CURRENT_VALUE is
     # captured exactly once at Save time, even while the bot is off, so the
     # target can never chase subsequent live-equity updates. Existing cycle

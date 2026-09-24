@@ -72,11 +72,13 @@ def test_main_uses_confirmed_contiguous_15m_zone_and_fails_closed_for_new_entrie
     assert "zone_context=zone_context" in source
 
 
-def test_zone_soldiers_are_beta_gated_for_safe_rollout():
+def test_zone_soldiers_are_available_to_beta_but_never_implicitly_enabled():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     assert '"zone_soldiers": {"status": "TESTEN", "beta": True, "stable": False}' in source
-    assert 'out.setdefault("zoneSoldiersEnabled", True)' in source
-    assert 'out.pop(key, None)' in source
+    assert 'out.setdefault("zoneSoldiersEnabled", True)' not in source
+    assert 'out["zoneSoldiersEnabled"] = explicit_zone_opt_in' in source
+    assert 'out["zoneSoldiersEnabled"] = False' in source
+    assert 'zoneSoldiersOptInVersion' in source
 
 
 def test_existing_live_positions_are_migrated_without_guessing_origin_zone():
@@ -119,3 +121,26 @@ def test_zone_entry_growth_is_configurable_and_used_by_the_real_entry_planner():
     assert "entry_margin_usd=zone_entry_margin_usd" in source
     assert "entry_notional_usd=zone_entry_notional_usd" in source
     assert '"entrySizing"' in source
+
+
+def test_build417_requires_explicit_zone_opt_in_marker_and_keeps_restart_state():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    core = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert 'settings.get("zoneSoldiersEnabled") is True' in source
+    assert 'int(safe_float(settings.get("zoneSoldiersOptInVersion"))) >= 1' in source
+    assert 'zone_soldiers_opt_in_version: int = 0' in core
+    assert '"zoneSoldiersOptInVersion": self.zone_soldiers_opt_in_version' in core
+
+
+def test_build417_zone_off_drains_only_existing_zone_owned_positions():
+    core = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert 'zone_lifecycle = "ACTIVE" if zone_mode else ("DRAINING" if zone_owned_open_count > 0 else "OFF")' in core
+    assert '"safeForNewEntries": False' in core
+    assert '"drainingOpenCount": zone_owned_open_count' in core
+
+
+def test_build417_unavailable_accounts_force_zone_mode_off_server_side():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert 'zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))' in source
+    assert 'out["zoneSoldiersEnabled"] = False' in source
+    assert 'out["zoneSoldiersOptInVersion"] = 0' in source

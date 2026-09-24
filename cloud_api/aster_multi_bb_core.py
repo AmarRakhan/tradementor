@@ -56,6 +56,7 @@ class MultiBbConfig:
     exposure_refill_trigger_percent: float = 20.0
     exposure_refill_release_percent: float = 8.0
     zone_soldiers_enabled: bool = False
+    zone_soldiers_opt_in_version: int = 0
     zone_base_long_soldiers: int = 3
     zone_base_short_soldiers: int = 3
     zone_exposure_balancer_enabled: bool = True
@@ -118,6 +119,7 @@ class MultiBbConfig:
             exposure_refill_trigger_percent=_f(raw.get("exposureRefillTriggerPercent"), 20.0),
             exposure_refill_release_percent=_f(raw.get("exposureRefillReleasePercent"), 8.0),
             zone_soldiers_enabled=bool(raw.get("zoneSoldiersEnabled", False)),
+            zone_soldiers_opt_in_version=max(0, _i(raw.get("zoneSoldiersOptInVersion"), 0)),
             zone_base_long_soldiers=_i(raw.get("zoneBaseLongSoldiers"), 3),
             zone_base_short_soldiers=_i(raw.get("zoneBaseShortSoldiers"), 3),
             zone_exposure_balancer_enabled=bool(raw.get("zoneExposureBalancerEnabled", True)),
@@ -189,6 +191,7 @@ class MultiBbConfig:
             "exposureRefillTriggerPercent": self.exposure_refill_trigger_percent,
             "exposureRefillReleasePercent": self.exposure_refill_release_percent,
             "zoneSoldiersEnabled": self.zone_soldiers_enabled,
+            "zoneSoldiersOptInVersion": self.zone_soldiers_opt_in_version,
             "zoneBaseLongSoldiers": self.zone_base_long_soldiers,
             "zoneBaseShortSoldiers": self.zone_base_short_soldiers,
             "zoneExposureBalancerEnabled": self.zone_exposure_balancer_enabled,
@@ -967,6 +970,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     zone_state: dict[str, Any] | None = None
     zone_report: dict[str, Any] | None = None
     zone_mode = bool(getattr(settings, "zone_soldiers_enabled", False))
+    zone_owned_open_count = sum(
+        1 for key, row in state.items()
+        if key in active and str(row.get("soldierRole") or "") in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}
+    )
+    zone_lifecycle = "ACTIVE" if zone_mode else ("DRAINING" if zone_owned_open_count > 0 else "OFF")
     zone_entry_multiplier = 1.0
     zone_entry_margin_usd = float(settings.entry_margin_usd)
     zone_entry_notional_usd = float(settings.entry_notional_usd)
@@ -999,6 +1007,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         )
         zone_migration_hold = bool(_i((zone_report or {}).get("legacyMigratedThisTick")) > 0)
         if zone_report is not None:
+            zone_report["lifecycle"] = "ACTIVE"
+            zone_report["drainingOpenCount"] = 0
             base_entry = float(settings.entry_margin_usd if settings.entry_sizing_mode == "margin" else settings.entry_notional_usd)
             zone_report["entrySizing"] = {
                 "mode": settings.entry_sizing_mode,
@@ -1013,10 +1023,29 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 "multiBbPositions": state,
                 "zoneSoldierState": zone_state,
                 "zoneSoldierReport": {**(zone_report or {}), "migrationHold": zone_migration_hold},
+                "zoneSoldierLifecycle": "ACTIVE",
                 "zoneSoldierUpdatedAt": datetime.now(timezone.utc),
             }, merge=True)
     else:
         zone_migration_hold = False
+        zone_report = {
+            "enabled": False,
+            "lifecycle": zone_lifecycle,
+            "safeForNewEntries": False,
+            "activeZone": None,
+            "drainingOpenCount": zone_owned_open_count,
+            "message": (
+                f"Zone-strategie uitgeschakeld · bestaande {zone_owned_open_count} positie(s) worden nog beheerd"
+                if zone_owned_open_count > 0 else
+                "Traditionele strategie actief · Portfolio Koers is alleen informatief"
+            ),
+        }
+        if not dry_run:
+            ref.set({
+                "zoneSoldierLifecycle": zone_lifecycle,
+                "zoneSoldierReport": zone_report,
+                "zoneSoldierUpdatedAt": datetime.now(timezone.utc),
+            }, merge=True)
 
     strategy_active_keys = {key for key in active if key in state or (settings.manual_symbol_selection_enabled and key in selected_keys)}
     # maximumPositions is the Strategy-2 seat cap, not a cap on every position
@@ -1637,6 +1666,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "netExposureNotional": exposure_refill.get("netExposure"), "grossExposureNotional": exposure_refill.get("grossExposure"),
               "exposureImbalancePercent": exposure_refill.get("imbalancePercent"),
               "zoneSoldiersEnabled": zone_mode,
+              "zoneSoldierLifecycle": zone_lifecycle,
               "zoneMigrationHold": zone_migration_hold,
               "zoneSoldiers": ({**(zone_report or {}), "migrationHold": zone_migration_hold} if zone_mode else zone_report),
               "shortRequiresLongEnabled": settings.short_requires_long_enabled,
@@ -1669,8 +1699,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                  "exposureRefillSide": exposure_refill.get("activeSide") or None,
                  "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
                  "lastReason": f"{entry_status}: {entry_reason}"}
+        final_payload["zoneSoldierLifecycle"] = zone_lifecycle
         if zone_mode:
             final_payload["zoneSoldierState"] = zone_state
+        if zone_report is not None:
             final_payload["zoneSoldierReport"] = zone_report
         ref.set(final_payload, merge=True)
     return {"status": "simulated" if dry_run else "running", "action": "MULTI_BB", **report}
