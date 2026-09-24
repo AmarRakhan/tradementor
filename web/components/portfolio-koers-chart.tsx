@@ -32,7 +32,13 @@ const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOf
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
-const advisorErrorText=(reason:unknown,fallback:string)=>{\n  const message=reason instanceof Error?reason.message.trim():"";\n  if(!message)return fallback;\n  if(/failed to fetch|networkerror|load failed/i.test(message))return "Serververbinding onderbroken · er is niets gewijzigd. Probeer opnieuw.";\n  return message;\n};\nconst compactUsd=(value:number|null|undefined)=>{
+const advisorErrorText=(reason:unknown,fallback:string)=>{
+  const message=reason instanceof Error?reason.message.trim():"";
+  if(!message)return fallback;
+  if(/failed to fetch|networkerror|load failed/i.test(message))return "Serververbinding onderbroken · er is niets gewijzigd. Probeer opnieuw.";
+  return message;
+};
+const compactUsd=(value:number|null|undefined)=>{
   if(!Number.isFinite(Number(value))||Number(value)===0)return "";
   const number=Number(value),sign=number<0?"-":"";
   return `${sign}$ ${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}`;
