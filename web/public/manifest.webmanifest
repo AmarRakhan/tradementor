@@ -3,7 +3,7 @@
   "short_name": "Crypto Bot",
   "description": "Persoonlijke multi-exchange portfolio-intelligentie.",
   "id": "/",
-  "start_url": "/?source=pwa&appVersion=46",
+  "start_url": "/?source=pwa&appVersion=46#/aster",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],

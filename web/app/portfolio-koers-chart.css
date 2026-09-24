@@ -91,3 +91,48 @@
 .portfolio-koers-zone-progress>b{color:#f0cf69;font-size:7.1px}
 .portfolio-koers-zone-progress>span{color:#9fb3ad;font-size:6.8px;font-weight:850}
 @media(max-width:560px){.portfolio-koers-zone-boundary>span{min-width:68px}.portfolio-koers-zone-progress{grid-template-columns:minmax(46px,1fr) auto auto;gap:3px}.portfolio-koers-zone-progress>b{font-size:6.3px}.portfolio-koers-zone-progress>span{font-size:6px}}
+
+
+/* Build 414 · operational formation dashboard + stronger zone navigation hierarchy. */
+.portfolio-koers-zone-boundary>span{min-width:82px;padding:3px 6px;font-size:8.2px;letter-spacing:.015em}
+.portfolio-koers-instruction.formation-dashboard{min-height:118px}
+.portfolio-koers-instruction.formation-dashboard .portfolio-koers-instruction-copy{gap:3px}
+.portfolio-koers-formation-primary{display:flex;align-items:baseline;gap:8px;min-width:0}
+.portfolio-koers-formation-primary>strong{color:#f7f8f5;font:950 13px/1 system-ui;white-space:nowrap}
+.portfolio-koers-formation-primary>strong>em{color:#aebbb8;font:850 7px/1 system-ui;font-style:normal;letter-spacing:.035em}
+.portfolio-koers-formation-primary>span{display:flex;align-items:center;gap:4px;color:#aebbb8;font:900 7.6px/1 system-ui;white-space:nowrap}
+.portfolio-koers-formation-primary>span>i{color:#6d807d;font-style:normal}
+.portfolio-koers-formation-primary b.long{color:#25e9a5}.portfolio-koers-formation-primary b.short{color:#ff667d}
+.portfolio-koers-formation-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;min-width:0}
+.portfolio-koers-formation-meta>span{display:flex;align-items:center;gap:4px;min-width:0;padding:2px 4px;border:1px solid rgba(126,154,154,.14);border-radius:5px;background:rgba(5,18,20,.46);white-space:nowrap;overflow:hidden}
+.portfolio-koers-formation-meta i{color:#78908c;font:850 5.7px/1 system-ui;font-style:normal;letter-spacing:.035em}
+.portfolio-koers-formation-meta b{color:#dbe5e2;font:900 6.8px/1 system-ui;overflow:hidden;text-overflow:ellipsis}
+.portfolio-koers-formation-action{color:#cbd6d2;font:900 7.7px/1.08 system-ui;white-space:normal}
+.portfolio-koers-formation-action.ok{color:#35e7aa}.portfolio-koers-formation-action.add,.portfolio-koers-formation-action.partial_add{color:#f0cb65}.portfolio-koers-formation-action.remove{color:#f0cb65}.portfolio-koers-formation-action.blocked{color:#ff7186}
+.portfolio-koers-formation-detail-sr{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
+.portfolio-koers-next-levels b{font-size:7.5px;padding:2px 5px}
+.portfolio-koers-zone-progress>b{font-size:7.5px}.portfolio-koers-zone-progress>span{font-size:7.1px}
+@media(max-width:560px){
+  .portfolio-koers-zone-boundary>span{min-width:74px;padding:3px 5px;font-size:7.6px}
+  .portfolio-koers-instruction.formation-dashboard{min-height:116px}
+  .portfolio-koers-instruction.formation-dashboard .portfolio-koers-instruction-copy{gap:2px}
+  .portfolio-koers-formation-primary{gap:5px}
+  .portfolio-koers-formation-primary>strong{font-size:10.5px}
+  .portfolio-koers-formation-primary>strong>em{font-size:5.9px}
+  .portfolio-koers-formation-primary>span{font-size:6.5px;gap:3px}
+  .portfolio-koers-formation-meta{gap:2px}
+  .portfolio-koers-formation-meta>span{gap:2px;padding:2px 3px}
+  .portfolio-koers-formation-meta i{font-size:5px}
+  .portfolio-koers-formation-meta b{font-size:5.9px}
+  .portfolio-koers-formation-action{font-size:6.7px}
+  .portfolio-koers-next-levels b{font-size:6.8px;padding:2px 4px}
+  .portfolio-koers-zone-progress>b{font-size:6.8px}
+  .portfolio-koers-zone-progress>span{font-size:6.4px}
+}
+@media(max-width:385px){
+  .portfolio-koers-zone-boundary>span{min-width:70px;font-size:7.1px}
+  .portfolio-koers-formation-primary>strong{font-size:9.8px}
+  .portfolio-koers-formation-primary>span{font-size:6.1px}
+  .portfolio-koers-formation-meta i{font-size:4.7px}
+  .portfolio-koers-formation-meta b{font-size:5.5px}
+}

@@ -27,3 +27,19 @@ test("Overboeken keeps MetaMask signing user-controlled and resumable", async ()
   assert.match(proxy, /proxyCloudPublic/);
   assert.match(signPage, /MetaMask bevestiging/);
 });
+
+
+test("Build 414 cold-starts directly on ASTER without synthesizing a HOME portal first", async () => {
+  const [bridge, page, manifestRaw] = await Promise.all([
+    read("components/home-navigation-bridge.tsx"),
+    read("app/page.tsx"),
+    read("public/manifest.webmanifest"),
+  ]);
+  const manifest = JSON.parse(manifestRaw);
+  assert.equal(manifest.start_url, "/?source=pwa&appVersion=46#/aster");
+  assert.match(page, /useState<Destination>\("aster"\)/);
+  assert.match(page, /let initial: Destination = route \|\| "aster"/);
+  assert.match(page, /window\.scrollTo\(\{ top: 0, left: 0, behavior: "auto" \}\)/);
+  assert.match(bridge, /launchUrl\.hash = "\/aster"/);
+  assert.doesNotMatch(bridge, /tmView: "home" \}, "", urlWithView\("home"\)/);
+});

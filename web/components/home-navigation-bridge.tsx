@@ -97,8 +97,11 @@ export function HomeNavigationBridge() {
     const initialUrl = new URL(window.location.href);
     const explicitView = initialUrl.searchParams.has(VIEW_PARAM);
     const explicitHash = /^#\/(hyperliquid|aster|journey|positions|risk|wallet|admin)/.test(initialUrl.hash);
-    if (!explicitView && !explicitHash && !window.sessionStorage.getItem(SESSION_EXIT)) {
-      window.history.replaceState({ ...window.history.state, tmView: "home" }, "", urlWithView("home"));
+    if (!explicitView && !explicitHash) {
+      const launchUrl = new URL(window.location.href);
+      launchUrl.searchParams.delete(VIEW_PARAM);
+      launchUrl.hash = "/aster";
+      window.history.replaceState({ ...window.history.state, destination: "aster" }, "", `${launchUrl.pathname}${launchUrl.search}${launchUrl.hash}`);
     }
 
     const sync = () => {

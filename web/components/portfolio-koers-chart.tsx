@@ -23,12 +23,12 @@ const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null
 const ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32";
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
-  "1m":{visibleBars:36,barSpacing:6.4,rightOffset:1.2},
-  "5m":{visibleBars:32,barSpacing:7.0,rightOffset:1.2},
-  "15m":{visibleBars:28,barSpacing:8.4,rightOffset:1.4},
-  "1u":{visibleBars:26,barSpacing:9.2,rightOffset:1.5},
-  "4u":{visibleBars:24,barSpacing:10.4,rightOffset:1.7},
-  "24u":{visibleBars:22,barSpacing:11.6,rightOffset:1.9},
+  "1m":{visibleBars:24,barSpacing:7.0,rightOffset:1.2},
+  "5m":{visibleBars:20,barSpacing:7.8,rightOffset:1.2},
+  "15m":{visibleBars:16,barSpacing:9.0,rightOffset:1.4},
+  "1u":{visibleBars:16,barSpacing:9.6,rightOffset:1.5},
+  "4u":{visibleBars:14,barSpacing:10.8,rightOffset:1.7},
+  "24u":{visibleBars:12,barSpacing:12.0,rightOffset:1.9},
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
@@ -260,10 +260,10 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     const focusVisibleBars=portfolioKoersFocusBars(candles,view.visibleBars,initialFocusPrice,focusLower,focusUpper);
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
-      layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#b8c8d2",attributionLogo:false} as any,
+      layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
       grid:{vertLines:{color:advisorEnabled?"rgba(75,133,160,.025)":"rgba(75,133,160,.07)"},horzLines:{color:advisorEnabled?"rgba(75,133,160,.032)":"rgba(75,133,160,.09)"}},
       crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"},horzLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"}},
-      rightPriceScale:{borderColor:"rgba(85,160,190,.28)",minimumWidth:PRICE_AXIS_WIDTH,scaleMargins:{top:.08,bottom:.08}},
+      rightPriceScale:{borderColor:"rgba(85,160,190,.22)",minimumWidth:PRICE_AXIS_WIDTH,scaleMargins:{top:.12,bottom:.12}},
       timeScale:{borderColor:"rgba(85,160,190,.28)",timeVisible:true,secondsVisible:false,rightOffset:view.rightOffset,barSpacing:view.barSpacing,minBarSpacing:3,tickMarkFormatter:(time:unknown)=>{
         const sec=typeof time==="number"?time:0;
         if(!sec)return"";
@@ -501,16 +501,16 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const instructionTitle=!advisorTimelineReady
     ? "15m-historie wordt veilig hersteld"
     : instructionStatus==="ADD"||instructionStatus==="PARTIAL_ADD"
-    ? `Stuur ${instructionAmount} extra ${instructionSide}-soldaten`
-    : instructionStatus==="REMOVE"
-      ? `Roep ${instructionAmount} ${instructionSide}-soldaten naar huis`
-      : instructionStatus==="BLOCKED"
-        ? `${instructionAmount} extra ${instructionSide}-soldaten nodig`
-        : instructionStatus==="OK"
-          ? "Formatie klopt · geen actie nodig"
-          : activeZone===null&&advisorSeats.longSlots!==null&&advisorSeats.shortSlots!==null
-            ? "Prijszones worden gesynchroniseerd"
-            : "Live stoelbezetting wordt geladen";
+      ? `+${instructionAmount} ${instructionSide} nodig`
+      : instructionStatus==="REMOVE"
+        ? `−${instructionAmount} ${instructionSide} terughalen`
+        : instructionStatus==="BLOCKED"
+          ? `${instructionAmount} ${instructionSide} nodig · limiet bereikt`
+          : instructionStatus==="OK"
+            ? "✓ Formatie klopt · geen extra soldaten nodig"
+            : activeZone===null&&advisorSeats.longSlots!==null&&advisorSeats.shortSlots!==null
+              ? "Prijszones worden gesynchroniseerd"
+              : "Live stoelbezetting wordt geladen";
   const actionLabel=advisorBusy?"OPSLAAN…":!advisorTimelineReady?"WACHTEN":instructionStatus==="REMOVE"
     ? `−${instructionAmount} ${instructionSide}`
     : instructionStatus==="ADD"||instructionStatus==="PARTIAL_ADD"
@@ -519,6 +519,13 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   const biasLabel=activeZone===null?"ZONE":activeZone>0?"SHORT BIAS":activeZone<0?"LONG BIAS":"BALANS";
   const desiredLong=integerOrNull(advisorInstruction?.desiredLongSlots??advisorSeats.longSlots);
   const desiredShort=integerOrNull(advisorInstruction?.desiredShortSlots??advisorSeats.shortSlots);
+  const activeLong=advisorSeats.activeLong;
+  const activeShort=advisorSeats.activeShort;
+  const activeTotal=activeLong!==null&&activeShort!==null?activeLong+activeShort:null;
+  const capacityLong=advisorSeats.longSlots;
+  const capacityShort=advisorSeats.shortSlots;
+  const freeLong=capacityLong!==null&&activeLong!==null?Math.max(0,capacityLong-activeLong):null;
+  const freeShort=capacityShort!==null&&activeShort!==null?Math.max(0,capacityShort-activeShort):null;
   const upperTrigger=zoneContext?.upperBoundary??null;
   const lowerTrigger=zoneContext?.lowerBoundary??null;
   const nextUpIndex=zoneContext?.nextUpIndex??null;
@@ -567,16 +574,24 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
       {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b>{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
     </div>
-    {advisorEnabled?<div className={`portfolio-koers-instruction ${instructionStatus.toLowerCase()}`} data-reference={ZONE_ADVISOR_REFERENCE}>
+    {advisorEnabled?<div className={`portfolio-koers-instruction formation-dashboard ${instructionStatus.toLowerCase()}`} data-reference={ZONE_ADVISOR_REFERENCE}>
       <span className="portfolio-koers-instruction-icon" aria-hidden="true">⌖</span>
       <div className="portfolio-koers-instruction-copy" aria-live="polite">
-        <small>KOERSINSTRUCTIE · ZONE {signedZone(activeZone)}</small>
-        <strong>{instructionTitle}</strong>
-        <span>Gewenst: <b className="long">{Number.isFinite(desiredLong)?desiredLong:"—"}L</b> / <b className="short">{Number.isFinite(desiredShort)?desiredShort:"—"}S</b> · Huidig: <b className="long">{advisorSeats.longSlots??"—"}L</b> / <b className="short">{advisorSeats.shortSlots??"—"}S</b></span>
-        <span className="portfolio-koers-zone-basis">{zoneBasisSummary}</span>
-        {instructionReason?<span className="portfolio-koers-instruction-reason">{instructionReason}</span>:null}
+        <small title={zoneBasisSummary}>KOERSINSTRUCTIE · Z{signedZone(activeZone)} · {biasLabel}</small>
+        <div className="portfolio-koers-formation-primary">
+          <strong>{activeTotal??"—"} <em>SOLDATEN ACTIEF</em></strong>
+          <span><b className="long">{activeLong??"—"} LONG</b><i>·</i><b className="short">{activeShort??"—"} SHORT</b></span>
+        </div>
+        <div className="portfolio-koers-formation-meta">
+          <span><i>CAPACITEIT</i><b>{capacityLong??"—"}L · {capacityShort??"—"}S</b></span>
+          <span><i>VRIJ</i><b>{freeLong??"—"}L · {freeShort??"—"}S</b></span>
+          <span><i>DOEL</i><b>{desiredLong??"—"}L · {desiredShort??"—"}S</b></span>
+        </div>
+        <strong className={`portfolio-koers-formation-action ${instructionStatus.toLowerCase()}`} title={instructionReason}>{instructionTitle}</strong>
         {nextTriggerSummary.length?<span className="portfolio-koers-next-levels" title={`Exacte zonegrenzen: ${zoneBandSummary}`}>{nextTriggerSummary.map((item,index)=><b key={index}>{item}</b>)}</span>:null}
         {zoneProgressPercent!==null&&nextUpIndex!==null?<span className="portfolio-koers-zone-progress" title={`Exacte zonegrenzen: ${zoneBandSummary}`}><i><em style={{width:`${zoneProgressPercent}%`}}/></i><b>{Math.round(zoneProgressPercent)}%</b><span>richting ↑ Z{signedZone(nextUpIndex)}</span></span>:null}
+        <span className="portfolio-koers-zone-basis portfolio-koers-formation-detail-sr">{zoneBasisSummary}</span>
+        {instructionReason?<span className="portfolio-koers-instruction-reason portfolio-koers-formation-detail-sr">{instructionReason}</span>:null}
         {advisorMessage?<em>{advisorMessage}</em>:null}
       </div>
       <button type="button" className={instructionSide==="LONG"?"long":instructionSide==="SHORT"?"short":"neutral"} disabled={!instructionActionable||advisorBusy} onClick={()=>void applySoldierInstruction()}>{actionLabel}</button>

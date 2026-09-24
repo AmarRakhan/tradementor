@@ -204,7 +204,7 @@ export function portfolioKoersFocusBars(candles, maxVisibleBars, currentPrice, l
   const padding=Math.max(span*0.65,current*0.004);
   const focusFloor=Math.max(Number.EPSILON,lower-padding);
   const focusCeiling=upper+padding;
-  const minBars=Math.min(maxBars,Math.max(10,Math.round(maxBars*0.5)));
+  const minBars=Math.min(maxBars,Math.max(6,Math.round(maxBars*0.35)));
   let visible=0;
 
   for(let index=rows.length-1;index>=0&&visible<maxBars;index-=1){

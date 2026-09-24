@@ -231,16 +231,30 @@ test("Build 413 initial focus drops old distant history while preserving recent 
 test("Build 413 configures every approved timeframe for a closer initial viewport and keeps timeframe switching focused",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const pair of [
-    '"1m":{visibleBars:36',
-    '"5m":{visibleBars:32',
-    '"15m":{visibleBars:28',
-    '"1u":{visibleBars:26',
-    '"4u":{visibleBars:24',
-    '"24u":{visibleBars:22',
+    '"1m":{visibleBars:24',
+    '"5m":{visibleBars:20',
+    '"15m":{visibleBars:16',
+    '"1u":{visibleBars:16',
+    '"4u":{visibleBars:14',
+    '"24u":{visibleBars:12',
   ]) assert.ok(component.includes(pair),pair);
   assert.ok(component.includes("portfolioKoersFocusBars(candles,view.visibleBars"));
   assert.ok(component.includes("focusVisibleBars"));
   assert.ok(component.includes("guideLow"));
   assert.ok(component.includes("guideHigh"));
   assert.equal(component.includes("fitContent()"),false);
+});
+
+
+test("Build 414 can stop before a deep old candle after a small recent decision window",()=>{
+  const old=Array.from({length:20},(_,index)=>({time:index+1,open:100,high:102,low:98,close:100}));
+  const recent=Array.from({length:7},(_,index)=>({time:21+index,open:144.4,high:146.1,low:143.8,close:145.5}));
+  assert.equal(portfolioKoersFocusBars([...old,...recent],16,145.53,145.18,146.48),7);
+});
+
+test("Build 414 reduces price-axis typography while keeping live equity as the last-value label",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('textColor:"#9fb0ba",fontSize:10'));
+  assert.ok(component.includes("lastValueVisible:true"));
+  assert.ok(component.includes("scaleMargins:{top:.12,bottom:.12}"));
 });

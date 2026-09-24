@@ -9,6 +9,7 @@ test("Crypto Bot 2026 has a standalone installable manifest", async () => {
   assert.equal(manifest.scope, "/");
   assert.match(manifest.start_url, /source=pwa/);
   assert.match(manifest.start_url, /appVersion=46/);
+  assert.match(manifest.start_url, /#\/aster$/);
   assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192" && icon.purpose.includes("any")));
   assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose.includes("maskable")));
 });

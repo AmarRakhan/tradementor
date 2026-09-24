@@ -94,7 +94,7 @@ export default function HomePage() {
 
 function TradeMentorHome() {
   const { user, cloudReady, signOut } = useAuthSession();
-  const [active, setActive] = useState<Destination>("hyperliquid");
+  const [active, setActive] = useState<Destination>("aster");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [sound, setSound] = useState(true);
@@ -138,12 +138,11 @@ function TradeMentorHome() {
   }, [snapshots.hyperliquid.updatedAt, snapshots.aster.updatedAt, user?.uid]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("tradementor.activeDestination");
     const route = destinationFromLocation();
     const savedInterface = window.localStorage.getItem("tradementor.interfaceMode");
     if (savedInterface === "premium" || savedInterface === "legacy") setInterfaceMode(savedInterface);
     const savedHyperliquidVisibility = window.localStorage.getItem("tradementor.navigation.hyperliquid.visible");
-    let initial = route || (destinationIds.has(saved as Destination) ? saved as Destination : "hyperliquid");
+    let initial: Destination = route || "aster";
     if (savedHyperliquidVisibility === "false") {
       setShowHyperliquidTab(false);
       if (initial === "hyperliquid") initial = "aster";
@@ -151,6 +150,7 @@ function TradeMentorHome() {
     setActive(initial);
     window.localStorage.setItem("tradementor.activeDestination", initial);
     if (route !== initial) window.history.replaceState({ destination: initial }, "", destinationHref(initial));
+    if (initial === "aster") requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
     const savedSkin = window.localStorage.getItem("tradementor.appSkin");
     const skin = savedSkin === "suriname-heritage" ? "suriname-heritage" : "original";
     setAppSkin(skin);

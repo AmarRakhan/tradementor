@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 413 release-contract sync: Portfolio Koers zone-focus and percentage-first navigation ship together.
+// Build 414 release-contract sync: ASTER cold start, tighter zone focus and Formation Dashboard ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -26,42 +26,85 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
-  title: "Portfolio Koers · zonefocus en procentuele afstanden",
+  title: "ASTER cold start · zonefocus · Formation Dashboard",
   newItems: [
-    "Portfolio Koers opent automatisch dichter op de actuele equity en de aangrenzende zonegrenzen, in plaats van een groot historisch prijsbereik samen te persen.",
-    "De eerstvolgende grens omhoog en omlaag worden primair als procentuele afstand tot de actuele portfolio-equity getoond.",
-    "De koersinstructie toont daarnaast compact hoeveel procent van de actieve zone al is doorlopen richting de bovengrens.",
+    "De PWA en root-start openen direct op ASTER met Portfolio Koers bovenaan; HOME blijft via de onderste navigatie bereikbaar.",
+    "Portfolio Koers gebruikt een compactere zone-aware openingswindow zodat de actuele equity en aangrenzende zones centraal leesbaar zijn.",
+    "Koersinstructie is omgebouwd tot Formation Dashboard met actieve soldaten, LONG/SHORT-verdeling, stoelcapaciteit, vrije stoelen, doelcapaciteit en verschil/actie.",
+    "Procentuele zonebadges zijn groter gemaakt en de absolute prijsas is visueel teruggenomen.",
   ],
   problems: [
-    "De standaardweergave kon oude, ver verwijderde candles meenemen waardoor de actuele zone op mobiel als een dunne strook bovenin verscheen.",
-    "Beide aangrenzende grenzen heetten VOLGENDE en toonden vooral absolute bedragen, waardoor een lagere grens als een tweede volgende zone kon worden gelezen.",
+    "Een volledig afgesloten app kon opnieuw op de algemene HOME/Overboeken-landingspagina starten.",
+    "Build 413 kon op 15m nog voldoende oude candles in de openingswindow houden om de actuele equity bovenin de grafiek samen te drukken.",
+    "De oude koersinstructie vermengde huidige stoelcapaciteit met actieve posities en maakte vrije capaciteit niet expliciet zichtbaar.",
   ],
   causes: [
-    "De initiële viewport gebruikte per timeframe een relatief groot vast aantal candles en liet de prijs-as volledig door die historische range bepalen.",
-    "De grenslabels waren oorspronkelijk ontworpen als exacte triggerprijzen en maakten de richting omhoog/omlaag semantisch onvoldoende expliciet.",
+    "HomeNavigationBridge synthetiseerde bij een root-start expliciet tmView=home en de hoofdpage initialiseerde vóór routing nog op Hyperliquid.",
+    "De minimale zone-focuswindow van Build 413 was nog te groot voor een tijdreeks met een recente sprong of historiegat.",
+    "De instructiekaart was ontstaan als actie-uitleg en niet als operationeel overzicht van actief, capaciteit, vrij en doel.",
   ],
   fixes: [
-    "Per timeframe is de maximale openingswindow verkleind en een zone-aware focusfunctie stopt vóór oude candles die ver buiten het actuele zonegebied liggen.",
-    "Transparante autoscale-ankers houden de actuele lower/upper zonegrens met beperkte padding in beeld zonder koersdata te wijzigen of te verzinnen.",
-    "Grenslabels tonen nu richting, doelzone en live procentuele afstand; exacte prijzen blijven alleen secundair als detail/title beschikbaar.",
-    "De koersinstructie gebruikt dezelfde live percentages en toont een 0–100% zoneprogressie. Zone-, soldaten-, DCA-, TP- en orderlogica zijn niet gewijzigd.",
+    "Manifest start_url wijst naar #/aster; de runtime root-fallback zet eveneens ASTER en de eerste React-state is ASTER zodat er geen HOME-flash nodig is.",
+    "De focuswindow is per timeframe verder verkleind en mag na zes recente relevante candles al stoppen vóór een oude candle ver buiten de actieve zone.",
+    "De kaart onderscheidt actieve LONG/SHORT-posities, ingestelde capaciteit, vrije stoelen en gewenste zonecapaciteit expliciet.",
+    "De bestaande actieknop blijft uitsluitend longSlots, shortSlots en maximumPositions opslaan; er is geen directe exchange-order toegevoegd.",
   ],
   now: [
-    "Bij 144,85 met Z0 op 145,27 en Z-2 op 143,21 leest de gebruiker ongeveer ↑ Z0 · +0,29% en ↓ Z-2 · −1,13%.",
-    "De gebruiker ziet direct de huidige zone, de afstand omhoog en omlaag, de positie binnen de zone en de bestaande LONG/SHORT-soldatenactie.",
-    "Timeframewissels naar 1m, 5m, 15m, 1u, 4u en 24u krijgen dezelfde zonegerichte openingslogica.",
+    "Cold start → ASTER → Portfolio Koers → Portfolio Snapshot.",
+    "De actuele koers staat bij openen dichter bij het midden van het relevante zonegebied en handmatig uitzoomen blijft mogelijk omdat geen historische candle wordt verwijderd.",
+    "De gebruiker leest in één kaart: zone/bias, actief totaal, LONG/SHORT actief, capaciteit, vrij, doel, verschil, zoneafstanden en de bestaande seat-capacity actie.",
   ],
-  before: "Build 412 verwijderde de oude 100-stoelengrens, maar de Portfolio Koers kon nog te ver uitgezoomd openen en absolute grensprijzen dominant tonen.",
-  after: "Build 413 maakt de Portfolio Koers percentage-first en opent automatisch op het relevante zonegebied, zonder tradinglogica te veranderen.",
+  before: "Build 413 maakte de zoneafstanden percentage-first, maar startte nog niet direct op ASTER en de openingsfocus kon bij recente grote historieverschillen nog te ruim zijn.",
+  after: "Build 414 maakt ASTER de operationele cold-start, verkleint de initiële chartcamera verder en maakt de koersinstructie een Formation Dashboard.",
   technicalDetails: [
-    "afstand % = ((grens - actuele equity) / actuele equity) × 100.",
-    "zoneProgress = clamp(((equity - lowerBoundary) / (upperBoundary - lowerBoundary)) × 100, 0, 100).",
-    "Geen ontbrekende historische koerswaarden worden aangevuld of geïnterpoleerd.",
+    "Geen candle-, zone-, Bollinger-, DCA-, TP/SL-, entry- of orderlogica gewijzigd.",
+    "Alle volledige historische candles blijven in de dataset en worden zichtbaar bij handmatig uitzoomen.",
+    "Actief = multiBb.activeLong/activeShort; capaciteit = settings.longSlots/shortSlots; vrij = max(0, capaciteit - actief); doel = zone-advisor desiredLongSlots/desiredShortSlots.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-413-portfolio-koers-percent-focus",
+    version: "46",
+    build: "413",
+    releasedAt: "2026-09-24",
+    title: "Portfolio Koers · zonefocus en procentuele afstanden",
+    newItems: [
+      "Portfolio Koers opent automatisch dichter op de actuele equity en de aangrenzende zonegrenzen, in plaats van een groot historisch prijsbereik samen te persen.",
+      "De eerstvolgende grens omhoog en omlaag worden primair als procentuele afstand tot de actuele portfolio-equity getoond.",
+      "De koersinstructie toont daarnaast compact hoeveel procent van de actieve zone al is doorlopen richting de bovengrens.",
+    ],
+    problems: [
+      "De standaardweergave kon oude, ver verwijderde candles meenemen waardoor de actuele zone op mobiel als een dunne strook bovenin verscheen.",
+      "Beide aangrenzende grenzen heetten VOLGENDE en toonden vooral absolute bedragen, waardoor een lagere grens als een tweede volgende zone kon worden gelezen.",
+    ],
+    causes: [
+      "De initiële viewport gebruikte per timeframe een relatief groot vast aantal candles en liet de prijs-as volledig door die historische range bepalen.",
+      "De grenslabels waren oorspronkelijk ontworpen als exacte triggerprijzen en maakten de richting omhoog/omlaag semantisch onvoldoende expliciet.",
+    ],
+    fixes: [
+      "Per timeframe is de maximale openingswindow verkleind en een zone-aware focusfunctie stopt vóór oude candles die ver buiten het actuele zonegebied liggen.",
+      "Transparante autoscale-ankers houden de actuele lower/upper zonegrens met beperkte padding in beeld zonder koersdata te wijzigen of te verzinnen.",
+      "Grenslabels tonen nu richting, doelzone en live procentuele afstand; exacte prijzen blijven alleen secundair als detail/title beschikbaar.",
+      "De koersinstructie gebruikt dezelfde live percentages en toont een 0–100% zoneprogressie. Zone-, soldaten-, DCA-, TP- en orderlogica zijn niet gewijzigd.",
+    ],
+    now: [
+      "Bij 144,85 met Z0 op 145,27 en Z-2 op 143,21 leest de gebruiker ongeveer ↑ Z0 · +0,29% en ↓ Z-2 · −1,13%.",
+      "De gebruiker ziet direct de huidige zone, de afstand omhoog en omlaag, de positie binnen de zone en de bestaande LONG/SHORT-soldatenactie.",
+      "Timeframewissels naar 1m, 5m, 15m, 1u, 4u en 24u krijgen dezelfde zonegerichte openingslogica.",
+    ],
+    before: "Build 412 verwijderde de oude 100-stoelengrens, maar de Portfolio Koers kon nog te ver uitgezoomd openen en absolute grensprijzen dominant tonen.",
+    after: "Build 413 maakt de Portfolio Koers percentage-first en opent automatisch op het relevante zonegebied, zonder tradinglogica te veranderen.",
+    technicalDetails: [
+      "afstand % = ((grens - actuele equity) / actuele equity) × 100.",
+      "zoneProgress = clamp(((equity - lowerBoundary) / (upperBoundary - lowerBoundary)) × 100, 0, 100).",
+      "Geen ontbrekende historische koerswaarden worden aangevuld of geïnterpoleerd.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-412-portfolio-koers-capacity",
     version: "46",

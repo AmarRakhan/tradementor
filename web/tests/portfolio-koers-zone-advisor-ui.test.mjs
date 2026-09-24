@@ -35,13 +35,18 @@ test("zone labels stay hidden while BETA zone contrast is visibly stronger",asyn
   assert.ok(css.includes(".portfolio-koers-instruction"));
 });
 
-test("reference instruction text exposes desired and current formation with one functional button",async()=>{
+test("formation dashboard distinguishes active soldiers, capacity, free seats and zone target with one functional button",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("KOERSINSTRUCTIE · ZONE"));
-  assert.ok(component.includes("Stuur ${instructionAmount} extra ${instructionSide}-soldaten"));
-  assert.ok(component.includes("Roep ${instructionAmount} ${instructionSide}-soldaten naar huis"));
-  assert.ok(component.includes("Gewenst:"));
-  assert.ok(component.includes("Huidig:"));
+  assert.ok(component.includes("KOERSINSTRUCTIE · Z{signedZone(activeZone)} · {biasLabel}"));
+  assert.ok(component.includes("SOLDATEN ACTIEF"));
+  assert.ok(component.includes("CAPACITEIT"));
+  assert.ok(component.includes("VRIJ"));
+  assert.ok(component.includes("DOEL"));
+  assert.ok(component.includes("activeTotal"));
+  assert.ok(component.includes("freeLong"));
+  assert.ok(component.includes("freeShort"));
+  assert.ok(component.includes("desiredLong"));
+  assert.ok(component.includes("desiredShort"));
   assert.ok(component.includes("applySoldierInstruction()"));
 });
 
@@ -197,4 +202,23 @@ test("Build 413 keeps exact absolute zone prices secondary in title text instead
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("Exacte grens ${levelUsd(boundary.price)}"));
   assert.ok(component.includes("Exacte zonegrenzen: ${zoneBandSummary}"));
+});
+
+
+test("Build 414 makes percentage zone badges more prominent than before without changing their live calculation",async()=>{
+  const [component,css]=await Promise.all([
+    readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8"),
+  ]);
+  assert.ok(component.includes("portfolioZoneDistancePercent(boundary.price,currentZonePrice)"));
+  assert.ok(css.includes(".portfolio-koers-zone-boundary>span{min-width:82px;padding:3px 6px;font-size:8.2px"));
+  assert.ok(css.includes("font-size:7.6px"));
+});
+
+test("Build 414 keeps the instruction button as seat-capacity persistence only",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("longSlots:targetLong"));
+  assert.ok(component.includes("shortSlots:targetShort"));
+  assert.ok(component.includes("maximumPositions:targetLong+targetShort"));
+  assert.equal(component.includes("/order"),false);
 });
