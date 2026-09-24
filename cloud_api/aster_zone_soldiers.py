@@ -405,7 +405,7 @@ def _ensure_balancers(pool: dict[str, Any], *, side: str, amount: int, timestamp
     return None
 
 
-def _bind_open_soldiersdef _bind_open_soldiers(zone_state: dict[str, Any], managed_state: dict[str, Any], positions: list[dict[str, Any]], *, timestamp_ms: int) -> None:
+def _bind_open_soldiers(zone_state: dict[str, Any], managed_state: dict[str, Any], positions: list[dict[str, Any]], *, timestamp_ms: int) -> None:
     pmap = _position_map(positions)
     bound: set[str] = set()
     pools = zone_state["pools"]
@@ -465,7 +465,7 @@ def _activate_free_soldiers(zone_state: dict[str, Any], *, active_zone: int | No
             soldier["updatedAtMs"] = timestamp_ms
 
 
-def prepare_zone_runtimedef prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] | None,
+def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] | None,
                          positions: list[dict[str, Any]] | None, confirmed_zone: int | None,
                          zone_safe: bool, base_long: int, base_short: int,
                          balancer_enabled: bool, trigger_percent: float, release_percent: float,
