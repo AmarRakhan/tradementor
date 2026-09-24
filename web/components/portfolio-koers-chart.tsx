@@ -214,8 +214,10 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
   },[liveEquityText,timeframe]);
 
   const baseCandles=useMemo(()=>mergePortfolioKoersCandles(browserCandles,payload.candles,320) as Candle[],[browserCandles,payload.candles]);
-  const chartTimeline=useMemo(()=>portfolioKoersTimelineHealth(baseCandles,timeframe,payload.snapshotAtMs??Date.now(),1),[baseCandles,timeframe,payload.snapshotAtMs]);
-  const recentChartGap=chartTimeline.gaps?.at(-1)??null;
+  const timelineCandles=useMemo(()=>liveEquity?mergeRealtimeEquitySample(baseCandles,liveEquity,Date.now(),timeframe) as Candle[]:baseCandles,[baseCandles,liveEquity,timeframe]);
+  const chartTimeline=useMemo(()=>portfolioKoersTimelineHealth(timelineCandles,timeframe,Date.now(),1),[timelineCandles,timeframe]);
+  const visibleTimelineStart=timelineCandles[Math.max(0,timelineCandles.length-((TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"]).visibleBars+3))]?.time??0;
+  const recentChartGap=chartTimeline.gaps?.filter((gap:any)=>gap.beforeTime>=visibleTimelineStart).at(-1)??null;
   const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
   const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(payload.zones,currentZonePrice),[payload.zones,currentZonePrice]);
   const advisorZoneSource=useMemo(()=>advisorEnabled&&advisorZones.length?advisorZones:payload.zones,[advisorEnabled,advisorZones,payload.zones]);
