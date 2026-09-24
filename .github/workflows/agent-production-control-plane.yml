@@ -193,7 +193,15 @@ jobs:
           RUN_ID=''
           for N in 1 2 3 4 5 6 7 8 9 10; do
             sleep 3
-            RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?event=workflow_dispatch&per_page=50" --jq --arg started "$STARTED_AT" --arg sha "$SOURCE_COMMIT" '[.workflow_runs[] | select(.created_at >= $started)] | sort_by(.created_at) | reverse | .[0].id // empty')"
+            RUNS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?event=workflow_dispatch&per_page=50")"
+            RUN_ID="$(python - "$STARTED_AT" "$RUNS_JSON" <<'PY'
+          import json,sys
+          started,payload=sys.argv[1],json.loads(sys.argv[2])
+          rows=[row for row in payload.get("workflow_runs",[]) if str(row.get("created_at") or "") >= started]
+          rows.sort(key=lambda row:str(row.get("created_at") or ""),reverse=True)
+          print(rows[0]["id"] if rows else "")
+          PY
+            )"
             [ -n "$RUN_ID" ] && break
           done
           test -n "$RUN_ID"
