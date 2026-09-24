@@ -168,6 +168,14 @@ def test_custom_seat_targets_and_legacy_default_are_validated():
     import pytest
     with pytest.raises(ValueError): Strategy2Config.from_mapping({"maximumPairs":80,"maximumLongPositions":60,"maximumShortPositions":19})
 
+def test_slot_capacity_can_exceed_retired_100_limit_but_keeps_400_platform_guard():
+    config=Strategy2Config.from_mapping({"maximumPairs":108,"maximumLongPositions":70,"maximumShortPositions":38})
+    assert config.maximum_pairs==108
+    assert config.entry_targets==(70,38)
+    import pytest
+    with pytest.raises(ValueError):
+        Strategy2Config.from_mapping({"maximumPairs":401})
+
 def test_minimum_quote_volume_defaults_to_ten_million():
     config=Strategy2Config.from_mapping({})
     assert config.minimum_quote_volume_24h_usdt==10_000_000
