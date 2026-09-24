@@ -32,6 +32,7 @@ import "./profit-pot-snapshot.css";
 import "./liquidation-gauge-hotfix.css";
 import "./portfolio-hedge.css";
 import "./home-transfer.css";
+import "./continuity-monitor.css";
 import "./tradecentrum-responsive.css";
 import "./release-history.css";
 import "./sniper-bridge.css";
