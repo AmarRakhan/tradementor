@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { HomeTransferPage } from "@/components/home-transfer-page";
 import { SniperDashboard } from "@/components/sniper-dashboard";
 import { useAuthSession } from "@/components/auth-provider";
+import { ContinuityStartupGuard } from "@/components/continuity-monitor";
 
 const VIEW_PARAM = "tmView";
 const SESSION_EXIT = "tradementor.home.explicitExit.v1";
@@ -89,7 +90,7 @@ function syncNav(view: BridgeView) {
 }
 
 export function HomeNavigationBridge() {
-  const { cloudReady } = useAuthSession();
+  const { cloudReady, betaOwner, user } = useAuthSession();
   const [view, setView] = useState<BridgeView>(null);
   const [target, setTarget] = useState<HTMLElement | null>(null);
 
@@ -156,6 +157,10 @@ export function HomeNavigationBridge() {
     return <div className="tm-sniper-portal"><SniperDashboard cloudReady={cloudReady} /></div>;
   }, [view, target, cloudReady]);
 
-  if (!portal || !target) return null;
-  return createPortal(portal, target);
+  const startupGuard = <ContinuityStartupGuard
+    enabled={Boolean(cloudReady && betaOwner && user?.uid && view !== "home")}
+    onOpen={() => openView("home")}
+  />;
+  if (!portal || !target) return startupGuard;
+  return <>{startupGuard}{createPortal(portal, target)}</>;
 }
