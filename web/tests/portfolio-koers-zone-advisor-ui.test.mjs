@@ -16,7 +16,10 @@ test("soldier action persists only seat capacity and never sends a direct exchan
   assert.ok(component.includes("longSlots:targetLong"));
   assert.ok(component.includes("shortSlots:targetShort"));
   assert.ok(component.includes("maximumPositions:targetLong+targetShort"));
-  assert.ok(component.includes("targetLong+targetShort>PORTFOLIO_ZONE_MAX_TOTAL_SLOTS"));\n  assert.ok(component.includes("MAX ${PORTFOLIO_ZONE_MAX_TOTAL_SLOTS}"));\n  assert.equal(component.includes("LIMIET 100"),false);\n  assert.ok(component.includes("Serververbinding onderbroken · er is niets gewijzigd. Probeer opnieuw."));
+  assert.ok(component.includes("targetLong+targetShort>PORTFOLIO_ZONE_MAX_TOTAL_SLOTS"));
+  assert.ok(component.includes("MAX ${PORTFOLIO_ZONE_MAX_TOTAL_SLOTS}"));
+  assert.equal(component.includes("LIMIET 100"),false);
+  assert.ok(component.includes("Serververbinding onderbroken · er is niets gewijzigd. Probeer opnieuw."));
   assert.equal(component.includes("/order"),false);
   assert.equal(component.includes("manual-close"),false);
   assert.equal(component.includes("close-all"),false);
@@ -78,7 +81,10 @@ test("canonical 15m zone fetch is BETA-only and fails closed when continuity evi
   const canonicalFetch=component.indexOf('/portfolio-chart?timeframe=15m&limit=320');
   assert.ok(betaGate>0);
   assert.ok(canonicalFetch>betaGate);
-  assert.ok(component.includes("catch{\n        setAdvisorZones([]);\n        setAdvisorTimeline(null);\n      }"));
+  assert.ok(component.includes("catch{
+        setAdvisorZones([]);
+        setAdvisorTimeline(null);
+      }"));
   assert.ok(component.includes('const instructionActionable=advisorTimelineReady&&["ADD","PARTIAL_ADD","REMOVE"].includes(instructionStatus)'));
   assert.ok(component.includes('!advisorTimelineReady?"WACHTEN"'));
 });
