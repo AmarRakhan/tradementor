@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 412 release-contract sync: Portfolio Koers capacity and network-error safety ship together.
+// Build 412 release-contract sync: Portfolio Koers capacity, network-error safety and the clean regression source ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
