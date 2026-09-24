@@ -263,6 +263,43 @@ jobs:
           assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           PY
 
+      - name: Configure isolated continuity monitor schedule
+        id: continuity_scheduler
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tradementor-continuity-monitor"
+          URI="$SERVICE_URL/internal/continuity/check"
+          SCHEDULE="17 */4 * * *"
+          if gcloud scheduler jobs describe "$JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
+            gcloud scheduler jobs update http "$JOB" \
+              --project "$GCP_PROJECT_ID" \
+              --location "$GCP_REGION" \
+              --schedule "$SCHEDULE" \
+              --time-zone "Europe/Amsterdam" \
+              --uri "$URI" \
+              --http-method POST \
+              --oidc-service-account-email "$RUNTIME_SERVICE_ACCOUNT" \
+              --oidc-token-audience "$SERVICE_URL" \
+              --quiet
+          else
+            gcloud scheduler jobs create http "$JOB" \
+              --project "$GCP_PROJECT_ID" \
+              --location "$GCP_REGION" \
+              --schedule "$SCHEDULE" \
+              --time-zone "Europe/Amsterdam" \
+              --uri "$URI" \
+              --http-method POST \
+              --oidc-service-account-email "$RUNTIME_SERVICE_ACCOUNT" \
+              --oidc-token-audience "$SERVICE_URL" \
+              --quiet
+          fi
+          gcloud scheduler jobs describe "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --location "$GCP_REGION" \
+            --format='value(state,schedule,httpTarget.uri)'
+
       - name: Verify Cloud Run IAM is unchanged
         shell: bash
         run: |
