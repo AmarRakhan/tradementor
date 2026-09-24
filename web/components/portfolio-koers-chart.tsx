@@ -182,7 +182,7 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
       </article>
       <article>
         <span className="pcc-status-icon trophy" aria-hidden="true">♛</span>
-        <div><small>WINST THUISGEKOMEN</small><strong>{vm.winningHomeToday}</strong><em>vandaag gesloten met winst</em></div>
+        <div><small>WINST THUISGEKOMEN</small><strong>{vm.winningHomeToday}</strong><em>oude-zone soldaten terug met winst</em></div>
       </article>
       <article className={`priority ${priorityClass}`}>
         <span className="pcc-status-icon arrow" aria-hidden="true">↑</span>
