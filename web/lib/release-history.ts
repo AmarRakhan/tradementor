@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 417 release-contract sync: Portfolio Koers is informational by default and zone trading requires explicit opt-in.
+// Build 417 final release-contract: informational Portfolio Koers, explicit zone opt-in and safe draining.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -62,6 +62,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "zoneSoldierLifecycle is ACTIVE, DRAINING of OFF.",
     "Portfolio Koers heeft geen Strategy-2 settings-writepad meer.",
     "Owner-only availability blijft behouden; STABLE krijgt geen zone-tradinggedrag.",
+    "Web- en backendcontracten bewaken expliciet dat Portfolio Koers geen Strategy-2 settings kan muteren.",
   ],
   confidence: "confirmed",
 };
