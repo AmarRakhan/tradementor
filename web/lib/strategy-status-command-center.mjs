@@ -5,6 +5,78 @@ export const COMMAND_CENTER_HEALTH_THRESHOLDS = Object.freeze({
   unlimitedReferenceRounds: 12,
 });
 
+export const SOLDIER_ACTIVITY_WINDOWS = Object.freeze([
+  { key:"15m", label:"15m", ms:15*60*1000 },
+  { key:"1u", label:"1u", ms:60*60*1000 },
+  { key:"4u", label:"4u", ms:4*60*60*1000 },
+  { key:"24u", label:"24u", ms:24*60*60*1000 },
+]);
+
+const SOLDIER_ROLES = new Set(["ZONE_BASE","EXPOSURE_BALANCER"]);
+
+export function soldierOpenEventsFromManagedPositions(rawPositions) {
+  const source=rawPositions&&typeof rawPositions==="object"?rawPositions:{};
+  const result=[];
+  for(const [key,raw] of Object.entries(source)){
+    if(!raw||typeof raw!=="object")continue;
+    const role=String(raw.soldierRole||"").toUpperCase().trim();
+    if(!SOLDIER_ROLES.has(role))continue;
+    if(raw.adoptedExisting===true||raw.recoveredFromSelectedOpenPosition===true)continue;
+    const side=String(key).toUpperCase().endsWith("|SHORT")?"SHORT":String(key).toUpperCase().endsWith("|LONG")?"LONG":"";
+    const atMs=Math.floor(Number(raw.cycleStartedAtMs));
+    if(!side||!Number.isFinite(atMs)||atMs<=0)continue;
+    const originRaw=Number(raw.originZone);
+    const originZone=Number.isInteger(originRaw)?originRaw:null;
+    const stable=String(raw.soldierId||raw.cycleId||"").trim();
+    result.push({
+      id:stable||`${key}:${atMs}`,
+      atMs,
+      side,
+      count:1,
+      originZone,
+      role,
+      source:"confirmed-zone-soldier-open",
+    });
+  }
+  return result.sort((a,b)=>b.atMs-a.atMs||String(a.id).localeCompare(String(b.id)));
+}
+
+export function mergeSoldierActivityHistory(existing,current,nowMs=Date.now()) {
+  const cutoff=Math.max(0,Number(nowMs)-25*60*60*1000);
+  const rows=[...(Array.isArray(existing)?existing:[]),...(Array.isArray(current)?current:[])];
+  const byId=new Map();
+  for(const raw of rows){
+    if(!raw||typeof raw!=="object")continue;
+    const atMs=Math.floor(Number(raw.atMs));
+    const side=String(raw.side||"").toUpperCase();
+    const count=Math.max(1,Math.floor(Number(raw.count)||1));
+    if(!Number.isFinite(atMs)||atMs<cutoff||!["LONG","SHORT"].includes(side))continue;
+    const id=String(raw.id||`${side}:${atMs}:${raw.originZone??""}`);
+    byId.set(id,{...raw,id,atMs,side,count});
+  }
+  return [...byId.values()].sort((a,b)=>b.atMs-a.atMs||String(a.id).localeCompare(String(b.id)));
+}
+
+export function summarizeSoldierActivity(events,nowMs=Date.now()) {
+  const now=Number(nowMs);
+  const clean=(Array.isArray(events)?events:[])
+    .filter((row)=>row&&["LONG","SHORT"].includes(String(row.side||"").toUpperCase())&&Number.isFinite(Number(row.atMs)))
+    .map((row)=>({...row,side:String(row.side).toUpperCase(),atMs:Number(row.atMs),count:Math.max(1,Math.floor(Number(row.count)||1))}))
+    .sort((a,b)=>b.atMs-a.atMs||String(a.id||"").localeCompare(String(b.id||"")));
+  const windows={};
+  for(const spec of SOLDIER_ACTIVITY_WINDOWS){
+    let long=0,short=0;
+    for(const row of clean){
+      if(row.atMs>now||row.atMs<now-spec.ms)continue;
+      if(row.side==="LONG")long+=row.count;
+      else short+=row.count;
+    }
+    windows[spec.key]={key:spec.key,label:spec.label,long,short,total:long+short};
+  }
+  const recent=clean.filter((row)=>row.atMs<=now&&row.atMs>=now-24*60*60*1000).slice(0,3);
+  return {windows,recent,total24h:windows["24u"].total};
+}
+
 function finite(value) {
   const number=Number(value);
   return Number.isFinite(number)?number:null;
@@ -30,7 +102,7 @@ export function parsePortfolioMoney(value) {
       : cleaned.replaceAll(",","");
   }else if(comma>=0){
     normalized=cleaned.replaceAll(".","").replace(",",".");
-  }else if((cleaned.match(/./g)||[]).length>1){
+  }else if((cleaned.match(/\./g)||[]).length>1){
     const last=cleaned.lastIndexOf(".");
     normalized=cleaned.slice(0,last).replaceAll(".","")+cleaned.slice(last);
   }
@@ -258,5 +330,6 @@ export function buildStrategyStatusCommandCenter(input={}) {
     nextZoneDisplay:finite(input.nextZonePrice)===null?"—":`${formatCommandMoney(input.nextZonePrice)} (${formatPercent(distancePercent(input.nextZonePrice,input.currentEquity))})`,
     previousZoneDisplay:finite(input.previousZonePrice)===null?"—":`${formatCommandMoney(input.previousZonePrice)} (${formatPercent(distancePercent(input.previousZonePrice,input.currentEquity))})`,
     estimateCaveat:"Schatting op basis van actuele sizing/configuratiemarge; niet-beschikbare fee- of marktminimumdata wordt niet verzonnen.",
+    soldierActivity:summarizeSoldierActivity(input.soldierActivity,input.nowMs??Date.now()),
   };
 }
