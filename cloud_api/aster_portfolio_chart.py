@@ -193,6 +193,85 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
     return sorted(result, key=lambda row: (int(row["atMs"]), str(row["kind"]), str(row["side"])))
 
 
+def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: str) -> list[dict[str, Any]]:
+    """Project fresh confirmed Strategy-2 audit actions into chart markers.
+
+    This is intentionally independent from Aster fill-history polling.  The
+    trading runtime writes these audit rows only after an execution path has
+    confirmed its action, so Portfolio Koers can surface the event immediately
+    while the heavier exchange fill cache catches up later.
+    """
+    if timeframe not in TIMEFRAME_MS:
+        return []
+    event_map = {
+        "MULTI_BB_ENTRY": ("entry", None, "ENTRY"),
+        "MULTI_BB_DCA": ("entry", None, "DCA"),
+        "MULTI_BB_TP": ("tp", "ALL", "TP"),
+        "MULTI_BB_ASYM_SHORT_ENTRY": ("entry", "SHORT", "ENTRY"),
+        "MANUAL_DCA_DETECTED": ("entry", None, "DCA"),
+    }
+    groups: dict[tuple[int, str, str], dict[str, Any]] = {}
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        event = str(raw.get("event", "")).upper().strip()
+        mapped = event_map.get(event)
+        if mapped is None:
+            continue
+        kind, forced_side, activity_type = mapped
+        stamp = _event_timestamp_ms(raw)
+        side = str(forced_side or raw.get("side", "")).upper()
+        if stamp <= 0:
+            continue
+        if kind == "entry" and side not in {"LONG", "SHORT"}:
+            continue
+        group_side = side if kind == "entry" else "ALL"
+        bucket = bucket_start_ms(stamp, timeframe)
+        key = (bucket, kind, group_side)
+        group = groups.setdefault(key, {
+            "time": bucket // 1000,
+            "atMs": bucket,
+            "kind": kind,
+            "side": group_side,
+            "count": 0,
+            "notionalUsd": 0.0,
+            "realizedPnlUsd": 0.0,
+            "source": "strategy2-confirmed-audit",
+            "activityTypes": [],
+        })
+        group["count"] += 1
+        if activity_type not in group["activityTypes"]:
+            group["activityTypes"].append(activity_type)
+        if kind == "entry":
+            origin = raw.get("originZone")
+            if isinstance(origin, int) or (isinstance(origin, str) and origin.lstrip("-+").isdigit()):
+                group.setdefault("originZones", [])
+                value = int(origin)
+                if value not in group["originZones"]:
+                    group["originZones"].append(value)
+            role = str(raw.get("soldierRole", "")).upper().strip()
+            if role:
+                group.setdefault("soldierRoles", [])
+                if role not in group["soldierRoles"]:
+                    group["soldierRoles"].append(role)
+
+    result: list[dict[str, Any]] = []
+    for group in groups.values():
+        if isinstance(group.get("originZones"), list):
+            group["originZones"].sort()
+        if isinstance(group.get("soldierRoles"), list):
+            group["soldierRoles"].sort()
+        group["activityTypes"].sort()
+        if group["kind"] == "entry":
+            side_letter = "L" if group["side"] == "LONG" else "S"
+            prefix = "DCA" if group["activityTypes"] == ["DCA"] else "ENTRY"
+            group["label"] = f"{prefix} {side_letter}"
+        else:
+            group["label"] = "TP"
+        result.append(group)
+    return sorted(result, key=lambda row: (int(row["atMs"]), str(row["kind"]), str(row["side"])))
+
+
 def external_cashflow_markers(rows: list[dict[str, Any]] | None, timeframe: str) -> list[dict[str, Any]]:
     """Keep deposits/transfers separate from trading performance."""
     if timeframe not in TIMEFRAME_MS:
