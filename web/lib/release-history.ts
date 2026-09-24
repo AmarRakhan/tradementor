@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 419 release-contract: first Zone-Soldaten opt-in preserves safe defaults.
+// Build 420 release-contract: stable Portfolio Koers overlays, compact strategy cockpit and explicit optional refill.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
