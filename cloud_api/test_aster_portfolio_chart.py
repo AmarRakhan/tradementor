@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from aster_portfolio_chart import (
     active_zone,
     aggregate_trade_activity,
@@ -7,6 +9,7 @@ from aster_portfolio_chart import (
     latest_contiguous_candles,
     merge_equity_sample,
     public_candle,
+    strategy_audit_trade_markers,
     zone_shadow_backtest,
 )
 
@@ -116,3 +119,34 @@ def test_latest_contiguous_candles_never_bridges_an_unobserved_gap():
     ]
     recent = latest_contiguous_candles(rows, "15m")
     assert [row["atMs"] for row in recent] == [4_500_000, 5_400_000]
+
+
+def test_recent_strategy_audit_events_become_immediate_chart_markers():
+    rows = [
+        {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "side": "SHORT", "originZone": -2, "soldierRole": "ZONE_BASE"},
+        {"event": "MULTI_BB_DCA", "timestampMs": 65_000, "side": "SHORT"},
+        {"event": "MULTI_BB_TP", "timestampMs": 70_000, "side": "LONG"},
+        {"event": "MULTI_BB_DCA_BLOCKED", "timestampMs": 71_000, "side": "LONG"},
+    ]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert len(markers) == 2
+    short = next(row for row in markers if row["kind"] == "entry")
+    assert short["side"] == "SHORT"
+    assert short["count"] == 2
+    assert short["activityTypes"] == ["DCA", "ENTRY"]
+    assert short["originZones"] == [-2]
+    assert short["soldierRoles"] == ["ZONE_BASE"]
+    tp = next(row for row in markers if row["kind"] == "tp")
+    assert tp["side"] == "ALL"
+    assert tp["count"] == 1
+
+
+def test_live_portfolio_event_endpoint_is_read_only_and_does_not_poll_aster():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index('@app.get("/v1/me/aster/portfolio-chart/events")')
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart")', start + 1)
+    block = source[start:end]
+    assert "AsterV3Client(" not in block
+    assert "portfolio_chart_strategy_audit_markers" in block
+    assert '"ordersSent": 0' in block
+    assert "confirmed Strategy-2 audit events; no exchange polling" in block

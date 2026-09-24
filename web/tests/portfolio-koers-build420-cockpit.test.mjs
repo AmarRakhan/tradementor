@@ -9,8 +9,9 @@ test("Build 420 keeps async zone advisor updates out of the chart creation depen
   assert.match(source, /advisorZoneLadderRef=useRef<any>\(null\)/);
   assert.match(source, /activeZoneRef=useRef<number\|null>\(null\)/);
   assert.match(source, /useEffect\(\(\)=>\{syncOverlaysRef\.current\(\)\},\[advisorZoneLadder,activeZone\]\)/);
-  assert.match(source, /\},\[baseCandles,payload\.markers,payload\.zones,payload\.cycleStartEquity,timeframe\]\);/);
-  assert.doesNotMatch(source, /\},\[baseCandles,payload\.markers,payload\.zones,payload\.cycleStartEquity,timeframe,advisorZoneLadder,activeZone\]\);/);
+  assert.match(source, /\},\[baseCandles,payload\.zones,payload\.cycleStartEquity,timeframe\]\);/);
+  assert.doesNotMatch(source, /\},\[baseCandles,payload\.markers,payload\.zones,payload\.cycleStartEquity,timeframe\]\);/);
+  assert.doesNotMatch(source, /\},\[baseCandles,payload\.zones,payload\.cycleStartEquity,timeframe,advisorZoneLadder,activeZone\]\);/);
 });
 
 test("Build 420 renders a compact Portfolio Snapshot-family strategy cockpit", async () => {

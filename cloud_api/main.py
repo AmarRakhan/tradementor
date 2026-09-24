@@ -72,7 +72,7 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, zone_shadow_backtest
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -5151,6 +5151,56 @@ def _portfolio_chart_cashflows(user: dict[str, Any], client: AsterV3Client | Non
         return rows
     except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, HTTPException, ValueError):
         return previous
+
+
+def _portfolio_chart_recent_strategy_audit_rows(uid: str, *, now_utc: datetime | None = None) -> list[dict[str, Any]]:
+    """Read only recent already-persisted Strategy-2 execution evidence.
+
+    No Aster exchange request is made here.  A short time window keeps Firestore
+    reads bounded while still covering the live 1m/5m event layer.
+    """
+    current = now_utc or datetime.now(timezone.utc)
+    cutoff = current - timedelta(hours=2)
+    reference = aster_strategy2_reference(uid).collection("audit")
+    rows: list[dict[str, Any]] = []
+    try:
+        query = reference.where("timestamp", ">=", cutoff).order_by(
+            "timestamp", direction=firestore.Query.DESCENDING
+        ).limit(250)
+        for document in query.stream():
+            row = document.to_dict() or {}
+            stamp = _portfolio_chart_timestamp_ms(row.get("timestampMs", row.get("timestamp")))
+            if stamp <= 0:
+                continue
+            rows.append({**row, "timestampMs": stamp})
+    except Exception:
+        return []
+    return rows
+
+
+@app.get("/v1/me/aster/portfolio-chart/events")
+def aster_portfolio_chart_events(
+    timeframe: str = Query(default="1m", pattern=r"^(1m|5m|15m|1u|4u|24u)$"),
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Fast read-only marker feed from confirmed Strategy-2 audit evidence.
+
+    This endpoint deliberately performs zero exchange API calls.  The normal
+    Portfolio Koers route remains responsible for candles, equity and durable
+    Aster fill history.
+    """
+    uid = str(user["uid"])
+    now_utc = datetime.now(timezone.utc)
+    rows = _portfolio_chart_recent_strategy_audit_rows(uid, now_utc=now_utc)
+    markers = portfolio_chart_strategy_audit_markers(rows, timeframe)
+    return {
+        "timeframe": timeframe,
+        "markers": markers,
+        "snapshotAtMs": int(now_utc.timestamp() * 1000),
+        "readOnly": True,
+        "ordersSent": 0,
+        "source": "confirmed Strategy-2 audit events; no exchange polling",
+    }
 
 
 @app.get("/v1/me/aster/portfolio-chart")
