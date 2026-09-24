@@ -10,7 +10,7 @@ Design invariants:
 - OPEN soldiers remain OPEN when their origin zone becomes inactive;
 - a soldier released while its origin zone is inactive becomes DORMANT;
 - legacy positions are never guessed into a zone;
-- exposure balancing adds temporary soldiers to the active zone only;
+- exposure balancing only prioritizes which existing base side may enter next;
 - all entry/exit/DCA execution remains in the existing Multi-BB runtime.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from typing import Any
 import hashlib
 import math
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ROLE_ZONE_BASE = "ZONE_BASE"
 ROLE_EXPOSURE_BALANCER = "EXPOSURE_BALANCER"
 ROLE_LEGACY_UNASSIGNED = "LEGACY_UNASSIGNED"
@@ -99,6 +99,37 @@ def _clean_soldier(raw: Any) -> dict[str, Any] | None:
     }
 
 
+
+def _clean_homecoming_events(raw: Any) -> list[dict[str, Any]]:
+    rows = raw if isinstance(raw, list) else []
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        closed_at = max(0, _integer(item.get("closedAtMs")))
+        side = str(item.get("side", "")).upper()
+        role = str(item.get("soldierRole", item.get("role", ""))).upper()
+        soldier_id = str(item.get("soldierId", "")).strip()
+        if closed_at <= 0 or side not in {"LONG", "SHORT"} or role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}:
+            continue
+        origin_raw = item.get("originZone")
+        try:
+            origin_zone = int(origin_raw) if origin_raw is not None else None
+        except (TypeError, ValueError):
+            origin_zone = None
+        event_id = str(item.get("eventId", "")).strip() or f"{soldier_id or side}:{closed_at}"
+        by_id[event_id] = {
+            "eventId": event_id,
+            "closedAtMs": closed_at,
+            "side": side,
+            "originZone": origin_zone,
+            "soldierId": soldier_id,
+            "soldierRole": role,
+            "reason": "TP_WIN",
+        }
+    return sorted(by_id.values(), key=lambda row: (row["closedAtMs"], row["eventId"]))[-512:]
+
+
 def _clean_pool(raw: Any, zone: int, *, base_long: int, base_short: int, timestamp_ms: int) -> dict[str, Any]:
     source = raw if isinstance(raw, dict) else {}
     created_at = max(0, _integer(source.get("createdAtMs"))) or timestamp_ms
@@ -114,6 +145,14 @@ def _clean_pool(raw: Any, zone: int, *, base_long: int, base_short: int, timesta
     for item in rows:
         soldier = _clean_soldier(item)
         if soldier is not None:
+            # Historical balancer soldiers may remain OPEN until their normal
+            # profitable close, but flat balancer capacity is never reused.
+            if (
+                soldier["role"] == ROLE_EXPOSURE_BALANCER
+                and soldier["status"] not in {STATUS_OPEN, STATUS_EXITING}
+                and not soldier.get("tradeKey")
+            ):
+                continue
             soldier["originZone"] = zone
             soldier["originZoneCycleId"] = cycle_id
             soldiers[soldier["soldierId"]] = soldier
@@ -175,6 +214,7 @@ def normalize_zone_state(raw: Any, *, base_long: int, base_short: int, timestamp
         "baseShortSoldiers": max(0, int(base_short)),
         "pools": pools,
         "balancer": dict(source.get("balancer") or {}),
+        "homecomingEvents": _clean_homecoming_events(source.get("homecomingEvents")),
         "updatedAtMs": timestamp_ms,
     }
 
@@ -333,7 +373,7 @@ def _managed_exposure(managed_state: dict[str, Any], positions: list[dict[str, A
 def _balancer_plan(*, exposure: dict[str, Any], previous_side: str, enabled: bool,
                    trigger_percent: float, release_percent: float,
                    fallback_unit_notional: float) -> dict[str, Any]:
-    gross = max(0.0, _number(exposure.get("grossExposureUsd")))
+    """Return exposure ENTRY PRIORITY only; never manufacture capacity."""
     net = _number(exposure.get("netExposureUsd"))
     imbalance = max(0.0, _number(exposure.get("imbalancePercent")))
     previous = str(previous_side or "").upper()
@@ -347,18 +387,13 @@ def _balancer_plan(*, exposure: dict[str, Any], previous_side: str, enabled: boo
         elif imbalance >= max(0.0, trigger_percent):
             active_side = underweight
     unit = max(0.0, _number(exposure.get("medianPositionNotionalUsd"))) or max(0.0, fallback_unit_notional)
-    desired_count = 0
-    desired_notional = 0.0
-    if active_side and gross > 0 and unit > 0:
-        release_ratio = max(0.0, min(0.99, release_percent / 100.0))
-        excess = max(0.0, abs(net) - release_ratio * gross)
-        desired_notional = excess / (1.0 + release_ratio)
-        desired_count = max(1, int(math.ceil(desired_notional / unit - 1e-12)))
     return {
+        "mode": "PRIORITY_ONLY",
         "status": "BALANCED" if not active_side else f"{active_side}_UNDERWEIGHT",
         "activeSide": active_side or None,
-        "desiredCount": desired_count,
-        "desiredNotionalUsd": desired_notional,
+        "prioritySide": active_side or None,
+        "desiredCount": 0,
+        "desiredNotionalUsd": 0.0,
         "unitNotionalUsd": unit,
         "triggerPercent": trigger_percent,
         "releasePercent": release_percent,
@@ -366,30 +401,11 @@ def _balancer_plan(*, exposure: dict[str, Any], previous_side: str, enabled: boo
 
 
 def _ensure_balancers(pool: dict[str, Any], *, side: str, amount: int, timestamp_ms: int) -> None:
-    soldiers = pool["soldiers"]
-    zone = int(pool["zone"])
-    cycle_id = str(pool["originZoneCycleId"])
-    for ordinal in range(1, max(0, int(amount)) + 1):
-        soldier_id = _balancer_soldier_id(zone, side, ordinal)
-        if soldier_id in soldiers:
-            continue
-        soldiers[soldier_id] = {
-            "soldierId": soldier_id,
-            "side": side,
-            "role": ROLE_EXPOSURE_BALANCER,
-            "status": STATUS_DORMANT,
-            "originZone": zone,
-            "originZoneCycleId": cycle_id,
-            "tradeKey": "",
-            "symbol": "",
-            "openedAtMs": 0,
-            "entryPrice": 0.0,
-            "entryPortfolioEquity": 0.0,
-            "updatedAtMs": timestamp_ms,
-        }
+    """Deprecated compatibility shim. Build 423 never creates extra soldiers."""
+    return None
 
 
-def _bind_open_soldiers(zone_state: dict[str, Any], managed_state: dict[str, Any], positions: list[dict[str, Any]], *, timestamp_ms: int) -> None:
+def _bind_open_soldiersdef _bind_open_soldiers(zone_state: dict[str, Any], managed_state: dict[str, Any], positions: list[dict[str, Any]], *, timestamp_ms: int) -> None:
     pmap = _position_map(positions)
     bound: set[str] = set()
     pools = zone_state["pools"]
@@ -440,21 +456,16 @@ def _activate_free_soldiers(zone_state: dict[str, Any], *, active_zone: int | No
         for soldier in pool["soldiers"].values():
             if soldier["status"] == STATUS_OPEN:
                 continue
-            should_activate = False
-            if active_zone is not None and zone == active_zone:
-                if soldier["role"] == ROLE_ZONE_BASE:
-                    should_activate = True
-                elif soldier["role"] == ROLE_EXPOSURE_BALANCER:
-                    desired_side = str(balancer.get("activeSide") or "").upper()
-                    desired_count = max(0, _integer(balancer.get("desiredCount")))
-                    if soldier["side"] == desired_side:
-                        ordinal = int(str(soldier["soldierId"]).rsplit(":", 1)[-1])
-                        should_activate = ordinal <= desired_count
+            should_activate = bool(
+                active_zone is not None
+                and zone == active_zone
+                and soldier["role"] == ROLE_ZONE_BASE
+            )
             soldier["status"] = STATUS_AVAILABLE if should_activate else STATUS_DORMANT
             soldier["updatedAtMs"] = timestamp_ms
 
 
-def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] | None,
+def prepare_zone_runtimedef prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] | None,
                          positions: list[dict[str, Any]] | None, confirmed_zone: int | None,
                          zone_safe: bool, base_long: int, base_short: int,
                          balancer_enabled: bool, trigger_percent: float, release_percent: float,
@@ -503,9 +514,7 @@ def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] |
         fallback_unit_notional=fallback_unit_notional,
     )
     active_zone = zone_state.get("activeZone")
-    if active_zone is not None and balancer.get("activeSide") and _integer(balancer.get("desiredCount")) > 0:
-        pool = zone_state["pools"][_zone_key(int(active_zone))]
-        _ensure_balancers(pool, side=str(balancer["activeSide"]), amount=_integer(balancer["desiredCount"]), timestamp_ms=timestamp_ms)
+    # Exposure balancing is routing/prioriteit only. It never adds seats.
     zone_state["balancer"] = {**balancer, "updatedAtMs": timestamp_ms}
     _bind_open_soldiers(zone_state, state, positions or [], timestamp_ms=timestamp_ms)
     _activate_free_soldiers(zone_state, active_zone=active_zone, balancer=balancer, timestamp_ms=timestamp_ms)
@@ -525,7 +534,12 @@ def available_soldiers(zone_state: dict[str, Any], side: str) -> list[dict[str, 
     normalized = str(side).upper()
     rows = [
         soldier for soldier in pool.get("soldiers", {}).values()
-        if isinstance(soldier, dict) and soldier.get("side") == normalized and soldier.get("status") == STATUS_AVAILABLE
+        if (
+            isinstance(soldier, dict)
+            and soldier.get("role") == ROLE_ZONE_BASE
+            and soldier.get("side") == normalized
+            and soldier.get("status") == STATUS_AVAILABLE
+        )
     ]
     return sorted(rows, key=lambda row: (0 if row.get("role") == ROLE_ZONE_BASE else 1, str(row.get("soldierId"))))
 
@@ -548,6 +562,32 @@ def claim_soldier(zone_state: dict[str, Any], side: str, *, trade_key: str, symb
     return dict(soldier)
 
 
+def record_soldier_homecoming(zone_state: dict[str, Any], managed_row: dict[str, Any], *,
+                               side: str, timestamp_ms: int) -> bool:
+    """Record one exchange-confirmed profitable zone-soldier TP close."""
+    role = str((managed_row or {}).get("soldierRole", "")).upper()
+    soldier_id = str((managed_row or {}).get("soldierId", "")).strip()
+    normalized_side = str(side or "").upper()
+    if role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER} or not soldier_id or normalized_side not in {"LONG", "SHORT"}:
+        return False
+    origin_raw = (managed_row or {}).get("originZone")
+    try:
+        origin_zone = int(origin_raw) if origin_raw is not None else None
+    except (TypeError, ValueError):
+        origin_zone = None
+    event_id = f"{soldier_id}:{int(timestamp_ms)}"
+    events = _clean_homecoming_events(zone_state.get("homecomingEvents"))
+    if any(row.get("eventId") == event_id for row in events):
+        return False
+    events.append({
+        "eventId": event_id, "closedAtMs": int(timestamp_ms), "side": normalized_side,
+        "originZone": origin_zone, "soldierId": soldier_id, "soldierRole": role, "reason": "TP_WIN",
+    })
+    zone_state["homecomingEvents"] = _clean_homecoming_events(events)
+    zone_state["updatedAtMs"] = max(_integer(zone_state.get("updatedAtMs")), int(timestamp_ms))
+    return True
+
+
 def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any],
                         positions: list[dict[str, Any]], *, zone_safe: bool) -> dict[str, Any]:
     active_zone = zone_state.get("activeZone")
@@ -557,19 +597,17 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
     soldiers = list(current.get("soldiers", {}).values()) if isinstance(current.get("soldiers"), dict) else []
 
     def count_current(side: str, *, role: str | None = None, status: str | None = None) -> int:
-        return sum(
-            1 for soldier in soldiers
-            if isinstance(soldier, dict)
-            and soldier.get("side") == side
-            and (role is None or soldier.get("role") == role)
-            and (status is None or soldier.get("status") == status)
-        )
+        return sum(1 for soldier in soldiers if isinstance(soldier, dict)
+                   and soldier.get("side") == side
+                   and (role is None or soldier.get("role") == role)
+                   and (status is None or soldier.get("status") == status))
 
+    pmap = _position_map(positions)
     old_open_long = old_open_short = 0
     for key, row in managed_state.items():
         if str(row.get("soldierRole", "")).upper() not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}:
             continue
-        if key not in _position_map(positions):
+        if key not in pmap:
             continue
         origin = row.get("originZone")
         if active_zone is not None and origin is not None and int(origin) == int(active_zone):
@@ -581,52 +619,47 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
 
     exposure = _managed_exposure(managed_state, positions)
     balancer = dict(zone_state.get("balancer") or {})
-    balancer_side = str(balancer.get("activeSide") or "").upper()
-    balancer_open = count_current(balancer_side, role=ROLE_EXPOSURE_BALANCER, status=STATUS_OPEN) if balancer_side else 0
-    balancer_free = count_current(balancer_side, role=ROLE_EXPOSURE_BALANCER, status=STATUS_AVAILABLE) if balancer_side else 0
+    priority = str(balancer.get("prioritySide") or balancer.get("activeSide") or "").upper()
+    if priority not in {"LONG", "SHORT"}:
+        priority = ""
+    legacy_balancer_open = (
+        count_current("LONG", role=ROLE_EXPOSURE_BALANCER, status=STATUS_OPEN)
+        + count_current("SHORT", role=ROLE_EXPOSURE_BALANCER, status=STATUS_OPEN)
+    )
     base_open_long = count_current("LONG", role=ROLE_ZONE_BASE, status=STATUS_OPEN)
     base_open_short = count_current("SHORT", role=ROLE_ZONE_BASE, status=STATUS_OPEN)
     base_free_long = count_current("LONG", role=ROLE_ZONE_BASE, status=STATUS_AVAILABLE)
     base_free_short = count_current("SHORT", role=ROLE_ZONE_BASE, status=STATUS_AVAILABLE)
+    homecomings = _clean_homecoming_events(zone_state.get("homecomingEvents"))
+    zone_state["homecomingEvents"] = homecomings
 
     return {
-        "enabled": True,
-        "schemaVersion": SCHEMA_VERSION,
+        "enabled": True, "schemaVersion": SCHEMA_VERSION,
         "safeForNewEntries": bool(zone_safe and active_zone is not None),
-        "activeZone": active_zone,
-        "previousZone": zone_state.get("previousZone"),
-        "zoneActivationId": zone_state.get("zoneActivationId"),
+        "activeZone": active_zone, "previousZone": zone_state.get("previousZone"),
+        "zoneActivationId": zone_state.get("zoneActivationId"), "hardFormationCap": True,
         "zoneFormation": {
             "baseLongSoldiers": _integer(zone_state.get("baseLongSoldiers")),
             "baseShortSoldiers": _integer(zone_state.get("baseShortSoldiers")),
         },
         "currentZone": {
-            "openLong": base_open_long,
-            "openShort": base_open_short,
-            "freeLong": base_free_long,
-            "freeShort": base_free_short,
-            "balancerOpen": balancer_open,
-            "balancerFree": balancer_free,
+            "openLong": base_open_long, "openShort": base_open_short,
+            "freeLong": base_free_long, "freeShort": base_free_short,
+            "balancerOpen": legacy_balancer_open, "balancerFree": 0,
         },
-        "oldZonesOpen": {
-            "total": old_open_long + old_open_short,
-            "long": old_open_long,
-            "short": old_open_short,
-        },
+        "oldZonesOpen": {"total": old_open_long + old_open_short, "long": old_open_long, "short": old_open_short},
         "totalActive": exposure["totalLongOpenCount"] + exposure["totalShortOpenCount"],
         "totalLongOpenCount": exposure["totalLongOpenCount"],
         "totalShortOpenCount": exposure["totalShortOpenCount"],
-        "exposure": exposure,
+        "exposure": exposure, "entryPriority": priority or None,
         "balancer": {
-            **balancer,
-            "openCount": balancer_open,
-            "freeCount": balancer_free,
-            "message": (
-                "Geen correctie nodig"
-                if not balancer_side
-                else f"+{max(0, _integer(balancer.get('desiredCount')) - balancer_open)} {balancer_side}-balancer gewenst"
-            ),
+            **balancer, "mode": "PRIORITY_ONLY", "prioritySide": priority or None,
+            "activeSide": priority or None, "desiredCount": 0, "desiredNotionalUsd": 0.0,
+            "openCount": legacy_balancer_open, "freeCount": 0,
+            "message": "Geen exposure-prioriteit" if not priority else f"Entry-prioriteit {priority} · geen extra soldaten",
         },
+        "homecomings": {"total": len(homecomings), "events": homecomings[-128:]},
+        "legacyBalancerOpenCount": legacy_balancer_open,
         "legacyUnassignedOpenCount": exposure["legacyUnassignedOpenCount"],
         "poolCount": len(pools),
     }
