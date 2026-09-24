@@ -197,8 +197,20 @@
       if(i){setTimeout(function(){i.focus();},0);}
     };
   </script>
-  <script src="data-v26.js"></script>
-  <script src="app-v34.js"></script>
+  <script>
+    // Stable admin loader: always request the current data/app with a fresh cache key.
+    (function(){
+      var v=Date.now();
+      var dataScript=document.createElement('script');
+      dataScript.src='data-current.js?v='+v;
+      dataScript.onload=function(){
+        var appScript=document.createElement('script');
+        appScript.src='app-current.js?v='+v;
+        document.body.appendChild(appScript);
+      };
+      document.body.appendChild(dataScript);
+    })();
+  </script>
   <script>
     // Beheerapp moet ALTIJD starten in het plakscherm.
     // Dit staat bewust los van app.js zodat caching of een latere JS-fout
