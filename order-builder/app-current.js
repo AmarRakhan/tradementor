@@ -294,6 +294,7 @@
     {code:'671R3AA#ABB', patterns:['65w usb-c lader','65w usb c lader','usb-c 65w','usb c 65w','65w lader','usb-c lader 65w']},
     {code:'75615', patterns:['rj45','usb-c rj45','usb c rj45','netwerkadapter','netwerk adapter','ethernet adapter']},
     {code:'D31429-RPET', patterns:['rugtas','rugzak','backpack','laptop rugtas','laptoprugtas']},
+    {code:'D31431-RPET', patterns:['laptop tas','laptoptas','tas laptop','standaard laptoptas','standaard laptop tas']},
     {code:'PS025645', patterns:['lightning','lighting','lightning kabel','lighting kabel']}
   ];
 
@@ -617,7 +618,8 @@
       {code:'54337265#ABH', terms:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
       {code:'54337313#ABH', terms:['tekenlaptop','teken laptop','cad laptop','cad-laptop']},
       {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation']},
-      {code:'AW5M5UT#ABB', terms:['cad docking','cad dock','tekendocking','teken docking','teken dock','cad dockingstation']}
+      {code:'AW5M5UT#ABB', terms:['cad docking','cad dock','tekendocking','teken docking','teken dock','cad dockingstation']},
+      {code:'D31431-RPET', terms:['laptop tas','laptoptas','tas laptop','standaard laptoptas','standaard laptop tas']}
     ];
     for(const rule of directRules){
       if(rule.terms.some(term=>nq.includes(ticketIntentText(term)))){
@@ -905,7 +907,8 @@
       {code:'54337265#ABH', terms:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
       {code:'54337313#ABH', terms:['tekenlaptop','teken laptop','cad laptop']},
       {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation']},
-      {code:'AW5M5UT#ABB', terms:['cad docking','cad dock','tekendocking','teken docking']}
+      {code:'AW5M5UT#ABB', terms:['cad docking','cad dock','tekendocking','teken docking']},
+      {code:'D31431-RPET', terms:['laptop tas','laptoptas','tas laptop','standaard laptoptas','standaard laptop tas']}
     ];
     forcedRules.forEach(rule=>{
       const hit=rule.terms.find(term=>wholeText.includes(ticketIntentText(term)));
