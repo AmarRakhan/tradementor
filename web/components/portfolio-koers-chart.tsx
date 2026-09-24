@@ -7,7 +7,7 @@ import { useAuthSession } from "@/components/auth-provider";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersTimelineHealth, portfolioZoneForPrice } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
-import { derivePortfolioZoneInstruction, derivePortfolioZoneLadder, portfolioZoneContextFromLadder, portfolioZoneFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
+import { PORTFOLIO_ZONE_MAX_TOTAL_SLOTS, derivePortfolioZoneInstruction, derivePortfolioZoneLadder, portfolioZoneContextFromLadder, portfolioZoneFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
@@ -32,7 +32,7 @@ const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOf
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
-const compactUsd=(value:number|null|undefined)=>{
+const advisorErrorText=(reason:unknown,fallback:string)=>{\n  const message=reason instanceof Error?reason.message.trim():"";\n  if(!message)return fallback;\n  if(/failed to fetch|networkerror|load failed/i.test(message))return "Serververbinding onderbroken · er is niets gewijzigd. Probeer opnieuw.";\n  return message;\n};\nconst compactUsd=(value:number|null|undefined)=>{
   if(!Number.isFinite(Number(value))||Number(value)===0)return "";
   const number=Number(value),sign=number<0?"-":"";
   return `${sign}$ ${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}`;
@@ -159,7 +159,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       setAdvisorSeats(EMPTY_ADVISOR);
       setAdvisorZones([]);
       setAdvisorTimeline(null);
-      setAdvisorMessage(reason instanceof Error?reason.message:"Koersinstructie kon niet worden geladen.");
+      setAdvisorMessage(advisorErrorText(reason,"Koersinstructie kon niet worden geladen."));
     }
   },[]);
 
@@ -434,7 +434,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       if(!["ADD","PARTIAL_ADD","REMOVE"].includes(String(instruction.status)))throw new Error("De live situatie is veranderd; de koersinstructie is opnieuw berekend.");
       const targetLong=Math.max(Number(instruction.activeLong)||0,Number(instruction.targetLongSlots)||0);
       const targetShort=Math.max(Number(instruction.activeShort)||0,Number(instruction.targetShortSlots)||0);
-      if(targetLong+targetShort>100)throw new Error("Maximaal 100 totale stoelen toegestaan.");
+      if(targetLong+targetShort>PORTFOLIO_ZONE_MAX_TOTAL_SLOTS)throw new Error(`Platformveiligheidsgrens van ${PORTFOLIO_ZONE_MAX_TOTAL_SLOTS} totale stoelen bereikt.`);
       const nextSettings={...fresh.settings,longSlots:targetLong,shortSlots:targetShort,maximumPositions:targetLong+targetShort};
       const result=await authenticatedRequest("/api/exchanges/aster/strategy2/settings",{method:"PUT",body:JSON.stringify({settings:nextSettings})});
       const confirmed=advisorSeatsFromPayload(result);
@@ -446,7 +446,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
       setAdvisorMessage(`${instruction.amount} ${instruction.side}-soldaten ${verb} · nu ${targetLong}L / ${targetShort}S.`);
       await loadAdvisor();
     }catch(reason){
-      setAdvisorMessage(reason instanceof Error?reason.message:"Soldaten aanpassen is mislukt.");
+      setAdvisorMessage(advisorErrorText(reason,"Soldaten aanpassen is mislukt."));
       await loadAdvisor();
     }finally{setAdvisorBusy(false)}
   };
@@ -482,7 +482,7 @@ export function PortfolioKoersChart({liveEquityText}:{liveEquityText:string}) {
     ? `−${instructionAmount} ${instructionSide}`
     : instructionStatus==="ADD"||instructionStatus==="PARTIAL_ADD"
       ? `+${instructionAmount} ${instructionSide}`
-      : instructionStatus==="BLOCKED"?"LIMIET 100":activeZone===null?"WACHTEN":"✓ GEREED";
+      : instructionStatus==="BLOCKED"?`MAX ${PORTFOLIO_ZONE_MAX_TOTAL_SLOTS}`:activeZone===null?"WACHTEN":"✓ GEREED";
   const biasLabel=activeZone===null?"ZONE":activeZone>0?"SHORT BIAS":activeZone<0?"LONG BIAS":"BALANS";
   const desiredLong=integerOrNull(advisorInstruction?.desiredLongSlots??advisorSeats.longSlots);
   const desiredShort=integerOrNull(advisorInstruction?.desiredShortSlots??advisorSeats.shortSlots);
