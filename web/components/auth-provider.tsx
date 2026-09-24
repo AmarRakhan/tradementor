@@ -27,6 +27,7 @@ type AuthContextValue = {
   user: User | null;
   ready: boolean;
   cloudReady: boolean;
+  betaOwner: boolean;
   error: string;
   signIn: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
@@ -51,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
   const [cloudReady, setCloudReady] = useState(false);
+  const [betaOwner, setBetaOwner] = useState(false);
   const [error, setError] = useState("");
   const bootstrapInFlight = useRef<{ uid: string; promise: Promise<void> } | null>(null);
 
@@ -70,7 +72,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (reason) {
       const code = typeof reason === "object" && reason && "code" in reason ? String(reason.code) : "";
       if (code.includes("user-token-expired") || code.includes("invalid-user-token") || code.includes("user-disabled")) {
-        await firebaseSignOut(firebaseAuth);
+        setBetaOwner(false);
+    await firebaseSignOut(firebaseAuth);
         throw new Error("Je oude sessie is verwijderd. Log opnieuw in om verder te gaan.");
       }
       throw reason;
@@ -95,6 +98,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     if (!response.ok) throw new Error("De persoonlijke cloudsessie kon niet worden gecontroleerd.");
+    const bootstrapPayload = await response.json().catch(() => ({}));
+    setBetaOwner(Boolean(bootstrapPayload.betaOwner));
     setCloudReady(true);
     console.info("[TradeMentor bootstrap timing]", { totalMs: Math.round(performance.now() - started) });
     })().finally(() => {
@@ -128,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setReady(true);
           setError("");
           if (current) bootstrap(current).catch((reason) => setError(authMessage(reason)));
-          else setCloudReady(false);
+          else { setCloudReady(false); setBetaOwner(false); }
         });
       })
       .catch((reason) => {
@@ -207,7 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return current.getIdToken();
   }, [previewUser]);
 
-  const value = useMemo(() => ({ user, ready, cloudReady, error, signIn, register, resetPassword, signOut, idToken }), [user, ready, cloudReady, error, signIn, register, resetPassword, signOut, idToken]);
+  const value = useMemo(() => ({ user, ready, cloudReady, betaOwner, error, signIn, register, resetPassword, signOut, idToken }), [user, ready, cloudReady, betaOwner, error, signIn, register, resetPassword, signOut, idToken]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
