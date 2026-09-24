@@ -1,0 +1,286 @@
+/*
+ * ASTER Ultra Rivalry presentation skin.
+ * Visual truth: file_000000000ce8820bafd7e295812f41f0
+ * Functional/data truth: file_00000000f090824387a969906f318d64
+ *
+ * IMPORTANT: this file is deliberately presentation-only. Every rule is scoped to
+ * the existing ASTER compact snapshot flag and the persisted visual skin.
+ * No handler, store, API, polling, websocket, order or strategy path lives here.
+ */
+
+.skin-preview.rivalry {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(238, 186, 73, .46), transparent 18%),
+    radial-gradient(circle at 18% 55%, rgba(230, 236, 245, .32), transparent 28%),
+    radial-gradient(circle at 82% 55%, rgba(51, 90, 255, .38), transparent 28%),
+    linear-gradient(112deg, #04070a 0 46%, #15100b 50%, #030712 54% 100%);
+  border-color: rgba(229, 183, 70, .72) !important;
+}
+.skin-preview.rivalry::before,
+.skin-preview.rivalry::after {
+  content: "";
+  position: absolute;
+  inset-block: 20%;
+  width: 28%;
+  border-radius: 50% 50% 38% 38%;
+  filter: drop-shadow(0 0 8px currentColor);
+}
+.skin-preview.rivalry::before { left: 12%; color: #d8e6ef; background: linear-gradient(145deg, #eef4f7 0 30%, #718297 31% 45%, #111820 46%); }
+.skin-preview.rivalry::after { right: 12%; color: #345dff; background: linear-gradient(145deg, #3d72ff 0 28%, #131f69 29% 48%, #050916 49%); }
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] {
+  --ur-gold: #e6b84e;
+  --ur-gold-soft: #8d6926;
+  --ur-ink: #02060a;
+  --ur-panel: rgba(3, 11, 15, .965);
+  --ur-line: rgba(226, 181, 72, .56);
+  --ur-long: #25e8a0;
+  --ur-short: #ff5d82;
+  --ur-blue: #4279ff;
+  background: #010306;
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] body {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(231, 188, 78, .075), transparent 26rem),
+    radial-gradient(circle at 91% 34%, rgba(48, 84, 196, .095), transparent 30rem),
+    linear-gradient(180deg, #010407 0%, #02070a 52%, #010305 100%);
+  color: #f6f4ef;
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .app-shell {
+  background: transparent;
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .workspace,
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .content {
+  background: transparent;
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .topbar {
+  border-color: rgba(226, 181, 72, .42);
+  background: linear-gradient(180deg, rgba(2, 7, 11, .98), rgba(2, 6, 9, .94));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .38), inset 0 -1px rgba(226, 181, 72, .15);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .mobile-context {
+  border-color: rgba(226, 181, 72, .25);
+  background: rgba(2, 7, 10, .94);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] #aster-portfolio-snapshot-host {
+  position: relative;
+  isolation: isolate;
+  margin-top: 0;
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] #aster-portfolio-snapshot-host::before {
+  content: "";
+  display: block;
+  width: 100%;
+  aspect-ratio: 4.65 / 1;
+  margin: 0 0 10px;
+  border: 1px solid rgba(232, 188, 78, .74);
+  border-radius: 16px;
+  background:
+    linear-gradient(90deg, rgba(1, 5, 9, .12), rgba(1, 5, 9, .05) 42%, rgba(1, 5, 9, .14)),
+    radial-gradient(circle at 50% 40%, rgba(233, 185, 75, .18), transparent 20%),
+    url("https://en.dragon-ball-official.com/dragonball/jp/news/2025/04/h250524979-3.jpg?_=1790237400") center 42% / cover no-repeat;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .45), 0 0 20px rgba(224, 175, 62, .08);
+  filter: saturate(.78) contrast(1.06) brightness(.72);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] #aster-portfolio-snapshot-host::after {
+  content: "ZEN OSAMA · BALANCE CREATES FREEDOM";
+  position: absolute;
+  z-index: 4;
+  top: 7px;
+  left: 50%;
+  width: 112px;
+  height: 86px;
+  transform: translateX(-50%);
+  display: grid;
+  align-content: end;
+  justify-items: center;
+  padding: 0 5px 8px;
+  border-radius: 999px 999px 18px 18px;
+  color: rgba(246, 237, 209, .9);
+  background:
+    linear-gradient(180deg, rgba(2, 6, 11, .02) 0 44%, rgba(2, 6, 11, .8) 72% 100%),
+    url("https://en.dragon-ball-official.com/dragonball/jp/news/2022/08/chara70_1.jpg?_=1790280480") center 22% / 52px auto no-repeat;
+  font: 800 6.6px/1.25 system-ui, sans-serif;
+  letter-spacing: .09em;
+  text-align: center;
+  text-shadow: 0 2px 5px #000;
+  pointer-events: none;
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aster-portfolio-snapshot {
+  --aps-gold: var(--ur-gold);
+  --aps-green: var(--ur-long);
+  --aps-red: var(--ur-short);
+  padding: 11px;
+  border: 1px solid rgba(229, 181, 68, .82);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(41, 235, 160, .055), transparent 29%),
+    radial-gradient(circle at 92% 0%, rgba(61, 93, 255, .065), transparent 31%),
+    linear-gradient(145deg, rgba(2, 10, 13, .985), rgba(1, 6, 9, .99));
+  box-shadow: 0 18px 38px rgba(0, 0, 0, .42), inset 0 1px rgba(255, 241, 191, .055);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aster-portfolio-snapshot::before {
+  width: 48%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(237, 197, 91, .9), transparent);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aster-portfolio-snapshot h2 {
+  color: #e9bd56;
+  font-size: 15px;
+  letter-spacing: .075em;
+  text-shadow: 0 0 12px rgba(222, 174, 63, .12);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-metric,
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-status-row,
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-growth-row,
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-liquidation-gauge {
+  border-color: rgba(73, 177, 143, .25);
+  background: linear-gradient(145deg, rgba(3, 17, 20, .86), rgba(2, 9, 12, .92));
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-metric {
+  min-height: 61px;
+  border-radius: 9px;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .018);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-metric small,
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-growth-card small {
+  color: #d7ab47;
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-live {
+  color: #35e99e;
+  border-color: rgba(38, 232, 158, .34);
+  background: rgba(5, 70, 45, .22);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-close-all {
+  color: #ff8d78;
+  border-color: rgba(255, 91, 91, .82);
+  background: linear-gradient(180deg, rgba(98, 18, 21, .56), rgba(39, 7, 10, .86));
+  box-shadow: 0 0 15px rgba(255, 58, 58, .08);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-profit-long {
+  border-color: rgba(36, 232, 158, .82);
+  background: linear-gradient(145deg, rgba(4, 45, 33, .78), rgba(2, 13, 14, .96));
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-profit-short {
+  border-color: rgba(255, 79, 119, .82);
+  background: linear-gradient(145deg, rgba(57, 12, 28, .74), rgba(8, 8, 16, .96));
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aps-profit-all {
+  border-color: rgba(229, 184, 74, .78);
+  background: linear-gradient(145deg, rgba(55, 39, 8, .7), rgba(11, 9, 7, .96));
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] [data-btc-quick-view="bull-bear"] {
+  margin-top: 8px;
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] [role="group"][aria-label="BTC Bollinger timeframe"] {
+  border: 1px solid rgba(229, 184, 74, .42);
+  border-radius: 12px;
+  background: rgba(3, 8, 11, .96);
+  box-shadow: inset 0 1px rgba(255, 255, 255, .025);
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] [role="group"][aria-label="BTC Bollinger timeframe"] button {
+  color: #c9c8c2;
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] [role="group"][aria-label="BTC Bollinger timeframe"] button[aria-pressed="true"] {
+  color: #fff6dc;
+  border-color: rgba(237, 188, 71, .7);
+  background: linear-gradient(180deg, rgba(129, 85, 16, .72), rgba(61, 39, 8, .88));
+  box-shadow: 0 0 16px rgba(230, 181, 62, .14);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] {
+  min-height: 220px;
+  overflow: hidden;
+  border-color: rgba(229, 184, 74, .72);
+  background:
+    linear-gradient(90deg, rgba(1, 12, 14, .9) 0 19%, rgba(1, 7, 11, .30) 36% 64%, rgba(8, 5, 19, .9) 81% 100%),
+    linear-gradient(180deg, rgba(1, 5, 8, .1), rgba(1, 5, 8, .76)),
+    url("https://en.dragon-ball-official.com/dragonball/jp/news/2025/04/h250524979-3.jpg?_=1790237400") center 42% / cover no-repeat;
+  box-shadow: 0 15px 32px rgba(0, 0, 0, .42), 0 0 16px rgba(225, 176, 61, .08);
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] > img,
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] > video {
+  opacity: 0 !important;
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] [class*="sidePanel"] {
+  background: linear-gradient(180deg, rgba(2, 10, 12, .36), rgba(2, 8, 11, .86));
+  backdrop-filter: blur(1.5px);
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] [class*="centerPanel"] {
+  border-radius: 10px;
+  background: radial-gradient(circle at center, rgba(4, 7, 10, .78), rgba(2, 5, 8, .38) 68%, transparent 100%);
+  text-shadow: 0 2px 9px rgba(0, 0, 0, .95);
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] [class*="longPanel"] {
+  border-left: 2px solid rgba(38, 231, 158, .78);
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] [class*="shortPanel"] {
+  border-right: 2px solid rgba(255, 79, 125, .78);
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] [class*="battleFooter"] {
+  background: linear-gradient(180deg, rgba(2, 7, 10, .54), rgba(1, 5, 8, .94));
+  border-top: 1px solid rgba(229, 184, 74, .22);
+}
+
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .bottom-nav {
+  border-top-color: rgba(229, 184, 74, .52);
+  background: linear-gradient(180deg, rgba(2, 7, 10, .965), rgba(1, 4, 7, .995));
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, .38), inset 0 1px rgba(229, 184, 74, .12);
+}
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .bottom-nav button.active,
+html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .bottom-nav [aria-current="page"] {
+  color: #efc45d;
+  text-shadow: 0 0 12px rgba(229, 184, 74, .22);
+}
+
+@media (max-width: 640px) {
+  html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] #aster-portfolio-snapshot-host::before {
+    margin-bottom: 7px;
+    border-radius: 12px;
+  }
+  html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] #aster-portfolio-snapshot-host::after {
+    top: 4px;
+    width: 92px;
+    height: 68px;
+    background-size: 42px auto;
+    font-size: 5.4px;
+    padding-bottom: 5px;
+  }
+  html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aster-portfolio-snapshot {
+    padding: 9px;
+    border-radius: 15px;
+  }
+  html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] .aster-portfolio-snapshot h2 {
+    font-size: 13.5px;
+  }
+  html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] section[data-bollinger-score] {
+    min-height: 196px;
+    border-radius: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-app-skin="ultra-rivalry"][data-aster-compact-snapshot="true"] * {
+    scroll-behavior: auto !important;
+  }
+}
