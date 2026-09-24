@@ -248,7 +248,7 @@ test("Build 413 configures every approved timeframe for a closer initial viewpor
 
 test("Build 414 can stop before a deep old candle after a small recent decision window",()=>{
   const old=Array.from({length:20},(_,index)=>({time:index+1,open:100,high:102,low:98,close:100}));
-  const recent=Array.from({length:7},(_,index)=>({time:21+index,open:144.4,high:146.1,low:143.8,close:145.5}));
+  const recent=Array.from({length:7},(_,index)=>({time:21+index,open:144.6,high:146.1,low:144.5,close:145.5}));
   assert.equal(portfolioKoersFocusBars([...old,...recent],16,145.53,145.18,146.48),7);
 });
 

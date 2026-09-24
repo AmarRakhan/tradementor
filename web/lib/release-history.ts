@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 414 release-contract sync: ASTER cold start, tighter zone focus and Formation Dashboard ship together.
+// Build 414 release-contract sync: ASTER cold start, tighter zone focus, Formation Dashboard and the corrected focus regression fixture ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -60,6 +60,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen candle-, zone-, Bollinger-, DCA-, TP/SL-, entry- of orderlogica gewijzigd.",
     "Alle volledige historische candles blijven in de dataset en worden zichtbaar bij handmatig uitzoomen.",
     "Actief = multiBb.activeLong/activeShort; capaciteit = settings.longSlots/shortSlots; vrij = max(0, capaciteit - actief); doel = zone-advisor desiredLongSlots/desiredShortSlots.",
+    "De zone-focus regressietest gebruikt recente candles binnen het relevante zonevenster en bevestigt dat een oudere, verre candle buiten de initiële camera kan blijven.",
   ],
   confidence: "confirmed",
 };
