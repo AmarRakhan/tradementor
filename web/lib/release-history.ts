@@ -26,6 +26,46 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-24",
+  title: "ASTER · Ultra Rivalry presentatiethema",
+  newItems: [
+    "WALLET → Thema bevat nu Ultra Rivalry als extra opgeslagen skin-keuze.",
+    "Ultra Rivalry verandert uitsluitend de ASTER-presentatielaag en gebruikt dezelfde bestaande Portfolio Snapshot-, Portfolio Impact-, Tradecentrum- en navigatiecomponenten.",
+    "De ASTER-look volgt de donkere Goku LONG / Vegeta SHORT / Zeno-balance referentie met gecontroleerde goud-, groen- en magenta/blauwe accenten.",
+  ],
+  problems: [
+    "Gebruikers wilden een uitgesproken ASTER battle-thema zonder functionele afwijking in knoppen, data of handelsgedrag.",
+    "Een volledige alternatieve ASTER-implementatie zou onnodig risico geven op dubbele handlers, afwijkende state of ontbrekende data.",
+  ],
+  causes: [
+    "Het bestaande app-skin systeem had nog geen ASTER-only themavariant met een strikt gescopeerde presentation layer.",
+  ],
+  fixes: [
+    "De bestaande tradementor.appSkin persistence accepteert nu ultra-rivalry zonder een nieuwe state- of datalaag te introduceren.",
+    "Alle operationele Ultra Rivalry CSS is gescopeerd op data-app-skin=ultra-rivalry én de bestaande data-aster-compact-snapshot ASTER-flag, zodat andere hoofdtabbladen niet worden gerestyled.",
+    "Bestaande Close Long, Close Short, Close All, timeframe, Portfolio Impact en Tradecentrum handlers/components zijn niet vervangen of opnieuw bedraad.",
+  ],
+  now: [
+    "Ultra Rivalry kan onder WALLET → Thema worden gekozen en blijft via dezelfde lokale voorkeur na refresh/PWA-herstart actief.",
+    "Op ASTER krijgt dezelfde live data een donkere premium battle-presentatie; buiten ASTER blijft de bestaande UI intact.",
+    "Trading-, order-, DCA-, TP/SL-, zone-, leverage-, ownership-, polling-, websocket- en exchange-logica zijn onaangeraakt.",
+  ],
+  before: "Build 423 maakte de zoneformatie hard en voegde winst-homecomings toe; de bestaande skins hadden nog geen Ultra Rivalry ASTER-presentatie.",
+  after: "Build 424 voegt uitsluitend een optionele ASTER skin toe bovenop dezelfde bestaande componenten en handlers.",
+  technicalDetails: [
+    "Primaire visuele referentie: file_000000000ce8820bafd7e295812f41f0.",
+    "Functionele/data-referentie: file_00000000f090824387a969906f318d64.",
+    "Implementatie: page.tsx breidt alleen AppSkin/persistence/selector uit; ultra-rivalry.css bevat ASTER-only visuele overrides.",
+    "Geen backend-, API-, trading-engine-, order-, scheduler- of exchangebestand gewijzigd voor deze theme-release.",
+  ],
+  confidence: "confirmed",
+};
+
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-423-zone-soldiers-fixed-formation",
+  version: "46",
+  build: "423",
+  releasedAt: "2026-09-24",
   title: "Zone-Soldaten · vaste formatie + winst thuisgekomen",
   newItems: [
     "Het owner-only Strategiestatus Command Center is herbouwd naar de goedgekeurde referentie file_000000009e0081f4b88f4b415de68c71.",
@@ -64,9 +104,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan DCA-regel, TP-doel, leverage guards, exchange close guard, auth of PWA.",
   ],
   confidence: "confirmed",
-};
-
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
   {
     id: "v46-build-422-soldier-activity-chart-events",
     version: "46",
