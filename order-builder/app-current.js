@@ -819,21 +819,33 @@
 
   function analyzeTicketText(text){
     const packageIntentsNow=detectTicketPackageIntents(text);
-    const packageTexts=new Set(packageIntentsNow.map(x=>normalizeSmartText(data.packages[x.index].name)));
-    const hardPackageAliases=[];
-    if(packageIntentsNow.some(x=>normalizeSmartText(data.packages[x.index].name).includes('iphone 13 ref'))){
-      hardPackageAliases.push('ref iphone 13','iphone 13 ref','refurb iphone 13','iphone 13 refurb');
+    const packageNames=packageIntentsNow.map(x=>normalizeSmartText(data.packages[x.index].name));
+    const hasIphone13RefPackage=packageNames.some(n=>n.includes('iphone 13 ref'));
+
+    function lineConsumedByPackage(line){
+      const q=ticketPackageText(line.query||line.raw||'');
+      if(!q) return false;
+
+      if(hasIphone13RefPackage){
+        if(
+          q.includes('ref iphone 13') ||
+          q.includes('iphone 13 ref') ||
+          q.includes('refurb iphone 13') ||
+          q.includes('iphone 13 refurb')
+        ) return true;
+      }
+
+      return packageNames.some(pn=>pn && q.includes(pn));
     }
+
     const scanned=scanWholeTicketFragments(text);
-    const results=scanned.results.slice();
+
+    // Ook full-text fragmentmatches verwijderen als ze dezelfde tekst representeren
+    // die al door een pakket is geconsumeerd.
+    const results=scanned.results.filter(r=>!lineConsumedByPackage(r));
 
     parseTicketLines(text)
-      .filter(line=>{
-        const q=ticketPackageText(line.query);
-        if(Array.from(packageTexts).some(pn=>q.includes(pn))) return false;
-        if(hardPackageAliases.some(a=>q.includes(a))) return false;
-        return true;
-      })
+      .filter(line=>!lineConsumedByPackage(line))
       .filter(line=>{
         const n=ticketIntentText(line.query);
         return !scanned.phrases.some(p=>p&&n.includes(p));
@@ -848,14 +860,19 @@
         const genericAmbiguous=genericTerms.has(nq)&&suggestions.length>1;
         if(!fixed&&first&&!genericAmbiguous){
           const gap=second?first.confidence-second.confidence:first.confidence;
-          if(first.confidence>=1.35||(first.confidence>=0.85&&gap>=0.28)){selectedCode=first.item.code;auto=true;}
+          if(first.confidence>=1.35||(first.confidence>=0.85&&gap>=0.28)){
+            selectedCode=first.item.code;
+            auto=true;
+          }
         }
         if(!selectedCode&&suggestions.length===0&&isAdministrativeMeaning(line.query)) return;
         if(selectedCode&&results.some(r=>r.selectedCode===selectedCode)) return;
-        results.push({...line,suggestions:suggestions,selectedCode:selectedCode,auto:auto,serials:line.serial?[line.serial]:[]});
+        results.push({...line,suggestions,selectedCode,auto,serials:line.serial?[line.serial]:[]});
       });
+
     return results;
   }
+
   function renderTicketPreview(results){
     const box=$('ticketMatchPreview'); if(!box)return;
     box.classList.remove('hidden');
