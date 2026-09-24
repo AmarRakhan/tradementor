@@ -13,7 +13,7 @@ from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 from aster_zone_soldiers import (
     ROLE_EXPOSURE_BALANCER, ROLE_LEGACY_UNASSIGNED, ROLE_ZONE_BASE,
-    available_soldiers, claim_soldier, prepare_zone_runtime,
+    available_soldiers, claim_soldier, prepare_zone_runtime, record_soldier_homecoming,
 )
 
 ENGINE = "multi_bb_v1"
@@ -872,10 +872,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                                  close_evidence=evidence, before_submit=before_order)
                 fresh = _position_map(client.position_risk(symbol))
                 if key in fresh: raise RuntimeError(f"{key}: TP-close niet flat bevestigd")
+                if zone_mode:
+                    record_soldier_homecoming(zone_state or {}, st0, side=side, timestamp_ms=timestamp_ms)
                 state.pop(key, None); pmap.pop(key, None)
-                ref.set({"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
-                         "lastReason": "Multi DCA actief; slot na TP vrijgegeven"}, merge=True)
-                ref.collection("audit").add({"event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price, "timestamp": datetime.now(timezone.utc)})
+                tp_write = {"multiBbPositions": state, "lastTickAt": datetime.now(timezone.utc), "phase": "RUNNING",
+                            "lastReason": "Multi DCA actief; soldaat met winst thuis na TP"}
+                if zone_mode:
+                    tp_write["zoneSoldierState"] = zone_state
+                ref.set(tp_write, merge=True)
+                ref.collection("audit").add({"event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price,
+                                             "originZone": st0.get("originZone"), "soldierId": st0.get("soldierId"),
+                                             "soldierRole": st0.get("soldierRole"), "homecoming": bool(zone_mode and st0.get("soldierId")),
+                                             "timestamp": datetime.now(timezone.utc)})
             sent += 1; continue
         if asym["active"] and side == "LONG" and st0.get("pairedShortPending"):
             actions.append({"kind": "ASYM_HEDGE_PENDING", "symbol": symbol, "side": side, "reason": "INITIAL_SHORT_NOT_CONFIRMED"}); continue
@@ -1148,7 +1156,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         except Exception as exc:
             actions.append({"kind": "EXPOSURE_REFILL_DATA_HOLD", "reason": str(exc)})
 
-    # New seats: fill immediately from Top-N volume after leverage/order/margin checks.
+    # New fixed-formation seats: only configured base soldiers can enter after
+    # leverage/order/margin/Bollinger checks. Exposure balance changes priority,
+    # never capacity.
     scanned_candidates = 0
     executable_candidates = 0
     minimum_margin_rejections: list[float] = []
@@ -1203,10 +1213,20 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 side = "LONG"
             elif zone_mode and zone_report:
                 current = zone_report.get("currentZone") if isinstance(zone_report.get("currentZone"), dict) else {}
-                current_long = _i(current.get("openLong")) + (_i(current.get("balancerOpen")) if str((zone_report.get("balancer") or {}).get("activeSide") or "") == "LONG" else 0)
-                current_short = _i(current.get("openShort")) + (_i(current.get("balancerOpen")) if str((zone_report.get("balancer") or {}).get("activeSide") or "") == "SHORT" else 0)
-                side = _next_entry_side(long_count=current_long, short_count=current_short,
-                    long_slots=current_long + long_need, short_slots=current_short + short_need)
+                current_long = _i(current.get("openLong"))
+                current_short = _i(current.get("openShort"))
+                priority = str(zone_report.get("entryPriority") or (zone_report.get("balancer") or {}).get("prioritySide") or "").upper()
+                if priority == "LONG" and long_need > 0:
+                    side = "LONG"
+                elif priority == "SHORT" and short_need > 0:
+                    side = "SHORT"
+                elif priority in {"LONG", "SHORT"}:
+                    # Do not worsen a live imbalance by filling the opposite side
+                    # merely because the priority side's fixed formation is full.
+                    side = ""
+                else:
+                    side = _next_entry_side(long_count=current_long, short_count=current_short,
+                        long_slots=current_long + long_need, short_slots=current_short + short_need)
             else:
                 side = _next_entry_side(long_count=long_count,short_count=short_count,long_slots=settings.long_slots,short_slots=settings.short_slots)
             if not side: break
