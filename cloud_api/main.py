@@ -3684,6 +3684,27 @@ def acknowledge_continuity_alert(request: ContinuityAlertAckRequest,
     return {"acknowledged": True, "alertId": request.alert_id}
 
 
+@app.post("/internal/continuity/check")
+def internal_continuity_check(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Isolated provider/billing refresh. This route has no trading mutation path."""
+    verify_internal_cloud_request(authorization)
+    config = continuity_owner_reference().get().to_dict() or {}
+    owner_uid = str(config.get("ownerUid") or "").strip()
+    if not owner_uid or config.get("enabled") is False:
+        return {"checked": False, "reason": "owner_not_configured"}
+    if not _is_beta_owner_uid(owner_uid):
+        raise HTTPException(403, "Continuity owner identity kon niet worden bevestigd")
+    record = auth.get_user(owner_uid, app=auth_app)
+    snapshot = _build_continuity_snapshot({"uid": owner_uid, "email": record.email or ""})
+    return {
+        "checked": True,
+        "ownerOnly": True,
+        "overallStatus": (snapshot.get("summary") or {}).get("overallStatus"),
+        "alert": snapshot.get("alert"),
+        "lastUpdated": snapshot.get("lastUpdated"),
+    }
+
+
 @app.get("/v1/admin/releases")
 def admin_release_features(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     require_admin(user)
