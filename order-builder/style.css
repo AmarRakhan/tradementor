@@ -307,3 +307,7 @@ button{cursor:pointer}
 
 .serial-copy-button{margin-top:2px;background:linear-gradient(180deg,#0f5fc0,#0a52aa)}
 .serial-copy-button:disabled{opacity:.48;cursor:not-allowed;box-shadow:none}
+
+/* Serial copy action must never disappear; when unavailable it is disabled, not hidden. */
+.serial-copy-button,
+.serial-copy-button.hidden{display:flex!important}
