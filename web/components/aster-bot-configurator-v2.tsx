@@ -69,6 +69,12 @@ const n = (value: unknown, fallback = 0) => {
   const number = Number(String(value ?? "").replace(",", "."));
   return Number.isFinite(number) ? number : fallback;
 };
+const nDefault = (value: unknown, fallback: number) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return fallback;
+  const number = Number(raw.replace(",", "."));
+  return Number.isFinite(number) ? number : fallback;
+};
 const pctText = (value: unknown, fallback: number) => String(n(value, fallback) * 100);
 const textValue = (value: unknown, fallback: number) => String(Number.isFinite(Number(value)) ? Number(value) : fallback);
 const tf = (value: unknown, fallback: Timeframe): Timeframe => TIMEFRAMES.includes(String(value) as Timeframe) ? String(value) as Timeframe : fallback;
@@ -287,11 +293,11 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       ...(zoneSoldiersAvailable ? {
         zoneSoldiersEnabled: draft.zoneSoldiersEnabled,
         zoneSoldiersOptInVersion: draft.zoneSoldiersEnabled ? 1 : 0,
-        zoneBaseLongSoldiers: Math.max(1, Math.round(n(persisted.zoneBaseLongSoldiers, 3))),
-        zoneBaseShortSoldiers: Math.max(1, Math.round(n(persisted.zoneBaseShortSoldiers, 3))),
+        zoneBaseLongSoldiers: Math.max(1, Math.round(nDefault(persisted.zoneBaseLongSoldiers, 3))),
+        zoneBaseShortSoldiers: Math.max(1, Math.round(nDefault(persisted.zoneBaseShortSoldiers, 3))),
         zoneExposureBalancerEnabled: persisted.zoneExposureBalancerEnabled !== false,
-        zoneEntryGrowthPercent: n(persisted.zoneEntryGrowthPercent, 2),
-        zoneEntryMaxMultiplier: n(persisted.zoneEntryMaxMultiplier, 1.2),
+        zoneEntryGrowthPercent: nDefault(persisted.zoneEntryGrowthPercent, 2),
+        zoneEntryMaxMultiplier: nDefault(persisted.zoneEntryMaxMultiplier, 1.2),
       } : { zoneSoldiersEnabled: false, zoneSoldiersOptInVersion: 0 }),
       ...sizing,
       entryMarginUsd: n(draft.entryMarginLong),
