@@ -38,10 +38,20 @@ test("zone zero keeps the existing formation",()=>{
   assert.equal(row.targetShortSlots,40);
 });
 
-test("advisor never grows beyond the hard total slot ceiling",()=>{
-  const row=derivePortfolioZoneInstruction({zoneIndex:2,longSlots:70,shortSlots:30,activeLong:70,activeShort:30});
-  assert.equal(row.status,"BLOCKED");
+test("zone +2 can raise 70L/30S to 70L/38S when only 28 SHORT seats are occupied",()=>{
+  const row=derivePortfolioZoneInstruction({zoneIndex:2,longSlots:70,shortSlots:30,activeLong:70,activeShort:28});
+  assert.equal(row.status,"ADD");
+  assert.equal(row.side,"SHORT");
+  assert.equal(row.amount,8);
   assert.equal(row.targetLongSlots,70);
+  assert.equal(row.targetShortSlots,38);
+  assert.equal(row.desiredShortSlots,38);
+});
+
+test("advisor still fails closed at the 400-seat platform safety ceiling",()=>{
+  const row=derivePortfolioZoneInstruction({zoneIndex:2,longSlots:370,shortSlots:30,activeLong:370,activeShort:30});
+  assert.equal(row.status,"BLOCKED");
+  assert.equal(row.targetLongSlots,370);
   assert.equal(row.targetShortSlots,30);
 });
 
