@@ -1,6 +1,6 @@
 import { WEBAPP_BUILD_NUMBER, WEBAPP_VERSION } from "@/lib/app-version";
 
-// Build 415 release-contract sync: BETA zone-owned soldiers, safe legacy migration and exposure-balancer UI ship together.
+// Build 415 release-contract sync: BETA zone-owned soldiers, safe legacy migration, exposure-balancer UI and updated zone-advisor regressions ship together.
 
 export type ReleaseConfidence = "confirmed" | "reconstructed";
 
@@ -64,6 +64,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Balancer-deadband hergebruikt exposureRefillTriggerPercent / exposureRefillReleasePercent; geen nieuw willekeurig financieel threshold.",
     "Geen directe balancer-market-order toegevoegd; de gewone Multi-BB entrypipeline blijft verantwoordelijk voor kandidaat, Bollinger, margin, leverage, symbol ownership en execution guards.",
     "Global capacity is in zone-owned modus afgeleid en blijft onder de bestaande platformveiligheidsgrens; oude globale side slots bepalen niet meer hoeveel nieuwe zone-soldaten bestaan.",
+    "Bestaande UI-regressietests zijn aangepast zodat de legacy zone-advisor fallback bewaakt blijft zonder de nieuwe zone-owned bron van waarheid als regressie te markeren.",
   ],
   confidence: "confirmed",
 };

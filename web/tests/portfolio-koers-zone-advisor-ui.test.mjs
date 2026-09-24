@@ -37,7 +37,7 @@ test("zone labels stay hidden while BETA zone contrast is visibly stronger",asyn
 
 test("formation dashboard distinguishes active soldiers, capacity, free seats and zone target with one functional button",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("KOERSINSTRUCTIE · Z{signedZone(activeZone)} · {biasLabel}"));
+  assert.ok(component.includes('KOERSINSTRUCTIE · Z{signedZone(activeZone)} · {zoneSoldierEnabled?"ZONE-OWNED":biasLabel}'));
   assert.ok(component.includes("SOLDATEN ACTIEF"));
   assert.ok(component.includes("CAPACITEIT"));
   assert.ok(component.includes("VRIJ"));
@@ -55,7 +55,7 @@ test("Build 406/408 uses the extrapolated ladder context for BETA active zone in
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice)"));
-  assert.ok(component.includes("advisorEnabled?zoneContext?.activeIndex??null:confirmedActiveZone"));
+  assert.ok(component.includes("advisorEnabled?(zoneSoldierEnabled?zoneSoldierActiveZone:zoneContext?.activeIndex??null):confirmedActiveZone"));
 });
 
 test("BETA ladder fills the complete chart height including the outer zones",async()=>{
@@ -87,7 +87,7 @@ test("canonical 15m zone fetch is BETA-only and fails closed when continuity evi
   assert.ok(betaGate>0);
   assert.ok(canonicalFetch>betaGate);
   assert.ok(component.includes("catch{\n        setAdvisorZones([]);\n        setAdvisorTimeline(null);\n      }"));
-  assert.ok(component.includes('const instructionActionable=advisorTimelineReady&&["ADD","PARTIAL_ADD","REMOVE"].includes(instructionStatus)'));
+  assert.ok(component.includes('const instructionActionable=!zoneSoldierEnabled&&advisorTimelineReady&&["ADD","PARTIAL_ADD","REMOVE"].includes(instructionStatus)'));
   assert.ok(component.includes('!advisorTimelineReady?"WACHTEN"'));
 });
 
