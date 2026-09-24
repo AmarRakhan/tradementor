@@ -1,5 +1,5 @@
-export const MAX_TOTAL_POSITIONS = 100;
-export const MAX_SIDE_SLOTS = 100;
+export const MAX_TOTAL_POSITIONS = 400;
+export const MAX_SIDE_SLOTS = 400;
 
 export type PositionSlotState = { total: number; long: number; short: number };
 
