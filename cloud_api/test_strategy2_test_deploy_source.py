@@ -111,7 +111,9 @@ def test_isolated_strategy2_scheduler_route_exists_and_is_fail_closed():
     assert 'os.getenv("ASTER_STRATEGY3_LIVE_ENABLED", "false")' in route
     assert 'os.getenv("ASTER_STRATEGY3_RUNTIME_ENABLED", "false")' in route
     assert 'return {"processed": 0, "status": "centrally-disabled"' in route
-    assert 'control_plane.db.collection("asterStrategy2")' in route
+    assert 'control_plane.db.collection("users").where("betaOwner", "==", True).limit(2).stream()' in route
+    assert 'control_plane.aster_strategy2_reference(uid).get()' in route
+    assert 'control_plane.db.collection("asterStrategy2").where("monitor", "==", True)' not in route
     assert 'db.collection("asterAutomation")' not in route
     assert '_run_aster_strategy3_tick' not in route
     assert "ASTER_STRATEGY2_EXCLUSIVE_OWNERSHIP=true" in workflow
