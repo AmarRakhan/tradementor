@@ -95,7 +95,11 @@ const percent2=(value:number|null|undefined,signed=true)=>{
 function markerPresentation(row:Marker) {
   const kind=String(row.kind||"").toLowerCase(),side=String(row.side||"").toUpperCase(),count=Math.max(1,Number(row.count)||1);
   if(kind==="cashflow")return {tone:"cashflow" as const,glyph:"↕",multiplier:count>1?`×${count}`:"",title:String(row.cashflowType||"Transfer").replaceAll("_"," "),value:""};
-  if(kind==="entry")return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:"⚔",multiplier:`×${count}`,title:side==="SHORT"?"SHORT":"LONG",value:""};
+  if(kind==="entry"){
+    const types=Array.isArray(row.activityTypes)?row.activityTypes.map((value)=>String(value).toUpperCase()):[];
+    const mission=types.length===1&&types[0]==="DCA"?"DCA":types.includes("DCA")&&types.includes("ENTRY")?"ENTRY + DCA":"";
+    return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:"⚔",multiplier:`×${count}`,title:`${side==="SHORT"?"SHORT":"LONG"}${mission?` · ${mission}`:""}`,value:""};
+  }
   return {tone:"tp" as const,glyph:"💰",multiplier:count>1?`TP ×${count}`:"TP",title:"Take Profit",value:""};
 }
 
@@ -121,7 +125,9 @@ function markerDetail(row:Marker) {
     const roles=Array.isArray(row.soldierRoles)?row.soldierRoles.map((value)=>String(value).toUpperCase()):[];
     const origin=zones.length===1?` · ${zones[0]}`:zones.length>1?` · ${zones.length} zones`:"";
     const role=roles.length===1?` · ${roles[0]==="EXPOSURE_BALANCER"?"exposure-balancer":roles[0]==="ZONE_BASE"?"basis-soldaat":roles[0].toLowerCase().replaceAll("_","-")}`:"";
-    return `${side==="SHORT"?"SHORT":"LONG"}${count>1?` ×${count}`:""} ${compactUsd(row.notionalUsd)}${origin}${role}`.trim();
+    const types=Array.isArray(row.activityTypes)?row.activityTypes.map((value)=>String(value).toUpperCase()):[];
+    const activity=types.length===1&&types[0]==="DCA"?" DCA":types.includes("DCA")&&types.includes("ENTRY")?" ENTRY+DCA":"";
+    return `${side==="SHORT"?"SHORT":"LONG"}${activity}${count>1?` ×${count}`:""} ${compactUsd(row.notionalUsd)}${origin}${role}`.trim();
   }
   return `💰${count>1?` ×${count}`:""} ${compactUsd(row.realizedPnlUsd)}`.trim();
 }
