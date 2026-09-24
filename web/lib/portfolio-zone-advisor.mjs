@@ -1,5 +1,5 @@
 export const PORTFOLIO_ZONE_SEATS_PER_STEP = 5;
-export const PORTFOLIO_ZONE_MAX_TOTAL_SLOTS = 100;
+export const PORTFOLIO_ZONE_MAX_TOTAL_SLOTS = 400;
 
 function count(value) {
   if (value === null || value === undefined || value === "") return null;
