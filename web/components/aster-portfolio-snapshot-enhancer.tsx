@@ -813,7 +813,12 @@ export function AsterPortfolioSnapshotEnhancer() {
 
   return host ? createPortal(
     <>
-      <PortfolioKoersChart liveEquityText={values.equity} />
+      <PortfolioKoersChart
+        liveEquityText={values.equity}
+        liveAvailableText={values.available}
+        liveLongText={values.longs}
+        liveShortText={values.shorts}
+      />
       <Snapshot
         values={values}
         profitPreview={profitPreview}
