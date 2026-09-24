@@ -7,7 +7,7 @@ const VISUAL_REFERENCE = "file_000000003e34820a9d0c8dc22b84ac47";
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 type Timeframe = typeof TIMEFRAMES[number];
 type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
-type ReleaseFeature = { key?: string; status?: string; beta?: boolean; stable?: boolean; enabled?: boolean; updatedAt?: unknown };
+type ReleaseFeature = { key?: string; status?: string; beta?: boolean; stable?: boolean; enabled?: boolean; ownerOnly?: boolean; updatedAt?: unknown };
 type ReleaseState = { channel?: "BETA" | "STABLE"; features?: Record<string, ReleaseFeature> };
 
 type Props = {
@@ -36,6 +36,7 @@ type Draft = {
   exposureRefillShortTimeframe: Timeframe;
   exposureRefillTriggerPercent: string;
   exposureRefillReleasePercent: string;
+  zoneSoldiersEnabled: boolean;
   fixedPositionSize: boolean;
   entryMarginLong: string;
   entryMarginShort: string;
@@ -106,6 +107,7 @@ function normalizeDraft(settings: Record<string, unknown>): Draft {
     exposureRefillShortTimeframe: tf(settings.exposureRefillShortTimeframe, "1m"),
     exposureRefillTriggerPercent: textValue(settings.exposureRefillTriggerPercent, 20),
     exposureRefillReleasePercent: textValue(settings.exposureRefillReleasePercent, 8),
+    zoneSoldiersEnabled: settings.zoneSoldiersEnabled === true && n(settings.zoneSoldiersOptInVersion, 0) >= 1,
     fixedPositionSize: String(settings.entrySizingMode || "margin").toLowerCase() === "notional",
     entryMarginLong: textValue(settings.entryMarginLongUsd ?? settings.entryMarginLong ?? legacyEntry, legacyEntry),
     entryMarginShort: textValue(settings.entryMarginShortUsd ?? settings.entryMarginShort ?? legacyEntry, legacyEntry),
@@ -202,6 +204,10 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const directionalAvailable = feature("directional_bollinger").enabled === true;
   const exposureAvailable = feature("exposure_refill").enabled === true;
   const priceZonesAvailable = feature("price_zones").enabled === true;
+  const zoneSoldiersAvailable = ownerBeta && feature("zone_soldiers").enabled === true;
+  const savedZoneStrategyEnabled = zoneSoldiersAvailable && persisted.zoneSoldiersEnabled === true && n(persisted.zoneSoldiersOptInVersion, 0) >= 1;
+  const zoneLifecycle = String(strategy2.zoneSoldierLifecycle || (savedZoneStrategyEnabled ? "ACTIVE" : "OFF")).toUpperCase();
+  const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · ZONE SOLDATEN" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONE DRAINING" : "STRATEGIE · TRADITIONEEL";
 
   const update = <K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -278,6 +284,15 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
         exposureRefillTriggerPercent: n(draft.exposureRefillTriggerPercent),
         exposureRefillReleasePercent: n(draft.exposureRefillReleasePercent),
       } : {}),
+      ...(zoneSoldiersAvailable ? {
+        zoneSoldiersEnabled: draft.zoneSoldiersEnabled,
+        zoneSoldiersOptInVersion: draft.zoneSoldiersEnabled ? 1 : 0,
+        zoneBaseLongSoldiers: Math.max(1, Math.round(n(persisted.zoneBaseLongSoldiers, 3))),
+        zoneBaseShortSoldiers: Math.max(1, Math.round(n(persisted.zoneBaseShortSoldiers, 3))),
+        zoneExposureBalancerEnabled: persisted.zoneExposureBalancerEnabled !== false,
+        zoneEntryGrowthPercent: n(persisted.zoneEntryGrowthPercent, 2),
+        zoneEntryMaxMultiplier: n(persisted.zoneEntryMaxMultiplier, 1.2),
+      } : { zoneSoldiersEnabled: false, zoneSoldiersOptInVersion: 0 }),
       ...sizing,
       entryMarginUsd: n(draft.entryMarginLong),
       entryMarginLongUsd: n(draft.entryMarginLong),
@@ -389,7 +404,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
 
   return <article id="bot-configurator-v2" data-reference={VISUAL_REFERENCE}>
     <header className="v2-hero">
-      <div>{ownerBeta && <span className="v2-beta">BETA · alleen zichtbaar voor jou</span>}<h2>Botconfigurator V2</h2><p>{ownerBeta ? "Bouw en test nieuwe blokken op jouw account. STABLE-gebruikers blijven op hun vrijgegeven logica." : "Bouw je Aster-bot stap voor stap met alleen vrijgegeven functies."}</p></div>
+      <div><div className="v2-hero-badges">{ownerBeta && <span className="v2-beta">BETA · alleen zichtbaar voor jou</span>}<span className={"v2-strategy-badge " + (savedZoneStrategyEnabled ? "zone" : zoneLifecycle === "DRAINING" ? "draining" : "traditional")}>{strategyBadge}</span></div><h2>Botconfigurator V2</h2><p>{ownerBeta ? "BETA bepaalt alleen welke strategie je mág kiezen. Alleen jouw opgeslagen strategie-keuze bepaalt wat de bot werkelijk doet." : "Bouw je Aster-bot stap voor stap met alleen vrijgegeven functies."}</p></div>
       <div className={"v2-live " + (enabled ? "on" : "")}><i /><span><small>Aster live bot</small><b>{enabled ? "AAN" : "UIT"}</b></span>{enabled && <button type="button" disabled={busy} onClick={stopBot}>Uitschakelen</button>}</div>
     </header>
 
@@ -407,6 +422,11 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
     </section>
 
     <section className="v2-step" id="v2-step-posities"><StepHead number="2" title="Posities" subtitle="Hoe wil je je portfolio verdelen?" />
+      <div className={"v2-strategy-choice " + (draft.zoneSoldiersEnabled ? "zone" : "traditional")}>
+        <div><small>HANDELSSTRATEGIE</small><strong>{draft.zoneSoldiersEnabled ? "Zone-Soldatenstrategie" : "Traditionele bot"}</strong><p>{draft.zoneSoldiersEnabled ? "Nieuwe entries krijgen pas na Opslaan zone-eigendom. Bestaande posities worden niet gesloten of achteraf aan een zone gekoppeld." : "LONG/SHORT-slots en normale Multi-BB-logica sturen nieuwe entries. Portfolio Koers blijft alleen informatief."}</p></div>
+        <Toggle label="Zone-Soldatenstrategie" description={zoneSoldiersAvailable ? "Expliciete opt-in. BETA-toegang zet deze strategie nooit automatisch aan." : "Deze strategie is nog niet beschikbaar voor dit account."} checked={draft.zoneSoldiersEnabled} onChange={(v) => update("zoneSoldiersEnabled", v)} disabled={!zoneSoldiersAvailable} />
+      </div>
+      {zoneLifecycle === "DRAINING" && !draft.zoneSoldiersEnabled && <p className="v2-warning">Zone-strategie uitgeschakeld · bestaande zone-posities worden nog veilig beheerd. Er worden geen nieuwe zone-soldaten geopend.</p>}
       <div className="v2-slot-visual" aria-label="Actieve posities ten opzichte van ingestelde stoelcapaciteit">
         <div className="long"><span>LONG</span><i title={activeLong === null ? "Live bezetting wordt geladen" : activeLong + " van " + totals.longSlots + " LONG-stoelen bezet"}><u style={{ width: slotFill(activeLong, totals.longSlots) + "%" }} /></i><b>{activeLong === null ? "—/" + totals.longSlots : activeLong + "/" + totals.longSlots}</b></div>
         <div className="short"><span>SHORT</span><i title={activeShort === null ? "Live bezetting wordt geladen" : activeShort + " van " + totals.shortSlots + " SHORT-stoelen bezet"}><u style={{ width: slotFill(activeShort, totals.shortSlots) + "%" }} /></i><b>{activeShort === null ? "—/" + totals.shortSlots : activeShort + "/" + totals.shortSlots}</b></div>
@@ -457,6 +477,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
 
     <section className="v2-step" id="v2-step-controle"><StepHead number="8" title="Controle & samenvatting" subtitle="Controleer wat je bot gaat doen vóór opslaan of activeren." />
       <div className="v2-summary">
+        <Summary label="Strategie" value={draft.zoneSoldiersEnabled ? "Zone-Soldatenstrategie" : "Traditionele strategie"} />
         <Summary label="Markten" value={"Top " + Math.max(1, Math.round(n(draft.universeTopN)))} />
         <Summary label="Posities" value={totals.longSlots + " LONG · " + totals.shortSlots + " SHORT · " + totals.totalSlots + " totaal"} />
         <Summary label="Instap" value={"LONG " + draft.bollingerLongTimeframe + " · SHORT " + draft.bollingerShortTimeframe} />
@@ -471,7 +492,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       {ownerBeta && <details className="v2-release-center" open>
         <summary>Releasecentrum · alleen BETA-owner</summary>
         <p>Een vinkje/akkoord publiceert niets automatisch. Publiceren en terugtrekken gebeurt per blok.</p>
-        <div className="v2-release-list">{Object.entries(releases.features ?? {}).map(([key, row]) => <article key={key}><div><b>{releaseLabel(key)}</b><small>{row.status || "TESTEN"} · BETA {row.beta ? "AAN" : "UIT"} · STABLE {row.stable ? "AAN" : "UIT"}</small></div><span>{row.status !== "AKKOORD" && row.status !== "LIVE" && <button disabled={busy} onClick={() => changeRelease(key, { status: "AKKOORD", beta: true, stable: false })}>✓ Getest en akkoord</button>}{row.status === "AKKOORD" && !row.stable && <button disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " vrijgeven aan alle gebruikers? Alleen dit onderdeel wordt gepubliceerd.")) void changeRelease(key, { status: "LIVE", beta: true, stable: true, confirm: true }); }}>Vrijgeven aan alle gebruikers</button>}{row.stable && <button className="rollback" disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " terugtrekken naar alleen BETA?")) void changeRelease(key, { status: "TESTEN", beta: true, stable: false, confirm: true }); }}>Terug naar BETA</button>}</span></article>)}</div>
+        <div className="v2-release-list">{Object.entries(releases.features ?? {}).map(([key, row]) => <article key={key}><div><b>{releaseLabel(key)}</b><small>{row.status || "TESTEN"} · BETA {row.beta ? "AAN" : "UIT"} · STABLE {row.stable ? "AAN" : "UIT"}{row.ownerOnly ? " · OWNER-ONLY" : ""}</small></div><span>{row.ownerOnly ? <em className="v2-owner-only">Alleen beschikbaarheid · gebruiker kiest zelf AAN/UIT</em> : <>{row.status !== "AKKOORD" && row.status !== "LIVE" && <button disabled={busy} onClick={() => changeRelease(key, { status: "AKKOORD", beta: true, stable: false })}>✓ Getest en akkoord</button>}{row.status === "AKKOORD" && !row.stable && <button disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " vrijgeven aan alle gebruikers? Alleen dit onderdeel wordt gepubliceerd.")) void changeRelease(key, { status: "LIVE", beta: true, stable: true, confirm: true }); }}>Vrijgeven aan alle gebruikers</button>}{row.stable && <button className="rollback" disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " terugtrekken naar alleen BETA?")) void changeRelease(key, { status: "TESTEN", beta: true, stable: false, confirm: true }); }}>Terug naar BETA</button>}</>}</span></article>)}</div>
       </details>}
     </section>
 
@@ -486,17 +507,17 @@ function StepHead({ number, title, subtitle }: { number: string; title: string; 
 }
 function Summary({ label, value }: { label: string; value: string }) { return <span><small>{label}</small><b>{value}</b></span>; }
 function releaseLabel(key: string) {
-  return ({ bot_configurator_v2: "Botconfigurator layout", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", price_zones: "Price zones", margin_summary: "Margin summary" } as Record<string, string>)[key] || key;
+  return ({ bot_configurator_v2: "Botconfigurator layout", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", zone_soldiers: "Zone-Soldatenstrategie", price_zones: "Price zones", margin_summary: "Margin summary" } as Record<string, string>)[key] || key;
 }
 
 const styles = `
 #bot-configurator-v2{--gold:#d9b84f;--green:#23d89a;--pink:#ff637e;--panel:#07120f;--panel2:#091914;--muted:#83938b;color:#eef8f3;background:radial-gradient(circle at 75% 0%,rgba(32,190,130,.12),transparent 28%),linear-gradient(180deg,#06100d,#020604);border:1px solid rgba(217,184,79,.46);border-radius:20px;padding:12px;box-shadow:0 24px 70px rgba(0,0,0,.42)}
-#bot-configurator-v2 *{box-sizing:border-box}.v2-hero{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;padding:6px 4px 12px}.v2-hero h2{font-size:24px;margin:3px 0}.v2-hero p{margin:0;color:#91a198;font-size:11px;max-width:650px;line-height:1.5}.v2-beta{display:inline-flex;border:1px solid rgba(217,184,79,.5);background:rgba(217,184,79,.08);color:#f5d36e;border-radius:999px;padding:5px 8px;font-size:8px;font-weight:900;letter-spacing:.12em}.v2-live{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #31413a;border-radius:12px;background:#09120f}.v2-live>i{width:10px;height:10px;border-radius:50%;background:#64746c}.v2-live.on>i{background:#4beca9;box-shadow:0 0 10px #32ce8f}.v2-live span{display:grid}.v2-live small{color:#7f8d86;font-size:7px}.v2-live b{font-size:10px}.v2-live button{border:1px solid rgba(255,99,126,.45);background:#251015;color:#ff9aac;border-radius:8px;padding:6px 8px;font-size:8px}
+#bot-configurator-v2 *{box-sizing:border-box}.v2-hero{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;padding:6px 4px 12px}.v2-hero h2{font-size:24px;margin:3px 0}.v2-hero p{margin:0;color:#91a198;font-size:11px;max-width:650px;line-height:1.5}.v2-hero-badges{display:flex;flex-wrap:wrap;gap:6px}.v2-beta{display:inline-flex;border:1px solid rgba(217,184,79,.5);background:rgba(217,184,79,.08);color:#f5d36e;border-radius:999px;padding:5px 8px;font-size:8px;font-weight:900;letter-spacing:.12em}.v2-strategy-badge{display:inline-flex;border:1px solid rgba(91,120,108,.5);background:#0a1511;color:#aebdb6;border-radius:999px;padding:5px 8px;font-size:8px;font-weight:900;letter-spacing:.06em}.v2-strategy-badge.zone{border-color:rgba(35,216,154,.55);color:#65efbc;background:rgba(12,101,70,.18)}.v2-strategy-badge.draining{border-color:rgba(244,184,67,.55);color:#f1cf77;background:rgba(116,76,12,.18)}.v2-live{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #31413a;border-radius:12px;background:#09120f}.v2-live>i{width:10px;height:10px;border-radius:50%;background:#64746c}.v2-live.on>i{background:#4beca9;box-shadow:0 0 10px #32ce8f}.v2-live span{display:grid}.v2-live small{color:#7f8d86;font-size:7px}.v2-live b{font-size:10px}.v2-live button{border:1px solid rgba(255,99,126,.45);background:#251015;color:#ff9aac;border-radius:8px;padding:6px 8px;font-size:8px}
 .v2-stepnav{position:sticky;top:0;z-index:15;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;padding:7px 0;margin:0 0 8px;background:linear-gradient(180deg,rgba(3,8,6,.98),rgba(3,8,6,.88),transparent);backdrop-filter:blur(10px)}.v2-stepnav button{display:grid;justify-items:center;gap:3px;min-width:0;border:0;background:transparent;color:#6f8178;font-size:7px;padding:3px 1px}.v2-stepnav b{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;border:1px solid #405048;background:#0a1511}.v2-stepnav button.active{color:#f0d279}.v2-stepnav button.active b{border-color:#d9b84f;color:#101713;background:#d9b84f;box-shadow:0 0 12px rgba(217,184,79,.24)}
 .v2-step{scroll-margin-top:58px;display:grid;gap:10px;margin:0 0 10px;padding:12px;border:1px solid rgba(217,184,79,.27);border-radius:16px;background:linear-gradient(180deg,rgba(8,24,18,.97),rgba(3,12,9,.98));box-shadow:inset 0 1px rgba(255,255,255,.025)}.v2-stephead{display:flex;gap:10px;align-items:center;border-bottom:1px solid rgba(255,255,255,.05);padding-bottom:9px}.v2-stephead>b{display:grid;place-items:center;width:32px;height:32px;flex:0 0 32px;border:1px solid var(--gold);border-radius:50%;color:#f5d36e;font-size:13px;background:rgba(217,184,79,.06)}.v2-stephead span{display:grid}.v2-stephead small{color:#b59a4b;font-size:7px;letter-spacing:.12em}.v2-stephead h3{margin:0;font-size:15px}.v2-stephead p{margin:1px 0 0;color:#83938b;font-size:9px}
 .v2-grid{display:grid;gap:8px}.v2-grid.cols2{grid-template-columns:repeat(2,minmax(0,1fr))}.v2-field{display:grid;gap:4px;color:#b8c5bf;font-size:8px}.v2-input{display:flex;align-items:center;border:1px solid rgba(217,184,79,.25);border-radius:10px;background:#050d0a;overflow:hidden}.v2-input input{width:100%;height:38px;border:0;outline:0;background:transparent;color:#eef8f3;padding:0 10px;font-size:12px}.v2-input em{padding:0 9px;color:#77877e;font-style:normal;font-size:8px}.v2-field select{height:38px;border:1px solid rgba(217,184,79,.25);border-radius:10px;background:#050d0a;color:#eef8f3;padding:0 9px}.v2-field input:disabled,.v2-field select:disabled{opacity:.45}
 .v2-toggle{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:9px 10px;border:1px solid rgba(89,113,102,.28);border-radius:12px;background:rgba(255,255,255,.015)}.v2-toggle>span{display:grid}.v2-toggle b{font-size:10px}.v2-toggle small{font-size:7.5px;color:#819088;line-height:1.35}.v2-toggle input{position:absolute;opacity:0}.v2-toggle>i{width:38px;height:22px;border-radius:999px;background:#23302a;position:relative;transition:.2s}.v2-toggle>i:after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;left:3px;top:3px;background:#74847b;transition:.2s}.v2-toggle.on>i{background:#107b56;box-shadow:inset 0 0 0 1px #25d99b}.v2-toggle.on>i:after{left:19px;background:#eafff5}.v2-toggle.disabled{opacity:.48}
-.v2-sidegrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.v2-side{display:grid;gap:7px;padding:10px;border-radius:13px;background:rgba(255,255,255,.015)}.v2-side.long{border:1px solid rgba(35,216,154,.32)}.v2-side.short{border:1px solid rgba(255,99,126,.34)}.v2-side.long>b{color:#57ebb2}.v2-side.short>b{color:#ff8da1}.v2-slot-visual{display:grid;grid-template-columns:1fr 1fr auto;gap:7px;align-items:center}.v2-slot-visual>div{display:grid;grid-template-columns:48px 1fr 52px;gap:7px;align-items:center;font-size:9px}.v2-slot-visual i{height:9px;border:1px solid currentColor;border-radius:999px;padding:1px;overflow:hidden}.v2-slot-visual u{display:block;height:100%;background:currentColor;border-radius:999px;box-shadow:0 0 7px currentColor;transition:width .2s ease}.v2-slot-visual b,.v2-slot-visual strong{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.v2-slot-visual .long{color:#49e6a8}.v2-slot-visual .short{color:#ff6b84}.v2-slot-visual .total{grid-template-columns:auto auto;color:#e7c766}.v2-note{color:#73847b;font-size:7.5px}
+.v2-strategy-choice{display:grid;grid-template-columns:minmax(0,1fr) minmax(250px,.72fr);gap:9px;align-items:center;padding:10px;border:1px solid rgba(118,143,132,.28);border-radius:13px;background:rgba(255,255,255,.015)}.v2-strategy-choice.zone{border-color:rgba(35,216,154,.42);background:linear-gradient(120deg,rgba(6,76,54,.20),rgba(255,255,255,.01))}.v2-strategy-choice>div:first-child{display:grid;gap:3px}.v2-strategy-choice>div:first-child small{font-size:7px;color:#9b8b55;letter-spacing:.08em}.v2-strategy-choice>div:first-child strong{font-size:12px}.v2-strategy-choice>div:first-child p{margin:0;color:#809188;font-size:7.6px;line-height:1.4}.v2-owner-only{display:block;max-width:190px;color:#d8be6c;font-size:7px;font-style:normal;line-height:1.3;text-align:right}.v2-sidegrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.v2-side{display:grid;gap:7px;padding:10px;border-radius:13px;background:rgba(255,255,255,.015)}.v2-side.long{border:1px solid rgba(35,216,154,.32)}.v2-side.short{border:1px solid rgba(255,99,126,.34)}.v2-side.long>b{color:#57ebb2}.v2-side.short>b{color:#ff8da1}.v2-slot-visual{display:grid;grid-template-columns:1fr 1fr auto;gap:7px;align-items:center}.v2-slot-visual>div{display:grid;grid-template-columns:48px 1fr 52px;gap:7px;align-items:center;font-size:9px}.v2-slot-visual i{height:9px;border:1px solid currentColor;border-radius:999px;padding:1px;overflow:hidden}.v2-slot-visual u{display:block;height:100%;background:currentColor;border-radius:999px;box-shadow:0 0 7px currentColor;transition:width .2s ease}.v2-slot-visual b,.v2-slot-visual strong{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}.v2-slot-visual .long{color:#49e6a8}.v2-slot-visual .short{color:#ff6b84}.v2-slot-visual .total{grid-template-columns:auto auto;color:#e7c766}.v2-note{color:#73847b;font-size:7.5px}
 .v2-runtime-strip,.v2-account-strip{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid rgba(35,216,154,.19);border-radius:11px;overflow:hidden}.v2-runtime-strip span,.v2-account-strip span{display:grid;padding:8px;border-right:1px solid rgba(35,216,154,.14)}.v2-runtime-strip span:last-child,.v2-account-strip span:last-child{border-right:0}.v2-runtime-strip small,.v2-account-strip small{font-size:7px;color:#7f8f87}.v2-runtime-strip b,.v2-account-strip b{font-size:10px}.v2-runtime-strip b.long{color:#4ce8aa}.v2-runtime-strip b.short{color:#ff7e94}
 .v2-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.v2-tabs button{height:36px;border:1px solid rgba(217,184,79,.26);border-radius:10px;background:#07130f;color:#87988f;font-size:9px;font-weight:850}.v2-tabs button.active{border-color:#d9b84f;background:linear-gradient(180deg,#987019,#5d430d);color:#fff1c5}
 .v2-advanced{border:1px solid rgba(217,184,79,.18);border-radius:12px;padding:8px}.v2-advanced summary{cursor:pointer;font-size:9px;font-weight:800;color:#d6c07b}.v2-advanced>p{font-size:8px;color:#819088;line-height:1.5}.v2-feature-note{display:flex;justify-content:space-between;gap:10px;padding:8px;border-radius:9px;background:#07110e}.v2-feature-note b{font-size:9px}.v2-feature-note span{font-size:8px;color:#e2bd5d}

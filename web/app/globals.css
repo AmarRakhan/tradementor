@@ -438,3 +438,10 @@ h1, h2, h3, p { margin-top: 0; }
 .strategy-two-card .maker-nav{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px!important}
 .strategy-two-card .maker-nav button{min-width:0;padding:9px 5px;font-size:10px}
 @media(max-width:390px){.strategy-two-card .compact-settings-grid{gap:8px}.strategy-two-card .position-settings-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.strategy-two-card .compact-settings-grid>label,.strategy-two-card .position-settings-grid>label{font-size:9px}}
+
+/* Build 417 · explicit Aster strategy-mode visibility */
+.aster-strategy-mode{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;padding:8px 11px;border:1px solid rgba(126,148,138,.25);border-radius:12px;background:rgba(7,17,13,.84)}
+.aster-strategy-mode span{font-size:9px;font-weight:950;letter-spacing:.055em;color:#b8c7c0}.aster-strategy-mode small{font-size:7.5px;color:#7f9188;text-align:right}
+.aster-strategy-mode.zone{border-color:rgba(35,216,154,.42);background:linear-gradient(90deg,rgba(5,78,54,.28),rgba(5,17,13,.88))}.aster-strategy-mode.zone span{color:#5aebb5}
+.aster-strategy-mode.draining{border-color:rgba(238,188,73,.42);background:linear-gradient(90deg,rgba(95,65,13,.24),rgba(5,17,13,.88))}.aster-strategy-mode.draining span{color:#f0cb70}
+@media(max-width:560px){.aster-strategy-mode{align-items:flex-start;flex-direction:column}.aster-strategy-mode small{text-align:left}}
