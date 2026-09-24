@@ -317,3 +317,29 @@
   .pcc-action{grid-template-columns:32px minmax(0,1fr) 78px}.pcc-action-icon{width:29px;height:29px;font-size:20px}.pcc-action-copy strong{font-size:12.6px}.pcc-action-copy em{font-size:5.8px}.pcc-bot-state{height:46px}.pcc-bot-state b{font-size:5px}
   .pcc-grid article,.pcc-bottom-grid article{grid-template-columns:18px minmax(0,1fr);min-height:56px;padding:5px 4px}.pcc-icon{font-size:13px}.pcc-grid small,.pcc-bottom-grid small{font-size:4.35px}.pcc-grid strong,.pcc-bottom-grid strong{font-size:9.5px}.pcc-grid em,.pcc-bottom-grid em{font-size:4.8px}.pcc-footer strong{font-size:6.2px}.pcc-footer em{font-size:5.2px}
 }
+
+
+/* Build 422 · owner-only soldier activity + viewport-aware event markers */
+.portfolio-koers-event.compressed{width:38px;height:31px;gap:1px}
+.portfolio-koers-event.compressed .portfolio-koers-event-icon{width:28px;height:21px;border-radius:7px}
+.portfolio-koers-event.compressed .portfolio-koers-event-glyph{font-size:15px}
+.portfolio-koers-event.compressed .portfolio-koers-event-badge{min-width:25px;height:12px;padding:0 4px;font-size:7px;border-radius:5px}
+.portfolio-koers-event.compressed.tp .portfolio-koers-event-glyph{font-size:13px}
+
+.pcc-activity{display:grid;gap:5px;padding:7px;border:1px solid rgba(48,204,119,.28);border-radius:11px;background:linear-gradient(145deg,rgba(2,34,20,.74),rgba(1,17,11,.78));box-shadow:inset 0 1px rgba(255,255,255,.018)}
+.pcc-activity>header{display:flex;align-items:end;justify-content:space-between;gap:8px;padding:0 1px}.pcc-activity>header>div{display:grid;gap:2px}.pcc-activity>header small{color:#d6aa3c;font:900 5.6px/1 system-ui;letter-spacing:.09em}.pcc-activity>header strong{color:#f4f2ec;font:950 10.5px/1 system-ui}.pcc-activity>header>em{color:#708b7f;font:800 5.3px/1 system-ui;font-style:normal;white-space:nowrap}
+.pcc-activity-windows{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.pcc-activity-windows article{min-width:0;display:grid;gap:2px;padding:6px 5px;border:1px solid rgba(66,194,122,.19);border-radius:8px;background:rgba(2,29,18,.68);text-align:center}
+.pcc-activity-windows small{color:#d7aa3a;font:900 5.4px/1 system-ui}.pcc-activity-windows strong{color:#f2f3ed;font:950 12.7px/1 system-ui}.pcc-activity-windows em{display:flex;align-items:center;justify-content:center;gap:3px;color:#7f968c;font:850 5.9px/1 system-ui;font-style:normal}.pcc-activity-windows em .long{color:#2fe8a0}.pcc-activity-windows em .short{color:#ff6b84}.pcc-activity-windows em span{color:#65786f}
+.pcc-recent-activity{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:7px;padding-top:1px}.pcc-recent-activity>small{padding-top:3px;color:#8fa198;font:900 5px/1 system-ui;letter-spacing:.045em;white-space:nowrap}.pcc-recent-activity>div{display:grid;gap:2px}.pcc-recent-activity>div>span{display:grid;grid-template-columns:34px 66px minmax(0,1fr);align-items:center;gap:3px;color:#aab8b0;font:750 5.8px/1 system-ui}.pcc-recent-activity time{color:#92a69c;font-variant-numeric:tabular-nums}.pcc-recent-activity b{font-size:6px;white-space:nowrap}.pcc-recent-activity b.long{color:#2fe8a0}.pcc-recent-activity b.short{color:#ff6b84}.pcc-recent-activity em{overflow:hidden;text-overflow:ellipsis;color:#7e9188;font:750 5.5px/1 system-ui;font-style:normal;white-space:nowrap}
+.pcc-recent-activity>em{color:#7f958b;font:750 5.8px/1.1 system-ui;font-style:normal}
+
+@media(max-width:560px){
+  .pcc-activity{gap:4px;padding:6px}.pcc-activity>header strong{font-size:9.6px}.pcc-activity>header small{font-size:5px}.pcc-activity>header>em{font-size:4.8px}
+  .pcc-activity-windows{gap:3px}.pcc-activity-windows article{padding:5px 3px}.pcc-activity-windows small{font-size:4.8px}.pcc-activity-windows strong{font-size:11.4px}.pcc-activity-windows em{font-size:5.2px}
+  .pcc-recent-activity{gap:5px}.pcc-recent-activity>small{font-size:4.5px}.pcc-recent-activity>div>span{grid-template-columns:30px 59px minmax(0,1fr);font-size:5.1px}.pcc-recent-activity b{font-size:5.3px}.pcc-recent-activity em{font-size:4.9px}
+}
+@media(max-width:380px){
+  .pcc-activity-windows article{padding:4px 2px}.pcc-activity-windows strong{font-size:10.4px}.pcc-activity-windows em{font-size:4.7px}
+  .pcc-recent-activity>div>span{grid-template-columns:28px 54px minmax(0,1fr);font-size:4.7px}.pcc-recent-activity b{font-size:4.9px}
+}
