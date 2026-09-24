@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 import { useExchangeData } from "@/lib/use-exchange-data";
+import { ContinuityAlertModal, ContinuityDashboard, ContinuityHomeCard, useContinuityMonitor, type ContinuitySnapshot } from "@/components/continuity-monitor";
 
 type Destination = {
   id: string; contactId: string; label: string; destinationType: string; asset: string;
@@ -17,7 +18,7 @@ type Intent = {
   createdAt?: string; completedAt?: string;
 };
 type Quote = { asset: string; network: string; chainId: number; withdrawableAmount: string; fee: string; destination: { id: string; label: string; address: string } };
-type Flow = "home" | "contacts" | "destinations" | "amount" | "review" | "signing" | "status" | "done";
+type Flow = "home" | "continuity" | "contacts" | "destinations" | "amount" | "review" | "signing" | "status" | "done";
 
 declare global { interface Window { ethereum?: { request(args: { method: string; params?: unknown[] }): Promise<unknown> } } }
 
@@ -38,8 +39,9 @@ function navigateExisting(destination: string) {
 }
 
 export function HomeTransferPage() {
-  const { user, cloudReady } = useAuthSession();
+  const { user, cloudReady, betaOwner } = useAuthSession();
   const { snapshots } = useExchangeData(cloudReady, user?.uid || "");
+  const continuity = useContinuityMonitor(Boolean(cloudReady && user?.uid && betaOwner));
   const [flow, setFlow] = useState<Flow>("home");
   const [mode, setMode] = useState<"contacts" | "recent">("contacts");
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -169,7 +171,31 @@ export function HomeTransferPage() {
 
   const resetTransfer = () => { setFlow("contacts"); setContact(null); setDestination(null); setQuote(null); setAmount(""); setIntent(null); setTypedData(null); setError(""); };
 
-  if (flow === "home") return <HomeDashboard portfolio={portfolio} changePct={changePct} onTransfer={() => { setFlow("contacts"); void loadContacts(); }} />;
+  if (flow === "home") return <>
+    <HomeDashboard
+      portfolio={portfolio}
+      changePct={changePct}
+      continuity={continuity.snapshot}
+      continuityAvailable={continuity.available === true}
+      continuityLoading={continuity.loading}
+      onContinuity={() => setFlow("continuity")}
+      onTransfer={() => { setFlow("contacts"); void loadContacts(); }}
+    />
+    {continuity.snapshot?.alert?.showStartupAlert && <ContinuityAlertModal
+      alert={continuity.snapshot.alert}
+      onAcknowledge={continuity.acknowledge}
+      onOpen={() => setFlow("continuity")}
+    />}
+  </>;
+
+  if (flow === "continuity") return <ContinuityDashboard
+    snapshot={continuity.snapshot}
+    loading={continuity.loading}
+    error={continuity.error}
+    onBack={() => setFlow("home")}
+    onRefresh={() => continuity.refresh(true)}
+    onSnapshot={(next: ContinuitySnapshot) => continuity.setSnapshot(next)}
+  />;
 
   return <section className="tm-transfer-shell">
     <header className="tm-transfer-header"><button type="button" className="tm-back" onClick={() => flow === "contacts" ? setFlow("home") : setFlow(flow === "destinations" ? "contacts" : flow === "amount" ? "destinations" : flow === "review" ? "amount" : "contacts")}>‹</button><strong>{flow === "done" ? "Voltooid" : flow === "status" ? "Opname bezig" : flow === "review" || flow === "signing" ? "Bevestigen" : flow === "amount" ? "Bedrag en details" : flow === "destinations" ? "Bestemming kiezen" : "Overboeken"}</strong><span /></header>
@@ -192,7 +218,23 @@ export function HomeTransferPage() {
   </section>;
 }
 
-function HomeDashboard({ portfolio, changePct, onTransfer }: { portfolio: number; changePct: number; onTransfer: () => void }) {
+function HomeDashboard({
+  portfolio,
+  changePct,
+  continuity,
+  continuityAvailable,
+  continuityLoading,
+  onContinuity,
+  onTransfer,
+}: {
+  portfolio: number;
+  changePct: number;
+  continuity: ContinuitySnapshot | null;
+  continuityAvailable: boolean;
+  continuityLoading: boolean;
+  onContinuity: () => void;
+  onTransfer: () => void;
+}) {
   const cards = [
     ["▦", "Dashboard", "aster"], ["↗", "Trading", "aster"], ["▤", "Posities", "positions"], ["◎", "Scanner", "markets"],
     ["▥", "Statistieken", "journey"], ["➤", "Overboeken", "transfer"], ["⚙", "Instellingen", "wallet"], ["•••", "Meer", ""],
@@ -201,11 +243,11 @@ function HomeDashboard({ portfolio, changePct, onTransfer }: { portfolio: number
     <div className="tm-home-brand"><img src="/tradementor-logo.png?v=redgreen-1" alt="" /><strong>Aster</strong><button type="button" aria-label="Help">?</button></div>
     <div className="tm-home-portfolio"><span>Portfolio</span><div className="tm-home-value-row"><div><strong>{money(portfolio || null)}</strong><small className={changePct >= 0 ? "positive" : "negative"}>{changePct >= 0 ? "+" : ""}{changePct.toFixed(2)}% (24h)</small></div><svg viewBox="0 0 180 70" aria-hidden="true"><polyline points="0,57 14,51 26,53 39,42 54,45 67,34 80,39 94,27 108,31 120,18 134,25 148,12 160,17 180,4" fill="none" stroke="currentColor" strokeWidth="3" /></svg></div></div>
     <div className="tm-home-grid">{cards.map(([icon, label, destination]) => <button key={label} type="button" className={label === "Overboeken" ? "featured" : ""} onClick={() => destination === "transfer" ? onTransfer() : destination ? navigateExisting(destination) : undefined}><i>{icon}</i><span>{label}</span></button>)}</div>
+    {continuityAvailable && <ContinuityHomeCard snapshot={continuity} loading={continuityLoading} onOpen={onContinuity} />}
     <button className="tm-home-transfer-callout" type="button" onClick={onTransfer}><span className="tm-home-logo-dot">✦</span><span>Snel en veilig geld overboeken<br />naar je eigen wallet of exchange.</span><b>›</b></button>
     <div className="tm-home-globe" aria-hidden="true"><div className="tm-globe-line one" /><div className="tm-globe-line two" /><div className="tm-globe-line three" /></div>
   </section>;
 }
-
 function ContactsScreen({ contacts, recent, mode, setMode, onChoose, onAdd, onRecent }: { contacts: Contact[]; recent: Intent[]; mode: "contacts"|"recent"; setMode: (m:"contacts"|"recent")=>void; onChoose:(c:Contact)=>void; onAdd:()=>void; onRecent:(i:Intent)=>void }) {
   return <div className="tm-transfer-body"><div className="tm-segment"><button className={mode === "contacts" ? "active" : ""} onClick={() => setMode("contacts")}>Contacten</button><button className={mode === "recent" ? "active" : ""} onClick={() => setMode("recent")}>Recente</button></div>
     {mode === "contacts" ? <><div className="tm-contact-grid">{contacts.map((item) => <button key={item.id} onClick={() => onChoose(item)}><span className="tm-avatar">{item.avatar ? <img src={item.avatar} alt="" /> : item.name.slice(0,2).toUpperCase()}</span><strong>{item.name}</strong><small>{item.destinations?.length || 0} adressen</small></button>)}<button className="add" onClick={onAdd}><span className="tm-avatar">＋</span><strong>Toevoegen</strong></button></div><button className="tm-secondary-wide" onClick={onAdd}>＋ Nieuw contact toevoegen</button>{contacts.length === 0 && <p className="tm-empty">Voeg eerst jezelf of een andere ontvanger toe.</p>}</> : <div className="tm-list">{recent.map((item) => <button key={item.id} onClick={() => onRecent(item)}><span><strong>{item.destinationLabel}</strong><small>{item.network} · {item.createdAt ? new Date(item.createdAt).toLocaleString("nl-NL") : ""}</small></span><span><strong>{item.requestedAmount} {item.asset}</strong><small className={`status ${item.status.toLowerCase()}`}>{item.status}</small></span></button>)}{recent.length === 0 && <p className="tm-empty">Nog geen overboekingen.</p>}</div>}
