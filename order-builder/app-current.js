@@ -274,11 +274,14 @@
     $('sumNew').textContent=newCount;
     $('sumRefurb').textContent=refurbCount;
     const serialRows=rows.filter(r=>r.serial);
-    $('serialCopyButton')?.classList.toggle('hidden',serialRows.length===0);
     if($('serialCopyButton')){
-      $('serialCopyButton').textContent=serialRows.length===1
-        ? '2. Kopieer serienummer'
-        : `2. Kopieer serienummers (${serialRows.length})`;
+      $('serialCopyButton').classList.remove('hidden');
+      $('serialCopyButton').disabled=serialRows.length===0;
+      $('serialCopyButton').textContent=serialRows.length===0
+        ? '2. Kopieer serienummers'
+        : serialRows.length===1
+          ? '2. Kopieer serienummer (1)'
+          : `2. Kopieer serienummers (${serialRows.length})`;
     }
   }
 
@@ -1183,12 +1186,27 @@
   }
 
   async function copySerialNumbers(){
-    const serials=expandedRows().filter(r=>r.serial).map(r=>r.serial);
-    if(!serials.length){toast('Geen serienummers gevonden');return;}
-    await writeClipboard(serials.join('\n'));
-    toast(serials.length===1
-      ? 'Serienummer gekopieerd · plak in de kolom Serienummer'
-      : `${serials.length} serienummers gekopieerd · plak vanaf de eerste serienummercell`);
+    const rows=expandedRows();
+    if(!rows.length){toast('Geen orderregels gevonden');return;}
+
+    const serialCount=rows.filter(r=>r.serial).length;
+    if(!serialCount){toast('Geen serienummers gevonden in deze order');return;}
+
+    // Eén clipboardregel per orderregel.
+    // Lege regels blijven bewust leeg zodat plakken vanaf de bovenste
+    // Serienummer-cel exact op dezelfde F&O-rijen uitkomt.
+    const serialColumn=rows.map(r=>r.serial||'');
+
+    // Na de laatste serienummerregel hoeven lege eindregels niet mee.
+    // Lege regels vóór/tussen serienummers blijven wél behouden.
+    let lastSerialIndex=serialColumn.length-1;
+    while(lastSerialIndex>=0 && !serialColumn[lastSerialIndex]) lastSerialIndex--;
+    const txt=serialColumn.slice(0,lastSerialIndex+1).join('\n');
+
+    await writeClipboard(txt);
+    toast(serialCount===1
+      ? 'Serienummerkolom gekopieerd · plak vanaf de bovenste cel Serienummer'
+      : `${serialCount} serienummers uitgelijnd gekopieerd · plak vanaf de bovenste cel Serienummer`);
   }
 
   function renderCounts(){
