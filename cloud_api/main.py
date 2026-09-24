@@ -3056,6 +3056,7 @@ def _build_continuity_snapshot(user: dict[str, Any]) -> dict[str, Any]:
             "activeServices": active_count,
             "totalServices": len(services),
             "upcomingPayments": upcoming_count,
+            "upcomingAmount": upcoming,
             "knownMonthlyCost": known_monthly,
             "currency": currency,
             "overallStatus": overall,
