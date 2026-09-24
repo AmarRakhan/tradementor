@@ -25,7 +25,8 @@ export function soldierOpenEventsFromManagedPositions(rawPositions) {
     const side=String(key).toUpperCase().endsWith("|SHORT")?"SHORT":String(key).toUpperCase().endsWith("|LONG")?"LONG":"";
     const atMs=Math.floor(Number(raw.cycleStartedAtMs));
     if(!side||!Number.isFinite(atMs)||atMs<=0)continue;
-    const originRaw=Number(raw.originZone);
+    const hasOrigin=raw.originZone!==null&&raw.originZone!==undefined&&String(raw.originZone).trim()!=="";
+    const originRaw=hasOrigin?Number(raw.originZone):NaN;
     const originZone=Number.isInteger(originRaw)?originRaw:null;
     const stable=String(raw.soldierId||raw.cycleId||"").trim();
     result.push({
