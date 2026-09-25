@@ -153,6 +153,7 @@ from hyperliquid_account_state import direction_available, normalize_hyperliquid
 from firebase_identity import check_revoked_tokens, identity_app, recent_id_token
 from read_only_source import read_source_url
 from bybit_continuity import BybitContinuityClient, BybitContinuityCredentials, BybitContinuityError
+from friends_analytics import install_friends_routes
 
 
 class Strategy2OrderBudgetExhausted(RuntimeError):
@@ -9925,3 +9926,7 @@ install_aster_dynamic_hedge_routes(
     user_reference=user_reference,
     client_factory=_dynamic_hedge_aster_client,
 )
+
+
+# Friends is read-only community analytics: no trading or exchange side effects.
+install_friends_routes(app, authenticated_user)
