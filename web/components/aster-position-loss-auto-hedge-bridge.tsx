@@ -257,6 +257,7 @@ export function AsterPositionLossAutoHedgeBridge() {
 
   const threshold = Number(draft.replace(",", "."));
   const sliderValue = Math.max(5, Math.min(100, Number.isFinite(threshold) ? threshold : 10));
+  const statusLabel = state.operational ? "ACTIEF" : state.enabled ? "TEST" : "UIT";
 
   const tile = tileHost && available === true ? createPortal(
     <div
@@ -278,7 +279,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       <span className="plah-tile-copy">
         <small>AUTO HEDGE</small>
         <strong>vanaf -{moneyThreshold(Number(state.thresholdUsd) || 10)}</strong>
-        <em className={state.enabled ? "on" : ""}>{state.enabled ? "ACTIEF" : "UIT"}</em>
+        <em className={state.enabled ? "on" : ""}>{statusLabel}</em>
       </span>
       <Toggle checked={state.enabled} disabled={saving || loading} onChange={toggle} compact />
     </div>,
@@ -303,7 +304,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         </header>
 
         <div className="plah-toggle-row">
-          <div><strong>AUTO HEDGE</strong><em>{state.enabled ? "ACTIEF" : "UIT"}</em></div>
+          <div><strong>AUTO HEDGE</strong><em>{statusLabel}</em></div>
           <Toggle checked={state.enabled} disabled={saving} onChange={toggle} />
         </div>
 
@@ -341,6 +342,7 @@ export function AsterPositionLossAutoHedgeBridge() {
           <p>Zowel bestaande open posities als nieuwe posities worden continu gemonitord. Bij het bereiken van de ingestelde verliesdrempel wordt alleen de ontbrekende tegen-quantity aangevuld.</p>
         </div>
 
+        {state.enabled && !state.operational ? <div className="plah-test-mode">TESTMODUS · actuele posities worden berekend en gereconcilieerd, maar er worden geen orders verstuurd.</div> : null}
         {error ? <div className="plah-error" role="alert">{error}</div> : null}
         {message ? <div className="plah-success">{message}</div> : null}
 
