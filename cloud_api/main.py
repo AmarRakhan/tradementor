@@ -6284,10 +6284,15 @@ def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any]
         "updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"stopped":True,"finishingPortfolioExit":exit_in_progress,**aster_strategy2_public(uid)}
 
-def _portfolio_growth_client(user:dict[str,Any],*,live:bool)->AsterV3Client:
-    secret=load_aster_secret(user)
-    return AsterV3Client(signer_address=secret.signer_address,
-        sign_message=local_eip712_signer(secret),live_authorized=live)
+def _portfolio_growth_client(user:dict[str,Any],*,live:bool,
+        emergency_close_all:bool=False)->AsterV3Client:
+    secret=load_aster_secret(user);uid=str(user["uid"])
+    return AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),
+        live_authorized=live,
+        before_order_submit=(None if emergency_close_all else _block_order_during_close_all(uid)),
+    )
 
 
 
@@ -6472,7 +6477,7 @@ def close_all_aster_strategy(
         action_ref.set({"status":"FAILED_BEFORE_CLOSE","submitted":0,
             "reason":"Account execution bleef bezet tijdens noodstop","updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,"NOODSTOP wacht op een lopende strategieactie; bots staan al UIT. Probeer Alles sluiten opnieuw.")
-    client=_portfolio_growth_client(user,live=True);submitted=[]
+    client=_portfolio_growth_client(user,live=True,emergency_close_all=True);submitted=[]
     dynamic_hedge_ref=user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard=None
     try:
