@@ -196,7 +196,7 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
     <section className="pcc-formation-hero">
       <FormationArmy longCount={vm.desiredLong} shortCount={vm.desiredShort}/>
       <div className="pcc-formation-copy">
-        <small>ACTIEVE ZONEFORMATIE</small>
+        <small>ACTIEVE FORMATIE · HUIDIGE ZONE</small>
         <strong><b>{vm.activeZone}</b> · <span className="long">{vm.desiredLong} LONG</span> <i>/</i> <span className="short">{vm.desiredShort} SHORT</span></strong>
         <em>Huidige zone — niet totaal account</em>
       </div>
