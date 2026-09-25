@@ -619,6 +619,67 @@
     return 'Overige accessoires';
   }
 
+  function displayItemSection(it){
+    const coarse=displayItemGroup(it.category,it.name,it.code);
+    const nm=normalizeSmartText(it.name||'');
+    const code=it.code||'';
+
+    // Echte apparaten blijven in hun eigen hoofdgroep.
+    if(['Laptops','Telefoons','Tablets','Monitoren','Docks'].includes(coarse)) return coarse;
+
+    // Accessoires eerst aan het concrete doelapparaat koppelen.
+    if(nm.includes('iphone se')) return 'iPhone SE accessoires';
+    if(nm.includes('iphone 13')) return 'iPhone 13 accessoires';
+    if(nm.includes('iphone 14')) return 'iPhone 14 accessoires';
+    if(nm.includes('iphone 16')) return 'iPhone 16 accessoires';
+    if(nm.includes('iphone xr') || nm.includes('iphone 11')) return 'iPhone 11 / XR accessoires';
+
+    if(nm.includes('ipadpro') || nm.includes('ipad pro')) return 'iPad Pro accessoires';
+    if(nm.includes('ipad 10 2') || nm.includes('ipad10 2')) return 'iPad 10.2 accessoires';
+    if(
+      nm.includes('ipad 10 9') ||
+      nm.includes('ipad2024 11') ||
+      nm.includes('ipad 2024 11') ||
+      nm.includes('ipad 2025 11') ||
+      nm.includes('ipad 2022 10 9')
+    ) return 'iPad 10.9 / 11 accessoires';
+
+    if(nm.includes('xcover7') || nm.includes('xcover 7')) return 'Samsung XCover 7 accessoires';
+    if(nm.includes('tab a9')) return 'Samsung Tab A9+ accessoires';
+
+    // Apple Pencil is een apart herkenbaar iPad-accessoire.
+    if(code==='MUWA3ZM/A' || nm.includes('apple pencil')) return 'Apple Pencil';
+
+    // Algemene accessoires.
+    if(coarse==='Opladers') return 'Opladers';
+    if(coarse==='Kabels') return 'Kabels';
+    if(coarse==='Toetsenbord & muis') return 'Toetsenbord & muis';
+    if(coarse==='Tassen & rugzakken') return 'Tassen & rugzakken';
+    if(coarse==='Headsets & audio') return 'Headsets & audio';
+    if(coarse==='Netwerk & connectiviteit') return 'Netwerk & connectiviteit';
+    if(coarse==='Webcams') return 'Webcams';
+    if(coarse==='Montage & houders') return 'Montage & houders';
+    if(coarse==='Reiniging') return 'Reiniging';
+    if(coarse==='Screenprotectors') return 'Overige screenprotectors';
+    if(coarse==='Hoezen & cases') return 'Overige hoezen & cases';
+
+    return 'Overige accessoires';
+  }
+
+  function sectionSortRank(section){
+    const order=[
+      'Laptops','Telefoons','Tablets','Monitoren','Docks',
+      'iPhone SE accessoires','iPhone 11 / XR accessoires','iPhone 13 accessoires','iPhone 14 accessoires','iPhone 16 accessoires',
+      'iPad 10.2 accessoires','iPad 10.9 / 11 accessoires','iPad Pro accessoires','Apple Pencil',
+      'Samsung XCover 7 accessoires','Samsung Tab A9+ accessoires',
+      'Opladers','Kabels','Toetsenbord & muis','Tassen & rugzakken','Headsets & audio',
+      'Netwerk & connectiviteit','Webcams','Montage & houders','Reiniging',
+      'Overige screenprotectors','Overige hoezen & cases','Overige accessoires'
+    ];
+    const i=order.indexOf(section);
+    return i<0?999:i;
+  }
+
   function sectionIcon(group){
     return group==='Laptops'?'💻':
       group==='Telefoons'?'📱':
@@ -769,83 +830,54 @@
     const list=filteredItems();
     $('itemsEmpty').classList.toggle('hidden',list.length>0);
 
-    const order=[
-      'Laptops','Telefoons','Tablets','Monitoren','Docks',
-      'Opladers','Screenprotectors','Hoezen & cases','Kabels',
-      'Toetsenbord & muis','Tassen & rugzakken','Headsets & audio',
-      'Netwerk & connectiviteit','Webcams','Montage & houders',
-      'Reiniging','Stylus & Apple Pencil','Overige accessoires'
-    ];
-    const grouped=new Map(order.map(x=>[x,[]]));
+    const grouped=new Map();
     list.forEach(it=>{
-      const group=displayItemGroup(it.category,it.name,it.code);
-      if(!grouped.has(group)) grouped.set(group,[]);
-      grouped.get(group).push(it);
+      const section=displayItemSection(it);
+      if(!grouped.has(section)) grouped.set(section,[]);
+      grouped.get(section).push(it);
     });
 
-    $('categoriesGrid').innerHTML=order
-      .filter(group=>grouped.get(group)?.length)
-      .map(group=>{
-        const arr=grouped.get(group);
-        const collapsed=uiState.collapsedCatalogSections.has('item:'+group);
-        return `<section class="catalog-section item-section ${collapsed?'collapsed':''}">
-          <div class="catalog-section-head">
-            <div class="catalog-section-heading">
-              <span class="catalog-section-icon">${sectionIcon(group)}</span>
-              <div><div class="catalog-section-title">${esc(group)}</div><div class="catalog-section-count">${arr.length} artikel${arr.length===1?'':'en'}</div></div>
+    const sections=[...grouped.keys()].sort((a,b)=>{
+      const rank=sectionSortRank(a)-sectionSortRank(b);
+      return rank || a.localeCompare(b,'nl');
+    });
+
+    $('categoriesGrid').innerHTML=sections.map(section=>{
+      const arr=grouped.get(section);
+      const collapsed=uiState.collapsedCatalogSections.has('item:'+section);
+      const isDevice=['Laptops','Telefoons','Tablets','Monitoren','Docks'].includes(section);
+      return `<section class="dense-catalog-section ${isDevice?'dense-device-section':''} ${collapsed?'collapsed':''}">
+        <div class="dense-section-head">
+          <div class="dense-section-title-wrap">
+            <span class="dense-section-icon">${sectionIcon(isDevice?section:'Accessoires')}</span>
+            <div>
+              <div class="dense-section-title">${esc(section)}</div>
+              <div class="dense-section-count">${arr.length} artikel${arr.length===1?'':'en'}</div>
             </div>
-            <button class="section-collapse-button" type="button" data-collapse-section="item:${esc(group)}">
-              ${collapsed?'Alles uitklappen':'Alles inklappen'} <span>${collapsed?'⌄':'⌃'}</span>
-            </button>
           </div>
-          <div class="catalog-card-grid product-catalog-grid ${collapsed?'hidden':''}">
-            ${arr.map(it=>{
-              const sel=itemSelected(it.code);
-              const status=sel?.status||state.itemStatuses[it.code]||'Nieuw';
-              return `<article class="product-card-v2 ${sel?'selected':''}">
-                <button class="product-select-surface" type="button" data-item="${esc(it.code)}">
-                  <span class="package-selected-check">✓</span>
-                  <div class="product-name-v2">${esc(it.name)}</div>
-                  <span class="status-badge ${status==='Refurb'?'refurb':''}">${esc(status)}</span>
-                  <div class="product-card-body">
-                    <img src="${iconFor(it.category)}" alt="">
-                    <div>
-                      <div class="product-group-label">${esc(
-                        group==='Tablets'?'Tablet':
-                        group==='Telefoons'?'Telefoon':
-                        group==='Laptops'?'Laptop':
-                        group==='Monitoren'?'Monitor':
-                        group==='Docks'?'Dock':
-                        group==='Opladers'?'Oplader':
-                        group==='Screenprotectors'?'Screenprotector':
-                        group==='Hoezen & cases'?'Hoes / case':
-                        group==='Kabels'?'Kabel':
-                        group==='Toetsenbord & muis'?'Toetsenbord / muis':
-                        group==='Tassen & rugzakken'?'Tas / rugzak':
-                        group==='Headsets & audio'?'Headset / audio':
-                        group==='Netwerk & connectiviteit'?'Netwerk / connectiviteit':
-                        group==='Webcams'?'Webcam':
-                        group==='Montage & houders'?'Montage / houder':
-                        group==='Reiniging'?'Reiniging':
-                        group==='Stylus & Apple Pencil'?'Stylus':
-                        'Accessoire'
-                      )}</div>
-                      <div class="product-code-hint">${esc(it.category)}</div>
-                    </div>
-                  </div>
-                </button>
-                <div class="product-card-footer">
-                  <span>⌄</span> Details
-                  <select class="status-select compact-status" data-status-code="${esc(it.code)}" aria-label="Voorraadstatus">
-                    <option ${status==='Nieuw'?'selected':''}>Nieuw</option>
-                    <option ${status==='Refurb'?'selected':''}>Refurb</option>
-                  </select>
-                </div>
-              </article>`;
-            }).join('')}
-          </div>
-        </section>`;
-      }).join('');
+          <button class="dense-collapse-button" type="button" data-collapse-section="item:${esc(section)}" title="${collapsed?'Uitklappen':'Inklappen'}">
+            ${collapsed?'⌄':'⌃'}
+          </button>
+        </div>
+        <div class="dense-item-list ${collapsed?'hidden':''}">
+          ${arr.map(it=>{
+            const sel=itemSelected(it.code);
+            const status=sel?.status||state.itemStatuses[it.code]||'Nieuw';
+            return `<div class="dense-item-row ${sel?'selected':''}">
+              <button class="dense-item-select" type="button" data-item="${esc(it.code)}" title="Selecteer ${esc(it.name)}">
+                <span class="dense-item-check">✓</span>
+                <img src="${iconFor(it.category)}" alt="">
+                <span class="dense-item-name">${esc(it.name)}</span>
+              </button>
+              <select class="status-select dense-status" data-status-code="${esc(it.code)}" aria-label="Voorraadstatus">
+                <option ${status==='Nieuw'?'selected':''}>Nieuw</option>
+                <option ${status==='Refurb'?'selected':''}>Refurb</option>
+              </select>
+            </div>`;
+          }).join('')}
+        </div>
+      </section>`;
+    }).join('');
 
     document.querySelectorAll('[data-item]').forEach(el=>el.addEventListener('click',()=>toggleItem(el.dataset.item)));
     document.querySelectorAll('[data-status-code]').forEach(el=>{
