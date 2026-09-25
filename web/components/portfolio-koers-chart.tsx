@@ -266,14 +266,22 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
       <summary><span>DATA RECONCILIATION</span><strong>{syncStatus}</strong></summary>
       <div className="pcc-reconciliation-grid">
         <span><small>Exchange positions</small><b>{vm.accountTotal??"—"}</b></span>
+        <span><small>App positions</small><b>{vm.appPositions??"—"}</b></span>
         <span><small>Classified</small><b>{vm.classifiedPositions??"—"}</b></span>
         <span><small>Unclassified / unknown</small><b>{vm.unclassifiedPositions??"—"}</b></span>
         <span><small>Exchange long / short</small><b>{vm.accountLong??"—"} / {vm.accountShort??"—"}</b></span>
         <span><small>Soldiers / non-Soldiers</small><b>{vm.soldiersTotal??"—"} / {vm.nonSoldiersTotal??"—"}</b></span>
         <span><small>Long exposure</small><b>{commandMoney(vm.longExposureUsd)}</b></span>
         <span><small>Short exposure</small><b>{commandMoney(vm.shortExposureUsd)}</b></span>
-        <span><small>Net exposure</small><b>{commandMoney(Math.abs(Number(vm.netExposureUsd)))} {vm.netExposureSide}</b></span>
+        <span><small>Net exposure</small><b>{vm.netExposureUsd===null||vm.netExposureUsd===undefined?"—":commandMoney(Math.abs(Number(vm.netExposureUsd)))} {vm.netExposureSide}</b></span>
+        <span><small>Equity / Available</small><b>{commandMoney(vm.exchangeEquityUsd)} / {commandMoney(vm.exchangeAvailableUsd)}</b></span>
+        <span><small>Position margin</small><b>{commandMoney(vm.positionInitialMarginUsd)}</b></span>
+        <span><small>Open-order margin</small><b>{commandMoney(vm.openOrderInitialMarginUsd)}</b></span>
+        <span><small>Total initial margin</small><b>{commandMoney(vm.totalInitialMarginUsd)}</b></span>
+        <span><small>Onbeschikbaar kapitaal</small><b>{commandMoney(vm.unavailableCapitalUsd)}</b></span>
+        <span><small>Overig / residual</small><b>{commandMoney(vm.marginResidualUsd)}</b></span>
         <span><small>Exchange / UI Available</small><b>{commandMoney(vm.exchangeAvailableUsd)} / {commandMoney(vm.appAvailableUsd)}</b></span>
+        <span><small>Open orders</small><b>{vm.openOrders??"—"} · {vm.openOrdersFresh?"fresh":"niet bewezen"}</b></span>
         <span><small>Snapshot age</small><b>{commandAge(vm.snapshotAgeMs)}</b></span>
       </div>
       {vm.snapshotId?<code>snapshot {vm.snapshotId}</code>:null}
