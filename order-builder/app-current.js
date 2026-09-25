@@ -211,6 +211,26 @@
         </div>`;
       document.body.appendChild(wrapper.firstElementChild);
     }
+
+    // Force the intended 3-step workflow, even with cached admin HTML.
+    const topdeskBtn=$('topdeskCopyButton');
+    const orderBtn=$('copyButton');
+    const serialBtn=$('serialCopyButton');
+    if(topdeskBtn){
+      topdeskBtn.innerHTML='<span class="copy-icon">T</span>1. TOPdesk: scan & kopieer';
+    }
+    if(orderBtn){
+      orderBtn.innerHTML='<span class="copy-icon">▣</span>2. Kopieer verkooporderregels';
+    }
+    if(serialBtn){
+      serialBtn.innerHTML='<span class="copy-icon">#</span>3. Kopieer serienummers';
+    }
+
+    const topdeskSection=document.querySelector('.topdesk-export');
+    const dynamicsSection=document.querySelector('.dynamics-export');
+    if(topdeskSection && dynamicsSection && dynamicsSection.parentNode){
+      dynamicsSection.parentNode.insertBefore(topdeskSection,dynamicsSection);
+    }
   }
 
   function bindTopdeskUi(){
@@ -281,7 +301,6 @@
     }else{
       state.packages.push({index,qty:1,serialsByCode:{}});
       save(); render();
-      setTimeout(()=>startMissingSerialScan(false),0);
     }
   }
   function toggleItem(code){
@@ -292,7 +311,6 @@
     }else{
       state.items.push({code,qty:1,status:state.itemStatuses[code]||'Nieuw',serials:[]});
       save(); render();
-      setTimeout(()=>startMissingSerialScan(false),0);
     }
   }
   function setCatalogStatus(code,status){
@@ -325,7 +343,6 @@
       }
     }
     save(); render();
-    if(delta>0) setTimeout(()=>startMissingSerialScan(false),0);
   }
   function removeSelection(kind,key){
     const arr=kind==='package'?state.packages:state.items;
@@ -502,10 +519,10 @@
       $('serialCopyButton').classList.remove('hidden');
       $('serialCopyButton').disabled=serialRows.length===0;
       $('serialCopyButton').textContent=serialRows.length===0
-        ? '2. Kopieer serienummers'
+        ? '3. Kopieer serienummers'
         : serialRows.length===1
-          ? '2. Kopieer serienummer (1)'
-          : `2. Kopieer serienummers (${serialRows.length})`;
+          ? '3. Kopieer serienummer (1)'
+          : `3. Kopieer serienummers (${serialRows.length})`;
     }
   }
 
@@ -1282,10 +1299,6 @@
   }
   function closeTicketModal(){
     $('ticketPasteModal')?.classList.add('hidden');
-    setTimeout(()=>{
-      rebuildMissingSerialQueue();
-      if(serialScanQueue.length) openNextSerialScan();
-    },0);
   }
 
   let packageDraftRows=[];
@@ -1504,8 +1517,8 @@
     await writeClipboard(txt);
     const serialCount=rows.filter(r=>r.serial).length;
     toast(serialCount
-      ? `${rows.length} Dynamics-orderregels gekopieerd · plak nu in F&O, daarna stap 2`
-      : `${rows.length} Dynamics-orderregels gekopieerd · plak nu in F&O`);
+      ? `${rows.length} verkooporderregels gekopieerd · plak nu in Dynamics, daarna stap 3`
+      : `${rows.length} verkooporderregels gekopieerd · plak nu in Dynamics`);
   }
 
   async function copySerialNumbers(){
