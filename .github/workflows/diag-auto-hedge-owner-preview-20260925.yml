@@ -78,19 +78,69 @@ jobs:
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
-          TOKEN="$(gcloud auth print-access-token)"
-          curl --fail --silent --show-error \
-            -H "Authorization: Bearer $TOKEN" \
-            "https://firestore.googleapis.com/v1/projects/$GCP_PROJECT_ID/databases/(default)/documents/systemStatus/autoHedgeOwnerPreview" \
-            > "$RUNNER_TEMP/firestore.json"
-          python - "$MARKER" "$RUNNER_TEMP/firestore.json" <<'PY'
-          import json,sys
-          marker=sys.argv[1]
-          doc=json.load(open(sys.argv[2],encoding='utf-8'))
-          fields=doc.get('fields') or {}
-          got=(fields.get('marker') or {}).get('stringValue','')
-          payload=(fields.get('payload') or {}).get('stringValue','')
-          if got!=marker or not payload:
-              raise SystemExit('diagnostic marker mismatch')
-          print(marker+'='+payload)
+          ENCODE_JOB="tm-autohedge-encode-${GITHUB_RUN_ID: -7}"
+          cleanup2(){ gcloud run jobs delete "$ENCODE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap 'cleanup2; cleanup' EXIT
+          ENCODE_B64="$(base64 -w0 <<'PY'
+          import base64,json,os,zlib
+          from google.cloud import firestore
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
+          db=firestore.Client(project='tradementor-production')
+          doc=db.collection('systemStatus').document('autoHedgeOwnerPreview').get().to_dict() or {}
+          payload=json.loads(str(doc.get('payload') or '{}'))
+          compact={
+            'thresholdUsd':payload.get('thresholdUsd'),
+            'positionCount':payload.get('positionCount'),
+            'longCount':payload.get('longCount'),
+            'shortCount':payload.get('shortCount'),
+            'dynamicHedgeEnabled':payload.get('dynamicHedgeEnabled'),
+            'storedAutoHedgeEnabled':payload.get('storedAutoHedgeEnabled'),
+            'storedThresholdUsd':payload.get('storedThresholdUsd'),
+            'eligibleCount':payload.get('eligibleCount'),
+            'needsHedgeCount':payload.get('needsHedgeCount'),
+            'actions':[
+              [a.get('symbol'),a.get('triggerSide'),round(float(a.get('triggerOpenPnl') or 0),4),
+               a.get('losingSideQty'),a.get('existingOppositeQty'),a.get('pendingOppositeQty'),
+               a.get('requiredDelta'),a.get('status')]
+              for a in payload.get('actions',[])
+            ],
+          }
+          encoded=base64.b85encode(zlib.compress(json.dumps(compact,separators=(',',':')).encode(),9))
+          alphabet=base64._b85alphabet
+          if idx>=len(encoded): raise SystemExit(0)
+          raise SystemExit(alphabet.index(encoded[idx:idx+1])+1)
+          PY
+          )"
+          gcloud run jobs deploy "$ENCODE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$ENCODE_B64'))" --tasks 1024 --parallelism 100 --max-retries 0 --task-timeout 90s --quiet
+          set +e
+          gcloud run jobs execute "$ENCODE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$ENCODE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/tasks.json"
+          python - "$RUNNER_TEMP/tasks.json" <<'PY'
+          import base64,json,sys,zlib
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          values=[]
+          for row in rows:
+              idx=row.get('index')
+              if not isinstance(idx,int): continue
+              codes=[]
+              def walk(v):
+                  if isinstance(v,dict):
+                      for k,x in v.items():
+                          if k=='exitCode' and isinstance(x,int): codes.append(x)
+                          else: walk(x)
+                  elif isinstance(v,list):
+                      for x in v: walk(x)
+              walk(row)
+              values.append((idx,codes[0] if codes else -1))
+          values.sort()
+          alphabet=base64._b85alphabet
+          out=bytearray()
+          for idx,code in values:
+              if code<=0: break
+              if code>len(alphabet): raise SystemExit(f'invalid encoded exit code {code} at {idx}')
+              out.extend(alphabet[code-1:code])
+          decoded=json.loads(zlib.decompress(base64.b85decode(bytes(out))).decode())
+          print('AUTO_HEDGE_OWNER_RESULT='+json.dumps(decoded,separators=(',',':'),sort_keys=True))
           PY
