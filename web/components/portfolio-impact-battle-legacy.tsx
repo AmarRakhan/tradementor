@@ -415,8 +415,8 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
   const timeframeLabel = TIMEFRAMES.find((item) => item.id === timeframe)?.label ?? timeframe;
   const visiblePrice = livePrice && livePrice > 0 ? livePrice : bollinger?.price ?? 0;
   const pressureCaption = bollinger
-    ? `BTCUSDT · ${timeframeLabel} · BOLLINGER ${scoreNumber.format(targetScore)}%${visiblePrice > 0 ? ` · $${money.format(visiblePrice)}` : ""}`
-    : pressureError ? "BTC BOLLINGER TIJDELIJK ONBESCHIKBAAR" : "BTC BOLLINGER";
+    ? `MARKTDRUK · GEEN P&L-VERDELING · BTCUSDT · ${timeframeLabel} · BOLLINGER ${scoreNumber.format(targetScore)}%${visiblePrice > 0 ? ` · ${money.format(visiblePrice)}` : ""}`
+    : pressureError ? "MARKTDRUK · BTC BOLLINGER TIJDELIJK ONBESCHIKBAAR" : "MARKTDRUK · BTC BOLLINGER";
   const impactPosition = 50 + (displayLongShare - 50) * 0.10;
   const visualIntensity = Math.min(1, 0.28 + Math.abs(displayLongShare - 50) / 50 * 1.18);
   const visualStyle = { "--long-share": `${displayLongShare}%`, "--impact-x": `${impactPosition}%`, "--battle-intensity": visualIntensity } as React.CSSProperties;
@@ -432,7 +432,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
       data-bollinger-score={targetScore.toFixed(3)} data-visual-long-share={displayLongShare.toFixed(3)} data-target-long-share={targetScore.toFixed(3)}
       data-timeframe={timeframe} data-updated-at={livePriceAt ?? bollinger?.updatedAt ?? updatedAt ?? ""} data-video-ready={videoReady ? "true" : "false"} data-video-failed={videoFailed ? "true" : "false"}
       data-market-live={marketConnected ? "true" : "false"} data-playback-direction={activeDirection}
-      aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(netPnl, true)}. BTC Bollinger ${scoreNumber.format(targetScore)} procent. ${pressureStatus}.`}>
+      aria-label={`Portfolio impact. Long open P&L ${formatUsd(snapshot.longPnl, true)}, short open P&L ${formatUsd(snapshot.shortPnl, true)}, netto ${formatUsd(netPnl, true)}. De percentages onderaan zijn BTC Bollinger-marktdruk en geen verdeling van open P&L. BTC Bollinger ${scoreNumber.format(targetScore)} procent. ${pressureStatus}.`}>
       <img className={videoStyles.poster} src={POSTER_SOURCE} alt="" aria-hidden="true" />
       {!forwardFailed ? <>
         <video ref={forwardVideoRef} className={`${videoStyles.video} ${forwardReady ? videoStyles.videoReady : ""} ${activeDirection === "forward" ? videoStyles.videoActive : videoStyles.videoInactive}`} src={MASTER_SOURCE} poster={POSTER_SOURCE}
@@ -454,7 +454,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
         <div className={`${styles.sidePanel} ${styles.shortPanel}`}><div className={styles.sideTitle}><i>↘</i><span>SHORTS</span></div><small>Open P&amp;L</small><strong className={tone(snapshot.shortPnl)}>{formatUsd(snapshot.shortPnl, true)}</strong><em className={tone(snapshot.shortPnl)}>{formatPercent(shortPercent)}</em><span className={styles.positionCount}>{snapshot.shorts.length} posities</span></div>
       </>}
 
-      <div className={styles.battleFooter}><div className={styles.status}>{pressureStatus}</div><div className={styles.balanceRow}><div className={`${styles.share} ${styles.longShare}`}><strong>{formatShare(displayLongShare)}%</strong></div><div className={styles.balanceTrack} aria-hidden="true"><div className={styles.longFill} /><div className={styles.shortFill} /><i /></div><div className={`${styles.share} ${styles.shortShare}`}><strong>{formatShare(displayShortShare)}%</strong></div></div><div className={styles.barCaption}>{pressureCaption}</div></div>
+      <div className={styles.battleFooter}><div className={styles.status}>MARKTDRUK · {pressureStatus}</div><div className={styles.balanceRow}><div className={`${styles.share} ${styles.longShare}`}><strong>{formatShare(displayLongShare)}%</strong></div><div className={styles.balanceTrack} aria-hidden="true"><div className={styles.longFill} /><div className={styles.shortFill} /><i /></div><div className={`${styles.share} ${styles.shortShare}`}><strong>{formatShare(displayShortShare)}%</strong></div></div><div className={styles.barCaption}>{pressureCaption}</div></div>
     </section>
   </div>;
 }
