@@ -86,16 +86,22 @@ test("Build 430 exposes account scope and reconciliation without confusing zone 
     actualLong:66,actualShort:43,
     reconciliation:{
       status:"SYNCED",liveDataStatus:"LIVE",snapshotId:"abc123",snapshotAgeMs:700,
-      exchangePositions:109,exchangeLong:66,exchangeShort:43,soldiersTotal:30,nonSoldiersTotal:79,
+      exchangePositions:109,appPositions:109,exchangeLong:66,exchangeShort:43,soldiersTotal:30,nonSoldiersTotal:79,
       classifiedPositions:109,unclassifiedPositions:0,
       categories:{soldiersCurrentZone:6,soldiersOldZones:24,legacyAster:79,unknown:0},
       longExposureUsd:1037,shortExposureUsd:1759,netExposureUsd:-722,netExposureSide:"SHORT",
       hedgeCoveragePercent:169.624,
-      margin:{availableUsd:26.5},
+      margin:{
+        equityUsd:122.79,availableUsd:26.5,unavailableCapitalUsd:96.29,
+        activeTradeCapitalUsd:95.45,totalInitialMarginUsd:96.29,
+        positionInitialMarginUsd:95.45,openOrderInitialMarginUsd:.84,
+        otherOrResidualUsd:0,openOrders:1,openOrdersFresh:true,
+      },
     },
   });
   assert.equal(vm.totalZoneSeats,6);
   assert.equal(vm.accountTotal,109);
+  assert.equal(vm.appPositions,109);
   assert.equal(vm.accountLong,66);
   assert.equal(vm.accountShort,43);
   assert.equal(vm.soldiersTotal,30);
@@ -103,6 +109,14 @@ test("Build 430 exposes account scope and reconciliation without confusing zone 
   assert.equal(vm.soldierCurrentZone,6);
   assert.equal(vm.soldierOldZones,24);
   assert.equal(vm.netExposureUsd,-722);
+  assert.equal(vm.exchangeEquityUsd,122.79);
+  assert.equal(vm.exchangeAvailableUsd,26.5);
+  assert.equal(vm.positionInitialMarginUsd,95.45);
+  assert.equal(vm.openOrderInitialMarginUsd,.84);
+  assert.equal(vm.totalInitialMarginUsd,96.29);
+  assert.equal(vm.marginResidualUsd,0);
+  assert.equal(vm.openOrders,1);
+  assert.equal(vm.openOrdersFresh,true);
   assert.equal(vm.reconciliationStatus,"SYNCED");
   assert.equal(vm.liveDataStatus,"LIVE");
 });
