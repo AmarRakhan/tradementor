@@ -1620,7 +1620,7 @@
     const rows=expandedRows();
     if(!rows.length){toast('Selecteer eerst een pakket of artikel');return;}
 
-    // Voor TOPdesk mogen serienummerplichtige artikelen nooit zonder SN worden gekopieerd.
+    // Eerst alle verplichte serienummers verzamelen.
     rebuildMissingSerialQueue();
     if(serialScanQueue.length){
       topdeskAfterSerialScan=true;
@@ -1628,9 +1628,53 @@
       return;
     }
 
-    const txt=topdeskLines().join('\n');
+    // Bouw TOPdesk-tekst hier rechtstreeks op.
+    // Pakketaccessoires worden NOOIT uitgeschreven.
+    const lines=[];
+
+    state.packages.forEach(sel=>{
+      const pkg=data.packages[sel.index];
+      if(!pkg)return;
+
+      for(let n=0;n<sel.qty;n++){
+        lines.push(`Pakket: ${pkg.name}`);
+
+        const excluded=new Set(sel.excludedCodes||[]);
+        pkg.items.filter(it=>!excluded.has(it.code)).forEach(it=>{
+          const serials=((sel.serialsByCode||{})[it.code]||[]);
+          const perPackageQty=(it.qty||1);
+
+          for(let q=0;q<perPackageQty;q++){
+            const serial=serials[n*perPackageQty+q]||'';
+            if(!serial) continue;
+
+            const info=orderItemInfo(it.code,it.label);
+            lines.push(`- ${info.name||it.label} | serienummer: ${serial}`);
+          }
+        });
+
+        if((sel.excludedCodes||[]).some(code=>code==='MD3J4ZM/A'||code==='MHJE3ZM/A')){
+          lines.push('- zonder 20W-lader');
+        }
+
+        lines.push('');
+      }
+    });
+
+    // Losse artikelen blijven wel als losse regel zichtbaar.
+    state.items.forEach(sel=>{
+      const info=orderItemInfo(sel.code);
+      for(let q=0;q<sel.qty;q++){
+        const serial=(sel.serials||[])[q]||'';
+        lines.push(`1x ${info.name}${serial?' | serienummer: '+serial:''}`);
+      }
+    });
+
+    while(lines.length && !lines[lines.length-1]) lines.pop();
+
+    const txt=lines.join('\n');
     await writeClipboard(txt);
-    toast('TOPdesk-tekst gekopieerd · plak dit alleen in TOPdesk');
+    toast('TOPdesk-tekst gekopieerd · alleen pakketnaam + serienummers');
   }
 
   function renderCounts(){
