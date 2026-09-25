@@ -328,3 +328,9 @@ button{cursor:pointer}
 .topdesk-copy-button{background:linear-gradient(180deg,#6b46c1,#553c9a)}
 .topdesk-warning{margin-top:7px;padding:7px 8px;border-radius:7px;background:#fff1f1;color:#a12626;font-size:10.5px;font-weight:800;line-height:1.35}
 .dynamics-export .copy-help{padding:0;margin-top:6px}
+
+.serial-inline-wrap{display:grid;gap:5px;margin-top:7px}
+.serial-inline-field{display:grid;grid-template-columns:minmax(0,1fr) 128px;gap:6px;align-items:center}
+.serial-inline-field span{font-size:9.8px;color:#607b9b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.serial-inline-field input{height:27px;border:1px solid #b9cee4;border-radius:6px;padding:0 7px;font-size:10.5px;font-weight:750;color:#173c69;text-transform:uppercase;background:#fff}
+.serial-inline-field input:focus{outline:0;border-color:#0b7cff;box-shadow:0 0 0 2px rgba(11,124,255,.10)}
