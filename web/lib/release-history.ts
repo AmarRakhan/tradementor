@@ -26,36 +26,72 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-25",
-  title: "Friends · tab opent nu direct",
+  title: "Soldiers · accountreconciliatie en uitlegbare margin",
   newItems: [
-    "FRIENDS vervangt nu direct de onderliggende Aster-content zodra de Friends-route actief wordt.",
+    "Zone-Soldaten gebruikt voor entry-prioriteit nu één accountbrede exchange-exposurebron, inclusief legacy en nog niet aan Strategy-2 toegewezen posities.",
+    "Het owner-only Command Center toont afzonderlijk huidige zoneformatie, totaal Soldiers, overige accountposities en accounttotaal.",
+    "Nieuwe DATA RECONCILIATION en runtime instroombudget-diagnostiek maken positie-, exposure-, snapshot- en Available-afwijkingen zichtbaar.",
   ],
   problems: [
-    "De FRIENDS-knop werd visueel actief, maar op mobiel bleef de Aster-pagina zichtbaar.",
+    "De Soldiers-balancer kon exposure berekenen over alleen Strategy-2 managed state terwijl Portfolio Snapshot accountbrede posities liet zien.",
+    "De UI kon 'onvoldoende Available' tonen zonder de exacte runtime marginberekening te laten zien.",
+    "De Bull/Bear-percentages onder Portfolio Impact konden ten onrechte worden gelezen als verdeling van open P&L.",
   ],
   causes: [
-    "De Friends-route werd correct actief, maar de content-isolatie week af van het bewezen globale bridge-patroon van HOME, MARKETS en SNIPER.",
+    "Ownership-classificatie en account-exposure waren in de zone-runtime aan elkaar gekoppeld.",
+    "Command Center schatte instroombudget zelfstandig in de frontend.",
+    "De Portfolio Impact-footer labelde Bollinger-marktdruk niet expliciet als een andere metriek dan open P&L.",
   ],
   fixes: [
-    "Friends krijgt een dedicated globale friends-bridge.css met dezelfde directe-child hide/show-constructie als de bestaande werkende hoofdviews.",
-    "De Friends-portal gebruikt een vaste globale .friends-portal klasse en krijgt expliciet een eigen stacking context.",
-    "Op mobiel wordt de content-padding tijdens Friends net als bij MARKETS expliciet geneutraliseerd.",
-    "Regressietests controleren de globale bridge-selector, layout-import en portalclass.",
+    "Canonical account exposure wordt rechtstreeks uit alle actuele exchange-posities berekend; ownership blijft uitsluitend classificatie/provenance.",
+    "Backend publiceert snapshotId, reconciliationstatus, positieclassificatie, exposure en exchange-margincomponenten uit dezelfde status-snapshot.",
+    "De echte runtime entry-guard publiceert Available, initial margin, safety buffer, vereist totaal en tekort; de UI maakt geen eigen canOpenSoldier-beslissing meer.",
+    "Portfolio Snapshot toont LIVE alleen bij een gezonde, verse reconciliation; anders STALE, DEGRADED of DATA MISMATCH.",
+    "Portfolio Impact benoemt de onderste percentages expliciet als MARKTDRUK · GEEN P&L-VERDELING.",
   ],
   now: [
-    "Tik op FRIENDS opent de Friends-pagina direct op dezelfde plek waar Aster stond.",
-    "Geen wijziging aan Friends-data, backend, Aster/Sniper trading, DCA, TP/SL, ownership of orders.",
+    "De actieve 3L/3S-zoneformatie wordt expliciet als huidige zone en niet als accounttotaal gepresenteerd.",
+    "Onbekende posities blijven zichtbaar als UNKNOWN in plaats van stil te verdwijnen.",
+    "Na een bevestigde entry blijft de bestaande verse exchange-refresh de volgende zone-exposure opnieuw berekenen.",
   ],
-  before: "Build 428 activeerde de Friends-route wel, maar de Aster-content bleef op het live mobiele scherm zichtbaar.",
-  after: "Build 429 corrigeert uitsluitend de Friends presentatielaag.",
+  before: "Build 429 herstelde de Friends-portal; Soldiers exposure en dashboarddiagnostiek konden nog verschillende scopes gebruiken.",
+  after: "Build 430 maakt exposure, margin, positieherkomst en datafreshness expliciet reconcilieerbaar zonder onbewezen tradingwijzigingen.",
   technicalDetails: [
-    "Gebruikersbewijs: screenshot file_0000000037e082468affa793000ef949 toont FRIENDS actief terwijl Aster-content zichtbaar blijft.",
-    "Implementatieverschil bevestigd: Friends miste de dedicated globale bridge-CSS die de bestaande werkende portalviews gebruiken.",
+    "AccountExposureSnapshot scope: ALL_EXCHANGE_POSITIONS.",
+    "Margincontract bevat totalInitialMargin, positionInitialMargin, openOrderInitialMargin, unavailableCapital en residual.",
+    "Geen deployment of live-accountorder is onderdeel van de codewijziging zelf; live verificatie volgt pas na gecontroleerde release.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-429-friends-portal-hotfix",
+    version: "46",
+    build: "429",
+    releasedAt: "2026-09-25",
+    title: "Friends · tab opent nu direct",
+    newItems: [
+      "FRIENDS vervangt nu direct de onderliggende Aster-content zodra de Friends-route actief wordt.",
+    ],
+    problems: [
+      "De FRIENDS-knop werd visueel actief, maar op mobiel bleef de Aster-pagina zichtbaar.",
+    ],
+    causes: [
+      "De Friends-route werd correct actief, maar de content-isolatie week af van het bewezen globale bridge-patroon van HOME, MARKETS en SNIPER.",
+    ],
+    fixes: [
+      "Friends kreeg een dedicated globale friends-bridge.css met dezelfde directe-child hide/show-constructie als de bestaande werkende hoofdviews.",
+      "De Friends-portal gebruikt een vaste globale .friends-portal klasse en een expliciete eigen stacking context.",
+    ],
+    now: [
+      "Tik op FRIENDS opent de Friends-pagina direct op dezelfde plek waar Aster stond.",
+      "Geen wijziging aan Friends-data, backend, Aster/Sniper trading, DCA, TP/SL, ownership of orders.",
+    ],
+    before: "Build 428 activeerde de Friends-route wel, maar de Aster-content bleef op het live mobiele scherm zichtbaar.",
+    after: "Build 429 corrigeerde uitsluitend de Friends-presentatielaag.",
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-428-friends-community",
     version: "46",
