@@ -475,25 +475,132 @@
     };
   }
 
-  function displayItemGroup(category,name=''){
+  function displayItemGroup(category,name='',code=''){
     const cat=normalizeSmartText(category);
     const nm=normalizeSmartText(name);
-    if(cat.includes('laptop') || nm.includes('elitebook') || nm.includes('zbook') || nm.includes('laptop')) return 'Laptops';
+
+    // UI-CATEGORISATIE: specifieke accessoiretypes winnen ALTIJD van woorden
+    // als iPhone, iPad, laptop, ZBook, etc. in de productnaam.
+    if(
+      cat.includes('oplader') ||
+      nm.includes('adapter') && (
+        nm.includes('20w') || nm.includes('65w') || nm.includes('230w') ||
+        nm.includes('charger') || nm.includes('travel charger') || nm.includes('fast adapter')
+      ) ||
+      nm.includes('lader') ||
+      nm.includes('charger')
+    ) return 'Opladers';
+
+    if(
+      nm.includes('screenprotector') ||
+      nm.includes('screen protector') ||
+      nm.includes('tempered glass') ||
+      nm.includes('nuglas') ||
+      nm.includes('glasss')
+    ) return 'Screenprotectors';
+
+    if(
+      nm.includes('case') ||
+      nm.includes('hoes') ||
+      nm.includes('folio') ||
+      nm.includes('cover') ||
+      nm.includes('rugged') ||
+      nm.includes('tri fold') ||
+      nm.includes('tri-fold')
+    ) return 'Hoezen & cases';
+
+    if(
+      nm.includes('kabel') ||
+      nm.includes('cable') ||
+      nm.includes('datacable') ||
+      nm.includes('chargecable') ||
+      nm.includes('lightning')
+    ) return 'Kabels';
+
+    if(
+      cat.includes('toetsenbord') ||
+      cat.includes('muizen') ||
+      nm.includes('mouse') ||
+      nm.includes('muis') ||
+      nm.includes('keyboard') ||
+      nm.includes('kbd') ||
+      nm.includes('logitech lift')
+    ) return 'Toetsenbord & muis';
+
+    if(
+      cat.includes('laptoptassen') ||
+      cat.includes('rugtas') ||
+      nm.includes('backpack') ||
+      nm.includes('bag') ||
+      nm.includes('dicota')
+    ) return 'Tassen & rugzakken';
+
+    if(
+      cat.includes('headset') ||
+      nm.includes('headset') ||
+      nm.includes('voyager') ||
+      nm.includes('oorkussen')
+    ) return 'Headsets & audio';
+
+    if(
+      nm.includes('webcam') ||
+      nm.includes('brio')
+    ) return 'Webcams';
+
+    if(
+      nm.includes('bureausteun') ||
+      nm.includes('monitor arm') ||
+      nm.includes('monitorarm')
+    ) return 'Montage & houders';
+
+    if(
+      nm.includes('cleaning') ||
+      nm.includes('clean ') ||
+      nm.includes('air duster') ||
+      nm.includes('isopropyl') ||
+      nm.includes('surface cleaning')
+    ) return 'Reiniging';
+
+    if(
+      nm.includes('rj45') ||
+      nm.includes('ethernet') ||
+      nm.includes('hub') ||
+      nm.includes('huawei e3372') ||
+      nm.includes('screencast') ||
+      nm.includes('wireless display adapter')
+    ) return 'Netwerk & connectiviteit';
+
+    if(
+      code==='MUWA3ZM/A' ||
+      nm.includes('apple pencil')
+    ) return 'Stylus & Apple Pencil';
+
+    // Volwaardige apparaten pas NA alle accessoiretypes categoriseren.
+    if(
+      cat==='laptops' ||
+      /^hp elitebook\b/.test(nm) ||
+      /^hp zbook\b/.test(nm)
+    ) return 'Laptops';
+
     if(cat.includes('monitor')) return 'Monitoren';
     if(cat.includes('dock')) return 'Docks';
+
     if(
-      cat==='telefoons' ||
-      (cat.includes('telefoons') && (
-        /^apple iphone\b/.test(nm) || /^iphone\s*\d/.test(nm) || nm.includes('xcover')
-      ))
+      /^apple iphone\b/.test(nm) ||
+      /^iphone\s*\d/.test(nm) ||
+      nm.includes('samsung xcover') ||
+      code==='PM90G6Y04DFE0C' ||
+      code==='PM95'
     ) return 'Telefoons';
+
     if(
-      cat==='ipads' ||
-      nm.startsWith('ipad') ||
-      nm.startsWith('apple ipad') ||
-      nm.includes('samsung tab')
+      /^apple ipad\b/.test(nm) ||
+      /^ipad\s*\d/.test(nm) ||
+      nm.includes('samsung tab') ||
+      nm.includes('remarkable')
     ) return 'Tablets';
-    return 'Accessoires';
+
+    return 'Overige accessoires';
   }
 
   function sectionIcon(group){
@@ -501,7 +608,19 @@
       group==='Telefoons'?'📱':
       group==='Tablets'?'▤':
       group==='Monitoren'?'🖥️':
-      group==='Docks'?'▰':'⬡';
+      group==='Docks'?'▰':
+      group==='Opladers'?'🔌':
+      group==='Screenprotectors'?'▤':
+      group==='Hoezen & cases'?'▣':
+      group==='Kabels'?'🔗':
+      group==='Toetsenbord & muis'?'⌨️':
+      group==='Tassen & rugzakken'?'💼':
+      group==='Headsets & audio'?'🎧':
+      group==='Netwerk & connectiviteit'?'⌁':
+      group==='Webcams'?'◉':
+      group==='Montage & houders'?'⌑':
+      group==='Reiniging'?'✦':
+      group==='Stylus & Apple Pencil'?'✎':'⬡';
   }
 
   function toggleCatalogSection(key){
@@ -634,10 +753,16 @@
     const list=filteredItems();
     $('itemsEmpty').classList.toggle('hidden',list.length>0);
 
-    const order=['Laptops','Telefoons','Tablets','Monitoren','Docks','Accessoires'];
+    const order=[
+      'Laptops','Telefoons','Tablets','Monitoren','Docks',
+      'Opladers','Screenprotectors','Hoezen & cases','Kabels',
+      'Toetsenbord & muis','Tassen & rugzakken','Headsets & audio',
+      'Netwerk & connectiviteit','Webcams','Montage & houders',
+      'Reiniging','Stylus & Apple Pencil','Overige accessoires'
+    ];
     const grouped=new Map(order.map(x=>[x,[]]));
     list.forEach(it=>{
-      const group=displayItemGroup(it.category,it.name);
+      const group=displayItemGroup(it.category,it.name,it.code);
       if(!grouped.has(group)) grouped.set(group,[]);
       grouped.get(group).push(it);
     });
@@ -669,7 +794,26 @@
                   <div class="product-card-body">
                     <img src="${iconFor(it.category)}" alt="">
                     <div>
-                      <div class="product-group-label">${esc(group==='Tablets'?'Tablet':group==='Telefoons'?'Telefoon':group.slice(0,-1)||group)}</div>
+                      <div class="product-group-label">${esc(
+                        group==='Tablets'?'Tablet':
+                        group==='Telefoons'?'Telefoon':
+                        group==='Laptops'?'Laptop':
+                        group==='Monitoren'?'Monitor':
+                        group==='Docks'?'Dock':
+                        group==='Opladers'?'Oplader':
+                        group==='Screenprotectors'?'Screenprotector':
+                        group==='Hoezen & cases'?'Hoes / case':
+                        group==='Kabels'?'Kabel':
+                        group==='Toetsenbord & muis'?'Toetsenbord / muis':
+                        group==='Tassen & rugzakken'?'Tas / rugzak':
+                        group==='Headsets & audio'?'Headset / audio':
+                        group==='Netwerk & connectiviteit'?'Netwerk / connectiviteit':
+                        group==='Webcams'?'Webcam':
+                        group==='Montage & houders'?'Montage / houder':
+                        group==='Reiniging'?'Reiniging':
+                        group==='Stylus & Apple Pencil'?'Stylus':
+                        'Accessoire'
+                      )}</div>
                       <div class="product-code-hint">${esc(it.category)}</div>
                     </div>
                   </div>
