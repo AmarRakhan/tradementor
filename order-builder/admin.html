@@ -69,7 +69,7 @@
       <aside class="order-panel" aria-label="Geselecteerde order">
         <div class="order-head">
           <div class="order-title"><span class="cart-icon">🛒</span>Geselecteerde order</div>
-          <button id="clearOrder" class="clear-link" type="button">♙ Alles wissen</button>
+          <button id="clearOrder" class="clear-link" type="button">▱ Alles verwijderen</button>
         </div>
         <div id="orderCountLabel" class="order-count-label">Nog niets geselecteerd</div>
         <div id="orderList" class="order-list"></div>
@@ -82,6 +82,16 @@
         <div id="packageContents" class="package-contents hidden">
           <div class="section-title">Gecombineerde inhoud <span id="expandedCount"></span></div>
           <div id="combinedRows" class="combined-rows"></div>
+        </div>
+
+        <div class="order-note-card">
+          <label for="orderNote">Notitie <span>(optioneel)</span></label>
+          <textarea id="orderNote" rows="3" placeholder="Voeg een notitie toe aan deze order..."></textarea>
+        </div>
+
+        <div class="order-grand-total">
+          <span>Totaal aantal artikelen</span>
+          <strong id="orderGrandTotal">0</strong>
         </div>
 
         <div class="order-summary">
