@@ -120,7 +120,11 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     row = data or _current(uid)
     enabled = row.get("enabled") is True
     operational = enabled and WORKER_ENABLED and EXECUTION_ENABLED
-    pairs = sorted((_serialize(value) for value in _pair_states(uid).values()), key=_pair_sort_key)
+    pairs = sorted(
+        (_serialize(value) for value in _pair_states(uid).values()
+         if str(value.get("status", "")).upper() != "CLOSED"),
+        key=_pair_sort_key,
+    )
     report = row.get("lastReport") if isinstance(row.get("lastReport"), dict) else None
     preview = []
     if report and str(report.get("mode", "")).upper() == "SHADOW":
@@ -676,16 +680,24 @@ def put_position_loss_auto_hedge_rehedge(
     status = str(current.get("status", "")).upper()
     if status not in RECOVERY_STATUSES:
         raise HTTPException(409, "Opnieuw hedgen is alleen beschikbaar voor een recoverypositie")
+    if request.enabled and _current(uid).get("enabled") is not True:
+        raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je deze recovery opnieuw bewapent")
+    if request.enabled and _dynamic_hedge_enabled(uid):
+        raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
     now = datetime.now(timezone.utc)
+    next_status = (
+        "REHEDGE_ARMED" if request.enabled
+        else ("DISABLED" if current.get("rehedgeEnabled") is True or status == "REHEDGE_ARMED" else "RECOVERY")
+    )
     ref.set({
         "rehedgeEnabled": bool(request.enabled),
-        "status": "REHEDGE_ARMED" if request.enabled else "RECOVERY",
+        "status": next_status,
         "updatedAt": now,
     }, merge=True)
     _audit(uid, {
         "symbol": normalized,
         "pairCycleId": str(current.get("generationId", "")),
-        "resultingStatus": "REHEDGE_ARMED" if request.enabled else "RECOVERY",
+        "resultingStatus": next_status,
         "reason": "USER_REHEDGE_ENABLED" if request.enabled else "USER_REHEDGE_DISABLED",
     })
     report = _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
