@@ -697,7 +697,6 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       : activeZone===null
         ? "Portfoliozone wordt berekend"
         : `Portfolio bevindt zich momenteel in Z${signedZone(activeZone)}`;
-  const biasLabel=zoneSoldierEnabled?(balancerSide?`BALANSER ${balancerSide}`:"ZONE-STURING ACTIEF"):zoneSoldierLifecycle==="DRAINING"?"ZONE DRAINING":"INFORMATIEF";
   const upperTrigger=zoneContext?.upperBoundary??null;
   const lowerTrigger=zoneContext?.lowerBoundary??null;
   const nextUpIndex=zoneContext?.nextUpIndex??null;
@@ -794,7 +793,12 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     <header className="portfolio-koers-header">
       <div className="portfolio-koers-heading">
         <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={payload.live?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{payload.live?"Live":"Sync"}</span></div>
-        <small>Totale portfolio waarde (USDT)</small><span className="portfolio-koers-context">{timeframe} candles · {timeframe} zones · BB 20,2</span>
+        <small>{viewMode==="performance"?"Performance · cashflow gecorrigeerd":"Accountwaarde · werkelijke Aster equity"}</small>
+        <span className="portfolio-koers-context">{viewMode==="performance"?`${timeframe} performance · stortingen/opnames apart`:`${timeframe} candles · strategyzones · BB 20,2`}</span>
+        <div className="portfolio-koers-view-toggle" role="group" aria-label="Portfolio Koers weergave">
+          <button type="button" className={viewMode==="performance"?"active":""} onClick={()=>setViewMode("performance")}>PERFORMANCE</button>
+          <button type="button" className={viewMode==="account"?"active":""} onClick={()=>setViewMode("account")}>ACCOUNTWAARDE</button>
+        </div>
       </div>
       <div className="portfolio-koers-toolbar" role="group" aria-label="Portfolio Koers timeframe">
         {PORTFOLIO_KOERS_TIMEFRAMES.map((value)=><button type="button" key={value} className={timeframe===value?"active":""} onClick={()=>setTimeframe(value)}>{value}</button>)}
@@ -804,14 +808,14 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     <div className="portfolio-koers-stage">
       <div ref={canvasRef} className="portfolio-koers-canvas"/>
       {recentChartGap?<div className="portfolio-koers-gap-warning" role="status">⚠ Historiegat {clockTime(recentChartGap.fromTime)}–{clockTime(recentChartGap.toTime)} · geen koerswaarden verzonnen</div>:null}
-      {activeZone!==null?<div className="portfolio-koers-bias neutral" aria-hidden="true"><b>{biasLabel}</b><span>Z{signedZone(activeZone)}{zoneSoldierEnabled&&zoneBaseLong!==null&&zoneBaseShort!==null?` · ${zoneBaseLong}L / ${zoneBaseShort}S`:""}</span></div>:null}
+      {viewMode==="performance"?<div className="portfolio-koers-performance-note">PERFORMANCE · cashflow gecorrigeerd<span>Strategyzones staan alleen bij Accountwaarde</span></div>:null}
       <div className={`portfolio-koers-zones ${zoneLayout.length?"is-ready":""}`} aria-hidden="true">{zoneLayout.map((zone)=><div key={zone.index} className={`portfolio-koers-zone zone-${zone.tone} ${zoneLevelClass(zone.index)} ${zone.index===activeZone?"active":""}`} style={{top:`${zone.top}px`,height:`${zone.height}px`}}><span>{zone.label}</span></div>)}</div>
       <div className="portfolio-koers-zone-boundaries" aria-hidden="true">{zoneBoundaries.map((boundary,index)=>{const distance=portfolioZoneDistancePercent(boundary.price,currentZonePrice);return <div key={`${boundary.price}-${index}`} className={`portfolio-koers-zone-boundary ${boundary.kind}`} style={{top:`${boundary.top}px`}}>{boundary.kind!=="regular"?<span title={`Exacte grens ${levelUsd(boundary.price)}`}>{boundary.kind==="next-up"?"↑":"↓"} Z{signedZone(boundary.targetIndex)} · {percent2(distance)}</span>:null}</div>})}</div>
-      <div className="portfolio-koers-event-layer" aria-hidden="true">{eventLabels.map((label)=><div key={label.id} className="portfolio-koers-event-group">{!label.compact&&connectorStyle(label)?<i className={`portfolio-koers-connector ${label.tone}`} style={connectorStyle(label)}/>:null}{!label.compact&&Number.isFinite(label.anchorLeft)&&Number.isFinite(label.anchorTop)?<i className={`portfolio-koers-anchor ${label.tone}`} style={{left:`${label.anchorLeft}px`,top:`${label.anchorTop}px`}}/>:null}<div className={`portfolio-koers-event ${label.tone} ${label.position} ${label.compact?"compact":""} ${(label as any).compressed?"compressed":""}`} style={{left:`${label.left}px`,top:`${label.top}px`}}>{label.compact?<b>{label.multiplier||`+${label.eventCount}`}</b>:<><span className="portfolio-koers-event-icon"><b className="portfolio-koers-event-glyph">{label.glyph}</b></span>{label.multiplier?<small className="portfolio-koers-event-badge">{label.multiplier}</small>:null}</>}</div></div>)}</div>
+      <div className="portfolio-koers-event-layer" aria-hidden="true">{eventLabels.map((label)=><div key={label.id} className="portfolio-koers-event-group"><div className={`portfolio-koers-event portfolio-koers-event-chip ${label.tone} ${label.position} ${(label as any).compressed?"compressed":""}`} style={{left:`${label.left}px`,top:`${label.top}px`}}><b>{label.multiplier||`+${label.eventCount}`}</b></div></div>)}</div>
       {loading&&!baseCandles.length?<div className="portfolio-koers-state"><i/>Portfoliohistorie laden…</div>:null}
       {!loading&&!baseCandles.length&&!error?<div className="portfolio-koers-state"><strong>Historie wordt opgebouwd</strong><span>Nieuwe candles gebruiken bevestigde Aster-equity; bestaande bevestigde browserhistorie wordt veilig hergebruikt als die beschikbaar is.</span></div>:null}
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
-      {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b>{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
+      {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span>{viewMode==="performance"?<b>Performance {compactUsd(hover.candle.close-portfolioCashflowShift(combinedMarkers,baseCandles[0]?.time??hover.candle.time,hover.candle.time))}</b>:<><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b></>}{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
     </div>
     {commandCenterTester&&(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle==="DRAINING")?<StrategyCommandCenter vm={commandCenterVm} advisorMessage={advisorMessage}/>:null}
     {!commandCenterTester&&(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle==="DRAINING")?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
