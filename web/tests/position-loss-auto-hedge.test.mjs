@@ -66,7 +66,7 @@ test("Recovery is explicitly user-controlled instead of automatically rehedged i
   const component = await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
   assert.match(component, /rehedgeEnabled/);
   assert.match(component, /setRehedge/);
-  assert.match(component, /recoverypositie weer onder Auto Hedge-bescherming/);
+  assert.match(component, /positie weer onder Auto Hedge-bescherming/);
   assert.match(component, /Opnieuw hedgen voor/);
 });
 
