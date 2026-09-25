@@ -10,6 +10,8 @@ const TILE_REFERENCE = "file_00000000340881f4b05212f7cfd82727";
 const SETTINGS_REFERENCE = "file_00000000ee58820abf41140132367883";
 
 type AutoHedgeState = {
+  available?: boolean;
+  ownerOnly?: boolean;
   enabled: boolean;
   thresholdUsd: number;
   workerEnabled?: boolean;
@@ -93,6 +95,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [tileHost, setTileHost] = useState<HTMLElement | null>(null);
   const [backHost, setBackHost] = useState<HTMLElement | null>(null);
   const [state, setState] = useState<AutoHedgeState>(DEFAULT_STATE);
+  const [available, setAvailable] = useState<boolean | null>(null);
   const [draft, setDraft] = useState("10");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -105,12 +108,22 @@ export function AsterPositionLossAutoHedgeBridge() {
     setLoading(true);
     try {
       const next = await authenticatedRequest("/api/exchanges/aster/position-loss-auto-hedge", { cache: "no-store" }) as AutoHedgeState;
+      if (next.available === false) {
+        setAvailable(false);
+        document.documentElement.removeAttribute("data-position-loss-auto-hedge");
+        setState(DEFAULT_STATE);
+        setError("");
+        return;
+      }
       const threshold = Number(next.thresholdUsd);
       if (!Number.isFinite(threshold) || threshold <= 0) throw new Error("Auto Hedge verliesgrens is ongeldig.");
+      setAvailable(true);
+      document.documentElement.setAttribute("data-position-loss-auto-hedge", "true");
       setState(next);
       setDraft(String(threshold));
       setError("");
     } catch (reason) {
+      document.documentElement.removeAttribute("data-position-loss-auto-hedge");
       setError(reason instanceof Error ? reason.message : "Auto Hedge kon niet worden geladen.");
     } finally {
       setLoading(false);
@@ -157,6 +170,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       const snapshot = document.querySelector<HTMLElement>(".aster-portfolio-snapshot");
       snapshot?.classList.remove("plah-has-flip", "plah-is-flipped");
       document.getElementById(BACK_HOST_ID)?.remove();
+      document.documentElement.removeAttribute("data-position-loss-auto-hedge");
     };
   }, []);
 
@@ -244,7 +258,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   const threshold = Number(draft.replace(",", "."));
   const sliderValue = Math.max(5, Math.min(100, Number.isFinite(threshold) ? threshold : 10));
 
-  const tile = tileHost ? createPortal(
+  const tile = tileHost && available === true ? createPortal(
     <div
       className="plah-tile"
       data-reference={TILE_REFERENCE}
@@ -271,7 +285,7 @@ export function AsterPositionLossAutoHedgeBridge() {
     tileHost,
   ) : null;
 
-  const settings = backHost ? createPortal(
+  const settings = backHost && available === true ? createPortal(
     <section className="plah-back" data-reference={SETTINGS_REFERENCE} aria-label="Auto Hedge instellingen">
       <div className="plah-back-scroll">
         <button type="button" className="plah-back-link" onClick={() => setOpen(false)} disabled={saving}>
