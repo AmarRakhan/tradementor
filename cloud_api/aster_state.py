@@ -71,6 +71,10 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
     )
     if active and active_trade_capital <= 0:
         active_trade_capital = _number(account.get("totalInitialMargin"))
+    total_initial_margin = _number(account.get("totalInitialMargin"))
+    position_initial_margin = _number(account.get("totalPositionInitialMargin")) or active_trade_capital
+    open_order_initial_margin = _number(account.get("totalOpenOrderInitialMargin"))
+    unavailable_capital = max(0.0, equity - available)
     return {
         "equity": equity,
         "walletBalance": wallet,
@@ -78,12 +82,17 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
         "unrealizedPnl": unrealized,
         "activePositions": len(active),
         "activeTradeCapital": active_trade_capital,
+        "totalInitialMargin": total_initial_margin,
+        "positionInitialMargin": position_initial_margin,
+        "openOrderInitialMargin": open_order_initial_margin,
+        "unavailableCapital": unavailable_capital,
+        "marginReconciliationResidual": unavailable_capital - total_initial_margin if total_initial_margin > 0 else unavailable_capital - active_trade_capital,
         "maintenanceMargin": maintenance,
         **cross_risk,
         # Backwards-compatible ratio; authoritative new clients consume liquidationRiskPct/source.
         "marginRatio": cross_risk["liquidationRiskPct"] / 100.0,
         "financialDataContract": {
-            "version": 1,
+            "version": 2,
             "sourceOfTruth": "ASTER_API",
             "direct": {
                 "equity": "totalMarginBalance",
@@ -91,12 +100,17 @@ def dashboard_snapshot(account: dict[str, Any], positions: list[dict[str, Any]])
                 "unrealizedPnl": "totalUnrealizedProfit",
                 "maintenanceMargin": "totalMaintMargin",
                 "marginBalance": "totalMarginBalance",
+                "totalInitialMargin": "totalInitialMargin",
+                "positionInitialMargin": "totalPositionInitialMargin (fallback: sum positionInitialMargin)",
+                "openOrderInitialMargin": "totalOpenOrderInitialMargin",
                 "positionUnrealizedPnl": "unRealizedProfit",
                 "positionLiquidationPrice": "liquidationPrice",
             },
             "aggregated": {
                 "activePositions": "count(positionAmt != 0)",
                 "activeTradeCapital": "sum(positionInitialMargin) for active positions",
+                "unavailableCapital": "max(0, equity - availableBalance)",
+                "marginReconciliationResidual": "unavailableCapital - totalInitialMargin (fallback activeTradeCapital)",
             },
             "calculated": {
                 "liquidationRiskPct": "Aster account margin ratio when supplied; otherwise totalMaintMargin / totalMarginBalance * 100",
