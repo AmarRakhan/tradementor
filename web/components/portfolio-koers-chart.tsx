@@ -215,6 +215,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const activeZoneRef=useRef<number|null>(null);
   const liveEquityTextRef=useRef(liveEquityText);
   const [timeframe,setTimeframe]=useState(PORTFOLIO_KOERS_DEFAULT_TIMEFRAME);
+  const [viewMode,setViewMode]=useState<PortfolioViewMode>("performance");
   const [payload,setPayload]=useState<Payload>(EMPTY);
   const [recentMarkers,setRecentMarkers]=useState<Marker[]>([]);
   const [browserCandles,setBrowserCandles]=useState<Candle[]>([]);
