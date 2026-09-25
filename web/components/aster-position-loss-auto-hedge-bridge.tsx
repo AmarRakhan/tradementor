@@ -1,13 +1,42 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 
 const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
-const BACK_HOST_ID = "aster-position-loss-auto-hedge-back-host";
+const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
 const TILE_REFERENCE = "file_00000000340881f4b05212f7cfd82727";
-const SETTINGS_REFERENCE = "file_00000000ee58820abf41140132367883";
+const SCREEN_REFERENCE = "file_00000000ecd08246bd1b15532fb478d6";
+
+type LegView = {
+  quantity?: number;
+  entryPrice?: number;
+  markPrice?: number;
+  openPnl?: number;
+  leverage?: number;
+} | null;
+
+type PairState = {
+  symbol: string;
+  status?: string;
+  protectedSide?: "LONG" | "SHORT";
+  hedgeSide?: "LONG" | "SHORT";
+  generationId?: string;
+  triggerAt?: string;
+  triggerPnl?: number;
+  recoveryAt?: string;
+  rehedgeEnabled?: boolean;
+  currentProtectedQty?: number;
+  currentHedgeQty?: number;
+  reservedHedgeQty?: number;
+  normalFreeQty?: number;
+  hedgeRatio?: number | null;
+  protectedLeg?: LegView;
+  hedgeLeg?: LegView;
+  lastReason?: string;
+  lastReconciledAt?: string;
+};
 
 type AutoHedgeState = {
   available?: boolean;
@@ -18,6 +47,9 @@ type AutoHedgeState = {
   executionEnabled?: boolean;
   operational?: boolean;
   status?: string;
+  lastCheckedAt?: string;
+  pairs?: PairState[];
+  previewPairs?: Array<Record<string, unknown>>;
   lastReport?: {
     mode?: string;
     ordersSent?: number;
@@ -32,6 +64,8 @@ type AutoHedgeState = {
 const DEFAULT_STATE: AutoHedgeState = {
   enabled: false,
   thresholdUsd: 10,
+  pairs: [],
+  previewPairs: [],
   lastReport: null,
   lastError: "",
 };
@@ -40,14 +74,6 @@ function shieldIcon() {
   return <svg viewBox="0 0 32 32" aria-hidden="true">
     <path d="M16 3.5 6.5 7.6v7.2c0 6.2 3.8 10.8 9.5 13.2 5.7-2.4 9.5-7 9.5-13.2V7.6L16 3.5Z" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinejoin="round" />
     <path d="m11.7 15.6 2.7 2.8 5.9-7" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>;
-}
-
-function targetIcon() {
-  return <svg viewBox="0 0 32 32" aria-hidden="true">
-    <circle cx="16" cy="16" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
-    <circle cx="16" cy="16" r="3.5" fill="none" stroke="currentColor" strokeWidth="2" />
-    <path d="M16 2v5M16 25v5M2 16h5M25 16h5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
   </svg>;
 }
 
@@ -65,17 +91,26 @@ function clockIcon() {
   </svg>;
 }
 
-function Toggle({ checked, disabled, onChange, compact = false }: {
+function gearIcon() {
+  return <svg viewBox="0 0 32 32" aria-hidden="true">
+    <circle cx="16" cy="16" r="5" fill="none" stroke="currentColor" strokeWidth="2" />
+    <path d="M16 3v4M16 25v4M3 16h4M25 16h4M6.8 6.8l2.8 2.8M22.4 22.4l2.8 2.8M25.2 6.8l-2.8 2.8M9.6 22.4l-2.8 2.8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>;
+}
+
+function Toggle({ checked, disabled, onChange, compact = false, label }: {
   checked: boolean;
   disabled?: boolean;
   onChange: () => void;
   compact?: boolean;
+  label?: string;
 }) {
   return <button
     type="button"
     className={`plah-switch ${checked ? "on" : ""} ${compact ? "compact" : ""}`}
     role="switch"
     aria-checked={checked}
+    aria-label={label}
     disabled={disabled}
     onTouchEnd={(event) => event.stopPropagation()}
     onDoubleClick={(event) => event.stopPropagation()}
@@ -86,14 +121,140 @@ function Toggle({ checked, disabled, onChange, compact = false }: {
   ><span /></button>;
 }
 
-function moneyThreshold(value: number) {
+function nlNumber(value: number | undefined, maximumFractionDigits = 8) {
+  if (!Number.isFinite(Number(value))) return "–";
+  return new Intl.NumberFormat("nl-NL", { maximumFractionDigits }).format(Number(value));
+}
+
+function money(value: number | undefined, signed = true) {
+  if (!Number.isFinite(Number(value))) return "–";
+  const number = Number(value);
+  const sign = signed && number > 0 ? "+" : "";
+  return `${sign}$${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(number)}`;
+}
+
+function thresholdMoney(value: number) {
   const digits = Number.isInteger(value) ? 0 : 2;
   return `$${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: 2 }).format(value)}`;
 }
 
+function statusLabel(status?: string) {
+  const value = String(status || "").toUpperCase();
+  if (value === "HEDGED") return "HEDGED";
+  if (value === "HEDGING" || value === "ADJUSTING") return "BIJWERKEN";
+  if (value === "RECOVERY") return "RECOVERY";
+  if (value === "REHEDGE_ARMED") return "GEWAPEND";
+  if (value === "DISABLED") return "UITGESCHAKELD";
+  if (value === "BLOCKED" || value === "ERROR" || value === "PRECISION_BLOCKED") return "FOUT";
+  if (value === "CLOSED") return "GESLOTEN";
+  return value || "ONBEKEND";
+}
+
+function statusClass(status?: string) {
+  const value = String(status || "").toUpperCase();
+  if (value === "HEDGED") return "hedged";
+  if (value === "HEDGING" || value === "ADJUSTING") return "adjusting";
+  if (value === "RECOVERY") return "recovery";
+  if (value === "REHEDGE_ARMED") return "armed";
+  if (value === "DISABLED" || value === "CLOSED") return "disabled";
+  return "error";
+}
+
+function PairLeg({ side, role, leg }: {
+  side: "LONG" | "SHORT";
+  role: string;
+  leg: LegView;
+}) {
+  if (!leg) return null;
+  const pnl = Number(leg.openPnl || 0);
+  return <div className="plah-leg-row">
+    <span className={`plah-side-badge ${side.toLowerCase()}`}>{side}</span>
+    <span className={`plah-role-badge ${role.toLowerCase().replaceAll(" ", "-")}`}>{role}</span>
+    <span className="plah-leg-cell"><small>Qty</small><b>{nlNumber(leg.quantity)}</b></span>
+    <span className="plah-leg-cell"><small>Entry</small><b>{nlNumber(leg.entryPrice, 6)}</b></span>
+    <span className="plah-leg-cell"><small>Mark</small><b>{nlNumber(leg.markPrice, 6)}</b></span>
+    <span className="plah-leg-cell pnl"><small>Open PnL</small><b className={pnl >= 0 ? "positive" : "negative"}>{money(pnl)}</b></span>
+  </div>;
+}
+
+function CoinBadge({ symbol }: { symbol: string }) {
+  const label = symbol.replace(/USDT$/i, "");
+  return <span className="plah-coin-badge" aria-hidden="true">{label.slice(0, 2)}</span>;
+}
+
+function PairCard({ pair, saving, onRehedge }: {
+  pair: PairState;
+  saving: boolean;
+  onRehedge: (pair: PairState, enabled: boolean) => void;
+}) {
+  const status = String(pair.status || "").toUpperCase();
+  const recovery = status === "RECOVERY" || status === "REHEDGE_ARMED" || status === "DISABLED";
+  const protectedSide = pair.protectedSide || "SHORT";
+  const hedgeSide = pair.hedgeSide || (protectedSide === "SHORT" ? "LONG" : "SHORT");
+  const protectedPnl = Number(pair.protectedLeg?.openPnl || 0);
+  const hedgePnl = Number(pair.hedgeLeg?.openPnl || 0);
+  const net = protectedPnl + hedgePnl;
+  const ratio = Number(pair.hedgeRatio);
+  const stamp = recovery ? pair.recoveryAt || pair.triggerAt : pair.triggerAt;
+  const stampText = stamp ? new Date(stamp).toLocaleString("nl-NL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+
+  return <article className={`plah-pair-card ${statusClass(status)}`}>
+    <div className="plah-pair-head">
+      <div className="plah-pair-identity">
+        <CoinBadge symbol={pair.symbol} />
+        <div>
+          <div className="plah-pair-title-row">
+            <strong>{pair.symbol.replace(/USDT$/i, "")}</strong>
+            <span className={`plah-status-badge ${statusClass(status)}`}>{statusLabel(status)}</span>
+          </div>
+          <small>{recovery ? "Eerder gehedged" : "Auto Hedge actief"}{stampText ? ` · ${stampText}` : ""}</small>
+        </div>
+      </div>
+
+      {recovery ? <div className="plah-rehedge-control">
+        <span>Opnieuw hedgen</span>
+        <Toggle
+          checked={pair.rehedgeEnabled === true}
+          disabled={saving}
+          onChange={() => onRehedge(pair, pair.rehedgeEnabled !== true)}
+          compact
+          label={`Opnieuw hedgen voor ${pair.symbol}`}
+        />
+      </div> : <div className="plah-lock-state">
+        <span>{shieldIcon()}</span>
+        <div><small>Auto Hedge</small><b>Actief en vergrendeld</b></div>
+      </div>}
+    </div>
+
+    <div className="plah-leg-stack">
+      {!recovery && <PairLeg side={protectedSide} role="Beschermd" leg={pair.protectedLeg || null} />}
+      <PairLeg
+        side={recovery ? hedgeSide : hedgeSide}
+        role={recovery ? "Recovery" : "Hedge-lock"}
+        leg={pair.hedgeLeg || null}
+      />
+    </div>
+
+    {!recovery ? <div className="plah-pair-summary">
+      <span><small>Netto pair resultaat</small><b className={net >= 0 ? "positive" : "negative"}>{money(net)}</b></span>
+      <span><small>Hedge ratio</small><b>{Number.isFinite(ratio) ? `${nlNumber(ratio, 1)}% (1:1)` : "–"}</b></span>
+      <span><small>Status</small><b>{status === "HEDGED" ? "Volledig gehedged" : statusLabel(status)}</b></span>
+    </div> : <div className="plah-recovery-note">
+      <span>i</span>
+      <p>
+        Deze positie was eerder gehedged. De tegenpositie is gesloten.
+        Zet <strong>Opnieuw hedgen</strong> aan om deze positie weer onder Auto Hedge-bescherming te brengen.
+      </p>
+    </div>}
+
+    {status === "ADJUSTING" && <div className="plah-adjust-note">Quantity wordt automatisch teruggebracht naar exact 1:1.</div>}
+    {(status === "BLOCKED" || status === "ERROR" || status === "PRECISION_BLOCKED") && <div className="plah-pair-error">{pair.lastReason || "Auto Hedge kan deze pair momenteel niet veilig bijwerken."}</div>}
+  </article>;
+}
+
 export function AsterPositionLossAutoHedgeBridge() {
   const [tileHost, setTileHost] = useState<HTMLElement | null>(null);
-  const [backHost, setBackHost] = useState<HTMLElement | null>(null);
+  const [screenHost, setScreenHost] = useState<HTMLElement | null>(null);
   const [state, setState] = useState<AutoHedgeState>(DEFAULT_STATE);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [draft, setDraft] = useState("10");
@@ -102,6 +263,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [coinFilter, setCoinFilter] = useState("ALL");
   const lastTap = useRef(0);
 
   const load = useCallback(async () => {
@@ -112,18 +274,16 @@ export function AsterPositionLossAutoHedgeBridge() {
         setAvailable(false);
         document.documentElement.removeAttribute("data-position-loss-auto-hedge");
         setState(DEFAULT_STATE);
-        setError("");
         return;
       }
       const threshold = Number(next.thresholdUsd);
       if (!Number.isFinite(threshold) || threshold <= 0) throw new Error("Auto Hedge verliesgrens is ongeldig.");
       setAvailable(true);
       document.documentElement.setAttribute("data-position-loss-auto-hedge", "true");
-      setState(next);
+      setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
       setDraft(String(threshold));
       setError("");
     } catch (reason) {
-      document.documentElement.removeAttribute("data-position-loss-auto-hedge");
       setError(reason instanceof Error ? reason.message : "Auto Hedge kon niet worden geladen.");
     } finally {
       setLoading(false);
@@ -132,77 +292,60 @@ export function AsterPositionLossAutoHedgeBridge() {
 
   useEffect(() => {
     let alive = true;
-    let frame = 0;
     const sync = () => {
       if (!alive) return;
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const tile = document.getElementById(TILE_HOST_ID);
-        const snapshot = document.querySelector<HTMLElement>(".aster-portfolio-snapshot");
-        if (!tile || !snapshot) {
-          setTileHost(null);
-          setBackHost(null);
-          return;
-        }
-        setTileHost((current) => current === tile ? current : tile);
-        let back = document.getElementById(BACK_HOST_ID);
-        if (!back) {
-          back = document.createElement("div");
-          back.id = BACK_HOST_ID;
-          back.setAttribute("aria-hidden", "true");
-          snapshot.appendChild(back);
-        } else if (back.parentElement !== snapshot) {
-          snapshot.appendChild(back);
-        }
-        snapshot.classList.add("plah-has-flip");
-        setBackHost((current) => current === back ? current : back);
-      });
+      const tile = document.getElementById(TILE_HOST_ID);
+      setTileHost(tile);
+      let host = document.getElementById(SCREEN_HOST_ID);
+      if (!host) {
+        host = document.createElement("div");
+        host.id = SCREEN_HOST_ID;
+        host.setAttribute("aria-hidden", "true");
+        document.body.appendChild(host);
+      }
+      setScreenHost(host);
     };
     const observer = new MutationObserver(sync);
     observer.observe(document.body, { subtree: true, childList: true });
     sync();
-    const timer = window.setInterval(sync, 3000);
     return () => {
       alive = false;
       observer.disconnect();
-      clearInterval(timer);
-      cancelAnimationFrame(frame);
-      const snapshot = document.querySelector<HTMLElement>(".aster-portfolio-snapshot");
-      snapshot?.classList.remove("plah-has-flip", "plah-is-flipped");
-      document.getElementById(BACK_HOST_ID)?.remove();
+      document.getElementById(SCREEN_HOST_ID)?.remove();
       document.documentElement.removeAttribute("data-position-loss-auto-hedge");
+      document.documentElement.removeAttribute("data-auto-hedge-screen-open");
     };
   }, []);
 
   useEffect(() => {
     if (!tileHost) return;
     void load();
-    const timer = window.setInterval(() => { void load(); }, 10000);
+    const timer = window.setInterval(() => { void load(); }, open ? 3000 : 10000);
     const onVisible = () => { if (document.visibilityState === "visible") void load(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [tileHost, load]);
+  }, [tileHost, load, open]);
 
   useEffect(() => {
-    const snapshot = document.querySelector<HTMLElement>(".aster-portfolio-snapshot");
-    if (!snapshot || !backHost) return;
-    snapshot.classList.toggle("plah-is-flipped", open);
-    backHost.setAttribute("aria-hidden", open ? "false" : "true");
+    if (!screenHost) return;
+    screenHost.classList.toggle("plah-screen-open", open);
+    screenHost.setAttribute("aria-hidden", open ? "false" : "true");
+    document.documentElement.toggleAttribute("data-auto-hedge-screen-open", open);
     if (!open) return;
     const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !saving) setOpen(false);
     };
-    document.body.style.overflow = "hidden";
     window.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKey);
     };
-  }, [open, backHost, saving]);
+  }, [open, screenHost, saving]);
 
   const persist = async (enabled: boolean, threshold: number, applyNow = false) => {
     if (!Number.isFinite(threshold) || threshold < 0.01 || threshold > 100000) {
@@ -220,16 +363,14 @@ export function AsterPositionLossAutoHedgeBridge() {
         method: applyNow ? "POST" : "PUT",
         body: JSON.stringify({ enabled, thresholdUsd: threshold }),
       }) as AutoHedgeState;
-      setState(next);
+      setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
       setDraft(String(Number(next.thresholdUsd)));
-      if (applyNow && !next.operational) {
+      if (!next.executionEnabled) {
         const actions = Array.isArray(next.lastReport?.actions) ? next.lastReport?.actions ?? [] : [];
         const due = actions.filter((item) => Number(item.requiredDelta) > 0).length;
-        setMessage(`Testcontrole klaar · ${due} positie${due === 1 ? "" : "s"} zouden nu een ontbrekende tegen-quantity krijgen. Er zijn geen orders verstuurd.`);
+        setMessage(`Testcontrole klaar · ${due} pair${due === 1 ? "" : "s"} vragen een 1:1-aanpassing · 0 orders verstuurd.`);
       } else {
-        setMessage(applyNow
-          ? "Instelling opgeslagen en alle actuele open posities zijn opnieuw gecontroleerd."
-          : enabled ? "Auto Hedge staat aan." : "Auto Hedge staat uit.");
+        setMessage(enabled ? "Auto Hedge staat aan." : "Nieuwe Auto Hedge-triggers staan uit; bestaande locks blijven bewaakt.");
       }
       return true;
     } catch (reason) {
@@ -240,10 +381,37 @@ export function AsterPositionLossAutoHedgeBridge() {
     }
   };
 
-  const toggle = () => {
-    const threshold = Number(draft.replace(",", "."));
-    void persist(!state.enabled, threshold, !state.enabled);
+  const setRehedge = async (pair: PairState, enabled: boolean) => {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const next = await authenticatedRequest(
+        `/api/exchanges/aster/position-loss-auto-hedge/pairs/${encodeURIComponent(pair.symbol)}/rehedge`,
+        { method: "PUT", body: JSON.stringify({ enabled }) },
+      ) as AutoHedgeState;
+      setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
+      setMessage(enabled
+        ? `${pair.symbol.replace(/USDT$/i, "")} doet opnieuw mee met Auto Hedge.`
+        : `${pair.symbol.replace(/USDT$/i, "")} blijft Recovery zonder automatische rehedge.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Opnieuw hedgen kon niet worden aangepast.");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const threshold = Number(draft.replace(",", "."));
+  const sliderValue = Math.max(5, Math.min(100, Number.isFinite(threshold) ? threshold : 10));
+  const status = state.operational ? "ACTIEF" : state.enabled ? "TEST" : "UIT";
+  const pairs = Array.isArray(state.pairs) ? state.pairs : [];
+  const coinOptions = useMemo(() => [...new Set(pairs.map((pair) => pair.symbol))].sort(), [pairs]);
+  const visiblePairs = coinFilter === "ALL" ? pairs : pairs.filter((pair) => pair.symbol === coinFilter);
+  const counts = useMemo(() => ({
+    hedged: pairs.filter((pair) => ["HEDGED", "HEDGING", "ADJUSTING"].includes(String(pair.status).toUpperCase())).length,
+    recovery: pairs.filter((pair) => ["RECOVERY", "REHEDGE_ARMED", "DISABLED"].includes(String(pair.status).toUpperCase())).length,
+    errors: pairs.filter((pair) => ["BLOCKED", "ERROR", "PRECISION_BLOCKED"].includes(String(pair.status).toUpperCase())).length,
+  }), [pairs]);
 
   const openFromCard = () => {
     setMessage("");
@@ -261,17 +429,13 @@ export function AsterPositionLossAutoHedgeBridge() {
     }
   };
 
-  const threshold = Number(draft.replace(",", "."));
-  const sliderValue = Math.max(5, Math.min(100, Number.isFinite(threshold) ? threshold : 10));
-  const statusLabel = state.operational ? "ACTIEF" : state.enabled ? "TEST" : "UIT";
-
   const tile = tileHost && available === true ? createPortal(
     <div
       className="plah-tile"
       data-reference={TILE_REFERENCE}
       role="button"
       tabIndex={0}
-      aria-label={`Auto Hedge ${state.enabled ? "actief" : "uit"}, vanaf min ${moneyThreshold(Number(state.thresholdUsd) || 10)} verlies. Dubbel tik voor instellingen.`}
+      aria-label={`Auto Hedge ${state.enabled ? "aan" : "uit"}, vanaf min ${thresholdMoney(Number(state.thresholdUsd) || 10)} verlies. Dubbel tik voor instellingen.`}
       onDoubleClick={openFromCard}
       onTouchEnd={onTouchEnd}
       onKeyDown={(event) => {
@@ -284,22 +448,23 @@ export function AsterPositionLossAutoHedgeBridge() {
       <span className="plah-tile-icon">{shieldIcon()}</span>
       <span className="plah-tile-copy">
         <small>AUTO HEDGE</small>
-        <strong>vanaf -{moneyThreshold(Number(state.thresholdUsd) || 10)}</strong>
-        <em className={state.enabled ? "on" : ""}>{statusLabel}</em>
+        <strong>vanaf -{thresholdMoney(Number(state.thresholdUsd) || 10)}</strong>
+        <em className={state.enabled ? "on" : ""}>{status}</em>
       </span>
-      <Toggle checked={state.enabled} disabled={saving || loading} onChange={toggle} compact />
+      <Toggle checked={state.enabled} disabled={saving || loading} onChange={() => void persist(!state.enabled, threshold, !state.enabled)} compact label="Auto Hedge" />
     </div>,
     tileHost,
   ) : null;
 
-  const settings = backHost && available === true ? createPortal(
-    <section className="plah-back" data-reference={SETTINGS_REFERENCE} aria-label="Auto Hedge instellingen">
-      <div className="plah-back-scroll">
-        <button type="button" className="plah-back-link" onClick={() => setOpen(false)} disabled={saving}>
-          <span aria-hidden="true">‹</span> Terug naar Dashboard
-        </button>
-
-        <div className="plah-mini-brand"><span>{shieldIcon()}</span><b>AUTO HEDGE</b></div>
+  const screen = screenHost && available === true ? createPortal(
+    <section className="plah-screen" data-reference={SCREEN_REFERENCE} aria-label="Auto Hedge">
+      <div className="plah-screen-scroll">
+        <div className="plah-screen-topline">
+          <button type="button" className="plah-back-link" onClick={() => setOpen(false)} disabled={saving}>
+            <span aria-hidden="true">‹</span> Terug naar Dashboard
+          </button>
+          <div className="plah-mini-brand"><span>{shieldIcon()}</span><b>AUTO HEDGE</b></div>
+        </div>
 
         <header className="plah-hero">
           <span className="plah-hero-shield">{shieldIcon()}</span>
@@ -307,64 +472,76 @@ export function AsterPositionLossAutoHedgeBridge() {
             <h3>AUTO HEDGE</h3>
             <p>Beschermt verliesgevende posities met een volledige tegengestelde hedge.</p>
           </div>
+          <Toggle checked={state.enabled} disabled={saving} onChange={() => void persist(!state.enabled, threshold, !state.enabled)} label="Auto Hedge hoofdschakelaar" />
         </header>
 
-        <div className="plah-toggle-row">
-          <div><strong>AUTO HEDGE</strong><em>{statusLabel}</em></div>
-          <Toggle checked={state.enabled} disabled={saving} onChange={toggle} />
-        </div>
-
-        <div className="plah-threshold-card">
+        <section className="plah-threshold-card">
           <div className="plah-threshold-head">
             <label htmlFor="plah-threshold-number">Hedge vanaf verlies per positie</label>
-            <span className="plah-threshold-value">{moneyThreshold(Number.isFinite(threshold) ? threshold : 10)}</span>
+            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={saving} /></label></div>
           </div>
-          <input
-            className="plah-range"
-            type="range"
-            min="5"
-            max="100"
-            step="1"
-            value={sliderValue}
-            onChange={(event) => setDraft(event.target.value)}
-            disabled={saving}
-            aria-label="Auto Hedge verliesgrens"
-          />
+          <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
+          <input className="plah-range" type="range" min="5" max="100" step="1" value={sliderValue} onChange={(event) => setDraft(event.target.value)} disabled={saving} aria-label="Auto Hedge verliesgrens" />
           <div className="plah-range-labels" aria-hidden="true"><span>$5</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <div className="plah-number-row">
-            <span>Exact bedrag</span>
-            <label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={saving} /></label>
-          </div>
-          <p className="plah-info"><span>i</span> Bij -{moneyThreshold(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangevuld tot exact 1:1 coin quantity.</p>
-        </div>
+          <p className="plah-info"><span>i</span> Bij -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangepast tot exact 1:1 coin quantity.</p>
+        </section>
 
         <div className="plah-scope-grid">
           <article><span>{layersIcon()}</span><div><small>Bestaande posities</small><strong>Inbegrepen</strong></div><b>✓</b></article>
           <article><span>{clockIcon()}</span><div><small>Nieuwe posities</small><strong>Realtime bewaakt</strong></div><b>✓</b></article>
+          <article><span>{gearIcon()}</span><div><small>Controle-interval</small><strong>Elke 3 seconden</strong></div><b>✓</b></article>
         </div>
 
-        <div className="plah-monitor-note">
-          <span>{targetIcon()}</span>
-          <p>Zowel bestaande open posities als nieuwe posities worden continu gemonitord. Bij het bereiken van de ingestelde verliesdrempel wordt alleen de ontbrekende tegen-quantity aangevuld.</p>
-        </div>
+        {!state.executionEnabled && <div className="plah-test-mode">
+          TESTMODUS · actuele Aster-posities worden exact 1:1 doorgerekend, maar Auto Hedge verstuurt nog geen orders.
+        </div>}
+        {error && <div className="plah-error" role="alert">{error}</div>}
+        {message && <div className="plah-success">{message}</div>}
 
-        {state.enabled && !state.operational ? <div className="plah-test-mode">TESTMODUS · actuele posities worden berekend en gereconcilieerd, maar er worden geen orders verstuurd.</div> : null}
-        {error ? <div className="plah-error" role="alert">{error}</div> : null}
-        {message ? <div className="plah-success">{message}</div> : null}
+        <section className="plah-positions">
+          <div className="plah-positions-head">
+            <div>
+              <h4>Gehedgde posities</h4>
+              <p>Alleen coins die (in het verleden) door Auto Hedge zijn gehedged.</p>
+            </div>
+            <select value={coinFilter} onChange={(event) => setCoinFilter(event.target.value)} aria-label="Filter gehedgde coins">
+              <option value="ALL">Alle coins</option>
+              {coinOptions.map((symbol) => <option value={symbol} key={symbol}>{symbol.replace(/USDT$/i, "")}</option>)}
+            </select>
+          </div>
 
-        <button
-          type="button"
-          className="plah-apply"
-          disabled={saving || loading}
-          onClick={() => void persist(state.enabled, threshold, true)}
-        >
-          <span aria-hidden="true">⇄</span>
-          <span><strong>{saving ? "CONTROLEREN…" : "VOLLEDIG DICHTHEDGEN"}</strong><small>Pas de ingestelde verliesgrens direct toe op alle open posities.</small></span>
-        </button>
+          <div className="plah-counts">
+            <span><b>{counts.hedged}</b><small>Gehedged</small></span>
+            <span><b>{counts.recovery}</b><small>Recovery</small></span>
+            <span className={counts.errors ? "has-error" : ""}><b>{counts.errors}</b><small>Fouten</small></span>
+          </div>
+
+          {counts.hedged > 0 && <div className="plah-lock-banner">
+            <span>🔒</span><div><b>Hedge-lock actief</b><small>Een beschermende Auto Hedge-quantity sluit niet automatisch zolang de beschermde positie nog open staat.</small></div>
+          </div>}
+
+          <div className="plah-pair-list">
+            {visiblePairs.length ? visiblePairs.map((pair) =>
+              <PairCard key={pair.symbol} pair={pair} saving={saving} onRehedge={(item, enabled) => void setRehedge(item, enabled)} />
+            ) : <div className="plah-empty">
+              <span>{shieldIcon()}</span>
+              <strong>Nog geen historische Auto Hedge-pairs</strong>
+              <p>Coins verschijnen hier zodra Auto Hedge een pair daadwerkelijk heeft beschermd. Shadow-resultaten worden niet als echte hedge opgeslagen.</p>
+            </div>}
+          </div>
+        </section>
+
+        <section className="plah-important">
+          <span>{shieldIcon()}</span>
+          <div><b>Belangrijk</b><p>Alleen door Auto Hedge gereserveerde hedge-quantity is vergrendeld. Normale strategieposities blijven normaal werken; verdwijnt normale dekking, dan vult Auto Hedge het ontbrekende verschil opnieuw aan.</p></div>
+          <button type="button" onClick={() => void persist(state.enabled, threshold, true)} disabled={saving || loading}>
+            {saving ? "Controleren…" : "Nu controleren"} <span>›</span>
+          </button>
+        </section>
       </div>
     </section>,
-    backHost,
+    screenHost,
   ) : null;
 
-  return <>{tile}{settings}</>;
+  return <>{tile}{screen}</>;
 }
