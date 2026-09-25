@@ -232,3 +232,14 @@ def test_build430_status_publishes_single_snapshot_reconciliation_contract():
     assert '"reconciliation": reconciliation' in source
     assert '"liveDataStatus": reconciliation["liveDataStatus"]' in source
     assert '"margin": {' in source
+
+
+
+def test_build430_cross_only_risk_fields_do_not_create_false_account_mismatch():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert "comparable_cross_scope = bool(" in source
+    assert "snapshot_position_count == cross_position_count" in source
+    assert "snapshot_position_count == len(raw_snapshot_positions)" in source
+    assert "snapshot_long_notional=(safe_float(snapshot.get(\"longNotional\")) if comparable_cross_scope" in source
+    assert '"legacyCrossExposure"' in source
+    assert '"scope": "CROSS_ONLY"' in source
