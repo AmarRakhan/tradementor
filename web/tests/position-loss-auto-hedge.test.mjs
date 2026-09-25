@@ -19,6 +19,9 @@ test("Build 430 binds Auto Hedge to the approved Snapshot references and exact s
   assert.match(component, /file_00000000ee58820abf41140132367883/);
   assert.match(component, /AUTO HEDGE/);
   assert.match(component, /ACTIEF/);
+  assert.match(component, /TESTMODUS/);
+  assert.match(component, /available === true/);
+  assert.match(component, /data-position-loss-auto-hedge/);
   assert.match(component, /VOLLEDIG DICHTHEDGEN/);
   assert.match(component, /Pas de ingestelde verliesgrens direct toe op alle open posities/);
   assert.match(component, /onDoubleClick=\{openFromCard\}/);
