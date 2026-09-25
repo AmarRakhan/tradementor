@@ -75,6 +75,8 @@ function Toggle({ checked, disabled, onChange, compact = false }: {
     role="switch"
     aria-checked={checked}
     disabled={disabled}
+    onTouchEnd={(event) => event.stopPropagation()}
+    onDoubleClick={(event) => event.stopPropagation()}
     onClick={(event) => {
       event.stopPropagation();
       onChange();
