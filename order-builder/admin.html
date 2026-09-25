@@ -92,17 +92,18 @@
           <div class="summary-row"><span>Refurb</span><strong id="sumRefurb">0</strong></div>
         </div>
 
-        <div class="export-section dynamics-export">
-          <div class="export-section-title">Dynamics 365 F&amp;O</div>
-          <button id="copyButton" class="copy-button" type="button"><span class="copy-icon">▣</span>1. Kopieer orderregels</button>
-          <button id="serialCopyButton" class="copy-button serial-copy-button" type="button" style="display:flex!important;"><span class="copy-icon">#</span>2. Kopieer serienummer(s)</button>
-          <div class="copy-help">Alleen gebruiken in Dynamics. Eerst orderregels plakken, daarna eventueel serienummers vanaf de bovenste cel in de kolom Serienummer.</div>
+        <div class="export-section topdesk-export">
+          <div class="export-section-title">Stap 1 · TOPdesk</div>
+          <button id="topdeskCopyButton" class="copy-button topdesk-copy-button" type="button"><span class="copy-icon">T</span>1. TOPdesk: scan &amp; kopieer</button>
+          <div class="copy-help">Controleert eerst alle serienummerplichtige artikelen, laat ontbrekende serienummers scannen en kopieert daarna de leesbare TOPdesk-tekst.</div>
+          <div class="topdesk-warning">Deze tekst is alleen voor TOPdesk — niet in Dynamics plakken.</div>
         </div>
 
-        <div class="export-section topdesk-export">
-          <div class="export-section-title">TOPdesk</div>
-          <button id="topdeskCopyButton" class="copy-button topdesk-copy-button" type="button"><span class="copy-icon">T</span>Kopieer TOPdesk-tekst</button>
-          <div class="topdesk-warning">Niet in Dynamics plakken — dit is leesbare tickettekst voor TOPdesk.</div>
+        <div class="export-section dynamics-export">
+          <div class="export-section-title">Stap 2 + 3 · Dynamics 365 F&amp;O</div>
+          <button id="copyButton" class="copy-button" type="button"><span class="copy-icon">▣</span>2. Kopieer verkooporderregels</button>
+          <button id="serialCopyButton" class="copy-button serial-copy-button" type="button" style="display:flex!important;"><span class="copy-icon">#</span>3. Kopieer serienummer(s)</button>
+          <div class="copy-help">Stap 2: plak de verkooporderregels in Dynamics. Stap 3: klik daarna in de bovenste cel van de kolom <strong>Serienummer</strong> en plak de serienummerkolom.</div>
         </div>
       </aside>
     </section>
