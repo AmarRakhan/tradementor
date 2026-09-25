@@ -231,7 +231,7 @@ def test_build430_status_publishes_single_snapshot_reconciliation_contract():
     assert '"accountStateVersion": reconciliation["accountStateVersion"]' in source
     assert '"reconciliation": reconciliation' in source
     assert '"liveDataStatus": reconciliation["liveDataStatus"]' in source
-    assert '"margin": {' in source
+    assert 'reconciliation["margin"] = {' in source
 
 
 
