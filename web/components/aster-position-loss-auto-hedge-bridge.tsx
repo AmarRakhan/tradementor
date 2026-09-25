@@ -445,8 +445,11 @@ export function AsterPositionLossAutoHedgeBridge() {
 
   const threshold = Number(draft.replace(",", "."));
   const sliderValue = Math.max(5, Math.min(100, Number.isFinite(threshold) ? threshold : 10));
-  const status = state.operational ? "ACTIEF" : state.enabled ? "TEST" : "UIT";
   const pairs = Array.isArray(state.pairs) ? state.pairs : [];
+  const hasLockedPair = pairs.some((pair) =>
+    ["HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED"].includes(String(pair.status || "").toUpperCase()),
+  );
+  const status = state.operational ? "ACTIEF" : state.enabled ? "TEST" : hasLockedPair ? "LOCK" : "UIT";
   const coinOptions = useMemo(() => [...new Set(pairs.map((pair) => pair.symbol))].sort(), [pairs]);
   const visiblePairs = coinFilter === "ALL" ? pairs : pairs.filter((pair) => pair.symbol === coinFilter);
   const counts = useMemo(() => ({
