@@ -74,10 +74,14 @@ def test_external_cashflows_remain_separate_from_trading_markers():
         {"incomeType": "REALIZED_PNL", "income": "5", "time": 62_000},
         {"incomeType": "TRANSFER", "income": "-10", "time": 63_000},
     ], "1m")
-    assert len(rows) == 1
-    assert rows[0]["kind"] == "cashflow"
-    assert rows[0]["amountUsd"] == 40.0
-    assert rows[0]["count"] == 2
+    assert len(rows) == 2
+    deposit = next(row for row in rows if row["cashflowType"] == "DEPOSIT")
+    withdrawal = next(row for row in rows if row["cashflowType"] == "WITHDRAWAL")
+    assert deposit["kind"] == withdrawal["kind"] == "cashflow"
+    assert deposit["amountUsd"] == 50.0
+    assert withdrawal["amountUsd"] == -10.0
+    assert "STORTING" in deposit["label"]
+    assert "OPNAME" in withdrawal["label"]
 
 
 def test_zones_require_confirmed_swings_and_use_cycle_reference_for_zone_zero():
@@ -150,3 +154,19 @@ def test_live_portfolio_event_endpoint_is_read_only_and_does_not_poll_aster():
     assert "portfolio_chart_strategy_audit_markers" in block
     assert '"ordersSent": 0' in block
     assert "confirmed Strategy-2 audit events; no exchange polling" in block
+
+
+def test_build432_cashflow_markers_aggregate_same_direction_but_never_net_opposite_flows():
+    rows=external_cashflow_markers([
+        {"incomeType":"DEPOSIT","income":"100","time":61_000},
+        {"incomeType":"TRANSFER","income":"50","time":62_000},
+        {"incomeType":"WITHDRAWAL","income":"-25","time":63_000},
+        {"incomeType":"FUNDING_FEE","income":"-2","time":64_000},
+    ],"1m")
+    assert len(rows)==2
+    deposit=next(row for row in rows if row["cashflowType"]=="DEPOSIT")
+    withdrawal=next(row for row in rows if row["cashflowType"]=="WITHDRAWAL")
+    assert deposit["amountUsd"]==150
+    assert deposit["count"]==2
+    assert withdrawal["amountUsd"]==-25
+    assert withdrawal["count"]==1
