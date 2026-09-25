@@ -71,30 +71,26 @@ jobs:
             'needsHedgeCount':sum(a.required_delta>1e-12 for a in actions),
             'actions':[a.public_dict() for a in actions],
           }
-          print(os.environ['MARKER']+'='+json.dumps(out,separators=(',',':'),sort_keys=True),flush=True)
+          doc={'marker':os.environ['MARKER'],'payload':json.dumps(out,separators=(',',':'),sort_keys=True)}
+          db.collection('systemStatus').document('autoHedgeOwnerPreview').set(doc)
+          print(os.environ['MARKER']+'=WRITTEN',flush=True)
           PY
           )"
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
-          : > "$RUNNER_TEMP/value.txt"
-          for N in 1 2 3 4 5 6 7 8 9 10; do
-            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json" || echo '[]' > "$RUNNER_TEMP/logs.json"
-            python - "$MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/value.txt" <<'PY'
+          TOKEN="$(gcloud auth print-access-token)"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://firestore.googleapis.com/v1/projects/$GCP_PROJECT_ID/databases/(default)/documents/systemStatus/autoHedgeOwnerPreview" \
+            > "$RUNNER_TEMP/firestore.json"
+          python - "$MARKER" "$RUNNER_TEMP/firestore.json" <<'PY'
           import json,sys
-          marker=sys.argv[1]+'='
-          data=json.load(open(sys.argv[2],encoding='utf-8'))
-          def strings(obj):
-              if isinstance(obj,str): yield obj
-              elif isinstance(obj,dict):
-                  for v in obj.values(): yield from strings(v)
-              elif isinstance(obj,list):
-                  for v in obj: yield from strings(v)
-          for row in data if isinstance(data,list) else []:
-              for value in strings(row):
-                  if marker in value:
-                      print(value[value.index(marker):].splitlines()[0]); raise SystemExit
+          marker=sys.argv[1]
+          doc=json.load(open(sys.argv[2],encoding='utf-8'))
+          fields=doc.get('fields') or {}
+          got=(fields.get('marker') or {}).get('stringValue','')
+          payload=(fields.get('payload') or {}).get('stringValue','')
+          if got!=marker or not payload:
+              raise SystemExit('diagnostic marker mismatch')
+          print(marker+'='+payload)
           PY
-            [ -s "$RUNNER_TEMP/value.txt" ] && break
-            sleep 3
-          done
-          cat "$RUNNER_TEMP/value.txt"
