@@ -21,6 +21,7 @@ test("fixed zone formation is complete capacity and ignores balancer counts",()=
     baseLong:3,baseShort:3,zoneOpenLong:2,zoneOpenShort:1,zoneFreeLong:1,zoneFreeShort:2,
     balancerDesired:11,balancerFree:11,entryPriority:"LONG",
     availableText:"US$ 66,67",activeZoneEntryUsd:250,entrySizingMode:"notional",minimumLeverage:50,
+    entryBudget:{availableUsd:66.67,requiredInitialMarginUsd:5,safetyBufferUsd:.25,requiredTotalUsd:5.25,shortfallUsd:0,status:"SUFFICIENT"},
   });
   assert.equal(vm.totalZoneSeats,6);
   assert.equal(vm.freeZoneSeats,3);
@@ -36,6 +37,7 @@ test("priority side cannot create entry when fixed formation has no free soldier
     zoneOpenLong:3,zoneOpenShort:1,zoneFreeLong:0,zoneFreeShort:2,
     entryPriority:"LONG",availableText:"US$ 100,00",
     activeZoneEntryUsd:250,entrySizingMode:"notional",minimumLeverage:50,
+    entryBudget:{availableUsd:100,requiredInitialMarginUsd:5,safetyBufferUsd:.25,requiredTotalUsd:5.25,shortfallUsd:0,status:"SUFFICIENT"},
   });
   assert.equal(vm.nextPossibleInflow,"GEEN");
   assert.match(vm.nextPossibleDetail,/geen vrije LONG-soldaat/i);
@@ -46,6 +48,7 @@ test("without exposure priority next entry stays inside free base formation",()=
     strategyEnabled:true,zoneSafe:true,baseLong:3,baseShort:3,
     zoneOpenLong:1,zoneOpenShort:2,zoneFreeLong:2,zoneFreeShort:1,
     availableText:"US$ 100,00",activeZoneEntryUsd:250,entrySizingMode:"notional",minimumLeverage:50,
+    entryBudget:{availableUsd:100,requiredInitialMarginUsd:5,safetyBufferUsd:.25,requiredTotalUsd:5.25,shortfallUsd:0,status:"SUFFICIENT"},
   });
   assert.equal(vm.entryPriority,"GEEN");
   assert.equal(vm.nextPossibleInflow,"1 LONG");
@@ -56,10 +59,52 @@ test("insufficient Available cannot claim next legal inflow",()=>{
     strategyEnabled:true,zoneSafe:true,baseLong:3,baseShort:3,zoneFreeLong:1,zoneFreeShort:1,
     entryPriority:"LONG",availableText:"US$ 4,00",
     activeZoneEntryUsd:250,entrySizingMode:"notional",minimumLeverage:50,
+    entryBudget:{availableUsd:4,requiredInitialMarginUsd:5,safetyBufferUsd:.25,requiredTotalUsd:5.25,shortfallUsd:1.25,status:"INSUFFICIENT"},
   });
   assert.equal(vm.estimatedSoldierCost,5);
   assert.equal(vm.nextPossibleInflow,"GEEN");
   assert.match(vm.nextPossibleDetail,/Available/i);
+  assert.match(vm.nextPossibleDetail,/1,25/);
+  assert.equal(vm.entryBudget.requiredTotalUsd,5.25);
+});
+
+test("missing canonical runtime budget fails closed instead of estimating an entry in the UI",()=>{
+  const vm=buildStrategyStatusCommandCenter({
+    strategyEnabled:true,zoneSafe:true,baseLong:3,baseShort:3,
+    zoneOpenLong:2,zoneOpenShort:2,zoneFreeLong:1,zoneFreeShort:1,
+    entryPriority:"LONG",availableText:"US$ 100,00",
+    activeZoneEntryUsd:250,entrySizingMode:"notional",minimumLeverage:50,
+  });
+  assert.equal(vm.nextPossibleInflow,"GEEN");
+  assert.match(vm.nextPossibleDetail,/runtime budgetcheck/i);
+});
+
+test("Build 430 exposes account scope and reconciliation without confusing zone formation with account totals",()=>{
+  const vm=buildStrategyStatusCommandCenter({
+    strategyEnabled:true,zoneSafe:true,baseLong:3,baseShort:3,
+    zoneOpenLong:3,zoneOpenShort:3,zoneFreeLong:0,zoneFreeShort:0,
+    actualLong:66,actualShort:43,
+    reconciliation:{
+      status:"SYNCED",liveDataStatus:"LIVE",snapshotId:"abc123",snapshotAgeMs:700,
+      exchangePositions:109,exchangeLong:66,exchangeShort:43,soldiersTotal:30,nonSoldiersTotal:79,
+      classifiedPositions:109,unclassifiedPositions:0,
+      categories:{soldiersCurrentZone:6,soldiersOldZones:24,legacyAster:79,unknown:0},
+      longExposureUsd:1037,shortExposureUsd:1759,netExposureUsd:-722,netExposureSide:"SHORT",
+      hedgeCoveragePercent:169.624,
+      margin:{availableUsd:26.5},
+    },
+  });
+  assert.equal(vm.totalZoneSeats,6);
+  assert.equal(vm.accountTotal,109);
+  assert.equal(vm.accountLong,66);
+  assert.equal(vm.accountShort,43);
+  assert.equal(vm.soldiersTotal,30);
+  assert.equal(vm.nonSoldiersTotal,79);
+  assert.equal(vm.soldierCurrentZone,6);
+  assert.equal(vm.soldierOldZones,24);
+  assert.equal(vm.netExposureUsd,-722);
+  assert.equal(vm.reconciliationStatus,"SYNCED");
+  assert.equal(vm.liveDataStatus,"LIVE");
 });
 
 test("old-zone open soldiers and winning homecomings are separate truths",()=>{
