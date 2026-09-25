@@ -163,7 +163,7 @@ def _client(uid: str, *, live: bool):
         signer_address=secret.signer_address,
         sign_message=main.local_eip712_signer(secret),
         live_authorized=bool(live),
-        before_order_submit=main._block_order_during_close_all(uid),
+        before_order_submit=main._block_order_during_close_all(uid, allow_auto_hedge_locked=True),
     )
 
 
