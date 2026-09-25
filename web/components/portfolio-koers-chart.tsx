@@ -367,18 +367,25 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const candle=next.at(-1);
     if(!candle)return;
     try{
-      candleSeriesRef.current.update({time:candle.time as UTCTimestamp,open:candle.open,high:candle.high,low:candle.low,close:candle.close});
-      const bb=bollinger20x2(next);
-      bbRefs.current.upper?.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
-      bbRefs.current.middle?.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
-      bbRefs.current.lower?.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+      if(viewMode==="performance"){
+        const anchorTime=next[0]?.time??candle.time;
+        const shift=portfolioCashflowShift(markerRowsRef.current,anchorTime,candle.time);
+        const adjusted=Math.max(Number.EPSILON,candle.close-shift);
+        candleSeriesRef.current.update({time:candle.time as UTCTimestamp,value:adjusted});
+      }else{
+        candleSeriesRef.current.update({time:candle.time as UTCTimestamp,open:candle.open,high:candle.high,low:candle.low,close:candle.close});
+        const bb=bollinger20x2(next);
+        bbRefs.current.upper?.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+        bbRefs.current.middle?.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+        bbRefs.current.lower?.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+      }
       syncOverlaysRef.current();
       if(previousTime===null||candle.time>previousTime){
         setHover(null);
         requestAnimationFrame(()=>{try{chartRef.current?.timeScale().scrollToRealTime()}catch{/* disposed */}});
       }
     }catch{/* the next confirmed payload rebuilds a stale chart safely */}
-  },[liveEquityText,timeframe]);
+  },[liveEquityText,timeframe,viewMode]);
 
   const baseCandles=useMemo(()=>mergePortfolioKoersCandles(browserCandles,payload.candles,320) as Candle[],[browserCandles,payload.candles]);
   const timelineCandles=useMemo(()=>liveEquity?mergeRealtimeEquitySample(baseCandles,liveEquity,Date.now(),timeframe) as Candle[]:baseCandles,[baseCandles,liveEquity,timeframe]);
