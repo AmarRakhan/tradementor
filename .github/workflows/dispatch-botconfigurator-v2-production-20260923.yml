@@ -1,4 +1,4 @@
-# Build 430 reuse: dispatch canonical backend after owner-only Auto Hedge shadow candidate merge.
+# Build 432 dispatch: Portfolio Koers 2.0 cashflow/status backend exact-source production release.\n# Build 430 reuse: dispatch canonical backend after owner-only Auto Hedge shadow candidate merge.
 # Build 418 continuity-monitor backend dispatch. The canonical production workflow
 # reruns exact-source tests, deploys a zero-traffic candidate, verifies health/IAM and retains rollback.
 name: Dispatch Botconfigurator V2 production backend 2026-09-23
