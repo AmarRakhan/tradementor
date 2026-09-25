@@ -6,6 +6,8 @@ from typing import Any, Callable
 import math
 import os
 
+from aster_position_loss_auto_hedge_lock import require_auto_hedge_close_allowed
+
 
 BLOCK_MESSAGE = "Sluiting geblokkeerd: verwacht nettoresultaat is niet positief"
 
@@ -56,6 +58,15 @@ def require_profitable_automatic_close(
     *,
     audit: Callable[[dict[str, Any]], None] | None = None,
 ) -> CloseEvidence:
+    if evidence is not None:
+        require_auto_hedge_close_allowed(
+            account_uid=evidence.account_uid,
+            symbol=evidence.symbol,
+            side=evidence.side,
+            quantity=evidence.quantity,
+            caller=evidence.caller,
+            audit=audit,
+        )
     reliable = evidence is not None and all((
         evidence.account_uid, evidence.symbol, evidence.side, evidence.caller,
         evidence.quantity > 0, evidence.entry_price > 0, evidence.mark_price > 0,

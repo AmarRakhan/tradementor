@@ -117,6 +117,7 @@ from aster_execution import configure_maximum_usable_leverage
 from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rejection
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
+from aster_position_loss_auto_hedge_lock import configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_sniper import SniperSettings, backtest_candles
 from aster_sniper_runtime import run_sniper_tick
@@ -212,6 +213,12 @@ async def existing_data_read_bridge(request: Request, call_next: Any) -> Respons
 
 
 db = firestore.client()
+configure_auto_hedge_lock_reader(
+    lambda uid, symbol: (
+        db.collection("asterPositionLossAutoHedge").document(str(uid))
+        .collection("pairs").document(str(symbol).upper()).get().to_dict() or {}
+    )
+)
 info = Info(constants.MAINNET_API_URL, skip_ws=True)
 secrets_client = secretmanager.SecretManagerServiceClient()
 tasks_client = tasks_v2.CloudTasksClient()
@@ -1313,9 +1320,25 @@ def _aster_close_all_active(uid: str) -> bool:
     return not isinstance(until,datetime) or until>datetime.now(timezone.utc)
 
 
-def _block_order_during_close_all(uid:str):
+def _block_order_during_close_all(uid:str, *, allow_auto_hedge_locked:bool=False):
+    """Final account pre-submit guard.
+
+    Normal automatic/manual strategy paths may never consume quantity reserved by
+    Auto Hedge. The Auto Hedge reconciler itself opts out only when it has to
+    REDUCE its own reservation. Emergency account-wide Close All uses a separate
+    client without this callback and therefore remains the explicit override.
+    """
     def guard(_intent:AsterOrderIntent)->None:
-        if _aster_close_all_active(uid):raise AsterValidationError("Accountgebonden Alles-sluiten-lock blokkeert deze order")
+        if _aster_close_all_active(uid):
+            raise AsterValidationError("Accountgebonden Alles-sluiten-lock blokkeert deze order")
+        if str(_intent.action).upper()=="CLOSE" and not allow_auto_hedge_locked:
+            require_auto_hedge_close_allowed(
+                account_uid=uid,
+                symbol=_intent.symbol,
+                side=_intent.position_side.value,
+                quantity=float(_intent.quantity),
+                caller="aster-pre-submit",
+            )
     return guard
 
 
@@ -6261,10 +6284,15 @@ def stop_aster_strategy2(request: AsterStrategyStopRequest, user: dict[str, Any]
         "updatedAt":datetime.now(timezone.utc)},merge=True)
     return {"stopped":True,"finishingPortfolioExit":exit_in_progress,**aster_strategy2_public(uid)}
 
-def _portfolio_growth_client(user:dict[str,Any],*,live:bool)->AsterV3Client:
-    secret=load_aster_secret(user)
-    return AsterV3Client(signer_address=secret.signer_address,
-        sign_message=local_eip712_signer(secret),live_authorized=live)
+def _portfolio_growth_client(user:dict[str,Any],*,live:bool,
+        emergency_close_all:bool=False)->AsterV3Client:
+    secret=load_aster_secret(user);uid=str(user["uid"])
+    return AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),
+        live_authorized=live,
+        before_order_submit=(None if emergency_close_all else _block_order_during_close_all(uid)),
+    )
 
 
 
@@ -6449,7 +6477,7 @@ def close_all_aster_strategy(
         action_ref.set({"status":"FAILED_BEFORE_CLOSE","submitted":0,
             "reason":"Account execution bleef bezet tijdens noodstop","updatedAt":datetime.now(timezone.utc)},merge=True)
         raise HTTPException(409,"NOODSTOP wacht op een lopende strategieactie; bots staan al UIT. Probeer Alles sluiten opnieuw.")
-    client=_portfolio_growth_client(user,live=True);submitted=[]
+    client=_portfolio_growth_client(user,live=True,emergency_close_all=True);submitted=[]
     dynamic_hedge_ref=user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard=None
     try:
