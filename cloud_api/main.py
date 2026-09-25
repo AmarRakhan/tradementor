@@ -6608,9 +6608,14 @@ def preview_profitable_aster_positions(
     client = _portfolio_growth_client(user, live=False)
     try:
         owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
-        rows=[row for row in client.position_risk()
+        account_rows=list(client.position_risk())
+        rows=[row for row in account_rows
             if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
-        preview = profit_preview_with_settings(rows, load_hedge_settings(user, user_reference))
+        preview = profit_preview_with_settings(
+            rows,
+            load_hedge_settings(user, user_reference),
+            exposure_rows=account_rows,
+        )
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
     return {**preview, "generatedAt": datetime.now(timezone.utc).isoformat(), "reliable": True}
