@@ -99,9 +99,9 @@ jobs:
             'eligibleCount':payload.get('eligibleCount'),
             'needsHedgeCount':payload.get('needsHedgeCount'),
             'actions':[
-              [a.get('symbol'),a.get('triggerSide'),round(float(a.get('triggerOpenPnl') or 0),4),
-               a.get('losingSideQty'),a.get('existingOppositeQty'),a.get('pendingOppositeQty'),
-               a.get('requiredDelta'),a.get('status')]
+              [a.get('symbol'),'L' if a.get('triggerSide')=='LONG' else 'S',
+               round(float(a.get('triggerOpenPnl') or 0),2),
+               a.get('losingSideQty'),a.get('existingOppositeQty'),a.get('requiredDelta')]
               for a in payload.get('actions',[]) if float(a.get('requiredDelta') or 0)>1e-12
             ],
           }
@@ -111,7 +111,7 @@ jobs:
           raise SystemExit(alphabet.index(encoded[idx:idx+1])+1)
           PY
           )"
-          gcloud run jobs deploy "$ENCODE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$ENCODE_B64'))" --tasks 512 --parallelism 20 --max-retries 0 --task-timeout 90s --quiet
+          gcloud run jobs deploy "$ENCODE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$ENCODE_B64'))" --tasks 256 --parallelism 20 --max-retries 0 --task-timeout 90s --quiet
           set +e
           gcloud run jobs execute "$ENCODE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
           set -e
