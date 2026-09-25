@@ -320,6 +320,9 @@
     }else{
       state.packages.push({index,qty:1,serialsByCode:{}});
       save(); render();
+      // Direct na pakketselectie het serienummervenster openen
+      // voor alle serienummerplichtige artikelen in dit pakket.
+      setTimeout(()=>startMissingSerialScan(false),0);
     }
   }
   function toggleItem(code){
@@ -330,6 +333,8 @@
     }else{
       state.items.push({code,qty:1,status:state.itemStatuses[code]||'Nieuw',serials:[]});
       save(); render();
+      // Ook losse serienummerplichtige artikelen direct laten scannen.
+      setTimeout(()=>startMissingSerialScan(false),0);
     }
   }
   function setCatalogStatus(code,status){
@@ -362,6 +367,8 @@
       }
     }
     save(); render();
+    // Bij +1 ontstaat voor serienummerplichtige hardware ook +1 serienummer.
+    if(delta>0) setTimeout(()=>startMissingSerialScan(false),0);
   }
   function removeSelection(kind,key){
     const arr=kind==='package'?state.packages:state.items;
