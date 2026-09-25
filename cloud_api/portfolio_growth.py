@@ -11,7 +11,11 @@ import math
 from typing import Any, Iterable
 
 
-EXTERNAL_CASHFLOW_TYPES = frozenset({"TRANSFER", "WELCOME_BONUS", "INSURANCE_CLEAR"})
+EXTERNAL_CASHFLOW_TYPES = frozenset({
+    "TRANSFER", "DEPOSIT", "WITHDRAWAL", "WALLET_TRANSFER", "INTERNAL_TRANSFER",
+    "WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT",
+})
+CASHFLOW_ADJUSTMENT_TYPES = frozenset({"WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT"})
 ENTRY_INTENT_WORDS = ("open", "entry", "base", "dca", "reopen", "reset")
 PORTFOLIO_GROWTH_START_DATE = "2026-08-23"
 
@@ -86,8 +90,56 @@ def external_cashflow_since(rows: Iterable[dict[str, Any]], since_ms: int) -> fl
         if when < since_ms:
             continue
         if str(row.get("incomeType", "")).upper() in EXTERNAL_CASHFLOW_TYPES:
-            total += _finite(row.get("income", 0))
+            total += _finite(row.get("income", row.get("amount", 0)))
     return total
+
+
+def external_cashflow_breakdown(rows: Iterable[dict[str, Any]], since_ms: int) -> dict[str, Any]:
+    """Audit-friendly signed cashflow breakdown for the measured Aster scope."""
+    deposits = 0.0
+    withdrawals = 0.0
+    adjustments = 0.0
+    count = 0
+    types: set[str] = set()
+    for row in rows:
+        when = int(_finite(row.get("time", row.get("timestamp", 0))))
+        ledger_type = str(row.get("incomeType", "")).upper().strip()
+        if when < since_ms or ledger_type not in EXTERNAL_CASHFLOW_TYPES:
+            continue
+        amount = _finite(row.get("income", row.get("amount", 0)))
+        if abs(amount) <= 1e-12:
+            continue
+        count += 1
+        types.add(ledger_type)
+        if ledger_type in CASHFLOW_ADJUSTMENT_TYPES:
+            adjustments += amount
+        elif amount > 0:
+            deposits += amount
+        else:
+            withdrawals += amount
+    return {
+        "count": count,
+        "depositsUsd": deposits,
+        "withdrawalsUsd": withdrawals,
+        "adjustmentsUsd": adjustments,
+        "netExternalCashflowUsd": deposits + withdrawals + adjustments,
+        "ledgerTypes": sorted(types),
+    }
+
+
+def chain_linked_return_percent(subperiod_returns_percent: Iterable[Any]) -> float:
+    """Chain-link independently measured subperiod returns (TWR primitive)."""
+    factor = 1.0
+    count = 0
+    for value in subperiod_returns_percent:
+        rate = _finite(value) / 100.0
+        if rate <= -1.0:
+            raise ValueError("Subperiode-rendement kan niet lager dan -100% zijn")
+        factor *= 1.0 + rate
+        count += 1
+    if count == 0:
+        raise ValueError("Minimaal één subperiode is vereist")
+    return (factor - 1.0) * 100.0
 
 
 def estimate_close_value(
