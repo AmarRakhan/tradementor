@@ -31,6 +31,26 @@ def test_strategy2_test_auto_publish_is_branch_and_path_scoped():
     assert 'test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"' in workflow
 
 
+def test_suspended_strategy2_test_project_keeps_push_tests_but_gates_cloud_publication():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "STRATEGY2_TEST_DEPLOY_ENABLED:" in workflow
+    assert "vars.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'" in workflow
+    gate = "if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'"
+    for step in (
+        "Authenticate to isolated Google Cloud test project",
+        "Set up Google Cloud CLI",
+        "Build and push isolated Strategy 2 test image",
+        "Deploy isolated Strategy 2 test service",
+        "Verify service boundary",
+        "Read existing Strategy 2 scheduler state without modifying it",
+        "Verify Strategy 2 route and preserve scheduler state",
+        "Publish test service URL",
+    ):
+        start = workflow.index(f"- name: {step}")
+        tail = workflow[start:start + 220]
+        assert gate in tail, step
+
+
 def test_deployment_proves_exact_commit_and_money_grabber_routes():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     source = MAIN.read_text(encoding="utf-8")
