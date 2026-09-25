@@ -332,29 +332,34 @@ export function AsterPositionLossAutoHedgeBridge() {
   useEffect(() => {
     const currentPairs = Array.isArray(state.pairs) ? state.pairs : [];
     const syncTradecentrum = () => {
-      document.querySelectorAll(".plah-tc-auto-hedge").forEach((node) => node.remove());
       const tradecentrum = document.querySelector<HTMLElement>(
         'article[data-reference="nexora_tradecentrum_actieve_posities.png"]',
       );
-      if (!tradecentrum || currentPairs.length === 0) return;
+      if (!tradecentrum) return;
       const rows = Array.from(tradecentrum.querySelectorAll<HTMLElement>('[role="table"]>[role="row"]')).slice(1);
       for (const row of rows) {
         const coinCell = row.querySelector<HTMLElement>('button[role="cell"]');
         if (!coinCell) continue;
+        const existing = coinCell.querySelector<HTMLElement>(".plah-tc-auto-hedge");
         const text = (coinCell.textContent || "").toUpperCase();
         const pair = currentPairs.find((item) => {
           const coin = String(item.symbol || "").replace(/USDT$/i, "").toUpperCase();
           return coin.length >= 2 && (text.startsWith(coin) || text.includes(` ${coin}`));
         });
-        if (!pair) continue;
+        if (!pair) {
+          existing?.remove();
+          continue;
+        }
         const small = coinCell.querySelector<HTMLElement>("small");
         if (!small) continue;
-        const badge = document.createElement("em");
         const cls = statusClass(pair.status);
-        badge.className = `plah-tc-auto-hedge ${cls}`;
-        badge.textContent = `AH ${statusLabel(pair.status)}`;
+        const label = `AH ${statusLabel(pair.status)}`;
+        const badge = existing || document.createElement("em");
+        const nextClass = `plah-tc-auto-hedge ${cls}`;
+        if (badge.className !== nextClass) badge.className = nextClass;
+        if (badge.textContent !== label) badge.textContent = label;
         badge.title = "Auto Hedge-status";
-        small.appendChild(badge);
+        if (!existing) small.appendChild(badge);
       }
     };
     syncTradecentrum();
