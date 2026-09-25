@@ -25,6 +25,151 @@
   const $ = id => document.getElementById(id);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const lower = s => String(s ?? '').toLocaleLowerCase('nl');
+  let serialScanQueue=[];
+  let serialScanCurrent=null;
+  let topdeskAfterSerialScan=false;
+
+  function orderItemInfo(code,label=''){
+    return getCatalogItem(code) || data.items.find(x=>x.code===code) || {
+      code,
+      name:label||code,
+      category:''
+    };
+  }
+
+  function requiresSerial(code,label=''){
+    const item=orderItemInfo(code,label);
+    const category=String(item.category||'');
+    const name=normalizeSmartText(item.name||label||'');
+    const serialCategories=new Set(['Laptops','Telefoons','iPads','Docks','Monitoren']);
+    return serialCategories.has(category) ||
+      code==='MUWA3ZM/A' ||
+      name.includes('apple pencil');
+  }
+
+  function selectedSerialCountForItem(sel){
+    return (sel.serials||[]).filter(Boolean).length;
+  }
+
+  function selectedSerialCountForPackage(sel,code){
+    return ((sel.serialsByCode||{})[code]||[]).filter(Boolean).length;
+  }
+
+  function queueMissingSerialsForItem(code){
+    const sel=itemSelected(code); if(!sel)return;
+    const item=orderItemInfo(code);
+    if(!requiresSerial(code,item.name)) return;
+    const missing=Math.max(0,sel.qty-selectedSerialCountForItem(sel));
+    for(let i=0;i<missing;i++){
+      serialScanQueue.push({
+        kind:'item',
+        key:code,
+        code,
+        name:item.name,
+        number:selectedSerialCountForItem(sel)+i+1,
+        total:sel.qty
+      });
+    }
+  }
+
+  function queueMissingSerialsForPackage(index){
+    const sel=packageSelected(index); if(!sel)return;
+    const pkg=data.packages[index]; if(!pkg)return;
+    const excluded=new Set(sel.excludedCodes||[]);
+    pkg.items.filter(it=>!excluded.has(it.code)).forEach(it=>{
+      const info=orderItemInfo(it.code,it.label);
+      if(!requiresSerial(it.code,info.name)) return;
+      const needed=sel.qty*(it.qty||1);
+      const have=selectedSerialCountForPackage(sel,it.code);
+      for(let i=have;i<needed;i++){
+        serialScanQueue.push({
+          kind:'package',
+          key:index,
+          code:it.code,
+          name:info.name||it.label,
+          number:i+1,
+          total:needed
+        });
+      }
+    });
+  }
+
+  function rebuildMissingSerialQueue(){
+    serialScanQueue=[];
+    state.packages.forEach(sel=>queueMissingSerialsForPackage(sel.index));
+    state.items.forEach(sel=>queueMissingSerialsForItem(sel.code));
+  }
+
+  function openNextSerialScan(){
+    if(!serialScanQueue.length){
+      serialScanCurrent=null;
+      $('serialScanModal')?.classList.add('hidden');
+      save(); render();
+      if(topdeskAfterSerialScan){
+        topdeskAfterSerialScan=false;
+        copyTopdeskText();
+      }
+      return;
+    }
+    serialScanCurrent=serialScanQueue.shift();
+    const modal=$('serialScanModal'); if(!modal)return;
+    modal.classList.remove('hidden');
+    $('serialScanItemName').textContent=serialScanCurrent.name;
+    $('serialScanProgress').textContent=serialScanCurrent.total>1
+      ? `Serienummer ${serialScanCurrent.number} van ${serialScanCurrent.total}`
+      : 'Serienummer vereist voor dit artikel';
+    $('serialScanInput').value='';
+    setTimeout(()=>$('serialScanInput').focus(),0);
+  }
+
+  function startMissingSerialScan(afterTopdesk=false){
+    rebuildMissingSerialQueue();
+    topdeskAfterSerialScan=afterTopdesk;
+    if(!serialScanQueue.length){
+      if(afterTopdesk){
+        topdeskAfterSerialScan=false;
+        copyTopdeskText();
+      }
+      return;
+    }
+    openNextSerialScan();
+  }
+
+  function confirmSerialScan(){
+    if(!serialScanCurrent)return;
+    const serial=$('serialScanInput')?.value.trim().toUpperCase();
+    if(!serial){toast('Scan of vul eerst een serienummer in');$('serialScanInput')?.focus();return;}
+
+    if(serialScanCurrent.kind==='item'){
+      const sel=itemSelected(serialScanCurrent.key);
+      if(sel){
+        sel.serials=sel.serials||[];
+        if(!sel.serials.includes(serial)) sel.serials.push(serial);
+      }
+    }else{
+      const sel=packageSelected(serialScanCurrent.key);
+      if(sel){
+        sel.serialsByCode=sel.serialsByCode||{};
+        sel.serialsByCode[serialScanCurrent.code]=sel.serialsByCode[serialScanCurrent.code]||[];
+        if(!sel.serialsByCode[serialScanCurrent.code].includes(serial)){
+          sel.serialsByCode[serialScanCurrent.code].push(serial);
+        }
+      }
+    }
+
+    save();
+    openNextSerialScan();
+  }
+
+  function cancelSerialScan(){
+    serialScanQueue=[];
+    serialScanCurrent=null;
+    topdeskAfterSerialScan=false;
+    $('serialScanModal')?.classList.add('hidden');
+    render();
+  }
+
+
 
   function save(){
     try{
@@ -79,13 +224,25 @@
 
   function togglePackage(index){
     const pos=state.packages.findIndex(x=>x.index===index);
-    if(pos>=0) state.packages.splice(pos,1); else state.packages.push({index,qty:1});
-    save(); render();
+    if(pos>=0){
+      state.packages.splice(pos,1);
+      save(); render();
+    }else{
+      state.packages.push({index,qty:1,serialsByCode:{}});
+      save(); render();
+      setTimeout(()=>startMissingSerialScan(false),0);
+    }
   }
   function toggleItem(code){
     const pos=state.items.findIndex(x=>x.code===code);
-    if(pos>=0) state.items.splice(pos,1); else state.items.push({code,qty:1,status:state.itemStatuses[code]||'Nieuw'});
-    save(); render();
+    if(pos>=0){
+      state.items.splice(pos,1);
+      save(); render();
+    }else{
+      state.items.push({code,qty:1,status:state.itemStatuses[code]||'Nieuw',serials:[]});
+      save(); render();
+      setTimeout(()=>startMissingSerialScan(false),0);
+    }
   }
   function setCatalogStatus(code,status){
     state.itemStatuses[code]=status;
@@ -100,8 +257,24 @@
   function changeQty(kind,key,delta){
     const arr=kind==='package'?state.packages:state.items;
     const obj=kind==='package'?arr.find(x=>x.index===key):arr.find(x=>x.code===key);
-    if(!obj)return; obj.qty+=delta; if(obj.qty<=0){ const i=arr.indexOf(obj); arr.splice(i,1); }
+    if(!obj)return;
+    obj.qty+=delta;
+    if(obj.qty<=0){
+      const i=arr.indexOf(obj); arr.splice(i,1);
+    }else if(delta<0){
+      if(kind==='item'){
+        obj.serials=(obj.serials||[]).slice(0,obj.qty);
+      }else{
+        const pkg=data.packages[key];
+        obj.serialsByCode=obj.serialsByCode||{};
+        (pkg?.items||[]).forEach(it=>{
+          const max=obj.qty*(it.qty||1);
+          obj.serialsByCode[it.code]=(obj.serialsByCode[it.code]||[]).slice(0,max);
+        });
+      }
+    }
     save(); render();
+    if(delta>0) setTimeout(()=>startMissingSerialScan(false),0);
   }
   function removeSelection(kind,key){
     const arr=kind==='package'?state.packages:state.items;
@@ -1302,6 +1475,60 @@
       : `${serialCount} serienummers uitgelijnd gekopieerd · plak vanaf de bovenste cel Serienummer`);
   }
 
+  function topdeskLines(){
+    const lines=[];
+
+    state.packages.forEach(sel=>{
+      const pkg=data.packages[sel.index]; if(!pkg)return;
+      for(let n=0;n<sel.qty;n++){
+        lines.push(`Pakket: ${pkg.name}`);
+        const excluded=new Set(sel.excludedCodes||[]);
+        const serialCursor={};
+        pkg.items.filter(it=>!excluded.has(it.code)).forEach(it=>{
+          for(let q=0;q<(it.qty||1);q++){
+            const info=orderItemInfo(it.code,it.label);
+            const cursor=serialCursor[it.code]||0;
+            const serial=((sel.serialsByCode||{})[it.code]||[])[n*(it.qty||1)+cursor]||'';
+            serialCursor[it.code]=cursor+1;
+            lines.push(`- 1x ${info.name||it.label}${serial?' | serienummer: '+serial:''}`);
+          }
+        });
+        if((sel.excludedCodes||[]).some(code=>code==='MD3J4ZM/A'||code==='MHJE3ZM/A')){
+          lines.push('- zonder 20W-lader');
+        }
+        lines.push('');
+      }
+    });
+
+    state.items.forEach(sel=>{
+      const info=orderItemInfo(sel.code);
+      for(let q=0;q<sel.qty;q++){
+        const serial=(sel.serials||[])[q]||'';
+        lines.push(`1x ${info.name}${serial?' | serienummer: '+serial:''}`);
+      }
+    });
+
+    while(lines.length && !lines[lines.length-1]) lines.pop();
+    return lines;
+  }
+
+  async function copyTopdeskText(){
+    const rows=expandedRows();
+    if(!rows.length){toast('Selecteer eerst een pakket of artikel');return;}
+
+    // Voor TOPdesk mogen serienummerplichtige artikelen nooit zonder SN worden gekopieerd.
+    rebuildMissingSerialQueue();
+    if(serialScanQueue.length){
+      topdeskAfterSerialScan=true;
+      openNextSerialScan();
+      return;
+    }
+
+    const txt=topdeskLines().join('\n');
+    await writeClipboard(txt);
+    toast('TOPdesk-tekst gekopieerd');
+  }
+
   function renderCounts(){
     const n=data.packages.filter(p=>p.badge==='Nieuw').length, r=data.packages.length-n;
     $('allCount').textContent=`(${data.packages.length})`; $('newCount').textContent=`(${n})`; $('refurbCount').textContent=`(${r})`;
@@ -1316,6 +1543,12 @@
   $('clearOrder').addEventListener('click',clearOrder);
   $('copyButton').addEventListener('click',copyDynamics);
   $('serialCopyButton')?.addEventListener('click',copySerialNumbers);
+  $('topdeskCopyButton')?.addEventListener('click',copyTopdeskText);
+  $('confirmSerialScanButton')?.addEventListener('click',confirmSerialScan);
+  $('cancelSerialScanButton')?.addEventListener('click',cancelSerialScan);
+  $('serialScanInput')?.addEventListener('keydown',e=>{
+    if(e.key==='Enter'){e.preventDefault();confirmSerialScan();}
+  });
   $('createPackageButton')?.addEventListener('click',openPackageModal);
   $('addPackageRowButton')?.addEventListener('click',addPackageBuilderRow);
   $('savePackageButton')?.addEventListener('click',saveCustomPackage);
@@ -1331,6 +1564,7 @@
   document.querySelectorAll('[data-close-article-modal]').forEach(el=>el.addEventListener('click',closeArticleModal));
   document.addEventListener('keydown',e=>{
     if(e.key!=='Escape') return;
+    if($('serialScanModal')&&!$('serialScanModal').classList.contains('hidden')){cancelSerialScan();return;}
     if($('ticketPasteModal')&&!$('ticketPasteModal').classList.contains('hidden')) closeTicketModal();
     if($('packageModal')&&!$('packageModal').classList.contains('hidden')) closePackageModal();
     if($('articleModal')&&!$('articleModal').classList.contains('hidden')) closeArticleModal();
