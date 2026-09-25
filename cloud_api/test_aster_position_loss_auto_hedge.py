@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from aster_position_loss_auto_hedge import evaluate_auto_hedge
+from aster_position_loss_auto_hedge import evaluate_auto_hedge, reconcile_auto_hedge
 
 
 def leg(symbol: str, side: str, qty: float, pnl: float):
@@ -126,6 +126,46 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
     def test_invalid_threshold_fails_closed(self):
         with self.assertRaises(ValueError):
             evaluate_auto_hedge([leg("DOGEUSDT", "LONG", 100, -20)], 0)
+
+    def test_shadow_mode_never_submits_an_order(self):
+        class Client:
+            def __init__(self):
+                self.submits = 0
+            def position_risk(self):
+                return [leg("DOGEUSDT", "LONG", 100, -20)]
+            def open_orders(self):
+                return []
+            def submit_order_once(self, *args, **kwargs):
+                self.submits += 1
+                raise AssertionError("shadow mode must not submit")
+
+        client = Client()
+        report = reconcile_auto_hedge(client=client, uid="u1", threshold_usd=10, execute=False)
+        self.assertEqual(report["mode"], "SHADOW")
+        self.assertEqual(report["ordersSent"], 0)
+        self.assertEqual(client.submits, 0)
+        self.assertEqual(report["actions"][0]["requiredDelta"], 100)
+
+    def test_insufficient_margin_fails_closed_without_order(self):
+        class Client:
+            def __init__(self):
+                self.submits = 0
+            def position_risk(self):
+                return [leg("DOGEUSDT", "LONG", 100, -20)]
+            def open_orders(self):
+                return []
+            def position_mode(self):
+                return True
+            def account_information(self):
+                return {"availableBalance": "0"}
+            def submit_order_once(self, *args, **kwargs):
+                self.submits += 1
+                raise AssertionError("insufficient margin must block before submission")
+
+        client = Client()
+        report = reconcile_auto_hedge(client=client, uid="u1", threshold_usd=10, execute=True)
+        self.assertEqual(client.submits, 0)
+        self.assertEqual(report["actions"][0]["status"], "INSUFFICIENT_MARGIN")
 
 
 if __name__ == "__main__":
