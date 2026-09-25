@@ -381,35 +381,3 @@ jobs:
         shell: bash
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'Build 423 backend dispatch did not produce a verifiable Actions run. No production promotion was claimed.'
-
-
-  dispatch-continuity-build-427:
-    if: github.event.issue.title == '[AGENT-CONTROL] deploy continuity build 427 741458b' && github.event.issue.user.login == 'AmarRakhan'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      GH_TOKEN: ${{ github.token }}
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
-    steps:
-      - name: Dispatch exact Build 427 production backend
-        shell: bash
-        run: |
-          set -euo pipefail
-          SOURCE_COMMIT='741458b372237aa5e18272fdbbefb50dea577509'
-          gh workflow run deploy-cloud-production.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$TARGET_BRANCH" \
-            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
-            -f source_commit="$SOURCE_COMMIT" \
-            -f request_issue="$ISSUE_NUMBER"
-
-      - name: Confirm backend deployment dispatch
-        shell: bash
-        run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Exact-source Build 427 backend deployment dispatched for 741458b372237aa5e18272fdbbefb50dea577509. Canonical production workflow will rerun all backend tests before candidate deployment and promotion."
-
-      - name: Report dispatch failure
-        if: failure()
-        shell: bash
-        run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'Build 427 backend dispatch failed before production mutation. No Cloud Run revision was promoted.'
