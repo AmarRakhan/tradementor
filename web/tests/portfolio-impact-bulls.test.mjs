@@ -95,6 +95,19 @@ test("exposure derives from notional first and size x mark as fallback", () => {
 });
 
 
+test("Build 430 reproduces the screenshot P&L arithmetic independently of market-pressure percentages", () => {
+  const result = deriveBattleMetrics({
+    longPnl: 8.27,
+    shortPnl: -322.68,
+    longDelta: 0,
+    shortDelta: 0,
+    equity: 122.79,
+    longExposure: 1037,
+    shortExposure: 1759,
+  });
+  assert.equal(Math.round(result.netPnl * 100) / 100, -314.41);
+});
+
 test("Build 430 labels the footer percentages as market pressure rather than P&L allocation", async () => {
   const component = await readFile(new URL("../components/portfolio-impact-battle-legacy.tsx", import.meta.url), "utf8");
   assert.ok(component.includes("MARKTDRUK · GEEN P&L-VERDELING"));
