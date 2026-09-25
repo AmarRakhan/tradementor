@@ -16,8 +16,8 @@ test("Sniper is a live main navigation view between Aster and News", () => {
   assert.match(bridge, /data-destination="aster"/);
   assert.match(bridge, /data-destination="news"/);
   assert.match(bridge, /<SniperDashboard cloudReady=\{cloudReady\}/);
-  assert.match(newsBridge, /"markets", "aster", "sniper", "news", "journey", "wallet"/);
-  assert.match(marketsBridge, /"markets", "aster", "sniper", "news", "journey", "wallet"/);
+  assert.match(newsBridge, /"markets", "aster", "sniper", "news", "friends", "journey", "wallet"/);
+  assert.match(marketsBridge, /"markets", "aster", "sniper", "news", "friends", "journey", "wallet"/);
 });
 
 test("Sniper dashboard exposes exactly the agreed strategy sections and live activation", () => {
@@ -59,7 +59,7 @@ test("Sniper dashboard only consumes Sniper trade endpoints for management", () 
   assert.doesNotMatch(dashboard, /\/strategy2\/start/);
 });
 
-test("mobile Sniper navigation stays compact with seven destinations", () => {
+test("mobile main navigation stays compact with eight destinations", () => {
   assert.match(css, /data-destination="sniper"/);
   assert.match(css, /@media\(max-width:760px\)/);
   assert.match(css, /\.bottom-nav \.nav-button small/);

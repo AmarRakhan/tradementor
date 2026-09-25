@@ -14,6 +14,7 @@ import { AsterPortfolioEmergencyReserveNote } from "@/components/aster-portfolio
 import { AsterProfitLockLadderBridge } from "@/components/aster-profit-lock-ladder-bridge";
 import { MarketsNavigationBridge } from "@/components/markets-navigation-bridge";
 import { NewsNavigationBridge } from "@/components/news-navigation-bridge";
+import { FriendsNavigationBridge } from "@/components/friends-navigation-bridge";
 import { AsterPairSettingsOverlay } from "@/components/aster-pair-settings-overlay";
 import { AsterSideTpSettings } from "@/components/aster-side-tp-settings";
 import { AsterShortDcaSaveGuard } from "@/components/aster-short-dca-save-guard";
@@ -98,6 +99,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <AsterPairSettingsOverlay />
           <MarketsNavigationBridge />
           <NewsNavigationBridge />
+          <FriendsNavigationBridge />
         </AuthProvider>
       </body>
     </html>
