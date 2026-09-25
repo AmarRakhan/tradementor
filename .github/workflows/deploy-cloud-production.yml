@@ -233,6 +233,7 @@ jobs:
               "/v1/me/aster/automation/close-all",
               "/v1/me/aster/position-loss-auto-hedge",
               "/v1/me/aster/position-loss-auto-hedge/apply",
+              "/v1/me/aster/position-loss-auto-hedge/pairs/{symbol}/rehedge",
           ):
               assert required in paths, required
           PY
