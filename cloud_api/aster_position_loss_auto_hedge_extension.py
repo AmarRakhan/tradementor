@@ -39,6 +39,21 @@ def _doc(uid: str):
     return main.db.collection("asterPositionLossAutoHedge").document(str(uid))
 
 
+def _owner_uid() -> str:
+    value = main.continuity_owner_reference().get().to_dict() or {}
+    if value.get("enabled") is False:
+        return ""
+    return str(value.get("ownerUid") or "").strip()
+
+
+def _dynamic_hedge_enabled(uid: str) -> bool:
+    try:
+        value = main.user_reference({"uid": uid}).collection("asterDynamicHedge").document("control").get().to_dict() or {}
+    except Exception:
+        return True
+    return value.get("enabled") is True
+
+
 def _current(uid: str) -> dict[str, Any]:
     row = _doc(uid).get().to_dict() or {}
     try:
@@ -67,6 +82,8 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     enabled = row.get("enabled") is True
     operational = enabled and WORKER_ENABLED and EXECUTION_ENABLED
     return _serialize({
+        "available": True,
+        "ownerOnly": True,
         "enabled": enabled,
         "thresholdUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
         "workerEnabled": WORKER_ENABLED,
@@ -103,9 +120,16 @@ def _client(uid: str, *, live: bool):
 
 
 def _run_uid(uid: str, *, force_shadow: bool = False) -> dict[str, Any]:
+    if not uid or uid != _owner_uid():
+        return {"mode": "OFF", "ordersSent": 0, "status": "BLOCKED", "reason": "OWNER_ONLY", "actions": []}
     settings = _current(uid)
     if settings.get("enabled") is not True:
         report = {"mode": "OFF", "ordersSent": 0, "actions": []}
+        _doc(uid).set({"lastReport": report, "lastCheckedAt": datetime.now(timezone.utc), "lastError": ""}, merge=True)
+        return report
+
+    if _dynamic_hedge_enabled(uid):
+        report = {"mode": "OFF", "ordersSent": 0, "status": "BLOCKED", "reason": "DYNAMIC_HEDGE_CONFLICT", "actions": []}
         _doc(uid).set({"lastReport": report, "lastCheckedAt": datetime.now(timezone.utc), "lastError": ""}, merge=True)
         return report
 
@@ -153,7 +177,13 @@ def get_position_loss_auto_hedge(
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
-    return _public(str(user["uid"]))
+    try:
+        uid = main.require_continuity_owner(user)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return {"available": False, "ownerOnly": True, "enabled": False, "thresholdUsd": DEFAULT_THRESHOLD_USD, "status": "UIT"}
+        raise
+    return _public(uid)
 
 
 @main.app.put("/v1/me/aster/position-loss-auto-hedge")
@@ -162,7 +192,9 @@ def put_position_loss_auto_hedge(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = str(user["uid"])
+    uid = main.require_continuity_owner(user)
+    if request.enabled and _dynamic_hedge_enabled(uid):
+        raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
     try:
         threshold = normalize_threshold(request.thresholdUsd)
     except ValueError as exc:
@@ -187,7 +219,9 @@ def apply_position_loss_auto_hedge(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = str(user["uid"])
+    uid = main.require_continuity_owner(user)
+    if request.enabled and _dynamic_hedge_enabled(uid):
+        raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
     try:
         threshold = normalize_threshold(request.thresholdUsd)
     except ValueError as exc:
@@ -205,13 +239,17 @@ def apply_position_loss_auto_hedge(
 def _worker_loop() -> None:
     while not _worker_stop.wait(WORKER_INTERVAL):
         try:
-            docs = list(main.db.collection("asterPositionLossAutoHedge").where("enabled", "==", True).limit(50).stream())
+            uid = _owner_uid()
+            if not uid:
+                continue
+            value = _doc(uid).get().to_dict() or {}
+            if value.get("enabled") is not True:
+                continue
         except Exception:
             continue
-        for doc in docs:
-            if _worker_stop.is_set():
-                return
-            _run_uid(str(doc.id), force_shadow=not EXECUTION_ENABLED)
+        if _worker_stop.is_set():
+            return
+        _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
 
 
 @main.app.on_event("startup")
