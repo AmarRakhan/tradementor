@@ -4,18 +4,15 @@
 name: Deploy Strategy 2 Shared Live Test
 
 on:
+  # Legacy Strategy-2 shared-live test project is currently suspended.
+  # Keep this workflow manual-only so ordinary production/backend pushes
+  # do not fail on authentication against that isolated test project.
   workflow_dispatch:
     inputs:
       confirmation:
         description: "Type DEPLOY_STRATEGY2_TEST_LIVE"
         required: true
         type: string
-  push:
-    branches:
-      - amar-crypto-bot-2026-cloud
-    paths:
-      - "cloud_api/**"
-      - ".github/workflows/deploy-cloud-strategy2-test-live.yml"
 
 permissions:
   contents: read
