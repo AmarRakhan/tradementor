@@ -642,6 +642,8 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const zoneFormation=record(zoneSoldierReport.zoneFormation);
   const zoneCurrent=record(zoneSoldierReport.currentZone);
   const zoneOld=record(zoneSoldierReport.oldZonesOpen);
+  const zoneOwned=record(zoneSoldierReport.strategyOwnedOpen);
+  const zoneCurrentOwned=record(zoneSoldierReport.currentZoneOwned);
   const zoneExposure=record(zoneSoldierReport.exposure);
   const zoneBalancer=record(zoneSoldierReport.balancer);
   const zoneHomecomings=record(zoneSoldierReport.homecomings);
@@ -658,6 +660,11 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const oldOpenTotal=integerOrNull(zoneOld.total);
   const oldOpenLong=integerOrNull(zoneOld.long);
   const oldOpenShort=integerOrNull(zoneOld.short);
+  const strategyOwnedTotal=integerOrNull(zoneOwned.total);
+  const strategyOwnedLong=integerOrNull(zoneOwned.long);
+  const strategyOwnedShort=integerOrNull(zoneOwned.short);
+  const currentZoneOwnedLong=integerOrNull(zoneCurrentOwned.long);
+  const currentZoneOwnedShort=integerOrNull(zoneCurrentOwned.short);
   const zoneTotalActive=integerOrNull(zoneSoldierReport.totalActive);
   const zoneTotalLong=integerOrNull(zoneSoldierReport.totalLongOpenCount);
   const zoneTotalShort=integerOrNull(zoneSoldierReport.totalShortOpenCount);
@@ -761,6 +768,12 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     oldZonesOpenTotal:oldOpenTotal,
     oldZonesOpenLong:oldOpenLong,
     oldZonesOpenShort:oldOpenShort,
+    strategyOwnedTotal,
+    strategyOwnedLong,
+    strategyOwnedShort,
+    currentZoneOwnedLong,
+    currentZoneOwnedShort,
+    netExposureUsd,
     netExposureSide,
     entryPriority:zoneSoldierReport.entryPriority??zoneBalancer.prioritySide??zoneBalancer.activeSide,
     homecomingEvents:Array.isArray(zoneHomecomings.events)?zoneHomecomings.events:[],
