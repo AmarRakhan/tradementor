@@ -13,7 +13,7 @@ import { AsterPortfolioEmergencyHedge } from "@/components/aster-portfolio-emerg
 import { AsterPortfolioEmergencyReserveNote } from "@/components/aster-portfolio-emergency-reserve-note";
 import { AsterProfitLockLadderBridge } from "@/components/aster-profit-lock-ladder-bridge";
 import { MarketsNavigationBridge } from "@/components/markets-navigation-bridge";
-import { NewsNavigationBridge } from "@/components/news-navigation-bridge";
+import { NewsNavigationBridge } from "@/components/news-navigation-bridge";\nimport { FriendsNavigationBridge } from "@/components/friends-navigation-bridge";
 import { AsterPairSettingsOverlay } from "@/components/aster-pair-settings-overlay";
 import { AsterSideTpSettings } from "@/components/aster-side-tp-settings";
 import { AsterShortDcaSaveGuard } from "@/components/aster-short-dca-save-guard";
@@ -97,7 +97,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <AsterShortDcaSaveGuard />
           <AsterPairSettingsOverlay />
           <MarketsNavigationBridge />
-          <NewsNavigationBridge />
+          <NewsNavigationBridge />\n          <FriendsNavigationBridge />
         </AuthProvider>
       </body>
     </html>
