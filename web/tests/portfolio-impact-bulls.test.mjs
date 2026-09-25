@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { deriveBattleMetrics, positionExposure } from "../lib/portfolio-impact-battle.mjs";
 
 const derive = (longPnl, shortPnl, extra = {}) => deriveBattleMetrics({ longPnl, shortPnl, equity: 10_000, longExposure: 5_000, shortExposure: 5_000, ...extra });
@@ -91,4 +92,11 @@ test("exposure derives from notional first and size x mark as fallback", () => {
   assert.equal(positionExposure({ notional: -1234 }), 1234);
   assert.equal(positionExposure({ size: -2, markPrice: 100 }), 200);
   assert.equal(positionExposure({ margin: 20, leverage: 50 }), 1000);
+});
+
+
+test("Build 430 labels the footer percentages as market pressure rather than P&L allocation", async () => {
+  const component = await readFile(new URL("../components/portfolio-impact-battle-legacy.tsx", import.meta.url), "utf8");
+  assert.ok(component.includes("MARKTDRUK · GEEN P&L-VERDELING"));
+  assert.ok(component.includes("percentages onderaan zijn BTC Bollinger-marktdruk en geen verdeling van open P&L"));
 });
