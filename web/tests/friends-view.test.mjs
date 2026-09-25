@@ -5,6 +5,8 @@ import test from "node:test";
 const view = readFileSync(new URL("../components/friends-view.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../components/friends-view.module.css", import.meta.url), "utf8");
 const bridge = readFileSync(new URL("../components/friends-navigation-bridge.tsx", import.meta.url), "utf8");
+const bridgeCss = readFileSync(new URL("../app/friends-bridge.css", import.meta.url), "utf8");
+const layout = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
 
 test("friends view keeps four approved visual references", () => {
   for (const id of [
@@ -38,4 +40,12 @@ test("friends mobile design has no horizontal overflow and responsive breakpoint
 
 test("friends source never renders absolute portfolio value labels", () => {
   assert.doesNotMatch(view, /currentEquity|dayStartEquity|todayUsd|availableBalance|walletAddress|realizedPnlUsd/);
+});
+
+
+test("friends portal uses the same global isolation contract as working main views", () => {
+  assert.match(bridge, /className="friends-portal"/);
+  assert.match(bridgeCss, /\.content\[data-friends-active="true"\] > :not\(\.friends-portal\)\{display:none!important\}/);
+  assert.match(bridgeCss, /\.content\[data-friends-active="true"\] > \.friends-portal\{display:block!important/);
+  assert.match(layout, /import "\.\/friends-bridge\.css"/);
 });

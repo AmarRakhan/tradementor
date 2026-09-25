@@ -37,6 +37,7 @@ import "./continuity-monitor.css";
 import "./tradecentrum-responsive.css";
 import "./release-history.css";
 import "./sniper-bridge.css";
+import "./friends-bridge.css";
 import "./ultra-rivalry.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
