@@ -69,6 +69,18 @@ html[data-position-loss-auto-hedge="true"] .aps-portfolio-cycle-card{grid-column
 .plah-adjust-note,.plah-pair-error{margin-top:9px;padding:8px 10px;border-radius:8px;font-size:10px}.plah-adjust-note{background:rgba(95,64,4,.2);color:#e6bc54}.plah-pair-error{background:rgba(98,12,29,.24);color:#ff8799}
 .plah-empty{display:grid;justify-items:center;gap:8px;padding:30px 20px;border:1px dashed rgba(67,154,110,.3);border-radius:13px;color:#9daba3;text-align:center}.plah-empty>span{display:grid;color:#33e99a}.plah-empty svg{width:36px;height:36px}.plah-empty strong{color:#d9e1dc;font-size:14px}.plah-empty p{max-width:520px;margin:0;font-size:11px;line-height:1.5}
 
+
+/* Minimal Tradecentrum integration: status only, no table redesign. */
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge{
+  flex:0 0 auto!important;margin-left:2px!important;padding:1px 4px!important;border:1px solid rgba(48,221,141,.38)!important;border-radius:999px!important;
+  background:rgba(7,78,47,.34)!important;color:#45efa4!important;font-style:normal!important;font-weight:950!important;letter-spacing:.01em!important
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge.recovery{border-color:rgba(159,91,229,.48)!important;background:rgba(78,33,125,.3)!important;color:#d09bff!important}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge.adjusting,
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge.armed{border-color:rgba(231,177,49,.5)!important;background:rgba(89,61,5,.28)!important;color:#efc15a!important}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge.error{border-color:rgba(255,82,107,.55)!important;background:rgba(99,14,31,.3)!important;color:#ff8799!important}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge.disabled{border-color:rgba(151,158,154,.36)!important;background:rgba(60,69,65,.25)!important;color:#aab6af!important}
+
 .plah-important{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:14px;margin-top:14px;padding:15px 18px;border:1px solid rgba(45,184,118,.4);border-radius:14px;background:linear-gradient(145deg,rgba(2,31,20,.88),rgba(3,21,15,.92))}.plah-important>span{display:grid;place-items:center;color:#efb83a}.plah-important svg{width:34px;height:34px}.plah-important>div{display:grid;gap:3px}.plah-important b{font-size:13px}.plah-important p{margin:0;color:#9eaaa4;font-size:10.5px;line-height:1.4}.plah-important button{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid #278fe5;border-radius:8px;background:#06243b;color:#eaf6ff;font:800 11px/1 inherit}.plah-important button span{font-size:18px}
 
 @media(max-width:720px){
