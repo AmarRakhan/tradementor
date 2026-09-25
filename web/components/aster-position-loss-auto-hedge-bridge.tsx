@@ -540,6 +540,9 @@ export function AsterPositionLossAutoHedgeBridge() {
         {!state.executionEnabled && <div className="plah-test-mode">
           TESTMODUS · actuele Aster-posities worden exact 1:1 doorgerekend, maar Auto Hedge verstuurt nog geen orders.
         </div>}
+        {!state.enabled && hasLockedPair && <div className="plah-lock-off-note">
+          Nieuwe triggers staan UIT · bestaande HEDGE_LOCKED-posities blijven beschermd en worden niet vrijgegeven.
+        </div>}
         {error && <div className="plah-error" role="alert">{error}</div>}
         {message && <div className="plah-success">{message}</div>}
 
