@@ -486,6 +486,99 @@
   function combinedContents(){
     const map=new Map(); expandedRows().forEach(r=>{ const k=r.label+'|'+r.status; const x=map.get(k)||{label:r.label,status:r.status,qty:0}; x.qty++; map.set(k,x); }); return [...map.values()];
   }
+  function serialInputsForPackage(sel,pkg){
+    const excluded=new Set(sel.excludedCodes||[]);
+    const fields=[];
+    sel.serialsByCode=sel.serialsByCode||{};
+
+    pkg.items.filter(it=>!excluded.has(it.code)).forEach(it=>{
+      const info=orderItemInfo(it.code,it.label);
+      if(!requiresSerial(it.code,info.name)) return;
+
+      const needed=sel.qty*(it.qty||1);
+      const serials=sel.serialsByCode[it.code]||[];
+
+      for(let i=0;i<needed;i++){
+        fields.push(`
+          <label class="serial-inline-field">
+            <span>${esc(info.name)} · SN ${i+1}</span>
+            <input
+              type="text"
+              value="${esc(serials[i]||'')}"
+              placeholder="Scan serienummer"
+              data-inline-serial-kind="package"
+              data-inline-package="${data.packages.indexOf(pkg)}"
+              data-inline-code="${esc(it.code)}"
+              data-inline-slot="${i}">
+          </label>`);
+      }
+    });
+
+    return fields.length
+      ? `<div class="serial-inline-wrap">${fields.join('')}</div>`
+      : '';
+  }
+
+  function serialInputsForItem(sel,it){
+    if(!requiresSerial(it.code,it.name)) return '';
+    sel.serials=sel.serials||[];
+
+    const fields=[];
+    for(let i=0;i<sel.qty;i++){
+      fields.push(`
+        <label class="serial-inline-field">
+          <span>Serienummer ${i+1}</span>
+          <input
+            type="text"
+            value="${esc(sel.serials[i]||'')}"
+            placeholder="Scan serienummer"
+            data-inline-serial-kind="item"
+            data-inline-code="${esc(it.code)}"
+            data-inline-slot="${i}">
+        </label>`);
+    }
+
+    return `<div class="serial-inline-wrap">${fields.join('')}</div>`;
+  }
+
+  function bindInlineSerialInputs(){
+    document.querySelectorAll('[data-inline-serial-kind]').forEach(input=>{
+      const saveValue=()=>{
+        const value=input.value.trim().toUpperCase();
+        input.value=value;
+        const slot=+input.dataset.inlineSlot;
+
+        if(input.dataset.inlineSerialKind==='item'){
+          const sel=itemSelected(input.dataset.inlineCode);
+          if(!sel)return;
+          sel.serials=sel.serials||[];
+          sel.serials[slot]=value;
+          while(sel.serials.length && !sel.serials[sel.serials.length-1]) sel.serials.pop();
+        }else{
+          const sel=packageSelected(+input.dataset.inlinePackage);
+          if(!sel)return;
+          sel.serialsByCode=sel.serialsByCode||{};
+          const code=input.dataset.inlineCode;
+          sel.serialsByCode[code]=sel.serialsByCode[code]||[];
+          sel.serialsByCode[code][slot]=value;
+          while(sel.serialsByCode[code].length && !sel.serialsByCode[code][sel.serialsByCode[code].length-1]){
+            sel.serialsByCode[code].pop();
+          }
+        }
+        save();
+        renderOrder();
+      };
+
+      input.addEventListener('change',saveValue);
+      input.addEventListener('keydown',e=>{
+        if(e.key==='Enter'){
+          e.preventDefault();
+          saveValue();
+        }
+      });
+    });
+  }
+
   function renderOrder(){
     const has=state.packages.length+state.items.length>0;
     $('orderEmpty').classList.toggle('hidden',has);
@@ -498,9 +591,10 @@
       const p=data.packages[sel.index];
       cards.push(`<div class="order-card">
         <div class="order-thumb"><img src="${pkgThumb(p)}" alt=""></div>
-        <div class="order-meta"><div class="order-name">${esc(p.name)}</div><div class="order-sub">Pakket${(sel.excludedCodes||[]).length?' · '+(sel.excludedCodes||[]).map(code=>(code==='MD3J4ZM/A'||code==='MHJE3ZM/A')?'zonder 20W-lader':'zonder '+code).join(', '):''}${Object.values(sel.serialsByCode||{}).flat().filter(Boolean).length?' · SN: '+Object.values(sel.serialsByCode||{}).flat().filter(Boolean).join(', '):''}</div>
+        <div class="order-meta"><div class="order-name">${esc(p.name)}</div><div class="order-sub">Pakket${(sel.excludedCodes||[]).length?' · '+(sel.excludedCodes||[]).map(code=>(code==='MD3J4ZM/A'||code==='MHJE3ZM/A')?'zonder 20W-lader':'zonder '+code).join(', '):''}</div>
           <div class="order-controls"><span class="status-badge ${p.badge==='Refurb'?'refurb':''}">${esc(p.badge)}</span>
           <span class="qty"><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="1">+</button></span></div>
+          ${serialInputsForPackage(sel,p)}
         </div>
         <button class="remove-order" type="button" data-rkind="package" data-rkey="${sel.index}">×</button>
       </div>`);
@@ -509,9 +603,10 @@
       const it=getCatalogItem(sel.code); if(!it)return;
       cards.push(`<div class="order-card">
         <div class="order-thumb"><img src="${iconFor(it.category)}" alt=""></div>
-        <div class="order-meta"><div class="order-name">${esc(it.name)}</div><div class="order-sub">${esc(it.category)}${(sel.serials||[]).filter(Boolean).length?' · SN: '+esc((sel.serials||[]).filter(Boolean).join(', ')):''}</div>
+        <div class="order-meta"><div class="order-name">${esc(it.name)}</div><div class="order-sub">${esc(it.category)}</div>
           <div class="order-controls"><select class="status-select" data-order-status="${esc(it.code)}"><option ${sel.status==='Nieuw'?'selected':''}>Nieuw</option><option ${sel.status==='Refurb'?'selected':''}>Refurb</option></select>
           <span class="qty"><button type="button" data-qkind="item" data-key="${esc(it.code)}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="item" data-key="${esc(it.code)}" data-delta="1">+</button></span></div>
+          ${serialInputsForItem(sel,it)}
         </div>
         <button class="remove-order" type="button" data-rkind="item" data-rkey="${esc(it.code)}">×</button>
       </div>`);
@@ -520,6 +615,7 @@
     document.querySelectorAll('[data-qkind]').forEach(el=>el.addEventListener('click',()=>changeQty(el.dataset.qkind,el.dataset.qkind==='package'?+el.dataset.key:el.dataset.key,+el.dataset.delta)));
     document.querySelectorAll('[data-rkind]').forEach(el=>el.addEventListener('click',()=>removeSelection(el.dataset.rkind,el.dataset.rkind==='package'?+el.dataset.rkey:el.dataset.rkey)));
     document.querySelectorAll('[data-order-status]').forEach(el=>el.addEventListener('change',()=>setOrderItemStatus(el.dataset.orderStatus,el.value)));
+    bindInlineSerialInputs();
 
     const combined=combinedContents();
     const showCombined=state.packages.length>0;
