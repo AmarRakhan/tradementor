@@ -66,7 +66,6 @@ function PortfolioCycleCard({ state }: { state: PortfolioCycleCardState }) {
       <span className="aps-cycle-icon">{cycleIcon()}</span>
       <span className="aps-cycle-inactive-copy">
         <small>PORTFOLIO CYCLUS</small>
-        <strong>Niet ingesteld</strong>
         <em>Portfolio TP niet actief</em>
       </span>
       <span className="aps-cycle-setup">Instellen</span>

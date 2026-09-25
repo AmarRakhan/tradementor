@@ -238,6 +238,11 @@ export function buildStrategyStatusCommandCenter(input={}) {
   const oldZonesOpenLong=integer(input.oldZonesOpenLong)??0;
   const oldZonesOpenShort=integer(input.oldZonesOpenShort)??0;
   const oldZonesOpenTotal=integer(input.oldZonesOpenTotal)??(oldZonesOpenLong+oldZonesOpenShort);
+  const strategyOwnedLong=integer(input.strategyOwnedLong)??Math.max(0,zoneOpenLong+oldZonesOpenLong);
+  const strategyOwnedShort=integer(input.strategyOwnedShort)??Math.max(0,zoneOpenShort+oldZonesOpenShort);
+  const strategyOwnedTotal=integer(input.strategyOwnedTotal)??(strategyOwnedLong+strategyOwnedShort);
+  const currentZoneOwnedLong=integer(input.currentZoneOwnedLong)??Math.max(0,strategyOwnedLong-oldZonesOpenLong);
+  const currentZoneOwnedShort=integer(input.currentZoneOwnedShort)??Math.max(0,strategyOwnedShort-oldZonesOpenShort);
 
   const strategyEnabled=input.strategyEnabled===true;
   const zoneSafe=input.zoneSafe===true;
@@ -247,9 +252,12 @@ export function buildStrategyStatusCommandCenter(input={}) {
   const netExposureSide=exposureRaw==="LONG"||exposureRaw==="SHORT"?exposureRaw:"NEUTRAAL";
 
   const soldierCost=estimateSoldierCost(input);
-  const enoughAvailable=availableUsd!==null&&soldierCost!==null&&availableUsd>=soldierCost*1.05;
+  const requiredAvailable=soldierCost===null?null:soldierCost*1.05;
+  const affordabilityKnown=availableUsd!==null&&requiredAvailable!==null;
+  const enoughAvailable=affordabilityKnown?availableUsd>=requiredAvailable:null;
+  const availabilityStatus=!affordabilityKnown?"UNKNOWN":enoughAvailable?"ENOUGH":"NOT_ENOUGH";
   let nextPossibleSide="";
-  if(strategyEnabled&&zoneSafe&&enoughAvailable){
+  if(strategyEnabled&&zoneSafe&&enoughAvailable===true){
     if(entryPriority==="LONG"){
       if(zoneFreeLong>0)nextPossibleSide="LONG";
     }else if(entryPriority==="SHORT"){
@@ -272,7 +280,8 @@ export function buildStrategyStatusCommandCenter(input={}) {
   let nextPossibleDetail="alleen als entry geldig is";
   if(!strategyEnabled)nextPossibleDetail="strategie staat uit";
   else if(!zoneSafe)nextPossibleDetail="wacht op bevestigde zone";
-  else if(!enoughAvailable)nextPossibleDetail="wacht op voldoende Available";
+  else if(enoughAvailable===false)nextPossibleDetail="wacht op voldoende Available";
+  else if(enoughAvailable===null)nextPossibleDetail="Available-check onbekend · geen kostenbedrag afgeleid";
   else if(entryPriority&&((entryPriority==="LONG"?zoneFreeLong:zoneFreeShort)<=0)){
     nextPossibleDetail=`${entryPriority} prioriteit · geen vrije ${entryPriority}-soldaat`;
   }else if(!nextPossibleSide){
@@ -296,11 +305,21 @@ export function buildStrategyStatusCommandCenter(input={}) {
     oldZonesOpenTotal,
     oldZonesOpenLong,
     oldZonesOpenShort,
+    strategyOwnedLong,
+    strategyOwnedShort,
+    strategyOwnedTotal,
+    currentZoneOwnedLong,
+    currentZoneOwnedShort,
     actualLong,
     actualShort,
     totalActiveSoldiers,
+    netExposureUsd:finite(input.netExposureUsd),
     netExposureSide,
     entryPriority:entryPriority||"GEEN",
+    nextZoneUp:zoneLabel(input.nextZone),
+    nextZoneDown:zoneLabel(input.previousZone),
+    nextZoneUpDistancePercent:Math.abs(distancePercent(input.nextZonePrice,input.currentEquity)??0),
+    nextZoneDownDistancePercent:Math.abs(distancePercent(input.previousZonePrice,input.currentEquity)??0),
     nextPossibleSide,
     nextPossibleInflow:nextPossibleSide?`1 ${nextPossibleSide}`:"GEEN",
     nextPossibleDetail,
@@ -309,6 +328,13 @@ export function buildStrategyStatusCommandCenter(input={}) {
     availableUsd,
     availableDisplay:String(input.availableText||formatCommandMoney(availableUsd)),
     estimatedSoldierCost:soldierCost,
+    requiredAvailable,
+    availabilityStatus,
+    availabilityReason:availabilityStatus==="NOT_ENOUGH"
+      ? `Available ${formatCommandMoney(availableUsd)} < vereist ${formatCommandMoney(requiredAvailable)}`
+      : availabilityStatus==="ENOUGH"
+        ? `Available ${formatCommandMoney(availableUsd)} ≥ vereist ${formatCommandMoney(requiredAvailable)}`
+        : "Niet genoeg sizing-data om Available betrouwbaar te beoordelen",
     actionExecutable:Boolean(nextPossibleSide),
     actionMode:nextPossibleSide?nextPossibleSide.toLowerCase():strategyEnabled&&zoneSafe?"waiting":"blocked",
     footerTitle:"Alleen oude-zone soldaten tellen als thuiskomst",

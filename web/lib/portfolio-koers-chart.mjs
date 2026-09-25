@@ -187,6 +187,45 @@ export function mergeRealtimeEquitySample(candles, equity, atMs, timeframe) {
   return rows;
 }
 
+
+function cashflowRows(markers) {
+  return (Array.isArray(markers)?markers:[])
+    .filter((row)=>row&&typeof row==="object"&&String(row.kind||"").toLowerCase()==="cashflow"&&finite(row.time)>0&&Math.abs(finite(row.amountUsd))>1e-12)
+    .map((row)=>({time:Math.floor(finite(row.time)),amountUsd:finite(row.amountUsd)}))
+    .sort((a,b)=>a.time-b.time);
+}
+
+export function portfolioCashflowShift(markers, anchorTime, currentTime) {
+  const anchor=Math.floor(finite(anchorTime)), current=Math.floor(finite(currentTime));
+  if(anchor<=0||current<=0||current<anchor) return 0;
+  let shift=0;
+  for(const row of cashflowRows(markers)){
+    if(row.time<=anchor) continue;
+    if(row.time>current) break;
+    shift+=row.amountUsd;
+  }
+  return shift;
+}
+
+export function cashflowAdjustedPortfolioSeries(candles, markers) {
+  const rows=(Array.isArray(candles)?candles:[])
+    .filter((row)=>row&&typeof row==="object"&&finite(row.time)>0&&finite(row.close)>0)
+    .map((row)=>({...row,time:Math.floor(finite(row.time)),close:finite(row.close)}))
+    .sort((a,b)=>a.time-b.time);
+  if(!rows.length) return [];
+  const anchorTime=rows[0].time;
+  return rows.map((row)=>{
+    const shift=portfolioCashflowShift(markers,anchorTime,row.time);
+    return {
+      time:row.time,
+      atMs:Math.floor(finite(row.atMs))||row.time*1000,
+      value:row.close-shift,
+      rawValue:row.close,
+      cashflowShift:shift,
+    };
+  }).filter((row)=>Number.isFinite(row.value)&&row.value>0);
+}
+
 export function portfolioKoersTimelineHealth(candles, timeframe, nowMs=Date.now(), requiredContiguousBars=14) {
   const step=PORTFOLIO_KOERS_TIMEFRAME_SECONDS[String(timeframe)];
   const required=Math.max(1,Math.floor(finite(requiredContiguousBars))||14);

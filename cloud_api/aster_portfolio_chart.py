@@ -24,7 +24,11 @@ COLLECTION_BY_TIMEFRAME: dict[str, str] = {
     "4u": "asterPortfolioChart4h",
     "24u": "asterPortfolioChart24h",
 }
-EXTERNAL_CASHFLOW_TYPES = frozenset({"TRANSFER", "WELCOME_BONUS", "INSURANCE_CLEAR"})
+EXTERNAL_CASHFLOW_TYPES = frozenset({
+    "TRANSFER", "DEPOSIT", "WITHDRAWAL", "WALLET_TRANSFER", "INTERNAL_TRANSFER",
+    "WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT",
+})
+CASHFLOW_ADJUSTMENT_TYPES = frozenset({"WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT"})
 
 
 def _number(value: Any) -> float:
@@ -273,39 +277,54 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
 
 
 def external_cashflow_markers(rows: list[dict[str, Any]] | None, timeframe: str) -> list[dict[str, Any]]:
-    """Keep deposits/transfers separate from trading performance."""
+    """Keep external balance movements separate from trading performance.
+
+    TRANSFER-like rows are classified by their signed amount so deposits and
+    withdrawals inside the same chart candle never cancel into one ambiguous
+    marker.  Adjustment/bonus rows remain a separate category.
+    """
     if timeframe not in TIMEFRAME_MS:
         return []
     grouped: dict[tuple[int, str], dict[str, Any]] = {}
     for raw in rows or []:
         if not isinstance(raw, dict):
             continue
-        kind = str(raw.get("incomeType", "")).upper()
-        if kind not in EXTERNAL_CASHFLOW_TYPES:
+        ledger_type = str(raw.get("incomeType", "")).upper().strip()
+        if ledger_type not in EXTERNAL_CASHFLOW_TYPES:
             continue
-        stamp = int(_number(raw.get("time")))
-        if stamp <= 0:
+        stamp = int(_number(raw.get("time", raw.get("timestamp"))))
+        amount = _number(raw.get("income", raw.get("amount")))
+        if stamp <= 0 or abs(amount) <= 1e-12:
             continue
+        cashflow_type = (
+            "ADJUSTMENT" if ledger_type in CASHFLOW_ADJUSTMENT_TYPES
+            else "DEPOSIT" if amount > 0
+            else "WITHDRAWAL"
+        )
         bucket = bucket_start_ms(stamp, timeframe)
-        key = (bucket, kind)
+        key = (bucket, cashflow_type)
         group = grouped.setdefault(key, {
             "time": bucket // 1000,
             "atMs": bucket,
             "kind": "cashflow",
-            "cashflowType": kind,
+            "cashflowType": cashflow_type,
+            "ledgerTypes": [],
             "amountUsd": 0.0,
             "count": 0,
             "source": "aster-income-ledger",
         })
-        group["amountUsd"] += _number(raw.get("income"))
+        if ledger_type not in group["ledgerTypes"]:
+            group["ledgerTypes"].append(ledger_type)
+        group["amountUsd"] += amount
         group["count"] += 1
     result = []
+    labels = {"DEPOSIT": "STORTING", "WITHDRAWAL": "OPNAME", "ADJUSTMENT": "AANPASSING"}
     for group in grouped.values():
         amount = _number(group.get("amountUsd"))
-        group["label"] = f"{group['cashflowType']} · {amount:+.2f} USD"
+        group["ledgerTypes"].sort()
+        group["label"] = f"{labels.get(str(group['cashflowType']), 'CASHFLOW')} · {amount:+.2f} USD"
         result.append(group)
-    return sorted(result, key=lambda row: int(row["atMs"]))
-
+    return sorted(result, key=lambda row: (int(row["atMs"]), str(row["cashflowType"])))
 
 def _true_ranges(candles: list[dict[str, Any]]) -> list[float]:
     result: list[float] = []

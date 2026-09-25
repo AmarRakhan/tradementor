@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import pytest
 
-from portfolio_growth import (PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms)
+from portfolio_growth import (PORTFOLIO_GROWTH_START_DATE, average_daily_return, chain_linked_return_percent, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, is_exposure_order, utc_ms)
 
 
 def position(notional=100, side="LONG"):
@@ -70,3 +70,29 @@ def test_daily_growth_removes_external_cashflow_and_averages_arithmetically():
     assert daily_return_percentage(200, 310, 100) == pytest.approx(5.0)
     assert daily_return_percentage(200, 155, -50) == pytest.approx(2.5)
     assert average_daily_return(5.0, 2, 4.0) == pytest.approx(3.0)
+
+
+def test_build432_signed_cashflow_breakdown_separates_deposits_withdrawals_and_trading():
+    rows=[
+        {"time":1000,"incomeType":"TRANSFER","income":"200"},
+        {"time":1100,"incomeType":"TRANSFER","income":"-100"},
+        {"time":1200,"incomeType":"WELCOME_BONUS","income":"5"},
+        {"time":1300,"incomeType":"REALIZED_PNL","income":"11.51"},
+    ]
+    assert external_cashflow_since(rows,1000) == pytest.approx(105)
+    audit=external_cashflow_breakdown(rows,1000)
+    assert audit["depositsUsd"] == pytest.approx(200)
+    assert audit["withdrawalsUsd"] == pytest.approx(-100)
+    assert audit["adjustmentsUsd"] == pytest.approx(5)
+    assert audit["netExternalCashflowUsd"] == pytest.approx(105)
+    assert audit["count"] == 3
+    assert "REALIZED_PNL" not in audit["ledgerTypes"]
+
+
+def test_build432_deposit_and_withdrawal_are_neutralized_in_daily_return():
+    assert daily_return_percentage(100,290,200) == pytest.approx(-10)
+    assert daily_return_percentage(300,195,-100) == pytest.approx(-1.6666666667)
+
+
+def test_build432_twr_primitive_chain_links_subperiod_returns():
+    assert chain_linked_return_percent([10,-5]) == pytest.approx(4.5)

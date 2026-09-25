@@ -706,17 +706,37 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
 
     pmap = _position_map(positions)
     old_open_long = old_open_short = 0
+    current_owned_long = current_owned_short = 0
+    strategy_owned_long = strategy_owned_short = 0
     for key, row in managed_state.items():
-        if str(row.get("soldierRole", "")).upper() not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}:
+        role = str(row.get("soldierRole", "")).upper()
+        if role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}:
             continue
         if key not in pmap:
             continue
-        origin = row.get("originZone")
-        if active_zone is not None and origin is not None and int(origin) == int(active_zone):
+        side = "LONG" if key.endswith("|LONG") else "SHORT" if key.endswith("|SHORT") else ""
+        if side == "LONG":
+            strategy_owned_long += 1
+        elif side == "SHORT":
+            strategy_owned_short += 1
+        else:
             continue
-        if key.endswith("|LONG"):
+        origin = row.get("originZone")
+        same_active_zone = False
+        if active_zone is not None and origin is not None:
+            try:
+                same_active_zone = int(origin) == int(active_zone)
+            except (TypeError, ValueError):
+                same_active_zone = False
+        if same_active_zone:
+            if side == "LONG":
+                current_owned_long += 1
+            else:
+                current_owned_short += 1
+            continue
+        if side == "LONG":
             old_open_long += 1
-        elif key.endswith("|SHORT"):
+        else:
             old_open_short += 1
 
     exposure = _managed_exposure(managed_state, positions)
@@ -750,6 +770,18 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
             "balancerOpen": legacy_balancer_open, "balancerFree": 0,
         },
         "oldZonesOpen": {"total": old_open_long + old_open_short, "long": old_open_long, "short": old_open_short},
+        "strategyOwnedOpen": {
+            "total": strategy_owned_long + strategy_owned_short,
+            "long": strategy_owned_long,
+            "short": strategy_owned_short,
+        },
+        "currentZoneOwned": {
+            "total": current_owned_long + current_owned_short,
+            "long": current_owned_long,
+            "short": current_owned_short,
+        },
+        # Legacy/manual ownership is intentionally excluded from strategyOwnedOpen.
+        # Account-wide exposure remains unchanged and continues to drive prioritisation.
         "totalActive": exposure["totalLongOpenCount"] + exposure["totalShortOpenCount"],
         "totalLongOpenCount": exposure["totalLongOpenCount"],
         "totalShortOpenCount": exposure["totalShortOpenCount"],

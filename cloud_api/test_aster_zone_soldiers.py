@@ -475,3 +475,31 @@ def test_stale_non_open_balancer_capacity_is_pruned_on_restart():
     assert "z0:long:bal:1" not in state["pools"]["0"]["soldiers"]
     assert report["currentZone"]["balancerFree"] == 0
     assert len(available_soldiers(state, "LONG")) == 3
+
+
+def test_build432_strategy_owned_counts_exclude_legacy_and_reconcile_old_zone_subset():
+    z0, _, _ = prepare({}, {}, [], 0, balancer=False)
+    long_soldier = claim_soldier(
+        z0, "LONG", trade_key="A|LONG", symbol="A",
+        entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000,
+    )
+    managed = {
+        "A|LONG": {
+            "cycleId":"owned-a","cycleStartedAtMs":11_000,"botManaged":True,
+            "originZone":0,"originZoneCycleId":long_soldier["originZoneCycleId"],
+            "soldierId":long_soldier["soldierId"],"soldierRole":ROLE_ZONE_BASE,
+        },
+        "LEGACY|SHORT": {
+            "cycleId":"legacy","cycleStartedAtMs":1_000,"botManaged":True,
+            "originZone":None,"soldierRole":ROLE_LEGACY_UNASSIGNED,
+        },
+    }
+    _, _, report = prepare(
+        z0, managed, [pos("A","LONG",100),pos("LEGACY","SHORT",100)],
+        1, balancer=False, at=20_000,
+    )
+    assert report["strategyOwnedOpen"] == {"total":1,"long":1,"short":0}
+    assert report["oldZonesOpen"] == {"total":1,"long":1,"short":0}
+    assert report["currentZoneOwned"] == {"total":0,"long":0,"short":0}
+    assert report["legacyUnassignedOpenCount"] == 1
+    assert report["totalActive"] == 2

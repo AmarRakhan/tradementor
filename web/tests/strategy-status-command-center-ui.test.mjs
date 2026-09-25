@@ -11,48 +11,43 @@ test("new Command Center remains hard betaOwner-only while non-owner keeps exist
   assert.ok(component.includes("portfolio-strategy-cockpit"));
 });
 
-test("owner Command Center uses approved homecoming visual reference",async()=>{
-  const [component,viewModel]=await Promise.all([
-    readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
-    readFile(new URL("../lib/strategy-status-command-center.mjs",import.meta.url),"utf8"),
-  ]);
-  assert.ok(component.includes('data-reference="file_000000009e0081f4b88f4b415de68c71"'));
-  for(const label of [
-    "ACTIEVE FORMATIE","NETTO EXPOSURE:","THUIS / BESCHIKBAAR","IN HET VELD",
-    "OUDE ZONES NOG BUITEN","WINST THUISGEKOMEN","ENTRY-PRIORITEIT","VOLGENDE MOGELIJKE INSTROOM",
-  ]) assert.ok(component.includes(label),label);
-  assert.ok(viewModel.includes('footerTitle:"Alleen oude-zone soldaten tellen als thuiskomst"'));
-  assert.ok(viewModel.includes('footerDetail:"Winst in de eigen actieve zone maakt dezelfde soldaat opnieuw beschikbaar"'));
-  assert.ok(component.includes("oude-zone soldaten terug met winst"));
+test("Build 432 owner Command Center uses the current screenshot reference and live-state labels",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('data-reference="file_00000000cf9481f4b495250734661e31"'));
+  for(const label of ["ACTIEVE ZONE","NETTO EXPOSURE","ZONE-SOLDATEN ACTIEF","OUDE-ZONE POSITIES","WINST THUISGEKOMEN","VOLGENDE ZONES"]){
+    assert.ok(component.includes(label),label);
+  }
+  for(const removed of ["THUIS / BESCHIKBAAR","VOLGENDE MOGELIJKE INSTROOM","<small>ENTRY-PRIORITEIT</small>"]){
+    assert.equal(component.includes(removed),false,removed);
+  }
 });
 
-test("owner Command Center removes bulk-soldier messaging and mutation controls",async()=>{
+test("owner Command Center removes mutation controls and duplicate balancer/free-seat emphasis",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const start=component.indexOf("function StrategyCommandCenter");
   const end=component.indexOf("export function PortfolioKoersChart",start);
   const block=component.slice(start,end);
-  assert.equal(block.includes("BOT KOOPT AUTOMATISCH"),false);
-  assert.equal(block.includes("GESCHATTE EXTRA SOLDATEN"),false);
-  assert.equal(block.includes("NU ACTIE"),false);
   assert.equal(block.includes('method:"PUT"'),false);
   assert.equal(block.includes('method:"POST"'),false);
   assert.equal(block.includes("onClick"),false);
+  assert.equal(block.includes("THUIS / BESCHIKBAAR"),false);
+  assert.equal(block.includes("VOLGENDE MOGELIJKE INSTROOM"),false);
 });
 
-test("Command Center receives active-zone occupancy old zones exposure priority and TP homecomings",async()=>{
+test("Command Center receives exact strategy-owned counts, old-zone subset, exposure and zone boundaries",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const token of [
-    "zoneOpenLong","zoneOpenShort","oldZonesOpenTotal:oldOpenTotal",
-    "netExposureSide","entryPriority:zoneSoldierReport.entryPriority",
-    "homecomingEvents:Array.isArray(zoneHomecomings.events)",
+    "strategyOwnedTotal","strategyOwnedLong","strategyOwnedShort",
+    "currentZoneOwnedLong","currentZoneOwnedShort",
+    "oldZonesOpenTotal:oldOpenTotal","oldZonesOpenLong:oldOpenLong","oldZonesOpenShort:oldOpenShort",
+    "netExposureUsd","netExposureSide","nextZone:nextUpIndex","previousZone:nextDownIndex",
   ]) assert.ok(component.includes(token),token);
 });
 
-test("fixed-formation mobile grid matches approved three-by-two reference",async()=>{
+test("Build 432 mobile status grid is two-column and overflow-safe",async()=>{
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
-  assert.ok(css.includes("file_000000009e0081f4b88f4b415de68c71"));
-  assert.ok(css.includes(".pcc-status-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))"));
-  assert.ok(css.includes("@media(max-width:560px)"));
+  assert.ok(css.includes(".pcc-status-grid-v2{grid-template-columns:repeat(2,minmax(0,1fr))!important}"));
+  assert.ok(css.includes("overflow-wrap:anywhere"));
   assert.ok(css.includes("@media(max-width:380px)"));
 });
 

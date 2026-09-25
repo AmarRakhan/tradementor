@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "../lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "../lib/portfolio-koers-chart.mjs";
 
 test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",()=>{
   assert.deepEqual([...PORTFOLIO_KOERS_TIMEFRAMES],["1m","5m","15m","1u","4u","24u"]);
@@ -113,8 +113,8 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(snapshotMount>chartMount);
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("Portfolio Koers"));
-  assert.ok(component.includes("Totale portfolio waarde (USDT)"));
-  assert.ok(component.includes("{timeframe} candles · {timeframe} zones · BB 20,2"));
+  assert.ok(component.includes("Performance · cashflow gecorrigeerd"));
+  assert.ok(component.includes("Accountwaarde · werkelijke Aster equity"));
   assert.ok(component.includes("priceToCoordinate(zone.center)"));
   assert.ok(component.includes("priceToCoordinate(zone.upper)"));
   assert.ok(component.includes("priceToCoordinate(zone.lower)"));
@@ -124,7 +124,7 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.equal(component.includes("maxCompact:2"),false);
   assert.ok(component.includes("getVisibleLogicalRange()"));
   assert.ok(component.includes("visibleMarkerRows"));
-  assert.ok(component.includes("safetyCap:160"));
+  assert.ok(component.includes("safetyCap:56"));
   assert.ok(component.includes("PRICE_AXIS_WIDTH=48"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
@@ -133,7 +133,7 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
 
 test("Portfolio Koers timeframe context never invents a different zone timeframe",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("{timeframe} candles · {timeframe} zones · BB 20,2"));
+  assert.ok(component.includes("strategyzones · BB 20,2"));
   assert.equal(component.includes("4u zones"),false);
 });
 
@@ -143,13 +143,12 @@ test("Portfolio Koers zone overlay renders above the opaque chart canvas",async(
   assert.ok(css.includes(".portfolio-koers-zones{position:absolute;inset:0 48px 0 0;z-index:4"));
 });
 
-test("Portfolio Koers uses icon-only standard events and keeps detail values in the tooltip",async()=>{
+test("Portfolio Koers uses compact aggregated event labels and keeps detail values in the tooltip",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.equal(component.includes("Entry L"),false);
-  assert.equal(component.includes("Entry S"),false);
-  assert.ok(component.includes('glyph:"⚔"'));
-  assert.ok(component.includes('glyph:"💰"'));
-  assert.ok(component.includes('value:""'));
+  assert.ok(component.includes('multiplier:`${label} ×${count}`'));
+  assert.ok(component.includes('multiplier:`TP ×${count}`'));
+  assert.equal(component.includes('glyph:"⚔"'),false);
+  assert.equal(component.includes('glyph:"💰"'),false);
   assert.ok(component.includes("markerDetail(row)"));
   assert.ok(component.includes("markerRowsRef.current.filter((row)=>row.time===time)"));
 });
@@ -194,19 +193,18 @@ test("standard chart event markup contains no event dollar value field",async()=
   const layer=component.slice(component.indexOf('className="portfolio-koers-event-layer"'),component.indexOf("{loading&&!baseCandles.length"));
   assert.equal(layer.includes("label.value"),false);
   assert.equal(layer.includes("compactUsd("),false);
-  assert.ok(layer.includes("label.glyph"));
+  assert.equal(layer.includes("label.glyph"),false);
   assert.ok(layer.includes("label.multiplier"));
+  assert.ok(layer.includes("portfolio-koers-event-chip"));
 });
 
-test("Portfolio Koers build 401 follows the approved sword-marker reference",async()=>{
+test("Build 432 replaces sword and moneybag clutter with compact clustered chips",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
-  assert.ok(component.includes('data-reference="file_00000000dd24820eaa6e54ec1054904f"'));
-  assert.ok(component.includes('glyph:"⚔"'));
-  assert.ok(component.includes('glyph:"💰"'));
-  assert.ok(css.includes(".portfolio-koers-event-icon"));
-  assert.ok(css.includes(".portfolio-koers-event-badge"));
-  assert.ok(css.includes(".portfolio-koers-connector"));
+  assert.ok(component.includes("portfolio-koers-event-chip"));
+  assert.equal(component.includes('glyph:"⚔"'),false);
+  assert.equal(component.includes('glyph:"💰"'),false);
+  assert.ok(css.includes(".portfolio-koers-event.portfolio-koers-event-chip"));
 });
 
 test("reference-style zone regions remain sourced from confirmed portfolio zones",async()=>{
@@ -244,7 +242,7 @@ test("Build 413 configures every approved timeframe for a closer initial viewpor
     '"4u":{visibleBars:14',
     '"24u":{visibleBars:12',
   ]) assert.ok(component.includes(pair),pair);
-  assert.ok(component.includes("portfolioKoersFocusBars(candles,view.visibleBars"));
+  assert.ok(component.includes('viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars'));
   assert.ok(component.includes("focusVisibleBars"));
   assert.ok(component.includes("guideLow"));
   assert.ok(component.includes("guideHigh"));
@@ -284,4 +282,39 @@ test("Build 422 preserves event-to-candle identity while scrolling and adds no f
   assert.ok(syncBlock.includes("timeToCoordinate(row.time"));
   assert.equal(syncBlock.includes("authenticatedRequest("),false);
   assert.ok(component.includes("subscribeVisibleLogicalRangeChange(sync)"));
+});
+
+
+test("Build 432 cashflow-adjusted performance neutralizes deposits and withdrawals without changing raw equity",()=>{
+  const candles=[
+    {time:60,atMs:60_000,open:100,high:100,low:100,close:100},
+    {time:120,atMs:120_000,open:300,high:300,low:300,close:300},
+    {time:180,atMs:180_000,open:195,high:195,low:195,close:195},
+  ];
+  const markers=[
+    {time:120,kind:"cashflow",cashflowType:"DEPOSIT",amountUsd:200},
+    {time:180,kind:"cashflow",cashflowType:"WITHDRAWAL",amountUsd:-100},
+  ];
+  assert.equal(portfolioCashflowShift(markers,60,120),200);
+  assert.equal(portfolioCashflowShift(markers,60,180),100);
+  const performance=cashflowAdjustedPortfolioSeries(candles,markers);
+  assert.deepEqual(performance.map((row)=>row.rawValue),[100,300,195]);
+  assert.deepEqual(performance.map((row)=>row.value),[100,100,95]);
+});
+
+test("Build 432 defaults to performance view and never draws raw strategy zones on its adjusted axis",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('useState<PortfolioViewMode>("performance")'));
+  assert.ok(component.includes('if(viewMode==="performance"){'));
+  assert.ok(component.includes("setZoneLayout([])"));
+  assert.ok(component.includes("setZoneBoundaries([])"));
+  assert.ok(component.includes("Strategyzones staan alleen bij Accountwaarde"));
+  assert.ok(component.includes("ACCOUNTWAARDE"));
+});
+
+test("Build 432 visually separates signed deposits and withdrawals from trading markers",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('cashflowType==="DEPOSIT"?"Storting"'));
+  assert.ok(component.includes('cashflowType==="WITHDRAWAL"?"Opname"'));
+  assert.ok(component.includes('copy.tone==="cashflow"?92:52'));
 });

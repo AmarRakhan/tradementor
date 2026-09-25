@@ -31,3 +31,10 @@ test("daily portfolio growth follows each confirmed Aster account snapshot",()=>
   assert.match(page,/dailyRefreshKey=\{snapshot\.serverUpdatedAt \?\? null\}/);
   assert.match(page,/PortfolioGrowthCard onChanged=\{onChanged\} refreshKey=\{dailyRefreshKey\}/);
 });
+
+
+test("Build 432 Snapshot explains that daily return excludes deposits and withdrawals",async()=>{
+  const snapshot=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
+  assert.match(snapshot,/excl\. stortingen & opnames/);
+  assert.match(snapshot,/aps-growth-detail/);
+});

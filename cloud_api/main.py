@@ -147,7 +147,7 @@ from hyperliquid_scanner import (
 from portfolio_risk import (
     ExchangeRiskSnapshot, PortfolioRiskLimits, evaluate_risk_increase,
 )
-from portfolio_growth import PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_since, is_exposure_order, utc_ms
+from portfolio_growth import PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, is_exposure_order, utc_ms
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from reliability_monitor import event_key as reliability_event_key, event_payload as reliability_event_payload, counts as reliability_counts, overall as reliability_overall
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
@@ -6306,17 +6306,26 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
     try:
         account=client.account_information();equity,_,_,_,_=aster_account_information_values(account)
         if equity<=0:raise ValueError("Actuele portfolio/equity is niet positief")
-        income=[]
-        for income_type in ("TRANSFER","WELCOME_BONUS","INSURANCE_CLEAR"):
-            income.extend(client.income_history(income_type=income_type,start_time=utc_ms(start_local),limit=1000))
+        # Read the signed income ledger once; classification is kept in
+        # portfolio_growth so deposits and withdrawals cannot silently cancel
+        # or be queried with an unsupported exchange-specific filter.
+        income=client.income_history(start_time=utc_ms(start_local),limit=1000)
+        income=[row for row in income if isinstance(row,dict)]
         cumulative_cashflow=external_cashflow_since(income,utc_ms(start_local))
-        today=local_now.date().isoformat();transaction=db.transaction()
+        today=local_now.date().isoformat()
+        day_start_local=local_now.replace(hour=0,minute=0,second=0,microsecond=0)
+        day_start_ms=utc_ms(day_start_local)
+        day_cashflow_breakdown=external_cashflow_breakdown(income,day_start_ms)
+        cumulative_cashflow_breakdown=external_cashflow_breakdown(income,utc_ms(start_local))
+        now_ms=int(now.timestamp()*1000)
+        transaction=db.transaction()
         @firestore.transactional
         def update(txn:Any)->dict[str,Any]:
             doc=ref.get(transaction=txn);stored=doc.to_dict() or {};state=dict(stored.get("dailyGrowth") or {})
             if state.get("startDate")!=PORTFOLIO_GROWTH_START_DATE or safe_float(state.get("referenceEquity"))<=0:
                 state={"startDate":PORTFOLIO_GROWTH_START_DATE,"referenceDate":today,"referenceEquity":equity,
-                    "referenceCashflow":cumulative_cashflow,"lastObservedDate":today,"lastObservedEquity":equity,
+                    "referenceCashflow":cumulative_cashflow,"referenceAtMs":now_ms,
+                    "lastObservedDate":today,"lastObservedEquity":equity,"lastObservedAtMs":now_ms,
                     "lastObservedCashflow":cumulative_cashflow,"completedReturnSum":0.0,"completedReturnCount":0}
             elif state.get("lastObservedDate")!=today:
                 previous_equity=safe_float(state.get("referenceEquity"));last_equity=safe_float(state.get("lastObservedEquity"))
@@ -6333,7 +6342,8 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
                     state["completedReturnCount"]=int(state.get("completedReturnCount",0))+1
                     state["referenceEquity"]=last_equity;state["referenceCashflow"]=last_cashflow
                     state["referenceDate"]=str(state.get("lastObservedDate"))
-            state["lastObservedDate"]=today;state["lastObservedEquity"]=equity;state["lastObservedCashflow"]=cumulative_cashflow
+                    state["referenceAtMs"]=int(safe_float(state.get("lastObservedAtMs"))) or None
+            state["lastObservedDate"]=today;state["lastObservedEquity"]=equity;state["lastObservedAtMs"]=now_ms;state["lastObservedCashflow"]=cumulative_cashflow
             today_pct=daily_return_percentage(safe_float(state.get("referenceEquity")),equity,cumulative_cashflow-safe_float(state.get("referenceCashflow")))
             completed_count=int(state.get("completedReturnCount",0));completed_sum=safe_float(state.get("completedReturnSum"))
             average_pct=average_daily_return(completed_sum,completed_count,today_pct)
@@ -6342,10 +6352,21 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
             today_usd=(equity-(cumulative_cashflow-safe_float(state.get("referenceCashflow"))))-safe_float(state.get("referenceEquity"))
             today_levels=max(0,int(math.floor(today_pct/average_pct+1e-12))) if average_pct>0 and today_pct>0 else 0
             history=list(state.get("history") or [])
+            day_net_cashflow=cumulative_cashflow-safe_float(state.get("referenceCashflow"))
+            adjusted_ending_equity=equity-day_net_cashflow
+            has_intraday_cashflow=int(day_cashflow_breakdown.get("count",0))>0
             return {"reliable":True,"todayPercentage":round(today_pct,8),"todayUsd":round(today_usd,8),"todayLevels":today_levels,
                 "averageDailyPercentage":round(average_pct,8),"measuredDays":completed_count+1,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,
-                "referenceDate":state.get("referenceDate"),"dayStartEquity":round(safe_float(state.get("referenceEquity")),8),
-                "currentEquity":round(equity,8),"history":history[-120:]}
+                "referenceDate":state.get("referenceDate"),"dayStartTimestampMs":int(safe_float(state.get("referenceAtMs"))) or None,
+                "dayStartEquity":round(safe_float(state.get("referenceEquity")),8),
+                "currentEquity":round(equity,8),"dayExternalCashflowUsd":round(day_net_cashflow,8),
+                "cashflowAdjustedEndingEquity":round(adjusted_ending_equity,8),
+                "cashflowBreakdown":day_cashflow_breakdown,"cumulativeCashflowBreakdown":cumulative_cashflow_breakdown,
+                "performanceMethod":"NET_CASHFLOW_ADJUSTED",
+                "twrReliable":not has_intraday_cashflow,
+                "twrPercentage":round(today_pct,8) if not has_intraday_cashflow else None,
+                "twrBlockReason":None if not has_intraday_cashflow else "Exacte intraday TWR vereist een exchange-equity snapshot direct voor/na iedere externe cashflow; die historische precisie wordt niet verzonnen.",
+                "history":history[-120:]}
         return update(transaction)
     except Exception as exc:
         return {"reliable":False,"measurementStartDate":PORTFOLIO_GROWTH_START_DATE,
