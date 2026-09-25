@@ -11,10 +11,19 @@
     catalogAdditions: [],
     deletedItemCodes: [],
     learnedAliases: {},
-    customPackages: []
+    customPackages: [],
+    orderNote: ''
   };
 
   const categoryOrder = ['Laptops','Telefoons','iPads','Monitoren','Docks','Opladers','Toetsenbord / muizen','Tassen','Headsets','Telefoonaccessoires','iPad-accessoires','Accessoires','Verouderd'];
+  // Presentatielaag voor de nieuwe catalogusweergave.
+  // Bewust niet gekoppeld aan trading/order/export business logic.
+  const uiState = {
+    expandedPackageCards:new Set(),
+    collapsedCatalogSections:new Set(),
+    collapsedOrderPackages:new Set()
+  };
+
   const iconEmoji = {'Laptops':'💻','Telefoons':'📱','iPads':'▤','Monitoren':'🖥️','Docks':'▰','Opladers':'🔌','Toetsenbord / muizen':'⌨️','Tassen':'💼','Headsets':'🎧','Telefoonaccessoires':'📱','iPad-accessoires':'▤','Accessoires':'🔗','Verouderd':'📦'};
   const iconFor = c => {
     const emoji=iconEmoji[c]||'📦';
@@ -313,7 +322,8 @@
         catalogAdditions:state.catalogAdditions,
         deletedItemCodes:state.deletedItemCodes,
         learnedAliases:state.learnedAliases,
-        customPackages:state.customPackages
+        customPackages:state.customPackages,
+        orderNote:state.orderNote
       }));
     }catch{}
   }
@@ -328,6 +338,7 @@
         state.deletedItemCodes = Array.isArray(saved.deletedItemCodes)?saved.deletedItemCodes:[];
         state.learnedAliases = saved.learnedAliases && typeof saved.learnedAliases==='object' ? saved.learnedAliases : {};
         state.customPackages = Array.isArray(saved.customPackages)?saved.customPackages:[];
+        state.orderNote = typeof saved.orderNote==='string' ? saved.orderNote : '';
         state.customPackages.forEach(pkg=>{
           if(!data.packages.some(p=>p.customId&&p.customId===pkg.customId)) data.packages.push(pkg);
         });
@@ -423,7 +434,103 @@
     const i=kind==='package'?arr.findIndex(x=>x.index===key):arr.findIndex(x=>x.code===key);
     if(i>=0)arr.splice(i,1); save(); render();
   }
-  function clearOrder(){ state.packages=[]; state.items=[]; save(); render(); }
+  function clearOrder(){ state.packages=[]; state.items=[]; state.orderNote=''; save(); render(); }
+
+
+  function packageGroup(p){
+    const n=normalizeSmartText(p.name);
+    if(n.includes('iphone') || n.includes('xcover')) return 'Telefoons';
+    if(n.includes('ipad') || n.includes('tab a9') || n.includes('tablet')) return 'Tablets';
+    if(
+      n.includes('management pakket') ||
+      n.includes('monteurspakket') ||
+      n.includes('standaard pakket') ||
+      n.includes('laptop') ||
+      n.includes('werkplek')
+    ) return 'Laptops';
+    return 'Accessoires / Overig';
+  }
+
+  function packageGroupIcon(group){
+    if(group==='Laptops') return '💻';
+    if(group==='Telefoons') return '📱';
+    if(group==='Tablets') return '▤';
+    return '⬡';
+  }
+
+  function packageMainInfo(p){
+    const items=(p.items||[]).map(it=>{
+      const info=orderItemInfo(it.code,it.label);
+      return {it,info};
+    });
+    const preferred=items.find(x=>requiresSerial(x.it.code,x.info.name)) || items[0];
+    const mainName=preferred?.info?.name || p.preview?.[0] || p.name;
+    const mainCategory=preferred?.info?.category || p.iconCategory || packageGroup(p);
+    const total=(p.items||[]).reduce((n,it)=>n+(it.qty||1),0) || p.count || 0;
+    const mainQty=preferred ? (preferred.it.qty||1) : 1;
+    return {
+      name:mainName,
+      category:mainCategory,
+      accessories:Math.max(0,total-mainQty)
+    };
+  }
+
+  function displayItemGroup(category,name=''){
+    const cat=normalizeSmartText(category);
+    const nm=normalizeSmartText(name);
+    if(cat.includes('laptop') || nm.includes('elitebook') || nm.includes('zbook') || nm.includes('laptop')) return 'Laptops';
+    if(cat.includes('monitor')) return 'Monitoren';
+    if(cat.includes('dock')) return 'Docks';
+    if(
+      cat==='telefoons' ||
+      (cat.includes('telefoons') && (
+        /^apple iphone\b/.test(nm) || /^iphone\s*\d/.test(nm) || nm.includes('xcover')
+      ))
+    ) return 'Telefoons';
+    if(
+      cat==='ipads' ||
+      nm.startsWith('ipad') ||
+      nm.startsWith('apple ipad') ||
+      nm.includes('samsung tab')
+    ) return 'Tablets';
+    return 'Accessoires';
+  }
+
+  function sectionIcon(group){
+    return group==='Laptops'?'💻':
+      group==='Telefoons'?'📱':
+      group==='Tablets'?'▤':
+      group==='Monitoren'?'🖥️':
+      group==='Docks'?'▰':'⬡';
+  }
+
+  function toggleCatalogSection(key){
+    if(uiState.collapsedCatalogSections.has(key)) uiState.collapsedCatalogSections.delete(key);
+    else uiState.collapsedCatalogSections.add(key);
+    if(state.view==='packages') renderPackages(); else renderItems();
+  }
+
+  function togglePackageDetails(index){
+    if(uiState.expandedPackageCards.has(index)) uiState.expandedPackageCards.delete(index);
+    else uiState.expandedPackageCards.add(index);
+    renderPackages();
+  }
+
+  function toggleOrderPackage(index){
+    if(uiState.collapsedOrderPackages.has(index)) uiState.collapsedOrderPackages.delete(index);
+    else uiState.collapsedOrderPackages.add(index);
+    renderOrder();
+  }
+
+  function removePackageItem(index,code){
+    const sel=packageSelected(index); if(!sel)return;
+    sel.excludedCodes=Array.isArray(sel.excludedCodes)?sel.excludedCodes:[];
+    if(!sel.excludedCodes.includes(code)) sel.excludedCodes.push(code);
+    if(sel.serialsByCode && sel.serialsByCode[code]) delete sel.serialsByCode[code];
+    save();
+    render();
+    toast('Artikel uit pakket verwijderd');
+  }
 
   function filteredPackages(){
     let list=data.packages.map((p,index)=>({...p,index}));
@@ -435,17 +542,70 @@
   function renderPackages(){
     const list=filteredPackages();
     $('packagesEmpty').classList.toggle('hidden',list.length>0);
-    $('packagesGrid').innerHTML=list.map(p=>{
-      const selected=!!packageSelected(p.index);
-      return `<button class="package-card ${selected?'selected':''}" type="button" data-package="${p.index}">
-        <span class="check">✓</span>
-        <div class="package-name">${esc(p.name)}</div>
-        <span class="status-badge ${p.badge==='Refurb'?'refurb':''}">${esc(p.badge)}</span>
-        <ul class="package-preview">${p.preview.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>
-        <div class="package-count">${p.count} artikelen</div>
-      </button>`;
-    }).join('');
+
+    const order=['Laptops','Telefoons','Tablets','Accessoires / Overig'];
+    const grouped=new Map(order.map(x=>[x,[]]));
+    list.forEach(p=>{
+      const key=packageGroup(p);
+      if(!grouped.has(key)) grouped.set(key,[]);
+      grouped.get(key).push(p);
+    });
+
+    $('packagesGrid').innerHTML=order
+      .filter(group=>grouped.get(group)?.length)
+      .map(group=>{
+        const arr=grouped.get(group);
+        const collapsed=uiState.collapsedCatalogSections.has('pkg:'+group);
+        return `<section class="catalog-section package-section ${collapsed?'collapsed':''}">
+          <div class="catalog-section-head">
+            <div class="catalog-section-heading">
+              <span class="catalog-section-icon">${packageGroupIcon(group)}</span>
+              <div><div class="catalog-section-title">${esc(group)}</div><div class="catalog-section-count">${arr.length} pakket${arr.length===1?'':'ten'}</div></div>
+            </div>
+            <button class="section-collapse-button" type="button" data-collapse-section="pkg:${esc(group)}">
+              ${collapsed?'Alles uitklappen':'Alles inklappen'} <span>${collapsed?'⌄':'⌃'}</span>
+            </button>
+          </div>
+          <div class="catalog-card-grid ${collapsed?'hidden':''}">
+            ${arr.map(p=>{
+              const selected=!!packageSelected(p.index);
+              const expanded=uiState.expandedPackageCards.has(p.index);
+              const main=packageMainInfo(p);
+              return `<article class="package-card-v2 ${selected?'selected':''}" data-package-card="${p.index}">
+                <button class="package-select-surface" type="button" data-package="${p.index}">
+                  <span class="package-selected-check">✓</span>
+                  <div class="package-card-top">
+                    <div>
+                      <div class="package-name-v2">${esc(p.name)}</div>
+                      <span class="status-badge ${p.badge==='Refurb'?'refurb':''}">${esc(p.badge)}</span>
+                    </div>
+                  </div>
+                  <div class="package-hero">
+                    <img src="${pkgThumb(p)}" alt="">
+                    <div class="package-hero-copy">
+                      <div class="package-main-type">${esc(main.name)}</div>
+                      <div class="package-accessory-count">${main.accessories?'+ '+main.accessories+' accessoires':'Compleet pakket'}</div>
+                    </div>
+                  </div>
+                </button>
+                <button class="package-expand-button" type="button" data-package-expand="${p.index}">
+                  <span>${expanded?'⌃':'⌄'}</span> ${expanded?'Verberg inhoud':'Toon inhoud'}
+                </button>
+                <div class="package-detail-list ${expanded?'':'hidden'}">
+                  ${(p.preview||[]).map(x=>`<div class="package-detail-row">• ${esc(x)}</div>`).join('')}
+                </div>
+              </article>`;
+            }).join('')}
+          </div>
+        </section>`;
+      }).join('');
+
     document.querySelectorAll('[data-package]').forEach(el=>el.addEventListener('click',()=>togglePackage(+el.dataset.package)));
+    document.querySelectorAll('[data-package-expand]').forEach(el=>el.addEventListener('click',e=>{
+      e.stopPropagation();
+      togglePackageDetails(+el.dataset.packageExpand);
+    }));
+    document.querySelectorAll('[data-collapse-section]').forEach(el=>el.addEventListener('click',()=>toggleCatalogSection(el.dataset.collapseSection)));
   }
 
   function catalogItems(){
@@ -473,32 +633,66 @@
   function renderItems(){
     const list=filteredItems();
     $('itemsEmpty').classList.toggle('hidden',list.length>0);
-    const grouped=new Map(); list.forEach(it=>{ if(!grouped.has(it.category))grouped.set(it.category,[]); grouped.get(it.category).push(it); });
-    const cats=[...grouped.keys()].sort((a,b)=>categoryOrder.indexOf(a)-categoryOrder.indexOf(b));
-    $('categoriesGrid').innerHTML=cats.map(cat=>{
-      const arr=grouped.get(cat); const sc=sectionClass(cat,arr.length);
-      return `<section class="category-section ${sc}">
-        <div class="category-title">${esc(cat)} (${arr.length})</div>
-        <div class="product-grid">${arr.map(it=>{
-          const sel=itemSelected(it.code); const status=sel?.status||state.itemStatuses[it.code]||'Nieuw';
-          return `<button class="product-card ${sel?'selected':''}" type="button" data-item="${esc(it.code)}">
-            <span class="check">✓</span>
-            <div class="product-image-wrap"><img class="product-image" src="${iconFor(it.category)}" alt=""></div>
-            <div class="product-name">${esc(it.name)}</div>
-            <div class="product-category">${esc(it.category)}</div>
-            <select class="status-select" data-status-code="${esc(it.code)}" aria-label="Voorraadstatus">
-              <option ${status==='Nieuw'?'selected':''}>Nieuw</option>
-              <option ${status==='Refurb'?'selected':''}>Refurb</option>
-            </select>
-          </button>`;
-        }).join('')}</div>
-      </section>`;
-    }).join('');
-    document.querySelectorAll('[data-item]').forEach(el=>el.addEventListener('click',e=>{ if(e.target.matches('select'))return; toggleItem(el.dataset.item); }));
+
+    const order=['Laptops','Telefoons','Tablets','Monitoren','Docks','Accessoires'];
+    const grouped=new Map(order.map(x=>[x,[]]));
+    list.forEach(it=>{
+      const group=displayItemGroup(it.category,it.name);
+      if(!grouped.has(group)) grouped.set(group,[]);
+      grouped.get(group).push(it);
+    });
+
+    $('categoriesGrid').innerHTML=order
+      .filter(group=>grouped.get(group)?.length)
+      .map(group=>{
+        const arr=grouped.get(group);
+        const collapsed=uiState.collapsedCatalogSections.has('item:'+group);
+        return `<section class="catalog-section item-section ${collapsed?'collapsed':''}">
+          <div class="catalog-section-head">
+            <div class="catalog-section-heading">
+              <span class="catalog-section-icon">${sectionIcon(group)}</span>
+              <div><div class="catalog-section-title">${esc(group)}</div><div class="catalog-section-count">${arr.length} artikel${arr.length===1?'':'en'}</div></div>
+            </div>
+            <button class="section-collapse-button" type="button" data-collapse-section="item:${esc(group)}">
+              ${collapsed?'Alles uitklappen':'Alles inklappen'} <span>${collapsed?'⌄':'⌃'}</span>
+            </button>
+          </div>
+          <div class="catalog-card-grid product-catalog-grid ${collapsed?'hidden':''}">
+            ${arr.map(it=>{
+              const sel=itemSelected(it.code);
+              const status=sel?.status||state.itemStatuses[it.code]||'Nieuw';
+              return `<article class="product-card-v2 ${sel?'selected':''}">
+                <button class="product-select-surface" type="button" data-item="${esc(it.code)}">
+                  <span class="package-selected-check">✓</span>
+                  <div class="product-name-v2">${esc(it.name)}</div>
+                  <span class="status-badge ${status==='Refurb'?'refurb':''}">${esc(status)}</span>
+                  <div class="product-card-body">
+                    <img src="${iconFor(it.category)}" alt="">
+                    <div>
+                      <div class="product-group-label">${esc(group==='Tablets'?'Tablet':group==='Telefoons'?'Telefoon':group.slice(0,-1)||group)}</div>
+                      <div class="product-code-hint">${esc(it.category)}</div>
+                    </div>
+                  </div>
+                </button>
+                <div class="product-card-footer">
+                  <span>⌄</span> Details
+                  <select class="status-select compact-status" data-status-code="${esc(it.code)}" aria-label="Voorraadstatus">
+                    <option ${status==='Nieuw'?'selected':''}>Nieuw</option>
+                    <option ${status==='Refurb'?'selected':''}>Refurb</option>
+                  </select>
+                </div>
+              </article>`;
+            }).join('')}
+          </div>
+        </section>`;
+      }).join('');
+
+    document.querySelectorAll('[data-item]').forEach(el=>el.addEventListener('click',()=>toggleItem(el.dataset.item)));
     document.querySelectorAll('[data-status-code]').forEach(el=>{
       el.addEventListener('click',e=>e.stopPropagation());
-      el.addEventListener('change',e=>{ e.stopPropagation(); setCatalogStatus(el.dataset.statusCode,el.value); });
+      el.addEventListener('change',e=>{e.stopPropagation();setCatalogStatus(el.dataset.statusCode,el.value);});
     });
+    document.querySelectorAll('[data-collapse-section]').forEach(el=>el.addEventListener('click',()=>toggleCatalogSection(el.dataset.collapseSection)));
   }
 
   function expandedRows(){
@@ -545,49 +739,98 @@
     const has=state.packages.length+state.items.length>0;
     $('orderEmpty').classList.toggle('hidden',has);
     $('orderList').classList.toggle('hidden',!has);
+
+    const rows=expandedRows();
     const selectedCount=state.packages.length+state.items.length;
-    $('orderCountLabel').textContent=has?`${selectedCount} selectie${selectedCount===1?'':'s'}`:'Nog niets geselecteerd';
+    $('orderCountLabel').textContent=has
+      ? `${selectedCount} selectie${selectedCount===1?'':'s'} · ${rows.length} artikel${rows.length===1?'':'en'}`
+      : 'Nog niets geselecteerd';
 
     const cards=[];
+
     state.packages.forEach(sel=>{
       const p=data.packages[sel.index];
-      cards.push(`<div class="order-card">
-        <div class="order-thumb"><img src="${pkgThumb(p)}" alt=""></div>
-        <div class="order-meta"><div class="order-name">${esc(p.name)}</div><div class="order-sub">Pakket${(sel.excludedCodes||[]).length?' · '+(sel.excludedCodes||[]).map(code=>(code==='MD3J4ZM/A'||code==='MHJE3ZM/A')?'zonder 20W-lader':'zonder '+code).join(', '):''}${Object.values(sel.serialsByCode||{}).flat().filter(Boolean).length?' · SN: '+Object.values(sel.serialsByCode||{}).flat().filter(Boolean).join(', '):''}</div>
-          <div class="order-controls"><span class="status-badge ${p.badge==='Refurb'?'refurb':''}">${esc(p.badge)}</span>
-          <span class="qty"><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="1">+</button></span></div>
+      if(!p)return;
+      const excluded=new Set(sel.excludedCodes||[]);
+      const childItems=(p.items||[]).filter(it=>!excluded.has(it.code));
+      const collapsed=uiState.collapsedOrderPackages.has(sel.index);
+
+      cards.push(`<div class="order-package-card">
+        <div class="order-package-head">
+          <div class="order-package-thumb"><img src="${pkgThumb(p)}" alt=""></div>
+          <div class="order-package-copy">
+            <div class="order-name">${esc(p.name)}</div>
+            <div class="order-package-meta"><span class="status-badge ${p.badge==='Refurb'?'refurb':''}">${esc(p.badge)}</span><span>${childItems.reduce((n,it)=>n+(it.qty||1),0)*sel.qty} artikelen</span></div>
+          </div>
+          <div class="order-package-actions">
+            <span class="qty"><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="package" data-key="${sel.index}" data-delta="1">+</button></span>
+            <button class="order-package-collapse" type="button" data-order-collapse="${sel.index}" title="Inhoud inklappen">${collapsed?'⌄':'⌃'}</button>
+            <button class="remove-order icon-remove" type="button" data-rkind="package" data-rkey="${sel.index}" title="Pakket verwijderen">×</button>
+          </div>
         </div>
-        <button class="remove-order" type="button" data-rkind="package" data-rkey="${sel.index}">×</button>
+        <div class="order-package-items ${collapsed?'hidden':''}">
+          ${childItems.map(it=>{
+            const info=orderItemInfo(it.code,it.label);
+            const q=sel.qty*(it.qty||1);
+            const serials=((sel.serialsByCode||{})[it.code]||[]).filter(Boolean);
+            return `<div class="order-child-row">
+              <div class="order-child-icon"><img src="${iconFor(info.category||p.iconCategory||'Accessoires')}" alt=""></div>
+              <div class="order-child-copy">
+                <div class="order-child-name">${esc(info.name||it.label||it.code)}</div>
+                ${serials.length?`<div class="order-child-serial">SN: ${esc(serials.join(', '))}</div>`:''}
+              </div>
+              <div class="order-child-qty">${q}×</div>
+              <span class="order-child-status ${it.status==='Refurb'?'refurb':''}">${esc(it.status||p.badge||'Nieuw')}</span>
+              <button class="order-child-remove" type="button" data-remove-package-item="${sel.index}" data-remove-package-code="${esc(it.code)}" title="Artikel uit pakket verwijderen">×</button>
+            </div>`;
+          }).join('')}
+        </div>
       </div>`);
     });
+
     state.items.forEach(sel=>{
       const it=getCatalogItem(sel.code); if(!it)return;
-      cards.push(`<div class="order-card">
-        <div class="order-thumb"><img src="${iconFor(it.category)}" alt=""></div>
-        <div class="order-meta"><div class="order-name">${esc(it.name)}</div><div class="order-sub">${esc(it.category)}${(sel.serials||[]).filter(Boolean).length?' · SN: '+esc((sel.serials||[]).filter(Boolean).join(', ')):''}</div>
-          <div class="order-controls"><select class="status-select" data-order-status="${esc(it.code)}"><option ${sel.status==='Nieuw'?'selected':''}>Nieuw</option><option ${sel.status==='Refurb'?'selected':''}>Refurb</option></select>
-          <span class="qty"><button type="button" data-qkind="item" data-key="${esc(it.code)}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="item" data-key="${esc(it.code)}" data-delta="1">+</button></span></div>
+      const serials=(sel.serials||[]).filter(Boolean);
+      cards.push(`<div class="order-loose-card">
+        <div class="order-child-icon"><img src="${iconFor(it.category)}" alt=""></div>
+        <div class="order-child-copy">
+          <div class="order-child-name">${esc(it.name)}</div>
+          <div class="order-child-sub">${esc(it.category)}${serials.length?' · SN: '+esc(serials.join(', ')):''}</div>
         </div>
-        <button class="remove-order" type="button" data-rkind="item" data-rkey="${esc(it.code)}">×</button>
+        <select class="status-select order-status-select" data-order-status="${esc(it.code)}">
+          <option ${sel.status==='Nieuw'?'selected':''}>Nieuw</option>
+          <option ${sel.status==='Refurb'?'selected':''}>Refurb</option>
+        </select>
+        <span class="qty"><button type="button" data-qkind="item" data-key="${esc(it.code)}" data-delta="-1">−</button><span>${sel.qty}</span><button type="button" data-qkind="item" data-key="${esc(it.code)}" data-delta="1">+</button></span>
+        <button class="remove-order icon-remove" type="button" data-rkind="item" data-rkey="${esc(it.code)}">×</button>
       </div>`);
     });
+
     $('orderList').innerHTML=cards.join('');
     document.querySelectorAll('[data-qkind]').forEach(el=>el.addEventListener('click',()=>changeQty(el.dataset.qkind,el.dataset.qkind==='package'?+el.dataset.key:el.dataset.key,+el.dataset.delta)));
     document.querySelectorAll('[data-rkind]').forEach(el=>el.addEventListener('click',()=>removeSelection(el.dataset.rkind,el.dataset.rkind==='package'?+el.dataset.rkey:el.dataset.rkey)));
     document.querySelectorAll('[data-order-status]').forEach(el=>el.addEventListener('change',()=>setOrderItemStatus(el.dataset.orderStatus,el.value)));
+    document.querySelectorAll('[data-order-collapse]').forEach(el=>el.addEventListener('click',()=>toggleOrderPackage(+el.dataset.orderCollapse)));
+    document.querySelectorAll('[data-remove-package-item]').forEach(el=>el.addEventListener('click',()=>removePackageItem(+el.dataset.removePackageItem,el.dataset.removePackageCode)));
 
-    const combined=combinedContents();
-    const showCombined=state.packages.length>0;
-    $('packageContents').classList.toggle('hidden',!showCombined);
-    $('expandedCount').textContent=showCombined?`(${expandedRows().length} artikelen)`:'';
-    $('combinedRows').innerHTML=combined.slice(0,18).map(x=>`<div class="combined-row"><span>${esc(x.label)}</span><span class="n">${x.qty}</span></div>`).join('');
+    // Oude gecombineerde inhoud blijft technisch bestaan, maar is in de nieuwe presentatie verborgen.
+    $('packageContents').classList.toggle('hidden',true);
+    $('expandedCount').textContent='';
+    $('combinedRows').innerHTML='';
 
-    const rows=expandedRows();
-    const newCount=rows.filter(r=>r.status==='Nieuw').length, refurbCount=rows.length-newCount;
+    const newCount=rows.filter(r=>r.status==='Nieuw').length;
+    const refurbCount=rows.length-newCount;
     $('sumArticles').textContent=new Set(rows.map(r=>r.code)).size;
     $('sumPieces').textContent=rows.length;
     $('sumNew').textContent=newCount;
     $('sumRefurb').textContent=refurbCount;
+
+    const totalEl=$('orderGrandTotal');
+    if(totalEl) totalEl.textContent=rows.length;
+
+    const note=$('orderNote');
+    if(note && note.value!==state.orderNote) note.value=state.orderNote;
+
     const serialRows=rows.filter(r=>r.serial);
     if($('serialCopyButton')){
       $('serialCopyButton').classList.remove('hidden');
@@ -1747,6 +1990,7 @@
   $('sortSelect').addEventListener('change',e=>{state.sort=e.target.value;render();});
   document.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{state.packageFilter=el.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===el));renderPackages();}));
   $('clearOrder').addEventListener('click',clearOrder);
+  $('orderNote')?.addEventListener('input',e=>{state.orderNote=e.target.value;save();});
   $('copyButton').addEventListener('click',copyDynamics);
   $('serialCopyButton')?.addEventListener('click',copySerialNumbers);
   // TOPdesk/scan listeners are bound after ensureTopdeskUi().
