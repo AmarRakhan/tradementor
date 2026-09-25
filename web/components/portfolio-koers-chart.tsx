@@ -5,7 +5,7 @@ import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, t
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
@@ -18,6 +18,7 @@ type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
 type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number};
 type SoldierActivityEvent={id:string;atMs:number;side:"LONG"|"SHORT";count:number;originZone:number|null;role?:string;source?:string};
+type PortfolioViewMode="performance"|"account";
 type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;settings:Record<string,unknown>;zoneSoldiers:Record<string,unknown>;soldierOpenEvents:SoldierActivityEvent[]};
 
 const EMPTY=normalizePortfolioKoersPayload({}) as Payload;
@@ -94,13 +95,18 @@ const percent2=(value:number|null|undefined,signed=true)=>{
 
 function markerPresentation(row:Marker) {
   const kind=String(row.kind||"").toLowerCase(),side=String(row.side||"").toUpperCase(),count=Math.max(1,Number(row.count)||1);
-  if(kind==="cashflow")return {tone:"cashflow" as const,glyph:"↕",multiplier:count>1?`×${count}`:"",title:String(row.cashflowType||"Transfer").replaceAll("_"," "),value:""};
-  if(kind==="entry"){
-    const types=Array.isArray(row.activityTypes)?row.activityTypes.map((value)=>String(value).toUpperCase()):[];
-    const mission=types.length===1&&types[0]==="DCA"?"DCA":types.includes("DCA")&&types.includes("ENTRY")?"ENTRY + DCA":"";
-    return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:"⚔",multiplier:`×${count}`,title:`${side==="SHORT"?"SHORT":"LONG"}${mission?` · ${mission}`:""}`,value:""};
+  if(kind==="cashflow"){
+    const amount=Number(row.amountUsd)||0;
+    const cashflowType=String(row.cashflowType||"").toUpperCase();
+    const title=cashflowType==="DEPOSIT"?"Storting":cashflowType==="WITHDRAWAL"?"Opname":"Cashflow";
+    const signed=amount>=0?`+${levelUsd(Math.abs(amount))}`:`−${levelUsd(Math.abs(amount))}`;
+    return {tone:"cashflow" as const,glyph:"",multiplier:`${title} ${signed}`,title,value:""};
   }
-  return {tone:"tp" as const,glyph:"💰",multiplier:count>1?`TP ×${count}`:"TP",title:"Take Profit",value:""};
+  if(kind==="entry"){
+    const label=side==="SHORT"?"S":"L";
+    return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:"",multiplier:`${label} ×${count}`,title:side==="SHORT"?"SHORT":"LONG",value:""};
+  }
+  return {tone:"tp" as const,glyph:"",multiplier:`TP ×${count}`,title:"Take Profit",value:""};
 }
 
 function connectorStyle(label:EventLabel) {
