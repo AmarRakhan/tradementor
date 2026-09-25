@@ -236,6 +236,13 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     ()=>mergePortfolioKoersMarkers(payload.markers,recentMarkers) as Marker[],
     [payload.markers,recentMarkers],
   );
+  const cashflowSignature=useMemo(
+    ()=>combinedMarkers
+      .filter((row)=>String(row.kind||"").toLowerCase()==="cashflow")
+      .map((row)=>String(row.time)+":"+String(row.cashflowType||"")+":"+String(Number(row.amountUsd)||0))
+      .join("|"),
+    [combinedMarkers],
+  );
   liveEquityTextRef.current=liveEquityText;
   markerRowsRef.current=combinedMarkers;
 
@@ -465,7 +472,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       bbRefs.current={upper:null,middle:null,lower:null};
     }
 
-    if(Number.isFinite(Number(initialFocusPrice))&&Number.isFinite(Number(focusLower))&&Number.isFinite(Number(focusUpper))&&Number(focusUpper)>Number(focusLower)){
+    if(viewMode==="account"&&Number.isFinite(Number(initialFocusPrice))&&Number.isFinite(Number(focusLower))&&Number.isFinite(Number(focusUpper))&&Number(focusUpper)>Number(focusLower)){
       const focusSpan=Math.max(Number(focusUpper)-Number(focusLower),Number(initialFocusPrice)*0.006);
       const focusPadding=Math.max(focusSpan*0.32,Number(initialFocusPrice)*0.0025);
       const guideLow=Math.max(Number.EPSILON,Number(focusLower)-focusPadding);
@@ -480,7 +487,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       }
     }
 
-    if(payload.cycleStartEquity&&payload.cycleStartEquity>0){
+    if(viewMode==="account"&&payload.cycleStartEquity&&payload.cycleStartEquity>0){
       series.createPriceLine({price:payload.cycleStartEquity,color:"rgba(229,190,75,.72)",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"CYCLE"});
     }
 
@@ -495,7 +502,12 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       const height=Math.max(1,container.clientHeight),width=Math.max(1,container.clientWidth);
       const zoneLadder=advisorZoneLadderRef.current;
       const liveActiveZone=activeZoneRef.current;
-      if(zoneLadder?.zones?.length){
+      if(viewMode==="performance"){
+        // Raw strategy-zone prices are deliberately hidden on the adjusted
+        // performance axis. Trading uses the unchanged server-side raw equity.
+        setZoneLayout([]);
+        setZoneBoundaries([]);
+      }else if(zoneLadder?.zones?.length){
         const zones=zoneLadder.zones.map((zone:any)=>{
           const upperY=zone.upper===Infinity?0:series.priceToCoordinate(zone.upper);
           const lowerY=zone.lower===-Infinity?height:series.priceToCoordinate(zone.lower);
@@ -556,18 +568,22 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         if(!candle)continue;
         const visual=markerVisual(row);
         const x=chart.timeScale().timeToCoordinate(row.time as UTCTimestamp);
-        const price=visual.position==="belowBar"?candle.low:candle.high;
-        const y=series.priceToCoordinate(price);
+        const rawPrice=visual.position==="belowBar"?candle.low:candle.high;
+        const performancePrice=performanceByTime.get(row.time);
+        const markerPrice=viewMode==="performance"&&Number.isFinite(performancePrice)?Number(performancePrice):rawPrice;
+        const y=series.priceToCoordinate(markerPrice);
         if(x===null||y===null)continue;
         const upperValue=bbUpperByTime.get(row.time),middleValue=bbMiddleByTime.get(row.time),lowerValue=bbLowerByTime.get(row.time);
         const upperY=Number.isFinite(upperValue)?series.priceToCoordinate(upperValue as number):null;
         const lowerY=Number.isFinite(lowerValue)?series.priceToCoordinate(lowerValue as number):null;
         const kind=String(row.kind||"").toLowerCase(),side=String(row.side||"").toUpperCase();
-        const position=kind==="entry"
-          ? (side==="SHORT"?"above":"below")
-          : kind==="tp"&&Number.isFinite(middleValue)
-            ? (candle.close>=Number(middleValue)?"above":"below")
-            : visual.position==="belowBar"?"below":"above";
+        const position=viewMode==="performance"
+          ? (kind==="entry"&&side==="LONG"?"below":"above")
+          : kind==="entry"
+            ? (side==="SHORT"?"above":"below")
+            : kind==="tp"&&Number.isFinite(middleValue)
+              ? (candle.close>=Number(middleValue)?"above":"below")
+              : visual.position==="belowBar"?"below":"above";
         const copy=markerPresentation(row);
         candidates.push({
           id:`${row.time}-${row.kind||""}-${row.side||""}-${index}`,
@@ -577,10 +593,10 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
           tone:copy.tone,title:copy.title,value:"",glyph:copy.glyph,multiplier:copy.multiplier,
           anchorLeft:Number(x),anchorTop:Number(y),
           bandTop:upperY===null?null:Number(upperY),bandBottom:lowerY===null?null:Number(lowerY),
-          width:copy.multiplier?48:42,height:44,
+          width:copy.tone==="cashflow"?92:52,height:30,
         });
       }
-      const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:160});
+      const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:56});
       setEventLabels(markerLayout.all as EventLabel[]);
     };
     syncOverlaysRef.current=()=>requestAnimationFrame(syncOverlays);
@@ -613,7 +629,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       if(chartRef.current===chart)chartRef.current=null;
       candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncOverlaysRef.current=()=>{};setZoneBoundaries([]);setEventLabels([]);
     };
-  },[baseCandles,payload.zones,payload.cycleStartEquity,timeframe]);
+  },[baseCandles,payload.zones,payload.cycleStartEquity,timeframe,viewMode,cashflowSignature]);
 
   const fullscreen=async()=>{
     if(!shellRef.current)return;
