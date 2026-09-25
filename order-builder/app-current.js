@@ -1504,8 +1504,8 @@
     await writeClipboard(txt);
     const serialCount=rows.filter(r=>r.serial).length;
     toast(serialCount
-      ? `${rows.length} orderregels gekopieerd · daarna serienummer(s) apart plakken`
-      : `${rows.length} regels gekopieerd voor Dynamics`);
+      ? `${rows.length} Dynamics-orderregels gekopieerd · plak nu in F&O, daarna stap 2`
+      : `${rows.length} Dynamics-orderregels gekopieerd · plak nu in F&O`);
   }
 
   async function copySerialNumbers(){
@@ -1583,7 +1583,7 @@
 
     const txt=topdeskLines().join('\n');
     await writeClipboard(txt);
-    toast('TOPdesk-tekst gekopieerd');
+    toast('TOPdesk-tekst gekopieerd · plak dit alleen in TOPdesk');
   }
 
   function renderCounts(){
