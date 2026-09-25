@@ -9,14 +9,14 @@ on:
 permissions:
   contents: read
   id-token: write
-  issues: write
 
 env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
-  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
 
 jobs:
   preview:
@@ -24,12 +24,15 @@ jobs:
     timeout-minutes: 10
     environment: production
     steps:
-      - uses: google-github-actions/auth@v2
+      - name: Authenticate deploy identity
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Read owner exchange truth and Auto Hedge decisions
+
+      - name: Run read-only owner Auto Hedge evaluation
         shell: bash
         run: |
           set -euo pipefail
@@ -40,9 +43,9 @@ jobs:
           print(spec['containers'][0]['image']); print(spec['serviceAccountName'])
           PY
           )
-          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-autohedge-preview-${GITHUB_RUN_ID: -7}"; MARKER="AUTO_HEDGE_PREVIEW_${GITHUB_RUN_ID}"
-          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-autohedge-preview-${GITHUB_RUN_ID: -7}"; MARKER="AUTO_HEDGE_OWNER_RESULT_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"
+          echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
           SCRIPT_B64="$(base64 -w0 <<'PY'
           import json,os
           from google.cloud import firestore
@@ -60,7 +63,7 @@ jobs:
           actions=evaluate_auto_hedge(positions,10,open_orders=orders)
           dyn=db.collection('users').document(uid).collection('asterDynamicHedge').document('control').get().to_dict() or {}
           settings=db.collection('asterPositionLossAutoHedge').document(uid).get().to_dict() or {}
-          out={
+          compact={
             'thresholdUsd':10,
             'positionCount':len(positions),
             'longCount':sum(str(r.get('positionSide','')).upper()=='LONG' for r in positions),
@@ -70,35 +73,62 @@ jobs:
             'storedThresholdUsd':settings.get('thresholdUsd'),
             'eligibleCount':len(actions),
             'needsHedgeCount':sum(a.required_delta>1e-12 for a in actions),
-            'actions':[a.public_dict() for a in actions],
-          }
-          compact={
-            'thresholdUsd':out.get('thresholdUsd'),
-            'positionCount':out.get('positionCount'),
-            'longCount':out.get('longCount'),
-            'shortCount':out.get('shortCount'),
-            'dynamicHedgeEnabled':out.get('dynamicHedgeEnabled'),
-            'storedAutoHedgeEnabled':out.get('storedAutoHedgeEnabled'),
-            'storedThresholdUsd':out.get('storedThresholdUsd'),
-            'eligibleCount':out.get('eligibleCount'),
-            'needsHedgeCount':out.get('needsHedgeCount'),
             'actions':[
-              [a.get('symbol'),'LONG' if a.get('triggerSide')=='LONG' else 'SHORT',
-               round(float(a.get('triggerOpenPnl') or 0),2),
-               a.get('losingSideQty'),a.get('existingOppositeQty'),
-               a.get('pendingOppositeQty'),a.get('requiredDelta')]
-              for a in out.get('actions',[]) if float(a.get('requiredDelta') or 0)>1e-12
+              [a.symbol,a.trigger_side,round(a.trigger_open_pnl,2),a.losing_side_qty,
+               a.existing_opposite_qty,a.pending_opposite_qty,a.required_delta,a.status]
+              for a in actions if a.required_delta>1e-12
             ],
           }
-          import httpx
-          token=os.environ.get('GH_TOKEN','')
-          body='AUTO_HEDGE_OWNER_RESULT='+json.dumps(compact,separators=(',',':'),sort_keys=True)
-          response=httpx.post('https://api.github.com/repos/AmarRakhan/tradementor/issues/277/comments',
-              headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json'},
-              json={'body':body},timeout=20.0)
-          response.raise_for_status()
-          print(os.environ['MARKER']+'=POSTED',flush=True)
+          print(os.environ['MARKER']+'='+json.dumps(compact,separators=(',',':'),sort_keys=True),flush=True)
           PY
           )"
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER,GH_TOKEN=${{ github.token }}" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - name: Authenticate observer identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Read sanitized diagnostic output
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in 1 2 3 4 5 6 7 8 9 10; do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.txt" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def strings(obj):
+              if isinstance(obj,str): yield obj
+              elif isinstance(obj,dict):
+                  for v in obj.values(): yield from strings(v)
+              elif isinstance(obj,list):
+                  for v in obj: yield from strings(v)
+          for row in rows if isinstance(rows,list) else []:
+              for value in strings(row):
+                  if marker in value:
+                      print(value[value.index(marker):].splitlines()[0]); raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.txt" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/result.txt"
+          cat "$RUNNER_TEMP/result.txt"
+
+      - name: Re-authenticate deploy identity for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup diagnostic job
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then
+            gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
