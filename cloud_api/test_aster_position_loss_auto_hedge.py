@@ -300,5 +300,42 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
         self.assertEqual(len(client.intents), 2)
 
 
+    def test_observed_shadow_snapshot_quantities_map_to_exact_open_or_reduce(self):
+        rows = [
+            leg("1000PEPEUSDT", "SHORT", 6551, -20),
+            leg("DOGEUSDT", "SHORT", 627, -20),
+            leg("NEARUSDT", "SHORT", 13, -20),
+            leg("SOLUSDT", "SHORT", 1.14, -20),
+            leg("XRPUSDT", "SHORT", 60.6, -20),
+            leg("HYPEUSDT", "SHORT", 2.4, -26.53),
+            leg("HYPEUSDT", "LONG", 3.0, 25.8),
+            leg("ZECUSDT", "SHORT", 0.194, -61.94),
+            leg("ZECUSDT", "LONG", 0.200, 60.2),
+        ]
+        actions = {
+            action.symbol: action
+            for action in evaluate_auto_hedge(rows, 10)
+        }
+        expected_open = {
+            "1000PEPEUSDT": 6551.0,
+            "DOGEUSDT": 627.0,
+            "NEARUSDT": 13.0,
+            "SOLUSDT": 1.14,
+            "XRPUSDT": 60.6,
+        }
+        for symbol, quantity in expected_open.items():
+            with self.subTest(symbol=symbol):
+                self.assertEqual(actions[symbol].operation, "OPEN")
+                self.assertEqual(actions[symbol].hedge_side, "LONG")
+                self.assertAlmostEqual(actions[symbol].required_delta, quantity, places=12)
+
+        self.assertEqual(actions["HYPEUSDT"].operation, "REDUCE")
+        self.assertEqual(actions["HYPEUSDT"].hedge_side, "LONG")
+        self.assertAlmostEqual(actions["HYPEUSDT"].required_delta, 0.6, places=12)
+        self.assertEqual(actions["ZECUSDT"].operation, "REDUCE")
+        self.assertEqual(actions["ZECUSDT"].hedge_side, "LONG")
+        self.assertAlmostEqual(actions["ZECUSDT"].required_delta, 0.006, places=12)
+
+
 if __name__ == "__main__":
     unittest.main()
