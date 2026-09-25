@@ -395,6 +395,8 @@ function BybitConnectModal({ onClose, onSnapshot }: { onClose: () => void; onSna
 function ContinuitySettingsModal({ snapshot, onClose, onSnapshot }: { snapshot: ContinuitySnapshot; onClose: () => void; onSnapshot: (snapshot: ContinuitySnapshot) => void }) {
   const chatgpt = service(snapshot, "chatgpt");
   const [buffer, setBuffer] = useState(String(snapshot.settings.safetyBufferAmount ?? 50));
+  const bufferRef = useRef<HTMLInputElement>(null);
+  const presetBuffer = [25, 50, 100].includes(Number(buffer)) ? Number(buffer) : null;
   const [currency, setCurrency] = useState(snapshot.settings.safetyBufferCurrency || "EUR");
   const [plan, setPlan] = useState(chatgpt?.plan || "");
   const [monthly, setMonthly] = useState(chatgpt?.monthlyEstimate != null ? String(chatgpt.monthlyEstimate) : "");
@@ -432,7 +434,13 @@ function ContinuitySettingsModal({ snapshot, onClose, onSnapshot }: { snapshot: 
   return <div className="tm-continuity-modal-layer" onMouseDown={onClose}>
     <div className="tm-continuity-modal settings" onMouseDown={(event) => event.stopPropagation()}>
       <div className="tm-continuity-modal-head"><div><span>CONTINUÏTEIT</span><h3>Instellingen</h3></div><button type="button" onClick={onClose}>×</button></div>
-      <label>Extra veiligheidsbuffer<div className="tm-inline-field"><input inputMode="decimal" value={buffer} onChange={(e) => setBuffer(e.target.value.replace(",", ".").replace(/[^0-9.]/g, ""))} /><select value={currency} onChange={(e) => setCurrency(e.target.value)}><option>EUR</option><option>USD</option></select></div></label>
+      <label>Extra veiligheidsbuffer
+        <div className="tm-buffer-presets" aria-label="Veiligheidsbuffer kiezen">
+          {[25, 50, 100].map((value) => <button key={value} type="button" className={presetBuffer === value ? "active" : ""} onClick={() => setBuffer(String(value))}>{currency === "EUR" ? "€" : "$"}{value}</button>)}
+          <button type="button" className={presetBuffer === null ? "active" : ""} onClick={() => { if (presetBuffer !== null) setBuffer(""); requestAnimationFrame(() => bufferRef.current?.focus()); }}>Aangepast</button>
+        </div>
+        <div className="tm-inline-field"><input ref={bufferRef} inputMode="decimal" value={buffer} onChange={(e) => setBuffer(e.target.value.replace(",", ".").replace(/[^0-9.]/g, ""))} placeholder="Eigen buffer" /><select value={currency} onChange={(e) => setCurrency(e.target.value)}><option>EUR</option><option>USD</option></select></div>
+      </label>
       <div className="tm-settings-divider"><strong>ChatGPT handmatig</strong><small>Alleen totdat ondersteunde live billingdata beschikbaar is.</small></div>
       <label>Plan<input value={plan} onChange={(e) => setPlan(e.target.value)} placeholder="Bijv. Plus / Pro" /></label>
       <label>Maandbedrag<input inputMode="decimal" value={monthly} onChange={(e) => setMonthly(e.target.value.replace(",", ".").replace(/[^0-9.]/g, ""))} placeholder="Niet ingesteld" /></label>
