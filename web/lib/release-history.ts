@@ -34,22 +34,23 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De FRIENDS-knop werd visueel actief, maar op mobiel bleef de Aster-pagina zichtbaar.",
   ],
   causes: [
-    "De twee cruciale Friends-portal CSS-regels bevatten letterlijke \\n-tekens in plaats van echte regeleinden, waardoor de selector die de onderliggende content verbergt niet correct werd toegepast.",
+    "De Friends-route werd correct actief, maar de content-isolatie week af van het bewezen globale bridge-patroon van HOME, MARKETS en SNIPER.",
   ],
   fixes: [
-    "De portal- en content-isolatieregels zijn opnieuw opgeslagen met echte CSS-regeleinden.",
-    "De Friends-portal krijgt expliciet een eigen stacking context zodat de nieuwe view boven de contentlaag staat.",
-    "Een regressietest blokkeert opnieuw letterlijke \\n-sequenties in de portal-CSS.",
+    "Friends krijgt een dedicated globale friends-bridge.css met dezelfde directe-child hide/show-constructie als de bestaande werkende hoofdviews.",
+    "De Friends-portal gebruikt een vaste globale .friends-portal klasse en krijgt expliciet een eigen stacking context.",
+    "Op mobiel wordt de content-padding tijdens Friends net als bij MARKETS expliciet geneutraliseerd.",
+    "Regressietests controleren de globale bridge-selector, layout-import en portalclass.",
   ],
   now: [
     "Tik op FRIENDS opent de Friends-pagina direct op dezelfde plek waar Aster stond.",
     "Geen wijziging aan Friends-data, backend, Aster/Sniper trading, DCA, TP/SL, ownership of orders.",
   ],
-  before: "Build 428 activeerde de Friends-route wel, maar de portal-isolatiestijl werd op mobiel niet correct geparsed.",
+  before: "Build 428 activeerde de Friends-route wel, maar de Aster-content bleef op het live mobiele scherm zichtbaar.",
   after: "Build 429 corrigeert uitsluitend de Friends presentatielaag.",
   technicalDetails: [
     "Gebruikersbewijs: screenshot file_0000000037e082468affa793000ef949 toont FRIENDS actief terwijl Aster-content zichtbaar blijft.",
-    "Root cause bevestigd in web/components/friends-view.module.css.",
+    "Implementatieverschil bevestigd: Friends miste de dedicated globale bridge-CSS die de bestaande werkende portalviews gebruiken.",
   ],
   confidence: "confirmed",
 };
