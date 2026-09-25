@@ -94,10 +94,33 @@
 
         <button id="copyButton" class="copy-button" type="button"><span class="copy-icon">▣</span>1. Kopieer orderregels</button>
         <button id="serialCopyButton" class="copy-button serial-copy-button" type="button" style="display:flex!important;"><span class="copy-icon">#</span>2. Kopieer serienummer(s)</button>
-        <div class="copy-help">Stap 1: plak de orderregels in Dynamics. Stap 2: klik in de eerste cel onder <strong>Serienummer</strong> en plak daarna de serienummers.</div>
+        <button id="topdeskCopyButton" class="copy-button topdesk-copy-button" type="button"><span class="copy-icon">T</span>Kopiëren voor TOPdesk</button>
+        <div class="copy-help">Dynamics: eerst orderregels, daarna eventueel serienummers. TOPdesk: kopieert een leesbare tickettekst met serienummers.</div>
       </aside>
     </section>
   </main>
+
+  <div id="serialScanModal" class="article-modal hidden" aria-modal="true" role="dialog">
+    <div class="article-modal-backdrop"></div>
+    <div class="article-modal-card serial-scan-card">
+      <div class="article-modal-head">
+        <div>
+          <div class="article-modal-title">Scan serienummer</div>
+          <div id="serialScanProgress" class="article-modal-sub"></div>
+        </div>
+      </div>
+      <div class="article-modal-section">
+        <div id="serialScanItemName" class="serial-scan-item"></div>
+        <label class="ticket-label" for="serialScanInput">Serienummer</label>
+        <input id="serialScanInput" class="serial-scan-input" type="text" autocomplete="off" placeholder="Scan of typ serienummer en druk Enter">
+        <div class="serial-scan-hint">De scanner mag direct Enter sturen. Het serienummer wordt aan deze orderregel gekoppeld.</div>
+        <div class="modal-actions">
+          <button id="cancelSerialScanButton" class="admin-action" type="button">Annuleren</button>
+          <button id="confirmSerialScanButton" class="save-article-button" type="button">Bevestigen</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="packageModal" class="article-modal hidden" aria-modal="true" role="dialog">
     <div class="article-modal-backdrop" data-close-package-modal></div>
