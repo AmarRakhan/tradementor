@@ -114,7 +114,7 @@ test("Build 430 Portfolio Snapshot only says LIVE when backend reconciliation sa
   assert.match(component, /reconciliationStatus/);
   assert.match(component, /snapshotId/);
   assert.match(component, /data-live-status={liveDataStatus}/);
-  assert.doesNotMatch(component, /<span className="aps-live"><i />Live</span>/);
+  assert.equal(component.includes('<span className="aps-live"><i />Live</span>'), false);
   assert.match(component, /aps-data-/);
   assert.match(css, /.aps-live.aps-data-stale/);
   assert.match(css, /.aps-live.aps-data-data-mismatch/);
