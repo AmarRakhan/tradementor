@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const REFERENCE = "file_00000000ecd08246bd1b15532fb478d6";
 
-test("Build 431 binds the dedicated Auto Hedge screen to the approved pixel reference", async () => {
+test("Build 432 keeps the dedicated Auto Hedge screen while simplifying the Snapshot tile", async () => {
   const [layout, row, component, css, route, applyRoute, rehedgeRoute, version] = await Promise.all([
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx", import.meta.url), "utf8"),
@@ -46,7 +46,7 @@ test("Build 431 binds the dedicated Auto Hedge screen to the approved pixel refe
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "431"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "432"/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {
@@ -78,4 +78,15 @@ test("Auto Hedge copy is coin-quantity based and exposes no fake live pair data"
   assert.match(component, /Shadow-resultaten worden niet als echte hedge opgeslagen/);
   assert.doesNotMatch(component, /921 DOGE/);
   assert.doesNotMatch(component, /18\.271/);
+});
+
+
+test("Build 432 Snapshot Auto Hedge tile shows status only, not the configured dollar trigger",async()=>{
+  const component=await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx",import.meta.url),"utf8");
+  const tile=component.slice(component.indexOf("const tile ="),component.indexOf("const screen ="));
+  assert.match(tile,/AUTO HEDGE/);
+  assert.match(tile,/tileStatus/);
+  assert.doesNotMatch(tile,/vanaf -/);
+  assert.doesNotMatch(tile,/thresholdMoney/);
+  assert.match(tile,/Auto Hedge \$\{tileStatus\}/);
 });
