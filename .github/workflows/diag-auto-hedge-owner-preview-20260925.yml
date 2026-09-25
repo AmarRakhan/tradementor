@@ -1,0 +1,100 @@
+name: Diagnose owner Auto Hedge preview 2026-09-25
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-auto-hedge-owner-preview-20260925.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read owner exchange truth and Auto Hedge decisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image']); print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-autohedge-preview-${GITHUB_RUN_ID: -7}"; MARKER="AUTO_HEDGE_PREVIEW_${GITHUB_RUN_ID}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os
+          from google.cloud import firestore
+          from main import load_aster_secret, AsterV3Client, local_eip712_signer
+          from aster_position_loss_auto_hedge import evaluate_auto_hedge
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              print(os.environ['MARKER']+'='+json.dumps({'error':'OWNER_NOT_CONFIGURED'}),flush=True); raise SystemExit
+          secret=load_aster_secret({'uid':uid})
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+          positions=[r for r in client.position_risk() if abs(float(r.get('positionAmt') or 0))>0]
+          orders=[r for r in client.open_orders() if isinstance(r,dict)]
+          actions=evaluate_auto_hedge(positions,10,open_orders=orders)
+          dyn=db.collection('users').document(uid).collection('asterDynamicHedge').document('control').get().to_dict() or {}
+          settings=db.collection('asterPositionLossAutoHedge').document(uid).get().to_dict() or {}
+          out={
+            'thresholdUsd':10,
+            'positionCount':len(positions),
+            'longCount':sum(str(r.get('positionSide','')).upper()=='LONG' for r in positions),
+            'shortCount':sum(str(r.get('positionSide','')).upper()=='SHORT' for r in positions),
+            'dynamicHedgeEnabled':dyn.get('enabled') is True,
+            'storedAutoHedgeEnabled':settings.get('enabled') is True,
+            'storedThresholdUsd':settings.get('thresholdUsd'),
+            'eligibleCount':len(actions),
+            'needsHedgeCount':sum(a.required_delta>1e-12 for a in actions),
+            'actions':[a.public_dict() for a in actions],
+          }
+          print(os.environ['MARKER']+'='+json.dumps(out,separators=(',',':'),sort_keys=True),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          : > "$RUNNER_TEMP/value.txt"
+          for N in 1 2 3 4 5 6 7 8 9 10; do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json" || echo '[]' > "$RUNNER_TEMP/logs.json"
+            python - "$MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/value.txt" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          data=json.load(open(sys.argv[2],encoding='utf-8'))
+          def strings(obj):
+              if isinstance(obj,str): yield obj
+              elif isinstance(obj,dict):
+                  for v in obj.values(): yield from strings(v)
+              elif isinstance(obj,list):
+                  for v in obj: yield from strings(v)
+          for row in data if isinstance(data,list) else []:
+              for value in strings(row):
+                  if marker in value:
+                      print(value[value.index(marker):].splitlines()[0]); raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/value.txt" ] && break
+            sleep 3
+          done
+          cat "$RUNNER_TEMP/value.txt"
