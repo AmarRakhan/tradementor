@@ -1129,3 +1129,77 @@ button{cursor:pointer}
   max-height:100%!important;
   overflow-y:auto!important;
 }
+
+
+/* ============================================================
+   PACKAGES CARD READABILITY TUNE — 2026-09-25
+   Pakketten only: larger thumbnails + wider cards + full device names.
+   ============================================================ */
+body.mode-packages .catalog-card-grid{
+  grid-template-columns:repeat(auto-fill,minmax(190px,1fr))!important;
+  gap:7px!important;
+}
+
+body.mode-packages .package-card-v2{
+  min-height:132px!important;
+}
+
+body.mode-packages .package-select-surface{
+  padding:8px 9px 6px!important;
+}
+
+body.mode-packages .package-hero{
+  min-height:48px!important;
+  gap:9px!important;
+  margin-top:6px!important;
+  align-items:center!important;
+}
+
+body.mode-packages .package-hero img{
+  width:54px!important;
+  height:48px!important;
+  max-width:54px!important;
+  max-height:48px!important;
+  object-fit:contain!important;
+}
+
+body.mode-packages .package-main-type{
+  font-size:12.8px!important;
+  line-height:1.18!important;
+  font-weight:750!important;
+  color:#244e7c!important;
+  white-space:normal!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+  display:-webkit-box!important;
+  -webkit-box-orient:vertical!important;
+  -webkit-line-clamp:2!important;
+}
+
+body.mode-packages .package-accessory-count{
+  font-size:9.4px!important;
+  margin-top:2px!important;
+}
+
+body.mode-packages .package-name-v2{
+  font-size:12px!important;
+  line-height:1.15!important;
+  min-height:28px!important;
+}
+
+body.mode-packages .package-expand-button{
+  height:27px!important;
+  font-size:9.6px!important;
+}
+
+/* Wide desktop: keep cards readable instead of shrinking too far */
+@media(min-width:1500px){
+  body.mode-packages .catalog-card-grid{
+    grid-template-columns:repeat(auto-fill,minmax(185px,1fr))!important;
+  }
+}
+@media(min-width:1850px){
+  body.mode-packages .catalog-card-grid{
+    grid-template-columns:repeat(auto-fill,minmax(180px,1fr))!important;
+  }
+}
