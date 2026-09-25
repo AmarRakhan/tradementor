@@ -222,9 +222,15 @@ export function AsterPositionLossAutoHedgeBridge() {
       }) as AutoHedgeState;
       setState(next);
       setDraft(String(Number(next.thresholdUsd)));
-      setMessage(applyNow
-        ? "Instelling opgeslagen en alle actuele open posities zijn opnieuw gecontroleerd."
-        : enabled ? "Auto Hedge staat aan." : "Auto Hedge staat uit.");
+      if (applyNow && !next.operational) {
+        const actions = Array.isArray(next.lastReport?.actions) ? next.lastReport?.actions ?? [] : [];
+        const due = actions.filter((item) => Number(item.requiredDelta) > 0).length;
+        setMessage(`Testcontrole klaar · ${due} positie${due === 1 ? "" : "s"} zouden nu een ontbrekende tegen-quantity krijgen. Er zijn geen orders verstuurd.`);
+      } else {
+        setMessage(applyNow
+          ? "Instelling opgeslagen en alle actuele open posities zijn opnieuw gecontroleerd."
+          : enabled ? "Auto Hedge staat aan." : "Auto Hedge staat uit.");
+      }
       return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Auto Hedge kon niet worden opgeslagen.");
