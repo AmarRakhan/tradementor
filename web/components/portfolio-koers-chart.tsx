@@ -139,25 +139,17 @@ function markerDetail(row:Marker) {
 }
 
 
-function FormationArmy({longCount,shortCount}:{longCount:number;shortCount:number}) {
-  const render=(count:number,side:"long"|"short")=>{
-    const visible=Math.min(6,Math.max(0,Number(count)||0));
-    return <span className={`pcc-army-line ${side}`}>
-      {Array.from({length:visible},(_,index)=><i key={index} aria-hidden="true">♟</i>)}
-      {count>visible?<b>+{count-visible}</b>:null}
-    </span>;
-  };
-  return <span className="pcc-army" aria-hidden="true">{render(longCount,"long")}{render(shortCount,"short")}</span>;
-}
-
 function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string}) {
   const exposureClass=String(vm.netExposureSide||"NEUTRAAL").toLowerCase();
   const priorityClass=String(vm.entryPriority||"GEEN").toLowerCase();
+  const exposureAmount=Number.isFinite(Number(vm.netExposureUsd))&&Math.abs(Number(vm.netExposureUsd))>=.005
+    ? `${levelUsd(Math.abs(Number(vm.netExposureUsd)))} ${vm.netExposureSide}`
+    : String(vm.netExposureSide||"NEUTRAAL");
   return <section
     className={`portfolio-command-center pcc-homecoming cc-${vm.actionMode}`}
-    data-reference="file_000000009e0081f4b88f4b415de68c71"
+    data-reference="file_00000000cf9481f4b495250734661e31"
     data-account-only="beta-owner"
-    aria-label="Zone-Soldaten Strategiestatus Command Center"
+    aria-label="Zone-Soldaten Strategiestatus"
     aria-live="polite"
   >
     <header className="pcc-head">
@@ -166,54 +158,44 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
       <span className="pcc-command-badge">COMMAND CENTER<em>{vm.strategyEnabled?"BOT ACTIEF · 24/7":"STRATEGY UIT"}</em></span>
     </header>
 
-    <section className="pcc-formation-hero">
-      <FormationArmy longCount={vm.desiredLong} shortCount={vm.desiredShort}/>
-      <div className="pcc-formation-copy">
-        <small>ACTIEVE FORMATIE</small>
-        <strong><b>{vm.activeZone}</b> · <span className="long">{vm.desiredLong} LONG</span> <i>/</i> <span className="short">{vm.desiredShort} SHORT</span></strong>
-        <em>Vaste zoneformatie · geen extra soldaten</em>
+    <section className="pcc-formation-hero pcc-zone-summary">
+      <div className="pcc-active-zone">
+        <small>ACTIEVE ZONE</small>
+        <strong>{vm.activeZone}</strong>
+        <em>Doel {vm.desiredLong}L · {vm.desiredShort}S</em>
       </div>
       <div className={`pcc-exposure ${exposureClass}`}>
         <span aria-hidden="true">⚖</span>
-        <div><small>NETTO EXPOSURE:</small><strong>{vm.netExposureSide}</strong><em>PRIORITEIT: <b className={priorityClass}>{vm.entryPriority}</b></em></div>
+        <div><small>NETTO EXPOSURE</small><strong>{exposureAmount}</strong><em>PRIORITEIT: <b className={priorityClass}>{vm.entryPriority}</b></em></div>
       </div>
     </section>
 
-    <div className="pcc-status-grid">
-      <article>
-        <span className="pcc-status-icon home" aria-hidden="true">⌂</span>
-        <div><small>THUIS / BESCHIKBAAR</small><strong><b className="long">{vm.zoneFreeLong}L</b> · <b className="short">{vm.zoneFreeShort}S</b></strong><em>klaar voor nieuwe entry</em></div>
-      </article>
+    <div className="pcc-status-grid pcc-status-grid-v2">
       <article>
         <span className="pcc-status-icon field" aria-hidden="true">♟</span>
-        <div><small>IN HET VELD</small><strong><b className="long">{vm.zoneOpenLong}L</b> · <b className="short">{vm.zoneOpenShort}S</b></strong><em>actief in {vm.activeZone}</em></div>
+        <div><small>ZONE-SOLDATEN ACTIEF</small><strong><b className="long">{vm.strategyOwnedLong}L</b> · <b className="short">{vm.strategyOwnedShort}S</b></strong><em>{vm.strategyOwnedTotal} totaal · strategy-owned</em></div>
       </article>
       <article>
         <span className="pcc-status-icon map" aria-hidden="true">◇</span>
-        <div><small>OUDE ZONES NOG BUITEN</small><strong>{vm.oldZonesOpenTotal}</strong><em>blijven buiten tot winst</em></div>
+        <div><small>OUDE-ZONE POSITIES</small><strong>{vm.oldZonesOpenTotal}</strong><em><b className="long">{vm.oldZonesOpenLong}L</b> · <b className="short">{vm.oldZonesOpenShort}S</b></em></div>
+      </article>
+      <article className="pcc-next-zones">
+        <span className="pcc-status-icon clock" aria-hidden="true">◷</span>
+        <div><small>VOLGENDE ZONES</small><strong>↑ {vm.nextZoneUp} · {percent2(vm.nextZoneUpDistancePercent,false)}</strong><em>↓ {vm.nextZoneDown} · {percent2(vm.nextZoneDownDistancePercent,false)}</em></div>
       </article>
       <article>
         <span className="pcc-status-icon trophy" aria-hidden="true">♛</span>
-        <div><small>WINST THUISGEKOMEN</small><strong>{vm.winningHomeToday}</strong><em>oude-zone soldaten terug met winst</em></div>
-      </article>
-      <article className={`priority ${priorityClass}`}>
-        <span className="pcc-status-icon arrow" aria-hidden="true">↑</span>
-        <div><small>ENTRY-PRIORITEIT</small><strong>{vm.entryPriority}</strong><em>balancer stuurt keuze, niet extra soldaten</em></div>
-      </article>
-      <article className={`inflow ${String(vm.nextPossibleSide||"none").toLowerCase()}`}>
-        <span className="pcc-status-icon clock" aria-hidden="true">◷</span>
-        <div><small>VOLGENDE MOGELIJKE INSTROOM</small><strong>{vm.nextPossibleInflow}</strong><em>{vm.nextPossibleDetail}</em></div>
+        <div><small>WINST THUISGEKOMEN</small><strong>{vm.winningHomeToday}</strong><em>vandaag · oude-zone soldaten</em></div>
       </article>
     </div>
 
     <footer className="pcc-homecoming-footer">
       <span className="pcc-info-icon" aria-hidden="true">i</span>
-      <div><strong>{vm.footerTitle}</strong><em>{vm.footerDetail}</em></div>
-      <span className="pcc-return-flow" aria-hidden="true"><b>♟</b><i>→</i><b>⌂</b><i>◉</i></span>
+      <div><strong>Oude-zone posities zijn onderdeel van Zone-Soldaten actief</strong><em>Legacy, manual en Sniper tellen hier niet mee.</em></div>
     </footer>
 
     <span className="portfolio-koers-cockpit-sr">
-      Vaste formatie {vm.activeZone}: {vm.desiredLong} long en {vm.desiredShort} short. Thuis beschikbaar {vm.zoneFreeLong} long en {vm.zoneFreeShort} short. In het veld {vm.zoneOpenLong} long en {vm.zoneOpenShort} short. Oude zones nog buiten {vm.oldZonesOpenTotal}. Vandaag met winst thuisgekomen {vm.winningHomeToday}. Netto exposure {vm.netExposureSide}. Entry-prioriteit {vm.entryPriority}. Volgende mogelijke instroom {vm.nextPossibleInflow}. {advisorMessage}
+      Actieve zone {vm.activeZone}. Strategy-owned {vm.strategyOwnedLong} long en {vm.strategyOwnedShort} short. Oude-zone posities {vm.oldZonesOpenLong} long en {vm.oldZonesOpenShort} short. Netto exposure {exposureAmount}. Prioriteit {vm.entryPriority}. Volgende zones omhoog {vm.nextZoneUp} op {percent2(vm.nextZoneUpDistancePercent,false)} en omlaag {vm.nextZoneDown} op {percent2(vm.nextZoneDownDistancePercent,false)}. {advisorMessage}
     </span>
   </section>;
 }
