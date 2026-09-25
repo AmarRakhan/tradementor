@@ -479,14 +479,37 @@
     const cat=normalizeSmartText(category);
     const nm=normalizeSmartText(name);
 
-    // UI-CATEGORISATIE: specifieke accessoiretypes winnen ALTIJD van woorden
+    // Bekende apparaat-/pakketartikelcodes krijgen voorrang op woorden als
+    // "cover", "case" of "cable" die toevallig in een apparaatnaam voorkomen.
+    const explicitGroups=new Map([
+      ['SM-G556BZKDEEB','Telefoons'], // Samsung XCover 7
+      ['MLPF3ZD/A','Telefoons'],
+      ['MPUF3ZD/A','Telefoons'],
+      ['MYE73ZD/A','Telefoons'],
+      ['MD1Q4ZD/A','Telefoons'],      // iPhone 16e pakketartikel
+      ['MMXF3ZD/A','Telefoons'],      // refurb iPhone pakketartikel
+      ['PM90G6Y04DFE0C','Telefoons'],
+      ['PM95','Telefoons'],
+      ['MQ6J3NF/A','Tablets'],
+      ['MD7F4TY/A','Tablets'],
+      ['MVW13NF/A','Tablets'],
+      ['SM-X216BZAEEUB','Tablets'],
+      ['5TW10AA','Docks'],
+      ['9X3V1UT#ABB','Docks'],
+      ['4J0G4AA','Docks'],
+      ['AW5M5UT#ABB','Docks'],
+      ['PS025904','Hoezen & cases']
+    ]);
+    if(explicitGroups.has(code)) return explicitGroups.get(code);
+
+    // UI-CATEGORISATIE: specifieke accessoiretypes winnen daarna van woorden
     // als iPhone, iPad, laptop, ZBook, etc. in de productnaam.
     if(
       cat.includes('oplader') ||
-      nm.includes('adapter') && (
+      (nm.includes('adapter') && (
         nm.includes('20w') || nm.includes('65w') || nm.includes('230w') ||
         nm.includes('charger') || nm.includes('travel charger') || nm.includes('fast adapter')
-      ) ||
+      )) ||
       nm.includes('lader') ||
       nm.includes('charger')
     ) return 'Opladers';
@@ -494,16 +517,24 @@
     if(
       nm.includes('screenprotector') ||
       nm.includes('screen protector') ||
+      nm.includes('screenprotect') ||
       nm.includes('tempered glass') ||
       nm.includes('nuglas') ||
       nm.includes('glasss')
     ) return 'Screenprotectors';
 
+    // DICOTA "Case" is een laptoptas, geen telefoon/tablethoes.
+    if(
+      cat.includes('laptoptassen') ||
+      cat.includes('rugtas') ||
+      nm.includes('backpack') ||
+      nm.includes('dicota')
+    ) return 'Tassen & rugzakken';
+
     if(
       nm.includes('case') ||
       nm.includes('hoes') ||
       nm.includes('folio') ||
-      nm.includes('cover') ||
       nm.includes('rugged') ||
       nm.includes('tri fold') ||
       nm.includes('tri-fold')
@@ -511,10 +542,10 @@
 
     if(
       nm.includes('kabel') ||
-      nm.includes('cable') ||
       nm.includes('datacable') ||
       nm.includes('chargecable') ||
-      nm.includes('lightning')
+      nm.includes('lightning') ||
+      nm.includes(' usb c to usb c ')
     ) return 'Kabels';
 
     if(
@@ -528,24 +559,13 @@
     ) return 'Toetsenbord & muis';
 
     if(
-      cat.includes('laptoptassen') ||
-      cat.includes('rugtas') ||
-      nm.includes('backpack') ||
-      nm.includes('bag') ||
-      nm.includes('dicota')
-    ) return 'Tassen & rugzakken';
-
-    if(
       cat.includes('headset') ||
       nm.includes('headset') ||
       nm.includes('voyager') ||
       nm.includes('oorkussen')
     ) return 'Headsets & audio';
 
-    if(
-      nm.includes('webcam') ||
-      nm.includes('brio')
-    ) return 'Webcams';
+    if(nm.includes('webcam') || nm.includes('brio')) return 'Webcams';
 
     if(
       nm.includes('bureausteun') ||
@@ -570,10 +590,7 @@
       nm.includes('wireless display adapter')
     ) return 'Netwerk & connectiviteit';
 
-    if(
-      code==='MUWA3ZM/A' ||
-      nm.includes('apple pencil')
-    ) return 'Stylus & Apple Pencil';
+    if(code==='MUWA3ZM/A' || nm.includes('apple pencil')) return 'Stylus & Apple Pencil';
 
     // Volwaardige apparaten pas NA alle accessoiretypes categoriseren.
     if(
@@ -588,13 +605,12 @@
     if(
       /^apple iphone\b/.test(nm) ||
       /^iphone\s*\d/.test(nm) ||
-      nm.includes('samsung xcover') ||
-      code==='PM90G6Y04DFE0C' ||
-      code==='PM95'
+      nm.includes('samsung xcover')
     ) return 'Telefoons';
 
     if(
       /^apple ipad\b/.test(nm) ||
+      /^apple \d+(?: inch|\-inch) ipad\b/.test(nm) ||
       /^ipad\s*\d/.test(nm) ||
       nm.includes('samsung tab') ||
       nm.includes('remarkable')
