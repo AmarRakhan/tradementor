@@ -171,6 +171,57 @@
 
 
 
+  function ensureTopdeskUi(){
+    // raw.githack can cache admin.html. Build missing new controls from the always-fresh app-current.js.
+    if(!$('topdeskCopyButton')){
+      const serialBtn=$('serialCopyButton');
+      if(serialBtn){
+        const btn=document.createElement('button');
+        btn.id='topdeskCopyButton';
+        btn.className='copy-button topdesk-copy-button';
+        btn.type='button';
+        btn.innerHTML='<span class="copy-icon">T</span>Kopiëren voor TOPdesk';
+        serialBtn.insertAdjacentElement('afterend',btn);
+      }
+    }
+
+    if(!$('serialScanModal')){
+      const wrapper=document.createElement('div');
+      wrapper.innerHTML=`
+        <div id="serialScanModal" class="article-modal hidden" aria-modal="true" role="dialog">
+          <div class="article-modal-backdrop"></div>
+          <div class="article-modal-card serial-scan-card">
+            <div class="article-modal-head">
+              <div>
+                <div class="article-modal-title">Scan serienummer</div>
+                <div id="serialScanProgress" class="article-modal-sub"></div>
+              </div>
+            </div>
+            <div class="article-modal-section">
+              <div id="serialScanItemName" class="serial-scan-item"></div>
+              <label class="ticket-label" for="serialScanInput">Serienummer</label>
+              <input id="serialScanInput" class="serial-scan-input" type="text" autocomplete="off" placeholder="Scan of typ serienummer en druk Enter">
+              <div class="serial-scan-hint">Het serienummer wordt aan precies deze orderregel gekoppeld.</div>
+              <div class="modal-actions">
+                <button id="cancelSerialScanButton" class="admin-action" type="button">Annuleren</button>
+                <button id="confirmSerialScanButton" class="save-article-button" type="button">Bevestigen</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(wrapper.firstElementChild);
+    }
+  }
+
+  function bindTopdeskUi(){
+    $('topdeskCopyButton')?.addEventListener('click',copyTopdeskText);
+    $('confirmSerialScanButton')?.addEventListener('click',confirmSerialScan);
+    $('cancelSerialScanButton')?.addEventListener('click',cancelSerialScan);
+    $('serialScanInput')?.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();confirmSerialScan();}
+    });
+  }
+
   function save(){
     try{
       localStorage.setItem('amar-order-builder-v2', JSON.stringify({
@@ -1229,7 +1280,13 @@
     window.__ticketText='';
     setTimeout(()=>$('ticketPasteInput').focus(),0);
   }
-  function closeTicketModal(){ $('ticketPasteModal')?.classList.add('hidden'); }
+  function closeTicketModal(){
+    $('ticketPasteModal')?.classList.add('hidden');
+    setTimeout(()=>{
+      rebuildMissingSerialQueue();
+      if(serialScanQueue.length) openNextSerialScan();
+    },0);
+  }
 
   let packageDraftRows=[];
 
@@ -1535,7 +1592,10 @@
   }
   function render(){ renderCounts(); if(state.view==='packages')renderPackages(); else renderItems(); renderOrder(); }
 
-  $('tabPackages').addEventListener('click',()=>setView('packages'));
+  ensureTopdeskUi();
+  bindTopdeskUi();
+
+    $('tabPackages').addEventListener('click',()=>setView('packages'));
   $('tabItems').addEventListener('click',()=>setView('items'));
   $('searchInput').addEventListener('input',e=>{state.query=e.target.value.trim();render();});
   $('sortSelect').addEventListener('change',e=>{state.sort=e.target.value;render();});
@@ -1543,12 +1603,7 @@
   $('clearOrder').addEventListener('click',clearOrder);
   $('copyButton').addEventListener('click',copyDynamics);
   $('serialCopyButton')?.addEventListener('click',copySerialNumbers);
-  $('topdeskCopyButton')?.addEventListener('click',copyTopdeskText);
-  $('confirmSerialScanButton')?.addEventListener('click',confirmSerialScan);
-  $('cancelSerialScanButton')?.addEventListener('click',cancelSerialScan);
-  $('serialScanInput')?.addEventListener('keydown',e=>{
-    if(e.key==='Enter'){e.preventDefault();confirmSerialScan();}
-  });
+  // TOPdesk/scan listeners are bound after ensureTopdeskUi().
   $('createPackageButton')?.addEventListener('click',openPackageModal);
   $('addPackageRowButton')?.addEventListener('click',addPackageBuilderRow);
   $('savePackageButton')?.addEventListener('click',saveCustomPackage);
