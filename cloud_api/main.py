@@ -5051,17 +5051,34 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         reconciliation_captured_ms = int(reconciliation_captured.timestamp() * 1000)
     else:
         reconciliation_captured_ms = 0
+    snapshot_position_count = int(safe_float(snapshot.get("activePositions")))
+    cross_position_count = int(safe_float(snapshot.get("positionCountIncluded")))
+    # The pre-existing risk fields longNotional/shortNotional intentionally cover
+    # CROSS positions only. Compare them with the all-account canonical exposure
+    # only when both scopes contain the same number of positions; otherwise an
+    # isolated position would create a false DATA MISMATCH.
+    comparable_cross_scope = bool(
+        snapshot_position_count == cross_position_count
+        and snapshot_position_count == len(raw_snapshot_positions)
+    )
     reconciliation = account_reconciliation_report(
         positions=raw_snapshot_positions,
         managed_state=managed_for_reconciliation,
         active_zone=reconciliation_active_zone,
         sniper_symbols=sniper_owned_symbols,
-        snapshot_position_count=int(safe_float(snapshot.get("activePositions"))),
-        snapshot_long_notional=safe_float(snapshot.get("longNotional")) if snapshot.get("longNotional") is not None else None,
-        snapshot_short_notional=safe_float(snapshot.get("shortNotional")) if snapshot.get("shortNotional") is not None else None,
+        snapshot_position_count=snapshot_position_count,
+        snapshot_long_notional=(safe_float(snapshot.get("longNotional")) if comparable_cross_scope and snapshot.get("longNotional") is not None else None),
+        snapshot_short_notional=(safe_float(snapshot.get("shortNotional")) if comparable_cross_scope and snapshot.get("shortNotional") is not None else None),
         captured_at_ms=reconciliation_captured_ms,
         now_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
     )
+    reconciliation["legacyCrossExposure"] = {
+        "comparableToAccount": comparable_cross_scope,
+        "positionCountIncluded": cross_position_count,
+        "longExposureUsd": safe_float(snapshot.get("longNotional")),
+        "shortExposureUsd": safe_float(snapshot.get("shortNotional")),
+        "scope": "CROSS_ONLY",
+    }
     unavailable_capital = safe_float(snapshot.get("unavailableCapital"))
     total_initial_margin = safe_float(snapshot.get("totalInitialMargin"))
     position_initial_margin = safe_float(snapshot.get("positionInitialMargin", snapshot.get("activeTradeCapital")))
