@@ -413,6 +413,8 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const candles=(observedEquity?mergeRealtimeEquitySample(baseCandles,observedEquity,Date.now(),timeframe):baseCandles) as Candle[];
     if(!container||!candles.length){candleDataRef.current=[];setZoneLayout([]);setZoneBoundaries([]);setEventLabels([]);return}
     candleDataRef.current=candles.map((row)=>({...row}));
+    const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
+    const performanceByTime=new Map(performancePoints.map((row:any)=>[Number(row.time),Number(row.value)]));
     const view=TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"];
     const initialFocusPrice=observedEquity??payload.currentEquity??candles.at(-1)?.close??null;
     const initialFocusContext=portfolioZoneContextFromLadder(advisorZoneLadderRef.current,initialFocusPrice);
@@ -420,7 +422,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const fallbackFocusZone=fallbackFocusIndex===null?null:payload.zones.find((zone)=>zone.index===fallbackFocusIndex)??null;
     const focusLower=initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null;
     const focusUpper=initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null;
-    const focusVisibleBars=portfolioKoersFocusBars(candles,view.visibleBars,initialFocusPrice,focusLower,focusUpper);
+    const focusVisibleBars=viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars,initialFocusPrice,focusLower,focusUpper):Math.min(candles.length,view.visibleBars);
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
@@ -440,18 +442,28 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true},
     });
     chartRef.current=chart;
-    const series=chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineColor:"#d9b34a",priceLineWidth:1,lastValueVisible:true});
+    const series=viewMode==="performance"
+      ? chart.addSeries(LineSeries,{color:"#39eaa0",lineWidth:3,priceLineColor:"#d9b34a",priceLineWidth:1,lastValueVisible:true,crosshairMarkerVisible:true})
+      : chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineColor:"#d9b34a",priceLineWidth:1,lastValueVisible:true});
     candleSeriesRef.current=series;
-    series.setData(candles.map((row)=>({time:row.time as UTCTimestamp,open:row.open,high:row.high,low:row.low,close:row.close})));
+    if(viewMode==="performance"){
+      series.setData(performancePoints.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+    }else{
+      series.setData(candles.map((row)=>({time:row.time as UTCTimestamp,open:row.open,high:row.high,low:row.low,close:row.close})));
+    }
 
-    const bb=bollinger20x2(candles);
-    const upper=chart.addSeries(LineSeries,{color:"#1298ff",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-    const middle=chart.addSeries(LineSeries,{color:"rgba(226,235,239,.78)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-    const lower=chart.addSeries(LineSeries,{color:"#f02e49",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-    bbRefs.current={upper,middle,lower};
-    upper.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
-    middle.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
-    lower.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+    const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
+    if(viewMode==="account"){
+      const upper=chart.addSeries(LineSeries,{color:"#1298ff",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const middle=chart.addSeries(LineSeries,{color:"rgba(226,235,239,.78)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const lower=chart.addSeries(LineSeries,{color:"#f02e49",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      bbRefs.current={upper,middle,lower};
+      upper.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+      middle.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+      lower.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
+    }else{
+      bbRefs.current={upper:null,middle:null,lower:null};
+    }
 
     if(Number.isFinite(Number(initialFocusPrice))&&Number.isFinite(Number(focusLower))&&Number.isFinite(Number(focusUpper))&&Number(focusUpper)>Number(focusLower)){
       const focusSpan=Math.max(Number(focusUpper)-Number(focusLower),Number(initialFocusPrice)*0.006);
