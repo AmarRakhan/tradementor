@@ -39,31 +39,60 @@
 
   function requiresSerial(code,label=''){
     const item=orderItemInfo(code,label);
-    const category=String(item.category||'');
-    const name=normalizeSmartText(item.name||label||'');
-    const serialCategories=new Set(['Laptops','Telefoons','iPads','Docks','Monitoren']);
+    const category=normalizeSmartText(item.category||'');
+    const name=normalizeSmartText(item.name||item.description||label||'');
 
-    // Artikelen die in de bron als pakketartikel staan maar wel degelijk
-    // een serienummerplichtig device zijn.
-    const serialCodes=new Set([
-      'MD1Q4ZD/A',   // iPhone 16e
-      'MUWA3ZM/A'    // Apple Pencil USB-C
+    // Bekende hardwarecodes: altijd serienummerplichtig.
+    const serialDeviceCodes=new Set([
+      // iPhones
+      'MMXF3ZD/A','MLPF3ZD/A','MPUF3ZD/A','MYE73ZD/A','MD1Q4ZD/A',
+      // iPads / tablets
+      'MQ6J3NF/A','MD7F4TY/A','MVW13NF/A','SM-X216BZAEEUB',
+      // Samsung telefoon
+      'SM-G556BZKDEEB',
+      // Laptops
+      '54337282#ABH','54337265#ABH','54337313#ABH',
+      // Docks
+      '5TW10AA','9X3V1UT#ABB','AW5M5UT#ABB',
+      // Apple Pencil
+      'MUWA3ZM/A'
     ]);
+    if(serialDeviceCodes.has(code)) return true;
 
-    const serialByName=
-      name.includes('iphone') ||
-      name.includes('ipad') ||
-      name.includes('tablet') ||
-      name.includes('elitebook') ||
-      name.includes('zbook') ||
-      name.includes('laptop') ||
-      name.includes('dock') ||
-      name.includes('monitor') ||
-      name.includes('apple pencil');
+    // Deze termen maken duidelijk dat het om een accessoire gaat.
+    // Zo wordt "Tempered Glass Apple iPad 10.9" NOOIT als iPad-device gezien.
+    const accessoryTerms=[
+      'screenprotector','screen protector','tempered glass','nuglas',
+      'case','hoes','folio','cover','rugged',
+      'kabel','cable','datacable','chargecable',
+      'adapter','lader','charger',
+      'keyboard','toetsenbord',
+      'hub','rj45'
+    ];
+    if(accessoryTerms.some(term=>name.includes(term))) return false;
 
-    return serialCategories.has(category) ||
-      serialCodes.has(code) ||
-      serialByName;
+    // Volledige hardwarecategorieën waar ieder artikel een serienummer heeft.
+    if(
+      category==='laptops' ||
+      category==='monitoren' ||
+      category==='docks' ||
+      category==='dockings'
+    ) return true;
+
+    // Alleen echte device-omschrijvingen als vangnet.
+    return (
+      /^apple iphone\b/.test(name) ||
+      /^iphone\s*\d/.test(name) ||
+      /^apple ipad\b/.test(name) ||
+      /^ipad\s*\d/.test(name) ||
+      /^samsung xcover\b/.test(name) ||
+      /^samsung tab\b/.test(name) ||
+      /^hp elitebook\b/.test(name) ||
+      /^hp zbook\b/.test(name) ||
+      /^apple pencil\b/.test(name) ||
+      /\bmonitor\b/.test(name) ||
+      /\bdock\b/.test(name)
+    );
   }
 
   function selectedSerialCountForItem(sel){
@@ -118,6 +147,20 @@
     state.packages.forEach(sel=>queueMissingSerialsForPackage(sel.index));
     state.items.forEach(sel=>queueMissingSerialsForItem(sel.code));
   }
+  function startSerialScanForPackage(index){
+    serialScanQueue=[];
+    topdeskAfterSerialScan=false;
+    queueMissingSerialsForPackage(index);
+    if(serialScanQueue.length) openNextSerialScan();
+  }
+
+  function startSerialScanForItem(code){
+    serialScanQueue=[];
+    topdeskAfterSerialScan=false;
+    queueMissingSerialsForItem(code);
+    if(serialScanQueue.length) openNextSerialScan();
+  }
+
 
   function openNextSerialScan(){
     if(!serialScanQueue.length){
@@ -322,7 +365,7 @@
       save(); render();
       // Direct na pakketselectie het serienummervenster openen
       // voor alle serienummerplichtige artikelen in dit pakket.
-      setTimeout(()=>startMissingSerialScan(false),0);
+      setTimeout(()=>startSerialScanForPackage(index),0);
     }
   }
   function toggleItem(code){
@@ -334,7 +377,7 @@
       state.items.push({code,qty:1,status:state.itemStatuses[code]||'Nieuw',serials:[]});
       save(); render();
       // Ook losse serienummerplichtige artikelen direct laten scannen.
-      setTimeout(()=>startMissingSerialScan(false),0);
+      setTimeout(()=>startSerialScanForItem(code),0);
     }
   }
   function setCatalogStatus(code,status){
@@ -367,8 +410,13 @@
       }
     }
     save(); render();
-    // Bij +1 ontstaat voor serienummerplichtige hardware ook +1 serienummer.
-    if(delta>0) setTimeout(()=>startMissingSerialScan(false),0);
+    // Bij +1 alleen voor deze selectie het extra serienummer vragen.
+    if(delta>0){
+      setTimeout(()=>{
+        if(kind==='package') startSerialScanForPackage(+key);
+        else startSerialScanForItem(key);
+      },0);
+    }
   }
   function removeSelection(kind,key){
     const arr=kind==='package'?state.packages:state.items;
