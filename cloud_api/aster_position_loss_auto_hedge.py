@@ -210,6 +210,8 @@ def _confirmed_fill(client: Any, symbol: str, intent_id: str, result: dict[str, 
             raise RuntimeError(f"Aster Auto Hedge order eindigde als {status}")
         if attempt < 2:
             time.sleep(0.15)
+    if status == "PARTIALLY_FILLED" and abs(_f(current.get("executedQty"))) > 0:
+        return current
     raise RuntimeError(f"Auto Hedge order is nog niet definitief gevuld ({status or 'ONBEKEND'})")
 
 
