@@ -12,8 +12,8 @@ test("News is mounted without changing the trading page destination model", asyn
     read("../components/markets-navigation-bridge.tsx"),
   ]);
   assert.match(layout, /NewsNavigationBridge/);
-  assert.match(bridge, /\["markets", "aster", "sniper", "news", "journey", "wallet"\]/);
-  assert.match(marketsBridge, /\["markets", "aster", "sniper", "news", "journey", "wallet"\]/);
+  assert.match(bridge, /\["markets", "aster", "sniper", "news", "friends", "journey", "wallet"\]/);
+  assert.match(marketsBridge, /\["markets", "aster", "sniper", "news", "friends", "journey", "wallet"\]/);
   assert.match(bridge, /createPortal/);
   assert.doesNotMatch(page, /type Destination = [^;]*"news"/);
 });
