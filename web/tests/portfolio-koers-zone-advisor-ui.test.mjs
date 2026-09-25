@@ -128,7 +128,7 @@ test("Build 417 informational state shows next upper and lower zone triggers wit
 test("Build 408 bias badge summarizes active zone and desired formation without loose chart zone labels",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
-  assert.ok(component.includes("Z{signedZone(activeZone)}"));
+  assert.ok(component.includes('activeZoneLabel=activeZone===null?"—":`Z${signedZone(activeZone)}`'));
   assert.ok(component.includes("zoneLevelClass(zone.index)"));
   assert.ok(component.includes("<span>{zone.label}</span>"));
   assert.ok(css.includes(".beta-zone-advisor .portfolio-koers-zone span{display:none!important}"));
