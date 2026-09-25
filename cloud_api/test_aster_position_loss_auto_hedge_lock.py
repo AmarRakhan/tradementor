@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from aster_position_loss_auto_hedge_lock import (
     AutoHedgeCloseBlocked,
@@ -87,3 +88,13 @@ def test_configured_reader_failure_fails_closed():
             account_uid="u1", symbol="DOGEUSDT", side="LONG",
             quantity=1, caller="strategy-tp",
         )
+
+
+def test_main_routes_all_ordinary_live_closes_through_auto_hedge_guard_but_close_all_bypasses():
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    assert "configure_auto_hedge_lock_reader(" in source
+    assert "before_order_submit=(None if emergency_close_all else _block_order_during_close_all(uid))" in source
+    assert "_portfolio_growth_client(user,live=True,emergency_close_all=True)" in source
+    assert "allow_auto_hedge_locked:bool=False" in source
+    extension = Path(__file__).with_name("aster_position_loss_auto_hedge_extension.py").read_text(encoding="utf-8")
+    assert "_block_order_during_close_all(uid, allow_auto_hedge_locked=True)" in extension
