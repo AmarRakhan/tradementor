@@ -466,6 +466,7 @@ export function AsterPositionLossAutoHedgeBridge() {
     ["HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED"].includes(String(pair.status || "").toUpperCase()),
   );
   const status = state.operational ? "ACTIEF" : state.enabled ? "TEST" : hasLockedPair ? "LOCK" : "UIT";
+  const tileStatus = state.enabled ? "ACTIEF" : "UIT";
   const coinOptions = useMemo(() => [...new Set(pairs.map((pair) => pair.symbol))].sort(), [pairs]);
   const visiblePairs = coinFilter === "ALL" ? pairs : pairs.filter((pair) => pair.symbol === coinFilter);
 
@@ -491,7 +492,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       data-reference={TILE_REFERENCE}
       role="button"
       tabIndex={0}
-      aria-label={`Auto Hedge ${state.enabled ? "aan" : "uit"}, vanaf min ${thresholdMoney(Number(state.thresholdUsd) || 10)} verlies. Dubbel tik voor instellingen.`}
+      aria-label={`Auto Hedge ${tileStatus}. Dubbel tik voor instellingen.`}
       onDoubleClick={openFromCard}
       onTouchEnd={onTouchEnd}
       onKeyDown={(event) => {
@@ -504,8 +505,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       <span className="plah-tile-icon">{shieldIcon()}</span>
       <span className="plah-tile-copy">
         <small>AUTO HEDGE</small>
-        <strong>vanaf -{thresholdMoney(Number(state.thresholdUsd) || 10)}</strong>
-        <em className={state.enabled ? "on" : ""}>{status}</em>
+        <strong className={state.enabled ? "on" : ""}>{tileStatus}</strong>
       </span>
       <Toggle checked={state.enabled} disabled={saving || loading} onChange={() => void persist(!state.enabled, threshold, !state.enabled)} compact label="Auto Hedge" />
     </div>,
