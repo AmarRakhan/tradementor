@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from aster_zone_soldiers import (
     ROLE_EXPOSURE_BALANCER,
     ROLE_LEGACY_UNASSIGNED,
@@ -7,6 +9,8 @@ from aster_zone_soldiers import (
     STATUS_AVAILABLE,
     STATUS_DORMANT,
     STATUS_OPEN,
+    account_exposure_snapshot,
+    account_reconciliation_report,
     annotate_legacy_positions,
     available_soldiers,
     claim_soldier,
@@ -475,3 +479,100 @@ def test_stale_non_open_balancer_capacity_is_pruned_on_restart():
     assert "z0:long:bal:1" not in state["pools"]["0"]["soldiers"]
     assert report["currentZone"]["balancerFree"] == 0
     assert len(available_soldiers(state, "LONG")) == 3
+
+
+
+def test_build430_zone_priority_uses_all_exchange_positions_not_only_managed_ownership():
+    managed = dict([
+        owned("LEGACYUSDT", "LONG", soldierRole=ROLE_LEGACY_UNASSIGNED),
+    ])
+    positions = [
+        pos("LEGACYUSDT", "LONG", 100.0),
+        pos("MANUALUSDT", "SHORT", 300.0),
+    ]
+    _zone, _managed, report = prepare({}, managed, positions, 0, trigger=20.0, release=8.0)
+    assert report["exposure"]["scope"] == "ALL_EXCHANGE_POSITIONS"
+    assert report["exposure"]["totalLongOpenCount"] == 1
+    assert report["exposure"]["totalShortOpenCount"] == 1
+    assert math.isclose(report["exposure"]["totalLongNotional"], 100.0)
+    assert math.isclose(report["exposure"]["totalShortNotional"], 300.0)
+    assert math.isclose(report["exposure"]["netExposureUsd"], -200.0)
+    assert report["entryPriority"] == "LONG"
+
+
+def test_build430_canonical_exposure_matches_reference_book_arithmetic():
+    positions = [
+        pos(f"L{index}USDT", "LONG", 1037.0 / 66.0)
+        for index in range(66)
+    ] + [
+        pos(f"S{index}USDT", "SHORT", 1759.0 / 43.0)
+        for index in range(43)
+    ]
+    exposure = account_exposure_snapshot(positions)
+    assert exposure["sourcePositionCount"] == 109
+    assert exposure["totalLongOpenCount"] == 66
+    assert exposure["totalShortOpenCount"] == 43
+    assert math.isclose(exposure["totalLongNotional"], 1037.0, rel_tol=1e-9)
+    assert math.isclose(exposure["totalShortNotional"], 1759.0, rel_tol=1e-9)
+    assert math.isclose(exposure["netExposureUsd"], -722.0, rel_tol=1e-9)
+    assert exposure["netExposureSide"] == "SHORT"
+    assert math.isclose(exposure["hedgeCoveragePercent"], 1759.0 / 1037.0 * 100.0, rel_tol=1e-9)
+
+
+def test_build430_reconciliation_assigns_every_open_position_exactly_one_category():
+    managed = {
+        "CURUSDT|LONG": {
+            "soldierRole": ROLE_ZONE_BASE,
+            "soldierId": "z0:long:base:1",
+            "originZone": 0,
+        },
+        "OLDUSDT|SHORT": {
+            "soldierRole": ROLE_ZONE_BASE,
+            "soldierId": "n1:short:base:1",
+            "originZone": -1,
+        },
+        "LEGACYUSDT|LONG": {"soldierRole": ROLE_LEGACY_UNASSIGNED},
+    }
+    positions = [
+        pos("CURUSDT", "LONG", 100.0),
+        pos("OLDUSDT", "SHORT", 120.0),
+        pos("LEGACYUSDT", "LONG", 80.0),
+        pos("SNIPEUSDT", "SHORT", 60.0),
+        pos("UNKNOWNUSDT", "LONG", 40.0),
+    ]
+    exposure = account_exposure_snapshot(positions)
+    report = account_reconciliation_report(
+        positions=positions,
+        managed_state=managed,
+        active_zone=0,
+        sniper_symbols={"SNIPEUSDT"},
+        snapshot_position_count=5,
+        snapshot_long_notional=exposure["totalLongNotional"],
+        snapshot_short_notional=exposure["totalShortNotional"],
+        captured_at_ms=1_000,
+        now_ms=1_100,
+    )
+    assert report["status"] == "SYNCED"
+    assert report["exchangePositions"] == 5
+    assert report["classifiedPositions"] == 5
+    assert len(report["classifications"]) == 5
+    assert report["soldiersTotal"] == 2
+    assert report["nonSoldiersTotal"] == 3
+    assert report["categories"]["soldiersCurrentZone"] == 1
+    assert report["categories"]["soldiersOldZones"] == 1
+    assert report["categories"]["legacyAster"] == 1
+    assert report["categories"]["sniper"] == 1
+    assert report["categories"]["unknown"] == 1
+    assert report["unclassifiedPositions"] == 1
+
+
+def test_build430_dashboard_position_shape_uses_same_exposure_calculation():
+    report = account_exposure_snapshot([
+        {"symbol": "BTCUSDT", "side": "LONG", "quantity": 2, "notionalUsd": 200},
+        {"symbol": "ETHUSDT", "side": "SHORT", "quantity": 1, "notionalUsd": 300},
+    ])
+    assert report["sourcePositionCount"] == 2
+    assert report["totalLongNotional"] == 200
+    assert report["totalShortNotional"] == 300
+    assert report["netExposureUsd"] == -100
+    assert report["netExposureSide"] == "SHORT"
