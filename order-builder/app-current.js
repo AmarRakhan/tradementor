@@ -1550,26 +1550,41 @@
 
     state.packages.forEach(sel=>{
       const pkg=data.packages[sel.index]; if(!pkg)return;
+
       for(let n=0;n<sel.qty;n++){
         lines.push(`Pakket: ${pkg.name}`);
+
         const excluded=new Set(sel.excludedCodes||[]);
         const serialCursor={};
+
+        // Binnen een pakket tonen we in TOPdesk alleen regels die daadwerkelijk
+        // een serienummer hebben. Het pakket zelf beschrijft de accessoires al.
         pkg.items.filter(it=>!excluded.has(it.code)).forEach(it=>{
+          const serials=((sel.serialsByCode||{})[it.code]||[]);
+
           for(let q=0;q<(it.qty||1);q++){
-            const info=orderItemInfo(it.code,it.label);
             const cursor=serialCursor[it.code]||0;
-            const serial=((sel.serialsByCode||{})[it.code]||[])[n*(it.qty||1)+cursor]||'';
+            const serial=serials[n*(it.qty||1)+cursor]||'';
             serialCursor[it.code]=cursor+1;
-            lines.push(`- 1x ${info.name||it.label}${serial?' | serienummer: '+serial:''}`);
+
+            if(!serial) continue;
+
+            const info=orderItemInfo(it.code,it.label);
+            lines.push(`- ${info.name||it.label} | serienummer: ${serial}`);
           }
         });
+
+        // Alleen relevante afwijkingen van het standaardpakket blijven zichtbaar.
         if((sel.excludedCodes||[]).some(code=>code==='MD3J4ZM/A'||code==='MHJE3ZM/A')){
           lines.push('- zonder 20W-lader');
         }
+
         lines.push('');
       }
     });
 
+    // Los geselecteerde artikelen blijven zichtbaar omdat er geen pakketnaam is
+    // die hun betekenis al afdekt.
     state.items.forEach(sel=>{
       const info=orderItemInfo(sel.code);
       for(let q=0;q<sel.qty;q++){
