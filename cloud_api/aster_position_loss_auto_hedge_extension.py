@@ -322,7 +322,7 @@ def _prepare_lifecycle(
                     synthetic = evaluate_auto_hedge(
                         positions, threshold, open_orders=open_orders,
                         protected_sides={symbol: remaining_side},
-                        skip_symbols={s for s in pmap if False},
+                        skip_symbols=set(),
                     )
                     action = next((a for a in synthetic if a.symbol == symbol), None)
                     if action:
@@ -415,17 +415,20 @@ def _sync_pair_views(
         reserved = min(reserved, current_hedge)
         free_qty = max(0.0, current_hedge - reserved)
 
-        final_status = str(final.get("status") or action.get("status") or "").upper()
-        if final_status == "HEDGED":
+        action_status = str(action.get("status") or "").upper()
+        final_status = str(final.get("status") or "").upper()
+        if action_status == "PRECISION_BLOCKED":
+            status = "PRECISION_BLOCKED"
+        elif action_status in {"FAILED", "INSUFFICIENT_MARGIN"}:
+            status = "BLOCKED"
+        elif final_status == "HEDGED":
             status = "HEDGED"
         elif final_status == "PENDING":
             status = "HEDGING"
         elif final_status in {"NEEDS_HEDGE", "NEEDS_REDUCE"}:
             status = "ADJUSTING"
-        elif str(action.get("status", "")).upper() == "PRECISION_BLOCKED":
-            status = "PRECISION_BLOCKED"
-        elif str(action.get("status", "")).upper() in {"FAILED", "INSUFFICIENT_MARGIN"}:
-            status = "BLOCKED"
+        elif action_status in {"HEDGED", "PARTIAL"}:
+            status = "HEDGING" if action_status == "PARTIAL" else "HEDGED"
         else:
             status = "ADJUSTING"
 
