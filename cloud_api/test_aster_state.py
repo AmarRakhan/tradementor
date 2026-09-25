@@ -57,6 +57,30 @@ def test_dashboard_snapshot_falls_back_to_account_initial_margin_for_cross_posit
     assert snapshot["activeTradeCapital"] == 214.76
 
 
+
+
+def test_build430_dashboard_snapshot_exposes_margin_reconciliation_components():
+    snapshot = dashboard_snapshot({
+        "totalMarginBalance": "122.79",
+        "availableBalance": "26.50",
+        "totalInitialMargin": "96.29",
+        "totalPositionInitialMargin": "95.45",
+        "totalOpenOrderInitialMargin": "0.84",
+        "totalMaintMargin": "2.50",
+    }, [{
+        "symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "1",
+        "markPrice": "100", "entryPrice": "100", "positionInitialMargin": "95.45",
+    }])
+    assert snapshot["equity"] == 122.79
+    assert snapshot["availableBalance"] == 26.5
+    assert snapshot["unavailableCapital"] == 96.29
+    assert snapshot["activeTradeCapital"] == 95.45
+    assert snapshot["positionInitialMargin"] == 95.45
+    assert snapshot["openOrderInitialMargin"] == 0.84
+    assert snapshot["totalInitialMargin"] == 96.29
+    assert abs(snapshot["marginReconciliationResidual"]) < 1e-9
+    assert snapshot["financialDataContract"]["version"] == 2
+
 def position(symbol, side, amount, entry=100, leverage=10):
     return {
         "symbol": symbol, "positionSide": side, "positionAmt": amount,
