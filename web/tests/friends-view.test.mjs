@@ -25,7 +25,7 @@ test("friends UI includes ranking, risk, profile settings and compare", () => {
 });
 
 test("friends navigation has a real top-level destination", () => {
-  assert.match(bridge, /data\.destination\s*=\s*"friends"/);
+  assert.match(bridge, /dataset\.destination\s*=\s*"friends"/);
   assert.match(bridge, /FRIENDS/);
   assert.match(bridge, /tmView/);
 });
