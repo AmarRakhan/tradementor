@@ -307,6 +307,7 @@ export function buildStrategyStatusCommandCenter(input={}) {
   const reconciliationStatus=String(reconciliation.status||"UNKNOWN").toUpperCase();
   const liveDataStatus=String(reconciliation.liveDataStatus||input.liveDataStatus||reconciliationStatus||"UNKNOWN").toUpperCase();
   const snapshotAgeMs=finite(reconciliation.snapshotAgeMs);
+  const margin=reconciliation.margin&&typeof reconciliation.margin==="object"?reconciliation.margin:{};
   const entryBudget=runtimeBudget?{
     availableUsd:finite(runtimeBudget.availableUsd),
     newSoldierNotionalUsd:finite(runtimeBudget.newSoldierNotionalUsd),
@@ -357,6 +358,7 @@ export function buildStrategyStatusCommandCenter(input={}) {
     accountLong,
     accountShort,
     accountTotal,
+    appPositions:integer(reconciliation.appPositions),
     soldiersTotal,
     nonSoldiersTotal,
     unknownPositions:integer(reconciliation.unknownPositions)??integer(categories.unknown)??0,
@@ -369,7 +371,16 @@ export function buildStrategyStatusCommandCenter(input={}) {
     shortExposureUsd:finite(reconciliation.shortExposureUsd),
     netExposureUsd:finite(reconciliation.netExposureUsd),
     hedgeCoveragePercent:finite(reconciliation.hedgeCoveragePercent),
-    exchangeAvailableUsd:finite(reconciliation.margin?.availableUsd),
+    exchangeEquityUsd:finite(margin.equityUsd),
+    exchangeAvailableUsd:finite(margin.availableUsd),
+    unavailableCapitalUsd:finite(margin.unavailableCapitalUsd),
+    activeTradeCapitalUsd:finite(margin.activeTradeCapitalUsd),
+    totalInitialMarginUsd:finite(margin.totalInitialMarginUsd),
+    positionInitialMarginUsd:finite(margin.positionInitialMarginUsd),
+    openOrderInitialMarginUsd:finite(margin.openOrderInitialMarginUsd),
+    marginResidualUsd:finite(margin.otherOrResidualUsd),
+    openOrders:integer(margin.openOrders),
+    openOrdersFresh:margin.openOrdersFresh===true,
     appAvailableUsd:availableUsd,
     classifiedPositions:integer(reconciliation.classifiedPositions),
     unclassifiedPositions:integer(reconciliation.unclassifiedPositions),
