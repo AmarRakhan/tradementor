@@ -404,3 +404,42 @@
   .pcc-status-grid article{grid-template-columns:24px minmax(0,1fr);gap:4px;padding:7px 5px}.pcc-status-icon{width:23px;height:23px;font-size:17px}
   .pcc-status-grid small{font-size:4.25px}.pcc-status-grid strong{font-size:10.4px}.pcc-status-grid em{font-size:4.8px}
 }
+/* Build 432 — Portfolio Koers 2.0 */
+.portfolio-koers-view-toggle{display:flex;gap:4px;margin-top:6px;min-width:0}
+.portfolio-koers-view-toggle button{min-width:0;padding:5px 8px;border:1px solid rgba(104,168,143,.3);border-radius:999px;background:rgba(4,25,23,.76);color:#91a69d;font:800 7px/1 inherit;letter-spacing:.035em;white-space:nowrap}
+.portfolio-koers-view-toggle button.active{border-color:rgba(66,238,164,.72);background:rgba(20,111,77,.28);color:#62efb0;box-shadow:inset 0 0 10px rgba(45,232,157,.08)}
+.portfolio-koers-performance-note{position:absolute;z-index:6;left:10px;top:9px;display:grid;gap:2px;max-width:176px;padding:6px 8px;border:1px solid rgba(44,225,153,.24);border-radius:9px;background:rgba(2,20,18,.78);backdrop-filter:blur(5px);color:#63efb0;font-size:7px;font-weight:900;letter-spacing:.03em;pointer-events:none}
+.portfolio-koers-performance-note span{color:#8fa99d;font-size:5.6px;font-weight:750;letter-spacing:0}
+.portfolio-koers-event.portfolio-koers-event-chip{display:flex;align-items:center;justify-content:center;min-width:0;height:24px;padding:0 7px;border-radius:8px;box-shadow:0 3px 10px rgba(0,0,0,.28);transform:translate(-50%,-50%);white-space:nowrap}
+.portfolio-koers-event-chip b{font-size:7px;line-height:1;font-weight:950;letter-spacing:.015em}
+.portfolio-koers-event-chip.long{border-color:rgba(36,231,157,.62);background:rgba(4,55,38,.92);color:#5af0b1}
+.portfolio-koers-event-chip.short{border-color:rgba(255,91,116,.58);background:rgba(61,13,24,.92);color:#ff8fa4}
+.portfolio-koers-event-chip.tp{border-color:rgba(224,181,66,.58);background:rgba(67,47,8,.92);color:#f0c65b}
+.portfolio-koers-event-chip.cashflow{border-color:rgba(92,184,255,.58);background:rgba(7,35,55,.94);color:#8ed2ff}
+.pcc-homecoming .pcc-zone-summary{display:grid;grid-template-columns:minmax(0,.76fr) minmax(0,1.24fr);gap:8px;min-height:72px;padding:9px}
+.pcc-active-zone{display:grid;align-content:center;min-width:0;padding:8px 9px;border:1px solid rgba(224,181,66,.25);border-radius:11px;background:rgba(34,26,5,.24)}
+.pcc-active-zone small{color:#dcb752;font-size:5.5px;font-weight:900;letter-spacing:.07em}
+.pcc-active-zone strong{margin-top:4px;color:#fff2be;font-size:22px;line-height:1;font-weight:950;white-space:nowrap}
+.pcc-active-zone em{margin-top:4px;color:#8ca097;font-size:5.8px;line-height:1.1;font-style:normal;font-weight:750;white-space:nowrap}
+.pcc-homecoming .pcc-zone-summary .pcc-exposure{width:auto;height:auto;min-width:0;box-sizing:border-box}
+.pcc-status-grid-v2{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.pcc-status-grid-v2 article{min-width:0!important}
+.pcc-status-grid-v2 article>div{min-width:0}
+.pcc-status-grid-v2 strong,.pcc-status-grid-v2 em{white-space:normal!important;overflow-wrap:anywhere}
+.pcc-status-grid-v2 .pcc-next-zones strong,.pcc-status-grid-v2 .pcc-next-zones em{font-variant-numeric:tabular-nums}
+.pcc-homecoming-footer>div{min-width:0}
+@media(max-width:640px){
+  .portfolio-koers-view-toggle{gap:3px;margin-top:4px}
+  .portfolio-koers-view-toggle button{padding:4px 6px;font-size:5.8px}
+  .portfolio-koers-performance-note{left:7px;top:7px;max-width:145px;padding:5px 6px;font-size:5.8px}.portfolio-koers-performance-note span{font-size:4.8px}
+  .portfolio-koers-event.portfolio-koers-event-chip{height:20px;padding:0 5px;border-radius:6px}.portfolio-koers-event-chip b{font-size:5.8px}
+  .pcc-homecoming .pcc-zone-summary{grid-template-columns:minmax(0,.72fr) minmax(0,1.28fr);min-height:67px;padding:7px;gap:6px}
+  .pcc-active-zone{padding:7px}.pcc-active-zone small{font-size:4.7px}.pcc-active-zone strong{font-size:18px}.pcc-active-zone em{font-size:5px}
+  .pcc-status-grid-v2 article{min-height:67px!important}
+}
+@media(max-width:380px){
+  .portfolio-koers-view-toggle button{padding:4px 5px;font-size:5.1px}
+  .pcc-homecoming .pcc-zone-summary{grid-template-columns:minmax(0,.68fr) minmax(0,1.32fr);gap:4px;padding:6px}
+  .pcc-active-zone{padding:6px 5px}.pcc-active-zone strong{font-size:16px}.pcc-active-zone em{font-size:4.5px}
+  .pcc-status-grid-v2{gap:4px!important}.pcc-status-grid-v2 article{min-height:63px!important}
+}
