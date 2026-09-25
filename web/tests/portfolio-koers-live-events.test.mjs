@@ -29,7 +29,7 @@ test("multiple same-minute audit actions stay one visible marker with the highes
   assert.deepEqual(rows[0].activityTypes,["DCA","ENTRY"]);
 });
 
-test("Portfolio Koers uses a lightweight five-second marker feed without rebuilding the chart",async()=>{
+test("Portfolio Koers uses a lightweight five-second marker feed and rebuilds only when cashflow adjustment changes",async()=>{
   const [component,route]=await Promise.all([
     readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/api/exchanges/aster/portfolio-chart/events/route.ts",import.meta.url),"utf8"),
