@@ -381,3 +381,49 @@ jobs:
         shell: bash
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'Build 423 backend dispatch did not produce a verifiable Actions run. No production promotion was claimed.'
+
+
+  dispatch-continuity-build-427:
+    if: github.event.issue.title == '[AGENT-CONTROL] deploy continuity build 427 741458b' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch exact Build 427 production backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_COMMIT='741458b372237aa5e18272fdbbefb50dea577509'
+          STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/dispatches" \
+            -f ref="$TARGET_BRANCH" \
+            -f 'inputs[confirmation]=DEPLOY_PRODUCTION_BACKEND' \
+            -f "inputs[source_commit]=$SOURCE_COMMIT" \
+            -f "inputs[request_issue]=$ISSUE_NUMBER"
+          RUN_ID=''
+          for N in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 3
+            RUNS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?event=workflow_dispatch&per_page=50")"
+            RUN_ID="$(python - "$STARTED_AT" "$RUNS_JSON" <<'PY'
+import json,sys
+started,payload=sys.argv[1],json.loads(sys.argv[2])
+rows=[row for row in payload.get("workflow_runs",[]) if str(row.get("created_at") or "") >= started]
+rows.sort(key=lambda row:str(row.get("created_at") or ""),reverse=True)
+print(rows[0]["id"] if rows else "")
+PY
+            )"
+            [ -n "$RUN_ID" ] && break
+          done
+          test -n "$RUN_ID"
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          CREATED="$(python -c 'import json,sys;print(json.loads(sys.argv[1])["created_at"])' "$RUN_JSON")"
+          STATUS="$(python -c 'import json,sys;print(json.loads(sys.argv[1])["status"])' "$RUN_JSON")"
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Build 427 production backend run created: $RUN_ID · created $CREATED · status $STATUS · exact source $SOURCE_COMMIT."
+
+      - name: Report dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'Build 427 backend dispatch did not produce a verifiable Actions run. No production promotion was claimed.'
