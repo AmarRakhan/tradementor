@@ -230,17 +230,41 @@
     };
   </script>
   <script>
-    // Stable admin loader: always request the current data/app with a fresh cache key.
+    // Stable admin loader.
+    // raw.githack can cache branch assets aggressively, so load current JS
+    // directly from GitHub with cache disabled. Fall back to local files only
+    // if the raw GitHub request is unavailable.
     (function(){
-      var v=Date.now();
-      var dataScript=document.createElement('script');
-      dataScript.src='data-current.js?v='+v;
-      dataScript.onload=function(){
-        var appScript=document.createElement('script');
-        appScript.src='app-current.js?v='+v;
-        document.body.appendChild(appScript);
-      };
-      document.body.appendChild(dataScript);
+      var stamp=Date.now();
+      var base='https://raw.githubusercontent.com/AmarRakhan/tradementor/order-builder-test/order-builder/';
+
+      function runSource(source,label){
+        (new Function(source+'\n//# sourceURL='+label))();
+      }
+
+      function loadLocalFallback(){
+        var dataScript=document.createElement('script');
+        dataScript.src='data-current.js?v='+stamp;
+        dataScript.onload=function(){
+          var appScript=document.createElement('script');
+          appScript.src='app-current.js?v='+stamp;
+          document.body.appendChild(appScript);
+        };
+        document.body.appendChild(dataScript);
+      }
+
+      fetch(base+'data-current.js?v='+stamp,{cache:'no-store'})
+        .then(function(r){if(!r.ok)throw new Error('data '+r.status);return r.text();})
+        .then(function(source){
+          runSource(source,'data-current.js');
+          return fetch(base+'app-current.js?v='+stamp,{cache:'no-store'});
+        })
+        .then(function(r){if(!r.ok)throw new Error('app '+r.status);return r.text();})
+        .then(function(source){runSource(source,'app-current.js');})
+        .catch(function(err){
+          console.warn('Live GitHub loader fallback',err);
+          loadLocalFallback();
+        });
     })();
   </script>
   <script>
