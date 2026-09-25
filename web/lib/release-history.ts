@@ -47,14 +47,14 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   now: [
     "Threshold-semantiek is openPnl <= -thresholdUsd; een positie die bij activeren al verder in verlies staat wordt direct meegenomen.",
     "Geen automatische unhedge/recovery toegevoegd.",
-    "Live orderuitvoering heeft een afzonderlijke server-gate ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED en wordt niet door de frontend omzeild.",
+    "De eerste accounttest draait owner-only in TESTMODUS: echte Aster-posities worden gereconcilieerd, maar Auto Hedge verstuurt nog geen orders.",
   ],
   before: "Build 429 herstelde de mobiele Friends-portal.",
   after: "Build 430 voegt de geïsoleerde per-positie Auto Hedge-laag en pixelgebonden 3D-bediening toe.",
   technicalDetails: [
     "Exchange quantity is leidend; USD notional, margin en leverage bepalen de hedgegrootte niet.",
     "Oude Portfolio Noodhedge blijft niet geregistreerd in de productie-entrypoint.",
-    "Account coordination serialiseert live Auto Hedge-orders met andere Aster account-risicowijzigingen.",
+    "Account coordination is voorbereid voor een latere livefase; Build 430 forceert ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false tijdens deze owner-only test.",
   ],
   confidence: "confirmed",
 };
