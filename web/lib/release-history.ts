@@ -83,7 +83,11 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   },
 
   {
-    id: "v46-build-427-continuity-bybit-reserve",\n    version: "46",\n    build: "427",\n    releasedAt: "2026-09-25",\n    title: "Continuïteitsbewaker · Bybit betaalreserve hersteld",
+    id: "v46-build-427-continuity-bybit-reserve",
+    version: "46",
+    build: "427",
+    releasedAt: "2026-09-25",
+    title: "Continuïteitsbewaker · Bybit betaalreserve hersteld",
     newItems: [
       "De owner-only App kosten & betalingen-module blijft op de actuele V46-basis actief en gebruikt dezelfde dedicated read-only Bybit-koppeling.",
       "De betaalreserveberekening gebruikt nu daadwerkelijk het uit de Funding-wallet gelezen saldo voor de ingestelde basismunt.",
