@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { FriendsView } from "@/components/friends-view";
-import styles from "./friends-view.module.css";
 
 const VIEW_PARAM = "tmView";
 const NAV_DESTINATIONS = ["home","markets","aster","sniper","news","friends","journey","wallet"] as const;
@@ -89,5 +88,5 @@ export function FriendsNavigationBridge() {
   },[]);
   useEffect(()=>{if(!active||!target)return;target.dataset.friendsActive="true";return()=>{delete target.dataset.friendsActive;};},[active,target]);
   if(!active||!target)return null;
-  return createPortal(<div className={styles.portal} data-friends-portal="true"><FriendsView/></div>,target);
+  return createPortal(<div className="friends-portal" data-friends-portal="true"><FriendsView/></div>,target);
 }
