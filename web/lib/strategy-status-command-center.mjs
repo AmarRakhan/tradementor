@@ -246,8 +246,16 @@ export function buildStrategyStatusCommandCenter(input={}) {
   const exposureRaw=String(input.netExposureSide||"").toUpperCase();
   const netExposureSide=exposureRaw==="LONG"||exposureRaw==="SHORT"?exposureRaw:"NEUTRAAL";
 
-  const soldierCost=estimateSoldierCost(input);
-  const enoughAvailable=availableUsd!==null&&soldierCost!==null&&availableUsd>=soldierCost*1.05;
+  const runtimeBudget=input.entryBudget&&typeof input.entryBudget==="object"?input.entryBudget:null;
+  const soldierCost=runtimeBudget&&finite(runtimeBudget.requiredInitialMarginUsd)!==null
+    ? finite(runtimeBudget.requiredInitialMarginUsd)
+    : estimateSoldierCost(input);
+  const runtimeRequiredTotal=runtimeBudget?finite(runtimeBudget.requiredTotalUsd):null;
+  const runtimeBudgetStatus=String(runtimeBudget?.status||"").toUpperCase();
+  const canonicalBudgetKnown=Boolean(runtimeBudget&&runtimeRequiredTotal!==null&&runtimeRequiredTotal>0);
+  const enoughAvailable=canonicalBudgetKnown
+    ? runtimeBudgetStatus!=="INSUFFICIENT"&&availableUsd!==null&&availableUsd>=runtimeRequiredTotal
+    : false;
   let nextPossibleSide="";
   if(strategyEnabled&&zoneSafe&&enoughAvailable){
     if(entryPriority==="LONG"){
@@ -272,12 +280,44 @@ export function buildStrategyStatusCommandCenter(input={}) {
   let nextPossibleDetail="alleen als entry geldig is";
   if(!strategyEnabled)nextPossibleDetail="strategie staat uit";
   else if(!zoneSafe)nextPossibleDetail="wacht op bevestigde zone";
-  else if(!enoughAvailable)nextPossibleDetail="wacht op voldoende Available";
+  else if(!canonicalBudgetKnown)nextPossibleDetail="wacht op runtime budgetcheck";
+  else if(!enoughAvailable){
+    const shortfall=finite(runtimeBudget?.shortfallUsd);
+    nextPossibleDetail=shortfall!==null&&shortfall>0
+      ? `onvoldoende Available · tekort ${formatCommandMoney(shortfall)}`
+      : "wacht op voldoende Available";
+  }
   else if(entryPriority&&((entryPriority==="LONG"?zoneFreeLong:zoneFreeShort)<=0)){
     nextPossibleDetail=`${entryPriority} prioriteit · geen vrije ${entryPriority}-soldaat`;
   }else if(!nextPossibleSide){
     nextPossibleDetail="formatie is bezet";
   }
+
+  const reconciliation=input.reconciliation&&typeof input.reconciliation==="object"?input.reconciliation:{};
+  const categories=reconciliation.categories&&typeof reconciliation.categories==="object"?reconciliation.categories:{};
+  const accountLong=integer(reconciliation.exchangeLong)??actualLong;
+  const accountShort=integer(reconciliation.exchangeShort)??actualShort;
+  const accountTotal=integer(reconciliation.exchangePositions)??(
+    accountLong!==null&&accountShort!==null?accountLong+accountShort:null
+  );
+  const soldiersTotal=integer(reconciliation.soldiersTotal)??totalActiveSoldiers;
+  const nonSoldiersTotal=integer(reconciliation.nonSoldiersTotal)??(
+    accountTotal!==null&&soldiersTotal!==null?Math.max(0,accountTotal-soldiersTotal):null
+  );
+  const reconciliationStatus=String(reconciliation.status||"UNKNOWN").toUpperCase();
+  const liveDataStatus=String(reconciliation.liveDataStatus||input.liveDataStatus||reconciliationStatus||"UNKNOWN").toUpperCase();
+  const snapshotAgeMs=finite(reconciliation.snapshotAgeMs);
+  const entryBudget=runtimeBudget?{
+    availableUsd:finite(runtimeBudget.availableUsd),
+    newSoldierNotionalUsd:finite(runtimeBudget.newSoldierNotionalUsd),
+    requiredInitialMarginUsd:finite(runtimeBudget.requiredInitialMarginUsd),
+    safetyBufferUsd:finite(runtimeBudget.safetyBufferUsd),
+    requiredTotalUsd:finite(runtimeBudget.requiredTotalUsd),
+    minimumExchangeOrderMarginUsd:finite(runtimeBudget.minimumExchangeOrderMarginUsd),
+    shortfallUsd:finite(runtimeBudget.shortfallUsd),
+    status:runtimeBudgetStatus||"UNKNOWN",
+    source:String(runtimeBudget.source||""),
+  }:null;
 
   return {
     reference:"file_000000009e0081f4b88f4b415de68c71",
@@ -309,6 +349,30 @@ export function buildStrategyStatusCommandCenter(input={}) {
     availableUsd,
     availableDisplay:String(input.availableText||formatCommandMoney(availableUsd)),
     estimatedSoldierCost:soldierCost,
+    entryBudget,
+    reconciliationStatus,
+    liveDataStatus,
+    snapshotId:String(reconciliation.snapshotId||""),
+    snapshotAgeMs,
+    accountLong,
+    accountShort,
+    accountTotal,
+    soldiersTotal,
+    nonSoldiersTotal,
+    unknownPositions:integer(reconciliation.unknownPositions)??integer(categories.unknown)??0,
+    legacyAster:integer(categories.legacyAster)??0,
+    previousStrategy:integer(categories.previousStrategy)??0,
+    sniperPositions:integer(categories.sniper)??0,
+    soldierCurrentZone:integer(categories.soldiersCurrentZone)??zoneOpenLong+zoneOpenShort,
+    soldierOldZones:integer(categories.soldiersOldZones)??oldZonesOpenTotal,
+    longExposureUsd:finite(reconciliation.longExposureUsd),
+    shortExposureUsd:finite(reconciliation.shortExposureUsd),
+    netExposureUsd:finite(reconciliation.netExposureUsd),
+    hedgeCoveragePercent:finite(reconciliation.hedgeCoveragePercent),
+    exchangeAvailableUsd:finite(reconciliation.margin?.availableUsd),
+    appAvailableUsd:availableUsd,
+    classifiedPositions:integer(reconciliation.classifiedPositions),
+    unclassifiedPositions:integer(reconciliation.unclassifiedPositions),
     actionExecutable:Boolean(nextPossibleSide),
     actionMode:nextPossibleSide?nextPossibleSide.toLowerCase():strategyEnabled&&zoneSafe?"waiting":"blocked",
     footerTitle:"Alleen oude-zone soldaten tellen als thuiskomst",
