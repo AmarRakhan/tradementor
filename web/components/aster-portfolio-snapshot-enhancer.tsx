@@ -247,8 +247,8 @@ function MetricCard({ icon, label, value, tone = "normal", detail, detailTone = 
   return <article className={`aps-metric aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong>{detail ? <em className={`aps-metric-detail aps-detail-${detailTone}`}>{detail}</em> : null}</div></article>;
 }
 
-function GrowthCard({ icon, label, value, tone }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone }) {
-  return <article className={`aps-growth-card aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong></div></article>;
+function GrowthCard({ icon, label, value, tone, detail }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone; detail?: string }) {
+  return <article className={`aps-growth-card aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong>{detail ? <em className="aps-growth-detail">{detail}</em> : null}</div></article>;
 }
 
 
@@ -578,7 +578,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
           <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
         </div>
         <div className="aps-growth-row">
-          <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} />
+          <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} detail="excl. stortingen & opnames" />
           <GrowthCard icon="calendar" label="GEMIDDELD PER DAG" value={values.averageDailyGrowth} tone={values.averageDailyGrowthTone} />
         </div>
       </div>
