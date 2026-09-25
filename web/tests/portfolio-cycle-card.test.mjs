@@ -41,3 +41,14 @@ test("Portfolio Cycle tile supports legacy multiBbCycle payloads and caps at tar
   assert.equal(state.remainingUsd, 0);
   assert.equal(state.statusLabel, "Doel bereikt");
 });
+
+
+test("Build 432 inactive Portfolio Cycle Snapshot hides the duplicate Niet ingesteld headline",async()=>{
+  const { readFile }=await import("node:fs/promises");
+  const component=await readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx",import.meta.url),"utf8");
+  const start=component.indexOf("function PortfolioCycleCard");
+  const inactive=component.slice(start,component.indexOf("const progress",start));
+  assert.match(inactive,/PORTFOLIO CYCLUS/);
+  assert.match(inactive,/Portfolio TP niet actief/);
+  assert.doesNotMatch(inactive,/<strong>Niet ingesteld<\/strong>/);
+});
