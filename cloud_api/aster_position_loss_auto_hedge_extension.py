@@ -606,10 +606,8 @@ def get_position_loss_auto_hedge(
         uid = main.require_continuity_owner(user)
     except HTTPException as exc:
         if exc.status_code == 403:
-            return {
-                "available": False, "ownerOnly": True, "enabled": False,
-                "thresholdUsd": DEFAULT_THRESHOLD_USD, "status": "UIT", "pairs": [],
-            }
+            return {"available": False, "ownerOnly": True, "enabled": False,
+                "thresholdUsd": DEFAULT_THRESHOLD_USD, "status": "UIT", "pairs": []}
         raise
     return _public(uid)
 
