@@ -330,6 +330,43 @@ export function AsterPositionLossAutoHedgeBridge() {
   }, [tileHost, load, open]);
 
   useEffect(() => {
+    const currentPairs = Array.isArray(state.pairs) ? state.pairs : [];
+    const syncTradecentrum = () => {
+      document.querySelectorAll(".plah-tc-auto-hedge").forEach((node) => node.remove());
+      const tradecentrum = document.querySelector<HTMLElement>(
+        'article[data-reference="nexora_tradecentrum_actieve_posities.png"]',
+      );
+      if (!tradecentrum || currentPairs.length === 0) return;
+      const rows = Array.from(tradecentrum.querySelectorAll<HTMLElement>('[role="table"]>[role="row"]')).slice(1);
+      for (const row of rows) {
+        const coinCell = row.querySelector<HTMLElement>('button[role="cell"]');
+        if (!coinCell) continue;
+        const text = (coinCell.textContent || "").toUpperCase();
+        const pair = currentPairs.find((item) => {
+          const coin = String(item.symbol || "").replace(/USDT$/i, "").toUpperCase();
+          return coin.length >= 2 && (text.startsWith(coin) || text.includes(` ${coin}`));
+        });
+        if (!pair) continue;
+        const small = coinCell.querySelector<HTMLElement>("small");
+        if (!small) continue;
+        const badge = document.createElement("em");
+        const cls = statusClass(pair.status);
+        badge.className = `plah-tc-auto-hedge ${cls}`;
+        badge.textContent = `AH ${statusLabel(pair.status)}`;
+        badge.title = "Auto Hedge-status";
+        small.appendChild(badge);
+      }
+    };
+    syncTradecentrum();
+    const observer = new MutationObserver(syncTradecentrum);
+    observer.observe(document.body, { subtree: true, childList: true });
+    return () => {
+      observer.disconnect();
+      document.querySelectorAll(".plah-tc-auto-hedge").forEach((node) => node.remove());
+    };
+  }, [state.pairs]);
+
+  useEffect(() => {
     if (!screenHost) return;
     screenHost.classList.toggle("plah-screen-open", open);
     screenHost.setAttribute("aria-hidden", open ? "false" : "true");
