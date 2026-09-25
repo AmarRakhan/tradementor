@@ -177,7 +177,7 @@ jobs:
           RUN_SUFFIX="${GITHUB_RUN_ID: -6}"
           REVISION_SUFFIX="src-${SOURCE_COMMIT:0:8}-$RUN_SUFFIX"
           TAG="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT,TRADEMENTOR_IMAGE_SOURCE_COMMIT=$SOURCE_COMMIT,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false"             --no-traffic             --tag "$TAG"
+          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT,TRADEMENTOR_IMAGE_SOURCE_COMMIT=$SOURCE_COMMIT,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false,ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER=true,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false"             --no-traffic             --tag "$TAG"
           gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-candidate.json"
           python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
           import json
@@ -195,7 +195,7 @@ jobs:
           before_env = {item["name"]: item.get("value") for item in before_spec["containers"][0].get("env", [])}
           after_env = {item["name"]: item.get("value") for item in after_spec["containers"][0].get("env", [])}
           expected_env = dict(before_env)
-          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"TRADEMENTOR_IMAGE_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false"})
+          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"TRADEMENTOR_IMAGE_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false","ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER":"true","ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED":"false"})
           assert after_env == expected_env
           candidate = next(row for row in after["status"]["traffic"] if row.get("tag") == tag)
           print(f'CANDIDATE_URL={candidate["url"]}')
@@ -231,6 +231,8 @@ jobs:
               "/v1/me/aster/sniper/settings",
               "/v1/me/aster/sniper/trades/close",
               "/v1/me/aster/automation/close-all",
+              "/v1/me/aster/position-loss-auto-hedge",
+              "/v1/me/aster/position-loss-auto-hedge/apply",
           ):
               assert required in paths, required
           PY

@@ -177,6 +177,7 @@ export function AsterProfitPotSnapshotBridge() {
         </div>
       </article>
       <div id="aster-profit-sweep-settings-host" />
+      <div id="aster-position-loss-auto-hedge-host" />
       <PortfolioCycleCard state={cycleState} />
     </div>,
     host,
