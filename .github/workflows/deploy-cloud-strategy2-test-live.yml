@@ -4,15 +4,18 @@
 name: Deploy Strategy 2 Shared Live Test
 
 on:
-  # Legacy Strategy-2 shared-live test project is currently suspended.
-  # Keep this workflow manual-only so ordinary production/backend pushes
-  # do not fail on authentication against that isolated test project.
   workflow_dispatch:
     inputs:
       confirmation:
         description: "Type DEPLOY_STRATEGY2_TEST_LIVE"
         required: true
         type: string
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "cloud_api/**"
+      - ".github/workflows/deploy-cloud-strategy2-test-live.yml"
 
 permissions:
   contents: read
@@ -32,6 +35,9 @@ env:
   SCHEDULER_JOB: tradementor-strategy2-test-live-tick
   FIREBASE_AUTH_PROJECT_ID: tradementor-production
   STRATEGY2_INTERNAL_AUDIENCE: https://tradementor-strategy2-test-live-api-mumsywcfmq-ez.a.run.app
+  # Ordinary pushes still run the complete test suite. Cloud publication is
+  # opt-in while the isolated legacy test project is suspended.
+  STRATEGY2_TEST_DEPLOY_ENABLED: ${{ github.event_name == 'workflow_dispatch' || vars.STRATEGY2_TEST_DEPLOY_ENABLED == 'true' }}
 
 jobs:
   test-and-deploy:
@@ -85,15 +91,18 @@ jobs:
         run: pytest -q
 
       - name: Authenticate to isolated Google Cloud test project
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up Google Cloud CLI
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Build and push isolated Strategy 2 test image
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         shell: bash
         run: |
           gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
@@ -108,6 +117,7 @@ jobs:
           echo "IMAGE=$IMAGE_REPOSITORY@$DIGEST" >> "$GITHUB_ENV"
 
       - name: Deploy isolated Strategy 2 test service
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         run: |
           REVISION_SUFFIX="mg-${GITHUB_RUN_NUMBER}"
           echo "REVISION_SUFFIX=$REVISION_SUFFIX" >> "$GITHUB_ENV"
@@ -128,6 +138,7 @@ jobs:
             --to-latest
 
       - name: Verify service boundary
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         shell: bash
         run: |
           SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
@@ -183,6 +194,7 @@ jobs:
           echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
 
       - name: Read existing Strategy 2 scheduler state without modifying it
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -194,6 +206,7 @@ jobs:
           echo "SCHEDULER_INITIAL_STATE=$INITIAL_STATE" >> "$GITHUB_ENV"
 
       - name: Verify Strategy 2 route and preserve scheduler state
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -233,4 +246,5 @@ jobs:
           test "$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')" = "$SCHEDULER_INITIAL_STATE"
 
       - name: Publish test service URL
+        if: env.STRATEGY2_TEST_DEPLOY_ENABLED == 'true'
         run: echo "$SERVICE_URL"
