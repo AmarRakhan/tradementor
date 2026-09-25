@@ -113,6 +113,22 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
         self.assertEqual(action.protected_side, "SHORT")
         self.assertEqual(action.required_delta, 221)
 
+    def test_protected_dca_growth_adds_only_new_difference(self):
+        action = self.action([
+            leg("DOGEUSDT", "SHORT", 1100, -4),
+            leg("DOGEUSDT", "LONG", 921, 2),
+        ], protected={"DOGEUSDT": "SHORT"})
+        self.assertEqual(action.operation, "OPEN")
+        self.assertEqual(action.required_delta, 179)
+
+    def test_partial_protected_close_reduces_hedge_to_new_exact_target(self):
+        action = self.action([
+            leg("DOGEUSDT", "SHORT", 700, 5),
+            leg("DOGEUSDT", "LONG", 1100, -3),
+        ], protected={"DOGEUSDT": "SHORT"})
+        self.assertEqual(action.operation, "REDUCE")
+        self.assertEqual(action.required_delta, 400)
+
     def test_recovery_symbol_can_be_skipped_even_when_below_threshold(self):
         self.assertIsNone(self.action(
             [leg("SOLUSDT", "LONG", 1.14, -25)],
