@@ -39,31 +39,65 @@
 
   function requiresSerial(code,label=''){
     const item=orderItemInfo(code,label);
-    const category=String(item.category||'');
-    const name=normalizeSmartText(item.name||label||'');
-    const serialCategories=new Set(['Laptops','Telefoons','iPads','Docks','Monitoren']);
+    const category=normalizeSmartText(item.category||'');
+    const name=normalizeSmartText(item.name||item.description||label||'');
 
-    // Artikelen die in de bron als pakketartikel staan maar wel degelijk
-    // een serienummerplichtig device zijn.
+    // Expliciete hardwarecodes die ALTIJD een serienummer hebben.
     const serialCodes=new Set([
-      'MD1Q4ZD/A',   // iPhone 16e
-      'MUWA3ZM/A'    // Apple Pencil USB-C
+      // Apple / Samsung phones & tablets
+      'MLPF3ZD/A','MPUF3ZD/A','MYE73ZD/A','MD1Q4ZD/A',
+      'MQ6J3NF/A','MD7F4TY/A','MVW13NF/A',
+      'SM-G556BZKDEEB','SM-X216BZAEEUB',
+      // Laptops
+      '54337282#ABH','54337265#ABH','54337313#ABH',
+      // Docks
+      '9X3V1UT#ABB','AW5M5UT#ABB',
+      // Apple Pencil
+      'MUWA3ZM/A'
     ]);
 
-    const serialByName=
+    if(serialCodes.has(code)) return true;
+
+    // Ondersteun zowel de nieuwe UI-categorieën als de oude Excel-broncategorieën.
+    const serialCategory=
+      category==='laptops' ||
+      category==='telefoons' ||
+      category==='ipads' ||
+      category==='docks' ||
+      category==='monitoren' ||
+      category==='telefoons ipads' ||
+      category==='telefoons ipad';
+
+    if(serialCategory){
+      // Oude broncategorie "Telefoons / ipads" bevat ook accessoires.
+      // Daarom daar alleen echte devices op naam doorlaten.
+      if(category==='telefoons ipads' || category==='telefoons ipad'){
+        return (
+          name.includes('iphone') ||
+          name.includes('ipad ') ||
+          name.startsWith('ipad') ||
+          name.includes('samsung xcover') ||
+          name.includes('samsung tab') ||
+          name.includes('apple pencil')
+        );
+      }
+      return true;
+    }
+
+    return (
       name.includes('iphone') ||
-      name.includes('ipad') ||
+      name.includes('ipad ') ||
+      name.startsWith('ipad') ||
       name.includes('tablet') ||
       name.includes('elitebook') ||
       name.includes('zbook') ||
       name.includes('laptop') ||
       name.includes('dock') ||
       name.includes('monitor') ||
-      name.includes('apple pencil');
-
-    return serialCategories.has(category) ||
-      serialCodes.has(code) ||
-      serialByName;
+      name.includes('apple pencil') ||
+      name.includes('samsung xcover') ||
+      name.includes('samsung tab')
+    );
   }
 
   function selectedSerialCountForItem(sel){
