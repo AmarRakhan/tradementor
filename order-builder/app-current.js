@@ -42,9 +42,28 @@
     const category=String(item.category||'');
     const name=normalizeSmartText(item.name||label||'');
     const serialCategories=new Set(['Laptops','Telefoons','iPads','Docks','Monitoren']);
-    return serialCategories.has(category) ||
-      code==='MUWA3ZM/A' ||
+
+    // Artikelen die in de bron als pakketartikel staan maar wel degelijk
+    // een serienummerplichtig device zijn.
+    const serialCodes=new Set([
+      'MD1Q4ZD/A',   // iPhone 16e
+      'MUWA3ZM/A'    // Apple Pencil USB-C
+    ]);
+
+    const serialByName=
+      name.includes('iphone') ||
+      name.includes('ipad') ||
+      name.includes('tablet') ||
+      name.includes('elitebook') ||
+      name.includes('zbook') ||
+      name.includes('laptop') ||
+      name.includes('dock') ||
+      name.includes('monitor') ||
       name.includes('apple pencil');
+
+    return serialCategories.has(category) ||
+      serialCodes.has(code) ||
+      serialByName;
   }
 
   function selectedSerialCountForItem(sel){
