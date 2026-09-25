@@ -98,16 +98,17 @@ function gearIcon() {
   </svg>;
 }
 
-function Toggle({ checked, disabled, onChange, compact = false, label }: {
+function Toggle({ checked, disabled, onChange, compact = false, label, labelText = false }: {
   checked: boolean;
   disabled?: boolean;
   onChange: () => void;
   compact?: boolean;
   label?: string;
+  labelText?: boolean;
 }) {
   return <button
     type="button"
-    className={`plah-switch ${checked ? "on" : ""} ${compact ? "compact" : ""}`}
+    className={`plah-switch ${checked ? "on" : ""} ${compact ? "compact" : ""} ${labelText ? "labeled" : ""}`}
     role="switch"
     aria-checked={checked}
     aria-label={label}
@@ -118,7 +119,7 @@ function Toggle({ checked, disabled, onChange, compact = false, label }: {
       event.stopPropagation();
       onChange();
     }}
-  ><span /></button>;
+  >{labelText ? <em>{checked ? "AAN" : "UIT"}</em> : null}<span /></button>;
 }
 
 function nlNumber(value: number | undefined, maximumFractionDigits = 8) {
@@ -187,6 +188,7 @@ function PairCard({ pair, saving, onRehedge }: {
   saving: boolean;
   onRehedge: (pair: PairState, enabled: boolean) => void;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const status = String(pair.status || "").toUpperCase();
   const recovery = status === "RECOVERY" || status === "REHEDGE_ARMED" || status === "DISABLED";
   const protectedSide = pair.protectedSide || "SHORT";
@@ -205,25 +207,32 @@ function PairCard({ pair, saving, onRehedge }: {
         <div>
           <div className="plah-pair-title-row">
             <strong>{pair.symbol.replace(/USDT$/i, "")}</strong>
+            <span className="plah-pair-chevron" aria-hidden="true">⌄</span>
             <span className={`plah-status-badge ${statusClass(status)}`}>{statusLabel(status)}</span>
           </div>
-          <small>{recovery ? "Eerder gehedged" : "Auto Hedge actief"}{stampText ? ` · ${stampText}` : ""}</small>
+          {recovery ? <small className="plah-recovery-meta">
+            <span>{stampText ? `Gehedged op ${stampText}` : "Eerder gehedged"}</span>
+            <b>{status === "DISABLED" ? "Handmatig uitgeschakeld" : `Tegenpositie gesloten (${protectedSide})`}</b>
+          </small> : <small>{stampText ? `Sinds ${stampText}` : "Auto Hedge actief"}</small>}
         </div>
       </div>
 
-      {recovery ? <div className="plah-rehedge-control">
-        <span>Opnieuw hedgen</span>
-        <Toggle
-          checked={pair.rehedgeEnabled === true}
-          disabled={saving}
-          onChange={() => onRehedge(pair, pair.rehedgeEnabled !== true)}
-          compact
-          label={`Opnieuw hedgen voor ${pair.symbol}`}
-        />
-      </div> : <div className="plah-lock-state">
-        <span>{shieldIcon()}</span>
-        <div><small>Auto Hedge</small><b>Actief en vergrendeld</b></div>
-      </div>}
+      <div className="plah-pair-actions">
+        {recovery ? <div className="plah-rehedge-control">
+          <span>Opnieuw hedgen</span>
+          <Toggle
+            checked={pair.rehedgeEnabled === true}
+            disabled={saving}
+            onChange={() => onRehedge(pair, pair.rehedgeEnabled !== true)}
+            compact
+            label={`Opnieuw hedgen voor ${pair.symbol}`}
+          />
+        </div> : <div className="plah-lock-state">
+          <span>{shieldIcon()}</span>
+          <div><small>Auto Hedge</small><b>Actief en vergrendeld</b></div>
+        </div>}
+        <button type="button" className="plah-more" aria-expanded={detailsOpen} aria-label={`Details ${pair.symbol}`} onClick={() => setDetailsOpen((value) => !value)}>⋮</button>
+      </div>
     </div>
 
     <div className="plah-leg-stack">
@@ -249,6 +258,13 @@ function PairCard({ pair, saving, onRehedge }: {
 
     {status === "ADJUSTING" && <div className="plah-adjust-note">Quantity wordt automatisch teruggebracht naar exact 1:1.</div>}
     {(status === "BLOCKED" || status === "ERROR" || status === "PRECISION_BLOCKED") && <div className="plah-pair-error">{pair.lastReason || "Auto Hedge kan deze pair momenteel niet veilig bijwerken."}</div>}
+    {detailsOpen && <div className="plah-technical-details">
+      <span><small>Cyclus</small><b>{pair.generationId || "–"}</b></span>
+      <span><small>Trigger PnL</small><b>{money(pair.triggerPnl)}</b></span>
+      <span><small>Gereserveerd</small><b>{nlNumber(pair.reservedHedgeQty)}</b></span>
+      <span><small>Vrije quantity</small><b>{nlNumber(pair.normalFreeQty)}</b></span>
+      <p>{pair.lastReason || "Geen aanvullende melding."}</p>
+    </div>}
   </article>;
 }
 
@@ -452,11 +468,6 @@ export function AsterPositionLossAutoHedgeBridge() {
   const status = state.operational ? "ACTIEF" : state.enabled ? "TEST" : hasLockedPair ? "LOCK" : "UIT";
   const coinOptions = useMemo(() => [...new Set(pairs.map((pair) => pair.symbol))].sort(), [pairs]);
   const visiblePairs = coinFilter === "ALL" ? pairs : pairs.filter((pair) => pair.symbol === coinFilter);
-  const counts = useMemo(() => ({
-    hedged: pairs.filter((pair) => ["HEDGED", "HEDGING", "ADJUSTING"].includes(String(pair.status).toUpperCase())).length,
-    recovery: pairs.filter((pair) => ["RECOVERY", "REHEDGE_ARMED", "DISABLED"].includes(String(pair.status).toUpperCase())).length,
-    errors: pairs.filter((pair) => ["BLOCKED", "ERROR", "PRECISION_BLOCKED"].includes(String(pair.status).toUpperCase())).length,
-  }), [pairs]);
 
   const openFromCard = () => {
     setMessage("");
@@ -517,7 +528,7 @@ export function AsterPositionLossAutoHedgeBridge() {
             <h3>AUTO HEDGE</h3>
             <p>Beschermt verliesgevende posities met een volledige tegengestelde hedge.</p>
           </div>
-          <Toggle checked={state.enabled} disabled={saving} onChange={() => void persist(!state.enabled, threshold, !state.enabled)} label="Auto Hedge hoofdschakelaar" />
+          <Toggle checked={state.enabled} disabled={saving} onChange={() => void persist(!state.enabled, threshold, !state.enabled)} label="Auto Hedge hoofdschakelaar" labelText />
         </header>
 
         <section className="plah-threshold-card">
@@ -557,16 +568,6 @@ export function AsterPositionLossAutoHedgeBridge() {
               {coinOptions.map((symbol) => <option value={symbol} key={symbol}>{symbol.replace(/USDT$/i, "")}</option>)}
             </select>
           </div>
-
-          <div className="plah-counts">
-            <span><b>{counts.hedged}</b><small>Gehedged</small></span>
-            <span><b>{counts.recovery}</b><small>Recovery</small></span>
-            <span className={counts.errors ? "has-error" : ""}><b>{counts.errors}</b><small>Fouten</small></span>
-          </div>
-
-          {counts.hedged > 0 && <div className="plah-lock-banner">
-            <span>🔒</span><div><b>Hedge-lock actief</b><small>Een beschermende Auto Hedge-quantity sluit niet automatisch zolang de beschermde positie nog open staat.</small></div>
-          </div>}
 
           <div className="plah-pair-list">
             {visiblePairs.length ? visiblePairs.map((pair) =>
