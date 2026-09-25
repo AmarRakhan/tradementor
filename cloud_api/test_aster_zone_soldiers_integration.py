@@ -196,3 +196,39 @@ def test_build425_true_homecoming_requires_different_known_close_zone():
     assert 'if origin_zone == current_zone:' in source
     assert '"currentZoneAtClose": current_zone' in source
     assert 'next_status = STATUS_AVAILABLE if reusable_here else STATUS_DORMANT' in source
+
+
+
+def test_build430_runtime_exposes_canonical_entry_budget_and_auditable_fill_fields():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert '"requiredInitialMarginUsd": total_required' in source
+    assert '"safetyBufferUsd": required_safety_buffer' in source
+    assert '"requiredTotalUsd": required_total_margin' in source
+    assert '"shortfallUsd": max(0.0, required_total_margin - available)' in source
+    assert '"budgetStatus": "INSUFFICIENT"' in source
+    assert '"entryBudget": entry_budget' in source
+    for field in (
+        '"orderId":', '"requestedQty":', '"filledQty":', '"fillPrice":',
+        '"availableBeforeUsd":', '"requiredMarginUsd":',
+        '"netExposureBeforeUsd":', '"netExposureAfterFillEstimateUsd":',
+        '"priorityBefore":',
+    ):
+        assert field in source
+
+
+def test_build430_post_fill_zone_exposure_is_reconciled_from_fresh_exchange_positions():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    final_block = source.index("# One final exchange-truth reconciliation")
+    refresh = source.index("client.position_risk()", final_block)
+    prepare = source.index("prepare_zone_runtime(", refresh)
+    assert final_block < refresh < prepare
+
+
+def test_build430_status_publishes_single_snapshot_reconciliation_contract():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert "account_reconciliation_report(" in source
+    assert '"snapshotId": reconciliation["snapshotId"]' in source
+    assert '"accountStateVersion": reconciliation["accountStateVersion"]' in source
+    assert '"reconciliation": reconciliation' in source
+    assert '"liveDataStatus": reconciliation["liveDataStatus"]' in source
+    assert '"margin": {' in source
