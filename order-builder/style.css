@@ -896,3 +896,183 @@ button{cursor:pointer}
     max-height:none!important;
   }
 }
+
+
+/* ============================================================
+   COMPACT + SCROLL FIX — 2026-09-25
+   CSS only. No order/serial/export logic changes.
+   ============================================================ */
+
+/* Restore a real scroll container on BOTH catalog tabs */
+.workspace{
+  min-height:0!important;
+  height:100%!important;
+  overflow:hidden!important;
+  align-items:stretch!important;
+}
+.content-pane{
+  min-width:0!important;
+  min-height:0!important;
+  height:100%!important;
+  overflow:hidden!important;
+}
+.view-panel{
+  min-width:0!important;
+  min-height:0!important;
+  height:100%!important;
+  max-height:100%!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+  scrollbar-color:#b9c9da transparent;
+  padding-right:4px!important;
+  padding-bottom:8px!important;
+}
+.view-panel::-webkit-scrollbar{width:7px}
+.view-panel::-webkit-scrollbar-thumb{
+  background:#b9c9da;
+  border-radius:10px;
+}
+.view-panel::-webkit-scrollbar-track{background:transparent}
+
+/* More compact category blocks so substantially more fits in one viewport */
+.catalog-section{
+  margin-bottom:7px!important;
+  border-radius:8px!important;
+}
+.catalog-section-head{
+  min-height:42px!important;
+  padding:5px 9px!important;
+}
+.catalog-section-heading{
+  gap:7px!important;
+}
+.catalog-section-icon{
+  width:29px!important;
+  height:29px!important;
+  border-radius:7px!important;
+  font-size:16px!important;
+}
+.catalog-section-title{
+  font-size:15px!important;
+}
+.catalog-section-count{
+  font-size:9.5px!important;
+  margin-top:1px!important;
+}
+.section-collapse-button{
+  font-size:10px!important;
+  padding:4px 2px!important;
+}
+
+/* Smaller cards, more per row */
+.catalog-card-grid{
+  grid-template-columns:repeat(auto-fill,minmax(145px,1fr))!important;
+  gap:6px!important;
+  padding:0 9px 7px!important;
+}
+.package-card-v2,
+.product-card-v2{
+  border-radius:7px!important;
+}
+
+/* Package cards: compact shell, but LARGER readable product names */
+.package-select-surface,
+.product-select-surface{
+  padding:7px 8px 5px!important;
+}
+.package-name-v2,
+.product-name-v2{
+  font-size:11.5px!important;
+  line-height:1.15!important;
+  min-height:25px!important;
+  padding-right:18px!important;
+}
+.package-card-v2 .status-badge,
+.product-card-v2 .status-badge{
+  margin-top:2px!important;
+  min-height:16px!important;
+  padding:1px 6px!important;
+  font-size:8.8px!important;
+}
+.package-hero,
+.product-card-body{
+  gap:6px!important;
+  margin-top:5px!important;
+  min-height:34px!important;
+}
+.package-hero img,
+.product-card-body img{
+  width:36px!important;
+  height:32px!important;
+}
+.package-main-type{
+  font-size:12.2px!important;
+  line-height:1.15!important;
+  font-weight:700!important;
+  color:#244e7c!important;
+}
+.product-group-label{
+  font-size:11.3px!important;
+  line-height:1.15!important;
+  font-weight:700!important;
+  color:#244e7c!important;
+}
+.package-accessory-count,
+.product-code-hint{
+  font-size:9px!important;
+  line-height:1.2!important;
+  margin-top:1px!important;
+}
+.package-expand-button{
+  height:25px!important;
+  font-size:9.4px!important;
+}
+.package-detail-list{
+  padding:5px 8px 6px!important;
+}
+.package-detail-row{
+  font-size:9px!important;
+  line-height:1.3!important;
+}
+.product-card-footer{
+  min-height:26px!important;
+  padding:2px 5px 2px 7px!important;
+  font-size:9px!important;
+}
+.product-card-footer .compact-status{
+  width:68px!important;
+  height:21px!important;
+  font-size:8.5px!important;
+}
+
+/* Smaller selection indicator */
+.package-selected-check{
+  right:5px!important;
+  top:5px!important;
+  width:17px!important;
+  height:17px!important;
+  border-radius:4px!important;
+  font-size:11px!important;
+}
+
+/* Preserve right panel while left catalog scrolls */
+.order-panel{
+  height:100%!important;
+  max-height:100%!important;
+  overflow-y:auto!important;
+  overscroll-behavior:contain;
+}
+
+/* Extra density on wide work screens */
+@media(min-width:1500px){
+  .catalog-card-grid{
+    grid-template-columns:repeat(auto-fill,minmax(138px,1fr))!important;
+  }
+}
+@media(min-width:1850px){
+  .catalog-card-grid{
+    grid-template-columns:repeat(auto-fill,minmax(132px,1fr))!important;
+  }
+}
