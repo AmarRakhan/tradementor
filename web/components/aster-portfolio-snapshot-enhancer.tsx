@@ -185,9 +185,9 @@ async function loadLiquidationDiagnostics(): Promise<LiquidationDiagnostics> {
     longExposureUsd: firstNumber(records, ["longNotional", "longExposureUsd"]),
     shortExposureUsd: firstNumber(records, ["shortNotional", "shortExposureUsd"]),
     netExposureUsd: firstNumber(records, ["netExposure", "netExposureUsd"]),
-    liveDataStatus: firstString(records, ["liveDataStatus"]) || "UNKNOWN",
-    reconciliationStatus: firstString(records, ["status"]) || "UNKNOWN",
-    snapshotId: firstString(records, ["snapshotId", "accountStateVersion"]),
+    liveDataStatus: String(root.liveDataStatus || reconciliation.liveDataStatus || "UNKNOWN").toUpperCase(),
+    reconciliationStatus: String(reconciliation.status || "UNKNOWN").toUpperCase(),
+    snapshotId: String(reconciliation.snapshotId || root.snapshotId || root.accountStateVersion || ""),
     snapshotAgeMs: firstNumber(records, ["snapshotAgeMs"]),
   };
 }
