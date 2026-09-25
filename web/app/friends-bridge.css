@@ -1,0 +1,9 @@
+.content[data-friends-active="true"] > :not(.friends-portal){display:none!important}
+.content[data-friends-active="true"] > .friends-portal{display:block!important;width:100%;min-width:0}
+.friends-portal{display:block;width:100%;min-width:0;position:relative;z-index:2}
+.nav-button[data-destination="friends"].active{position:relative}
+.nav-button[data-destination="friends"].active::after{content:"";position:absolute;left:22%;right:22%;bottom:2px;height:2px;border-radius:99px;background:#2ef2b6;box-shadow:0 0 10px rgba(46,242,182,.7)}
+@media(max-width:760px){
+  .content[data-friends-active="true"]{padding:0!important;max-width:none!important;overflow:visible!important}
+  .bottom-nav .nav-button[data-destination="friends"] small{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+}
