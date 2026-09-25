@@ -1,6 +1,13 @@
 from pathlib import Path
 
 
+def preview_source() -> str:
+    source = Path(__file__).with_name("main.py").read_text()
+    start = source.index('@app.get("/v1/me/aster/positions/profitable-close-preview")')
+    end = source.index('@app.post("/v1/me/aster/positions/close-profitable")')
+    return source[start:end]
+
+
 def route_source() -> str:
     source = Path(__file__).with_name("main.py").read_text()
     start = source.index('@app.post("/v1/me/aster/positions/close-profitable")')
@@ -59,3 +66,13 @@ def test_multi_bb_runtime_ownership_is_included_in_safe_profit_close_scope():
     assert "keys.add((symbol,side))" in helper
     assert "_aster_strategy2_owned_keys(uid)" in route
     assert "in owned_keys" in route
+
+
+def test_build430_preview_keeps_close_ownership_but_uses_full_account_for_exposure():
+    preview = preview_source()
+    close = route_source()
+    assert "account_rows=list(client.position_risk())" in preview
+    assert "if (str(row.get(\"symbol\",\"\")).upper(),str(row.get(\"positionSide\",\"\")).upper()) in owned_keys" in preview
+    assert "exposure_rows=account_rows" in preview
+    assert "_aster_strategy2_owned_keys(uid)" in close
+    assert "in owned_keys" in close
