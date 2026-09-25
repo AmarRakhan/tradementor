@@ -40,3 +40,9 @@ def test_continuity_module_does_not_touch_trading_settings():
     forbidden = ("place_order", "close_position", "dca", "take_profit", "leverage", "longSlots", "shortSlots")
     for value in forbidden:
         assert value not in routes
+
+
+def test_bybit_base_currency_reserve_uses_the_parsed_balance_value():
+    block = SOURCE[SOURCE.index("def _continuity_bybit_service"):SOURCE.index("def _continuity_future_service")]
+    assert "comparable += balance" in block
+    assert "reserve_balance" not in block

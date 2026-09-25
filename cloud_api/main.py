@@ -2962,7 +2962,7 @@ def _continuity_bybit_service(uid: str, settings: dict[str, Any], upcoming_amoun
                 "transferBalance": balance,
             })
             if coin == base_currency:
-                comparable += reserve_balance
+                comparable += balance
             elif base_currency == "USD" and coin in {"USDT", "USDC"}:
                 comparable += balance
         difference = comparable - required
