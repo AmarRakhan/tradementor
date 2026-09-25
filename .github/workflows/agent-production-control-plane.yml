@@ -396,34 +396,20 @@ jobs:
         run: |
           set -euo pipefail
           SOURCE_COMMIT='741458b372237aa5e18272fdbbefb50dea577509'
-          STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/dispatches" \
-            -f ref="$TARGET_BRANCH" \
-            -f 'inputs[confirmation]=DEPLOY_PRODUCTION_BACKEND' \
-            -f "inputs[source_commit]=$SOURCE_COMMIT" \
-            -f "inputs[request_issue]=$ISSUE_NUMBER"
-          RUN_ID=''
-          for N in 1 2 3 4 5 6 7 8 9 10; do
-            sleep 3
-            RUNS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?event=workflow_dispatch&per_page=50")"
-            RUN_ID="$(python - "$STARTED_AT" "$RUNS_JSON" <<'PY'
-import json,sys
-started,payload=sys.argv[1],json.loads(sys.argv[2])
-rows=[row for row in payload.get("workflow_runs",[]) if str(row.get("created_at") or "") >= started]
-rows.sort(key=lambda row:str(row.get("created_at") or ""),reverse=True)
-print(rows[0]["id"] if rows else "")
-PY
-            )"
-            [ -n "$RUN_ID" ] && break
-          done
-          test -n "$RUN_ID"
-          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
-          CREATED="$(python -c 'import json,sys;print(json.loads(sys.argv[1])["created_at"])' "$RUN_JSON")"
-          STATUS="$(python -c 'import json,sys;print(json.loads(sys.argv[1])["status"])' "$RUN_JSON")"
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Build 427 production backend run created: $RUN_ID · created $CREATED · status $STATUS · exact source $SOURCE_COMMIT."
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$SOURCE_COMMIT" \
+            -f request_issue="$ISSUE_NUMBER"
+
+      - name: Confirm backend deployment dispatch
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Exact-source Build 427 backend deployment dispatched for 741458b372237aa5e18272fdbbefb50dea577509. Canonical production workflow will rerun all backend tests before candidate deployment and promotion."
 
       - name: Report dispatch failure
         if: failure()
         shell: bash
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'Build 427 backend dispatch did not produce a verifiable Actions run. No production promotion was claimed.'
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body 'Build 427 backend dispatch failed before production mutation. No Cloud Run revision was promoted.'
