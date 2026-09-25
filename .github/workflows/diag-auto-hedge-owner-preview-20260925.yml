@@ -76,7 +76,7 @@ jobs:
             'actions':[
               [a.symbol,a.trigger_side,round(a.trigger_open_pnl,2),a.losing_side_qty,
                a.existing_opposite_qty,a.pending_opposite_qty,a.required_delta,a.status]
-              for a in actions if a.required_delta>1e-12
+              for a in actions
             ],
           }
           print(os.environ['MARKER']+'='+json.dumps(compact,separators=(',',':'),sort_keys=True),flush=True)
