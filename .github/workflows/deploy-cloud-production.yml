@@ -231,6 +231,8 @@ jobs:
               "/v1/me/aster/sniper/settings",
               "/v1/me/aster/sniper/trades/close",
               "/v1/me/aster/automation/close-all",
+              "/v1/me/aster/position-loss-auto-hedge",
+              "/v1/me/aster/position-loss-auto-hedge/apply",
           ):
               assert required in paths, required
           PY
