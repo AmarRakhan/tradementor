@@ -103,3 +103,19 @@ test("Build 410 labels net exposure as exposure instead of a profit-loss amount"
   assert.ok(hedgeSummary.includes("exposureMoney(exposure.netExposureUsd)"));
   assert.equal(hedgeSummary.includes("exposureMoney(exposure.netExposureUsd, true)"),false);
 });
+
+
+test("Build 430 Portfolio Snapshot only says LIVE when backend reconciliation says LIVE", async () => {
+  const [component, css] = await Promise.all([
+    readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/portfolio-snapshot.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(component, /liveDataStatus/);
+  assert.match(component, /reconciliationStatus/);
+  assert.match(component, /snapshotId/);
+  assert.match(component, /data-live-status={liveDataStatus}/);
+  assert.equal(component.includes('<span className="aps-live"><i />Live</span>'), false);
+  assert.match(component, /aps-data-/);
+  assert.match(css, /.aps-live.aps-data-stale/);
+  assert.match(css, /.aps-live.aps-data-data-mismatch/);
+});

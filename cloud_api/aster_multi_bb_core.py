@@ -1438,12 +1438,27 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         required = float(plan.notional_per_leg) / plan.leverage
         short_required = float(short_plan.notional_per_leg) / short_plan.leverage if short_plan is not None else 0.0
         total_required = required + (0.0 if defer_paired_short else short_required)
-        if available < total_required * 1.05:
+        required_safety_buffer = total_required * 0.05
+        required_total_margin = total_required + required_safety_buffer
+        if available < required_total_margin:
             if orphan_priority:
                 print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=margin_wait required={total_required}", flush=True)
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=margin_wait available={available} required={total_required}", flush=True)
-            actions.append({"kind": "ENTRY_MARGIN_WAIT", "symbol": symbol, "side": side, "requiredMargin": total_required}); continue
+            actions.append({
+                "kind": "ENTRY_MARGIN_WAIT",
+                "symbol": symbol,
+                "side": side,
+                "availableBeforeUsd": available,
+                "newSoldierNotionalUsd": float(plan.notional_per_leg),
+                "requiredMargin": total_required,
+                "requiredInitialMarginUsd": total_required,
+                "safetyBufferUsd": required_safety_buffer,
+                "requiredTotalUsd": required_total_margin,
+                "shortfallUsd": max(0.0, required_total_margin - available),
+                "budgetStatus": "INSUFFICIENT",
+            })
+            continue
         planned_soldier = None
         if zone_mode:
             candidates_for_side = [
@@ -1456,8 +1471,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 else: short_need = 0
                 continue
             planned_soldier = candidates_for_side[0]
-        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
-            "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
+        zone_exposure_before = (zone_report or {}).get("exposure") if isinstance((zone_report or {}).get("exposure"), dict) else {}
+        entry_action = {
+            "kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage,
+            "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
+            "availableBeforeUsd": available,
+            "requiredInitialMarginUsd": total_required,
+            "safetyBufferUsd": required_safety_buffer,
+            "requiredTotalUsd": required_total_margin,
+            "shortfallUsd": max(0.0, required_total_margin - available),
+            "budgetStatus": "SUFFICIENT",
+            "netExposureBeforeUsd": _f(zone_exposure_before.get("netExposureUsd")),
+            "netExposureSideBefore": str(zone_exposure_before.get("netExposureSide", "")),
+            "priorityBefore": str((zone_report or {}).get("entryPriority") or ""),
+            "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"],
+        }
         if planned_soldier is not None:
             entry_action.update({"originZone": planned_soldier.get("originZone"), "originZoneCycleId": planned_soldier.get("originZoneCycleId"),
                 "soldierId": planned_soldier.get("soldierId"), "soldierRole": planned_soldier.get("role"),
@@ -1560,10 +1588,23 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if zone_mode:
                 write_payload["zoneSoldierState"] = zone_state
             ref.set(write_payload, merge=True)
-            ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "cycleId": cycle_id,
+            fill_notional = abs(fill_qty * fill_price)
+            signed_fill_notional = fill_notional if side == "LONG" else -fill_notional
+            ref.collection("audit").add({
+                "event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "cycleId": cycle_id,
                 "originZone": state[key].get("originZone"), "originZoneCycleId": state[key].get("originZoneCycleId"),
                 "soldierId": state[key].get("soldierId"), "soldierRole": state[key].get("soldierRole"),
-                "timestamp": datetime.now(timezone.utc)})
+                "orderId": str(fill.get("orderId", result.get("orderId", ""))),
+                "requestedQty": float(plan.quantity), "filledQty": fill_qty, "fillPrice": fill_price,
+                "availableBeforeUsd": entry_action.get("availableBeforeUsd"),
+                "requiredMarginUsd": entry_action.get("requiredInitialMarginUsd"),
+                "requiredTotalUsd": entry_action.get("requiredTotalUsd"),
+                "availableAfterEstimateUsd": max(0.0, available - required),
+                "netExposureBeforeUsd": entry_action.get("netExposureBeforeUsd"),
+                "netExposureAfterFillEstimateUsd": _f(entry_action.get("netExposureBeforeUsd")) + signed_fill_notional,
+                "priorityBefore": entry_action.get("priorityBefore"),
+                "timestamp": datetime.now(timezone.utc),
+            })
             actions.append(entry_action)
             if paired and short_plan is not None and short_action is not None and defer_paired_short:
                 pending = dict(state[key]); pending.update({"pairedShortPending": True, "pairedShortLastError": "SHORT_REQUIRES_PREEXISTING_LONG", "updatedAtMs": timestamp_ms}); state[key] = pending
@@ -1674,6 +1715,23 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
     entry_rows = [a for a in actions if a.get("kind") == "ENTRY"]
     entry_wait = [a for a in actions if a.get("kind") in {"ENTRY_SKIP", "ENTRY_MARGIN_WAIT"}]
+    margin_wait_rows = [a for a in actions if a.get("kind") == "ENTRY_MARGIN_WAIT"]
+    budget_source = min(margin_wait_rows, key=lambda row: _f(row.get("requiredTotalUsd")), default=None)
+    if budget_source is None and entry_rows:
+        budget_source = entry_rows[-1]
+    entry_budget = None
+    if isinstance(budget_source, dict):
+        entry_budget = {
+            "availableUsd": _f(budget_source.get("availableBeforeUsd")),
+            "newSoldierNotionalUsd": _f(budget_source.get("newSoldierNotionalUsd", budget_source.get("notionalUsd"))),
+            "requiredInitialMarginUsd": _f(budget_source.get("requiredInitialMarginUsd", budget_source.get("marginUsd"))),
+            "safetyBufferUsd": _f(budget_source.get("safetyBufferUsd")),
+            "requiredTotalUsd": _f(budget_source.get("requiredTotalUsd")),
+            "minimumExchangeOrderMarginUsd": min(minimum_margin_rejections, default=None),
+            "shortfallUsd": _f(budget_source.get("shortfallUsd")),
+            "status": str(budget_source.get("budgetStatus", "UNKNOWN")),
+            "source": "CANONICAL_RUNTIME_ENTRY_GUARD",
+        }
     selected_open = bool(settings.manual_symbol_selection_enabled and any(key in active for key in selected_keys))
     remaining_slots = pair_need if settings.asymmetric_hedge_enabled else long_need + short_need
     next_required_margin = min(minimum_margin_rejections, default=None)
@@ -1701,6 +1759,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     report = {"engine": ENGINE, "configVersion": settings.version,
               "ordersSent": 0 if dry_run else sent, "simulatedActions": len(actions) if dry_run else 0,
               "entryStatus": entry_status, "entryReason": entry_reason,
+              "entryBudget": entry_budget,
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "orphanShortSymbols": orphan_short_symbols,

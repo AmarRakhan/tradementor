@@ -100,7 +100,7 @@ from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
-from aster_zone_soldiers import confirmed_zone_from_display_zones
+from aster_zone_soldiers import confirmed_zone_from_display_zones, account_reconciliation_report
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -5033,6 +5033,76 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         cycle_start=safe_float(v2_state.get("cycleStartEquity")); cycle_equity=safe_float(v2_history.get("equity")) or safe_float(strategy2_snapshot.get("equity"))
         focus_v2_cockpit={"symbol":v2_symbol,"cycleId":str(v2_state.get("cycleId","")),"currentPrice":current,"longQuantity":long_qty,"longEntry":long_entry,"longBreakEvenPrice":long_break_even or long_entry,"longNotional":long_notional,"longPnl":safe_float(v2_long.get("unrealizedPnl",v2_long.get("unRealizedProfit"))),"longLeverage":safe_float(v2_long.get("leverage")),"shortQuantity":short_qty,"shortEntry":short_entry,"shortNotional":short_notional,"shortPnl":safe_float(v2_short.get("unrealizedPnl",v2_short.get("unRealizedProfit"))),"shortLeverage":safe_float(v2_short.get("leverage")),"netExposure":long_notional-short_notional,"grossExposure":long_notional+short_notional,"hedgeRatio":(short_notional/long_notional if long_notional>0 else 0.0),"dcaCount":int(safe_float(v2_state.get("dcaCount"))),"dcaAnchorPrice":dca_anchor,"nextLongDcaPrice":next_dca,"nextLongDcaDistancePct":((next_dca/current-1)*100 if next_dca>0 and current>0 else None),"recoveryReboundPrice":rebound,"recoveryTrigger":rebound,"longTakeProfitPrice":(0.0 if recovery_model_version>=3 else (safe_float(v2_history.get("longTakeProfitPrice")) or (long_entry*(1+strategy2_settings.focus_minimum_profit_pct) if long_entry>0 else 0.0))),"recoveryPriceMet":price_met,"bollinger5mMiddle":safe_float(v2_history.get("bollinger5mMiddle")),"bollinger5mConfirmed":middle_met,"portfolioRecoveryTarget":safe_float(v2_history.get("portfolioRecoveryTarget")) or cycle_start*strategy2_settings.focus_v2_portfolio_recovery_ratio,"portfolioRecoveryMet":portfolio_met,"shortReleaseRatio":strategy2_settings.focus_v2_release_ratio,"shortReleaseReady":release_ready,"nextShortReleasePrice":next_release_price,"nextShortReleaseQty":next_release_qty,"recoveryModelVersion":recovery_model_version,"recoveryStage":recovery_stage,"recoveryProgress":recovery_progress,"recoveryLow":recovery_low,"recoveryHigh":recovery_high,"releasedShortQty":released_short_qty,"targetShortNotional":target_short_notional,"rehedgePrice":rehedge_price,"rehedgeArmed":rehedge_armed,"armedRehedgeQty":armed_rehedge_qty,"cycleStartEquity":cycle_start,"cycleEquity":cycle_equity,"cyclePnl":cycle_equity-cycle_start if cycle_start>0 else 0.0,"cycleTargetActive":False,"cycleTargetEquity":None,"stateMachineVersion":state_machine_version,"cycleStatus":str(v2_state.get("cycleStatus",v2_state.get("lastAction","HOLD"))),"startHedgePercent":safe_float(v2_state.get("startHedgePercent",getattr(strategy2_settings,"focus_v2_start_hedge_ratio",0))),"hedgeTargetPercent":safe_float(v2_state.get("hedgeTargetPercent",strategy2_settings.focus_v2_hedge_ratio)),"tpMode":tp_mode,"tpValue":tp_value,"distanceToTp":profit_remaining,"autoRestart":bool(v2_state.get("autoRestart",getattr(strategy2_settings,"focus_v2_auto_restart",False))),"dcaMode":str(v2_state.get("dcaMode","")),"dcaTriggerPending":bool(v2_state.get("dcaTriggerPending",False)),"dcaTriggerPrice":safe_float(v2_state.get("dcaTriggerPrice")),"protectedFloorPrice":safe_float(v2_state.get("protectedFloorPrice")),"protectedCeilingPrice":safe_float(v2_state.get("protectedCeilingPrice")),"reHedgeAnchorPrice":safe_float(v2_state.get("reHedgeAnchorPrice")),"releaseRehedgeMarginReady":bool(v2_state.get("releaseRehedgeMarginReady",False)),"releaseRehedgeRequiredMargin":safe_float(v2_state.get("releaseRehedgeRequiredMargin")),"releaseRehedgeAvailableAfterCloseEstimate":safe_float(v2_state.get("releaseRehedgeAvailableAfterCloseEstimate")),"hedgeReleaseTriggerToSubmitMs":safe_float(v2_state.get("hedgeReleaseTriggerToSubmitMs")),"reHedgeTriggerToSubmitMs":safe_float(v2_state.get("reHedgeTriggerToSubmitMs")),"protectionReserveRequired":safe_float(v2_state.get("protectionReserveRequired")),"protectionReserveAvailable":safe_float(v2_state.get("protectionReserveAvailable")),"protectionReserveSpendableMargin":safe_float(v2_state.get("protectionReserveSpendableMargin")),"protectionReserveReady":bool(v2_state.get("protectionReserveReady",False)),"protectionReserveShortfall":safe_float(v2_state.get("protectionReserveShortfall")),"realtimeWorkerConnected":realtime_worker_connected,"realtimeWorkerHealthy":realtime_worker_healthy,"protectionStatus":("PROTECTION READY" if protection_ui_ready else ("PROTECTION MARGIN LOW" if not bool(v2_state.get("protectionReserveReady",False)) else "PROTECTION REALTIME NOT READY")),"triggerToLongSubmitMs":safe_float(v2_state.get("triggerToLongSubmitMs")),"longFillToShortSubmitMs":safe_float(v2_state.get("longFillToShortSubmitMs")),"triggerToFullHedgeMs":safe_float(v2_state.get("triggerToFullHedgeMs")),"hedgeState":str(v2_state.get("hedgeState","")),"lastDcaFillPrice":last_dca_fill,"hedgeReleasePrice":next_release_price if state_machine_version>=5 else 0.0,"shortNetGreenReleasePrice":safe_float(v2_state.get("shortNetGreenReleasePrice",v2_history.get("shortNetGreenReleasePrice"))),"shortReleasePriceReady":bool(v2_state.get("shortReleasePriceReady",False)),"shortReleaseNetGreenReady":bool(v2_state.get("shortReleaseNetGreenReady",False)),"expectedNetShortClosePnl":safe_float(v2_state.get("expectedNetShortClosePnl")),"hedgeReleaseRecoveryPct":strategy2_settings.focus_v2_hedge_release_recovery_pct if state_machine_version>=5 else 0.0,"recoverySinceLastDcaPct":safe_float(v2_history.get("recoverySinceLastDcaPct")),"hedgeTargetQty":safe_float(v2_state.get("hedgeTargetQty",v2_history.get("hedgeTargetQty"))),"harvestBaselineEquity":harvest_baseline,"profitSinceHarvest":profit_since_harvest,"profitTriggerUsdt":profit_trigger,"profitHarvestUsdt":profit_harvest,"profitRemainingUsdt":profit_remaining,"lastHarvestProfit":safe_float(v2_state.get("lastHarvestProfit",v2_history.get("lastHarvestProfit"))),"totalHarvestedProfit":safe_float(v2_state.get("totalHarvestedProfit",v2_history.get("totalHarvestedProfit"))),"nextAction":next_action,"status":str(v2_state.get("lastAction","HOLD")),"runtimePhase":runtime_phase,"runtimeHoldReason":runtime_hold_reason,"recentActions":recent_actions}
     closed_trades = _stored_aster_closed_trades(user)
+
+    # Build one explicit reconciliation contract from the exact exchange-backed
+    # snapshot used by this status response. Ownership describes provenance only;
+    # every open exchange position remains part of account exposure.
+    raw_snapshot_positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
+    managed_for_reconciliation = strategy2_state.get("multiBbPositions") if isinstance(strategy2_state.get("multiBbPositions"), dict) else {}
+    raw_zone_report = strategy2_state.get("zoneSoldierReport") if isinstance(strategy2_state.get("zoneSoldierReport"), dict) else {}
+    raw_active_zone = raw_zone_report.get("activeZone")
+    try:
+        reconciliation_active_zone = int(raw_active_zone) if raw_active_zone is not None else None
+    except (TypeError, ValueError):
+        reconciliation_active_zone = None
+    reconciliation_captured = snapshot.get("capturedAt")
+    if isinstance(reconciliation_captured, datetime):
+        reconciliation_captured = reconciliation_captured.replace(tzinfo=timezone.utc) if reconciliation_captured.tzinfo is None else reconciliation_captured.astimezone(timezone.utc)
+        reconciliation_captured_ms = int(reconciliation_captured.timestamp() * 1000)
+    else:
+        reconciliation_captured_ms = 0
+    snapshot_position_count = int(safe_float(snapshot.get("activePositions")))
+    cross_position_count = int(safe_float(snapshot.get("positionCountIncluded")))
+    # The pre-existing risk fields longNotional/shortNotional intentionally cover
+    # CROSS positions only. Compare them with the all-account canonical exposure
+    # only when both scopes contain the same number of positions; otherwise an
+    # isolated position would create a false DATA MISMATCH.
+    comparable_cross_scope = bool(
+        snapshot_position_count == cross_position_count
+        and snapshot_position_count == len(raw_snapshot_positions)
+    )
+    reconciliation = account_reconciliation_report(
+        positions=raw_snapshot_positions,
+        managed_state=managed_for_reconciliation,
+        active_zone=reconciliation_active_zone,
+        sniper_symbols=sniper_owned_symbols,
+        snapshot_position_count=snapshot_position_count,
+        snapshot_long_notional=(safe_float(snapshot.get("longNotional")) if comparable_cross_scope and snapshot.get("longNotional") is not None else None),
+        snapshot_short_notional=(safe_float(snapshot.get("shortNotional")) if comparable_cross_scope and snapshot.get("shortNotional") is not None else None),
+        captured_at_ms=reconciliation_captured_ms,
+        now_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
+    )
+    reconciliation["legacyCrossExposure"] = {
+        "comparableToAccount": comparable_cross_scope,
+        "positionCountIncluded": cross_position_count,
+        "longExposureUsd": safe_float(snapshot.get("longNotional")),
+        "shortExposureUsd": safe_float(snapshot.get("shortNotional")),
+        "scope": "CROSS_ONLY",
+    }
+    unavailable_capital = safe_float(snapshot.get("unavailableCapital"))
+    total_initial_margin = safe_float(snapshot.get("totalInitialMargin"))
+    position_initial_margin = safe_float(snapshot.get("positionInitialMargin", snapshot.get("activeTradeCapital")))
+    open_order_initial_margin = safe_float(snapshot.get("openOrderInitialMargin"))
+    reconciliation["margin"] = {
+        "equityUsd": safe_float(snapshot.get("equity")),
+        "availableUsd": safe_float(snapshot.get("availableBalance")),
+        "unavailableCapitalUsd": unavailable_capital,
+        "activeTradeCapitalUsd": safe_float(snapshot.get("activeTradeCapital")),
+        "totalInitialMarginUsd": total_initial_margin,
+        "positionInitialMarginUsd": position_initial_margin,
+        "openOrderInitialMarginUsd": open_order_initial_margin,
+        "otherOrResidualUsd": safe_float(snapshot.get("marginReconciliationResidual")),
+        "openOrders": int(safe_float(snapshot.get("openOrders"))),
+        "openOrdersFresh": bool(snapshot.get("openOrdersFresh", False)),
+        "source": "ASTER_API",
+    }
+    reconciliation["liveDataStatus"] = (
+        "DATA MISMATCH" if reconciliation["status"] == "MISMATCH"
+        else "STALE" if reconciliation["status"] == "STALE"
+        else "DEGRADED" if not bool(snapshot.get("openOrdersFresh", False))
+        else "LIVE"
+    )
+
     def confirmed_snapshot_number(key: str) -> float | None:
         value=snapshot.get(key)
         return safe_float(value) if value is not None else None
@@ -5045,6 +5115,11 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "activePositions": len(positions),
         "accountActivePositions": int(safe_float(snapshot.get("activePositions"))),
         "activeTradeCapital": confirmed_snapshot_number("activeTradeCapital"),
+        "totalInitialMargin": confirmed_snapshot_number("totalInitialMargin"),
+        "positionInitialMargin": confirmed_snapshot_number("positionInitialMargin"),
+        "openOrderInitialMargin": confirmed_snapshot_number("openOrderInitialMargin"),
+        "unavailableCapital": confirmed_snapshot_number("unavailableCapital"),
+        "marginReconciliationResidual": confirmed_snapshot_number("marginReconciliationResidual"),
         "financialDataContract": snapshot.get("financialDataContract") if isinstance(snapshot.get("financialDataContract"), dict) else {},
         "maintenanceMargin": confirmed_snapshot_number("maintenanceMargin"),
         "maintenanceMarginPct": confirmed_snapshot_number("maintenanceMarginPct"),
@@ -5064,6 +5139,10 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "tradableSymbols": int(safe_float(snapshot.get("tradableSymbols"))),
         "maximumLeverage": int(safe_float(snapshot.get("maximumLeverage"))),
         "liveReady": hedge_mode, "snapshotAt": snapshot.get("capturedAt"),
+        "snapshotId": reconciliation["snapshotId"],
+        "accountStateVersion": reconciliation["accountStateVersion"],
+        "reconciliation": reconciliation,
+        "liveDataStatus": reconciliation["liveDataStatus"],
     }
     return {
         **status,
@@ -6546,9 +6625,14 @@ def preview_profitable_aster_positions(
     client = _portfolio_growth_client(user, live=False)
     try:
         owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
-        rows=[row for row in client.position_risk()
+        account_rows=list(client.position_risk())
+        rows=[row for row in account_rows
             if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
-        preview = profit_preview_with_settings(rows, load_hedge_settings(user, user_reference))
+        preview = profit_preview_with_settings(
+            rows,
+            load_hedge_settings(user, user_reference),
+            exposure_rows=account_rows,
+        )
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
     return {**preview, "generatedAt": datetime.now(timezone.utc).isoformat(), "reliable": True}

@@ -18,10 +18,17 @@ type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
 type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number};
 type SoldierActivityEvent={id:string;atMs:number;side:"LONG"|"SHORT";count:number;originZone:number|null;role?:string;source?:string};
-type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;settings:Record<string,unknown>;zoneSoldiers:Record<string,unknown>;soldierOpenEvents:SoldierActivityEvent[]};
+type AdvisorSeats={
+  longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;
+  settings:Record<string,unknown>;zoneSoldiers:Record<string,unknown>;reconciliation:Record<string,unknown>;
+  entryBudget:Record<string,unknown>;liveDataStatus:string;soldierOpenEvents:SoldierActivityEvent[];
+};
 
 const EMPTY=normalizePortfolioKoersPayload({}) as Payload;
-const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null,activeShort:null,settings:{},zoneSoldiers:{},soldierOpenEvents:[]};
+const EMPTY_ADVISOR:AdvisorSeats={
+  longSlots:null,shortSlots:null,activeLong:null,activeShort:null,settings:{},zoneSoldiers:{},
+  reconciliation:{},entryBudget:{},liveDataStatus:"UNKNOWN",soldierOpenEvents:[],
+};
 const ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32";
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
@@ -70,6 +77,8 @@ function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
   const report=Object.keys(primaryReport).length?primaryReport:record(strategy2.multiBbReport);
   const zoneSoldiers=record(strategy2.zoneSoldiers);
   const reportZoneSoldiers=record(report.zoneSoldiers);
+  const reconciliation=record(root.reconciliation);
+  const entryBudget=record(report.entryBudget);
   return {
     longSlots:integerOrNull(settings.longSlots),
     shortSlots:integerOrNull(settings.shortSlots),
@@ -77,6 +86,9 @@ function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
     activeShort:integerOrNull(report.activeShort),
     settings,
     zoneSoldiers:Object.keys(zoneSoldiers).length?zoneSoldiers:reportZoneSoldiers,
+    reconciliation,
+    entryBudget,
+    liveDataStatus:String(root.liveDataStatus||reconciliation.liveDataStatus||"UNKNOWN").toUpperCase(),
     soldierOpenEvents:soldierOpenEventsFromManagedPositions(managedPositions) as SoldierActivityEvent[],
   };
 }
@@ -90,6 +102,17 @@ const percent2=(value:number|null|undefined,signed=true)=>{
   const number=Number(value);
   const prefix=signed?(number>0?"+":number<0?"−":""):"";
   return `${prefix}${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}%`;
+};
+const commandMoney=(value:unknown)=>{
+  const number=Number(value);
+  if(!Number.isFinite(number))return "—";
+  return "US$ "+new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(number);
+};
+const commandAge=(value:unknown)=>{
+  const ms=Number(value);
+  if(!Number.isFinite(ms)||ms<0)return "—";
+  if(ms<1000)return Math.round(ms)+" ms";
+  return (ms/1000).toFixed(ms<10000?1:0).replace(".",",")+" s";
 };
 
 function markerPresentation(row:Marker) {
@@ -147,31 +170,59 @@ function FormationArmy({longCount,shortCount}:{longCount:number;shortCount:numbe
 function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string}) {
   const exposureClass=String(vm.netExposureSide||"NEUTRAAL").toLowerCase();
   const priorityClass=String(vm.entryPriority||"GEEN").toLowerCase();
+  const liveStatus=String(vm.liveDataStatus||"UNKNOWN").toUpperCase();
+  const syncStatus=String(vm.reconciliationStatus||"UNKNOWN").toUpperCase();
+  const liveClass=liveStatus==="LIVE"?"live":liveStatus==="DATA MISMATCH"?"mismatch":liveStatus==="STALE"?"stale":"degraded";
+  const budget=vm.entryBudget&&typeof vm.entryBudget==="object"?vm.entryBudget:null;
+  const nonSoldierDetail=[
+    Number(vm.legacyAster)>0?String(vm.legacyAster)+" legacy":"",
+    Number(vm.sniperPositions)>0?String(vm.sniperPositions)+" Sniper":"",
+    Number(vm.unknownPositions)>0?String(vm.unknownPositions)+" unknown":"",
+  ].filter(Boolean).join(" · ")||"legacy / manual / andere strategie";
   return <section
-    className={`portfolio-command-center pcc-homecoming cc-${vm.actionMode}`}
+    className={"portfolio-command-center pcc-homecoming cc-"+vm.actionMode}
     data-reference="file_000000009e0081f4b88f4b415de68c71"
     data-account-only="beta-owner"
+    data-reconciliation-status={syncStatus}
     aria-label="Zone-Soldaten Strategiestatus Command Center"
     aria-live="polite"
   >
     <header className="pcc-head">
       <span className="pcc-head-icon" aria-hidden="true">⌖</span>
       <div><small>ZONE-SOLDATEN</small><strong>Strategiestatus</strong></div>
-      <span className="pcc-command-badge">COMMAND CENTER<em>{vm.strategyEnabled?"BOT ACTIEF · 24/7":"STRATEGY UIT"}</em></span>
+      <span className={"pcc-command-badge pcc-data-"+liveClass}>COMMAND CENTER<em>{vm.strategyEnabled?"BOT ACTIEF":"STRATEGY UIT"} · {liveStatus}</em></span>
     </header>
 
     <section className="pcc-formation-hero">
       <FormationArmy longCount={vm.desiredLong} shortCount={vm.desiredShort}/>
       <div className="pcc-formation-copy">
-        <small>ACTIEVE FORMATIE</small>
+        <small>ACTIEVE FORMATIE · HUIDIGE ZONE</small>
         <strong><b>{vm.activeZone}</b> · <span className="long">{vm.desiredLong} LONG</span> <i>/</i> <span className="short">{vm.desiredShort} SHORT</span></strong>
-        <em>Vaste zoneformatie · geen extra soldaten</em>
+        <em>Huidige zone — niet totaal account</em>
       </div>
-      <div className={`pcc-exposure ${exposureClass}`}>
+      <div className={"pcc-exposure "+exposureClass}>
         <span aria-hidden="true">⚖</span>
         <div><small>NETTO EXPOSURE:</small><strong>{vm.netExposureSide}</strong><em>PRIORITEIT: <b className={priorityClass}>{vm.entryPriority}</b></em></div>
       </div>
     </section>
+
+    <div className="pcc-account-scope" aria-label="Account en Soldiers scope">
+      <article>
+        <small>TOTAAL SOLDIERS</small>
+        <strong>{vm.soldiersTotal??"—"}</strong>
+        <em>{vm.soldierCurrentZone??0} huidige zone · {vm.soldierOldZones??0} oude zones</em>
+      </article>
+      <article>
+        <small>OVERIGE ACCOUNTSPOSITIES</small>
+        <strong>{vm.nonSoldiersTotal??"—"}</strong>
+        <em>{nonSoldierDetail}</em>
+      </article>
+      <article>
+        <small>ACCOUNT TOTAAL</small>
+        <strong><b className="long">{vm.accountLong??"—"}L</b> / <b className="short">{vm.accountShort??"—"}S</b></strong>
+        <em>{vm.accountTotal??"—"} totaal</em>
+      </article>
+    </div>
 
     <div className="pcc-status-grid">
       <article>
@@ -190,15 +241,51 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
         <span className="pcc-status-icon trophy" aria-hidden="true">♛</span>
         <div><small>WINST THUISGEKOMEN</small><strong>{vm.winningHomeToday}</strong><em>oude-zone soldaten terug met winst</em></div>
       </article>
-      <article className={`priority ${priorityClass}`}>
+      <article className={"priority "+priorityClass}>
         <span className="pcc-status-icon arrow" aria-hidden="true">↑</span>
-        <div><small>ENTRY-PRIORITEIT</small><strong>{vm.entryPriority}</strong><em>balancer stuurt keuze, niet extra soldaten</em></div>
+        <div><small>ENTRY-PRIORITEIT</small><strong>{vm.entryPriority}</strong><em>balancer gebruikt totale account-exposure</em></div>
       </article>
-      <article className={`inflow ${String(vm.nextPossibleSide||"none").toLowerCase()}`}>
+      <article className={"inflow "+String(vm.nextPossibleSide||"none").toLowerCase()}>
         <span className="pcc-status-icon clock" aria-hidden="true">◷</span>
         <div><small>VOLGENDE MOGELIJKE INSTROOM</small><strong>{vm.nextPossibleInflow}</strong><em>{vm.nextPossibleDetail}</em></div>
       </article>
     </div>
+
+    {budget?<section className={"pcc-budget "+String(budget.status||"unknown").toLowerCase()} aria-label="Soldier instroombudget">
+      <div className="pcc-budget-head"><small>INSTROOMBUDGET · RUNTIME GUARD</small><strong>{String(budget.status||"UNKNOWN")}</strong></div>
+      <div className="pcc-budget-grid">
+        <span><small>Available</small><b>{commandMoney(budget.availableUsd)}</b></span>
+        <span><small>Initial margin</small><b>{commandMoney(budget.requiredInitialMarginUsd)}</b></span>
+        <span><small>Safety buffer</small><b>{commandMoney(budget.safetyBufferUsd)}</b></span>
+        <span><small>Vereist totaal</small><b>{commandMoney(budget.requiredTotalUsd)}</b></span>
+        <span><small>Tekort</small><b>{commandMoney(budget.shortfallUsd)}</b></span>
+      </div>
+    </section>:null}
+
+    <details className={"pcc-reconciliation pcc-reconciliation-"+syncStatus.toLowerCase().replaceAll(" ","-")}>
+      <summary><span>DATA RECONCILIATION</span><strong>{syncStatus}</strong></summary>
+      <div className="pcc-reconciliation-grid">
+        <span><small>Exchange positions</small><b>{vm.accountTotal??"—"}</b></span>
+        <span><small>App positions</small><b>{vm.appPositions??"—"}</b></span>
+        <span><small>Classified</small><b>{vm.classifiedPositions??"—"}</b></span>
+        <span><small>Unclassified / unknown</small><b>{vm.unclassifiedPositions??"—"}</b></span>
+        <span><small>Exchange long / short</small><b>{vm.accountLong??"—"} / {vm.accountShort??"—"}</b></span>
+        <span><small>Soldiers / non-Soldiers</small><b>{vm.soldiersTotal??"—"} / {vm.nonSoldiersTotal??"—"}</b></span>
+        <span><small>Long exposure</small><b>{commandMoney(vm.longExposureUsd)}</b></span>
+        <span><small>Short exposure</small><b>{commandMoney(vm.shortExposureUsd)}</b></span>
+        <span><small>Net exposure</small><b>{vm.netExposureUsd===null||vm.netExposureUsd===undefined?"—":commandMoney(Math.abs(Number(vm.netExposureUsd)))} {vm.netExposureSide}</b></span>
+        <span><small>Equity / Available</small><b>{commandMoney(vm.exchangeEquityUsd)} / {commandMoney(vm.exchangeAvailableUsd)}</b></span>
+        <span><small>Position margin</small><b>{commandMoney(vm.positionInitialMarginUsd)}</b></span>
+        <span><small>Open-order margin</small><b>{commandMoney(vm.openOrderInitialMarginUsd)}</b></span>
+        <span><small>Total initial margin</small><b>{commandMoney(vm.totalInitialMarginUsd)}</b></span>
+        <span><small>Onbeschikbaar kapitaal</small><b>{commandMoney(vm.unavailableCapitalUsd)}</b></span>
+        <span><small>Overig / residual</small><b>{commandMoney(vm.marginResidualUsd)}</b></span>
+        <span><small>Exchange / UI Available</small><b>{commandMoney(vm.exchangeAvailableUsd)} / {commandMoney(vm.appAvailableUsd)}</b></span>
+        <span><small>Open orders</small><b>{vm.openOrders??"—"} · {vm.openOrdersFresh?"fresh":"niet bewezen"}</b></span>
+        <span><small>Snapshot age</small><b>{commandAge(vm.snapshotAgeMs)}</b></span>
+      </div>
+      {vm.snapshotId?<code>snapshot {vm.snapshotId}</code>:null}
+    </details>
 
     <footer className="pcc-homecoming-footer">
       <span className="pcc-info-icon" aria-hidden="true">i</span>
@@ -207,7 +294,11 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
     </footer>
 
     <span className="portfolio-koers-cockpit-sr">
-      Vaste formatie {vm.activeZone}: {vm.desiredLong} long en {vm.desiredShort} short. Thuis beschikbaar {vm.zoneFreeLong} long en {vm.zoneFreeShort} short. In het veld {vm.zoneOpenLong} long en {vm.zoneOpenShort} short. Oude zones nog buiten {vm.oldZonesOpenTotal}. Vandaag met winst thuisgekomen {vm.winningHomeToday}. Netto exposure {vm.netExposureSide}. Entry-prioriteit {vm.entryPriority}. Volgende mogelijke instroom {vm.nextPossibleInflow}. {advisorMessage}
+      Huidige zoneformatie {vm.activeZone}: {vm.desiredLong} long en {vm.desiredShort} short, niet het accounttotaal.
+      Account totaal {vm.accountTotal} posities: {vm.accountLong} long en {vm.accountShort} short.
+      Totaal Soldiers {vm.soldiersTotal}; overige accountposities {vm.nonSoldiersTotal}.
+      Netto exposure {vm.netExposureSide}. Entry-prioriteit {vm.entryPriority}. Reconciliation {syncStatus}.
+      Volgende mogelijke instroom {vm.nextPossibleInflow}. {advisorMessage}
     </span>
   </section>;
 }
@@ -750,6 +841,9 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     dcaFeeBufferUsd:advisorSeats.settings.dcaFeeBufferUsd,
     maxDca:advisorSeats.settings.maxDca,
     unlimitedDca:advisorSeats.settings.unlimitedDca===true,
+    reconciliation:advisorSeats.reconciliation,
+    entryBudget:advisorSeats.entryBudget,
+    liveDataStatus:advisorSeats.liveDataStatus,
     soldierActivity,
   });
 

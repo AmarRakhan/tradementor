@@ -404,3 +404,35 @@
   .pcc-status-grid article{grid-template-columns:24px minmax(0,1fr);gap:4px;padding:7px 5px}.pcc-status-icon{width:23px;height:23px;font-size:17px}
   .pcc-status-grid small{font-size:4.25px}.pcc-status-grid strong{font-size:10.4px}.pcc-status-grid em{font-size:4.8px}
 }
+
+
+/* Build 430 · account reconciliation, explicit scope and canonical runtime budget */
+.pcc-command-badge.pcc-data-live em{color:#35d98f}
+.pcc-command-badge.pcc-data-stale em,.pcc-command-badge.pcc-data-degraded em{color:#f0c450}
+.pcc-command-badge.pcc-data-mismatch{border-color:rgba(255,91,122,.7);background:rgba(92,13,30,.32)}
+.pcc-command-badge.pcc-data-mismatch em{color:#ff7188}
+.pcc-account-scope{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.pcc-account-scope article{min-width:0;display:grid;gap:4px;padding:9px 10px;border:1px solid rgba(86,173,126,.24);border-radius:12px;background:rgba(2,24,15,.7)}
+.pcc-account-scope small{color:var(--pcc-gold);font:900 6px/1 system-ui;letter-spacing:.045em}
+.pcc-account-scope strong{color:#f4f4ef;font:950 15px/1 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcc-account-scope strong .long{color:var(--pcc-green)}.pcc-account-scope strong .short{color:var(--pcc-red)}
+.pcc-account-scope em{color:#9eb0a7;font:720 6.5px/1.2 system-ui;font-style:normal;white-space:normal}
+.pcc-budget{display:grid;gap:7px;padding:9px 10px;border:1px solid rgba(232,184,61,.42);border-radius:13px;background:linear-gradient(145deg,rgba(55,43,9,.33),rgba(11,18,12,.7))}
+.pcc-budget.insufficient{border-color:rgba(255,91,122,.5);background:linear-gradient(145deg,rgba(73,16,28,.34),rgba(19,9,12,.72))}
+.pcc-budget.sufficient{border-color:rgba(37,239,145,.38);background:linear-gradient(145deg,rgba(3,57,34,.38),rgba(4,21,14,.72))}
+.pcc-budget-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.pcc-budget-head small{color:var(--pcc-gold);font:900 6px/1 system-ui;letter-spacing:.055em}.pcc-budget-head strong{color:#e9d78d;font:950 7px/1 system-ui}.pcc-budget.insufficient .pcc-budget-head strong{color:var(--pcc-red)}.pcc-budget.sufficient .pcc-budget-head strong{color:var(--pcc-green)}
+.pcc-budget-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}.pcc-budget-grid span{min-width:0;display:grid;gap:3px;padding:6px;border:1px solid rgba(129,159,143,.16);border-radius:8px;background:rgba(0,12,8,.42)}.pcc-budget-grid small{color:#839a90;font:800 5.5px/1.1 system-ui}.pcc-budget-grid b{color:#e9eeea;font:900 7.4px/1 system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcc-reconciliation{border:1px solid rgba(63,187,116,.27);border-radius:12px;background:rgba(1,17,10,.65);overflow:hidden}
+.pcc-reconciliation-mismatch{border-color:rgba(255,91,122,.58)}.pcc-reconciliation-stale{border-color:rgba(232,184,61,.48)}
+.pcc-reconciliation summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 10px;cursor:pointer;list-style:none}.pcc-reconciliation summary::-webkit-details-marker{display:none}.pcc-reconciliation summary span{color:#d8af43;font:900 6.5px/1 system-ui;letter-spacing:.065em}.pcc-reconciliation summary strong{color:#3ee99d;font:950 7px/1 system-ui}.pcc-reconciliation-mismatch summary strong{color:var(--pcc-red)}.pcc-reconciliation-stale summary strong{color:#f0c450}
+.pcc-reconciliation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:0 9px 9px}.pcc-reconciliation-grid span{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 7px;border:1px solid rgba(97,146,119,.15);border-radius:8px;background:rgba(3,26,16,.48)}.pcc-reconciliation-grid small{color:#8da399;font:760 5.7px/1.1 system-ui}.pcc-reconciliation-grid b{color:#e7ece8;font:900 6.8px/1 system-ui;text-align:right;white-space:nowrap}
+.pcc-reconciliation code{display:block;margin:0 9px 9px;color:#789188;font:700 5.5px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:560px){
+  .pcc-account-scope{gap:4px}.pcc-account-scope article{gap:3px;padding:7px 6px;border-radius:9px}.pcc-account-scope small{font-size:4.7px}.pcc-account-scope strong{font-size:10.4px}.pcc-account-scope em{font-size:5.1px}
+  .pcc-budget{gap:5px;padding:7px;border-radius:10px}.pcc-budget-head small{font-size:5px}.pcc-budget-head strong{font-size:5.8px}.pcc-budget-grid{gap:3px}.pcc-budget-grid span{padding:5px 4px}.pcc-budget-grid small{font-size:4.4px}.pcc-budget-grid b{font-size:5.6px}
+  .pcc-reconciliation summary{padding:7px}.pcc-reconciliation summary span,.pcc-reconciliation summary strong{font-size:5.4px}.pcc-reconciliation-grid{gap:3px;padding:0 6px 6px}.pcc-reconciliation-grid span{padding:5px}.pcc-reconciliation-grid small{font-size:4.5px}.pcc-reconciliation-grid b{font-size:5.5px}.pcc-reconciliation code{margin:0 6px 6px;font-size:4.5px}
+}
+@media(max-width:380px){
+  .pcc-account-scope article{padding:6px 4px}.pcc-account-scope small{font-size:4.2px}.pcc-account-scope strong{font-size:9.2px}.pcc-account-scope em{font-size:4.6px}
+  .pcc-budget-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}

@@ -106,6 +106,10 @@ type LiquidationDiagnostics = {
   longExposureUsd: number | null;
   shortExposureUsd: number | null;
   netExposureUsd: number | null;
+  liveDataStatus: string;
+  reconciliationStatus: string;
+  snapshotId: string;
+  snapshotAgeMs: number | null;
 };
 
 function directText(element: Element | null, selector: string) {
@@ -168,7 +172,8 @@ function money(value: number | null, fallback = "—") {
 async function loadLiquidationDiagnostics(): Promise<LiquidationDiagnostics> {
   const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" });
   const root = record(payload);
-  const records = [root, record(root.data), record(root.account), record(root.snapshot), record(root.accountRisk), record(root.crossRisk), record(root.portfolio)];
+  const reconciliation = record(root.reconciliation);
+  const records = [root, reconciliation, record(root.data), record(root.account), record(root.snapshot), record(root.accountRisk), record(root.crossRisk), record(root.portfolio)];
   const sourceRaw = firstString(records, ["liquidationRiskSource"]);
   const source = sourceRaw === "ASTER_ACCOUNT_RATIO" || sourceRaw === "SERVER_RECONSTRUCTED" ? sourceRaw : "UNKNOWN";
   return {
@@ -177,9 +182,13 @@ async function loadLiquidationDiagnostics(): Promise<LiquidationDiagnostics> {
     marginBalance: firstNumber(records, ["marginBalance", "totalMarginBalance"]),
     equity: firstNumber(records, ["equity", "totalMarginBalance"]),
     maintenanceMarginUsd: firstNumber(records, ["maintenanceMarginUsd", "totalMaintMargin"]),
-    longExposureUsd: firstNumber(records, ["longNotional", "longExposureUsd"]),
-    shortExposureUsd: firstNumber(records, ["shortNotional", "shortExposureUsd"]),
-    netExposureUsd: firstNumber(records, ["netExposure", "netExposureUsd"]),
+    longExposureUsd: optionalNumber(reconciliation.longExposureUsd) ?? firstNumber(records, ["longExposureUsd", "longNotional"]),
+    shortExposureUsd: optionalNumber(reconciliation.shortExposureUsd) ?? firstNumber(records, ["shortExposureUsd", "shortNotional"]),
+    netExposureUsd: optionalNumber(reconciliation.netExposureUsd) ?? firstNumber(records, ["netExposureUsd", "netExposure"]),
+    liveDataStatus: String(root.liveDataStatus || reconciliation.liveDataStatus || "UNKNOWN").toUpperCase(),
+    reconciliationStatus: String(reconciliation.status || "UNKNOWN").toUpperCase(),
+    snapshotId: String(reconciliation.snapshotId || root.snapshotId || root.accountStateVersion || ""),
+    snapshotAgeMs: firstNumber(records, ["snapshotAgeMs"]),
   };
 }
 
@@ -269,6 +278,7 @@ function LiquidationGauge({ value, diagnostics, exposure, equity, available }: {
   const shortExposure = exposure?.reliable ? exposure.shortExposureUsd : diagnostics?.shortExposureUsd ?? null;
   const netExposure = exposure?.reliable ? exposure.netExposureUsd : diagnostics?.netExposureUsd ?? null;
   const source = diagnostics?.source === "ASTER_ACCOUNT_RATIO" ? "ASTER ACCOUNT RATIO" : diagnostics?.source === "SERVER_RECONSTRUCTED" ? "SERVER RECONSTRUCTED" : "ONBEKEND";
+  const liveDataStatus = String(diagnostics?.liveDataStatus || "SYNC").toUpperCase();
   const marginLabel = diagnostics?.marginBalance !== null && diagnostics?.marginBalance !== undefined
     ? money(diagnostics.marginBalance)
     : diagnostics?.equity !== null && diagnostics?.equity !== undefined
@@ -286,7 +296,7 @@ function LiquidationGauge({ value, diagnostics, exposure, equity, available }: {
   >
     <span className={`aps-gauge-flipper${flipped ? " is-flipped" : ""}`}>
       <span className="aps-gauge-face aps-gauge-front">
-        <span className="aps-gauge-head"><b>LIQUIDATIERISICO</b><em><i />LIVE</em></span>
+        <span className="aps-gauge-head"><b>LIQUIDATIERISICO</b><em className={"aps-data-"+liveDataStatus.toLowerCase().replaceAll(" ","-")}><i />{liveDataStatus}</em></span>
         <span className="aps-gauge-dial" aria-hidden="true">
           <svg viewBox="0 0 220 126" role="presentation">
             <path className="aps-gauge-track" d="M20 105 A90 90 0 0 1 200 105" pathLength="100" />
@@ -553,12 +563,14 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
   onCloseProfit: (scope: ProfitScope) => void;
   onOpenHedge: () => void;
 }) {
-  return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={REFERENCE}>
+  const liveDataStatus=String(liquidationDiagnostics?.liveDataStatus||"SYNC").toUpperCase();
+  const liveDataClass=liveDataStatus.toLowerCase().replaceAll(" ","-");
+  return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={REFERENCE} data-live-status={liveDataStatus}>
     <header>
       <div className="aps-title-icon"><Icon name="positions" /></div>
       <h2>PORTFOLIO SNAPSHOT</h2>
       <div className="aps-header-actions">
-        <span className="aps-live"><i />Live</span>
+        <span className={"aps-live aps-data-"+liveDataClass} title={liquidationDiagnostics?.snapshotId?("Snapshot "+liquidationDiagnostics.snapshotId):undefined}><i />{liveDataStatus}</span>
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>

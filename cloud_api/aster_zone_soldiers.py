@@ -329,31 +329,34 @@ def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price:
 
 
 def _position_map(positions: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
+    """Normalize raw Aster positionRisk and browser dashboard rows to one key shape."""
     result: dict[str, dict[str, Any]] = {}
     for row in positions or []:
         if not isinstance(row, dict):
             continue
         symbol = str(row.get("symbol", "")).upper()
-        side = str(row.get("positionSide", "")).upper()
-        qty = abs(_number(row.get("positionAmt")))
-        if symbol and side in {"LONG", "SHORT"} and qty > 0:
+        side = str(row.get("positionSide", row.get("side", ""))).upper()
+        qty = abs(_number(row.get("positionAmt", row.get("quantity", row.get("size")))))
+        notional = abs(_number(row.get("notionalUsd", row.get("notional"))))
+        if symbol and side in {"LONG", "SHORT"} and (qty > 0 or notional > 0):
             result[f"{symbol}|{side}"] = row
     return result
 
 
-def _managed_exposure(managed_state: dict[str, Any], positions: list[dict[str, Any]] | None) -> dict[str, Any]:
+def account_exposure_snapshot(positions: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Canonical account-wide directional exposure from one exchange position snapshot.
+
+    Ownership is deliberately irrelevant here. Legacy, manual, Strategy-2,
+    Sniper and currently-unclassified positions all affect real account exposure.
+    """
     pmap = _position_map(positions)
     long_count = short_count = 0
     long_notional = short_notional = 0.0
     notionals: list[float] = []
-    legacy_count = 0
-    for key, state_row in managed_state.items():
-        row = pmap.get(key)
-        if row is None:
-            continue
-        side = str(row.get("positionSide", "")).upper()
-        qty = abs(_number(row.get("positionAmt")))
-        mark = _number(row.get("markPrice")) or _number(row.get("entryPrice"))
+    for row in pmap.values():
+        side = str(row.get("positionSide", row.get("side", ""))).upper()
+        qty = abs(_number(row.get("positionAmt", row.get("quantity", row.get("size")))))
+        mark = _number(row.get("markPrice", row.get("price"))) or _number(row.get("entryPrice", row.get("entry")))
         notional = qty * mark if qty > 0 and mark > 0 else abs(_number(row.get("notionalUsd", row.get("notional"))))
         if notional > 0:
             notionals.append(notional)
@@ -363,28 +366,179 @@ def _managed_exposure(managed_state: dict[str, Any], positions: list[dict[str, A
         elif side == "SHORT":
             short_count += 1
             short_notional += notional
-        if str(state_row.get("soldierRole", "")).upper() == ROLE_LEGACY_UNASSIGNED:
-            legacy_count += 1
     gross = long_notional + short_notional
     net = long_notional - short_notional
-    side = "LONG" if net > 1e-9 else "SHORT" if net < -1e-9 else "FLAT"
-    imbalance = abs(net) / gross * 100.0 if gross > 0 else 0.0
+    net_side = "LONG" if net > 1e-9 else "SHORT" if net < -1e-9 else "FLAT"
     notionals.sort()
     unit = 0.0
     if notionals:
         middle = len(notionals) // 2
-        unit = notionals[middle] if len(notionals) % 2 else (notionals[middle - 1] + notionals[middle]) / 2
+        unit = notionals[middle] if len(notionals) % 2 else (notionals[middle - 1] + notionals[middle]) / 2.0
     return {
         "totalLongOpenCount": long_count,
         "totalShortOpenCount": short_count,
+        "sourcePositionCount": len(pmap),
         "totalLongNotional": long_notional,
         "totalShortNotional": short_notional,
         "grossExposureUsd": gross,
         "netExposureUsd": net,
-        "netExposureSide": side,
-        "imbalancePercent": imbalance,
+        "netExposureSide": net_side,
+        "imbalancePercent": abs(net) / gross * 100.0 if gross > 0 else 0.0,
         "medianPositionNotionalUsd": unit,
+        "hedgeCoveragePercent": (short_notional / long_notional * 100.0) if long_notional > 0 else None,
+    }
+
+
+def _managed_exposure(managed_state: dict[str, Any], positions: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Account exposure plus ownership diagnostics.
+
+    Before Build 430 this function iterated only managed Strategy-2 state and
+    therefore ignored real exchange positions without Strategy-2 ownership.
+    The zone balancer could consequently choose a side from a different exposure
+    book than the Portfolio Snapshot. Exposure now always starts from exchange
+    truth; ownership is used only for diagnostics/classification.
+    """
+    pmap = _position_map(positions)
+    exposure = account_exposure_snapshot(positions)
+    legacy_count = 0
+    managed_open_count = 0
+    for key, state_row in managed_state.items():
+        if key not in pmap:
+            continue
+        managed_open_count += 1
+        if str(state_row.get("soldierRole", "")).upper() == ROLE_LEGACY_UNASSIGNED:
+            legacy_count += 1
+    return {
+        **exposure,
+        "managedOpenCount": managed_open_count,
+        "untrackedAccountOpenCount": max(0, len(pmap) - managed_open_count),
         "legacyUnassignedOpenCount": legacy_count,
+        "scope": "ALL_EXCHANGE_POSITIONS",
+    }
+
+
+def account_reconciliation_report(
+    *,
+    positions: list[dict[str, Any]] | None,
+    managed_state: dict[str, Any] | None,
+    active_zone: int | None = None,
+    sniper_symbols: set[str] | None = None,
+    snapshot_position_count: int | None = None,
+    snapshot_long_notional: float | None = None,
+    snapshot_short_notional: float | None = None,
+    captured_at_ms: int = 0,
+    now_ms: int = 0,
+) -> dict[str, Any]:
+    """Read-only classification and arithmetic reconciliation for one account snapshot."""
+    pmap = _position_map(positions)
+    managed = managed_state or {}
+    sniper = {str(symbol).upper() for symbol in (sniper_symbols or set())}
+    exposure = account_exposure_snapshot(positions)
+    counts = {
+        "soldiersCurrentZone": 0,
+        "soldiersOldZones": 0,
+        "soldiersOtherZones": 0,
+        "soldiersReturning": 0,
+        "legacyAster": 0,
+        "previousStrategy": 0,
+        "manual": 0,
+        "sniper": 0,
+        "unknown": 0,
+    }
+    classifications: list[dict[str, Any]] = []
+    soldiers_total = 0
+    for key, row in sorted(pmap.items()):
+        symbol, side = key.split("|", 1)
+        state_row = managed.get(key) if isinstance(managed.get(key), dict) else {}
+        role = str(state_row.get("soldierRole", "")).upper()
+        soldier_id = str(state_row.get("soldierId", "")).strip()
+        origin = state_row.get("originZone")
+        category = "UNKNOWN"
+        if role in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER} and soldier_id:
+            soldiers_total += 1
+            try:
+                origin_zone = int(origin)
+            except (TypeError, ValueError):
+                origin_zone = None
+            if active_zone is not None and origin_zone == active_zone:
+                category = "SOLDIER_CURRENT_ZONE"
+                counts["soldiersCurrentZone"] += 1
+            elif origin_zone is not None:
+                category = "SOLDIER_OLD_ZONE"
+                counts["soldiersOldZones"] += 1
+            else:
+                category = "SOLDIER_OTHER_ZONE"
+                counts["soldiersOtherZones"] += 1
+        elif role == ROLE_LEGACY_UNASSIGNED:
+            category = "LEGACY_ASTER"
+            counts["legacyAster"] += 1
+        elif state_row:
+            category = "ASTER_MANAGED_OTHER"
+            counts["previousStrategy"] += 1
+        elif symbol in sniper:
+            category = "SNIPER"
+            counts["sniper"] += 1
+        else:
+            category = "UNKNOWN"
+            counts["unknown"] += 1
+        classifications.append({
+            "key": key,
+            "symbol": symbol,
+            "side": side,
+            "category": category,
+            "soldierId": soldier_id or None,
+            "originZone": origin if origin is not None else None,
+        })
+
+    expected_count = exposure["sourcePositionCount"] if snapshot_position_count is None else max(0, int(snapshot_position_count))
+    count_mismatch = expected_count != exposure["sourcePositionCount"]
+
+    def exposure_mismatch(expected: float | None, actual: float) -> bool:
+        if expected is None:
+            return False
+        expected_value = abs(_number(expected))
+        tolerance = max(0.05, expected_value * 0.001)
+        return abs(expected_value - actual) > tolerance
+
+    long_mismatch = exposure_mismatch(snapshot_long_notional, exposure["totalLongNotional"])
+    short_mismatch = exposure_mismatch(snapshot_short_notional, exposure["totalShortNotional"])
+    age_ms = max(0, int(now_ms) - int(captured_at_ms)) if now_ms > 0 and captured_at_ms > 0 else None
+    stale = age_ms is None or age_ms > 120_000
+    status = "MISMATCH" if count_mismatch or long_mismatch or short_mismatch else "STALE" if stale else "SYNCED"
+    snapshot_material = (
+        f"{int(captured_at_ms)}|{exposure['sourcePositionCount']}|"
+        f"{exposure['totalLongNotional']:.8f}|{exposure['totalShortNotional']:.8f}"
+    )
+    snapshot_id = hashlib.sha256(snapshot_material.encode()).hexdigest()[:16]
+    unknown = counts["unknown"]
+    non_soldiers = max(0, exposure["sourcePositionCount"] - soldiers_total)
+    return {
+        "status": status,
+        "snapshotId": snapshot_id,
+        "accountStateVersion": snapshot_id,
+        "sourceTimestampMs": int(captured_at_ms) if captured_at_ms > 0 else None,
+        "snapshotAgeMs": age_ms,
+        "exchangePositions": exposure["sourcePositionCount"],
+        "appPositions": expected_count,
+        "classifiedPositions": exposure["sourcePositionCount"],
+        "unclassifiedPositions": unknown,
+        "unknownPositions": unknown,
+        "exchangeLong": exposure["totalLongOpenCount"],
+        "exchangeShort": exposure["totalShortOpenCount"],
+        "soldiersTotal": soldiers_total,
+        "nonSoldiersTotal": non_soldiers,
+        "categories": counts,
+        "longExposureUsd": exposure["totalLongNotional"],
+        "shortExposureUsd": exposure["totalShortNotional"],
+        "netExposureUsd": exposure["netExposureUsd"],
+        "netExposureSide": exposure["netExposureSide"],
+        "grossExposureUsd": exposure["grossExposureUsd"],
+        "hedgeCoveragePercent": exposure["hedgeCoveragePercent"],
+        "countMismatch": count_mismatch,
+        "longExposureMismatch": long_mismatch,
+        "shortExposureMismatch": short_mismatch,
+        "classifications": classifications,
+        "exposureScope": "ALL_EXCHANGE_POSITIONS",
     }
 
 
