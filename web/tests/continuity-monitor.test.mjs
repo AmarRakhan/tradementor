@@ -55,3 +55,14 @@ test("continuity CSS contains the three reference surfaces", async () => {
   assert.match(css, /\.tm-continuity-alert/);
   assert.match(css, /\.tm-continuity-modal/);
 });
+
+test("continuity settings expose the requested reserve presets plus custom", async () => {
+  const [source, css] = await Promise.all([
+    read("components/continuity-monitor.tsx"),
+    read("app/continuity-monitor.css"),
+  ]);
+  assert.match(source, /\[25, 50, 100\]/);
+  assert.match(source, />Aangepast<\/button>/);
+  assert.match(source, /tm-buffer-presets/);
+  assert.match(css, /\.tm-buffer-presets/);
+});

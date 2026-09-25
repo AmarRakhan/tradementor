@@ -26,36 +26,70 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-25",
-  title: "Continuïteitsbewaker · Bybit betaalreserve hersteld",
+  title: "BETA · Continuïteit veiligheidsbuffer afgerond",
   newItems: [
-    "De owner-only App kosten & betalingen-module blijft op de actuele V46-basis actief en gebruikt dezelfde dedicated read-only Bybit-koppeling.",
-    "De betaalreserveberekening gebruikt nu daadwerkelijk het uit de Funding-wallet gelezen saldo voor de ingestelde basismunt.",
+    "Continuïteitsinstellingen tonen nu de afgesproken snelle veiligheidsbuffers €25, €50 en €100 plus Aangepast.",
+    "De presets blijven gekoppeld aan dezelfde server-side reserveformule en ondersteunen EUR en USD zonder extra provider- of tradingcalls.",
   ],
   problems: [
-    "Bij een gekoppelde Bybit-wallet kon de continuïteitsrefresh een serverfout geven zodra een saldo in de basismunt werd verwerkt.",
+    "Build 427 herstelde de Bybit Funding-reserveberekening, maar de instellingen hadden nog alleen een vrij invoerveld voor de veiligheidsbuffer.",
   ],
   causes: [
-    "De reserve-aggregatie verwees naar een niet-bestaande variabele in plaats van naar het reeds veilig geparste Funding-balance.",
+    "De onderliggende configureerbare buffer bestond al; alleen de gevraagde preset-presentatie ontbrak nog.",
   ],
   fixes: [
-    "De basismunt telt nu exact dezelfde geparste balance-waarde op die in het read-only assetoverzicht wordt getoond.",
-    "Een regressietest blokkeert herintroductie van de ongedefinieerde reservevariabele.",
+    "Vier mobiele presetknoppen toegevoegd met duidelijke actieve state en directe vrije invoer voor Aangepast.",
+    "Regressietest toegevoegd voor €25, €50, €100 en Aangepast.",
+    "Owner-only beta-gating, read-only Bybit-verificatie en alle tradinglogica blijven ongewijzigd.",
   ],
   now: [
-    "Bybit blijft uitsluitend read-only: geen order-, transfer- of withdrawalpad is toegevoegd of gewijzigd.",
-    "Owner-UID gating, Secret Manager-opslag, Google billing-check, caching, startup-alerts en de bestaande trading-engine blijven ongewijzigd.",
+    "Build 428 is een owner-only BETA-candidate en wordt niet algemeen uitgerold zonder expliciet akkoord.",
+    "Reserve blijft: bekende betalingen binnen 30 dagen + ingestelde veiligheidsbuffer.",
   ],
-  before: "Build 426 maakte Portfolio Koers trade-events vrijwel direct zichtbaar; de eerder toegevoegde continuïteitsmodule bevatte nog een fout in de Bybit-reserveaggregatie.",
-  after: "Build 427 herstelt uitsluitend de owner-only continuïteitsbewaker op de huidige productiecode zonder tradinggedrag te wijzigen.",
+  before: "Build 427 maakte de gekoppelde Bybit-reserveberekening weer betrouwbaar.",
+  after: "Build 428 voltooit de afgesproken veiligheidsbuffer-UX zonder de backend- of tradingsemantiek te wijzigen.",
   technicalDetails: [
-    "Fix: comparable += balance voor de ingestelde Bybit-basismunt.",
-    "Geen wijziging aan Aster orders, Strategy-2, DCA, TP/SL, leverage, slots, ownership of schedulers.",
-    "Continuity endpoints blijven server-side beschermd door de immutable ownerUid gate.",
+    "Frontend presets: 25, 50, 100 en custom; servervalidatie blijft 0..100000 EUR/USD.",
+    "Geen wijzigingen aan orders, DCA, TP/SL, leverage, slots, Zone-Soldaten, schedulers of exchange polling.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-427-continuity-bybit-reserve",
+    version: "46",
+    build: "427",
+    releasedAt: "2026-09-25",
+    title: "Continuïteitsbewaker · Bybit betaalreserve hersteld",
+    newItems: [
+      "De owner-only App kosten & betalingen-module blijft op de actuele V46-basis actief en gebruikt dezelfde dedicated read-only Bybit-koppeling.",
+      "De betaalreserveberekening gebruikt nu daadwerkelijk het uit de Funding-wallet gelezen saldo voor de ingestelde basismunt.",
+    ],
+    problems: [
+      "Bij een gekoppelde Bybit-wallet kon de continuïteitsrefresh een serverfout geven zodra een saldo in de basismunt werd verwerkt.",
+    ],
+    causes: [
+      "De reserve-aggregatie verwees naar een niet-bestaande variabele in plaats van naar het reeds veilig geparste Funding-balance.",
+    ],
+    fixes: [
+      "De basismunt telt nu exact dezelfde geparste balance-waarde op die in het read-only assetoverzicht wordt getoond.",
+      "Een regressietest blokkeert herintroductie van de ongedefinieerde reservevariabele.",
+    ],
+    now: [
+      "Bybit blijft uitsluitend read-only: geen order-, transfer- of withdrawalpad is toegevoegd of gewijzigd.",
+      "Owner-UID gating, Secret Manager-opslag, Google billing-check, caching, startup-alerts en de bestaande trading-engine blijven ongewijzigd.",
+    ],
+    before: "Build 426 maakte Portfolio Koers trade-events vrijwel direct zichtbaar; de eerder toegevoegde continuïteitsmodule bevatte nog een fout in de Bybit-reserveaggregatie.",
+    after: "Build 427 herstelt uitsluitend de owner-only continuïteitsbewaker op de huidige productiecode zonder tradinggedrag te wijzigen.",
+    technicalDetails: [
+      "Fix: comparable += balance voor de ingestelde Bybit-basismunt.",
+      "Geen wijziging aan Aster orders, Strategy-2, DCA, TP/SL, leverage, slots, ownership of schedulers.",
+      "Continuity endpoints blijven server-side beschermd door de immutable ownerUid gate.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-426-realtime-portfolio-trade-events",
     version: "46",
