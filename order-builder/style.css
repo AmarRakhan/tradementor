@@ -1203,3 +1203,191 @@ body.mode-packages .package-expand-button{
     grid-template-columns:repeat(auto-fill,minmax(180px,1fr))!important;
   }
 }
+
+
+/* ============================================================
+   OVERIGE ARTIKELEN — COMPACT DEVICE-FAMILY INDEX
+   Dense multi-column lists; packages page unaffected.
+   ============================================================ */
+body.mode-items .categories-grid{
+  display:grid!important;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr))!important;
+  gap:7px!important;
+  align-items:start!important;
+  padding:0 2px 10px 0!important;
+}
+
+.dense-catalog-section{
+  min-width:0;
+  border:1px solid #d7e3ef;
+  border-radius:7px;
+  background:#fff;
+  overflow:hidden;
+  break-inside:avoid;
+}
+
+.dense-section-head{
+  min-height:35px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:7px;
+  padding:4px 6px 4px 7px;
+  background:#f7fbff;
+  border-bottom:1px solid #e6edf5;
+}
+
+.dense-device-section .dense-section-head{
+  background:#eef6ff;
+}
+
+.dense-section-title-wrap{
+  min-width:0;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+
+.dense-section-icon{
+  width:22px;
+  height:22px;
+  flex:0 0 22px;
+  display:grid;
+  place-items:center;
+  border-radius:5px;
+  background:#fff;
+  font-size:12px;
+}
+
+.dense-section-title{
+  font-size:11.2px;
+  line-height:1.12;
+  font-weight:850;
+  color:#0b2d5d;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.dense-section-count{
+  margin-top:1px;
+  color:#8195ac;
+  font-size:8.2px;
+  line-height:1;
+}
+
+.dense-collapse-button{
+  width:22px;
+  height:22px;
+  flex:0 0 22px;
+  border:0;
+  background:transparent;
+  color:#0b70da;
+  font-size:11px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.dense-item-list{
+  display:block;
+}
+
+.dense-item-row{
+  min-height:31px;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 65px;
+  align-items:center;
+  gap:4px;
+  padding:2px 4px 2px 5px;
+  border-bottom:1px solid #eef3f8;
+  background:#fff;
+}
+
+.dense-item-row:last-child{
+  border-bottom:0;
+}
+
+.dense-item-row:hover{
+  background:#f8fbff;
+}
+
+.dense-item-row.selected{
+  background:#eef7ff;
+  box-shadow:inset 3px 0 0 #0b7cff;
+}
+
+.dense-item-select{
+  min-width:0;
+  height:27px;
+  display:grid;
+  grid-template-columns:14px 22px minmax(0,1fr);
+  align-items:center;
+  gap:5px;
+  border:0;
+  background:transparent;
+  padding:0;
+  text-align:left;
+  cursor:pointer;
+}
+
+.dense-item-check{
+  width:14px;
+  height:14px;
+  border:1px solid #bad0e5;
+  border-radius:3px;
+  display:grid;
+  place-items:center;
+  color:transparent;
+  background:#fff;
+  font-size:9px;
+  font-weight:900;
+}
+
+.dense-item-row.selected .dense-item-check{
+  color:#fff;
+  border-color:#0b7cff;
+  background:#0b7cff;
+}
+
+.dense-item-select img{
+  width:21px;
+  height:21px;
+  object-fit:contain;
+}
+
+.dense-item-name{
+  min-width:0;
+  color:#173d6d;
+  font-size:9.8px;
+  line-height:1.12;
+  font-weight:700;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.dense-status{
+  width:65px!important;
+  height:23px!important;
+  padding:0 4px!important;
+  border-radius:5px!important;
+  font-size:8.5px!important;
+}
+
+@media(min-width:1700px){
+  body.mode-items .categories-grid{
+    grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  }
+}
+
+@media(max-width:1350px){
+  body.mode-items .categories-grid{
+    grid-template-columns:repeat(3,minmax(0,1fr))!important;
+  }
+}
+
+@media(max-width:1050px){
+  body.mode-items .categories-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+}
