@@ -39,3 +39,10 @@ test("friends mobile design has no horizontal overflow and responsive breakpoint
 test("friends source never renders absolute portfolio value labels", () => {
   assert.doesNotMatch(view, /currentEquity|dayStartEquity|todayUsd|availableBalance|walletAddress|realizedPnlUsd/);
 });
+
+
+test("friends portal CSS contains real rule boundaries instead of escaped newlines", () => {
+  assert.doesNotMatch(css.slice(0, 240), /\\\\n/);
+  assert.match(css, /\.portal\{[^}]+\}\n:global\(\.content\[data-friends-active="true"\]\)/);
+  assert.match(css, /data-friends-portal="true"/);
+});
