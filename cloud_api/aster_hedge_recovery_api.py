@@ -112,15 +112,27 @@ def _dynamic_impact(rows: list[dict[str, Any]], selected: list[dict[str, Any]], 
     }
 
 
-def profit_preview_with_settings(rows: list[dict[str, Any]], settings: dict[str, float]) -> dict[str, Any]:
-    """Keep the existing >=$0.50 selector but use the user's one hedge target everywhere."""
-    materialized = list(rows)
-    result = profit_preview(materialized)
+def profit_preview_with_settings(
+    rows: list[dict[str, Any]],
+    settings: dict[str, float],
+    *,
+    exposure_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Keep close eligibility scoped while reporting account-wide exposure.
+
+    rows remains the set of positions that the existing profit-close action is
+    allowed to select. exposure_rows may contain the full exchange account so
+    hedge/exposure presentation and impact calculations use the same account book
+    as the Soldiers balancer without broadening what Close Profit may trade.
+    """
+    selectable = list(rows)
+    account_rows = list(exposure_rows) if exposure_rows is not None else selectable
+    result = profit_preview(selectable)
     result["hedgeConfig"] = dict(settings)
-    result["exposure"] = portfolio_exposure(materialized, settings)
+    result["exposure"] = portfolio_exposure(account_rows, settings)
     for key in ("long", "short", "all"):
         selected = list((result.get(key) or {}).get("eligible") or [])
-        result[key]["impact"] = _dynamic_impact(materialized, selected, settings)
+        result[key]["impact"] = _dynamic_impact(account_rows, selected, settings)
     return result
 
 
