@@ -96,16 +96,16 @@ def test_zone_change_is_not_an_exit_trigger():
     assert "ZONE_CHANGE_CLOSE" not in core_source
 
 
-def test_zone_owned_rollout_is_hard_owner_only_not_generic_beta_or_stable():
+def test_zone_owned_rollout_uses_central_beta_stable_entitlement_not_owner_only_gate():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert '_OWNER_ONLY_RELEASE_FEATURES = {"zone_soldiers"}' in source
-    assert 'if key in _OWNER_ONLY_RELEASE_FEATURES:' in source
-    assert 'return bool(_is_beta_owner(user) and row.get("beta"))' in source
+    assert '"zone_soldiers": {"status": "TESTEN", "beta": True, "stable": False}' in source
+    assert "_OWNER_ONLY_RELEASE_FEATURES" not in source
     assert 'record = auth.get_user(str(uid), app=auth_app)' in source
-    assert 'legacy_beta_candidate = profile.get("betaOwner") is True or str(profile.get("releaseChannel") or "").upper() == "BETA"' in source
-    assert 'beta_owner = bool(legacy_beta_candidate and _is_beta_owner_uid(uid))' in source
-    assert '"betaOwner": beta_owner' in source
-    assert 'zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))' in source
+    assert 'profile.get("betaOwner") is True' in source
+    assert 'str(profile.get("releaseChannel") or "").upper() == "BETA"' in source
+    assert 'beta_owner = bool(beta_candidate and _is_beta_owner_uid(uid))' in source
+    assert 'return _release_channel_enabled(beta_owner, key)' in source
+    assert '_release_feature_enabled_for_uid(uid, "zone_soldiers")' in source
 
 def test_zone_entry_size_grows_gently_and_monotonically_with_zone_distance():
     values = [_zone_entry_multiplier(zone, 2.0, 1.20) for zone in (0, 1, 2, 3)]
@@ -139,11 +139,16 @@ def test_build417_zone_off_drains_only_existing_zone_owned_positions():
     assert '"drainingOpenCount": zone_owned_open_count' in core
 
 
-def test_build417_unavailable_accounts_force_zone_mode_off_server_side():
+def test_build445_unentitled_accounts_force_zone_mode_off_server_side_without_deleting_persisted_settings():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert 'zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))' in source
-    assert 'out["zoneSoldiersEnabled"] = False' in source
-    assert 'out["zoneSoldiersOptInVersion"] = 0' in source
+    start = source.index("def _strip_unreleased_beta_settings_for_uid(")
+    end = source.index("def _admin_device_reference(", start)
+    block = source[start:end]
+    assert 'if _release_feature_enabled_for_uid(uid, "zone_soldiers"):' in block
+    assert 'out["zoneSoldiersEnabled"] = False' in block
+    assert 'out["zoneSoldiersOptInVersion"] = 0' in block
+    assert "out = dict(settings)" in block
+    assert ".set(" not in block
 
 
 def test_build423_balancer_is_priority_only_and_fixed_formation_is_the_only_new_entry_capacity():
