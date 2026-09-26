@@ -256,10 +256,11 @@ test("Build 414 can stop before a deep old candle after a small recent decision 
   assert.equal(portfolioKoersFocusBars([...old,...recent],16,145.53,145.18,146.48),7);
 });
 
-test("Build 414 reduces price-axis typography while keeping live equity as the last-value label",async()=>{
+test("Build 446 keeps calm price-axis typography without a colored last-value badge",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('textColor:"#9fb0ba",fontSize:10'));
-  assert.ok(component.includes("lastValueVisible:true"));
+  assert.ok(component.includes("lastValueVisible:false"));
+  assert.ok(component.includes("priceLineVisible:false"));
   assert.ok(component.includes("scaleMargins:{top:.12,bottom:.12}"));
 });
 
