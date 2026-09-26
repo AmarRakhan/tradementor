@@ -12,6 +12,7 @@ from google.api_core import exceptions as google_exceptions
 from pydantic import BaseModel, Field
 
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, strict_profit_preview, strictly_profitable_positions
+from aster_position_loss_auto_hedge_lock import auto_hedge_symbol_managed
 from main import (
     PairExecutionPlan,
     PositionSide,
@@ -35,14 +36,39 @@ class SnapshotProfitCloseRequest(BaseModel):
     idempotency_key: str = Field(min_length=16, max_length=120)
 
 
+def _exclude_auto_hedge_managed(
+    uid: str, candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    safe: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    cache: dict[str, bool] = {}
+    for candidate in candidates:
+        symbol = str(candidate.get("symbol", "")).upper().strip()
+        if not symbol:
+            continue
+        if symbol not in cache:
+            cache[symbol] = auto_hedge_symbol_managed(account_uid=uid, symbol=symbol)
+        (excluded if cache[symbol] else safe).append(candidate)
+    return safe, excluded
+
+
 def _fresh_snapshot_preview(user: dict[str, Any]) -> dict[str, Any]:
     client = _portfolio_growth_client(user, live=False)
     try:
-        preview = strict_profit_preview(client.position_risk())
+        uid = str(user["uid"])
+        rows = list(client.position_risk())
+        raw = strictly_profitable_positions(rows, side="ALL")
+        safe, excluded = _exclude_auto_hedge_managed(uid, raw)
+        safe_keys = {(item["symbol"], item["side"]) for item in safe}
+        preview = strict_profit_preview([
+            row for row in rows
+            if (str(row.get("symbol", "")).upper(), str(row.get("positionSide", "")).upper()) in safe_keys
+        ])
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
     return {
         **preview,
+        "autoHedgeProtectedExcludedCount": len(excluded),
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "reliable": True,
     }
@@ -97,7 +123,12 @@ def snapshot_close_profitable(
     failed: list[dict[str, Any]] = []
     try:
         client = _portfolio_growth_client(user, live=True)
-        initial = strictly_profitable_positions(client.position_risk(), side=scope)
+        initial_raw = strictly_profitable_positions(client.position_risk(), side=scope)
+        initial, protected_excluded = _exclude_auto_hedge_managed(uid, initial_raw)
+        skipped.extend({
+            **candidate,
+            "reason": "Auto Hedge-pair beschermd; niet opgenomen in winstsluiting",
+        } for candidate in protected_excluded)
         for index, candidate in enumerate(initial, 1):
             symbol = candidate["symbol"]
             side = candidate["side"]
@@ -120,6 +151,13 @@ def snapshot_close_profitable(
                     **candidate,
                     "currentProfitUsd": current_profit,
                     "reason": "niet langer meer dan $0,50 groen",
+                })
+                continue
+            if auto_hedge_symbol_managed(account_uid=uid, symbol=symbol):
+                skipped.append({
+                    **candidate,
+                    "currentProfitUsd": current_profit,
+                    "reason": "Auto Hedge-pair werd actief; sluiting fail-closed overgeslagen",
                 })
                 continue
 
