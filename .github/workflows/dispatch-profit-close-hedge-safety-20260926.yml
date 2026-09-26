@@ -22,5 +22,5 @@ jobs:
             -R AmarRakhan/tradementor \
             --ref amar-crypto-bot-2026-cloud \
             -f confirmation=DEPLOY_PRODUCTION_BACKEND \
-            -f source_commit=23ec93a4df545328b36f0b4e401689e25e28b32e \
+            -f source_commit=25d4f90e885bc45bf4033086aa8677c0f0d29607 \
             -f request_issue=282
