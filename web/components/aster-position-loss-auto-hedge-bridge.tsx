@@ -9,6 +9,8 @@ const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
 const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
 const TILE_REFERENCE = "file_00000000340881f4b05212f7cfd82727";
 const SCREEN_REFERENCE = "file_00000000ecd08246bd1b15532fb478d6";
+const OVERVIEW_REFERENCE = "file_000000005090821091d88f1b301841d7";
+const SCALE_REFERENCE = "file_000000003ff08246ad57f7b054d4a96f";
 
 type LegView = {
   quantity?: number;
@@ -37,6 +39,49 @@ type PairState = {
   hedgeLeg?: LegView;
   lastReason?: string;
   lastReconciledAt?: string;
+};
+
+type ScaleLegPreview = {
+  side: "LONG" | "SHORT";
+  currentQuantity: number;
+  addedQuantity: number;
+  quantityAfter: number;
+  currentEntry: number;
+  executionPrice: number;
+  estimatedEntryAfter: number;
+  entryEffect: "GUNSTIGER" | "ONGUNSTIGER" | "VRIJWEL GELIJK";
+  leverage: number;
+};
+
+type ScalePreview = {
+  eventType: "LEGACY_HEDGE_SCALE";
+  symbol: string;
+  requestedMarginPerSideUsd: number;
+  availableBalance: number;
+  extraQuantity: number;
+  estimatedLongMarginUsd: number;
+  estimatedShortMarginUsd: number;
+  estimatedTotalMarginUsd: number;
+  estimatedFeesUsd: number;
+  estimatedAvailableDebitUsd: number;
+  availableAfterEstimate: number;
+  hedgeRatioAfter: number;
+  long: ScaleLegPreview;
+  short: ScaleLegPreview;
+  pairResultNote: string;
+  generatedAt?: string;
+};
+
+type ScaleResult = {
+  operationId: string;
+  symbol: string;
+  status: "SUCCEEDED" | "SUCCEEDED_PARTIAL";
+  actualAddedQuantity: number;
+  longQtyAfter: number;
+  shortQtyAfter: number;
+  longEntryAfter: number;
+  shortEntryAfter: number;
+  hedgeRatioAfter: number;
 };
 
 type AutoHedgeState = {
@@ -184,10 +229,11 @@ function CoinBadge({ symbol }: { symbol: string }) {
   return <span className="plah-coin-badge" aria-hidden="true">{label.slice(0, 2)}</span>;
 }
 
-function PairCard({ pair, saving, onRehedge }: {
+function PairCard({ pair, saving, onRehedge, onScale }: {
   pair: PairState;
   saving: boolean;
   onRehedge: (pair: PairState, enabled: boolean) => void;
+  onScale: (pair: PairState) => void;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const status = String(pair.status || "").toUpperCase();
@@ -210,6 +256,21 @@ function PairCard({ pair, saving, onRehedge }: {
             <strong>{pair.symbol.replace(/USDT$/i, "")}</strong>
             <span className="plah-pair-chevron" aria-hidden="true">⌄</span>
             <span className={`plah-status-badge ${statusClass(status)}`}>{statusLabel(status)}</span>
+            {status === "HEDGED" ? <button
+              type="button"
+              className="plah-scale-open"
+              disabled={saving}
+              onTouchEnd={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => {
+                event.stopPropagation();
+                onScale(pair);
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onScale(pair);
+              }}
+              aria-label={`Hedge-lock vergroten voor ${pair.symbol}`}
+            ><span aria-hidden="true">+</span> VERHOOG</button> : null}
           </div>
           {recovery ? <small className="plah-recovery-meta">
             <span>{stampText ? `Gehedged op ${stampText}` : "Eerder gehedged"}</span>
@@ -281,6 +342,14 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [coinFilter, setCoinFilter] = useState("ALL");
+  const [scalePair, setScalePair] = useState<PairState | null>(null);
+  const [scaleDraft, setScaleDraft] = useState("2");
+  const [scalePreview, setScalePreview] = useState<ScalePreview | null>(null);
+  const [scaleLoading, setScaleLoading] = useState(false);
+  const [scaleSubmitting, setScaleSubmitting] = useState(false);
+  const [scaleError, setScaleError] = useState("");
+  const [scaleMessage, setScaleMessage] = useState("");
+  const [scaleOperationId, setScaleOperationId] = useState("");
   const lastTap = useRef(0);
 
   const load = useCallback(async () => {
@@ -453,6 +522,25 @@ export function AsterPositionLossAutoHedgeBridge() {
     return persist(nextEnabled, threshold, nextEnabled, source);
   };
 
+  const openScale = (pair: PairState) => {
+    if (String(pair.status || "").toUpperCase() !== "HEDGED") return;
+    setScalePair(pair);
+    setScaleDraft("2");
+    setScalePreview(null);
+    setScaleError("");
+    setScaleMessage("");
+    setScaleOperationId("");
+  };
+
+  const closeScale = () => {
+    if (scaleSubmitting) return;
+    setScalePair(null);
+    setScalePreview(null);
+    setScaleError("");
+    setScaleMessage("");
+    setScaleOperationId("");
+  };
+
   const setRehedge = async (pair: PairState, enabled: boolean) => {
     setSaving(true);
     setError("");
@@ -470,6 +558,81 @@ export function AsterPositionLossAutoHedgeBridge() {
       setError(reason instanceof Error ? reason.message : "Opnieuw hedgen kon niet worden aangepast.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!scalePair) return;
+    const amount = Number(scaleDraft.replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setScalePreview(null);
+      setScaleError("Vul een bedrag per zijde groter dan $0 in.");
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setScaleLoading(true);
+      setScaleError("");
+      try {
+        const preview = await authenticatedRequest(
+          `/api/exchanges/aster/position-loss-auto-hedge/pairs/${encodeURIComponent(scalePair.symbol)}/scale/preview`,
+          {
+            method: "POST",
+            body: JSON.stringify({ marginPerSideUsd: amount, clientBuild: WEBAPP_BUILD_NUMBER }),
+            cache: "no-store",
+          },
+        ) as ScalePreview;
+        if (active) setScalePreview(preview);
+      } catch (reason) {
+        if (active) {
+          setScalePreview(null);
+          setScaleError(reason instanceof Error ? reason.message : "Recovery-preview kon niet worden berekend.");
+        }
+      } finally {
+        if (active) setScaleLoading(false);
+      }
+    }, 260);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [scalePair, scaleDraft]);
+
+  const executeScale = async () => {
+    if (!scalePair || !scalePreview || scaleSubmitting) return;
+    const amount = Number(scaleDraft.replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const operationId = scaleOperationId || (
+      globalThis.crypto?.randomUUID?.() || `lhs-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+    );
+    setScaleOperationId(operationId);
+    setScaleSubmitting(true);
+    setScaleError("");
+    setScaleMessage("");
+    try {
+      const result = await authenticatedRequest(
+        `/api/exchanges/aster/position-loss-auto-hedge/pairs/${encodeURIComponent(scalePair.symbol)}/scale`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            marginPerSideUsd: amount,
+            operationId,
+            confirm: true,
+            clientBuild: WEBAPP_BUILD_NUMBER,
+          }),
+        },
+      ) as ScaleResult;
+      setScaleMessage(
+        result.status === "SUCCEEDED"
+          ? `Uitgevoerd · LONG en SHORT +${nlNumber(result.actualAddedQuantity)} · hedge 100% (1:1).`
+          : `Gedeeltelijk gevuld maar veilig 1:1 · beide zijden +${nlNumber(result.actualAddedQuantity)}.`,
+      );
+      await load();
+      setScalePreview(null);
+    } catch (reason) {
+      setScaleError(reason instanceof Error ? reason.message : "Beide posities verhogen is niet uitgevoerd.");
+    } finally {
+      setScaleSubmitting(false);
     }
   };
 
@@ -527,8 +690,107 @@ export function AsterPositionLossAutoHedgeBridge() {
   ) : null;
 
   const screen = screenHost && available === true ? createPortal(
-    <section className="plah-screen" data-reference={SCREEN_REFERENCE} aria-label="Auto Hedge">
-      <div className="plah-screen-scroll">
+    <section
+      className="plah-screen"
+      data-reference={scalePair ? SCALE_REFERENCE : OVERVIEW_REFERENCE}
+      data-parent-reference={SCREEN_REFERENCE}
+      aria-label={scalePair ? "Hedge-lock vergroten" : "Auto Hedge"}
+    >
+      {scalePair ? <div className="plah-scale-screen">
+        <div className="plah-scale-topline">
+          <button type="button" className="plah-back-link" onClick={closeScale} disabled={scaleSubmitting}>
+            <span aria-hidden="true">‹</span> Terug
+          </button>
+          <div className="plah-mini-brand"><span>{shieldIcon()}</span><b>LEGACY RECOVERY</b></div>
+        </div>
+
+        <header className="plah-scale-hero">
+          <h3>Hedge-lock vergroten</h3>
+          <p>Verhoog beide posities met exact dezelfde coin quantity.</p>
+        </header>
+
+        <section className="plah-scale-pair">
+          <div className="plah-scale-pair-id">
+            <CoinBadge symbol={scalePair.symbol} />
+            <div>
+              <div className="plah-scale-pair-title">
+                <strong>{scalePair.symbol.replace(/USDT$/i, "")}</strong>
+                <span className="plah-status-badge hedged">HEDGED</span>
+              </div>
+              <small>Verhoog LONG en SHORT met hetzelfde marginbudget per zijde.</small>
+            </div>
+          </div>
+          <div className="plah-scale-ratio"><small>Hedge ratio</small><b>100% (1:1)</b></div>
+        </section>
+
+        <section className="plah-scale-form">
+          <div className="plah-scale-available">
+            <span className="plah-scale-wallet" aria-hidden="true">▣</span>
+            <span><small>Beschikbaar saldo</small><b>{scalePreview ? money(scalePreview.availableBalance, false) : scaleLoading ? "Laden…" : "–"}</b></span>
+          </div>
+
+          <label className="plah-scale-label" htmlFor="plah-scale-margin">Bedrag per zijde (USDT)</label>
+          <div className="plah-scale-input">
+            <input
+              id="plah-scale-margin"
+              type="number"
+              min="0.01"
+              step="0.01"
+              inputMode="decimal"
+              value={scaleDraft}
+              onChange={(event) => {
+                setScaleDraft(event.target.value);
+                setScaleMessage("");
+                setScaleOperationId("");
+              }}
+              disabled={scaleSubmitting}
+              aria-describedby="plah-scale-help"
+            />
+            <span><b>₮</b> USDT</span>
+          </div>
+          <p id="plah-scale-help" className="plah-scale-help"><span>i</span> Invoer is per zijde. De backend bepaalt één gemeenschappelijke uitvoerbare coin quantity.</p>
+
+          {scaleError ? <div className="plah-error" role="alert">{scaleError}</div> : null}
+          {scaleMessage ? <div className="plah-success">{scaleMessage}</div> : null}
+
+          <section className="plah-scale-preview" aria-busy={scaleLoading}>
+            <div className="plah-scale-preview-title"><span aria-hidden="true">◉</span><b>Preview (wijziging)</b>{scaleLoading ? <em>Actueel laden…</em> : null}</div>
+            <div className="plah-scale-preview-row"><span>LONG extra margin</span><b>{scalePreview ? money(scalePreview.estimatedLongMarginUsd, false) : "–"}</b></div>
+            <div className="plah-scale-preview-row"><span>SHORT extra margin</span><b>{scalePreview ? money(scalePreview.estimatedShortMarginUsd, false) : "–"}</b></div>
+            <div className="plah-scale-preview-row total"><span>Totaal extra margin</span><b>{scalePreview ? money(scalePreview.estimatedTotalMarginUsd, false) : "–"}</b></div>
+            <div className="plah-scale-preview-row"><span>Geschatte fees</span><b>{scalePreview ? money(scalePreview.estimatedFeesUsd, false) : "–"}</b></div>
+            <div className="plah-scale-preview-row"><span>Extra quantity beide zijden</span><b>{scalePreview ? nlNumber(scalePreview.extraQuantity) : "–"}</b></div>
+            <div className="plah-scale-preview-row"><span>Hedge ratio na uitvoering</span><b>{scalePreview ? "100% (1:1)" : "–"}</b></div>
+
+            <div className="plah-scale-entry-grid">
+              {(["long", "short"] as const).map((key) => {
+                const leg = scalePreview?.[key];
+                const side = key.toUpperCase();
+                const effect = String(leg?.entryEffect || "VRIJWEL GELIJK").toLowerCase().replaceAll(" ", "-");
+                return <article className="plah-scale-entry" key={key}>
+                  <div><span className={`plah-side-badge ${key}`}>{side}</span><em className={effect}>{leg?.entryEffect || "–"}</em></div>
+                  <small>Quantity</small>
+                  <b>{leg ? `${nlNumber(leg.currentQuantity)} → ${nlNumber(leg.quantityAfter)}` : "–"}</b>
+                  <small>Gemiddelde entry</small>
+                  <b>{leg ? `${nlNumber(leg.currentEntry, 8)} → ${nlNumber(leg.estimatedEntryAfter, 8)}` : "–"}</b>
+                  <small>Geschatte uitvoering</small>
+                  <b>{leg ? nlNumber(leg.executionPrice, 8) : "–"}</b>
+                </article>;
+              })}
+            </div>
+
+            <p className="plah-scale-result-note"><span>i</span>{scalePreview?.pairResultNote || "Bestaand pair-resultaat wordt niet als winst weggeboekt door deze actie."}</p>
+          </section>
+
+          <div className="plah-scale-actions">
+            <button type="button" className="secondary" onClick={closeScale} disabled={scaleSubmitting}>Annuleren</button>
+            <button type="button" className="primary" onClick={() => void executeScale()} disabled={!scalePreview || scaleLoading || scaleSubmitting}>
+              {scaleSubmitting ? "Uitvoeren…" : "Beide posities verhogen"}
+            </button>
+          </div>
+          <p className="plah-scale-footnote"><span>i</span> De LONG en SHORT worden beide met dezelfde exchange-valid coin quantity verhoogd. Een echte order wordt alleen door deze handmatige bevestiging gestart.</p>
+        </section>
+      </div> : <div className="plah-screen-scroll">
         <div className="plah-screen-topline">
           <button type="button" className="plah-back-link" onClick={() => setOpen(false)} disabled={saving}>
             <span aria-hidden="true">‹</span> Terug naar Dashboard
@@ -574,7 +836,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         <section className="plah-positions">
           <div className="plah-positions-head">
             <div>
-              <h4>Gehedgde posities</h4>
+              <h4>Gehedgede posities</h4>
               <p>Alleen coins die (in het verleden) door Auto Hedge zijn gehedged.</p>
             </div>
             <select value={coinFilter} onChange={(event) => setCoinFilter(event.target.value)} aria-label="Filter gehedgde coins">
@@ -585,7 +847,13 @@ export function AsterPositionLossAutoHedgeBridge() {
 
           <div className="plah-pair-list">
             {visiblePairs.length ? visiblePairs.map((pair) =>
-              <PairCard key={pair.symbol} pair={pair} saving={saving} onRehedge={(item, enabled) => void setRehedge(item, enabled)} />
+              <PairCard
+                key={pair.symbol}
+                pair={pair}
+                saving={saving || scaleSubmitting}
+                onRehedge={(item, enabled) => void setRehedge(item, enabled)}
+                onScale={openScale}
+              />
             ) : <div className="plah-empty">
               <span>{shieldIcon()}</span>
               <strong>Nog geen historische Auto Hedge-pairs</strong>
@@ -601,7 +869,7 @@ export function AsterPositionLossAutoHedgeBridge() {
             {saving ? "Controleren…" : "Nu controleren"} <span>›</span>
           </button>
         </section>
-      </div>
+      </div>}
     </section>,
     screenHost,
   ) : null;

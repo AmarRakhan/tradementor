@@ -23,7 +23,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.ok(css.includes(REFERENCE));
   assert.match(component, /document\.body\.appendChild\(host\)/);
   assert.match(css, /#aster-position-loss-auto-hedge-back-host\{position:fixed;inset:0;z-index:950/);
-  assert.match(component, /Gehedgde posities/);
+  assert.match(component, /Gehedgede posities/);
   assert.match(component, /Alleen coins die \(in het verleden\) door Auto Hedge zijn gehedged/);
   assert.match(component, /Opnieuw hedgen/);
   assert.match(component, /Hedge-lock/);
@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "440"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "441"/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {
@@ -101,4 +101,38 @@ test("Build 436 requires an explicit user confirmation before Auto Hedge can be 
   assert.match(component,/confirmDisable: state\.enabled === true && enabled === false/);
   assert.match(component,/clientBuild: WEBAPP_BUILD_NUMBER/);
   assert.match(component,/clientSource: source/);
+});
+
+
+test("Build 441 exposes owner-only Legacy Hedge Recovery UI and proxy routes", async () => {
+  const [component, css, previewRoute, executeRoute, release] = await Promise.all([
+    readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/position-loss-auto-hedge.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/position-loss-auto-hedge/pairs/[symbol]/scale/preview/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/position-loss-auto-hedge/pairs/[symbol]/scale/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/release-history.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(component, /file_000000005090821091d88f1b301841d7/);
+  assert.match(component, /file_000000003ff08246ad57f7b054d4a96f/);
+  assert.match(css, /file_000000005090821091d88f1b301841d7/);
+  assert.match(css, /file_000000003ff08246ad57f7b054d4a96f/);
+  assert.match(component, /plah-scale-open/);
+  assert.match(component, /VERHOOG/);
+  assert.match(component, /Hedge-lock vergroten/);
+  assert.match(component, /Bedrag per zijde \(USDT\)/);
+  assert.match(component, /Totaal extra margin/);
+  assert.match(component, /Geschatte fees/);
+  assert.match(component, /Extra quantity beide zijden/);
+  assert.match(component, /GUNSTIGER/);
+  assert.match(component, /ONGUNSTIGER/);
+  assert.match(component, /VRIJWEL GELIJK/);
+  assert.match(component, /Beide posities verhogen/);
+  assert.match(component, /confirm: true/);
+  assert.match(component, /crypto\?\.randomUUID/);
+  assert.match(previewRoute, /scale\/preview/);
+  assert.match(previewRoute, /"POST"/);
+  assert.match(executeRoute, /\/scale/);
+  assert.match(executeRoute, /"POST"/);
+  assert.match(release, /LEGACY_HEDGE_SCALE/);
+  assert.doesNotMatch(component, /Doel:\s*betere break-even voor SHORT/);
 });
