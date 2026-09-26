@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - build443-central-release-gates
+  pull_request:
+    branches:
+      - amar-crypto-bot-2026-cloud
   workflow_dispatch:
 
 permissions:
