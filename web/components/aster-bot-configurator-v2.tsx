@@ -7,7 +7,7 @@ const VISUAL_REFERENCE = "file_000000003e34820a9d0c8dc22b84ac47";
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 type Timeframe = typeof TIMEFRAMES[number];
 type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
-type ReleaseFeature = { key?: string; status?: string; beta?: boolean; stable?: boolean; enabled?: boolean; ownerOnly?: boolean; updatedAt?: unknown };
+type ReleaseFeature = { key?: string; status?: string; beta?: boolean; stable?: boolean; enabled?: boolean; ownerOnly?: boolean; dependencies?: string[]; updatedAt?: unknown };
 type ReleaseState = { channel?: "BETA" | "STABLE"; features?: Record<string, ReleaseFeature> };
 
 type Props = {
@@ -209,8 +209,9 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const feature = (key: string) => releases.features?.[key] ?? release.features?.[key] ?? {};
   const directionalAvailable = feature("directional_bollinger").enabled === true;
   const exposureAvailable = feature("exposure_refill").enabled === true;
+  const marginSummaryAvailable = feature("margin_summary").enabled === true;
   const priceZonesAvailable = feature("price_zones").enabled === true;
-  const zoneSoldiersAvailable = ownerBeta && feature("zone_soldiers").enabled === true;
+  const zoneSoldiersAvailable = feature("zone_soldiers").enabled === true;
   const savedZoneStrategyEnabled = zoneSoldiersAvailable && persisted.zoneSoldiersEnabled === true && n(persisted.zoneSoldiersOptInVersion, 0) >= 1;
   const zoneLifecycle = String(strategy2.zoneSoldierLifecycle || (savedZoneStrategyEnabled ? "ACTIVE" : "OFF")).toUpperCase();
   const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · ZONE SOLDATEN" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONE DRAINING" : "STRATEGIE · TRADITIONEEL";
@@ -305,7 +306,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
         zoneExposureBalancerEnabled: persisted.zoneExposureBalancerEnabled !== false,
         zoneEntryGrowthPercent: nDefault(persisted.zoneEntryGrowthPercent, 2),
         zoneEntryMaxMultiplier: nDefault(persisted.zoneEntryMaxMultiplier, 1.2),
-      } : { zoneSoldiersEnabled: false, zoneSoldiersOptInVersion: 0 }),
+      } : {}),
       ...sizing,
       entryMarginUsd: n(draft.entryMarginLong),
       entryMarginLongUsd: n(draft.entryMarginLong),
@@ -437,7 +438,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
     <section className="v2-step" id="v2-step-posities"><StepHead number="2" title="Posities" subtitle="Hoe wil je je portfolio verdelen?" />
       <div className={"v2-strategy-choice " + (draft.zoneSoldiersEnabled ? "zone" : "traditional")}>
         <div><small>HANDELSSTRATEGIE</small><strong>{draft.zoneSoldiersEnabled ? "Zone-Soldatenstrategie" : "Traditionele bot"}</strong><p>{draft.zoneSoldiersEnabled ? "Nieuwe entries krijgen pas na Opslaan zone-eigendom. Bestaande posities worden niet gesloten of achteraf aan een zone gekoppeld." : "LONG/SHORT-slots en normale Multi-BB-logica sturen nieuwe entries. Portfolio Koers blijft alleen informatief."}</p></div>
-        <Toggle label="Zone-Soldatenstrategie" description={zoneSoldiersAvailable ? "Expliciete opt-in. BETA-toegang zet deze strategie nooit automatisch aan." : "Deze strategie is nog niet beschikbaar voor dit account."} checked={draft.zoneSoldiersEnabled} onChange={(v) => update("zoneSoldiersEnabled", v)} disabled={!zoneSoldiersAvailable} />
+        <Toggle label="Zone-Soldatenstrategie" description={zoneSoldiersAvailable ? "Expliciete opt-in. Release-toegang zet deze strategie nooit automatisch aan." : "Deze strategie is nog niet beschikbaar voor dit account."} checked={draft.zoneSoldiersEnabled} onChange={(v) => update("zoneSoldiersEnabled", v)} disabled={!zoneSoldiersAvailable} />
       </div>
       {zoneLifecycle === "DRAINING" && !draft.zoneSoldiersEnabled && <p className="v2-warning">Zone-strategie uitgeschakeld · bestaande zone-posities worden nog veilig beheerd. Er worden geen nieuwe zone-soldaten geopend.</p>}
       <div className="v2-slot-visual" aria-label="Actieve posities ten opzichte van ingestelde stoelcapaciteit">
@@ -507,14 +508,14 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
         <Summary label="LONG" value={"Start $" + draft.entryMarginLong + " · DCA " + draft.longDcaDistance + "% · TP " + draft.longTp + "%"} />
         <Summary label="SHORT" value={"Start $" + draft.entryMarginShort + " · DCA " + draft.shortDcaDistance + "% · TP " + draft.shortTp + "%"} />
       </div>
-      <div className="v2-capacity"><span><small>Geschatte startbelasting</small><b>{money(totals.startMargin)}</b></span><span><small>Max ingestelde DCA-capaciteit</small><b>{money(totals.dcaCapacity)}</b></span><span><small>Theoretisch totaal</small><b>{money(totals.theoretical)}</b></span><span><small>Huidig available</small><b>{available > 0 ? money(available) : "—"}</b></span></div>
-      {available > 0 && totals.theoretical > available && <p className="v2-warning">Waarschuwing: theoretische volledige ingestelde belasting is hoger dan de huidige available. Dit is een configuratiecheck, geen voorspelling dat alle DCA's tegelijk worden uitgevoerd.</p>}
+      {marginSummaryAvailable && <div className="v2-capacity"><span><small>Geschatte startbelasting</small><b>{money(totals.startMargin)}</b></span><span><small>Max ingestelde DCA-capaciteit</small><b>{money(totals.dcaCapacity)}</b></span><span><small>Theoretisch totaal</small><b>{money(totals.theoretical)}</b></span><span><small>Huidig available</small><b>{available > 0 ? money(available) : "—"}</b></span></div>}
+      {marginSummaryAvailable && available > 0 && totals.theoretical > available && <p className="v2-warning">Waarschuwing: theoretische volledige ingestelde belasting is hoger dan de huidige available. Dit is een configuratiecheck, geen voorspelling dat alle DCA's tegelijk worden uitgevoerd.</p>}
       <div className="v2-account-strip"><span><small>Equity</small><b>{equity > 0 ? money(equity) : "—"}</b></span><span><small>Serverstatus</small><b>{serverConfirmed ? "Bevestigd" : "Wachten"}</b></span><span><small>Wijzigingen</small><b>{dirty ? "Niet opgeslagen" : "Opgeslagen"}</b></span></div>
 
       {ownerBeta && <details className="v2-release-center" open>
         <summary>Releasecentrum · alleen BETA-owner</summary>
         <p>Een vinkje/akkoord publiceert niets automatisch. Publiceren en terugtrekken gebeurt per blok.</p>
-        <div className="v2-release-list">{Object.entries(releases.features ?? {}).map(([key, row]) => <article key={key}><div><b>{releaseLabel(key)}</b><small>{row.status || "TESTEN"} · BETA {row.beta ? "AAN" : "UIT"} · STABLE {row.stable ? "AAN" : "UIT"}{row.ownerOnly ? " · OWNER-ONLY" : ""}</small></div><span>{row.ownerOnly ? <em className="v2-owner-only">Alleen beschikbaarheid · gebruiker kiest zelf AAN/UIT</em> : <>{row.status !== "AKKOORD" && row.status !== "LIVE" && <button disabled={busy} onClick={() => changeRelease(key, { status: "AKKOORD", beta: true, stable: false })}>✓ Getest en akkoord</button>}{row.status === "AKKOORD" && !row.stable && <button disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " vrijgeven aan alle gebruikers? Alleen dit onderdeel wordt gepubliceerd.")) void changeRelease(key, { status: "LIVE", beta: true, stable: true, confirm: true }); }}>Vrijgeven aan alle gebruikers</button>}{row.stable && <button className="rollback" disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " terugtrekken naar alleen BETA?")) void changeRelease(key, { status: "TESTEN", beta: true, stable: false, confirm: true }); }}>Terug naar BETA</button>}</>}</span></article>)}</div>
+        <div className="v2-release-list">{Object.entries(releases.features ?? {}).map(([key, row]) => <article key={key}><div><b>{releaseLabel(key)}</b><small>{row.status || "TESTEN"} · BETA {row.beta ? "AAN" : "UIT"} · STABLE {row.stable ? "AAN" : "UIT"}{row.ownerOnly ? " · OWNER-ONLY" : ""}{row.dependencies?.length ? ` · VEREIST ${row.dependencies.map(releaseLabel).join(" + ")}` : ""}</small></div><span>{row.ownerOnly ? <em className="v2-owner-only">Alleen beschikbaarheid · gebruiker kiest zelf AAN/UIT</em> : <>{row.status !== "AKKOORD" && row.status !== "LIVE" && <button disabled={busy} onClick={() => changeRelease(key, { status: "AKKOORD", beta: true, stable: false })}>✓ Getest en akkoord</button>}{row.status === "AKKOORD" && !row.stable && <button disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " vrijgeven aan alle gebruikers? Alleen dit onderdeel wordt gepubliceerd.")) void changeRelease(key, { status: "LIVE", beta: true, stable: true, confirm: true }); }}>Vrijgeven aan alle gebruikers</button>}{row.stable && <button className="rollback" disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " terugtrekken naar alleen BETA?")) void changeRelease(key, { status: "TESTEN", beta: true, stable: false, confirm: true }); }}>Terug naar BETA</button>}</>}</span></article>)}</div>
       </details>}
     </section>
 
@@ -529,7 +530,7 @@ function StepHead({ number, title, subtitle }: { number: string; title: string; 
 }
 function Summary({ label, value }: { label: string; value: string }) { return <span><small>{label}</small><b>{value}</b></span>; }
 function releaseLabel(key: string) {
-  return ({ bot_configurator_v2: "Botconfigurator layout", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", zone_soldiers: "Zone-Soldatenstrategie", price_zones: "Price zones", margin_summary: "Margin summary" } as Record<string, string>)[key] || key;
+  return ({ bot_configurator_v2: "Botconfigurator V2", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure Refill", margin_summary: "Margin Summary", price_zones: "Price Zones", zone_soldiers: "Zone-Soldatenstrategie", zone_command_center: "Zone Command Center", auto_hedge_v2: "Auto Hedge 2.0", legacy_hedge_recovery: "Legacy Hedge Recovery" } as Record<string, string>)[key] || key;
 }
 
 const styles = `
