@@ -546,7 +546,7 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
   </div>;
 }
 
-function SnapshotQuickActions() {
+function SnapshotQuickActions({ zoneCommandCenterAvailable }: { zoneCommandCenterAvailable: boolean }) {
   const lastTap=useRef(0);
   const openZoneSoldiers=()=>window.dispatchEvent(new CustomEvent(ZONE_SOLDIERS_OPEN_EVENT));
   const onZoneTouchEnd=()=>{
@@ -555,19 +555,20 @@ function SnapshotQuickActions() {
     else lastTap.current=now;
   };
   return <div className="aps-quick-actions" aria-label="Portfolio Snapshot snelle acties">
-    <button type="button" className="aps-quick aps-quick-zone" aria-label="Zone-Soldaten. Dubbeltik om te openen." onDoubleClick={openZoneSoldiers} onTouchEnd={onZoneTouchEnd}>
+    {zoneCommandCenterAvailable ? <button type="button" className="aps-quick aps-quick-zone" aria-label="Zone-Soldaten. Dubbeltik om te openen." onDoubleClick={openZoneSoldiers} onTouchEnd={onZoneTouchEnd}>
       <span className="aps-quick-icon">⌾</span><span><b>ZONE-SOLDATEN</b><small>Dubbeltik om te openen</small></span><em>›</em>
-    </button>
+    </button> : null}
     <button type="button" className="aps-quick"><span className="aps-quick-icon">▣</span><span><b>BOT STATUS</b><small>Actief</small></span></button>
     <button type="button" className="aps-quick"><span className="aps-quick-icon">▥</span><span><b>STRATEGIE</b><small>Z+2 · Long</small></span></button>
     <button type="button" className="aps-quick"><span className="aps-quick-icon">⚙</span><span><b>INSTELLINGEN</b><small>Beheren</small></span></button>
   </div>;
 }
-function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
+function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, zoneCommandCenterAvailable, onCloseAll, onCloseProfit, onOpenHedge }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
   profitBusy: ProfitScope | null;
+  zoneCommandCenterAvailable: boolean;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
   onOpenHedge: () => void;
@@ -581,7 +582,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
-    <SnapshotQuickActions />
+    <SnapshotQuickActions zoneCommandCenterAvailable={zoneCommandCenterAvailable} />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
@@ -654,6 +655,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
+  const [zoneCommandCenterAvailable, setZoneCommandCenterAvailable] = useState(false);
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
@@ -709,6 +711,30 @@ export function AsterPortfolioSnapshotEnhancer() {
       document.getElementById("aster-portfolio-snapshot-host")?.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (!host) return;
+    let alive = true;
+    const refreshRelease = async () => {
+      try {
+        const release = await authenticatedRequest("/api/releases/me", { cache: "no-store" }) as {
+          features?: Record<string, { enabled?: boolean }>;
+        };
+        if (alive) setZoneCommandCenterAvailable(release.features?.zone_command_center?.enabled === true);
+      } catch {
+        if (alive) setZoneCommandCenterAvailable(false);
+      }
+    };
+    void refreshRelease();
+    const timer = window.setInterval(refreshRelease, 45000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshRelease(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [host]);
 
   useEffect(() => {
     if (!host) return;
@@ -844,6 +870,7 @@ export function AsterPortfolioSnapshotEnhancer() {
         profitPreview={profitPreview}
         liquidationDiagnostics={liquidationDiagnostics}
         profitBusy={profitBusy}
+        zoneCommandCenterAvailable={zoneCommandCenterAvailable}
         onCloseAll={closeAll}
         onCloseProfit={openProfitPreview}
         onOpenHedge={() => setHedgeOpen(true)}
