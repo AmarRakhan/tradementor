@@ -398,6 +398,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [scaleError, setScaleError] = useState("");
   const [scaleMessage, setScaleMessage] = useState("");
   const [scaleOperationId, setScaleOperationId] = useState("");
+  const [scaleRefreshKey, setScaleRefreshKey] = useState(0);
   const lastTap = useRef(0);
 
   const load = useCallback(async () => {
@@ -611,6 +612,20 @@ export function AsterPositionLossAutoHedgeBridge() {
 
   useEffect(() => {
     if (!scalePair) return;
+    const refreshOnFocus = () => setScaleRefreshKey((value) => value + 1);
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === "visible") refreshOnFocus();
+    };
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisibility);
+    };
+  }, [scalePair]);
+
+  useEffect(() => {
+    if (!scalePair) return;
     const amount = Number(scaleDraft.replace(",", "."));
     if (!Number.isFinite(amount) || amount <= 0) {
       setScalePreview(null);
@@ -644,7 +659,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [scalePair, scaleDraft]);
+  }, [scalePair, scaleDraft, scaleRefreshKey]);
 
   const executeScale = async () => {
     if (!scalePair || !scalePreview || scaleSubmitting) return;
@@ -678,7 +693,14 @@ export function AsterPositionLossAutoHedgeBridge() {
       await load();
       setScalePreview(null);
     } catch (reason) {
-      setScaleError(reason instanceof Error ? reason.message : "Beide posities verhogen is niet uitgevoerd.");
+      const rawMessage = reason instanceof Error ? reason.message : "Beide posities verhogen is niet uitgevoerd.";
+      const replanRequired = rawMessage.includes("RECOVERY_REPLAN_REQUIRED");
+      setScaleError(rawMessage.replace(/RECOVERY_REPLAN_REQUIRED:\s*/g, ""));
+      if (replanRequired) {
+        setScaleOperationId("");
+        setScalePreview(null);
+        setScaleRefreshKey((value) => value + 1);
+      }
     } finally {
       setScaleSubmitting(false);
     }
