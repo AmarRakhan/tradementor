@@ -61,13 +61,6 @@ def _pair_doc(uid: str, symbol: str):
     return _pair_collection(uid).document(str(symbol).upper())
 
 
-def _owner_uid() -> str:
-    value = main.continuity_owner_reference().get().to_dict() or {}
-    if value.get("enabled") is False:
-        return ""
-    return str(value.get("ownerUid") or "").strip()
-
-
 def _dynamic_hedge_enabled(uid: str) -> bool:
     try:
         value = main.user_reference({"uid": uid}).collection("asterDynamicHedge").document("control").get().to_dict() or {}
@@ -136,6 +129,7 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "available": True,
         "ownerOnly": False,
         "releaseFeature": "auto_hedge_v2",
+        "legacyHedgeRecoveryAvailable": main._release_feature_enabled_for_uid(uid, "legacy_hedge_recovery"),
         "enabled": enabled,
         "thresholdUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
         "workerEnabled": WORKER_ENABLED,
