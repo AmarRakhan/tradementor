@@ -26,39 +26,69 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-26",
-  title: "Dagrendement 2.1 · stortingen tellen niet als winst",
-  // Build 433 contract: legacy Auto Hedge regression volgt de actuele buildbadge.
+  title: "Portfolio Koers · Accountwaarde standaard bij openen",
   newItems: [
-    "Rendement vandaag gebruikt uitsluitend een bevestigde equity-snapshot uit dezelfde Nederlandse kalenderdag als startpunt.",
-    "Een storting of opname na die dagstart wordt als externe cashflow uit het rendement verwijderd; een cashflow vóór de eerste dagsnapshot zit al in de nieuwe basis en creëert dus ook geen winst.",
-    "Gemiddeld per dag start opnieuw op de gerepareerde meetreeks zodat vervuilde Build-432 dagpercentages niet blijven doorwerken.",
+    "Portfolio Koers opent voortaan direct in Accountwaarde met candles, Bollinger Bands en strategyzones.",
+    "Performance blijft als afzonderlijk tabblad beschikbaar en kan handmatig worden geopend.",
   ],
   problems: [
-    "Een oude opgeslagen dagreferentie kon uren of dagen achterlopen en daardoor een storting of een lange meetpauze als extreem dagrendement presenteren.",
-    "De oude gemiddelde-dagwaarde kon vervuild blijven door eerder fout berekende dagen.",
+    "De app startte Portfolio Koers standaard in Performance, terwijl voor dagelijks gebruik Accountwaarde de gewenste hoofdweergave is.",
   ],
   causes: [
-    "De v1 dagmeting schoof de laatste observatie van een vorige dag door als nieuwe referentie en vroeg bovendien een lange income-ledger periode op.",
+    "Build 432 zette de nieuwe cashflow-gecorrigeerde Performance-weergave als initiële viewMode.",
   ],
   fixes: [
-    "Nieuwe schema-v2 dagmeting kiest de eerste bevestigde 5m equity-snapshot van vandaag en valt anders neutraal terug op de huidige exchange-equity.",
-    "De income-ledger wordt alleen vanaf die dagstart gelezen; bij een volle 1000-regel response wordt fail-closed geen percentage getoond.",
-    "Legacy daghistorie wordt bij de eerste v2-meting niet meegenomen in het nieuwe gemiddelde.",
+    "De initiële Portfolio Koers viewMode is gewijzigd van performance naar account.",
+    "Timeframe, data, strategyzones, Bollinger-berekening en beide tabknoppen blijven verder ongewijzigd.",
   ],
   now: [
-    "Portfolio Impact/open P&L blijft volledig onafhankelijk van stortingen en deze presentatiefix.",
-    "Trading-, DCA-, TP/SL- en Auto-Hedge executionlogica is niet gewijzigd.",
+    "Bij openen van de app zie je direct Accountwaarde zoals in de tweede referentiefoto.",
+    "Performance blijft één tik verwijderd via het bestaande PERFORMANCE-tabblad.",
+    "Trading-, DCA-, TP/SL-, Zone-Soldaten- en Auto-Hedge-logica is niet gewijzigd.",
   ],
-  before: "Build 432 introduceerde cashflow-gecorrigeerde Portfolio Koers, maar de dagreferentie kon nog stale zijn.",
-  after: "Build 433 verankert dagperformance op dezelfde kalenderdag en reset vervuilde gemiddelde-statistiek.",
+  before: "Portfolio Koers startte met de groene cashflow-gecorrigeerde Performance-lijn.",
+  after: "Portfolio Koers start met de Accountwaarde-candlestickweergave; Performance blijft optioneel.",
   technicalDetails: [
-    "DailyGrowth schemaVersion 2.",
-    "Performance method: SAME_DAY_SNAPSHOT_NET_CASHFLOW_ADJUSTED.",
-    "Backend en web worden via de bestaande guarded production pipelines gepubliceerd.",
+    "Alleen de initiële client-side viewMode en de bijbehorende regressietest zijn gewijzigd.",
+    "Visuele referenties: file_00000000fcc88210b2abe5478a224e25 en file_00000000e3808210aa0d12065716a4ac.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-433-daily-growth",
+    version: "46",
+    build: "433",
+    releasedAt: "2026-09-26",
+    title: "Dagrendement 2.1 · stortingen tellen niet als winst",
+    newItems: [
+      "Rendement vandaag gebruikt uitsluitend een bevestigde equity-snapshot uit dezelfde Nederlandse kalenderdag als startpunt.",
+      "Een storting of opname na die dagstart wordt als externe cashflow uit het rendement verwijderd.",
+      "Gemiddeld per dag start opnieuw op de gerepareerde meetreeks.",
+    ],
+    problems: [
+      "Een oude opgeslagen dagreferentie kon een storting of lange meetpauze als extreem dagrendement presenteren.",
+      "De oude gemiddelde-dagwaarde kon vervuild blijven door eerder fout berekende dagen.",
+    ],
+    causes: [
+      "De v1 dagmeting kon een vorige-dagreferentie doorrollen en een te lange income-ledger periode meenemen.",
+    ],
+    fixes: [
+      "Schema-v2 dagmeting verankert de berekening op dezelfde kalenderdag en corrigeert externe cashflows.",
+      "Legacy daghistorie wordt niet meegenomen in het nieuwe gemiddelde.",
+    ],
+    now: [
+      "Portfolio Impact/open P&L blijft onafhankelijk van stortingen.",
+      "Trading-, DCA-, TP/SL- en Auto-Hedge executionlogica bleef ongewijzigd.",
+    ],
+    before: "Build 432 introduceerde cashflow-gecorrigeerde Portfolio Koers, maar de dagreferentie kon nog stale zijn.",
+    after: "Build 433 verankerde dagperformance op dezelfde kalenderdag en reset vervuilde gemiddelde-statistiek.",
+    technicalDetails: [
+      "DailyGrowth schemaVersion 2.",
+      "Performance method: SAME_DAY_SNAPSHOT_NET_CASHFLOW_ADJUSTED.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-432-portfolio-koers-2",
     version: "46",

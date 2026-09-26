@@ -302,14 +302,14 @@ test("Build 432 cashflow-adjusted performance neutralizes deposits and withdrawa
   assert.deepEqual(performance.map((row)=>row.value),[100,100,95]);
 });
 
-test("Build 432 defaults to performance view and never draws raw strategy zones on its adjusted axis",async()=>{
+test("Build 434 opens Portfolio Koers in Accountwaarde while Performance remains an optional tab",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('useState<PortfolioViewMode>("performance")'));
-  assert.ok(component.includes('if(viewMode==="performance"){'));
-  assert.ok(component.includes("setZoneLayout([])"));
-  assert.ok(component.includes("setZoneBoundaries([])"));
-  assert.ok(component.includes("Strategyzones staan alleen bij Accountwaarde"));
+  assert.ok(component.includes('useState<PortfolioViewMode>("account")'));
+  assert.equal(component.includes('useState<PortfolioViewMode>("performance")'),false);
+  assert.ok(component.includes('onClick={()=>setViewMode("performance")}'));
+  assert.ok(component.includes('onClick={()=>setViewMode("account")}'));
   assert.ok(component.includes("ACCOUNTWAARDE"));
+  assert.ok(component.includes("PERFORMANCE"));
 });
 
 test("Build 432 visually separates signed deposits and withdrawals from trading markers",async()=>{
