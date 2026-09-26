@@ -1,4 +1,5 @@
 # Release verification contract for the interactive Hedge Dekking production flow.
+from aster_hedge_recovery_api import profit_preview_with_settings
 from aster_hedge_recovery import (
     apply_notional_impact,
     average_start_margin,
@@ -86,3 +87,23 @@ def test_max_correction_is_a_hard_ceiling_not_an_overshoot_hint():
     assert not would_exceed_step_target(18.9, 28.8, 28.9)
     assert would_exceed_step_target(112.0, 99.0, 102.0)
     assert not would_exceed_step_target(112.0, 102.1, 102.0)
+
+
+def test_profit_preview_candidate_filter_keeps_full_exposure_math():
+    settings = normalize_settings(None)
+    rows = [
+        row("PUMPUSDT", "LONG", 10, 1, pnl=5.2),
+        row("PUMPUSDT", "SHORT", 10, 1, pnl=-6.0),
+        row("BTCUSDT", "LONG", 2, 10, pnl=0.2),
+    ]
+    # Simulate Auto Hedge exclusion of the profitable PUMP LONG from the
+    # convenience close selector while retaining every row for hedge math.
+    candidate_rows = [rows[2]]
+    preview = profit_preview_with_settings(rows, settings, candidate_rows=candidate_rows)
+
+    assert preview["eligibleCount"] == 0
+    assert preview["long"]["eligibleCount"] == 0
+    assert preview["long"]["totalProfitUsd"] == 0
+    assert preview["exposure"]["longExposureUsd"] == 30
+    assert preview["exposure"]["shortExposureUsd"] == 10
+    assert preview["exposure"]["netExposureUsd"] == 20
