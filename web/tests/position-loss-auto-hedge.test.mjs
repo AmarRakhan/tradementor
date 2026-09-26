@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "435"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "436"/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {
@@ -89,4 +89,16 @@ test("Build 432 Snapshot Auto Hedge tile shows status only, not the configured d
   assert.doesNotMatch(tile,/vanaf -/);
   assert.doesNotMatch(tile,/thresholdMoney/);
   assert.match(tile,/Auto Hedge \$\{tileStatus\}/);
+});
+
+
+test("Build 436 requires an explicit user confirmation before Auto Hedge can be switched off",async()=>{
+  const component=await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx",import.meta.url),"utf8");
+  assert.match(component,/window\.confirm/);
+  assert.match(component,/Auto Hedge uitschakelen\?/);
+  assert.match(component,/requestEnabledChange\(!state\.enabled, "SNAPSHOT_TILE"\)/);
+  assert.match(component,/requestEnabledChange\(!state\.enabled, "AUTO_HEDGE_SCREEN"\)/);
+  assert.match(component,/confirmDisable: state\.enabled === true && enabled === false/);
+  assert.match(component,/clientBuild: WEBAPP_BUILD_NUMBER/);
+  assert.match(component,/clientSource: source/);
 });

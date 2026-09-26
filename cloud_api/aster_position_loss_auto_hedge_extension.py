@@ -40,6 +40,9 @@ SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,36}USDT$")
 class AutoHedgeSettingsRequest(BaseModel):
     enabled: bool
     thresholdUsd: float = Field(default=DEFAULT_THRESHOLD_USD, ge=0.01, le=100_000)
+    confirmDisable: bool = False
+    clientBuild: str = Field(default="", max_length=32)
+    clientSource: str = Field(default="", max_length=64)
 
 
 class RehedgeRequest(BaseModel):
@@ -157,6 +160,28 @@ def _audit(uid: str, payload: dict[str, Any]) -> None:
         "event": "POSITION_LOSS_AUTO_HEDGE_V2",
         **payload,
         "timestamp": datetime.now(timezone.utc),
+    })
+
+
+def _audit_global_setting_change(
+    uid: str,
+    *,
+    previous_enabled: bool,
+    requested_enabled: bool,
+    request: AutoHedgeSettingsRequest,
+    source_route: str,
+    result: str,
+) -> None:
+    _audit(uid, {
+        "eventType": "GLOBAL_SETTINGS_CHANGE",
+        "previousEnabled": bool(previous_enabled),
+        "requestedEnabled": bool(requested_enabled),
+        "confirmDisable": bool(request.confirmDisable),
+        "thresholdUsd": float(request.thresholdUsd),
+        "clientBuild": str(request.clientBuild or "")[:32],
+        "clientSource": str(request.clientSource or "")[:64],
+        "sourceRoute": source_route,
+        "result": result,
     })
 
 
@@ -623,6 +648,18 @@ def put_position_loss_auto_hedge(
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
     uid = main.require_continuity_owner(user)
+    current = _current(uid)
+    previous_enabled = current.get("enabled") is True
+    if previous_enabled and request.enabled is False and request.confirmDisable is not True:
+        _audit_global_setting_change(
+            uid,
+            previous_enabled=previous_enabled,
+            requested_enabled=False,
+            request=request,
+            source_route="PUT /v1/me/aster/position-loss-auto-hedge",
+            result="BLOCKED_CONFIRMATION_REQUIRED",
+        )
+        raise HTTPException(409, "Auto Hedge uitschakelen vereist expliciete bevestiging")
     if request.enabled and _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
     try:
@@ -635,6 +672,15 @@ def put_position_loss_auto_hedge(
         "thresholdUsd": threshold,
         "updatedAt": now,
     }, merge=True)
+    if previous_enabled != bool(request.enabled):
+        _audit_global_setting_change(
+            uid,
+            previous_enabled=previous_enabled,
+            requested_enabled=bool(request.enabled),
+            request=request,
+            source_route="PUT /v1/me/aster/position-loss-auto-hedge",
+            result="APPLIED",
+        )
     # Turning the global toggle off stops NEW triggers, not an existing hedge lock.
     _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
     response.headers["Cache-Control"] = "no-store"
@@ -648,6 +694,18 @@ def apply_position_loss_auto_hedge(
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
     uid = main.require_continuity_owner(user)
+    current = _current(uid)
+    previous_enabled = current.get("enabled") is True
+    if previous_enabled and request.enabled is False and request.confirmDisable is not True:
+        _audit_global_setting_change(
+            uid,
+            previous_enabled=previous_enabled,
+            requested_enabled=False,
+            request=request,
+            source_route="POST /v1/me/aster/position-loss-auto-hedge/apply",
+            result="BLOCKED_CONFIRMATION_REQUIRED",
+        )
+        raise HTTPException(409, "Auto Hedge uitschakelen vereist expliciete bevestiging")
     if request.enabled and _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
     try:
@@ -659,6 +717,15 @@ def apply_position_loss_auto_hedge(
         "thresholdUsd": threshold,
         "updatedAt": datetime.now(timezone.utc),
     }, merge=True)
+    if previous_enabled != bool(request.enabled):
+        _audit_global_setting_change(
+            uid,
+            previous_enabled=previous_enabled,
+            requested_enabled=bool(request.enabled),
+            request=request,
+            source_route="POST /v1/me/aster/position-loss-auto-hedge/apply",
+            result="APPLIED",
+        )
     report = _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
     response.headers["Cache-Control"] = "no-store"
     return {**_public(uid), "lastReport": _serialize(report)}

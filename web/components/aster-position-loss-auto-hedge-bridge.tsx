@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 
 const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
 const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
@@ -405,7 +406,7 @@ export function AsterPositionLossAutoHedgeBridge() {
     };
   }, [open, screenHost, saving]);
 
-  const persist = async (enabled: boolean, threshold: number, applyNow = false) => {
+  const persist = async (enabled: boolean, threshold: number, applyNow = false, source = "AUTO_HEDGE_SCREEN") => {
     if (!Number.isFinite(threshold) || threshold < 0.01 || threshold > 100000) {
       setError("Vul een verliesgrens tussen $0,01 en $100.000 in.");
       return false;
@@ -419,7 +420,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         : "/api/exchanges/aster/position-loss-auto-hedge";
       const next = await authenticatedRequest(endpoint, {
         method: applyNow ? "POST" : "PUT",
-        body: JSON.stringify({ enabled, thresholdUsd: threshold }),
+        body: JSON.stringify({ enabled, thresholdUsd: threshold, confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
       }) as AutoHedgeState;
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
       setDraft(String(Number(next.thresholdUsd)));
@@ -437,6 +438,19 @@ export function AsterPositionLossAutoHedgeBridge() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const requestEnabledChange = async (nextEnabled: boolean, source: string) => {
+    if (state.enabled === true && nextEnabled === false) {
+      const confirmed = window.confirm(
+        "Auto Hedge uitschakelen? Nieuwe verliesposities worden dan niet meer automatisch gehedged. Bestaande HEDGE_LOCKED-pairs blijven beschermd.",
+      );
+      if (!confirmed) {
+        setMessage("Auto Hedge blijft AAN.");
+        return false;
+      }
+    }
+    return persist(nextEnabled, threshold, nextEnabled, source);
   };
 
   const setRehedge = async (pair: PairState, enabled: boolean) => {
@@ -507,7 +521,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         <small>AUTO HEDGE</small>
         <strong className={state.enabled ? "on" : ""}>{tileStatus}</strong>
       </span>
-      <Toggle checked={state.enabled} disabled={saving || loading} onChange={() => void persist(!state.enabled, threshold, !state.enabled)} compact label="Auto Hedge" />
+      <Toggle checked={state.enabled} disabled={saving || loading} onChange={() => void requestEnabledChange(!state.enabled, "SNAPSHOT_TILE")} compact label="Auto Hedge" />
     </div>,
     tileHost,
   ) : null;
@@ -528,7 +542,7 @@ export function AsterPositionLossAutoHedgeBridge() {
             <h3>AUTO HEDGE</h3>
             <p>Beschermt verliesgevende posities met een volledige tegengestelde hedge.</p>
           </div>
-          <Toggle checked={state.enabled} disabled={saving} onChange={() => void persist(!state.enabled, threshold, !state.enabled)} label="Auto Hedge hoofdschakelaar" labelText />
+          <Toggle checked={state.enabled} disabled={saving} onChange={() => void requestEnabledChange(!state.enabled, "AUTO_HEDGE_SCREEN")} label="Auto Hedge hoofdschakelaar" labelText />
         </header>
 
         <section className="plah-threshold-card">
@@ -583,7 +597,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         <section className="plah-important">
           <span>{shieldIcon()}</span>
           <div><b>Belangrijk</b><p>Alleen door Auto Hedge gereserveerde hedge-quantity is vergrendeld. Normale strategieposities blijven normaal werken; verdwijnt normale dekking, dan vult Auto Hedge het ontbrekende verschil opnieuw aan.</p></div>
-          <button type="button" onClick={() => void persist(state.enabled, threshold, true)} disabled={saving || loading}>
+          <button type="button" onClick={() => void persist(state.enabled, threshold, true, "AUTO_HEDGE_CHECK")} disabled={saving || loading}>
             {saving ? "Controleren…" : "Nu controleren"} <span>›</span>
           </button>
         </section>

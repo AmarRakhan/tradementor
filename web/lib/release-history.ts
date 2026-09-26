@@ -26,6 +26,44 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-26",
+  title: "Auto Hedge · beschermd tegen onbedoeld uitschakelen",
+  newItems: [
+    "Auto Hedge uitschakelen vereist nu eerst een expliciete bevestiging in de app.",
+    "De backend weigert een AAN→UIT-wijziging zonder bevestigingsbewijs, ook wanneer een oudere clientsessie nog actief is.",
+    "Iedere succesvolle of geblokkeerde globale AAN/UIT-wijziging krijgt een server-side audit met vorige state, gevraagde state, route, webbuild en UI-bron.",
+  ],
+  problems: [
+    "Auto Hedge was server-side UIT geraakt na een succesvolle globale PUT terwijl de gebruiker niet bewust had willen uitschakelen.",
+  ],
+  causes: [
+    "De oude API accepteerde enabled=false direct; er bestond geen afzonderlijk confirmation-contract voor de risicovolle AAN→UIT-overgang.",
+    "De globale wijziging werd wel persistent opgeslagen maar had geen specifieke settings-audit waarmee de exacte UI-bron achteraf zichtbaar was.",
+  ],
+  fixes: [
+    "AAN→UIT vereist confirmDisable=true; ontbrekende bevestiging geeft fail-closed HTTP 409 en verandert de instelling niet.",
+    "Snapshot-tegel en Auto-Hedge-scherm vragen beide expliciet bevestiging voordat confirmDisable wordt meegestuurd.",
+    "Auditregels registreren clientBuild, clientSource en serverroute zonder trading- of accountgegevens te wijzigen.",
+  ],
+  now: [
+    "Een verdwaalde tik of oude webclient kan Auto Hedge niet meer stil uitschakelen.",
+    "Bestaande HEDGE_LOCKED-pairs blijven bij een bewust bevestigde uitschakeling beschermd; alleen nieuwe triggers stoppen.",
+    "Deze release zet de huidige hoofdschakelaar niet automatisch AAN of UIT.",
+  ],
+  before: "Een enkele geaccepteerde globale PUT kon Auto Hedge zonder extra bevestigingslaag uitschakelen.",
+  after: "Uitschakelen is tweelaags beschermd: bevestiging in de UI én server-side confirmDisable-validatie met audittrail.",
+  technicalDetails: [
+    "Nieuwe requestvelden: confirmDisable, clientBuild en clientSource.",
+    "Audit eventType: GLOBAL_SETTINGS_CHANGE.",
+    "Geen wijziging aan 1:1 quantity-reconciliation, hedge-orders, DCA, TP/SL of bestaande pair locks.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-435-startup-mask",
+  version: "46",
+  build: "435",
+  releasedAt: "2026-09-26",
   title: "Portfolio Koers · geen oude grafiekflits bij opstarten",
   newItems: [
     "Portfolio Koers houdt de grafiek tijdens de allereerste dataload volledig afgedekt.",
@@ -53,8 +91,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan Portfolio Koers-data, cashflowberekening, zones of orderlogica.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  },
   {
   id: "v46-build-434-accountwaarde-default",
   version: "46",

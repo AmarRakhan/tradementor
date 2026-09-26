@@ -40,3 +40,17 @@ def test_closed_pairs_stay_persisted_but_leave_current_hedged_positions_view():
     value = source()
     assert 'if str(value.get("status", "")).upper() != "CLOSED"' in value
     assert '"status": "CLOSED"' in value
+
+
+def test_global_disable_requires_explicit_confirmation_and_is_audited():
+    value = source()
+    assert "confirmDisable: bool = False" in value
+    assert "Auto Hedge uitschakelen vereist expliciete bevestiging" in value
+    assert "BLOCKED_CONFIRMATION_REQUIRED" in value
+    assert "GLOBAL_SETTINGS_CHANGE" in value
+    assert '"previousEnabled": bool(previous_enabled)' in value
+    assert '"requestedEnabled": bool(requested_enabled)' in value
+    assert '"clientBuild": str(request.clientBuild or "")[:32]' in value
+    assert '"clientSource": str(request.clientSource or "")[:64]' in value
+    assert '"sourceRoute": source_route' in value
+    assert '"result": result' in value
