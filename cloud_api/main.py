@@ -2708,10 +2708,7 @@ def _release_feature_enabled_for_uid(uid: str, key: str) -> bool:
 
 def require_release_feature(user: dict[str, Any], key: str) -> str:
     if not _release_feature_enabled(user, key):
-        raise HTTPException(
-            403,
-            detail={"code": "FEATURE_NOT_RELEASED", "feature": key},
-        )
+        raise HTTPException(403, detail=f"FEATURE_NOT_RELEASED: {key}")
     return str(user["uid"])
 
 
