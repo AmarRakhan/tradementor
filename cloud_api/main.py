@@ -1500,8 +1500,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
     if str(settings.get("engine",settings.get("strategyKind","")))==MULTI_BB_ENGINE:
         managed=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
         stored_zone_opt_in = _explicit_zone_soldier_opt_in(settings)
-        zone_owner_channel = str(raw.get("releaseChannel") or "").upper() == "BETA"
-        zone_active = bool(zone_owner_channel and stored_zone_opt_in)
+        zone_active = bool(_release_feature_enabled_for_uid(uid, "zone_soldiers") and stored_zone_opt_in)
         settings["zoneSoldiersEnabled"] = zone_active
         settings["zoneSoldiersOptInVersion"] = 1 if zone_active else 0
         zone_owned_open_count = sum(
@@ -2632,13 +2631,37 @@ _RELEASE_FEATURE_DEFAULTS: dict[str, dict[str, Any]] = {
     "bot_configurator_v2": {"status": "TESTEN", "beta": True, "stable": False},
     "directional_bollinger": {"status": "TESTEN", "beta": True, "stable": False},
     "exposure_refill": {"status": "TESTEN", "beta": True, "stable": False},
-    "zone_soldiers": {"status": "TESTEN", "beta": True, "stable": False},
-    "price_zones": {"status": "IN_BOUW", "beta": False, "stable": False},
     "margin_summary": {"status": "TESTEN", "beta": True, "stable": False},
+    "price_zones": {"status": "IN_BOUW", "beta": False, "stable": False},
+    "zone_soldiers": {"status": "TESTEN", "beta": True, "stable": False},
+    "zone_command_center": {"status": "TESTEN", "beta": True, "stable": False},
+    "auto_hedge_v2": {"status": "TESTEN", "beta": True, "stable": False},
+    "legacy_hedge_recovery": {"status": "TESTEN", "beta": True, "stable": False},
 }
 
-# Build 416: zone-owned trade behavior stays hard owner-only until explicit rollout approval.
-_OWNER_ONLY_RELEASE_FEATURES = {"zone_soldiers"}
+# Build 443: normal product features are release-entitlement driven. Hard owner
+# gates remain only for administrative/continuity surfaces, outside this map.
+_RELEASE_FEATURE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "legacy_hedge_recovery": ("auto_hedge_v2",),
+}
+
+_RELEASE_SETTING_KEYS: dict[str, tuple[str, ...]] = {
+    "directional_bollinger": (
+        "directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe",
+    ),
+    "exposure_refill": (
+        "exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
+        "exposureRefillTriggerPercent", "exposureRefillReleasePercent",
+    ),
+    "zone_soldiers": (
+        "zoneSoldiersEnabled", "zoneSoldiersOptInVersion", "zoneBaseLongSoldiers",
+        "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled", "zoneEntryGrowthPercent",
+        "zoneEntryMaxMultiplier",
+    ),
+    "price_zones": (
+        "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
+    ),
+}
 
 
 def _is_beta_owner(user: dict[str, Any]) -> bool:
@@ -2670,11 +2693,53 @@ def _explicit_zone_soldier_opt_in(settings: dict[str, Any]) -> bool:
     )
 
 
-def _release_feature_enabled(user: dict[str, Any], key: str) -> bool:
+def _release_channel_enabled(user: dict[str, Any], key: str) -> bool:
     row = _release_feature_record(key)
-    if key in _OWNER_ONLY_RELEASE_FEATURES:
-        return bool(_is_beta_owner(user) and row.get("beta"))
     return bool(row.get("beta")) if _is_beta_owner(user) else bool(row.get("stable"))
+
+
+def _release_feature_enabled(user: dict[str, Any], key: str) -> bool:
+    if not _release_channel_enabled(user, key):
+        return False
+    return all(_release_channel_enabled(user, dependency)
+               for dependency in _RELEASE_FEATURE_DEPENDENCIES.get(key, ()))
+
+
+def _release_user_for_uid(uid: str) -> dict[str, Any]:
+    """Resolve BETA only after a fresh immutable Firebase identity check.
+
+    Stable users do not need a Firebase admin lookup. A forged/stale BETA label
+    can therefore never unlock BETA-only functionality, while STABLE releases
+    remain available to ordinary accounts.
+    """
+    profile = user_reference({"uid": uid}).get().to_dict() or {}
+    beta_candidate = profile.get("betaOwner") is True or str(profile.get("releaseChannel") or "").upper() == "BETA"
+    if beta_candidate and _is_beta_owner_uid(uid):
+        expected = os.getenv("TRADEMENTOR_ADMIN_EMAIL", "amar_rakhan@hotmail.com").strip().lower()
+        return {"uid": str(uid), "email": expected}
+    return {"uid": str(uid), "email": ""}
+
+
+def _release_feature_enabled_for_uid(uid: str, key: str) -> bool:
+    return _release_feature_enabled(_release_user_for_uid(str(uid)), key)
+
+
+def require_release_feature(user: dict[str, Any], key: str) -> str:
+    if not _release_feature_enabled(user, key):
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "FEATURE_NOT_RELEASED", "featureKey": key},
+        )
+    return str(user["uid"])
+
+
+def _require_release_gated_settings(user: dict[str, Any], incoming: dict[str, Any]) -> None:
+    for feature_key, keys in _RELEASE_SETTING_KEYS.items():
+        if any(key in incoming for key in keys) and not _release_feature_enabled(user, feature_key):
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "FEATURE_NOT_RELEASED", "featureKey": feature_key},
+            )
 
 
 def _release_snapshot(user: dict[str, Any]) -> dict[str, Any]:
@@ -2682,9 +2747,12 @@ def _release_snapshot(user: dict[str, Any]) -> dict[str, Any]:
     features: dict[str, Any] = {}
     for key in _RELEASE_FEATURE_DEFAULTS:
         row = _release_feature_record(key)
-        owner_only = key in _OWNER_ONLY_RELEASE_FEATURES
-        enabled = bool(beta_owner and row.get("beta")) if owner_only else (bool(row.get("beta")) if beta_owner else bool(row.get("stable")))
-        features[key] = {**row, "enabled": enabled, "ownerOnly": owner_only}
+        features[key] = {
+            **row,
+            "enabled": _release_feature_enabled(user, key),
+            "ownerOnly": False,
+            "dependencies": list(_RELEASE_FEATURE_DEPENDENCIES.get(key, ())),
+        }
     return {"channel": "BETA" if beta_owner else "STABLE", "features": features}
 
 
@@ -3210,52 +3278,9 @@ def _strip_unreleased_beta_settings(settings: dict[str, Any], user: dict[str, An
 
 
 def _strip_unreleased_beta_settings_for_uid(settings: dict[str, Any], uid: str) -> dict[str, Any]:
-    beta_keys = {
-        "directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe",
-        "exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
-        "exposureRefillTriggerPercent", "exposureRefillReleasePercent",
-        "zoneSoldiersEnabled", "zoneSoldiersOptInVersion", "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
-        "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier",
-        "priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth",
-    }
-    # Existing Build-415 owner profiles may only have releaseChannel=BETA. Treat that
-    # as a migration candidate, but authorize it only after a fresh Firebase UID/email
-    # identity check. A forged/stale BETA label can therefore never unlock live zones.
-    profile = user_reference({"uid": uid}).get().to_dict() or {}
-    legacy_beta_candidate = profile.get("betaOwner") is True or str(profile.get("releaseChannel") or "").upper() == "BETA"
-    beta_owner = bool(legacy_beta_candidate and _is_beta_owner_uid(uid))
-    out = dict(settings)
-    directional = _release_feature_record("directional_bollinger")
-    refill = _release_feature_record("exposure_refill")
-    zone_soldiers = _release_feature_record("zone_soldiers")
-    zones = _release_feature_record("price_zones")
-    if not (bool(directional.get("beta")) if beta_owner else bool(directional.get("stable"))):
-        for key in ("directionalBollingerEnabled", "bollingerLongTimeframe", "bollingerShortTimeframe"):
-            out.pop(key, None)
-    if not (bool(refill.get("beta")) if beta_owner else bool(refill.get("stable"))):
-        for key in ("exposureRefillEnabled", "exposureRefillLongTimeframe", "exposureRefillShortTimeframe",
-                    "exposureRefillTriggerPercent", "exposureRefillReleasePercent"):
-            out.pop(key, None)
-    zone_owner_only = bool(beta_owner and zone_soldiers.get("beta"))
-    if zone_owner_only:
-        explicit_zone_opt_in = _explicit_zone_soldier_opt_in(out)
-        out["zoneSoldiersEnabled"] = explicit_zone_opt_in
-        out["zoneSoldiersOptInVersion"] = 1 if explicit_zone_opt_in else 0
-        out.setdefault("zoneBaseLongSoldiers", 3)
-        out.setdefault("zoneBaseShortSoldiers", 3)
-        out.setdefault("zoneExposureBalancerEnabled", True)
-        out.setdefault("zoneEntryGrowthPercent", 2.0)
-        out.setdefault("zoneEntryMaxMultiplier", 1.20)
-    else:
-        out["zoneSoldiersEnabled"] = False
-        out["zoneSoldiersOptInVersion"] = 0
-        for key in ("zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneExposureBalancerEnabled",
-                    "zoneEntryGrowthPercent", "zoneEntryMaxMultiplier"):
-            out.pop(key, None)
-    if not (bool(zones.get("beta")) if beta_owner else bool(zones.get("stable"))):
-        for key in ("priceZonesEnabled", "priceZoneMode", "priceZoneStepPercent", "priceZoneSeatGrowth"):
-            out.pop(key, None)
-    return out
+    # Kept under the historical name for call-site compatibility. Build 443
+    # makes the semantics entitlement-driven rather than owner-channel-driven.
+    return _strip_unreleased_beta_settings(settings, _release_user_for_uid(str(uid)))
 
 
 def _admin_device_reference(user:dict[str,Any]):
@@ -3825,6 +3850,20 @@ def update_release_feature(feature_key: str, request: ReleaseFeatureUpdateReques
         raise HTTPException(422, "Bevestiging is verplicht voor publiceren of terugtrekken")
     if stable and request.status != "LIVE":
         raise HTTPException(422, "Een STABLE-feature moet status LIVE hebben")
+    for dependency in _RELEASE_FEATURE_DEPENDENCIES.get(feature_key, ()):
+        dependency_row = _release_feature_record(dependency)
+        if beta and not bool(dependency_row.get("beta")):
+            raise HTTPException(422, f"{feature_key} vereist BETA-toegang tot {dependency}")
+        if stable and not bool(dependency_row.get("stable")):
+            raise HTTPException(422, f"{feature_key} vereist STABLE-toegang tot {dependency}")
+    for dependent, dependencies in _RELEASE_FEATURE_DEPENDENCIES.items():
+        if feature_key not in dependencies:
+            continue
+        dependent_row = _release_feature_record(dependent)
+        if bool(dependent_row.get("beta")) and not beta:
+            raise HTTPException(422, f"Schakel eerst BETA voor afhankelijke feature {dependent} uit")
+        if bool(dependent_row.get("stable")) and not stable:
+            raise HTTPException(422, f"Trek eerst STABLE voor afhankelijke feature {dependent} terug")
     now = datetime.now(timezone.utc)
     db.collection("releaseFeatures").document(feature_key).set({
         "status": request.status,
@@ -5877,6 +5916,7 @@ def extend_smart_rescue_active_cycle(symbol: str, payload: dict[str, Any], user:
 
 @app.put("/v1/me/aster/strategy2/settings")
 def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    _require_release_gated_settings(user, request.settings)
     uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}; old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
     # Established Multi BB settings updates are patch-like. Older/main forms still
     # submit shared fields only; absent LONG/SHORT fields must retain their stored values.
