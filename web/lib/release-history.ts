@@ -26,6 +26,40 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-26",
+  title: "Portfolio Koers · geen oude grafiekflits bij opstarten",
+  newItems: [
+    "Portfolio Koers houdt de grafiek tijdens de allereerste dataload volledig afgedekt.",
+    "De gebruiker ziet pas de Accountwaarde-candlestickweergave zodra de eerste canonieke Portfolio Koers-load is afgerond.",
+  ],
+  problems: [
+    "Bij het openen kon kort een onvolledige of oude grafiek uit lokale browserhistorie zichtbaar worden voordat de actuele Accountwaarde-weergave gereed was.",
+  ],
+  causes: [
+    "Lokale browsercandles waren sneller beschikbaar dan de canonieke serverpayload, terwijl de bestaande loading-overlay alleen verscheen als er nog helemaal geen candles waren.",
+  ],
+  fixes: [
+    "Een aparte initialChartReady-gate voorkomt dat browsercache of tussentijdse chart-opbouw zichtbaar wordt tijdens de eerste load.",
+    "De initiële loading-laag is volledig opaak zodat onderliggende candles, zones en eventlagen niet kunnen doorschijnen.",
+  ],
+  now: [
+    "De app opent rustig met Accountwaarde laden en schakelt daarna direct naar de juiste Accountwaarde-grafiek.",
+    "Performance blijft handmatig beschikbaar als tweede tab.",
+    "Trading-, Zone-Soldaten-, DCA-, TP/SL- en Auto-Hedge-logica is niet gewijzigd.",
+  ],
+  before: "Een korte tussenweergave van de cached/onvolledig opgebouwde grafiek kon zichtbaar zijn.",
+  after: "Geen oude grafiekflits meer; alleen de definitieve Accountwaarde-weergave wordt na initialisatie zichtbaar.",
+  technicalDetails: [
+    "Startup-only presentatiefix: initialChartReady plus een volledig opaak stage-masker.",
+    "Geen wijziging aan Portfolio Koers-data, cashflowberekening, zones of orderlogica.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-434-accountwaarde-default",
+  version: "46",
+  build: "434",
+  releasedAt: "2026-09-26",
   title: "Portfolio Koers · Accountwaarde standaard bij openen",
   newItems: [
     "Portfolio Koers opent voortaan direct in Accountwaarde met candles, Bollinger Bands en strategyzones.",
@@ -53,8 +87,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Visuele referenties: file_00000000fcc88210b2abe5478a224e25 en file_00000000e3808210aa0d12065716a4ac.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  },
   {
     id: "v46-build-433-daily-growth",
     version: "46",

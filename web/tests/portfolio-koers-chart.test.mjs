@@ -318,3 +318,14 @@ test("Build 432 visually separates signed deposits and withdrawals from trading 
   assert.ok(component.includes('cashflowType==="WITHDRAWAL"?"Opname"'));
   assert.ok(component.includes('copy.tone==="cashflow"?92:52'));
 });
+
+
+test("Build 435 masks the cached startup chart until the first canonical Accountwaarde load completes",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes("const [initialChartReady,setInitialChartReady]=useState(false)"));
+  assert.ok(component.includes("finally{setLoading(false);setInitialChartReady(true)}"));
+  assert.ok(component.includes("!initialChartReady?<div className=\"portfolio-koers-state portfolio-koers-initial-state\""));
+  assert.ok(component.includes("loading&&initialChartReady&&!baseCandles.length"));
+  assert.ok(css.includes(".portfolio-koers-state.portfolio-koers-initial-state{z-index:12;background:#03131b}"));
+});

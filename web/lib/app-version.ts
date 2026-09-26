@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 434: Portfolio Koers opent standaard in Accountwaarde; Performance blijft handmatig beschikbaar. Regressiecontracten gesynchroniseerd.
-export const WEBAPP_BUILD_NUMBER = "434";
+// Build 435: startup-flits verwijderd; Portfolio Koers blijft afgedekt tot de eerste canonieke Accountwaarde-load gereed is.
+export const WEBAPP_BUILD_NUMBER = "435";
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
   return `Webapp versie ${WEBAPP_VERSION} · build ${buildNumber}`;
