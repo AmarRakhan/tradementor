@@ -80,12 +80,19 @@ jobs:
           available=n(account.get('availableBalance'),-1)
 
           caps={}
+          support={}
           for lev in sorted({5,10,15,20,25,30,40,50,75,100,lev_long,lev_short}):
               try:
                   value=n(client.remaining_openable_notional_value(symbol,lev),-1)
                   caps[str(lev)]='POSITIVE' if value>0 else ('ZERO' if value==0 else 'INVALID')
+                  support[str(lev)]={
+                      'oneUsdPerSideCombined': value + 1e-9 >= 2*1*lev,
+                      'fiveUsdPerSideCombined': value + 1e-9 >= 2*5*lev,
+                      'fiveUsdSingleLeg': value + 1e-9 >= 5*lev,
+                  } if value>=0 else None
               except Exception as exc:
                   caps[str(lev)]='ERROR:'+str(exc)[:80]
+                  support[str(lev)]=None
 
           brackets=client.leverage_brackets(symbol)
           rows=[]
@@ -116,6 +123,7 @@ jobs:
               'leverageEqual':lev_long==lev_short,
               'availablePositive':available>0,
               'remainingByLeverage':caps,
+              'supportByLeverage':support,
               'longPositionCapField':lk,
               'shortPositionCapField':sk,
               'longPositionCapPresent':lcap>=0,
