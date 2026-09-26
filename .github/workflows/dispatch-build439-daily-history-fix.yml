@@ -1,0 +1,25 @@
+name: Dispatch Build 439 daily history backend fix
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/dispatch-build439-daily-history-fix.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch guarded exact-source production backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$GITHUB_SHA"
