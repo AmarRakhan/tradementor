@@ -116,7 +116,8 @@ test("Build 445 keeps the Zone-Soldaten quick row entitlement-gated in Portfolio
   assert.ok(component.includes("INSTELLINGEN"));
   assert.ok(component.includes("onDoubleClick={openZoneSoldiers}"));
   assert.ok(component.includes("onTouchEnd={onZoneTouchEnd}"));
-  assert.ok(component.includes("tradementor:open-zone-soldiers-command-center"));\n  assert.ok(component.includes('release.features?.zone_command_center?.enabled === true'));
+  assert.ok(component.includes("tradementor:open-zone-soldiers-command-center"));
+  assert.ok(component.includes('release.features?.zone_command_center?.enabled === true'));
   assert.ok(css.includes(".aps-quick-actions{display:grid"));
   const quick=component.indexOf("<SnapshotQuickActions zoneCommandCenterAvailable={zoneCommandCenterAvailable} />");
   const grid=component.indexOf('<div className="aps-grid">');
