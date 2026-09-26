@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import pytest
 
-from portfolio_growth import (PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, chain_linked_return_percent, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, is_exposure_order, select_day_start_snapshot, utc_ms)
+from portfolio_growth import (PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, chain_linked_return_percent, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, historical_day_windows, is_exposure_order, select_day_start_snapshot, utc_ms)
 
 
 def position(notional=100, side="LONG"):
@@ -99,7 +100,7 @@ def test_build432_twr_primitive_chain_links_subperiod_returns():
 
 
 def test_build433_day_start_never_uses_stale_previous_day_snapshot():
-    assert PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION == 2
+    assert PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION == 3
     rows=[
         {"atMs":1_000,"firstSampleAtMs":1_020,"open":100},
         {"atMs":2_000,"firstSampleAtMs":2_030,"open":300},
@@ -113,3 +114,32 @@ def test_build433_day_start_falls_back_to_current_equity_instead_of_stale_histor
     rows=[{"atMs":1_000,"firstSampleAtMs":1_010,"open":100}]
     start=select_day_start_snapshot(rows,day_start_ms=2_000,current_equity=340.59,current_at_ms=4_000)
     assert start == {"equity":340.59,"atMs":4_000,"source":"current-exchange-equity"}
+
+
+def _ams_ms(year,month,day,hour,minute=0):
+    zone=ZoneInfo("Europe/Amsterdam")
+    return int(datetime(year,month,day,hour,minute,tzinfo=zone).astimezone(timezone.utc).timestamp()*1000)
+
+
+def test_build438_reconstructs_only_complete_local_days_for_average():
+    rows=[
+        {"firstSampleAtMs":_ams_ms(2026,9,23,0,5),"sourceAtMs":_ams_ms(2026,9,23,0,55),"open":100,"close":102},
+        {"firstSampleAtMs":_ams_ms(2026,9,23,23,0),"sourceAtMs":_ams_ms(2026,9,23,23,55),"open":98,"close":95},
+        {"firstSampleAtMs":_ams_ms(2026,9,24,0,4),"sourceAtMs":_ams_ms(2026,9,24,0,55),"open":95,"close":94},
+        {"firstSampleAtMs":_ams_ms(2026,9,24,23,0),"sourceAtMs":_ams_ms(2026,9,24,23,56),"open":90,"close":89},
+        # Partial day: first observation is far too late and must not influence the average.
+        {"firstSampleAtMs":_ams_ms(2026,9,25,8,0),"sourceAtMs":_ams_ms(2026,9,25,23,55),"open":89,"close":88},
+    ]
+    windows=historical_day_windows(
+        rows,timezone_name="Europe/Amsterdam",current_date="2026-09-26",max_days=14,
+    )
+    assert [row["date"] for row in windows] == ["2026-09-23","2026-09-24"]
+    assert windows[0]["startEquity"] == pytest.approx(100)
+    assert windows[0]["endEquity"] == pytest.approx(95)
+    assert windows[1]["startEquity"] == pytest.approx(95)
+    assert windows[1]["endEquity"] == pytest.approx(89)
+
+
+def test_build438_backfilled_day_keeps_deposit_neutral():
+    start,end,deposit=95,189,100
+    assert daily_return_percentage(start,end,deposit) == pytest.approx(-6.3157894737)

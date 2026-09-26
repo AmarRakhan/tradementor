@@ -6,9 +6,10 @@ the financial rules can be exhaustively tested without credentials or orders.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 import math
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 
 EXTERNAL_CASHFLOW_TYPES = frozenset({
@@ -18,7 +19,7 @@ EXTERNAL_CASHFLOW_TYPES = frozenset({
 CASHFLOW_ADJUSTMENT_TYPES = frozenset({"WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT"})
 ENTRY_INTENT_WORDS = ("open", "entry", "base", "dca", "reopen", "reset")
 PORTFOLIO_GROWTH_START_DATE = "2026-08-23"
-PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION = 2
+PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION = 3
 
 
 def _finite(value: Any) -> float:
@@ -96,6 +97,71 @@ def select_day_start_snapshot(
         raise ValueError("Actuele portfolio-equity is ongeldig")
     return {"equity": current, "atMs": current_at, "source": "current-exchange-equity"}
 
+
+
+def historical_day_windows(
+    candles: Iterable[dict[str, Any]], *, timezone_name: str,
+    current_date: str, max_days: int = 14,
+    boundary_tolerance_minutes: int = 90,
+) -> list[dict[str, Any]]:
+    """Return only completed local days with reliable start/end equity coverage.
+
+    Partial days are excluded from the multi-day average instead of being
+    presented as complete daily returns.
+    """
+    if max_days < 1:
+        return []
+    zone = ZoneInfo(str(timezone_name))
+    today = date.fromisoformat(str(current_date))
+    tolerance_ms = max(0, int(boundary_tolerance_minutes)) * 60_000
+    grouped: dict[date, dict[str, Any]] = {}
+
+    for row in candles:
+        if not isinstance(row, dict):
+            continue
+        try:
+            first_ms = int(_finite(row.get("firstSampleAtMs", row.get("atMs", 0))))
+            last_ms = int(_finite(row.get("sourceAtMs", row.get("lastSampleAtMs", row.get("atMs", 0)))))
+            opened = _finite(row.get("open", 0))
+            closed = _finite(row.get("close", 0))
+        except ValueError:
+            continue
+        if first_ms <= 0 or last_ms < first_ms or opened <= 0 or closed <= 0:
+            continue
+        first_local = datetime.fromtimestamp(first_ms / 1000, tz=timezone.utc).astimezone(zone)
+        last_local = datetime.fromtimestamp(last_ms / 1000, tz=timezone.utc).astimezone(zone)
+        if first_local.date() != last_local.date() or first_local.date() >= today:
+            continue
+        day = first_local.date()
+        bucket = grouped.setdefault(day, {
+            "date": day.isoformat(),
+            "startAtMs": first_ms,
+            "endAtMs": last_ms,
+            "startEquity": opened,
+            "endEquity": closed,
+        })
+        if first_ms < int(bucket["startAtMs"]):
+            bucket["startAtMs"] = first_ms
+            bucket["startEquity"] = opened
+        if last_ms > int(bucket["endAtMs"]):
+            bucket["endAtMs"] = last_ms
+            bucket["endEquity"] = closed
+
+    reliable: list[dict[str, Any]] = []
+    for day in sorted(grouped):
+        row = grouped[day]
+        day_start = datetime.combine(day, datetime_time.min, tzinfo=zone)
+        next_start = datetime.combine(day + timedelta(days=1), datetime_time.min, tzinfo=zone)
+        day_start_ms = int(day_start.astimezone(timezone.utc).timestamp() * 1000)
+        day_end_ms = int(next_start.astimezone(timezone.utc).timestamp() * 1000)
+        if int(row["startAtMs"]) - day_start_ms > tolerance_ms:
+            continue
+        if day_end_ms - int(row["endAtMs"]) > tolerance_ms:
+            continue
+        if int(row["endAtMs"]) <= int(row["startAtMs"]):
+            continue
+        reliable.append(dict(row))
+    return reliable[-int(max_days):]
 
 def daily_return_percentage(previous_equity: Any, current_equity: Any, external_cashflow: Any = 0) -> float:
     previous = _finite(previous_equity)

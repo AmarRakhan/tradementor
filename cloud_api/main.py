@@ -147,7 +147,7 @@ from hyperliquid_scanner import (
 from portfolio_risk import (
     ExchangeRiskSnapshot, PortfolioRiskLimits, evaluate_risk_increase,
 )
-from portfolio_growth import PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, is_exposure_order, select_day_start_snapshot, utc_ms
+from portfolio_growth import PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, historical_day_windows, is_exposure_order, select_day_start_snapshot, utc_ms
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from reliability_monitor import event_key as reliability_event_key, event_payload as reliability_event_payload, counts as reliability_counts, overall as reliability_overall
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
@@ -6353,6 +6353,47 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
         today_pct=daily_return_percentage(reference_equity,equity,day_net_cashflow)
         today_usd=(equity-day_net_cashflow)-reference_equity
         today=local_now.date().isoformat()
+
+        # Build 438: schema v2 correctly neutralised today's deposit/withdrawal
+        # but intentionally erased the older average. Rebuild only completed,
+        # well-covered local days from durable account-equity candles. Each
+        # day's external cashflow is removed independently.
+        stored_preview=ref.get().to_dict() or {}
+        daily_preview=dict(stored_preview.get("dailyGrowth") or {})
+        preview_schema=int(safe_float(daily_preview.get("schemaVersion")))
+        backfill_history:list[dict[str,Any]]=[]
+        if preview_schema!=PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION:
+            hourly_candles=_read_portfolio_chart_candles(user,"1u",400)
+            windows=historical_day_windows(
+                hourly_candles,timezone_name="Europe/Amsterdam",
+                current_date=today,max_days=14,boundary_tolerance_minutes=90,
+            )
+            for window in windows:
+                try:
+                    ledger=client.income_history(
+                        start_time=int(window["startAtMs"]),
+                        end_time=int(window["endAtMs"]),limit=1000,
+                    )
+                    ledger=[row for row in ledger if isinstance(row,dict)]
+                    if len(ledger)>=1000:
+                        continue
+                    historical_cashflow=external_cashflow_breakdown(ledger,int(window["startAtMs"]))
+                    historical_net=safe_float(historical_cashflow.get("netExternalCashflowUsd"))
+                    historical_pct=daily_return_percentage(
+                        safe_float(window["startEquity"]),safe_float(window["endEquity"]),historical_net,
+                    )
+                    historical_usd=(safe_float(window["endEquity"])-historical_net)-safe_float(window["startEquity"])
+                    backfill_history.append({
+                        "date":str(window["date"]),
+                        "startEquity":round(safe_float(window["startEquity"]),8),
+                        "endEquity":round(safe_float(window["endEquity"]),8),
+                        "usdChange":round(historical_usd,8),
+                        "percentage":round(historical_pct,8),
+                        "externalCashflowUsd":round(historical_net,8),
+                        "source":"RECONSTRUCTED_HOURLY_EQUITY",
+                    })
+                except (AsterApiError,AsterSubmissionUncertain,AsterValidationError,HTTPException,ValueError,KeyError):
+                    continue
         transaction=db.transaction()
 
         @firestore.transactional
@@ -6360,8 +6401,15 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
             doc=ref.get(transaction=txn);stored=doc.to_dict() or {};state=dict(stored.get("dailyGrowth") or {})
             schema=int(safe_float(state.get("schemaVersion")))
             if schema!=PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION:
-                state={"schemaVersion":PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION,"measurementStartDate":today,
-                    "completedReturnSum":0.0,"completedReturnCount":0,"history":[]}
+                restored=[row for row in backfill_history if isinstance(row,dict)]
+                restored.sort(key=lambda row:str(row.get("date","")))
+                restored=restored[-120:]
+                state={"schemaVersion":PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION,
+                    "measurementStartDate":str(restored[0].get("date")) if restored else today,
+                    "completedReturnSum":sum(safe_float(row.get("percentage")) for row in restored),
+                    "completedReturnCount":len(restored),"history":restored,
+                    "historySource":"RECONSTRUCTED_HOURLY_EQUITY" if restored else "NO_RELIABLE_HISTORY",
+                    "reconstructedHistoryCount":len(restored)}
             elif state.get("lastObservedDate")!=today and state.get("lastObservedDate"):
                 if bool(state.get("lastObservedReliable")):
                     previous_return=safe_float(state.get("lastObservedReturnPercentage"))
@@ -6390,6 +6438,8 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
             return {"reliable":True,"todayPercentage":round(today_pct,8),"todayUsd":round(today_usd,8),"todayLevels":0,
                 "averageDailyPercentage":round(average_pct,8),"measuredDays":completed_count+1,
                 "measurementStartDate":str(state.get("measurementStartDate") or today),"referenceDate":today,
+                "averageHistorySource":str(state.get("historySource") or "DAILY_OBSERVATIONS"),
+                "historicalDaysRestored":int(safe_float(state.get("reconstructedHistoryCount"))),
                 "dayStartTimestampMs":reference_at_ms,"dayStartEquity":round(reference_equity,8),
                 "dayStartSource":str(anchor.get("source") or ""),"currentEquity":round(equity,8),
                 "dayExternalCashflowUsd":round(day_net_cashflow,8),
