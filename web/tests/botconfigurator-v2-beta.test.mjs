@@ -7,7 +7,7 @@ const v2 = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx"
 const page = fs.readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 
 test("unreleased path keeps the legacy configurator and V2 is lazy loaded", () => {
-  assert.match(shell, /if \(!betaEnabled\) return <AsterStrategy2Maker/);
+  assert.match(shell, /if \(!releaseEnabled\) return <AsterStrategy2Maker/);
   assert.match(shell, /lazy\(\(\) => import\("@\/components\/aster-bot-configurator-v2"\)/);
   assert.match(page, /AsterStrategy2Entry as AsterStrategy2Maker/);
 });
@@ -17,7 +17,9 @@ test("V2 uses the approved visual reference and one-page step structure", () => 
   for (const id of ["markt", "posities", "instap", "grootte", "dca", "winst", "bescherming", "controle"]) {
     assert.match(v2, new RegExp("v2-step-" + id));
   }
-  assert.match(v2, /BETA · alleen zichtbaar voor jou/);\n  assert.match(v2, /const zoneSoldiersAvailable = feature\\("zone_soldiers"\\)\\.enabled === true/);\n  assert.doesNotMatch(v2, /ownerBeta && feature\\("zone_soldiers"\\)/);
+  assert.match(v2, /BETA · alleen zichtbaar voor jou/);
+  assert.match(v2, /const zoneSoldiersAvailable = feature\("zone_soldiers"\)\.enabled === true/);
+  assert.doesNotMatch(v2, /ownerBeta && feature\("zone_soldiers"\)/);
 });
 
 test("release center keeps approval separate from publish and supports rollback", () => {
