@@ -18,6 +18,11 @@ _lock = threading.RLock()
 _reader: Callable[[str, str], dict[str, Any]] | None = None
 
 LOCKED_STATUSES = {"HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED"}
+# Bulk-profit convenience actions must stay completely away from any symbol that
+# still belongs to an Auto Hedge lifecycle. This is intentionally broader than
+# the quantity reservation guard below: it protects both legs of the managed
+# pair, including RECOVERY/REHEDGE states, from Close Long/Short/All.
+AUTO_HEDGE_MANAGED_STATUSES = LOCKED_STATUSES | {"RECOVERY", "REHEDGE_ARMED", "DISABLED"}
 EPSILON = 1e-12
 
 
@@ -59,6 +64,20 @@ def current_lock(account_uid: str, symbol: str) -> dict[str, Any]:
             "message": "Auto Hedge-lock kon niet betrouwbaar worden gelezen",
         })
     return value if isinstance(value, dict) else {}
+
+
+def auto_hedge_symbol_managed(*, account_uid: str, symbol: str) -> bool:
+    """Return whether a symbol is still owned by an Auto Hedge pair lifecycle.
+
+    Empty/CLOSED means no active Auto Hedge ownership. Any known managed status
+    is protected. An unexpected non-empty status is also treated as managed so
+    bulk-profit actions fail safe when lifecycle versions drift.
+    """
+    row = current_lock(account_uid, symbol)
+    status = str(row.get("status", "")).upper().strip()
+    if not status or status == "CLOSED":
+        return False
+    return status in AUTO_HEDGE_MANAGED_STATUSES or bool(status)
 
 
 def require_auto_hedge_close_allowed(
