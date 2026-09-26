@@ -1,0 +1,31 @@
+name: Dispatch Build 436 Auto Hedge disable guard
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/dispatch-build436-auto-hedge-disable-guard.yml"
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 285 -R AmarRakhan/tradementor --body "Dispatching guarded production backend deployment from verified source eab6c104b3079d28b8104c64a5f8326ad77c7fe1."
+      - name: Dispatch guarded production backend deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run deploy-cloud-production.yml \
+            -R AmarRakhan/tradementor \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit=eab6c104b3079d28b8104c64a5f8326ad77c7fe1 \
+            -f request_issue=285
