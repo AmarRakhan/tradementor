@@ -49,7 +49,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   before: "Een korte tussenweergave van de cached/onvolledig opgebouwde grafiek kon zichtbaar zijn.",
   after: "Geen oude grafiekflits meer; alleen de definitieve Accountwaarde-weergave wordt na initialisatie zichtbaar.",
   technicalDetails: [
-    "Startup-only presentatiefix: initialChartReady plus een volledig opaak stage-masker.",
+    "Startup-only presentatiefix: initialChartReady plus een volledig opaak stage-masker; chart-event regressiegrens gesynchroniseerd.",
     "Geen wijziging aan Portfolio Koers-data, cashflowberekening, zones of orderlogica.",
   ],
   confidence: "confirmed",

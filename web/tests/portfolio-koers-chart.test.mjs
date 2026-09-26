@@ -190,7 +190,7 @@ test("Portfolio Koers mobile plot reserves only 48px for the price axis and matc
 
 test("standard chart event markup contains no event dollar value field",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  const layer=component.slice(component.indexOf('className="portfolio-koers-event-layer"'),component.indexOf("{loading&&!baseCandles.length"));
+  const layer=component.slice(component.indexOf('className="portfolio-koers-event-layer"'),component.indexOf("{loading&&initialChartReady&&!baseCandles.length"));
   assert.equal(layer.includes("label.value"),false);
   assert.equal(layer.includes("compactUsd("),false);
   assert.equal(layer.includes("label.glyph"),false);
