@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 import main
 from aster_gateway import (
+    AsterApiError,
     AsterAutomationConfig,
     AsterOrderIntent,
     AsterValidationError,
@@ -235,6 +236,24 @@ def _truth_rows(client: Any, symbol: str) -> tuple[dict[str, Any], dict[str, Any
     return long_row, short_row, rows
 
 
+def _opening_capacity(
+    client: Any,
+    symbol: str,
+    long_leverage: int,
+    short_leverage: int,
+) -> tuple[float, str]:
+    leverages = sorted({int(long_leverage), int(short_leverage)})
+    if not leverages or any(value < 1 for value in leverages):
+        raise AsterValidationError("Actuele Aster leverage is niet betrouwbaar beschikbaar")
+    values = [
+        client.remaining_openable_notional_value(symbol, leverage)
+        for leverage in leverages
+    ]
+    if not values:
+        raise AsterValidationError("Aster openingsruimte is niet betrouwbaar beschikbaar")
+    return min(values), "ASTER_REMAINING_OPENABLE_NOTIONAL_VALUE"
+
+
 def _fresh_plan(
     uid: str,
     symbol: str,
@@ -269,6 +288,11 @@ def _fresh_plan(
         )
         long_break_even, long_break_even_source = _position_break_even(long_row)
         short_break_even, short_break_even_source = _position_break_even(short_row)
+        long_leverage = int(_number(long_row.get("leverage")))
+        short_leverage = int(_number(short_row.get("leverage")))
+        remaining_capacity, capacity_source = _opening_capacity(
+            client, symbol, long_leverage, short_leverage,
+        )
         plan = plan_legacy_hedge_scale(
             symbol=symbol,
             margin_per_side_usd=margin_per_side,
@@ -279,17 +303,18 @@ def _fresh_plan(
             short_entry=_number(short_row.get("entryPrice")),
             long_execution_price=long_price,
             short_execution_price=short_price,
-            long_leverage=max(1.0, _number(long_row.get("leverage"))),
-            short_leverage=max(1.0, _number(short_row.get("leverage"))),
+            long_leverage=long_leverage,
+            short_leverage=short_leverage,
             rules=rules,
             taker_fee_rate=_fee_rate(),
             current_price=current_price,
             long_break_even=long_break_even,
             short_break_even=short_break_even,
+            remaining_openable_notional_usd=remaining_capacity,
         )
     except HTTPException:
         raise
-    except (AsterValidationError, ValueError, RuntimeError) as exc:
+    except (AsterApiError, AsterValidationError, ValueError, RuntimeError) as exc:
         raise HTTPException(409, str(exc)) from exc
 
     plan.update({
@@ -298,6 +323,7 @@ def _fresh_plan(
         "executionPriceSource": "ASTER_BOOK_TICKER_BID_ASK_WITH_POSITION_MARK_FALLBACK",
         "longBreakEvenSource": long_break_even_source,
         "shortBreakEvenSource": short_break_even_source,
+        "openingCapacitySource": capacity_source,
         "estimated": True,
         "dataFresh": True,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -487,6 +513,59 @@ def _execute_operation(uid: str, operation_id: str, operation: dict[str, Any]) -
     if current_long + tolerance < pre_long or current_short + tolerance < pre_short:
         raise RuntimeError("Legacy basisquantity is tijdens recovery afgenomen; automatische schaalrecovery stopt")
 
+    initial_ids = [
+        stable_scale_intent_id(uid, symbol, operation_id, side, "initial", planned_qty)
+        for side in ("LONG", "SHORT")
+    ]
+    initial_exists = any(_query_existing(client, symbol, intent_id) is not None for intent_id in initial_ids)
+    no_new_exposure = (
+        abs(current_long - pre_long) <= tolerance
+        and abs(current_short - pre_short) <= tolerance
+    )
+    if no_new_exposure and not initial_exists:
+        try:
+            account = client.account_information() or {}
+            available = _number(account.get("availableBalance"), -1.0)
+            long_price, short_price, current_price, _ = _quote_prices(
+                client, symbol, long_row, short_row,
+            )
+            long_break_even, _ = _position_break_even(long_row)
+            short_break_even, _ = _position_break_even(short_row)
+            long_leverage = int(_number(long_row.get("leverage")))
+            short_leverage = int(_number(short_row.get("leverage")))
+            remaining_capacity, _ = _opening_capacity(
+                client, symbol, long_leverage, short_leverage,
+            )
+            fresh = plan_legacy_hedge_scale(
+                symbol=symbol,
+                margin_per_side_usd=_number(operation.get("requestedMarginPerSideUsd")),
+                available_balance=available,
+                current_long_qty=current_long,
+                current_short_qty=current_short,
+                long_entry=_number(long_row.get("entryPrice")),
+                short_entry=_number(short_row.get("entryPrice")),
+                long_execution_price=long_price,
+                short_execution_price=short_price,
+                long_leverage=long_leverage,
+                short_leverage=short_leverage,
+                rules=rules,
+                taker_fee_rate=_fee_rate(),
+                current_price=current_price,
+                long_break_even=long_break_even,
+                short_break_even=short_break_even,
+                remaining_openable_notional_usd=remaining_capacity,
+            )
+        except (AsterApiError, AsterValidationError, ValueError, RuntimeError) as exc:
+            raise RuntimeError(
+                "RECOVERY_REPLAN_REQUIRED: De actuele Aster leverage/openingsruimte laat "
+                f"de opgeslagen recovery niet meer veilig toe. {exc}"
+            ) from exc
+        if _number(fresh.get("extraQuantity")) + tolerance < planned_qty:
+            raise RuntimeError(
+                "RECOVERY_REPLAN_REQUIRED: De actuele Aster leverage, koers of openingsruimte "
+                "vereist een kleinere quantity. Laad de preview opnieuw."
+            )
+
     # Initial intents are replay-safe.  If a process died after LONG, the same
     # LONG client id resolves to the existing order and only the missing SHORT is sent.
     for side in ("LONG", "SHORT"):
@@ -654,6 +733,11 @@ def _resume_operation(uid: str, operation_id: str) -> dict[str, Any]:
     status = str(stored.get("status", "")).upper()
     if status in TERMINAL_OPERATION_STATUSES and isinstance(stored.get("result"), dict):
         return stored["result"]
+    if status == "FAILED":
+        raise RuntimeError(
+            "RECOVERY_REPLAN_REQUIRED: De vorige poging eindigde zonder nieuwe exposure. "
+            "Laad een nieuwe preview zodat leverage en Aster openingsruimte opnieuw worden berekend."
+        )
     if stored.get("userConfirmed") is not True:
         raise RuntimeError("Recovery-operatie mist expliciete gebruikersbevestiging")
     symbol = _normalize_symbol(str(stored.get("symbol", "")))
@@ -766,7 +850,11 @@ def _resume_operation(uid: str, operation_id: str) -> dict[str, Any]:
                     "De bevestigde recovery is nog niet definitief afgerond en blijft veilig in reconciliation; "
                     "dezelfde operation ID wordt hervat. " + str(exc)
                 ) from exc
-            raise
+            raise RuntimeError(
+                "RECOVERY_REPLAN_REQUIRED: De poging is zonder nieuwe exposure gestopt. "
+                "Leverage en Aster openingsruimte worden bij de volgende preview opnieuw gelezen. "
+                + str(exc)
+            ) from exc
         finally:
             main._release_aster_account_coordination(uid, token)
 
@@ -860,6 +948,11 @@ def execute_legacy_hedge_scale(
             "estimatedShortMarginUsd": plan["estimatedShortMarginUsd"],
             "estimatedTotalMarginUsd": plan["estimatedTotalMarginUsd"],
             "estimatedFeesUsd": plan["estimatedFeesUsd"],
+            "plannedOpenNotionalUsd": plan.get("plannedOpenNotionalUsd"),
+            "remainingOpenableNotionalAtConfirm": plan.get("remainingOpenableNotionalUsd"),
+            "capacityLimitedAtConfirm": bool(plan.get("capacityLimited")),
+            "longLeverageAtConfirm": plan["long"]["leverage"],
+            "shortLeverageAtConfirm": plan["short"]["leverage"],
             "availableAtConfirm": plan["availableBalance"],
             "pairCycleId": str(pair.get("generationId", "")),
             "createdAt": now,
