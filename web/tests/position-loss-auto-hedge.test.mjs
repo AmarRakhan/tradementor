@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "442"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "443"/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {
@@ -146,4 +146,13 @@ test("Build 442 makes break-even before/after the primary Legacy Hedge Recovery 
   assert.doesNotMatch(scaleScreen, /Gemiddelde entry/);
   assert.doesNotMatch(scaleScreen, /Geschatte uitvoering/);
   assert.doesNotMatch(scaleScreen, /pairResultNote/);
+});
+
+
+test("Build 443 refreshes stale Legacy Recovery previews and rotates ids only after explicit replan", async () => {
+  const component = await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
+  assert.match(component, /visibilitychange/);
+  assert.match(component, /window\.addEventListener\("focus"/);
+  assert.match(component, /RECOVERY_REPLAN_REQUIRED/);
+  assert.match(component, /setScaleRefreshKey/);
 });
