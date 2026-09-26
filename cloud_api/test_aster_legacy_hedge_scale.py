@@ -9,6 +9,8 @@ from aster_legacy_hedge_scale import (
     break_even_distance_change,
     entry_effect,
     excess_rollback_action,
+    leverage_capacity_guidance,
+    lower_leverage_candidates,
     parity_repair_action,
     plan_legacy_hedge_scale,
     stable_scale_intent_id,
@@ -173,6 +175,33 @@ class LegacyHedgeScalePlanTests(unittest.TestCase):
     def test_zero_remaining_openable_notional_blocks_before_execution(self):
         with self.assertRaisesRegex(ValueError, "geen extra opening-notional"):
             self.base(remaining_openable_notional_usd=0)
+
+    def test_lower_leverage_candidates_use_actual_bracket_levels(self):
+        payload = [{
+            "symbol": "NEARUSDT",
+            "brackets": [
+                {"initialLeverage": 50},
+                {"initialLeverage": 20},
+                {"initialLeverage": 10},
+                {"initialLeverage": 5},
+                {"initialLeverage": 4},
+            ],
+        }]
+        self.assertEqual(lower_leverage_candidates(payload, 20), [10, 5, 4])
+
+    def test_actionable_capacity_message_names_current_and_working_leverage(self):
+        message = leverage_capacity_guidance("NEARUSDT", 20, 10, 5)
+        self.assertEqual(
+            message,
+            "20x geblokkeerd door Aster · 10x heeft wel voldoende capaciteit voor $5 per zijde. "
+            "Verlaag NEAR naar 10x in Aster en laad opnieuw.",
+        )
+
+    def test_capacity_message_has_safe_fallback_when_no_lower_level_works(self):
+        message = leverage_capacity_guidance("NEARUSDT", 20, None, 1)
+        self.assertIn("20x geblokkeerd door Aster", message)
+        self.assertIn("lagere beschikbare leverages", message)
+        self.assertIn("$1 per zijde", message)
 
     def test_partial_fill_repair_targets_missing_side(self):
         repair = parity_repair_action(
