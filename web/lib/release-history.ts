@@ -49,7 +49,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   before: "Portfolio Koers startte met de groene cashflow-gecorrigeerde Performance-lijn.",
   after: "Portfolio Koers start met de Accountwaarde-candlestickweergave; Performance blijft optioneel.",
   technicalDetails: [
-    "Alleen de initiële client-side viewMode en de bijbehorende regressietest zijn gewijzigd.",
+    "Alleen de initiële client-side viewMode en bijbehorende regressiecontracten zijn gewijzigd.",
     "Visuele referenties: file_00000000fcc88210b2abe5478a224e25 en file_00000000e3808210aa0d12065716a4ac.",
   ],
   confidence: "confirmed",
