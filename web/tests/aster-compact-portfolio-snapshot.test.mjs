@@ -104,7 +104,7 @@ test("Build 410 labels net exposure as exposure instead of a profit-loss amount"
   assert.equal(hedgeSummary.includes("exposureMoney(exposure.netExposureUsd, true)"),false);
 });
 
-test("Build 437 adds the Zone-Soldaten quick row to Portfolio Snapshot",async()=>{
+test("Build 445 keeps the Zone-Soldaten quick row entitlement-gated in Portfolio Snapshot",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-snapshot.css",import.meta.url),"utf8");
   assert.ok(component.includes("file_0000000061fc81f49a44564879d533de"));
@@ -116,9 +116,9 @@ test("Build 437 adds the Zone-Soldaten quick row to Portfolio Snapshot",async()=
   assert.ok(component.includes("INSTELLINGEN"));
   assert.ok(component.includes("onDoubleClick={openZoneSoldiers}"));
   assert.ok(component.includes("onTouchEnd={onZoneTouchEnd}"));
-  assert.ok(component.includes("tradementor:open-zone-soldiers-command-center"));
+  assert.ok(component.includes("tradementor:open-zone-soldiers-command-center"));\n  assert.ok(component.includes('release.features?.zone_command_center?.enabled === true'));
   assert.ok(css.includes(".aps-quick-actions{display:grid"));
-  const quick=component.indexOf("<SnapshotQuickActions />");
+  const quick=component.indexOf("<SnapshotQuickActions zoneCommandCenterAvailable={zoneCommandCenterAvailable} />");
   const grid=component.indexOf('<div className="aps-grid">');
   assert.ok(quick>0&&quick<grid);
 });
