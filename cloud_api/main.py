@@ -6629,7 +6629,7 @@ def preview_profitable_aster_positions(
     client = _portfolio_growth_client(user, live=False)
     try:
         uid = str(user["uid"])
-        owned_keys=_aster_strategy2_owned_keys(uid)
+        owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
         rows=[row for row in client.position_risk()
             if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
         raw_candidates = profitable_positions(rows)
