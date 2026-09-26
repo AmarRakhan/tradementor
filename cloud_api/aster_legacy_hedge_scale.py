@@ -156,6 +156,7 @@ def plan_legacy_hedge_scale(
     current_price: Any | None = None,
     long_break_even: Any | None = None,
     short_break_even: Any | None = None,
+    remaining_openable_notional_usd: Any | None = None,
 ) -> dict[str, Any]:
     """Build a fail-closed quote using one common added quantity for both legs."""
     margin = _number(margin_per_side_usd)
@@ -187,6 +188,24 @@ def plan_legacy_hedge_scale(
     raw_long = _decimal(margin) * _decimal(long_lev) / _decimal(long_px)
     raw_short = _decimal(margin) * _decimal(short_lev) / _decimal(short_px)
     common_raw = min(raw_long, raw_short)
+
+    remaining_capacity: float | None = None
+    capacity_limited = False
+    if remaining_openable_notional_usd is not None:
+        remaining_capacity = _number(remaining_openable_notional_usd, -1.0)
+        if remaining_capacity < 0:
+            raise ValueError("Aster openingsruimte is niet betrouwbaar beschikbaar")
+        if remaining_capacity <= 0:
+            raise ValueError(
+                "Aster staat voor dit symbool en deze leverage momenteel geen extra opening-notional toe"
+            )
+        # Aster reports symbol-level remaining opening notional. This operation
+        # opens both hedge legs, so the capacity must cover their combined notional.
+        capacity_raw = _decimal(remaining_capacity) / (_decimal(long_px) + _decimal(short_px))
+        if capacity_raw < common_raw:
+            common_raw = capacity_raw
+            capacity_limited = True
+
     quantity = _floor_to_step(common_raw, rules.market_quantity_step)
     quantity = rules.market_quantity(quantity, min(_decimal(long_px), _decimal(short_px)))
     if quantity <= 0:
@@ -196,8 +215,11 @@ def plan_legacy_hedge_scale(
     long_margin = q * long_px / long_lev
     short_margin = q * short_px / short_lev
     total_margin = long_margin + short_margin
-    estimated_fees = q * (long_px + short_px) * fee_rate
+    planned_open_notional = q * (long_px + short_px)
+    estimated_fees = planned_open_notional * fee_rate
     required_available = total_margin + estimated_fees
+    if remaining_capacity is not None and planned_open_notional > remaining_capacity + 1e-9:
+        raise ValueError("Geplande recovery overschrijdt de actuele Aster openingsruimte")
     if required_available > available + 1e-9:
         raise ValueError(
             f"Onvoldoende Available to Trade: nodig circa USD {required_available:.2f}, "
@@ -253,6 +275,9 @@ def plan_legacy_hedge_scale(
         "estimatedShortMarginUsd": short_margin,
         "estimatedTotalMarginUsd": total_margin,
         "estimatedFeesUsd": estimated_fees,
+        "plannedOpenNotionalUsd": planned_open_notional,
+        "remainingOpenableNotionalUsd": remaining_capacity,
+        "capacityLimited": capacity_limited,
         "estimatedAvailableDebitUsd": required_available,
         "availableAfterEstimate": max(0.0, available - required_available),
         "hedgeRatioAfter": 100.0,

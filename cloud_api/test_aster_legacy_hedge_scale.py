@@ -162,6 +162,18 @@ class LegacyHedgeScalePlanTests(unittest.TestCase):
             self.assertIn(leg["distanceChangeKind"], {"CLOSER", "FARTHER", "UNCHANGED", "ALREADY_REACHED"})
         self.assertEqual(plan["long"]["currentPrice"], plan["short"]["currentPrice"])
 
+    def test_remaining_openable_notional_caps_the_two_leg_quantity(self):
+        plan = self.base(remaining_openable_notional_usd=50)
+        self.assertTrue(plan["capacityLimited"])
+        self.assertLessEqual(plan["plannedOpenNotionalUsd"], 50.0 + 1e-9)
+        self.assertEqual(plan["long"]["addedQuantity"], plan["short"]["addedQuantity"])
+        self.assertLess(plan["estimatedLongMarginUsd"], 2.0)
+        self.assertLess(plan["estimatedShortMarginUsd"], 2.0)
+
+    def test_zero_remaining_openable_notional_blocks_before_execution(self):
+        with self.assertRaisesRegex(ValueError, "geen extra opening-notional"):
+            self.base(remaining_openable_notional_usd=0)
+
     def test_partial_fill_repair_targets_missing_side(self):
         repair = parity_repair_action(
             pre_long_qty=100,
