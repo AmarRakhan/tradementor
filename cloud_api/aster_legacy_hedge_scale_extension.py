@@ -182,7 +182,12 @@ def _contract_rules(client: Any, symbol: str) -> ContractRules:
     return ContractRules.from_exchange_info(raw)
 
 
-def _quote_prices(client: Any, symbol: str, long_row: dict[str, Any], short_row: dict[str, Any]) -> tuple[float, float]:
+def _quote_prices(
+    client: Any,
+    symbol: str,
+    long_row: dict[str, Any],
+    short_row: dict[str, Any],
+) -> tuple[float, float, float, str]:
     long_mark = _number(long_row.get("markPrice"), _number(long_row.get("entryPrice")))
     short_mark = _number(short_row.get("markPrice"), _number(short_row.get("entryPrice")))
     bid = 0.0
@@ -193,11 +198,31 @@ def _quote_prices(client: Any, symbol: str, long_row: dict[str, Any], short_row:
         ask = _number(quote.get("askPrice"))
     except Exception:
         pass
-    long_price = ask if ask > 0 else long_mark
-    short_price = bid if bid > 0 else short_mark
-    if long_price <= 0 or short_price <= 0:
-        raise HTTPException(409, "Actuele bid/ask of markprijs is niet betrouwbaar beschikbaar")
-    return long_price, short_price
+
+    valid_book = bid > 0 and ask > 0 and ask >= bid
+    if valid_book:
+        current_price = (bid + ask) / 2.0
+        current_source = "ASTER_BOOK_TICKER_MID"
+    else:
+        marks = [value for value in (long_mark, short_mark) if value > 0]
+        current_price = sum(marks) / len(marks) if marks else 0.0
+        current_source = "ASTER_POSITION_RISK_MARK"
+
+    long_price = ask if ask > 0 else (long_mark if long_mark > 0 else current_price)
+    short_price = bid if bid > 0 else (short_mark if short_mark > 0 else current_price)
+    if long_price <= 0 or short_price <= 0 or current_price <= 0:
+        raise HTTPException(409, "Actuele koersdata is niet betrouwbaar beschikbaar; laad de preview opnieuw")
+    return long_price, short_price, current_price, current_source
+
+
+def _position_break_even(row: dict[str, Any]) -> tuple[float, str]:
+    explicit = _number(row.get("breakEvenPrice"))
+    if explicit > 0:
+        return explicit, "ASTER_POSITION_RISK.breakEvenPrice"
+    entry = _number(row.get("entryPrice"))
+    if entry > 0:
+        return entry, "ASTER_POSITION_RISK.entryPrice_FALLBACK"
+    raise HTTPException(409, "Break-evenbasis is niet betrouwbaar beschikbaar; laad de preview opnieuw")
 
 
 def _truth_rows(client: Any, symbol: str) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
@@ -239,7 +264,11 @@ def _fresh_plan(
         account = client.account_information() or {}
         available = _number(account.get("availableBalance"), -1.0)
         rules = _contract_rules(client, symbol)
-        long_price, short_price = _quote_prices(client, symbol, long_row, short_row)
+        long_price, short_price, current_price, current_price_source = _quote_prices(
+            client, symbol, long_row, short_row,
+        )
+        long_break_even, long_break_even_source = _position_break_even(long_row)
+        short_break_even, short_break_even_source = _position_break_even(short_row)
         plan = plan_legacy_hedge_scale(
             symbol=symbol,
             margin_per_side_usd=margin_per_side,
@@ -254,6 +283,9 @@ def _fresh_plan(
             short_leverage=max(1.0, _number(short_row.get("leverage"))),
             rules=rules,
             taker_fee_rate=_fee_rate(),
+            current_price=current_price,
+            long_break_even=long_break_even,
+            short_break_even=short_break_even,
         )
     except HTTPException:
         raise
@@ -262,7 +294,10 @@ def _fresh_plan(
 
     plan.update({
         "availableSource": "ASTER_ACCOUNT_INFORMATION.availableBalance",
-        "priceSource": "ASTER_BOOK_TICKER_WITH_MARK_FALLBACK",
+        "priceSource": current_price_source,
+        "executionPriceSource": "ASTER_BOOK_TICKER_BID_ASK_WITH_POSITION_MARK_FALLBACK",
+        "longBreakEvenSource": long_break_even_source,
+        "shortBreakEvenSource": short_break_even_source,
         "estimated": True,
         "dataFresh": True,
         "generatedAt": datetime.now(timezone.utc).isoformat(),

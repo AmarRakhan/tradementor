@@ -197,3 +197,84 @@ article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto
   .plah-scale-hero h3{font-size:25px}.plah-scale-pair-id small{max-width:185px}
   .plah-scale-entry-grid{grid-template-columns:1fr}.plah-scale-actions{grid-template-columns:.8fr 1.4fr}
 }
+
+
+/* Build 442 — Legacy Hedge Recovery UI 2.0
+   pixel reference: file_00000000d23482438b5f8f4588d6cf86 */
+.plah-scale-preview-v2{padding:14px 15px 13px}
+.plah-scale-preview-v2 .plah-scale-preview-title{
+  position:relative;display:flex;align-items:center;gap:9px;padding:0 0 11px;
+  border-bottom:0;color:#edf4ef;font-size:13px;font-weight:900
+}
+.plah-scale-preview-v2 .plah-scale-preview-title em{
+  position:absolute;right:34px;color:#6f8278;font-size:8px;font-style:normal;font-weight:700
+}
+.plah-scale-chart-icon{display:flex!important;align-items:flex-end!important;gap:2px!important;width:16px!important;height:16px!important;color:#35ee9c!important}
+.plah-scale-chart-icon i{display:block;width:3px;border-radius:2px 2px 0 0;background:#35ee9c}
+.plah-scale-chart-icon i:nth-child(1){height:8px}.plah-scale-chart-icon i:nth-child(2){height:15px}.plah-scale-chart-icon i:nth-child(3){height:11px}
+.plah-scale-info-dot{
+  display:grid!important;place-items:center!important;flex:0 0 auto!important;width:18px!important;height:18px!important;
+  margin-left:auto!important;border:1px solid #d9aa36!important;border-radius:50%!important;color:#e7ba48!important;
+  font:900 10px/1 serif!important
+}
+.plah-scale-overview{padding:0 12px;border:1px solid rgba(76,139,105,.34);border-radius:10px;background:rgba(0,13,8,.42)}
+.plah-scale-overview .plah-scale-preview-row{padding:8px 0;border-bottom:1px solid rgba(63,118,91,.15)}
+.plah-scale-overview .plah-scale-preview-row:last-child{border-bottom:0}
+.plah-scale-overview .plah-scale-preview-row span{font-size:10px}
+.plah-scale-overview .plah-scale-preview-row b{font-size:11px}.plah-scale-overview .plah-scale-preview-row.total b{font-size:12px}
+
+.plah-scale-break-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:11px}
+.plah-scale-break-card{
+  min-width:0;display:grid;align-content:start;padding:11px 12px 10px;border:1px solid rgba(63,139,100,.38);border-radius:12px;
+  background:linear-gradient(145deg,rgba(2,27,17,.93),rgba(1,17,11,.97));box-shadow:inset 0 1px 0 rgba(255,255,255,.018)
+}
+.plah-scale-break-card.long{border-color:rgba(36,213,135,.62)}
+.plah-scale-break-card.short{border-color:rgba(111,139,121,.34)}
+.plah-scale-break-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.plah-scale-direction{
+  display:grid;place-items:center;width:34px;height:34px;border-radius:50%;font-size:22px;font-weight:500
+}
+.plah-scale-direction.long{background:rgba(3,91,52,.5);color:#27ec95}
+.plah-scale-direction.short{background:rgba(91,18,31,.52);color:#ff5f75}
+.plah-scale-qty{margin-bottom:9px;color:#c8d2cc;font-size:10px;font-weight:800;white-space:nowrap}
+.plah-scale-break-card>small{margin-top:2px;color:#93a199;font-size:9px;line-height:1.2}
+.plah-scale-break-card>strong{margin:3px 0 8px;font-size:17px;line-height:1.02;font-weight:950;letter-spacing:-.02em;white-space:nowrap}
+.plah-scale-break-card>strong.long{color:#31ef9d}.plah-scale-break-card>strong.short{color:#ff6579}
+.plah-scale-break-card>strong.after{color:#eef5f0}.plah-scale-break-card>strong.after.short{color:#ff6579}
+.plah-scale-distance-change{
+  display:flex;align-items:center;justify-content:center;gap:8px;min-height:38px;margin-top:2px;padding:0 8px;border:1px solid;border-radius:9px;
+  font-size:14px;font-weight:950;text-align:center
+}
+.plah-scale-distance-change>span{font-size:19px;line-height:1}
+.plah-scale-distance-change.closer{border-color:rgba(30,211,130,.5);background:rgba(1,50,29,.4);color:#36efa0}
+.plah-scale-distance-change.farther{border-color:rgba(240,92,113,.48);background:rgba(84,12,26,.3);color:#ff7588}
+.plah-scale-distance-change.neutral{border-color:rgba(222,175,64,.42);background:rgba(73,53,9,.2);color:#e9c269}
+.plah-scale-break-note{
+  display:flex;align-items:center;gap:8px;margin:10px 0 0;padding-top:9px;border-top:1px solid rgba(63,118,91,.18);
+  color:#a4b0aa;font-size:9px;line-height:1.35
+}
+.plah-scale-break-note>span{
+  display:grid;place-items:center;flex:0 0 auto;width:18px;height:18px;border:1px solid #dda936;border-radius:50%;
+  color:#e5b744;font:900 10px/1 serif
+}
+.plah-scale-actions{margin-top:13px}
+
+@media(max-width:720px){
+  .plah-scale-preview-v2{padding:10px}
+  .plah-scale-preview-v2 .plah-scale-preview-title{gap:7px;padding-bottom:8px;font-size:9px}
+  .plah-scale-preview-v2 .plah-scale-preview-title em{right:28px;font-size:6px}
+  .plah-scale-chart-icon{width:12px!important;height:12px!important}.plah-scale-chart-icon i{width:2px}.plah-scale-chart-icon i:nth-child(1){height:6px}.plah-scale-chart-icon i:nth-child(2){height:11px}.plah-scale-chart-icon i:nth-child(3){height:8px}
+  .plah-scale-info-dot{width:15px!important;height:15px!important;font-size:8px!important}
+  .plah-scale-overview{padding:0 9px}.plah-scale-overview .plah-scale-preview-row{padding:6px 0}.plah-scale-overview .plah-scale-preview-row span{font-size:7.5px}.plah-scale-overview .plah-scale-preview-row b{font-size:8px}.plah-scale-overview .plah-scale-preview-row.total b{font-size:9px}
+  .plah-scale-break-grid{gap:7px;margin-top:8px}
+  .plah-scale-break-card{padding:8px 9px;border-radius:10px}.plah-scale-break-head{margin-bottom:6px}
+  .plah-scale-direction{width:27px;height:27px;font-size:17px}.plah-scale-qty{margin-bottom:7px;font-size:7.5px}
+  .plah-scale-break-card>small{font-size:7px}.plah-scale-break-card>strong{margin:2px 0 7px;font-size:12.5px}
+  .plah-scale-distance-change{min-height:31px;gap:5px;padding:0 5px;border-radius:7px;font-size:10.5px}.plah-scale-distance-change>span{font-size:15px}
+  .plah-scale-break-note{gap:6px;margin-top:8px;padding-top:7px;font-size:7px}.plah-scale-break-note>span{width:15px;height:15px;font-size:8px}
+}
+@media(max-width:390px){
+  .plah-scale-break-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px}
+  .plah-scale-break-card{padding:7px 7px}.plah-scale-direction{width:24px;height:24px;font-size:15px}
+  .plah-scale-break-card>strong{font-size:11px}.plah-scale-distance-change{font-size:9.5px}
+}

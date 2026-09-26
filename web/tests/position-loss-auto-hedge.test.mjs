@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "441"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "442"/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {
@@ -104,7 +104,7 @@ test("Build 436 requires an explicit user confirmation before Auto Hedge can be 
 });
 
 
-test("Build 441 exposes owner-only Legacy Hedge Recovery UI and proxy routes", async () => {
+test("Build 442 makes break-even before/after the primary Legacy Hedge Recovery preview", async () => {
   const [component, css, previewRoute, executeRoute, release] = await Promise.all([
     readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/position-loss-auto-hedge.css", import.meta.url), "utf8"),
@@ -112,20 +112,26 @@ test("Build 441 exposes owner-only Legacy Hedge Recovery UI and proxy routes", a
     readFile(new URL("../app/api/exchanges/aster/position-loss-auto-hedge/pairs/[symbol]/scale/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/release-history.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(component, /file_000000005090821091d88f1b301841d7/);
-  assert.match(component, /file_000000003ff08246ad57f7b054d4a96f/);
-  assert.match(css, /file_000000005090821091d88f1b301841d7/);
-  assert.match(css, /file_000000003ff08246ad57f7b054d4a96f/);
+  const reference = "file_00000000d23482438b5f8f4588d6cf86";
+  assert.ok(component.includes(reference));
+  assert.ok(css.includes(reference));
+  assert.ok(release.includes(reference));
   assert.match(component, /plah-scale-open/);
   assert.match(component, /VERHOOG/);
   assert.match(component, /Hedge-lock vergroten/);
   assert.match(component, /Bedrag per zijde \(USDT\)/);
+  assert.match(component, /Preview \(break-even afstand\)/);
   assert.match(component, /Totaal extra margin/);
   assert.match(component, /Geschatte fees/);
   assert.match(component, /Extra quantity beide zijden/);
-  assert.match(component, /GUNSTIGER/);
-  assert.match(component, /ONGUNSTIGER/);
-  assert.match(component, /VRIJWEL GELIJK/);
+  assert.match(component, /Hedge ratio na uitvoering/);
+  assert.match(component, /Nu naar break-even/);
+  assert.match(component, /Na verhogen/);
+  assert.match(component, /dichterbij/);
+  assert.match(component, /verder weg/);
+  assert.match(component, /Break-even al bereikt/);
+  assert.match(component, /Break-even afstand is per zijde, niet voor het totale pair/);
+  assert.match(component, /Qty \{/);
   assert.match(component, /Beide posities verhogen/);
   assert.match(component, /confirm: true/);
   assert.match(component, /crypto\?\.randomUUID/);
@@ -134,5 +140,10 @@ test("Build 441 exposes owner-only Legacy Hedge Recovery UI and proxy routes", a
   assert.match(executeRoute, /\/scale/);
   assert.match(executeRoute, /"POST"/);
   assert.match(release, /LEGACY_HEDGE_SCALE/);
-  assert.doesNotMatch(component, /Doel:\s*betere break-even voor SHORT/);
+  assert.doesNotMatch(component, /Nu naar break-even\s*\+9,1%/);
+  assert.doesNotMatch(component, /−44,1% omlaag/);
+  const scaleScreen = component.slice(component.indexOf("scalePair ?"), component.indexOf(": <div className=\"plah-screen-scroll\""));
+  assert.doesNotMatch(scaleScreen, /Gemiddelde entry/);
+  assert.doesNotMatch(scaleScreen, /Geschatte uitvoering/);
+  assert.doesNotMatch(scaleScreen, /pairResultNote/);
 });

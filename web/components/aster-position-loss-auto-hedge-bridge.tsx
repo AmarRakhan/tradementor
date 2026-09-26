@@ -10,7 +10,7 @@ const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
 const TILE_REFERENCE = "file_00000000340881f4b05212f7cfd82727";
 const SCREEN_REFERENCE = "file_00000000ecd08246bd1b15532fb478d6";
 const OVERVIEW_REFERENCE = "file_000000005090821091d88f1b301841d7";
-const SCALE_REFERENCE = "file_000000003ff08246ad57f7b054d4a96f";
+const SCALE_REFERENCE = "file_00000000d23482438b5f8f4588d6cf86";
 
 type LegView = {
   quantity?: number;
@@ -51,6 +51,17 @@ type ScaleLegPreview = {
   estimatedEntryAfter: number;
   entryEffect: "GUNSTIGER" | "ONGUNSTIGER" | "VRIJWEL GELIJK";
   leverage: number;
+  currentPrice: number;
+  currentBreakEven: number;
+  estimatedBreakEvenAfter: number;
+  breakEvenDistanceBeforePct: number;
+  breakEvenDistanceAfterPct: number;
+  breakEvenDirectionBefore: "UP" | "DOWN" | "REACHED";
+  breakEvenDirectionAfter: "UP" | "DOWN" | "REACHED";
+  breakEvenReachedBefore: boolean;
+  breakEvenReachedAfter: boolean;
+  distanceChangeKind: "CLOSER" | "FARTHER" | "UNCHANGED" | "ALREADY_REACHED";
+  distanceChangePct: number | null;
 };
 
 type ScalePreview = {
@@ -182,7 +193,44 @@ function money(value: number | undefined, signed = true) {
 
 function thresholdMoney(value: number) {
   const digits = Number.isInteger(value) ? 0 : 2;
-  return `$${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: 2 }).format(value)}`;
+  return `${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: 2 }).format(value)}`;
+}
+
+function pct1(value: number | null | undefined) {
+  if (!Number.isFinite(Number(value))) return "–";
+  const normalized = Math.abs(Number(value)) < 0.0000001 ? 0 : Number(value);
+  return new Intl.NumberFormat("nl-NL", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(normalized);
+}
+
+function breakEvenMoveText(leg: ScaleLegPreview | undefined, phase: "before" | "after") {
+  if (!leg) return "–";
+  const reached = phase === "before" ? leg.breakEvenReachedBefore : leg.breakEvenReachedAfter;
+  if (reached) return "Break-even bereikt";
+  const distance = phase === "before" ? leg.breakEvenDistanceBeforePct : leg.breakEvenDistanceAfterPct;
+  const direction = phase === "before" ? leg.breakEvenDirectionBefore : leg.breakEvenDirectionAfter;
+  if (direction === "UP") return `+${pct1(distance)}% omhoog`;
+  if (direction === "DOWN") return `−${pct1(distance)}% omlaag`;
+  return "Break-even bereikt";
+}
+
+function distanceChangeText(leg: ScaleLegPreview | undefined) {
+  if (!leg) return "–";
+  if (leg.distanceChangeKind === "ALREADY_REACHED") return "Break-even al bereikt";
+  if (leg.distanceChangeKind === "UNCHANGED") return "Ongewijzigd";
+  const value = Math.max(0, Math.round(Number(leg.distanceChangePct || 0)));
+  return leg.distanceChangeKind === "FARTHER"
+    ? `${value}% verder weg`
+    : `${value}% dichterbij`;
+}
+
+function distanceChangeClass(leg: ScaleLegPreview | undefined) {
+  if (!leg) return "neutral";
+  if (leg.distanceChangeKind === "CLOSER") return "closer";
+  if (leg.distanceChangeKind === "FARTHER") return "farther";
+  return "neutral";
 }
 
 function statusLabel(status?: string) {
@@ -748,38 +796,52 @@ export function AsterPositionLossAutoHedgeBridge() {
             />
             <span><b>₮</b> USDT</span>
           </div>
-          <p id="plah-scale-help" className="plah-scale-help"><span>i</span> Invoer is per zijde. De backend bepaalt één gemeenschappelijke uitvoerbare coin quantity.</p>
-
           {scaleError ? <div className="plah-error" role="alert">{scaleError}</div> : null}
           {scaleMessage ? <div className="plah-success">{scaleMessage}</div> : null}
 
-          <section className="plah-scale-preview" aria-busy={scaleLoading}>
-            <div className="plah-scale-preview-title"><span aria-hidden="true">◉</span><b>Preview (wijziging)</b>{scaleLoading ? <em>Actueel laden…</em> : null}</div>
-            <div className="plah-scale-preview-row"><span>LONG extra margin</span><b>{scalePreview ? money(scalePreview.estimatedLongMarginUsd, false) : "–"}</b></div>
-            <div className="plah-scale-preview-row"><span>SHORT extra margin</span><b>{scalePreview ? money(scalePreview.estimatedShortMarginUsd, false) : "–"}</b></div>
-            <div className="plah-scale-preview-row total"><span>Totaal extra margin</span><b>{scalePreview ? money(scalePreview.estimatedTotalMarginUsd, false) : "–"}</b></div>
-            <div className="plah-scale-preview-row"><span>Geschatte fees</span><b>{scalePreview ? money(scalePreview.estimatedFeesUsd, false) : "–"}</b></div>
-            <div className="plah-scale-preview-row"><span>Extra quantity beide zijden</span><b>{scalePreview ? nlNumber(scalePreview.extraQuantity) : "–"}</b></div>
-            <div className="plah-scale-preview-row"><span>Hedge ratio na uitvoering</span><b>{scalePreview ? "100% (1:1)" : "–"}</b></div>
+          <section className="plah-scale-preview plah-scale-preview-v2" aria-busy={scaleLoading}>
+            <div className="plah-scale-preview-title">
+              <span className="plah-scale-chart-icon" aria-hidden="true"><i /><i /><i /></span>
+              <b>Preview (break-even afstand)</b>
+              <span className="plah-scale-info-dot" aria-hidden="true">i</span>
+              {scaleLoading ? <em>Actueel laden…</em> : null}
+            </div>
 
-            <div className="plah-scale-entry-grid">
+            <div className="plah-scale-overview">
+              <div className="plah-scale-preview-row total"><span>Totaal extra margin</span><b>{scalePreview ? money(scalePreview.estimatedTotalMarginUsd, false) : "–"}</b></div>
+              <div className="plah-scale-preview-row"><span>Geschatte fees</span><b>{scalePreview ? money(scalePreview.estimatedFeesUsd, false) : "–"}</b></div>
+              <div className="plah-scale-preview-row"><span>Extra quantity beide zijden</span><b>{scalePreview ? nlNumber(scalePreview.extraQuantity) : "–"}</b></div>
+              <div className="plah-scale-preview-row"><span>Hedge ratio na uitvoering</span><b>{scalePreview ? "100% (1:1)" : "–"}</b></div>
+            </div>
+
+            <div className="plah-scale-break-grid">
               {(["long", "short"] as const).map((key) => {
                 const leg = scalePreview?.[key];
                 const side = key.toUpperCase();
-                const effect = String(leg?.entryEffect || "VRIJWEL GELIJK").toLowerCase().replaceAll(" ", "-");
-                return <article className="plah-scale-entry" key={key}>
-                  <div><span className={`plah-side-badge ${key}`}>{side}</span><em className={effect}>{leg?.entryEffect || "–"}</em></div>
-                  <small>Quantity</small>
-                  <b>{leg ? `${nlNumber(leg.currentQuantity)} → ${nlNumber(leg.quantityAfter)}` : "–"}</b>
-                  <small>Gemiddelde entry</small>
-                  <b>{leg ? `${nlNumber(leg.currentEntry, 8)} → ${nlNumber(leg.estimatedEntryAfter, 8)}` : "–"}</b>
-                  <small>Geschatte uitvoering</small>
-                  <b>{leg ? nlNumber(leg.executionPrice, 8) : "–"}</b>
+                const direction = leg?.breakEvenDirectionBefore === "DOWN" ? "down" : "up";
+                return <article className={`plah-scale-break-card ${key}`} key={key}>
+                  <div className="plah-scale-break-head">
+                    <span className={`plah-side-badge ${key}`}>{side}</span>
+                    <span className={`plah-scale-direction ${key} ${direction}`} aria-hidden="true">{direction === "down" ? "↘" : "↗"}</span>
+                  </div>
+
+                  <div className="plah-scale-qty">Qty {leg ? `${nlNumber(leg.currentQuantity)} → ${nlNumber(leg.quantityAfter)}` : "–"}</div>
+
+                  <small>Nu naar break-even</small>
+                  <strong className={key}>{breakEvenMoveText(leg, "before")}</strong>
+
+                  <small>Na verhogen</small>
+                  <strong className={`after ${key}`}>{breakEvenMoveText(leg, "after")}</strong>
+
+                  <div className={`plah-scale-distance-change ${distanceChangeClass(leg)}`}>
+                    <span aria-hidden="true">◎</span>
+                    <b>{distanceChangeText(leg)}</b>
+                  </div>
                 </article>;
               })}
             </div>
 
-            <p className="plah-scale-result-note"><span>i</span>{scalePreview?.pairResultNote || "Bestaand pair-resultaat wordt niet als winst weggeboekt door deze actie."}</p>
+            <p className="plah-scale-break-note"><span>i</span>Break-even afstand is per zijde, niet voor het totale pair.</p>
           </section>
 
           <div className="plah-scale-actions">
@@ -788,7 +850,6 @@ export function AsterPositionLossAutoHedgeBridge() {
               {scaleSubmitting ? "Uitvoeren…" : "Beide posities verhogen"}
             </button>
           </div>
-          <p className="plah-scale-footnote"><span>i</span> De LONG en SHORT worden beide met dezelfde exchange-valid coin quantity verhoogd. Een echte order wordt alleen door deze handmatige bevestiging gestart.</p>
         </section>
       </div> : <div className="plah-screen-scroll">
         <div className="plah-screen-topline">

@@ -73,6 +73,51 @@ def entry_effect(side: str, current_entry: Any, new_entry: Any) -> str:
     raise ValueError("Positiezijde moet LONG of SHORT zijn")
 
 
+def break_even_distance(side: str, current_price: Any, break_even_price: Any) -> dict[str, Any]:
+    """Return the required percentage move from current price to one leg break-even."""
+    current = _number(current_price)
+    target = _number(break_even_price)
+    normalized = str(side).upper().strip()
+    if normalized not in {"LONG", "SHORT"}:
+        raise ValueError("Positiezijde moet LONG of SHORT zijn")
+    if current <= 0 or target <= 0:
+        raise ValueError("Break-evenafstand mist een geldige actuele koers of break-evenprijs")
+
+    if normalized == "LONG":
+        reached = current + EPSILON >= target
+        distance = 0.0 if reached else ((target / current) - 1.0) * 100.0
+        direction = "REACHED" if reached else "UP"
+    else:
+        reached = current <= target + EPSILON
+        distance = 0.0 if reached else ((current - target) / current) * 100.0
+        direction = "REACHED" if reached else "DOWN"
+
+    if abs(distance) < 1e-10:
+        distance = 0.0
+    return {
+        "distancePct": max(0.0, distance),
+        "direction": direction,
+        "reached": reached,
+    }
+
+
+def break_even_distance_change(old_distance: Any, new_distance: Any, *, old_reached: bool = False) -> dict[str, Any]:
+    """Describe relative distance improvement against the original situation."""
+    old = max(0.0, _number(old_distance))
+    new = max(0.0, _number(new_distance))
+    if old_reached or old <= 1e-12:
+        return {"kind": "ALREADY_REACHED", "relativePct": None}
+    delta = old - new
+    tolerance = max(1e-10, old * 1e-9)
+    if abs(delta) <= tolerance:
+        return {"kind": "UNCHANGED", "relativePct": 0.0}
+    if delta > 0:
+        relative = min(100.0, max(0.0, delta / old * 100.0))
+        return {"kind": "CLOSER", "relativePct": relative}
+    relative = max(0.0, (new - old) / old * 100.0)
+    return {"kind": "FARTHER", "relativePct": relative}
+
+
 def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
     if step <= 0:
         return value
@@ -108,6 +153,9 @@ def plan_legacy_hedge_scale(
     short_leverage: Any,
     rules: ContractRules,
     taker_fee_rate: Any = DEFAULT_TAKER_FEE_RATE,
+    current_price: Any | None = None,
+    long_break_even: Any | None = None,
+    short_break_even: Any | None = None,
 ) -> dict[str, Any]:
     """Build a fail-closed quote using one common added quantity for both legs."""
     margin = _number(margin_per_side_usd)
@@ -161,6 +209,39 @@ def plan_legacy_hedge_scale(
     long_after_qty = long_qty + q
     short_after_qty = short_qty + q
 
+    current_px = _number(current_price)
+    if current_px <= 0:
+        current_px = (long_px + short_px) / 2.0
+    long_break_even_now = _number(long_break_even)
+    if long_break_even_now <= 0:
+        long_break_even_now = _number(long_entry)
+    short_break_even_now = _number(short_break_even)
+    if short_break_even_now <= 0:
+        short_break_even_now = _number(short_entry)
+    if current_px <= 0 or long_break_even_now <= 0 or short_break_even_now <= 0:
+        raise ValueError("Break-evenpreview mist betrouwbare actuele prijs- of positiegegevens")
+
+    # When Aster supplies breakEvenPrice it may already include accumulated
+    # fee/funding effects. Use that as the current basis; otherwise entryPrice.
+    # The post-scale break-even remains an estimate because the new fills/fees
+    # do not exist yet.
+    long_break_even_after = weighted_entry(long_qty, long_break_even_now, q, long_px)
+    short_break_even_after = weighted_entry(short_qty, short_break_even_now, q, short_px)
+    long_before_distance = break_even_distance("LONG", current_px, long_break_even_now)
+    long_after_distance = break_even_distance("LONG", current_px, long_break_even_after)
+    short_before_distance = break_even_distance("SHORT", current_px, short_break_even_now)
+    short_after_distance = break_even_distance("SHORT", current_px, short_break_even_after)
+    long_change = break_even_distance_change(
+        long_before_distance["distancePct"],
+        long_after_distance["distancePct"],
+        old_reached=bool(long_before_distance["reached"]),
+    )
+    short_change = break_even_distance_change(
+        short_before_distance["distancePct"],
+        short_after_distance["distancePct"],
+        old_reached=bool(short_before_distance["reached"]),
+    )
+
     return {
         "eventType": EVENT_TYPE,
         "symbol": str(symbol).upper().strip(),
@@ -186,6 +267,17 @@ def plan_legacy_hedge_scale(
             "estimatedEntryAfter": long_after_entry,
             "entryEffect": entry_effect("LONG", long_entry, long_after_entry),
             "leverage": long_lev,
+            "currentPrice": current_px,
+            "currentBreakEven": long_break_even_now,
+            "estimatedBreakEvenAfter": long_break_even_after,
+            "breakEvenDistanceBeforePct": long_before_distance["distancePct"],
+            "breakEvenDistanceAfterPct": long_after_distance["distancePct"],
+            "breakEvenDirectionBefore": long_before_distance["direction"],
+            "breakEvenDirectionAfter": long_after_distance["direction"],
+            "breakEvenReachedBefore": long_before_distance["reached"],
+            "breakEvenReachedAfter": long_after_distance["reached"],
+            "distanceChangeKind": long_change["kind"],
+            "distanceChangePct": long_change["relativePct"],
         },
         "short": {
             "side": "SHORT",
@@ -197,6 +289,17 @@ def plan_legacy_hedge_scale(
             "estimatedEntryAfter": short_after_entry,
             "entryEffect": entry_effect("SHORT", short_entry, short_after_entry),
             "leverage": short_lev,
+            "currentPrice": current_px,
+            "currentBreakEven": short_break_even_now,
+            "estimatedBreakEvenAfter": short_break_even_after,
+            "breakEvenDistanceBeforePct": short_before_distance["distancePct"],
+            "breakEvenDistanceAfterPct": short_after_distance["distancePct"],
+            "breakEvenDirectionBefore": short_before_distance["direction"],
+            "breakEvenDirectionAfter": short_after_distance["direction"],
+            "breakEvenReachedBefore": short_before_distance["reached"],
+            "breakEvenReachedAfter": short_after_distance["reached"],
+            "distanceChangeKind": short_change["kind"],
+            "distanceChangePct": short_change["relativePct"],
         },
         "pairResultNote": (
             "Bestaand pair-resultaat blijft bij uitvoering grotendeels behouden; "

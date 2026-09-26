@@ -65,3 +65,22 @@ def test_preview_and_execution_routes_are_distinct_and_preview_has_no_live_submi
 def test_production_entrypoint_registers_legacy_scale_extension():
     entry = Path(__file__).with_name("withdraw_app.py").read_text(encoding="utf-8")
     assert "import aster_legacy_hedge_scale_extension" in entry
+
+
+def test_break_even_preview_uses_exchange_break_even_when_available_and_fresh_current_price():
+    value = extension_source()
+    planner = Path(__file__).with_name("aster_legacy_hedge_scale.py").read_text(encoding="utf-8")
+    assert 'row.get("breakEvenPrice")' in value
+    assert '"ASTER_POSITION_RISK.breakEvenPrice"' in value
+    assert '"ASTER_POSITION_RISK.entryPrice_FALLBACK"' in value
+    assert '"ASTER_BOOK_TICKER_MID"' in value
+    assert '"ASTER_POSITION_RISK_MARK"' in value
+    assert "current_price=current_price" in value
+    assert "long_break_even=long_break_even" in value
+    assert "short_break_even=short_break_even" in value
+    assert "break_even_distance(" in planner
+    assert "break_even_distance_change(" in planner
+    assert '"breakEvenDistanceBeforePct"' in planner
+    assert '"breakEvenDistanceAfterPct"' in planner
+    assert '"distanceChangeKind"' in planner
+    assert '"distanceChangePct"' in planner

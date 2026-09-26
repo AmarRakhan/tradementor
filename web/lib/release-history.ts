@@ -26,41 +26,72 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-26",
-  title: "Legacy Hedge Recovery · hedge-lock handmatig 1:1 vergroten",
+  title: "Legacy Hedge Recovery UI 2.0 · break-even vóór/na",
   newItems: [
-    "Iedere volledig HEDGED Auto Hedge-pair heeft een compacte + VERHOOG-actie volgens de goedgekeurde mobiele referentie.",
-    "Hedge-lock vergroten toont live Available to Trade, één marginbudget per zijde en een dynamische LONG/SHORT entry-preview vóór bevestiging.",
-    "De backend berekent één exchange-valid coin quantity en gebruikt exact diezelfde quantity voor LONG en SHORT; de actie is owner-only en uitsluitend handmatig.",
+    "Hedge-lock vergroten toont nu per LONG en SHORT hoeveel procent de koers vanaf de actuele markt nog moet bewegen om break-even te bereiken.",
+    "De preview toont dezelfde break-evenafstand opnieuw voor de geschatte situatie na verhogen en rekent hoeveel procent van de oude afstand daarmee verdwijnt.",
+    "De mobiele preview is vereenvoudigd volgens de bindende referentie: totale extra margin, fees, gemeenschappelijke quantity, 1:1 hedge-ratio en twee compacte break-evenkaarten.",
   ],
   problems: [
-    "Oude DCA-origin pairs konden door sterk uiteenliggende gemiddelde entries moeilijk gecontroleerd worden uitgespeeld zonder opnieuw richtinggebonden DCA te gebruiken.",
-    "Een vaste previewtekst zoals betere break-even voor SHORT is inhoudelijk onjuist wanneer de actuele koers een andere entry-effectcombinatie geeft.",
+    "Build 441 zette gemiddelde entry en executionprijs centraal, terwijl voor herstelbeslissingen vooral de resterende koersafstand naar break-even relevant is.",
+    "Een label als GUNSTIGER/ONGUNSTIGER liet niet direct zien hoeveel koersbeweging vóór en na de verhoging nog nodig was.",
   ],
   causes: [
-    "De bestaande Auto Hedge had wel een exacte 1:1 lock en recovery, maar geen afzonderlijke handmatige scale-operatie voor beide benen tegelijk.",
-    "Dollarinput per zijde kon niet veilig rechtstreeks naar twee losse orders worden vertaald zonder gemeenschappelijke quantity-, rounding- en partial-fillreconciliation.",
+    "De eerste Legacy Hedge Recovery-preview was technisch georiënteerd en publiceerde nog geen server-authoritatieve break-evenafstand per zijde.",
   ],
   fixes: [
-    "Nieuw eventtype LEGACY_HEDGE_SCALE blijft volledig buiten DCA counters, DCA history, Smart Rescue en strategy-cycle state.",
-    "Preview gebruikt exchange contractregels, actuele bid/ask met mark fallback, actuele leverage en gewogen gemiddelde entry om GUNSTIGER, ONGUNSTIGER of VRIJWEL GELIJK per zijde te tonen.",
-    "Execution gebruikt stabiele idempotency ids, een pair-lock, accountcoördinatie, startup recovery en rollback van uitsluitend nieuw excess wanneer een leg niet gelijk fillt.",
+    "De backend gebruikt Aster breakEvenPrice wanneer beschikbaar en valt anders gecontroleerd terug op entryPrice; de actuele prijs komt uit verse book-ticker mid met position-mark fallback.",
+    "De geschatte break-even na verhogen gebruikt dezelfde bestaande Build-441 quantity/roundinglogica en een gewogen break-evenbasis per zijde.",
+    "Relatieve verbetering wordt berekend als (oude afstand - nieuwe afstand) / oude afstand; reeds bereikte break-even en verder-weg-situaties hebben expliciete randgevallen zonder NaN/Infinity.",
   ],
   now: [
-    "Een ingevoerde $2 per zijde is een marginbudget per zijde; de preview toont de werkelijk afgeronde margin, totale extra margin, fees en gemeenschappelijke quantity.",
-    "Een echte order wordt pas verzonden nadat de eigenaar handmatig Beide posities verhogen bevestigt; automatische tests en previews zijn read-only.",
-    "Na een succesvolle operatie blijft het pair HEDGED met 100% 1:1 quantity en blijft de bestaande Auto Hedge-lock intact.",
+    "De gebruiker ziet bijvoorbeeld Nu naar break-even +9,1% omhoog, Na verhogen +6,0% omhoog en 34% dichterbij wanneer die actuele cijfers dat werkelijk opleveren.",
+    "De voorbeeldwaarden uit de referentie zijn niet hardcoded; iedere preview komt uit actuele exchange/accountdata.",
+    "Build 441 execution safety blijft ongewijzigd en een echte LEGACY_HEDGE_SCALE-order ontstaat alleen na handmatige bevestiging.",
   ],
-  before: "Legacy DCA-pairs konden alleen worden bekeken of door de bestaande Auto Hedge lifecycle worden beheerd; gelijktijdig handmatig 1:1 vergroten bestond niet.",
-  after: "Owner-only Legacy Hedge Recovery biedt een expliciete preview en fail-closed 1:1 execution zonder de huidige Soldiers- of DCA-logica te wijzigen.",
+  before: "Build 441 toonde entryprijzen en een kwalitatieve gunstiger/ongunstiger-indicator als primaire herstelpreview.",
+  after: "Build 442 toont de resterende break-evenafstand vóór en na verhogen als hoofdmetric en houdt technische entrydata buiten het primaire scherm.",
   technicalDetails: [
-    "Visuele referenties: file_000000005090821091d88f1b301841d7 en file_000000003ff08246ad57f7b054d4a96f.",
-    "Backendroutes: POST /v1/me/aster/position-loss-auto-hedge/pairs/{symbol}/scale/preview en POST .../scale.",
-    "Quantity parity is leidend; rounding gebeurt omlaag op MARKET_LOT_SIZE en een onvoldoende Available/open-order/ongelijke pre-quantity blokkeert fail-closed.",
-    "Interrupted user-confirmed operations worden via dezelfde stable client-order ids hervat; legacy basisquantity wordt nooit door rollback verkleind.",
+    "Bindende visuele referentie: file_00000000d23482438b5f8f4588d6cf86.",
+    "Current break-even bron: Aster positionRisk.breakEvenPrice met entryPrice fallback.",
+    "Current-price bron: verse Aster bookTicker-mid, met signed positionRisk mark fallback.",
+    "Geen wijziging aan LEGACY_HEDGE_SCALE execution, idempotency, locks, reconciliation, rollback of DCA-state.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-441-legacy-hedge-recovery",
+    version: "46",
+    build: "441",
+    releasedAt: "2026-09-26",
+    title: "Legacy Hedge Recovery · hedge-lock handmatig 1:1 vergroten",
+    newItems: [
+      "Iedere volledig HEDGED Auto Hedge-pair kreeg een + VERHOOG-actie en een owner-only handmatige scale-flow.",
+      "De backend berekent één exchange-valid coin quantity en gebruikt exact dezelfde quantity voor LONG en SHORT.",
+    ],
+    problems: [
+      "Oude DCA-origin pairs waren moeilijk gecontroleerd uit te spelen zonder opnieuw richtinggebonden DCA te gebruiken.",
+    ],
+    causes: [
+      "Auto Hedge had wel een exacte 1:1 lock en recovery, maar geen afzonderlijke handmatige scale-operatie voor beide benen tegelijk.",
+    ],
+    fixes: [
+      "LEGACY_HEDGE_SCALE werd buiten DCA counters/history/cycles toegevoegd met idempotency, pair-locks en partial-fill reconciliation.",
+    ],
+    now: [
+      "Een echte recovery-order wordt alleen na expliciete handmatige bevestiging verzonden.",
+      "Na succes blijft de pair exact 1:1 HEDGED.",
+    ],
+    before: "Geen gelijktijdige handmatige 1:1-vergroting van bestaande hedge-pairs.",
+    after: "Owner-only Legacy Hedge Recovery met fail-closed execution en dynamische preview.",
+    technicalDetails: [
+      "Visuele referenties: file_000000005090821091d88f1b301841d7 en file_000000003ff08246ad57f7b054d4a96f.",
+      "Eventtype: LEGACY_HEDGE_SCALE.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-440-portfolio-cycle-post-close-equity",
     version: "46",
