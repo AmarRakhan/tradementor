@@ -1,0 +1,72 @@
+name: Diagnose profit-close safety tests 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-profit-close-tests-20260926.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 23ec93a4df545328b36f0b4e401689e25e28b32e
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Run targeted tests
+        id: targeted
+        continue-on-error: true
+        working-directory: cloud_api
+        run: |
+          set -o pipefail
+          pytest -q test_aster_position_loss_auto_hedge_lock.py test_aster_hedge_recovery.py test_aster_profit_close.py 2>&1 | tee "$RUNNER_TEMP/targeted.log"
+      - name: Run full backend tests when targeted pass
+        id: full
+        if: steps.targeted.outcome == 'success'
+        continue-on-error: true
+        working-directory: cloud_api
+        run: |
+          set -o pipefail
+          pytest -q 2>&1 | tee "$RUNNER_TEMP/full.log"
+      - name: Publish result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          {
+            echo "## Profit-close safety test diagnosis"
+            echo
+            echo "- Targeted tests: **${{ steps.targeted.outcome }}**"
+            echo "- Full backend tests: **${{ steps.full.outcome }}**"
+            echo
+            if [ -f "$RUNNER_TEMP/targeted.log" ]; then
+              echo '### Targeted tail'
+              echo '```'
+              tail -n 80 "$RUNNER_TEMP/targeted.log"
+              echo '```'
+            fi
+            if [ -f "$RUNNER_TEMP/full.log" ]; then
+              echo '### Full-suite tail'
+              echo '```'
+              tail -n 100 "$RUNNER_TEMP/full.log"
+              echo '```'
+            fi
+          } > "$RUNNER_TEMP/report.md"
+          gh issue comment 282 -R AmarRakhan/tradementor --body-file "$RUNNER_TEMP/report.md"
+      - name: Fail when tests failed
+        if: steps.targeted.outcome != 'success' || steps.full.outcome != 'success'
+        run: exit 1
