@@ -1,0 +1,74 @@
+name: Fast Auto Hedge state diagnosis 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-auto-hedge-state-fast-20260926.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read Firestore state over authenticated REST
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-access-token)"
+          BASE="https://firestore.googleapis.com/v1/projects/$GCP_PROJECT_ID/databases/(default)/documents"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/systemConfiguration/continuityDashboardV1" > "$RUNNER_TEMP/owner.json"
+          python - "$RUNNER_TEMP/owner.json" > "$RUNNER_TEMP/uid.txt" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1],encoding='utf-8'))
+          f=d.get('fields',{})
+          print(f.get('ownerUid',{}).get('stringValue',''))
+          PY
+          UID="$(cat "$RUNNER_TEMP/uid.txt")"
+          test -n "$UID"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/asterPositionLossAutoHedge/$UID" > "$RUNNER_TEMP/ah.json"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/users/$UID/asterDynamicHedge/control" > "$RUNNER_TEMP/dyn.json" || echo '{}' > "$RUNNER_TEMP/dyn.json"
+          python - "$RUNNER_TEMP/ah.json" "$RUNNER_TEMP/dyn.json" > "$RUNNER_TEMP/comment.md" <<'PY'
+          import json,sys
+          ah=json.load(open(sys.argv[1],encoding='utf-8')); dyn=json.load(open(sys.argv[2],encoding='utf-8'))
+          def val(field):
+              v=(ah.get('fields') or {}).get(field,{})
+              for k in ('booleanValue','doubleValue','integerValue','stringValue','timestampValue'):
+                  if k in v:return v[k]
+              if 'mapValue' in v:return '<map>'
+              return None
+          df=dyn.get('fields') or {}
+          dyn_enabled=(df.get('enabled') or {}).get('booleanValue',False)
+          out={
+            'persistedEnabled': val('enabled'),
+            'thresholdUsd': val('thresholdUsd'),
+            'updatedAt': val('updatedAt'),
+            'lastCheckedAt': val('lastCheckedAt'),
+            'lastError': val('lastError'),
+            'dynamicHedgeEnabled': dyn_enabled,
+            'firestoreDocumentUpdateTime': ah.get('updateTime'),
+          }
+          print('### Fast read-only Auto Hedge state')
+          print('```json')
+          print(json.dumps(out,indent=2,sort_keys=True,default=str))
+          print('```')
+          PY
+          gh issue comment 284 -R AmarRakhan/tradementor --body-file "$RUNNER_TEMP/comment.md"
