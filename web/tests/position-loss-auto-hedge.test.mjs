@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "439"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "440"/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {
