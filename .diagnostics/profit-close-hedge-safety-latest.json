@@ -1,0 +1,1 @@
+{"openPositionCount":115,"rawEligible":[{"autoHedgeManaged":true,"hedgeSide":"LONG","openPnlUsd":5.397,"pairStatus":"HEDGED","protectedSide":"SHORT","reservedHedgeQty":10620.0,"side":"LONG","symbol":"PUMPUSDT"}],"rawEligibleCount":1,"rawEligibleOpenPnlUsd":5.397,"safeEligible":[],"safeEligibleCount":0,"safeEligibleOpenPnlUsd":0,"strategy2OwnedOpenCount":107}
