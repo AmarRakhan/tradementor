@@ -28,6 +28,21 @@ test("Portfolio Cycle tile calculates live progress from server cycle data", () 
   assert.ok((state.progressPercent ?? 0) > 90);
 });
 
+test("Portfolio Cycle tile prefers the durable restarted cycle over a stale report", () => {
+  const state = derivePortfolioCycleCard({
+    equity: 103.50,
+    strategy2: {
+      settings: { takeProfitMode: "PORTFOLIO" },
+      multiBbCycle: { cycleStartEquity: 103.50, baseEquity: 103.50, targetEquity: 104.0175 },
+      multiBb: { portfolioCycle: { cycleStartEquity: 102.95, baseEquity: 102.95, targetEquity: 103.47 } },
+    },
+  });
+  assert.equal(state.active, true);
+  assert.equal(state.progressPercent, 0);
+  assert.equal(state.remainingUsd?.toFixed(2), "0.52");
+  assert.equal(state.statusLabel, "Actief");
+});
+
 test("Portfolio Cycle tile supports legacy multiBbCycle payloads and caps at target", () => {
   const state = derivePortfolioCycleCard({
     account: { totalMarginBalance: 105 },
