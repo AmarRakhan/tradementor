@@ -96,6 +96,8 @@ const HEDGE_CARD_REFERENCE = "file_00000000aa6c8210baf1b0ac8f94d18e";
 const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
 const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
 const LIQUIDATION_GAUGE_REFERENCE = "file_000000004e80820a80318a3de3ae5abd";
+const SNAPSHOT_V2_REFERENCE = "file_0000000061fc81f49a44564879d533de";
+const ZONE_SOLDIERS_OPEN_EVENT = "tradementor:open-zone-soldiers-command-center";
 
 type LiquidationDiagnostics = {
   liquidationRiskPercent: number | null;
@@ -544,6 +546,23 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
   </div>;
 }
 
+function SnapshotQuickActions() {
+  const lastTap=useRef(0);
+  const openZoneSoldiers=()=>window.dispatchEvent(new CustomEvent(ZONE_SOLDIERS_OPEN_EVENT));
+  const onZoneTouchEnd=()=>{
+    const now=Date.now();
+    if(now-lastTap.current<340){lastTap.current=0;openZoneSoldiers()}
+    else lastTap.current=now;
+  };
+  return <div className="aps-quick-actions" aria-label="Portfolio Snapshot snelle acties">
+    <button type="button" className="aps-quick aps-quick-zone" aria-label="Zone-Soldaten. Dubbeltik om te openen." onDoubleClick={openZoneSoldiers} onTouchEnd={onZoneTouchEnd}>
+      <span className="aps-quick-icon">⌾</span><span><b>ZONE-SOLDATEN</b><small>Dubbeltik om te openen</small></span><em>›</em>
+    </button>
+    <button type="button" className="aps-quick"><span className="aps-quick-icon">▣</span><span><b>BOT STATUS</b><small>Actief</small></span></button>
+    <button type="button" className="aps-quick"><span className="aps-quick-icon">▥</span><span><b>STRATEGIE</b><small>Z+2 · Long</small></span></button>
+    <button type="button" className="aps-quick"><span className="aps-quick-icon">⚙</span><span><b>INSTELLINGEN</b><small>Beheren</small></span></button>
+  </div>;
+}
 function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
@@ -553,7 +572,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
   onCloseProfit: (scope: ProfitScope) => void;
   onOpenHedge: () => void;
 }) {
-  return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={REFERENCE}>
+  return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={SNAPSHOT_V2_REFERENCE}>
     <header>
       <div className="aps-title-icon"><Icon name="positions" /></div>
       <h2>PORTFOLIO SNAPSHOT</h2>
@@ -562,6 +581,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
+    <SnapshotQuickActions />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />

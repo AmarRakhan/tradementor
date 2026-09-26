@@ -329,3 +329,17 @@ test("Build 435 masks the cached startup chart until the first canonical Account
   assert.ok(component.includes("loading&&initialChartReady&&!baseCandles.length"));
   assert.ok(css.includes(".portfolio-koers-state.portfolio-koers-initial-state{z-index:12;background:#03131b}"));
 });
+
+test("Build 437 moves Zone-Soldaten status off the chart and into an opaque dedicated screen",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes("file_00000000c2d0821082a1b3c28f6462c1"));
+  assert.ok(component.includes("ZONE_SOLDIERS_OPEN_EVENT"));
+  assert.ok(component.includes("ZoneSoldiersCommandCenterScreen"));
+  assert.ok(component.includes("document.body"));
+  assert.ok(component.includes('document.documentElement.setAttribute("data-zone-soldiers-screen-open","true")'));
+  assert.ok(component.includes("SNELLE ACTIES"));
+  assert.ok(component.includes("Terug naar snapshot"));
+  assert.ok(css.includes(".zsc-screen{position:fixed;z-index:1600;inset:0"));
+  assert.ok(component.includes('{false?<section className={`portfolio-strategy-cockpit'));
+});

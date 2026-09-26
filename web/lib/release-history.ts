@@ -26,6 +26,44 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-26",
+  title: "Portfolio Snapshot · Zone-Soldaten Command Center",
+  newItems: [
+    "Portfolio Snapshot begint direct onder Portfolio Koers; het grote inline Zone-Soldaten blok staat niet langer tussen grafiek en Snapshot.",
+    "Portfolio Snapshot heeft een nieuwe bovenste rij met Zone-Soldaten, Bot Status, Strategie en Instellingen volgens de goedgekeurde referentie.",
+    "Dubbeltik op Zone-Soldaten opent een volledig losse, opaque Command Center-pagina zonder grafiek of dashboardcontent erachter.",
+  ],
+  problems: [
+    "De grote Zone-Soldaten statuskaart nam op het hoofdscherm te veel verticale ruimte in en onderbrak de overgang van Portfolio Koers naar Snapshot.",
+    "Een detailweergave mocht geen flip/overlay zijn waarbij delen van het onderliggende scherm zichtbaar bleven.",
+  ],
+  causes: [
+    "Strategiestatus werd tot nu toe direct in PortfolioKoersChart onder de grafiek gerenderd.",
+  ],
+  fixes: [
+    "Inline Command Center is uit de hoofdweergave gehaald en vervangen door een dedicated fullscreen portal met volledig ondoorzichtige achtergrond.",
+    "De Snapshot heeft een compacte vierdelige quick-action rij; Zone-Soldaten ondersteunt desktop dubbelklik en mobiele dubbeltik.",
+    "De dedicated pagina hergebruikt dezelfde live, read-only Zone-Soldaten viewmodel zodat aantallen, exposure, zone en prioriteit niet worden gedupliceerd of verzonnen.",
+  ],
+  now: [
+    "Grafiek → direct Portfolio Snapshot.",
+    "Dubbeltik Zone-Soldaten → losse Command Center-pagina met Strategiestatus, snelle acties en eigen navigatie.",
+    "Geen wijziging aan trading-, DCA-, TP/SL-, Auto-Hedge- of Zone-Soldaten executionlogica.",
+  ],
+  before: "Zone-Soldaten Strategiestatus stond als groot blok tussen de grafiek en Portfolio Snapshot.",
+  after: "De status is een compacte Snapshot-knop en opent alleen op dubbeltik een zelfstandige Command Center-pagina.",
+  technicalDetails: [
+    "Snapshot referentie: file_0000000061fc81f49a44564879d533de.",
+    "Command Center referentie: file_00000000c2d0821082a1b3c28f6462c1.",
+    "Dedicated screen is fixed, z-index 1600 en volledig opaque; body-scroll wordt tijdens openen geblokkeerd.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-436-auto-hedge-disable-guard",
+  version: "46",
+  build: "436",
+  releasedAt: "2026-09-26",
   title: "Auto Hedge · beschermd tegen onbedoeld uitschakelen",
   newItems: [
     "Auto Hedge uitschakelen vereist nu eerst een expliciete bevestiging in de app.",
@@ -57,8 +95,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan 1:1 quantity-reconciliation, hedge-orders, DCA, TP/SL of bestaande pair locks.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  },
   {
   id: "v46-build-435-startup-mask",
   version: "46",

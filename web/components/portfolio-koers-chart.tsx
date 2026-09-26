@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
+import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
@@ -24,6 +26,8 @@ type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:numbe
 const EMPTY=normalizePortfolioKoersPayload({}) as Payload;
 const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null,activeShort:null,settings:{},zoneSoldiers:{},soldierOpenEvents:[]};
 const ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32";
+const ZONE_SOLDIERS_SCREEN_REFERENCE="file_00000000c2d0821082a1b3c28f6462c1";
+const ZONE_SOLDIERS_OPEN_EVENT="tradementor:open-zone-soldiers-command-center";
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
   "1m":{visibleBars:24,barSpacing:7.0,rightOffset:1.2},
@@ -200,6 +204,52 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
   </section>;
 }
 
+function ZoneSoldiersCommandCenterScreen({vm,advisorMessage,onClose}:{vm:any;advisorMessage:string;onClose:()=>void}) {
+  const goToUnderlying=(needle:string)=>{
+    onClose();
+    window.setTimeout(()=>{
+      const nodes=Array.from(document.querySelectorAll<HTMLElement>("button,a,[role=button]"));
+      const target=nodes.find((node)=>(node.textContent||"").toUpperCase().includes(needle));
+      target?.click();
+      target?.scrollIntoView({behavior:"smooth",block:"center"});
+    },80);
+  };
+  return createPortal(
+    <section className="zsc-screen" data-reference={ZONE_SOLDIERS_SCREEN_REFERENCE} aria-label="Zone-Soldaten Command Center">
+      <div className="zsc-scroll">
+        <header className="zsc-topbar">
+          <button type="button" className="zsc-back" onClick={onClose} aria-label="Terug naar Portfolio Snapshot">‹</button>
+          <div className="zsc-brand"><strong>Zone-Soldaten</strong><span>COMMAND CENTER</span></div>
+          <span className="zsc-live"><i/>Live</span>
+          <span className="zsc-build">Webapp versie 46 · build {WEBAPP_BUILD_NUMBER}</span>
+          <span className="zsc-bell" aria-hidden="true">♢</span>
+        </header>
+        <section className="zsc-intro">
+          <div><strong>Strategie-overzicht · losse pagina</strong><span>Alle Zone-Soldaten informatie, posities en statistieken in één overzicht.</span></div>
+          <div className="zsc-discipline"><b>◒</b><span>DISCIPLINE<br/>DATA<br/><em>LONG TERM WEALTH</em></span></div>
+        </section>
+        <StrategyCommandCenter vm={vm} advisorMessage={advisorMessage}/>
+        <section className="zsc-actions">
+          <header><strong>SNELLE ACTIES</strong><span>Direct naar de belangrijkste functies.</span></header>
+          <div className="zsc-actions-grid">
+            <button type="button" onClick={()=>goToUnderlying("ACTIEVE POSITIES")}><b>☷</b><span><strong>Open posities</strong><small>Bekijk alle actieve Zone-Soldaten</small></span><em>›</em></button>
+            <button type="button" className="gold" onClick={onClose}><b>◇</b><span><strong>Zone mapping</strong><small>Overzicht van alle zones</small></span><em>›</em></button>
+            <button type="button" onClick={()=>goToUnderlying("BOTINSTELLINGEN")}><b>⚙</b><span><strong>Instellingen</strong><small>Strategie en risico parameters</small></span><em>›</em></button>
+            <button type="button" className="gold" onClick={onClose}><b>↩</b><span><strong>Terug naar snapshot</strong><small>Naar portfolio overzicht</small></span><em>›</em></button>
+          </div>
+        </section>
+        <footer className="zsc-footer"><span>“Systeem. Discipline. Resultaat.”</span><b>AMAR CRYPTO BOT 2026</b></footer>
+      </div>
+      <nav className="zsc-bottom-nav" aria-label="Hoofdnavigatie">
+        {["HOME","MARKETS","ASTER","SNIPER","NIEUWS","FRIENDS","JOURNEY","WALLET"].map((label)=>
+          <button type="button" key={label} className={label==="ASTER"?"active":""} onClick={()=>label==="ASTER"?onClose():goToUnderlying(label)}><span>{label==="HOME"?"⌂":label==="ASTER"?"✦":label==="SNIPER"?"⌾":label==="FRIENDS"?"♟":label==="JOURNEY"?"△":label==="WALLET"?"▣":"▥"}</span><b>{label}</b></button>
+        )}
+      </nav>
+    </section>,
+    document.body,
+  );
+}
+
 export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongText,liveShortText}:{liveEquityText:string;liveAvailableText:string;liveLongText:string;liveShortText:string}) {
   const { user, betaOwner }=useAuthSession();
   const commandCenterTester=betaOwner===true;
@@ -233,6 +283,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const [advisorTimeline,setAdvisorTimeline]=useState<any>(null);
   const [advisorMessage,setAdvisorMessage]=useState("");
   const [soldierActivity,setSoldierActivity]=useState<SoldierActivityEvent[]>([]);
+  const [zoneSoldiersScreenOpen,setZoneSoldiersScreenOpen]=useState(false);
   const combinedMarkers=useMemo(
     ()=>mergePortfolioKoersMarkers(payload.markers,recentMarkers) as Marker[],
     [payload.markers,recentMarkers],
@@ -343,6 +394,22 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     markerRowsRef.current=combinedMarkers;
     syncOverlaysRef.current();
   },[combinedMarkers]);
+
+  useEffect(()=>{
+    const open=()=>setZoneSoldiersScreenOpen(true);
+    window.addEventListener(ZONE_SOLDIERS_OPEN_EVENT,open);
+    return()=>window.removeEventListener(ZONE_SOLDIERS_OPEN_EVENT,open);
+  },[]);
+
+  useEffect(()=>{
+    if(!zoneSoldiersScreenOpen)return;
+    const previous=document.body.style.overflow;
+    document.body.style.overflow="hidden";
+    document.documentElement.setAttribute("data-zone-soldiers-screen-open","true");
+    const onKey=(event:KeyboardEvent)=>{if(event.key==="Escape")setZoneSoldiersScreenOpen(false)};
+    window.addEventListener("keydown",onKey);
+    return()=>{document.body.style.overflow=previous;document.documentElement.removeAttribute("data-zone-soldiers-screen-open");window.removeEventListener("keydown",onKey)};
+  },[zoneSoldiersScreenOpen]);
 
   const load=useCallback(async()=>{
     try{
@@ -819,8 +886,8 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
       {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span>{viewMode==="performance"?<b>Performance {compactUsd(hover.candle.close-portfolioCashflowShift(combinedMarkers,baseCandles[0]?.time??hover.candle.time,hover.candle.time))}</b>:<><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b></>}{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
     </div>
-    {commandCenterTester&&(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle==="DRAINING")?<StrategyCommandCenter vm={commandCenterVm} advisorMessage={advisorMessage}/>:null}
-    {!commandCenterTester&&(activeZone!==null||zoneSoldierEnabled||zoneSoldierLifecycle==="DRAINING")?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
+    {zoneSoldiersScreenOpen?<ZoneSoldiersCommandCenterScreen vm={commandCenterVm} advisorMessage={advisorMessage} onClose={()=>setZoneSoldiersScreenOpen(false)}/>:null}
+    {false?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
       <header className="portfolio-strategy-head">
         <span className="portfolio-strategy-mark" aria-hidden="true">{zoneSoldierEnabled?"⌖":"◎"}</span>
         <div className="portfolio-strategy-heading">
