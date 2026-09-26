@@ -5,6 +5,7 @@ import aster_spot_balance_extension  # noqa: F401 - read-only Spot balance route
 import profit_sweep_settings_extension  # noqa: F401 - per-user Profit Pot settings
 import profit_sweep_live_extension  # noqa: F401 - fail-closed confirmed-close Futures -> Spot sweep
 import aster_position_loss_auto_hedge_extension  # noqa: F401 - isolated per-position 1:1 Auto Hedge
+import aster_legacy_hedge_scale_extension  # noqa: F401 - owner-only manual Legacy Hedge Recovery
 from snapshot_profit_close_extension import router as snapshot_profit_close_router
 
 # P0 2026-09-16: Portfolio Noodhedge is globally disabled.

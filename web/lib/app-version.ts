@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 440: Portfolio TP herstart uitsluitend vanaf bevestigde werkelijke post-close equity en toont de duurzame cycle als bron van waarheid.
-export const WEBAPP_BUILD_NUMBER = "440";
+// Build 441: owner-only Legacy Hedge Recovery vergroot een bestaande 1:1 hedge handmatig met exact gelijke coin quantity per zijde.
+export const WEBAPP_BUILD_NUMBER = "441";
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
   return `Webapp versie ${WEBAPP_VERSION} · build ${buildNumber}`;
