@@ -22,6 +22,15 @@ test("Build 446 renders one active gold zone and the three requested market-stru
   assert.ok(component.includes("volgende breakout"));
 });
 
+test("Build 446 defines the active zone by S1/R1 so a broken resistance can become the next support",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("marketContext?.lowerBoundary"));
+  assert.ok(component.includes("marketContext?.upperBoundary"));
+  assert.ok(component.includes("const activeLower=s1"));
+  assert.ok(component.includes("const activeUpper=r1"));
+  assert.ok(component.includes('candles[index-1].close<=Number(s1)&&candles[index].close>Number(s1)'));
+});
+
 test("Build 446 keeps the right price axis calm and does not add volume or a side summary",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("priceLineVisible:false,lastValueVisible:false"));
