@@ -112,10 +112,20 @@ def _dynamic_impact(rows: list[dict[str, Any]], selected: list[dict[str, Any]], 
     }
 
 
-def profit_preview_with_settings(rows: list[dict[str, Any]], settings: dict[str, float]) -> dict[str, Any]:
-    """Keep the existing >=$0.50 selector but use the user's one hedge target everywhere."""
+def profit_preview_with_settings(
+    rows: list[dict[str, Any]],
+    settings: dict[str, float],
+    *,
+    candidate_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Use one hedge target while allowing a stricter safe close-candidate set.
+
+    Exposure/impact always use the complete owned exchange rows. candidate_rows
+    only controls which positions may appear under Close Long/Short/All.
+    """
     materialized = list(rows)
-    result = profit_preview(materialized)
+    selection_rows = materialized if candidate_rows is None else list(candidate_rows)
+    result = profit_preview(selection_rows)
     result["hedgeConfig"] = dict(settings)
     result["exposure"] = portfolio_exposure(materialized, settings)
     for key in ("long", "short", "all"):
