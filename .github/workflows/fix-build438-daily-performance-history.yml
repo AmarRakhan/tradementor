@@ -41,6 +41,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import textwrap
 
           # 1) Pure portfolio-performance helpers.
           p=Path("cloud_api/portfolio_growth.py")
@@ -52,73 +53,73 @@ jobs:
 
           marker="\ndef daily_return_percentage("
           if "def historical_day_windows(" not in s:
-              helper=r'''
-
-def historical_day_windows(
-    candles: Iterable[dict[str, Any]], *, timezone_name: str,
-    current_date: str, max_days: int = 14,
-    boundary_tolerance_minutes: int = 90,
-) -> list[dict[str, Any]]:
-    """Return only completed local days with reliable start/end equity coverage.
-
-    This is intentionally conservative: partial days are excluded from the
-    multi-day average instead of pretending that an intraday fragment is a
-    complete daily return.
-    """
-    if max_days < 1:
-        return []
-    zone = ZoneInfo(str(timezone_name))
-    today = date.fromisoformat(str(current_date))
-    tolerance_ms = max(0, int(boundary_tolerance_minutes)) * 60_000
-    grouped: dict[date, dict[str, Any]] = {}
-
-    for row in candles:
-        if not isinstance(row, dict):
-            continue
-        try:
-            first_ms = int(_finite(row.get("firstSampleAtMs", row.get("atMs", 0))))
-            last_ms = int(_finite(row.get("sourceAtMs", row.get("lastSampleAtMs", row.get("atMs", 0)))))
-            opened = _finite(row.get("open", 0))
-            closed = _finite(row.get("close", 0))
-        except ValueError:
-            continue
-        if first_ms <= 0 or last_ms < first_ms or opened <= 0 or closed <= 0:
-            continue
-        first_local = datetime.fromtimestamp(first_ms / 1000, tz=timezone.utc).astimezone(zone)
-        last_local = datetime.fromtimestamp(last_ms / 1000, tz=timezone.utc).astimezone(zone)
-        if first_local.date() != last_local.date() or first_local.date() >= today:
-            continue
-        day = first_local.date()
-        bucket = grouped.setdefault(day, {
-            "date": day.isoformat(),
-            "startAtMs": first_ms,
-            "endAtMs": last_ms,
-            "startEquity": opened,
-            "endEquity": closed,
-        })
-        if first_ms < int(bucket["startAtMs"]):
-            bucket["startAtMs"] = first_ms
-            bucket["startEquity"] = opened
-        if last_ms > int(bucket["endAtMs"]):
-            bucket["endAtMs"] = last_ms
-            bucket["endEquity"] = closed
-
-    reliable: list[dict[str, Any]] = []
-    for day in sorted(grouped):
-        row = grouped[day]
-        day_start = datetime.combine(day, datetime_time.min, tzinfo=zone)
-        next_start = datetime.combine(day + timedelta(days=1), datetime_time.min, tzinfo=zone)
-        day_start_ms = int(day_start.astimezone(timezone.utc).timestamp() * 1000)
-        day_end_ms = int(next_start.astimezone(timezone.utc).timestamp() * 1000)
-        if int(row["startAtMs"]) - day_start_ms > tolerance_ms:
-            continue
-        if day_end_ms - int(row["endAtMs"]) > tolerance_ms:
-            continue
-        if int(row["endAtMs"]) <= int(row["startAtMs"]):
-            continue
-        reliable.append(dict(row))
-    return reliable[-int(max_days):]
-'''
+              helper=textwrap.dedent(r'''          
+          
+          def historical_day_windows(
+              candles: Iterable[dict[str, Any]], *, timezone_name: str,
+              current_date: str, max_days: int = 14,
+              boundary_tolerance_minutes: int = 90,
+          ) -> list[dict[str, Any]]:
+              """Return only completed local days with reliable start/end equity coverage.
+          
+              This is intentionally conservative: partial days are excluded from the
+              multi-day average instead of pretending that an intraday fragment is a
+              complete daily return.
+              """
+              if max_days < 1:
+                  return []
+              zone = ZoneInfo(str(timezone_name))
+              today = date.fromisoformat(str(current_date))
+              tolerance_ms = max(0, int(boundary_tolerance_minutes)) * 60_000
+              grouped: dict[date, dict[str, Any]] = {}
+          
+              for row in candles:
+                  if not isinstance(row, dict):
+                      continue
+                  try:
+                      first_ms = int(_finite(row.get("firstSampleAtMs", row.get("atMs", 0))))
+                      last_ms = int(_finite(row.get("sourceAtMs", row.get("lastSampleAtMs", row.get("atMs", 0)))))
+                      opened = _finite(row.get("open", 0))
+                      closed = _finite(row.get("close", 0))
+                  except ValueError:
+                      continue
+                  if first_ms <= 0 or last_ms < first_ms or opened <= 0 or closed <= 0:
+                      continue
+                  first_local = datetime.fromtimestamp(first_ms / 1000, tz=timezone.utc).astimezone(zone)
+                  last_local = datetime.fromtimestamp(last_ms / 1000, tz=timezone.utc).astimezone(zone)
+                  if first_local.date() != last_local.date() or first_local.date() >= today:
+                      continue
+                  day = first_local.date()
+                  bucket = grouped.setdefault(day, {
+                      "date": day.isoformat(),
+                      "startAtMs": first_ms,
+                      "endAtMs": last_ms,
+                      "startEquity": opened,
+                      "endEquity": closed,
+                  })
+                  if first_ms < int(bucket["startAtMs"]):
+                      bucket["startAtMs"] = first_ms
+                      bucket["startEquity"] = opened
+                  if last_ms > int(bucket["endAtMs"]):
+                      bucket["endAtMs"] = last_ms
+                      bucket["endEquity"] = closed
+          
+              reliable: list[dict[str, Any]] = []
+              for day in sorted(grouped):
+                  row = grouped[day]
+                  day_start = datetime.combine(day, datetime_time.min, tzinfo=zone)
+                  next_start = datetime.combine(day + timedelta(days=1), datetime_time.min, tzinfo=zone)
+                  day_start_ms = int(day_start.astimezone(timezone.utc).timestamp() * 1000)
+                  day_end_ms = int(next_start.astimezone(timezone.utc).timestamp() * 1000)
+                  if int(row["startAtMs"]) - day_start_ms > tolerance_ms:
+                      continue
+                  if day_end_ms - int(row["endAtMs"]) > tolerance_ms:
+                      continue
+                  if int(row["endAtMs"]) <= int(row["startAtMs"]):
+                      continue
+                  reliable.append(dict(row))
+              return reliable[-int(max_days):]
+                    ''')
               if marker not in s:
                   raise SystemExit("daily_return_percentage anchor missing")
               s=s.replace(marker, helper+marker, 1)
@@ -228,34 +229,34 @@ def historical_day_windows(
           s=s.replace("external_cashflow_since, is_exposure_order, select_day_start_snapshot, utc_ms)",
                       "external_cashflow_since, historical_day_windows, is_exposure_order, select_day_start_snapshot, utc_ms)")
           s=s.replace("assert PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION == 2", "assert PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION == 3")
-          tests=r'''
-
-def _ams_ms(year,month,day,hour,minute=0):
-    zone=ZoneInfo("Europe/Amsterdam")
-    return int(datetime(year,month,day,hour,minute,tzinfo=zone).astimezone(timezone.utc).timestamp()*1000)
-
-
-def test_build438_reconstructs_only_complete_local_days_for_average():
-    rows=[
-        {"firstSampleAtMs":_ams_ms(2026,9,23,0,5),"sourceAtMs":_ams_ms(2026,9,23,0,55),"open":100,"close":102},
-        {"firstSampleAtMs":_ams_ms(2026,9,23,23,0),"sourceAtMs":_ams_ms(2026,9,23,23,55),"open":98,"close":95},
-        {"firstSampleAtMs":_ams_ms(2026,9,24,0,4),"sourceAtMs":_ams_ms(2026,9,24,0,55),"open":95,"close":94},
-        {"firstSampleAtMs":_ams_ms(2026,9,24,23,0),"sourceAtMs":_ams_ms(2026,9,24,23,56),"open":90,"close":89},
-        # Partial day: first observation is far too late and must not influence the average.
-        {"firstSampleAtMs":_ams_ms(2026,9,25,8,0),"sourceAtMs":_ams_ms(2026,9,25,23,55),"open":89,"close":88},
-    ]
-    windows=historical_day_windows(rows,timezone_name="Europe/Amsterdam",current_date="2026-09-26",max_days=14)
-    assert [row["date"] for row in windows] == ["2026-09-23","2026-09-24"]
-    assert windows[0]["startEquity"] == pytest.approx(100)
-    assert windows[0]["endEquity"] == pytest.approx(95)
-    assert windows[1]["startEquity"] == pytest.approx(95)
-    assert windows[1]["endEquity"] == pytest.approx(89)
-
-
-def test_build438_backfilled_day_keeps_deposit_neutral():
-    start,end,deposit=95,189,100
-    assert daily_return_percentage(start,end,deposit) == pytest.approx(-6.3157894737)
-'''
+          tests=textwrap.dedent(r'''          
+          
+          def _ams_ms(year,month,day,hour,minute=0):
+              zone=ZoneInfo("Europe/Amsterdam")
+              return int(datetime(year,month,day,hour,minute,tzinfo=zone).astimezone(timezone.utc).timestamp()*1000)
+          
+          
+          def test_build438_reconstructs_only_complete_local_days_for_average():
+              rows=[
+                  {"firstSampleAtMs":_ams_ms(2026,9,23,0,5),"sourceAtMs":_ams_ms(2026,9,23,0,55),"open":100,"close":102},
+                  {"firstSampleAtMs":_ams_ms(2026,9,23,23,0),"sourceAtMs":_ams_ms(2026,9,23,23,55),"open":98,"close":95},
+                  {"firstSampleAtMs":_ams_ms(2026,9,24,0,4),"sourceAtMs":_ams_ms(2026,9,24,0,55),"open":95,"close":94},
+                  {"firstSampleAtMs":_ams_ms(2026,9,24,23,0),"sourceAtMs":_ams_ms(2026,9,24,23,56),"open":90,"close":89},
+                  # Partial day: first observation is far too late and must not influence the average.
+                  {"firstSampleAtMs":_ams_ms(2026,9,25,8,0),"sourceAtMs":_ams_ms(2026,9,25,23,55),"open":89,"close":88},
+              ]
+              windows=historical_day_windows(rows,timezone_name="Europe/Amsterdam",current_date="2026-09-26",max_days=14)
+              assert [row["date"] for row in windows] == ["2026-09-23","2026-09-24"]
+              assert windows[0]["startEquity"] == pytest.approx(100)
+              assert windows[0]["endEquity"] == pytest.approx(95)
+              assert windows[1]["startEquity"] == pytest.approx(95)
+              assert windows[1]["endEquity"] == pytest.approx(89)
+          
+          
+          def test_build438_backfilled_day_keeps_deposit_neutral():
+              start,end,deposit=95,189,100
+              assert daily_return_percentage(start,end,deposit) == pytest.approx(-6.3157894737)
+                    ''')
           if "test_build438_reconstructs_only_complete_local_days_for_average" not in s:
               s += tests
           p.write_text(s, encoding="utf-8")
@@ -283,44 +284,44 @@ def test_build438_backfilled_day_keeps_deposit_neutral():
           old_obj=old_obj.replace("version: WEBAPP_VERSION,",'version: "46",',1)
           old_obj=old_obj.replace("build: WEBAPP_BUILD_NUMBER,",'build: "437",',1)
 
-          new_current='''export const CURRENT_RELEASE: ReleaseHistoryEntry = {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
-  version: WEBAPP_VERSION,
-  build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-09-26",
-  title: "Dagrendement 2.2 · betrouwbaar meerdaags gemiddelde",
-  newItems: [
-    "Gemiddeld per dag gebruikt opnieuw betrouwbare voltooide dagen uit de bestaande Portfolio Koers-equityhistorie.",
-    "Iedere herstelde dag corrigeert stortingen en opnames afzonderlijk voordat het dagpercentage in het gemiddelde komt.",
-    "De API publiceert de bron en het aantal herstelde historische dagen voor controleerbare diagnostiek.",
-  ],
-  problems: [
-    "Build 433 zette bij de schema-migratie de gemiddelde-daghistorie bewust op nul; daardoor was Gemiddeld per dag tijdelijk praktisch gelijk aan Rendement vandaag.",
-    "Een eerdere waarde rond -7% kon daardoor verdwijnen zonder dat de onderliggende marktverliezen werkelijk waren hersteld.",
-  ],
-  causes: [
-    "De cashflow-fix van Build 433 koos veiligheid boven behoud van mogelijk vervuilde oude daghistorie, maar reconstrueerde daarna de betrouwbare dagen niet opnieuw.",
-  ],
-  fixes: [
-    "DailyGrowth schema v3 reconstrueert maximaal 14 voltooide Nederlandse kalenderdagen uit bevestigde 1u equity-candles.",
-    "Alleen dagen met betrouwbare dekking rond zowel begin als einde van de kalenderdag worden meegenomen; partiële dagen worden overgeslagen.",
-    "Per historische dag wordt de Aster income-ledger gelezen en externe cashflow uit het resultaat verwijderd voordat het gemiddelde wordt berekend.",
-  ],
-  now: [
-    "Gemiddeld per dag is weer echt een meerdaags gemiddelde zodra betrouwbare historische dagen beschikbaar zijn.",
-    "Rendement vandaag blijft een aparte, cashflow-neutrale dagmeting; Portfolio Impact blijft open P&L sinds de instapprijzen en is dus niet hetzelfde meetobject.",
-    "Geen wijziging aan trading-, DCA-, TP/SL-, Auto-Hedge- of Zone-Soldaten executionlogica.",
-  ],
-  before: "Schema v2 startte de gemiddelde reeks opnieuw op de migratiedag.",
-  after: "Schema v3 herstelt betrouwbare voltooide dagen en houdt stortingen/opnames rendement-neutraal.",
-  technicalDetails: [
-    "DailyGrowth schemaVersion 3.",
-    "Historische bron: persisted 1u Aster account-equity candles + per-day signed external cashflow ledger.",
-    "Onvolledige cashflow-ledger of onvoldoende dagdekking wordt fail-closed niet in het gemiddelde opgenomen.",
-  ],
-  confidence: "confirmed",
-};
-'''
+          new_current=textwrap.dedent('''          export const CURRENT_RELEASE: ReleaseHistoryEntry = {
+            id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+            version: WEBAPP_VERSION,
+            build: WEBAPP_BUILD_NUMBER,
+            releasedAt: "2026-09-26",
+            title: "Dagrendement 2.2 · betrouwbaar meerdaags gemiddelde",
+            newItems: [
+              "Gemiddeld per dag gebruikt opnieuw betrouwbare voltooide dagen uit de bestaande Portfolio Koers-equityhistorie.",
+              "Iedere herstelde dag corrigeert stortingen en opnames afzonderlijk voordat het dagpercentage in het gemiddelde komt.",
+              "De API publiceert de bron en het aantal herstelde historische dagen voor controleerbare diagnostiek.",
+            ],
+            problems: [
+              "Build 433 zette bij de schema-migratie de gemiddelde-daghistorie bewust op nul; daardoor was Gemiddeld per dag tijdelijk praktisch gelijk aan Rendement vandaag.",
+              "Een eerdere waarde rond -7% kon daardoor verdwijnen zonder dat de onderliggende marktverliezen werkelijk waren hersteld.",
+            ],
+            causes: [
+              "De cashflow-fix van Build 433 koos veiligheid boven behoud van mogelijk vervuilde oude daghistorie, maar reconstrueerde daarna de betrouwbare dagen niet opnieuw.",
+            ],
+            fixes: [
+              "DailyGrowth schema v3 reconstrueert maximaal 14 voltooide Nederlandse kalenderdagen uit bevestigde 1u equity-candles.",
+              "Alleen dagen met betrouwbare dekking rond zowel begin als einde van de kalenderdag worden meegenomen; partiële dagen worden overgeslagen.",
+              "Per historische dag wordt de Aster income-ledger gelezen en externe cashflow uit het resultaat verwijderd voordat het gemiddelde wordt berekend.",
+            ],
+            now: [
+              "Gemiddeld per dag is weer echt een meerdaags gemiddelde zodra betrouwbare historische dagen beschikbaar zijn.",
+              "Rendement vandaag blijft een aparte, cashflow-neutrale dagmeting; Portfolio Impact blijft open P&L sinds de instapprijzen en is dus niet hetzelfde meetobject.",
+              "Geen wijziging aan trading-, DCA-, TP/SL-, Auto-Hedge- of Zone-Soldaten executionlogica.",
+            ],
+            before: "Schema v2 startte de gemiddelde reeks opnieuw op de migratiedag.",
+            after: "Schema v3 herstelt betrouwbare voltooide dagen en houdt stortingen/opnames rendement-neutraal.",
+            technicalDetails: [
+              "DailyGrowth schemaVersion 3.",
+              "Historische bron: persisted 1u Aster account-equity candles + per-day signed external cashflow ledger.",
+              "Onvolledige cashflow-ledger of onvoldoende dagdekking wordt fail-closed niet in het gemiddelde opgenomen.",
+            ],
+            confidence: "confirmed",
+          };
+                    ''')
           s=s[:start]+new_current+marker+"  "+old_obj.replace("\n","\n  ")+",\n"+s[end+len(marker):]
           p.write_text(s,encoding="utf-8")
           PY
