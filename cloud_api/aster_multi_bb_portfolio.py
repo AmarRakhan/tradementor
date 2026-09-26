@@ -447,6 +447,36 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
     # baseline. Never use the theoretical target.
     final_account = client.account_information()
     end_equity = exchange_equity(final_account)
+    if end_equity <= 0:
+        # Exchange flat is not enough to start the next cycle: the new baseline
+        # must be the actual post-close account equity. If that value is
+        # temporarily unavailable, stay in the transactional exit state and
+        # retry on the next worker tick instead of persisting a zero/theoretical
+        # baseline or letting the target chase a live value.
+        wait_ms = int(time.time() * 1000)
+        cycle.update({"cycleStatus": FLAT_CONFIRMING, "updatedAtMs": wait_ms})
+        _write_cycle(
+            ref, cycle, phase=FLAT_CONFIRMING,
+            reason="Portfolio TP: exchange is flat, maar werkelijke sluitingsequity is nog niet betrouwbaar beschikbaar; nieuwe cycle wacht",
+        )
+        report = {
+            **portfolio_cycle_snapshot(
+                cycle, mode=mode, current_equity=0.0,
+                portfolio_tp_percent=portfolio_tp_percent,
+            ),
+            "actions": actions[-50:],
+            "ordersSent": sent,
+            "remainingPositions": 0,
+            "remainingBotOrders": 0,
+            "equityPending": True,
+            "autoRestarted": False,
+        }
+        ref.set({"multiBbReport": report}, merge=True)
+        return PortfolioGateResult(
+            True, False, report, {**raw_state, "multiBbCycle": cycle},
+            final_account, [], remaining_orders, sent,
+        )
+
     now = datetime.now(timezone.utc)
     cycle.update({"cycleStatus": FLAT_CONFIRMED, "cycleEndEquity": end_equity,
                   "flatConfirmedAt": now, "flatConfirmedAtMs": int(now.timestamp() * 1000),
