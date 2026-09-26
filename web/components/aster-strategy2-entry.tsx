@@ -36,12 +36,12 @@ export function AsterStrategy2Entry(props: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  const betaEnabled = release?.features?.bot_configurator_v2?.enabled === true;
-  if (!betaEnabled) return <AsterStrategy2Maker {...props} />;
+  const releaseEnabled = release?.features?.bot_configurator_v2?.enabled === true;
+  if (!releaseEnabled) return <AsterStrategy2Maker {...props} />;
 
   const fallback = (
     <article className="strategy-card" style={{ border: "1px solid rgba(214,181,90,.45)", borderRadius: 16, padding: 14 }}>
-      <span className="kicker">BETA · alleen zichtbaar voor jou</span>
+      <span className="kicker">BOTCONFIGURATOR V2</span>
       <h2>Botconfigurator V2 kon niet worden geladen</h2>
       <p>De fout is geïsoleerd. De rest van de app en de stabiele configurator blijven beschikbaar.</p>
       <AsterStrategy2Maker {...props} />
@@ -50,7 +50,7 @@ export function AsterStrategy2Entry(props: Props) {
 
   return (
     <BetaBoundary fallback={fallback}>
-      <Suspense fallback={<div className="strategy-card"><span className="kicker">BETA</span><p>Botconfigurator V2 laden…</p></div>}>
+      <Suspense fallback={<div className="strategy-card"><span className="kicker">BOTCONFIGURATOR V2</span><p>Nieuwe configurator laden…</p></div>}>
         <BetaConfigurator {...props} release={release ?? { channel: "BETA", features: {} }} />
       </Suspense>
     </BetaBoundary>

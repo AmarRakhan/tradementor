@@ -3,12 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 
-test("Build 417 keeps zone-trading availability owner-BETA gated while zones stay informational",async()=>{
+test("Build 445 keeps zone-trading availability release-gated while zones stay informational",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32"'));
   assert.ok(component.includes('authenticatedRequest("/api/releases/me"'));
   assert.ok(component.includes("features.zone_soldiers"));
-  assert.ok(component.includes('ownerStrategyAccess=String(release.channel||"").toUpperCase()==="BETA"&&zoneFeature.enabled===true'));
+  assert.ok(component.includes("const strategyAccess=zoneFeature.enabled===true"));
+  assert.ok(component.includes("const commandCenterAccess=commandCenterFeature.enabled===true"));
+  assert.equal(component.includes("ownerStrategyAccess"),false);
   assert.ok(component.includes("portfolio-zone-map"));
 });
 

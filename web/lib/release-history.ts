@@ -26,38 +26,80 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-27",
-  title: "Legacy Hedge Recovery · duidelijke leverage-capacity melding",
+  title: "Centrale BETA/STABLE release-gates · rechten i.p.v. owner-only",
   newItems: [
-    "Wanneer Aster de huidige leverage blokkeert, zoekt de backend automatisch de hoogste lagere Aster-leverage die het ingevoerde bedrag per zijde wél volledig kan ondersteunen.",
-    "De foutmelding noemt nu zowel de geblokkeerde leverage als de concrete werkende leverage en vertelt exact wat de gebruiker in Aster moet wijzigen.",
-    "De aanbeveling wordt uitsluitend uit actuele signed Aster capacity- en leveragebracket-data berekend; er worden geen recovery-orders verstuurd om dit te testen.",
+    "Negen functies gebruiken nu één centrale release-entitlementarchitectuur: Botconfigurator V2, Directional Bollinger, Exposure Refill, Margin Summary, Price Zones, Zone-Soldaten, Zone Command Center, Auto Hedge 2.0 en Legacy Hedge Recovery.",
+    "Auto Hedge 2.0, Legacy Hedge Recovery en het Zone Command Center zijn niet langer gekoppeld aan hardcoded owner-UID/UI-checks; toegang volgt BETA of STABLE uit /v1/me/releases.",
+    "Legacy Hedge Recovery heeft een expliciete dependency op Auto Hedge 2.0 en kan niet afzonderlijk worden gepubliceerd als die dependency op hetzelfde kanaal ontbreekt.",
   ],
   problems: [
-    "Build 443 blokkeerde veilig bij nul openingsruimte, maar de melding zei alleen dat Aster geen extra opening-notional toestond.",
-    "De gebruiker wist daardoor nog steeds niet welke lagere leverage het ingevoerde bedrag wél mogelijk maakte.",
+    "Meerdere reeds gebouwde testfuncties waren nog via owner-only, betaOwner of Continuity-ownerchecks afgeschermd en konden daardoor niet veilig via het bestaande Releasecentrum worden uitgerold.",
+    "Een frontendflag alleen was onvoldoende voor Auto Hedge en Legacy Recovery omdat backendroutes en de worker nog owner-specifieke gates gebruikten.",
   ],
   causes: [
-    "De capacity-guard kende wel de actuele resterende opening-notional, maar gebruikte de lagere leveragebrackets nog niet als gebruikersadvies.",
+    "De release-architectuur was eerder per functie gegroeid: sommige onderdelen gebruikten releaseFeatures, terwijl nieuwere testfeatures daarnaast nog tijdelijke owner-only guards hadden.",
   ],
   fixes: [
-    "Bij een nul-capacity leest de recovery de lagere leveragebrackets van het symbool en controleert die van hoog naar laag tegen remainingOpenableNotionalValue.",
-    "Een leverage wordt alleen geadviseerd wanneer de volledige ingevoerde margin per zijde uitvoerbaar blijft; een door capacity afgeknepen plan telt niet als voldoende.",
-    "Dezelfde guidance wordt ook gebruikt als de leverage na de preview verandert en execution daarom fail-closed opnieuw moet plannen.",
+    "Backendroutes voor Auto Hedge en Legacy Recovery zijn fail-closed op FEATURE_NOT_RELEASED en blijven server-authoritatief wanneer een frontendflag wordt omzeild.",
+    "De Auto-Hedge-worker ontdekt rechthebbende accounts via de feature-entitlement; na rollback ontstaan geen nieuwe triggers, terwijl bestaande actieve hedge-locks wel gereconcileerd blijven.",
+    "Zone-Soldaten en het Command Center gebruiken losse releaseblokken; expliciete Zone-Soldaten opt-in blijft verplicht en de Snapshot-tegel volgt zone_command_center.",
+    "Price Zones blijft hard IN_BOUW met BETA en STABLE uitgeschakeld.",
+    "Releasewijzigingen muteren uitsluitend releaseFeatures en schakelen geen bot, strategie, hedge, recovery of order automatisch aan.",
   ],
   now: [
-    "Voor NEAR 20x met voldoende capaciteit op 10x verschijnt bijvoorbeeld: 20x geblokkeerd door Aster · 10x heeft wel voldoende capaciteit voor $5 per zijde. Verlaag NEAR naar 10x in Aster en laad opnieuw.",
-    "Als geen lagere beschikbare leverage het bedrag ondersteunt, zegt de melding dat expliciet en adviseert zij het bedrag te verlagen of later opnieuw te proberen.",
+    "De BETA-owner kan ieder vrijgeefbaar blok afzonderlijk testen en later expliciet via Vrijgeven aan alle gebruikers naar STABLE brengen.",
+    "Rollback naar BETA verwijdert het gebruiksrecht zonder opgeslagen gebruikersinstellingen of bestaande bevestigde recovery-state te wissen.",
+    "Continuity, kosten/providerstatus, Bybit-reserve, Admin Portal, admin-device en Releasecentrum blijven owner/admin-only.",
   ],
-  before: "De recovery blokkeerde correct, maar gaf geen concrete vervolgstap.",
-  after: "De recovery vertaalt Asters capacity-blokkade naar één direct uitvoerbare gebruikersactie.",
+  before: "Nieuwe testfeatures hadden naast releaseFeatures nog tijdelijke owner-only checks in UI, API of worker.",
+  after: "Vrijgeefbare functies volgen één BETA/STABLE entitlementmodel; trading blijft afhankelijk van afzonderlijke gebruikersinstellingen en expliciete bevestiging.",
   technicalDetails: [
-    "Bronnen: signed leverageBracket + remainingOpenableNotionalValue.",
-    "Selectie: hoogste lagere bracket-leverage die het volledige ingevoerde bedrag zonder capacityLimited-plan ondersteunt.",
-    "Geen wijziging aan 1:1 quantity-pariteit, idempotency, reconciliation of orderveiligheid.",
+    "Fail-closed API-code: FEATURE_NOT_RELEASED.",
+    "Dependency: legacy_hedge_recovery -> auto_hedge_v2.",
+    "Auto Hedge rollback: maintenance van bestaande ACTIVE locks blijft mogelijk; allow_new_triggers=false.",
+    "Geen STABLE-feature is door Build 445 automatisch gepubliceerd.",
   ],
   confidence: "confirmed",
 };
+
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-444-legacy-leverage-guidance",
+    version: "46",
+    build: "444",
+    releasedAt: "2026-09-27",
+    title: "Legacy Hedge Recovery · duidelijke leverage-capacity melding",
+    newItems: [
+      "Wanneer Aster de huidige leverage blokkeert, zoekt de backend automatisch de hoogste lagere Aster-leverage die het ingevoerde bedrag per zijde wél volledig kan ondersteunen.",
+      "De foutmelding noemt nu zowel de geblokkeerde leverage als de concrete werkende leverage en vertelt exact wat de gebruiker in Aster moet wijzigen.",
+      "De aanbeveling wordt uitsluitend uit actuele signed Aster capacity- en leveragebracket-data berekend; er worden geen recovery-orders verstuurd om dit te testen.",
+    ],
+    problems: [
+      "Build 443 blokkeerde veilig bij nul openingsruimte, maar de melding zei alleen dat Aster geen extra opening-notional toestond.",
+      "De gebruiker wist daardoor nog steeds niet welke lagere leverage het ingevoerde bedrag wél mogelijk maakte.",
+    ],
+    causes: [
+      "De capacity-guard kende wel de actuele resterende opening-notional, maar gebruikte de lagere leveragebrackets nog niet als gebruikersadvies.",
+    ],
+    fixes: [
+      "Bij een nul-capacity leest de recovery de lagere leveragebrackets van het symbool en controleert die van hoog naar laag tegen remainingOpenableNotionalValue.",
+      "Een leverage wordt alleen geadviseerd wanneer de volledige ingevoerde margin per zijde uitvoerbaar blijft; een door capacity afgeknepen plan telt niet als voldoende.",
+      "Dezelfde guidance wordt ook gebruikt als de leverage na de preview verandert en execution daarom fail-closed opnieuw moet plannen.",
+    ],
+    now: [
+      "Voor NEAR 20x met voldoende capaciteit op 10x verschijnt bijvoorbeeld: 20x geblokkeerd door Aster · 10x heeft wel voldoende capaciteit voor $5 per zijde. Verlaag NEAR naar 10x in Aster en laad opnieuw.",
+      "Als geen lagere beschikbare leverage het bedrag ondersteunt, zegt de melding dat expliciet en adviseert zij het bedrag te verlagen of later opnieuw te proberen.",
+    ],
+    before: "De recovery blokkeerde correct, maar gaf geen concrete vervolgstap.",
+    after: "De recovery vertaalt Asters capacity-blokkade naar één direct uitvoerbare gebruikersactie.",
+    technicalDetails: [
+      "Bronnen: signed leverageBracket + remainingOpenableNotionalValue.",
+      "Selectie: hoogste lagere bracket-leverage die het volledige ingevoerde bedrag zonder capacityLimited-plan ondersteunt.",
+      "Geen wijziging aan 1:1 quantity-pariteit, idempotency, reconciliation of orderveiligheid.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-443-legacy-capacity-replan",
     version: "46",

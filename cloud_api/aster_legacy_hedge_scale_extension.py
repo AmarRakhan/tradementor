@@ -54,7 +54,6 @@ from aster_position_loss_auto_hedge_extension import (
     _client,
     _doc,
     _leg_view,
-    _owner_uid,
     _pair_doc,
     _position_map,
 )
@@ -450,7 +449,9 @@ def _fresh_plan(
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "pairCycleId": str(pair.get("generationId", "")),
         "pairStatus": "HEDGED",
-        "ownerOnly": True,
+        "ownerOnly": False,
+        "releaseFeature": "legacy_hedge_recovery",
+        "requires": ["auto_hedge_v2"],
     })
     return plan, pair, client, rules
 
@@ -1008,7 +1009,7 @@ def preview_legacy_hedge_scale(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = main.require_continuity_owner(user)
+    uid = main.require_release_feature(user, "legacy_hedge_recovery")
     normalized = _normalize_symbol(symbol)
     plan, _, _, _ = _fresh_plan(
         uid,
@@ -1028,7 +1029,7 @@ def execute_legacy_hedge_scale(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = main.require_continuity_owner(user)
+    uid = main.require_release_feature(user, "legacy_hedge_recovery")
     normalized = _normalize_symbol(symbol)
     operation_id = str(request.operationId).strip()
     if not OPERATION_ID_RE.fullmatch(operation_id):
@@ -1117,12 +1118,24 @@ def execute_legacy_hedge_scale(
 
 
 def _recover_user_confirmed_operations() -> None:
-    """Best-effort startup recovery for a crash between the two user-confirmed legs."""
+    """Resume only already-confirmed operations, independent of later rollout changes.
+
+    Release rollback removes future entitlement but must never strand an operation
+    that was explicitly confirmed before a process restart.
+    """
     try:
-        uid = _owner_uid()
+        account_snapshots = list(main.db.collection("asterPositionLossAutoHedge").stream())
+    except Exception:
+        return
+    for account_snapshot in account_snapshots:
+        uid = str(account_snapshot.id or "").strip()
         if not uid:
-            return
-        for snapshot in _operation_collection(uid).stream():
+            continue
+        try:
+            operation_snapshots = list(_operation_collection(uid).stream())
+        except Exception:
+            continue
+        for snapshot in operation_snapshots:
             row = snapshot.to_dict() or {}
             if row.get("userConfirmed") is not True:
                 continue
@@ -1133,8 +1146,6 @@ def _recover_user_confirmed_operations() -> None:
             except Exception:
                 # The operation record and audit already carry the concrete failure.
                 continue
-    except Exception:
-        return
 
 
 @main.app.on_event("startup")
