@@ -1,0 +1,65 @@
+name: Verify Build 434 live 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/verify-build434-live-20260926.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Wait for canonical Build 434
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          ok=false
+          for N in $(seq 1 30); do
+            curl --silent --show-error --max-time 20 "$URL/?verifyBuild434=$GITHUB_RUN_ID-$N" > "$RUNNER_TEMP/root.html" || true
+            BUILD="$(python - "$RUNNER_TEMP/root.html" <<'PY'
+          import re,sys
+          try: html=open(sys.argv[1],encoding='utf-8').read()
+          except Exception: html=''
+          m=re.search(r'data-webapp-build="([0-9]+)"',html)
+          print(m.group(1) if m else '')
+          PY
+          )"
+            if [ "$BUILD" = "434" ]; then ok=true; break; fi
+            sleep 20
+          done
+          test "$ok" = true
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          REVISION="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1],encoding='utf-8'))
+          rows=[r for r in d.get('status',{}).get('traffic',[]) if int(r.get('percent',0) or 0)==100]
+          print(rows[0].get('revisionName','') if len(rows)==1 else '')
+          PY
+          )"
+          echo "LIVE_REVISION=$REVISION" >> "$GITHUB_ENV"
+      - name: Publish verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 283 -R AmarRakhan/tradementor --body "Build 434 is live on the canonical V46 webapp. Visible build: 434. Live revision: $LIVE_REVISION. The deployed source defaults Portfolio Koers to Accountwaarde; Performance remains available as the existing tab."
+          gh issue close 283 -R AmarRakhan/tradementor --reason completed
