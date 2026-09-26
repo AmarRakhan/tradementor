@@ -37,6 +37,8 @@ from aster_legacy_hedge_scale import (
     DEFAULT_TAKER_FEE_RATE,
     EVENT_TYPE,
     excess_rollback_action,
+    leverage_capacity_guidance,
+    lower_leverage_candidates,
     parity_repair_action,
     parity_tolerance,
     plan_legacy_hedge_scale,
@@ -254,6 +256,103 @@ def _opening_capacity(
     return min(values), "ASTER_REMAINING_OPENABLE_NOTIONAL_VALUE"
 
 
+def _recommended_lower_leverage(
+    *,
+    client: Any,
+    symbol: str,
+    current_leverage: int,
+    margin_per_side: float,
+    available: float,
+    current_long_qty: float,
+    current_short_qty: float,
+    long_entry: float,
+    short_entry: float,
+    long_price: float,
+    short_price: float,
+    rules: ContractRules,
+    current_price: float,
+    long_break_even: float,
+    short_break_even: float,
+) -> int | None:
+    """Find the highest lower Aster leverage that can fund the requested full budget."""
+    try:
+        bracket_payload = client.leverage_brackets(symbol)
+    except Exception:
+        return None
+    for candidate in lower_leverage_candidates(bracket_payload, current_leverage):
+        try:
+            capacity = client.remaining_openable_notional_value(symbol, candidate)
+            if _number(capacity, -1.0) <= 0:
+                continue
+            candidate_plan = plan_legacy_hedge_scale(
+                symbol=symbol,
+                margin_per_side_usd=margin_per_side,
+                available_balance=available,
+                current_long_qty=current_long_qty,
+                current_short_qty=current_short_qty,
+                long_entry=long_entry,
+                short_entry=short_entry,
+                long_execution_price=long_price,
+                short_execution_price=short_price,
+                long_leverage=candidate,
+                short_leverage=candidate,
+                rules=rules,
+                taker_fee_rate=_fee_rate(),
+                current_price=current_price,
+                long_break_even=long_break_even,
+                short_break_even=short_break_even,
+                remaining_openable_notional_usd=capacity,
+            )
+            if candidate_plan.get("capacityLimited") is not True:
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
+def _capacity_guidance(
+    *,
+    client: Any,
+    symbol: str,
+    current_leverage: int,
+    margin_per_side: float,
+    available: float,
+    current_long_qty: float,
+    current_short_qty: float,
+    long_entry: float,
+    short_entry: float,
+    long_price: float,
+    short_price: float,
+    rules: ContractRules,
+    current_price: float,
+    long_break_even: float,
+    short_break_even: float,
+) -> str:
+    recommended = _recommended_lower_leverage(
+        client=client,
+        symbol=symbol,
+        current_leverage=current_leverage,
+        margin_per_side=margin_per_side,
+        available=available,
+        current_long_qty=current_long_qty,
+        current_short_qty=current_short_qty,
+        long_entry=long_entry,
+        short_entry=short_entry,
+        long_price=long_price,
+        short_price=short_price,
+        rules=rules,
+        current_price=current_price,
+        long_break_even=long_break_even,
+        short_break_even=short_break_even,
+    )
+    return leverage_capacity_guidance(
+        symbol,
+        current_leverage,
+        recommended,
+        margin_per_side,
+    )
+
+
 def _fresh_plan(
     uid: str,
     symbol: str,
@@ -293,6 +392,28 @@ def _fresh_plan(
         remaining_capacity, capacity_source = _opening_capacity(
             client, symbol, long_leverage, short_leverage,
         )
+        if remaining_capacity <= 0:
+            current_leverage = min(long_leverage, short_leverage)
+            raise HTTPException(
+                409,
+                _capacity_guidance(
+                    client=client,
+                    symbol=symbol,
+                    current_leverage=current_leverage,
+                    margin_per_side=margin_per_side,
+                    available=available,
+                    current_long_qty=position_quantity(long_row),
+                    current_short_qty=position_quantity(short_row),
+                    long_entry=_number(long_row.get("entryPrice")),
+                    short_entry=_number(short_row.get("entryPrice")),
+                    long_price=long_price,
+                    short_price=short_price,
+                    rules=rules,
+                    current_price=current_price,
+                    long_break_even=long_break_even,
+                    short_break_even=short_break_even,
+                ),
+            )
         plan = plan_legacy_hedge_scale(
             symbol=symbol,
             margin_per_side_usd=margin_per_side,
@@ -536,6 +657,25 @@ def _execute_operation(uid: str, operation_id: str, operation: dict[str, Any]) -
             remaining_capacity, _ = _opening_capacity(
                 client, symbol, long_leverage, short_leverage,
             )
+            if remaining_capacity <= 0:
+                guidance = _capacity_guidance(
+                    client=client,
+                    symbol=symbol,
+                    current_leverage=min(long_leverage, short_leverage),
+                    margin_per_side=_number(operation.get("requestedMarginPerSideUsd")),
+                    available=available,
+                    current_long_qty=current_long,
+                    current_short_qty=current_short,
+                    long_entry=_number(long_row.get("entryPrice")),
+                    short_entry=_number(short_row.get("entryPrice")),
+                    long_price=long_price,
+                    short_price=short_price,
+                    rules=rules,
+                    current_price=current_price,
+                    long_break_even=long_break_even,
+                    short_break_even=short_break_even,
+                )
+                raise RuntimeError("RECOVERY_REPLAN_REQUIRED: " + guidance)
             fresh = plan_legacy_hedge_scale(
                 symbol=symbol,
                 margin_per_side_usd=_number(operation.get("requestedMarginPerSideUsd")),
