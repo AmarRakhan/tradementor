@@ -1,0 +1,31 @@
+name: Dispatch Auto Hedge-safe profitable close fix v2 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/dispatch-profit-close-hedge-safety-v2-20260926.yml"
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment 282 -R AmarRakhan/tradementor --body "Retrying guarded production deployment from verified source commit 25d4f90e885bc45bf4033086aa8677c0f0d29607."
+      - name: Dispatch guarded production backend deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run deploy-cloud-production.yml \
+            -R AmarRakhan/tradementor \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit=25d4f90e885bc45bf4033086aa8677c0f0d29607 \
+            -f request_issue=282
