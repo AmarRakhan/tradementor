@@ -152,7 +152,7 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
   return <section
     className={`portfolio-command-center pcc-homecoming cc-${vm.actionMode}`}
     data-reference="file_00000000cf9481f4b495250734661e31"
-    data-account-only="beta-owner"
+    data-release-feature="zone_command_center"
     aria-label="Zone-Soldaten Strategiestatus"
     aria-live="polite"
   >
@@ -251,8 +251,7 @@ function ZoneSoldiersCommandCenterScreen({vm,advisorMessage,onClose}:{vm:any;adv
 }
 
 export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongText,liveShortText}:{liveEquityText:string;liveAvailableText:string;liveLongText:string;liveShortText:string}) {
-  const { user, betaOwner }=useAuthSession();
-  const commandCenterTester=betaOwner===true;
+  const { user }=useAuthSession();
   const shellRef=useRef<HTMLElement>(null);
   const canvasRef=useRef<HTMLDivElement>(null);
   const chartRef=useRef<IChartApi|null>(null);
@@ -278,6 +277,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
   const [advisorEnabled,setAdvisorEnabled]=useState(false);
+  const [commandCenterAvailable,setCommandCenterAvailable]=useState(false);
   const [advisorSeats,setAdvisorSeats]=useState<AdvisorSeats>(EMPTY_ADVISOR);
   const [advisorZones,setAdvisorZones]=useState<Zone[]>([]);
   const [advisorTimeline,setAdvisorTimeline]=useState<any>(null);
@@ -311,26 +311,29 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   useEffect(()=>{loadBrowserHistory()},[loadBrowserHistory,payload.snapshotAtMs]);
 
   useEffect(()=>{
-    if(!commandCenterTester||!user?.uid){setSoldierActivity([]);return}
+    if(!commandCenterAvailable||!user?.uid){setSoldierActivity([]);return}
     try{
       const key=`tradementor.zoneSoldierActivity.v1.${encodeURIComponent(user.uid)}`;
       const stored=JSON.parse(window.localStorage.getItem(key)||"[]");
       setSoldierActivity(mergeSoldierActivityHistory(Array.isArray(stored)?stored:[],[],Date.now()) as SoldierActivityEvent[]);
     }catch{setSoldierActivity([])}
-  },[commandCenterTester,user?.uid]);
+  },[commandCenterAvailable,user?.uid]);
 
   const loadAdvisor=useCallback(async()=>{
     try{
       const release=record(await authenticatedRequest("/api/releases/me",{cache:"no-store"}));
       const features=record(release.features);
       const zoneFeature=record(features.zone_soldiers);
-      const ownerStrategyAccess=String(release.channel||"").toUpperCase()==="BETA"&&zoneFeature.enabled===true;
-      setAdvisorEnabled(ownerStrategyAccess);
-      if(ownerStrategyAccess){
+      const commandCenterFeature=record(features.zone_command_center);
+      const strategyAccess=zoneFeature.enabled===true;
+      const commandCenterAccess=commandCenterFeature.enabled===true;
+      setAdvisorEnabled(strategyAccess);
+      setCommandCenterAvailable(commandCenterAccess);
+      if(strategyAccess){
         const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
         const nextAdvisor=advisorSeatsFromPayload(account);
         setAdvisorSeats(nextAdvisor);
-        if(commandCenterTester&&user?.uid){
+        if(commandCenterAccess&&user?.uid){
           setSoldierActivity((current)=>{
             const merged=mergeSoldierActivityHistory(current,nextAdvisor.soldierOpenEvents,Date.now()) as SoldierActivityEvent[];
             try{
@@ -345,6 +348,8 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       }
     }catch{
       setAdvisorEnabled(false);
+      setCommandCenterAvailable(false);
+      setZoneSoldiersScreenOpen(false);
       setAdvisorSeats(EMPTY_ADVISOR);
     }
     try{
@@ -357,7 +362,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       setAdvisorTimeline(null);
       setAdvisorMessage(advisorErrorText(reason,"15m-zonebasis tijdelijk niet beschikbaar; Portfolio Koers blijft informatief."));
     }
-  },[commandCenterTester,user?.uid]);
+  },[user?.uid]);
 
   useEffect(()=>{
     void loadAdvisor();
@@ -396,10 +401,14 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   },[combinedMarkers]);
 
   useEffect(()=>{
-    const open=()=>setZoneSoldiersScreenOpen(true);
+    const open=()=>{if(commandCenterAvailable)setZoneSoldiersScreenOpen(true)};
     window.addEventListener(ZONE_SOLDIERS_OPEN_EVENT,open);
     return()=>window.removeEventListener(ZONE_SOLDIERS_OPEN_EVENT,open);
-  },[]);
+  },[commandCenterAvailable]);
+
+  useEffect(()=>{
+    if(!commandCenterAvailable)setZoneSoldiersScreenOpen(false);
+  },[commandCenterAvailable]);
 
   useEffect(()=>{
     if(!zoneSoldiersScreenOpen)return;
@@ -886,7 +895,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
       {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span>{viewMode==="performance"?<b>Performance {compactUsd(hover.candle.close-portfolioCashflowShift(combinedMarkers,baseCandles[0]?.time??hover.candle.time,hover.candle.time))}</b>:<><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b></>}{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
     </div>
-    {zoneSoldiersScreenOpen?<ZoneSoldiersCommandCenterScreen vm={commandCenterVm} advisorMessage={advisorMessage} onClose={()=>setZoneSoldiersScreenOpen(false)}/>:null}
+    {zoneSoldiersScreenOpen&&commandCenterAvailable?<ZoneSoldiersCommandCenterScreen vm={commandCenterVm} advisorMessage={advisorMessage} onClose={()=>setZoneSoldiersScreenOpen(false)}/>:null}
     {false?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
       <header className="portfolio-strategy-head">
         <span className="portfolio-strategy-mark" aria-hidden="true">{zoneSoldierEnabled?"⌖":"◎"}</span>
