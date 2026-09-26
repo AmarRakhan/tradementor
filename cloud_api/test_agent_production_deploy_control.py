@@ -37,6 +37,6 @@ def test_agent_deploy_keeps_candidate_health_promotion_and_rollback() -> None:
     assert "Deploy candidate without production traffic" in text
     assert "Verify candidate health and route contract" in text
     assert "Promote verified revision" in text
-    assert "Verify promoted production health" in text
-    assert "Rollback production traffic on failure after promotion" in text
+    assert "Verify production after promotion" in text
+    assert "Roll back failed promotion" in text
     assert "google-github-actions/auth@v2" in text
