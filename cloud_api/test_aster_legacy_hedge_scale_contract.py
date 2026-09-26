@@ -84,3 +84,16 @@ def test_break_even_preview_uses_exchange_break_even_when_available_and_fresh_cu
     assert '"breakEvenDistanceAfterPct"' in planner
     assert '"distanceChangeKind"' in planner
     assert '"distanceChangePct"' in planner
+
+
+def test_build443_preflights_account_specific_opening_capacity_and_replans_stale_no_fill_operations():
+    value = extension_source()
+    planner = Path(__file__).with_name("aster_legacy_hedge_scale.py").read_text(encoding="utf-8")
+    assert "remaining_openable_notional_value" in value
+    assert "ASTER_REMAINING_OPENABLE_NOTIONAL_VALUE" in value
+    assert "remaining_openable_notional_usd=remaining_capacity" in value
+    assert "RECOVERY_REPLAN_REQUIRED" in value
+    assert "initial_exists" in value
+    assert "no_new_exposure" in value
+    assert '"capacityLimited"' in planner
+    assert '"plannedOpenNotionalUsd"' in planner
