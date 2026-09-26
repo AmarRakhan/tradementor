@@ -18,6 +18,14 @@ type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;cou
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
+type StructureLevelLayout={label:"R2"|"R1"|"S1"|"S2";price:number;top:number;side:"resistance"|"support"};
+type StructureOverlayLayout={
+  levels:StructureLevelLayout[];
+  activeZone:{top:number;height:number;label:string}|null;
+  roleFlip:{left:number;top:number}|null;
+  newHigh:{left:number;top:number}|null;
+  breakout:{left:number;top:number}|null;
+};
 type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number};
 type SoldierActivityEvent={id:string;atMs:number;side:"LONG"|"SHORT";count:number;originZone:number|null;role?:string;source?:string};
 type PortfolioViewMode="performance"|"account";
@@ -28,6 +36,9 @@ const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null
 const ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32";
 const ZONE_SOLDIERS_SCREEN_REFERENCE="file_00000000c2d0821082a1b3c28f6462c1";
 const ZONE_SOLDIERS_OPEN_EVENT="tradementor:open-zone-soldiers-command-center";
+const PORTFOLIO_STRUCTURE_REFERENCE="file_00000000035481f4bb41632c35857982";
+const PORTFOLIO_STRUCTURE_BASELINE_REFERENCE="file_000000002c048243bcc70e9957bb001e";
+const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
   "1m":{visibleBars:24,barSpacing:7.0,rightOffset:1.2},
@@ -273,6 +284,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const [initialChartReady,setInitialChartReady]=useState(false);
   const [zoneLayout,setZoneLayout]=useState<ZoneLayout[]>([]);
   const [zoneBoundaries,setZoneBoundaries]=useState<ZoneBoundaryLayout[]>([]);
+  const [structureOverlay,setStructureOverlay]=useState<StructureOverlayLayout>(EMPTY_STRUCTURE_OVERLAY);
   const [eventLabels,setEventLabels]=useState<EventLabel[]>([]);
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
@@ -495,7 +507,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const container=canvasRef.current;
     const observedEquity=parsePortfolioEquityText(liveEquityTextRef.current);
     const candles=(observedEquity?mergeRealtimeEquitySample(baseCandles,observedEquity,Date.now(),timeframe):baseCandles) as Candle[];
-    if(!container||!candles.length){candleDataRef.current=[];setZoneLayout([]);setZoneBoundaries([]);setEventLabels([]);return}
+    if(!container||!candles.length){candleDataRef.current=[];setZoneLayout([]);setZoneBoundaries([]);setStructureOverlay(EMPTY_STRUCTURE_OVERLAY);setEventLabels([]);return}
     candleDataRef.current=candles.map((row)=>({...row}));
     const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
     const performanceByTime=new Map(performancePoints.map((row:any)=>[Number(row.time),Number(row.value)]));
@@ -504,8 +516,26 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const initialFocusContext=portfolioZoneContextFromLadder(advisorZoneLadderRef.current,initialFocusPrice);
     const fallbackFocusIndex=portfolioZoneForPrice(payload.zones,initialFocusPrice);
     const fallbackFocusZone=fallbackFocusIndex===null?null:payload.zones.find((zone)=>zone.index===fallbackFocusIndex)??null;
-    const focusLower=initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null;
-    const focusUpper=initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null;
+    const focusActiveIndex=initialFocusContext?.activeIndex;
+    const focusRows=Array.isArray(advisorZoneLadderRef.current?.zones)?advisorZoneLadderRef.current.zones as any[]:[];
+    const focusActiveRow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex))??null;
+    const focusStep=Number(advisorZoneLadderRef.current?.step);
+    const focusS1=Number.isFinite(Number(initialFocusContext?.lowerBoundary))&&Number(initialFocusContext?.lowerBoundary)>0
+      ? Number(initialFocusContext?.lowerBoundary)
+      : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)-focusStep/2:null;
+    const focusR1=Number.isFinite(Number(initialFocusContext?.upperBoundary))&&Number(initialFocusContext?.upperBoundary)>0
+      ? Number(initialFocusContext?.upperBoundary)
+      : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)+focusStep/2:null;
+    const focusBelow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)-1);
+    const focusAbove=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)+1);
+    const focusS2=Number.isFinite(Number(focusBelow?.lower))
+      ? Number(focusBelow.lower)
+      : Number.isFinite(Number(focusS1))&&Number.isFinite(focusStep)?Number(focusS1)-focusStep:null;
+    const focusR2=Number.isFinite(Number(focusAbove?.upper))
+      ? Number(focusAbove.upper)
+      : Number.isFinite(Number(focusR1))&&Number.isFinite(focusStep)?Number(focusR1)+focusStep:null;
+    const focusLower=viewMode==="account"?(Number.isFinite(Number(focusS2))?focusS2:(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null)):(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null);
+    const focusUpper=viewMode==="account"?(Number.isFinite(Number(focusR2))?focusR2:(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null)):(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null);
     const focusVisibleBars=viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars,initialFocusPrice,focusLower,focusUpper):Math.min(candles.length,view.visibleBars);
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
@@ -527,8 +557,8 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     });
     chartRef.current=chart;
     const series=viewMode==="performance"
-      ? chart.addSeries(LineSeries,{color:"#39eaa0",lineWidth:3,priceLineColor:"#d9b34a",priceLineWidth:1,lastValueVisible:true,crosshairMarkerVisible:true})
-      : chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineColor:"#d9b34a",priceLineWidth:1,lastValueVisible:true});
+      ? chart.addSeries(LineSeries,{color:"#39eaa0",lineWidth:3,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:true})
+      : chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineVisible:false,lastValueVisible:false});
     candleSeriesRef.current=series;
     if(viewMode==="performance"){
       series.setData(performancePoints.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -538,9 +568,9 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
 
     const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
-      const upper=chart.addSeries(LineSeries,{color:"#1298ff",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-      const middle=chart.addSeries(LineSeries,{color:"rgba(226,235,239,.78)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-      const lower=chart.addSeries(LineSeries,{color:"#f02e49",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const upper=chart.addSeries(LineSeries,{color:"rgba(18,152,255,.26)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const middle=chart.addSeries(LineSeries,{color:"rgba(226,235,239,.16)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const lower=chart.addSeries(LineSeries,{color:"rgba(240,46,73,.26)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       bbRefs.current={upper,middle,lower};
       upper.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
       middle.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -565,7 +595,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     }
 
     if(viewMode==="account"&&payload.cycleStartEquity&&payload.cycleStartEquity>0){
-      series.createPriceLine({price:payload.cycleStartEquity,color:"rgba(229,190,75,.72)",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:"CYCLE"});
+      series.createPriceLine({price:payload.cycleStartEquity,color:"rgba(229,190,75,.28)",lineWidth:1,lineStyle:2,axisLabelVisible:false,title:""});
     }
 
     const candleByTime=new Map(candles.map((row)=>[row.time,row]));
@@ -629,6 +659,71 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         }).filter(Boolean);
         const zones=layoutPortfolioKoersZoneRegions(zoneCoordinates,height) as ZoneLayout[];
         setZoneLayout(zones);
+      }
+
+      if(viewMode==="account"&&zoneLadder?.zones?.length){
+        const structurePrice=parsePortfolioEquityText(liveEquityTextRef.current)??payload.currentEquity??candles.at(-1)?.close??null;
+        const marketContext=portfolioZoneContextFromLadder(zoneLadder,structurePrice);
+        const rows=Array.isArray(zoneLadder.zones)?zoneLadder.zones as any[]:[];
+        const activeIndex=marketContext?.activeIndex;
+        const activeRow=rows.find((row:any)=>Number(row.index)===Number(activeIndex))??null;
+        const step=Number(zoneLadder.step);
+        const s1=Number.isFinite(Number(marketContext?.lowerBoundary))&&Number(marketContext?.lowerBoundary)>0
+          ? Number(marketContext?.lowerBoundary)
+          : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)-step/2:null;
+        const r1=Number.isFinite(Number(marketContext?.upperBoundary))&&Number(marketContext?.upperBoundary)>0
+          ? Number(marketContext?.upperBoundary)
+          : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)+step/2:null;
+        const below=rows.find((row:any)=>Number(row.index)===Number(activeIndex)-1);
+        const above=rows.find((row:any)=>Number(row.index)===Number(activeIndex)+1);
+        const s2=Number.isFinite(Number(below?.lower))?Number(below.lower):Number.isFinite(Number(s1))&&Number.isFinite(step)?Number(s1)-step:null;
+        const r2=Number.isFinite(Number(above?.upper))?Number(above.upper):Number.isFinite(Number(r1))&&Number.isFinite(step)?Number(r1)+step:null;
+        const activeLower=s1;
+        const activeUpper=r1;
+        const rawLevels=[
+          {label:"R2",price:r2,side:"resistance"},
+          {label:"R1",price:r1,side:"resistance"},
+          {label:"S1",price:s1,side:"support"},
+          {label:"S2",price:s2,side:"support"},
+        ] as const;
+        const levels=rawLevels.flatMap((level)=>{
+          if(!Number.isFinite(Number(level.price))||Number(level.price)<=0)return [];
+          const coordinate=series.priceToCoordinate(Number(level.price));
+          if(coordinate===null)return [];
+          const top=Number(coordinate);
+          if(top<0||top>height)return [];
+          return [{label:level.label,price:Number(level.price),top,side:level.side}] as StructureLevelLayout[];
+        });
+        const r1Level=levels.find((level)=>level.label==="R1");
+        const r2Level=levels.find((level)=>level.label==="R2");
+        const s1Level=levels.find((level)=>level.label==="S1");
+        const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
+        const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
+        const activeTop=activeUpperY!==null&&activeLowerY!==null?Math.min(Number(activeUpperY),Number(activeLowerY)):null;
+        const activeBottom=activeUpperY!==null&&activeLowerY!==null?Math.max(Number(activeUpperY),Number(activeLowerY)):null;
+        const structureRange=chart.timeScale().getVisibleLogicalRange();
+        const visibleCandles=candles.filter((_,index)=>!structureRange||(index>=Math.floor(structureRange.from)-1&&index<=Math.ceil(structureRange.to)+1));
+        const visibleHigh=visibleCandles.reduce<Candle|null>((best,row)=>!best||row.high>best.high?row:best,null);
+        const highX=visibleHigh?chart.timeScale().timeToCoordinate(visibleHigh.time as UTCTimestamp):null;
+        const highY=visibleHigh?series.priceToCoordinate(visibleHigh.high):null;
+        let roleFlipCandle:Candle|null=null;
+        if(Number.isFinite(Number(s1))){
+          for(let index=1;index<candles.length;index+=1){
+            if(candles[index-1].close<=Number(s1)&&candles[index].close>Number(s1))roleFlipCandle=candles[index];
+          }
+        }
+        const roleX=roleFlipCandle?chart.timeScale().timeToCoordinate(roleFlipCandle.time as UTCTimestamp):null;
+        const roleY=Number.isFinite(Number(s1))?series.priceToCoordinate(Number(s1)):null;
+        const zoneLabel=Number.isInteger(Number(activeIndex))?`Zone ${Number(activeIndex)} actief`:"Zone actief";
+        setStructureOverlay({
+          levels,
+          activeZone:activeTop!==null&&activeBottom!==null?{top:activeTop,height:Math.max(1,activeBottom-activeTop),label:zoneLabel}:null,
+          roleFlip:roleX!==null&&roleY!==null&&Number(roleX)>70&&Number(roleX)<width-70?{left:Number(roleX),top:Number(roleY)}:null,
+          newHigh:highX!==null&&highY!==null?{left:Math.max(92,Math.min(width-86,Number(highX))),top:Math.max(22,Number(highY)-28)}:null,
+          breakout:(r2Level??r1Level)?{left:Math.max(150,Math.min(width-92,width*.72)),top:Math.max(20,(r2Level??r1Level)!.top-38)}:null,
+        });
+      }else{
+        setStructureOverlay(EMPTY_STRUCTURE_OVERLAY);
       }
 
       const markerRows=markerRowsRef.current.filter((row)=>candleByTime.has(row.time));
@@ -704,7 +799,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       container.removeEventListener("pointermove",sync);container.removeEventListener("touchmove",sync);
       try{chart.unsubscribeCrosshairMove(onCrosshair);chart.remove()}catch{/* disposed */}
       if(chartRef.current===chart)chartRef.current=null;
-      candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncOverlaysRef.current=()=>{};setZoneBoundaries([]);setEventLabels([]);
+      candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncOverlaysRef.current=()=>{};setZoneBoundaries([]);setStructureOverlay(EMPTY_STRUCTURE_OVERLAY);setEventLabels([]);
     };
   },[baseCandles,payload.zones,payload.cycleStartEquity,timeframe,viewMode,cashflowSignature]);
 
@@ -866,7 +961,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     soldierActivity,
   });
 
-  return <section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f" data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
+  return <section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f" data-structure-reference={PORTFOLIO_STRUCTURE_REFERENCE} data-structure-baseline-reference={PORTFOLIO_STRUCTURE_BASELINE_REFERENCE} data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
     <header className="portfolio-koers-header">
       <div className="portfolio-koers-heading">
         <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={payload.live?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{payload.live?"Live":"Sync"}</span></div>
@@ -889,6 +984,13 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       {viewMode==="performance"?<div className="portfolio-koers-performance-note">PERFORMANCE · cashflow gecorrigeerd<span>Strategyzones staan alleen bij Accountwaarde</span></div>:null}
       <div className={`portfolio-koers-zones ${zoneLayout.length?"is-ready":""}`} aria-hidden="true">{zoneLayout.map((zone)=><div key={zone.index} className={`portfolio-koers-zone zone-${zone.tone} ${zoneLevelClass(zone.index)} ${zone.index===activeZone?"active":""}`} style={{top:`${zone.top}px`,height:`${zone.height}px`}}><span>{zone.label}</span></div>)}</div>
       <div className="portfolio-koers-zone-boundaries" aria-hidden="true">{zoneBoundaries.map((boundary,index)=>{const distance=portfolioZoneDistancePercent(boundary.price,currentZonePrice);return <div key={`${boundary.price}-${index}`} className={`portfolio-koers-zone-boundary ${boundary.kind}`} style={{top:`${boundary.top}px`}}>{boundary.kind!=="regular"?<span title={`Exacte grens ${levelUsd(boundary.price)}`}>{boundary.kind==="next-up"?"↑":"↓"} Z{signedZone(boundary.targetIndex)} · {percent2(distance)}</span>:null}</div>})}</div>
+      {viewMode==="account"?<div className="portfolio-koers-structure-layer" data-reference={PORTFOLIO_STRUCTURE_REFERENCE} aria-hidden="true">
+        {structureOverlay.activeZone?<div className="portfolio-koers-structure-zone" style={{top:`${structureOverlay.activeZone.top}px`,height:`${structureOverlay.activeZone.height}px`}}><span>{structureOverlay.activeZone.label}</span></div>:null}
+        {structureOverlay.levels.map((level)=><div key={level.label} className={`portfolio-koers-structure-level ${level.side}`} style={{top:`${level.top}px`}}><span>{level.label}</span></div>)}
+        {structureOverlay.roleFlip?<div className="portfolio-koers-structure-note role-flip" style={{left:`${structureOverlay.roleFlip.left}px`,top:`${structureOverlay.roleFlip.top}px`}}>voormalige R1 → nieuwe support</div>:null}
+        {structureOverlay.newHigh?<div className="portfolio-koers-structure-note new-high" style={{left:`${structureOverlay.newHigh.left}px`,top:`${structureOverlay.newHigh.top}px`}}>nieuwe high</div>:null}
+        {structureOverlay.breakout?<div className="portfolio-koers-structure-note breakout" style={{left:`${structureOverlay.breakout.left}px`,top:`${structureOverlay.breakout.top}px`}}>volgende breakout</div>:null}
+      </div>:null}
       <div className="portfolio-koers-event-layer" aria-hidden="true">{eventLabels.map((label)=><div key={label.id} className="portfolio-koers-event-group"><div className={`portfolio-koers-event portfolio-koers-event-chip ${label.tone} ${label.position} ${(label as any).compressed?"compressed":""}`} style={{left:`${label.left}px`,top:`${label.top}px`}}><b>{label.multiplier||`+${label.eventCount}`}</b></div></div>)}</div>
       {loading&&initialChartReady&&!baseCandles.length?<div className="portfolio-koers-state"><i/>Portfoliohistorie laden…</div>:null}
       {!loading&&!baseCandles.length&&!error?<div className="portfolio-koers-state"><strong>Historie wordt opgebouwd</strong><span>Nieuwe candles gebruiken bevestigde Aster-equity; bestaande bevestigde browserhistorie wordt veilig hergebruikt als die beschikbaar is.</span></div>:null}
