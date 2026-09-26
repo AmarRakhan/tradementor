@@ -27,6 +27,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-26",
   title: "Dagrendement 2.1 · stortingen tellen niet als winst",
+  // Build 433 contract: legacy Auto Hedge regression volgt de actuele buildbadge.
   newItems: [
     "Rendement vandaag gebruikt uitsluitend een bevestigde equity-snapshot uit dezelfde Nederlandse kalenderdag als startpunt.",
     "Een storting of opname na die dagstart wordt als externe cashflow uit het rendement verwijderd; een cashflow vóór de eerste dagsnapshot zit al in de nieuwe basis en creëert dus ook geen winst.",

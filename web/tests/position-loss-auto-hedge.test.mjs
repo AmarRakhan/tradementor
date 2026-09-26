@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const REFERENCE = "file_00000000ecd08246bd1b15532fb478d6";
 
-test("Build 432 keeps the dedicated Auto Hedge screen while simplifying the Snapshot tile", async () => {
+test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Snapshot tile", async () => {
   const [layout, row, component, css, route, applyRoute, rehedgeRoute, version] = await Promise.all([
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx", import.meta.url), "utf8"),
@@ -46,7 +46,7 @@ test("Build 432 keeps the dedicated Auto Hedge screen while simplifying the Snap
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "432"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "433"/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {
