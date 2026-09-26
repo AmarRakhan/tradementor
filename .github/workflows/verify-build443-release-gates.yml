@@ -1,0 +1,51 @@
+name: Verify Build 443 Release Gates
+
+on:
+  push:
+    branches:
+      - build443-central-release-gates
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-build443-release-gates
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - run: pip install -r cloud_api/requirements.txt pytest
+      - name: Run backend test suite
+        working-directory: cloud_api
+        env:
+          ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED: "false"
+          ASTER_LIVE_EXECUTION_ENABLED: "false"
+          ASTER_STRATEGY2_LIVE_ENABLED: "false"
+          TRADEMENTOR_ALLOW_LIVE: "false"
+        run: pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --prefix web
+      - name: Run web build and tests
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm --prefix web test
