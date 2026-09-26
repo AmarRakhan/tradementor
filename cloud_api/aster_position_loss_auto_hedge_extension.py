@@ -61,13 +61,6 @@ def _pair_doc(uid: str, symbol: str):
     return _pair_collection(uid).document(str(symbol).upper())
 
 
-def _owner_uid() -> str:
-    value = main.continuity_owner_reference().get().to_dict() or {}
-    if value.get("enabled") is False:
-        return ""
-    return str(value.get("ownerUid") or "").strip()
-
-
 def _dynamic_hedge_enabled(uid: str) -> bool:
     try:
         value = main.user_reference({"uid": uid}).collection("asterDynamicHedge").document("control").get().to_dict() or {}
@@ -134,7 +127,7 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         preview = [item for item in report.get("actions", []) if isinstance(item, dict)]
     return _serialize({
         "available": True,
-        "ownerOnly": True,
+        "ownerOnly": False,
         "enabled": enabled,
         "thresholdUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
         "workerEnabled": WORKER_ENABLED,
@@ -314,6 +307,7 @@ def _prepare_lifecycle(
     positions: list[dict[str, Any]],
     open_orders: list[dict[str, Any]],
     execute: bool,
+    allow_rehedge: bool = True,
 ) -> tuple[dict[str, str], set[str], dict[str, dict[str, Any]], list[dict[str, Any]]]:
     threshold = float(settings["thresholdUsd"])
     pmap = _position_map(positions)
@@ -346,7 +340,7 @@ def _prepare_lifecycle(
                     }, merge=True)
                 skip.add(symbol)
                 continue
-            if state.get("rehedgeEnabled") is True:
+            if allow_rehedge and state.get("rehedgeEnabled") is True:
                 if position_open_pnl(remaining) <= -threshold:
                     synthetic = evaluate_auto_hedge(
                         positions, threshold, open_orders=open_orders,
@@ -515,10 +509,26 @@ def _sync_pair_views(
 
 
 def _run_uid(uid: str, *, force_shadow: bool = False) -> dict[str, Any]:
-    if not uid or uid != _owner_uid():
-        return {"mode": "OFF", "ordersSent": 0, "status": "BLOCKED", "reason": "OWNER_ONLY", "actions": []}
+    if not uid:
+        return {"mode": "OFF", "ordersSent": 0, "status": "BLOCKED", "reason": "MISSING_UID", "actions": []}
+
+    entitled = main._release_feature_enabled_for_uid(uid, "auto_hedge_v2")
+    existing_pairs = _pair_states(uid)
+    has_managed_pair = any(
+        str(row.get("status", "")).upper() in (ACTIVE_STATUSES | RECOVERY_STATUSES)
+        for row in existing_pairs.values()
+    )
+    if not entitled and not has_managed_pair:
+        return {
+            "mode": "OFF", "ordersSent": 0, "status": "BLOCKED",
+            "reason": "FEATURE_NOT_RELEASED", "featureKey": "auto_hedge_v2", "actions": [],
+        }
 
     settings = _current(uid)
+    # A withdrawn entitlement must stop new triggers/rehedges without abandoning
+    # an already protected pair. Persisted user preference is intentionally kept.
+    if not entitled:
+        settings = {**settings, "enabled": False}
     execute = EXECUTION_ENABLED and not force_shadow
     coordination_token: str | None = None
     try:
@@ -531,6 +541,7 @@ def _run_uid(uid: str, *, force_shadow: bool = False) -> dict[str, Any]:
             positions=positions,
             open_orders=open_orders,
             execute=execute,
+            allow_rehedge=entitled,
         )
 
         if not settings.get("enabled") and not protected_sides:
@@ -631,14 +642,13 @@ def get_position_loss_auto_hedge(
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
     response.headers["Cache-Control"] = "no-store"
-    try:
-        uid = main.require_continuity_owner(user)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            return {"available": False, "ownerOnly": True, "enabled": False,
-                "thresholdUsd": DEFAULT_THRESHOLD_USD, "status": "UIT", "pairs": []}
-        raise
-    return _public(uid)
+    if not main._release_feature_enabled(user, "auto_hedge_v2"):
+        return {
+            "available": False, "ownerOnly": False, "enabled": False,
+            "thresholdUsd": DEFAULT_THRESHOLD_USD, "status": "UIT", "pairs": [],
+            "reason": "FEATURE_NOT_RELEASED", "featureKey": "auto_hedge_v2",
+        }
+    return _public(str(user["uid"]))
 
 
 @main.app.put("/v1/me/aster/position-loss-auto-hedge")
@@ -647,7 +657,7 @@ def put_position_loss_auto_hedge(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = main.require_continuity_owner(user)
+    uid = main.require_release_feature(user, "auto_hedge_v2")
     current = _current(uid)
     previous_enabled = current.get("enabled") is True
     if previous_enabled and request.enabled is False and request.confirmDisable is not True:
@@ -693,7 +703,7 @@ def apply_position_loss_auto_hedge(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = main.require_continuity_owner(user)
+    uid = main.require_release_feature(user, "auto_hedge_v2")
     current = _current(uid)
     previous_enabled = current.get("enabled") is True
     if previous_enabled and request.enabled is False and request.confirmDisable is not True:
@@ -738,7 +748,7 @@ def put_position_loss_auto_hedge_rehedge(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = main.require_continuity_owner(user)
+    uid = main.require_release_feature(user, "auto_hedge_v2")
     normalized = str(symbol).upper().strip()
     if not SYMBOL_RE.fullmatch(normalized):
         raise HTTPException(422, "Ongeldig Aster USDT-symbool")
@@ -775,22 +785,28 @@ def put_position_loss_auto_hedge_rehedge(
 def _worker_loop() -> None:
     while not _worker_stop.wait(WORKER_INTERVAL):
         try:
-            uid = _owner_uid()
-            if not uid:
-                continue
-            settings = _current(uid)
-            pairs = _pair_states(uid)
-            has_active_lock = any(
-                str(row.get("status", "")).upper() in ACTIVE_STATUSES
-                for row in pairs.values()
-            )
-            if settings.get("enabled") is not True and not has_active_lock:
-                continue
+            snapshots = list(main.db.collection("asterPositionLossAutoHedge").stream())
         except Exception:
             continue
-        if _worker_stop.is_set():
-            return
-        _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
+        for snapshot in snapshots:
+            if _worker_stop.is_set():
+                return
+            uid = str(snapshot.id or "").strip()
+            if not uid:
+                continue
+            try:
+                settings = _current(uid)
+                pairs = _pair_states(uid)
+                has_managed_pair = any(
+                    str(row.get("status", "")).upper() in (ACTIVE_STATUSES | RECOVERY_STATUSES)
+                    for row in pairs.values()
+                )
+                entitled = main._release_feature_enabled_for_uid(uid, "auto_hedge_v2")
+                if not has_managed_pair and not (entitled and settings.get("enabled") is True):
+                    continue
+                _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
+            except Exception:
+                continue
 
 
 @main.app.on_event("startup")
