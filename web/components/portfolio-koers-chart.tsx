@@ -520,15 +520,20 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const focusRows=Array.isArray(advisorZoneLadderRef.current?.zones)?advisorZoneLadderRef.current.zones as any[]:[];
     const focusActiveRow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex))??null;
     const focusStep=Number(advisorZoneLadderRef.current?.step);
-    const focusCenter=Number(focusActiveRow?.center);
-    const focusS1Row=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)-1);
-    const focusS2Row=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)-2);
-    const focusR1Row=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)+1);
-    const focusR2Row=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)+2);
-    const focusS1=Number.isFinite(Number(focusS1Row?.center))?Number(focusS1Row.center):Number.isFinite(focusCenter)&&Number.isFinite(focusStep)?focusCenter-focusStep:null;
-    const focusS2=Number.isFinite(Number(focusS2Row?.center))?Number(focusS2Row.center):Number.isFinite(Number(focusS1))&&Number.isFinite(focusStep)?Number(focusS1)-focusStep:null;
-    const focusR1=Number.isFinite(Number(focusR1Row?.center))?Number(focusR1Row.center):Number.isFinite(focusCenter)&&Number.isFinite(focusStep)?focusCenter+focusStep:null;
-    const focusR2=Number.isFinite(Number(focusR2Row?.center))?Number(focusR2Row.center):Number.isFinite(Number(focusR1))&&Number.isFinite(focusStep)?Number(focusR1)+focusStep:null;
+    const focusS1=Number.isFinite(Number(initialFocusContext?.lowerBoundary))&&Number(initialFocusContext?.lowerBoundary)>0
+      ? Number(initialFocusContext?.lowerBoundary)
+      : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)-focusStep/2:null;
+    const focusR1=Number.isFinite(Number(initialFocusContext?.upperBoundary))&&Number(initialFocusContext?.upperBoundary)>0
+      ? Number(initialFocusContext?.upperBoundary)
+      : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)+focusStep/2:null;
+    const focusBelow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)-1);
+    const focusAbove=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)+1);
+    const focusS2=Number.isFinite(Number(focusBelow?.lower))
+      ? Number(focusBelow.lower)
+      : Number.isFinite(Number(focusS1))&&Number.isFinite(focusStep)?Number(focusS1)-focusStep:null;
+    const focusR2=Number.isFinite(Number(focusAbove?.upper))
+      ? Number(focusAbove.upper)
+      : Number.isFinite(Number(focusR1))&&Number.isFinite(focusStep)?Number(focusR1)+focusStep:null;
     const focusLower=viewMode==="account"?(Number.isFinite(Number(focusS2))?focusS2:(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null)):(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null);
     const focusUpper=viewMode==="account"?(Number.isFinite(Number(focusR2))?focusR2:(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null)):(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null);
     const focusVisibleBars=viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars,initialFocusPrice,focusLower,focusUpper):Math.min(candles.length,view.visibleBars);
@@ -663,21 +668,18 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         const activeIndex=marketContext?.activeIndex;
         const activeRow=rows.find((row:any)=>Number(row.index)===Number(activeIndex))??null;
         const step=Number(zoneLadder.step);
-        const activeCenter=Number(activeRow?.center);
-        const s1Row=rows.find((row:any)=>Number(row.index)===Number(activeIndex)-1);
-        const s2Row=rows.find((row:any)=>Number(row.index)===Number(activeIndex)-2);
-        const r1Row=rows.find((row:any)=>Number(row.index)===Number(activeIndex)+1);
-        const r2Row=rows.find((row:any)=>Number(row.index)===Number(activeIndex)+2);
-        const s1=Number.isFinite(Number(s1Row?.center))?Number(s1Row.center):Number.isFinite(activeCenter)&&Number.isFinite(step)?activeCenter-step:null;
-        const s2=Number.isFinite(Number(s2Row?.center))?Number(s2Row.center):Number.isFinite(Number(s1))&&Number.isFinite(step)?Number(s1)-step:null;
-        const r1=Number.isFinite(Number(r1Row?.center))?Number(r1Row.center):Number.isFinite(activeCenter)&&Number.isFinite(step)?activeCenter+step:null;
-        const r2=Number.isFinite(Number(r2Row?.center))?Number(r2Row.center):Number.isFinite(Number(r1))&&Number.isFinite(step)?Number(r1)+step:null;
-        const activeLower=Number.isFinite(Number(marketContext?.lowerBoundary))&&Number(marketContext?.lowerBoundary)>0
+        const s1=Number.isFinite(Number(marketContext?.lowerBoundary))&&Number(marketContext?.lowerBoundary)>0
           ? Number(marketContext?.lowerBoundary)
-          : Number.isFinite(activeCenter)&&Number.isFinite(step)?activeCenter-step/2:null;
-        const activeUpper=Number.isFinite(Number(marketContext?.upperBoundary))&&Number(marketContext?.upperBoundary)>0
+          : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)-step/2:null;
+        const r1=Number.isFinite(Number(marketContext?.upperBoundary))&&Number(marketContext?.upperBoundary)>0
           ? Number(marketContext?.upperBoundary)
-          : Number.isFinite(activeCenter)&&Number.isFinite(step)?activeCenter+step/2:null;
+          : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)+step/2:null;
+        const below=rows.find((row:any)=>Number(row.index)===Number(activeIndex)-1);
+        const above=rows.find((row:any)=>Number(row.index)===Number(activeIndex)+1);
+        const s2=Number.isFinite(Number(below?.lower))?Number(below.lower):Number.isFinite(Number(s1))&&Number.isFinite(step)?Number(s1)-step:null;
+        const r2=Number.isFinite(Number(above?.upper))?Number(above.upper):Number.isFinite(Number(r1))&&Number.isFinite(step)?Number(r1)+step:null;
+        const activeLower=s1;
+        const activeUpper=r1;
         const rawLevels=[
           {label:"R2",price:r2,side:"resistance"},
           {label:"R1",price:r1,side:"resistance"},
