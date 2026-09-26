@@ -58,7 +58,7 @@ def test_release_admin_changes_entitlement_only_never_runtime_or_trading_state()
         "submit_order",
         "place_order",
         "zoneSoldiersEnabled",
-        "enabled": True",
+        'enabled": True',
     ):
         assert forbidden not in admin
 
