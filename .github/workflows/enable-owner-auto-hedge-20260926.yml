@@ -1,0 +1,127 @@
+name: Enable owner Auto Hedge 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/enable-owner-auto-hedge-20260926.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Enable owner Auto Hedge through current backend contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); spec=s['spec']['template']['spec']; c=spec['containers'][0]
+          print(c['image']); print(spec['serviceAccountName'])
+          PY
+          )
+          JOB="tm-ah-enable-${GITHUB_RUN_ID: -7}"; MARKER="AH_ENABLE_${GITHUB_RUN_ID}"
+          echo "JOB=$JOB" >> "$GITHUB_ENV"; echo "MARKER=$MARKER" >> "$GITHUB_ENV"
+          SCRIPT="$(base64 -w0 <<'PY'
+          import json,os
+          from fastapi import Response
+          from google.cloud import firestore
+          import main
+          import aster_position_loss_auto_hedge_extension as ah
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              raise RuntimeError('OWNER_NOT_CONFIGURED')
+          if ah._dynamic_hedge_enabled(uid):
+              raise RuntimeError('DYNAMIC_HEDGE_CONFLICT')
+          current=ah._current(uid)
+          threshold=float(current.get('thresholdUsd') or 10.0)
+          request=ah.AutoHedgeSettingsRequest(enabled=True,thresholdUsd=threshold,confirmDisable=False,clientBuild='437',clientSource='OWNER_EXPLICIT_CHAT_REQUEST')
+          result=ah.put_position_loss_auto_hedge(request,Response(),{'uid':uid})
+          pairs=result.get('pairs') if isinstance(result.get('pairs'),list) else []
+          report=result.get('lastReport') if isinstance(result.get('lastReport'),dict) else {}
+          out={
+            'enabled':result.get('enabled') is True,
+            'operational':result.get('operational') is True,
+            'thresholdUsd':result.get('thresholdUsd'),
+            'executionEnabled':result.get('executionEnabled') is True,
+            'workerEnabled':result.get('workerEnabled') is True,
+            'activePairCount':len(pairs),
+            'report':{'mode':report.get('mode'),'status':report.get('status'),'reason':report.get('reason'),'ordersSent':report.get('ordersSent')},
+          }
+          print(os.environ['MARKER']+'='+json.dumps(out,separators=(',',':'),sort_keys=True,default=str),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "${V[0]}" --service-account "${V[1]}" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+      - name: Authenticate observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - name: Publish sanitized confirmation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in $(seq 1 12); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=80 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.txt" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='; rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def walk(x):
+              if isinstance(x,str): yield x
+              elif isinstance(x,dict):
+                  for v in x.values(): yield from walk(v)
+              elif isinstance(x,list):
+                  for v in x: yield from walk(v)
+          for row in rows:
+              for s in walk(row):
+                  if marker in s:
+                      raw=s[s.index(marker)+len(marker):].splitlines()[0]; json.loads(raw); print(raw); raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.txt" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/result.txt"
+          { echo '### Auto Hedge enabled by explicit owner request'; echo '```json'; cat "$RUNNER_TEMP/result.txt"; echo '```'; } > "$RUNNER_TEMP/comment.md"
+          gh issue comment 286 -R AmarRakhan/tradementor --body-file "$RUNNER_TEMP/comment.md"
+          gh issue close 286 -R AmarRakhan/tradementor --reason completed
+      - name: Re-authenticate deploy for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${JOB:-}" ]; then gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true; fi
