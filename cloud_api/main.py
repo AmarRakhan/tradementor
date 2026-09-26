@@ -117,7 +117,7 @@ from aster_execution import configure_maximum_usable_leverage
 from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rejection
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
-from aster_position_loss_auto_hedge_lock import configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
+from aster_position_loss_auto_hedge_lock import auto_hedge_symbol_managed, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_sniper import SniperSettings, backtest_candles
 from aster_sniper_runtime import run_sniper_tick
@@ -1241,6 +1241,32 @@ def _aster_strategy2_owned_keys(uid:str)->set[tuple[str,str]]:
         if symbol and side in {"LONG","SHORT"}:
             keys.add((symbol,side))
     return keys
+
+
+def _exclude_auto_hedge_managed_profit_candidates(
+    uid: str, candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep bulk-profit buttons away from every active Auto Hedge pair.
+
+    The convenience close action closes a complete exchange leg. If either leg
+    belongs to an Auto Hedge lifecycle, the whole symbol is excluded so a user
+    cannot accidentally dismantle the pair. Lock-state read failures propagate
+    and make the preview/action fail closed.
+    """
+    safe: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    managed_cache: dict[str, bool] = {}
+    for candidate in candidates:
+        symbol = str(candidate.get("symbol", "")).upper().strip()
+        if not symbol:
+            continue
+        if symbol not in managed_cache:
+            managed_cache[symbol] = auto_hedge_symbol_managed(account_uid=uid, symbol=symbol)
+        if managed_cache[symbol]:
+            excluded.append(candidate)
+        else:
+            safe.append(candidate)
+    return safe, excluded
 
 
 def _sniper_live_gate_enabled()->bool:
@@ -6602,13 +6628,26 @@ def preview_profitable_aster_positions(
     """Return a fresh, UID-scoped Aster preview; this endpoint never trades."""
     client = _portfolio_growth_client(user, live=False)
     try:
-        owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
+        uid = str(user["uid"])
+        owned_keys=_aster_strategy2_owned_keys(uid)
         rows=[row for row in client.position_risk()
             if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
-        preview = profit_preview_with_settings(rows, load_hedge_settings(user, user_reference))
+        raw_candidates = profitable_positions(rows)
+        safe_candidates, protected_candidates = _exclude_auto_hedge_managed_profit_candidates(uid, raw_candidates)
+        safe_keys = {(item["symbol"], item["side"]) for item in safe_candidates}
+        candidate_rows = [row for row in rows
+            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in safe_keys]
+        preview = profit_preview_with_settings(
+            rows, load_hedge_settings(user, user_reference), candidate_rows=candidate_rows,
+        )
     except Exception as exc:
         raise HTTPException(502, "Actuele Aster-winstposities konden niet betrouwbaar worden gecontroleerd") from exc
-    return {**preview, "generatedAt": datetime.now(timezone.utc).isoformat(), "reliable": True}
+    return {
+        **preview,
+        "autoHedgeProtectedExcludedCount": len(protected_candidates),
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "reliable": True,
+    }
 
 
 @app.post("/v1/me/aster/positions/close-profitable")
@@ -6661,10 +6700,16 @@ def close_profitable_aster_positions(
     try:
         client = _portfolio_growth_client(user, live=True)
         owned_keys=_aster_strategy2_owned_keys(uid)
-        initial = profitable_positions([row for row in client.position_risk()
+        initial_all = profitable_positions([row for row in client.position_risk()
             if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys])
+        initial, protected_excluded = _exclude_auto_hedge_managed_profit_candidates(uid, initial_all)
         if scope != "ALL":
             initial = [candidate for candidate in initial if candidate["side"] == scope]
+            protected_excluded = [candidate for candidate in protected_excluded if candidate["side"] == scope]
+        skipped.extend({
+            **candidate,
+            "reason": "Auto Hedge-pair beschermd; niet opgenomen in winstsluiting",
+        } for candidate in protected_excluded)
         for index, candidate in enumerate(initial, 1):
             symbol = candidate["symbol"]
             side = candidate["side"]
@@ -6683,6 +6728,13 @@ def close_profitable_aster_positions(
             mark = safe_float(current.get("markPrice"))
             if current_profit is None or current_profit < MINIMUM_PROFIT_USD or live_quantity <= 0 or mark <= 0:
                 skipped.append({**candidate, "currentProfitUsd": current_profit, "reason": "niet langer minimaal $0,50 groen"})
+                continue
+            if auto_hedge_symbol_managed(account_uid=uid, symbol=symbol):
+                skipped.append({
+                    **candidate,
+                    "currentProfitUsd": current_profit,
+                    "reason": "Auto Hedge-pair werd actief; sluiting fail-closed overgeslagen",
+                })
                 continue
             try:
                 plan = PairExecutionPlan(
