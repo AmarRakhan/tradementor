@@ -239,6 +239,12 @@ if "test_build438_reconstructs_only_complete_local_days_for_average" not in s:
     s += tests
 p.write_text(s, encoding="utf-8")
 
+# Keep the Auto-Hedge UI regression contract aligned with the canonical build bump.
+p = Path("web/tests/position-loss-auto-hedge.test.mjs")
+s = p.read_text(encoding="utf-8")
+s = s.replace('WEBAPP_BUILD_NUMBER = "437"', 'WEBAPP_BUILD_NUMBER = "438"')
+p.write_text(s, encoding="utf-8")
+
 # 4) Build number and release history.
 p = Path("web/lib/app-version.ts")
 s = p.read_text(encoding="utf-8")
