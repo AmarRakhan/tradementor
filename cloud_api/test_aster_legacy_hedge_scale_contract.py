@@ -97,3 +97,17 @@ def test_build443_preflights_account_specific_opening_capacity_and_replans_stale
     assert "no_new_exposure" in value
     assert '"capacityLimited"' in planner
     assert '"plannedOpenNotionalUsd"' in planner
+
+
+def test_build444_returns_actionable_lower_leverage_guidance_without_submitting_orders():
+    value = extension_source()
+    planner = Path(__file__).with_name("aster_legacy_hedge_scale.py").read_text(encoding="utf-8")
+    assert "_recommended_lower_leverage" in value
+    assert "_capacity_guidance" in value
+    assert "client.leverage_brackets(symbol)" in value
+    assert "client.remaining_openable_notional_value(symbol, candidate)" in value
+    assert "capacityLimited" in value
+    assert "leverage_capacity_guidance" in value
+    assert "lower_leverage_candidates" in planner
+    assert "heeft wel voldoende capaciteit" in planner
+    assert "Verlaag {coin} naar" in planner
