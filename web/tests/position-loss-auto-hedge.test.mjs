@@ -116,7 +116,7 @@ test("Build 441 exposes owner-only Legacy Hedge Recovery UI and proxy routes", a
   assert.match(component, /file_000000003ff08246ad57f7b054d4a96f/);
   assert.match(css, /file_000000005090821091d88f1b301841d7/);
   assert.match(css, /file_000000003ff08246ad57f7b054d4a96f/);
-  assert.match(component, /\+ VERHOOG/);
+  assert.match(component, /plah-scale-open/);\n  assert.match(component, /VERHOOG/);
   assert.match(component, /Hedge-lock vergroten/);
   assert.match(component, /Bedrag per zijde \(USDT\)/);
   assert.match(component, /Totaal extra margin/);
