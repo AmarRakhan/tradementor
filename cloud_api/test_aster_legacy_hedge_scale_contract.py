@@ -7,9 +7,9 @@ def extension_source() -> str:
     return Path(__file__).with_name("aster_legacy_hedge_scale_extension.py").read_text(encoding="utf-8")
 
 
-def test_legacy_scale_is_owner_only_manual_and_separate_from_dca():
+def test_legacy_scale_is_release_gated_manual_and_separate_from_dca():
     value = extension_source()
-    assert "main.require_continuity_owner(user)" in value
+    assert 'main.require_release_feature(user, "legacy_hedge_recovery")' in value\n    assert "main.require_continuity_owner(user)" not in value\n    assert '"requires": ["auto_hedge_v2"]' in value
     assert 'EVENT_TYPE' in value
     assert 'LEGACY_HEDGE_SCALE' in Path(__file__).with_name("aster_legacy_hedge_scale.py").read_text(encoding="utf-8")
     assert 'request.confirm is not True' in value
