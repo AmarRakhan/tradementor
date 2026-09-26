@@ -145,6 +145,7 @@ def test_build438_backfilled_day_keeps_deposit_neutral():
     assert daily_return_percentage(start,end,deposit) == pytest.approx(-6.3157894737)
 
 
+# Build 439 regression: liquidation/trading effects stay in performance.
 def test_build439_insurance_clear_and_trading_income_are_not_external_cashflow():
     rows=[
         {"time":1000,"incomeType":"TRANSFER","income":"100"},
