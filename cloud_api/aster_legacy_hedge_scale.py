@@ -124,6 +124,52 @@ def _floor_to_step(value: Decimal, step: Decimal) -> Decimal:
     return (value / step).to_integral_value(rounding=ROUND_DOWN) * step
 
 
+def lower_leverage_candidates(bracket_payload: Any, current_leverage: Any) -> list[int]:
+    """Return lower Aster bracket leverage levels from highest to lowest."""
+    current = int(_number(current_leverage))
+    if current < 1:
+        return []
+    values: set[int] = set()
+    rows = bracket_payload if isinstance(bracket_payload, list) else []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        nested = row.get("brackets")
+        items = nested if isinstance(nested, list) else ([row] if row.get("initialLeverage") is not None else [])
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            leverage = int(_number(item.get("initialLeverage")))
+            if 0 < leverage < current:
+                values.add(leverage)
+    return sorted(values, reverse=True)
+
+
+def leverage_capacity_guidance(
+    symbol: str,
+    current_leverage: Any,
+    recommended_leverage: Any | None,
+    margin_per_side_usd: Any,
+) -> str:
+    """Build actionable Dutch guidance when Aster blocks opening capacity."""
+    current = max(1, int(_number(current_leverage, 1)))
+    recommended = int(_number(recommended_leverage)) if recommended_leverage is not None else 0
+    margin = max(0.0, _number(margin_per_side_usd))
+    amount = f"{margin:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+    coin = str(symbol).upper().strip()
+    if coin.endswith("USDT"):
+        coin = coin[:-4]
+    if recommended > 0 and recommended < current:
+        return (
+            f"{current}x geblokkeerd door Aster · {recommended}x heeft wel voldoende capaciteit "
+            f"voor ${amount} per zijde. Verlaag {coin} naar {recommended}x in Aster en laad opnieuw."
+        )
+    return (
+        f"{current}x geblokkeerd door Aster · ook op lagere beschikbare leverages is momenteel "
+        f"onvoldoende capaciteit voor ${amount} per zijde. Verlaag het bedrag of probeer later opnieuw."
+    )
+
+
 def stable_scale_intent_id(
     uid: str,
     symbol: str,
