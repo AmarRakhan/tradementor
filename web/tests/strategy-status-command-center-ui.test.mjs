@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Build 437 moves Command Center to the dedicated Zone-Soldaten screen instead of inline chart content",async()=>{
+test("Build 445 keeps Command Center dedicated and release-entitlement gated instead of owner gated",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("const { user, betaOwner }=useAuthSession()"));
+  assert.ok(component.includes("const { user }=useAuthSession()"));
+  assert.equal(component.includes("const { user, betaOwner }=useAuthSession()"),false);
   assert.ok(component.includes("ZoneSoldiersCommandCenterScreen"));
   assert.ok(component.includes("ZONE_SOLDIERS_OPEN_EVENT"));
-  assert.ok(component.includes('zoneSoldiersScreenOpen?<ZoneSoldiersCommandCenterScreen'));
+  assert.ok(component.includes("const commandCenterAccess=commandCenterFeature.enabled===true"));
+  assert.ok(component.includes("if(commandCenterAvailable)setZoneSoldiersScreenOpen(true)"));
+  assert.ok(component.includes("zoneSoldiersScreenOpen&&commandCenterAvailable?<ZoneSoldiersCommandCenterScreen"));
   assert.ok(component.includes('{false?<section className={`portfolio-strategy-cockpit'));
   assert.ok(component.includes("portfolio-strategy-cockpit"));
 });
