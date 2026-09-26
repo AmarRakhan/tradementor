@@ -12,14 +12,17 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 
+# Only non-performance capital movements are neutralised from return.
+# INSURANCE_CLEAR is deliberately excluded: Aster lists it alongside trading
+# income and forced-liquidation/ADL effects must remain visible in performance.
 EXTERNAL_CASHFLOW_TYPES = frozenset({
     "TRANSFER", "DEPOSIT", "WITHDRAWAL", "WALLET_TRANSFER", "INTERNAL_TRANSFER",
-    "WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT",
+    "WELCOME_BONUS", "BALANCE_ADJUSTMENT",
 })
-CASHFLOW_ADJUSTMENT_TYPES = frozenset({"WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT"})
+CASHFLOW_ADJUSTMENT_TYPES = frozenset({"WELCOME_BONUS", "BALANCE_ADJUSTMENT"})
 ENTRY_INTENT_WORDS = ("open", "entry", "base", "dca", "reopen", "reset")
 PORTFOLIO_GROWTH_START_DATE = "2026-08-23"
-PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION = 3
+PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION = 4
 
 
 def _finite(value: Any) -> float:
@@ -101,7 +104,7 @@ def select_day_start_snapshot(
 
 def historical_day_windows(
     candles: Iterable[dict[str, Any]], *, timezone_name: str,
-    current_date: str, max_days: int = 14,
+    current_date: str, max_days: int | None = None,
     boundary_tolerance_minutes: int = 90,
 ) -> list[dict[str, Any]]:
     """Return only completed local days with reliable start/end equity coverage.
@@ -109,7 +112,7 @@ def historical_day_windows(
     Partial days are excluded from the multi-day average instead of being
     presented as complete daily returns.
     """
-    if max_days < 1:
+    if max_days is not None and max_days < 1:
         return []
     zone = ZoneInfo(str(timezone_name))
     today = date.fromisoformat(str(current_date))
@@ -161,7 +164,7 @@ def historical_day_windows(
         if int(row["endAtMs"]) <= int(row["startAtMs"]):
             continue
         reliable.append(dict(row))
-    return reliable[-int(max_days):]
+    return reliable if max_days is None else reliable[-int(max_days):]
 
 def daily_return_percentage(previous_equity: Any, current_equity: Any, external_cashflow: Any = 0) -> float:
     previous = _finite(previous_equity)
