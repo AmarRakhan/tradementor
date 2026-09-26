@@ -165,6 +165,78 @@ def test_percent_gate_triggers_once_at_threshold_and_restarts_from_actual_close_
     assert ref.data["settings"]["portfolioTpBaseMode"] == "CYCLE_START"
 
 
+def test_missing_post_close_equity_waits_and_never_seeds_zero_cycle():
+    class MissingPostCloseEquityClient(FakeClient):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.drop_first_flat_equity = True
+
+        def account_information(self):
+            if not self.positions and self.drop_first_flat_equity:
+                self.drop_first_flat_equity = False
+                return {}
+            return super().account_information()
+
+    raw = {
+        "enabled": True,
+        "settings": {
+            "takeProfitMode": "PORTFOLIO",
+            "portfolioTpPercent": 5.0,
+            "portfolioTpInputMode": "PERCENT",
+            "portfolioTpValue": 5.0,
+            "portfolioTpBaseMode": "CYCLE_START",
+        },
+        "multiBbCycle": {
+            "cycleId": "abc",
+            "cycleStartEquity": 100.0,
+            "baseEquity": 100.0,
+            "baseMode": "CYCLE_START",
+            "baseConfigVersion": 1,
+            "takeProfitInputMode": "PERCENT",
+            "takeProfitValue": 5.0,
+            "targetEquity": 105.0,
+            "cycleStatus": "RUNNING",
+        },
+    }
+    ref = Ref(raw)
+    client = MissingPostCloseEquityClient(equity=105.0, positions=[pos("BTCUSDT", "LONG")])
+
+    first = portfolio_cycle_gate(
+        client=client, ref=ref, raw_state=raw, uid="u",
+        account=client.account_information(), positions=client.position_risk(), open_orders=[],
+        timestamp_ms=1, take_profit_mode="PORTFOLIO", portfolio_tp_percent=5.0,
+        portfolio_tp_input_mode="PERCENT", portfolio_tp_value=5.0, config_version=1,
+    )
+    assert first.handled is True and first.restart is False
+    assert client.positions == []
+    assert ref.data["multiBbCycle"]["cycleStatus"] == "FLAT_CONFIRMING"
+    assert ref.data["multiBbCycle"]["cycleStartEquity"] == pytest.approx(100.0)
+    assert ref.data["multiBbCycle"]["targetEquity"] == pytest.approx(105.0)
+    assert first.report["equityPending"] is True
+
+    actual_post_close = client.equity
+    second_raw = ref.get().to_dict()
+    second = portfolio_cycle_gate(
+        client=client, ref=ref, raw_state=second_raw, uid="u",
+        account=client.account_information(), positions=client.position_risk(), open_orders=[],
+        timestamp_ms=2, take_profit_mode="PORTFOLIO", portfolio_tp_percent=5.0,
+        portfolio_tp_input_mode="PERCENT", portfolio_tp_value=5.0, config_version=1,
+    )
+    assert second.handled is True and second.restart is True
+    assert len(client.submissions) == 1
+    assert ref.data["multiBbCycle"]["cycleStartEquity"] == pytest.approx(actual_post_close)
+    assert ref.data["multiBbCycle"]["baseEquity"] == pytest.approx(actual_post_close)
+    assert ref.data["multiBbCycle"]["targetEquity"] == pytest.approx(actual_post_close * 1.05)
+
+
+def test_public_strategy2_status_exposes_authoritative_durable_cycle():
+    source = Path("main.py").read_text()
+    start = source.index("def aster_strategy2_public")
+    end = source.index("\ndef _run_focus_shadow_scheduler_step", start)
+    block = source[start:end]
+    assert '"multiBbCycle":raw.get("multiBbCycle")' in block
+
+
 def test_usd_mode_technical_replay_multiple_cycles():
     """Deterministic equity replay/backtest of cycle mechanics, not performance."""
     cycle_start = 100.0

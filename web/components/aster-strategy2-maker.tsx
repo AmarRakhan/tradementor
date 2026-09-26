@@ -118,7 +118,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const state = status.state as Record<string, unknown>;
   const persisted = (state.settings && typeof state.settings === "object" ? state.settings : {}) as Record<string, unknown>;
   const rawReport = ((state.multiBb && typeof state.multiBb === "object" ? state.multiBb : state.multiBbReport && typeof state.multiBbReport === "object" ? state.multiBbReport : {}) || {}) as Record<string, unknown>;
-  const cycle = (rawReport.portfolioCycle && typeof rawReport.portfolioCycle === "object" ? rawReport.portfolioCycle : {}) as Record<string, unknown>;
+  const durableCycle = (state.multiBbCycle && typeof state.multiBbCycle === "object" ? state.multiBbCycle : {}) as Record<string, unknown>;
+  const reportCycle = (rawReport.portfolioCycle && typeof rawReport.portfolioCycle === "object" ? rawReport.portfolioCycle : {}) as Record<string, unknown>;
+  const cycle = Object.keys(durableCycle).length ? durableCycle : reportCycle;
 
   useEffect(() => {
     if (dirty) return;

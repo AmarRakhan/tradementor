@@ -38,11 +38,12 @@ export function derivePortfolioCycleCard(payload: unknown): PortfolioCycleCardSt
   const settings = record(strategy2.settings);
   const multiBb = record(strategy2.multiBb);
   const multiBbReport = record(strategy2.multiBbReport);
-  const cycle = Object.keys(record(multiBb.portfolioCycle)).length
-    ? record(multiBb.portfolioCycle)
-    : Object.keys(record(multiBbReport.portfolioCycle)).length
-      ? record(multiBbReport.portfolioCycle)
-      : record(strategy2.multiBbCycle);
+  const durableCycle = record(strategy2.multiBbCycle);
+  const cycle = Object.keys(durableCycle).length
+    ? durableCycle
+    : Object.keys(record(multiBb.portfolioCycle)).length
+      ? record(multiBb.portfolioCycle)
+      : record(multiBbReport.portfolioCycle);
 
   const takeProfitMode = String(settings.takeProfitMode ?? "").trim().toUpperCase();
   if (takeProfitMode !== "PORTFOLIO") return inactive();
