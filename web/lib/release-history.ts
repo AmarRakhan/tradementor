@@ -55,6 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Snapshot referentie: file_0000000061fc81f49a44564879d533de.",
     "Command Center referentie: file_00000000c2d0821082a1b3c28f6462c1.",
     "Dedicated screen is fixed, z-index 1600 en volledig opaque; body-scroll wordt tijdens openen geblokkeerd.",
+    "Build-437 regressiecontract is gesynchroniseerd met de dedicated-screen architectuur.",
   ],
   confidence: "confirmed",
 };
