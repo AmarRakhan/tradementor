@@ -1,0 +1,246 @@
+name: Diagnose Build 442 NEAR break-even preview
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-build442-near-break-even-readonly.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  near-preview-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Authenticate deploy identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run read-only NEAR Legacy Recovery preview audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-near-be-${GITHUB_RUN_ID: -7}"; MARKER="NEAR_BE_442_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"
+          echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os,math
+          from decimal import Decimal
+          from google.cloud import firestore
+          from main import load_aster_secret,AsterV3Client,local_eip712_signer
+          from aster_gateway import ContractRules
+          from aster_legacy_hedge_scale import plan_legacy_hedge_scale
+
+          def n(v,d=0.0):
+              try:
+                  x=float(v)
+              except Exception:
+                  return d
+              return x if math.isfinite(x) else d
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              raise RuntimeError('OWNER_NOT_CONFIGURED')
+
+          secret=load_aster_secret({'uid':uid})
+          client=AsterV3Client(
+              signer_address=secret.signer_address,
+              sign_message=local_eip712_signer(secret),
+              live_authorized=False,
+          )
+          symbol='NEARUSDT'
+          positions=[r for r in client.position_risk(symbol) if isinstance(r,dict) and abs(n(r.get('positionAmt')))>0]
+          by_side={str(r.get('positionSide','')).upper():r for r in positions}
+          long=by_side.get('LONG'); short=by_side.get('SHORT')
+          if not long or not short:
+              raise RuntimeError('NEAR_LONG_SHORT_NOT_BOTH_OPEN')
+
+          pair=db.collection('asterPositionLossAutoHedge').document(uid).collection('pairs').document(symbol).get().to_dict() or {}
+          account=client.account_information() or {}
+          available=n(account.get('availableBalance'),-1)
+          orders=[r for r in client.open_orders(symbol) if isinstance(r,dict)]
+          info=client.public_exchange_info() or {}
+          raw=next((r for r in info.get('symbols',[]) if isinstance(r,dict) and str(r.get('symbol','')).upper()==symbol),None)
+          if raw is None:
+              raise RuntimeError('NEAR_CONTRACT_RULES_MISSING')
+          rules=ContractRules.from_exchange_info(raw)
+
+          quote=client.book_ticker(symbol) or {}
+          bid=n(quote.get('bidPrice')); ask=n(quote.get('askPrice'))
+          long_mark=n(long.get('markPrice'),n(long.get('entryPrice')))
+          short_mark=n(short.get('markPrice'),n(short.get('entryPrice')))
+          if bid>0 and ask>0 and ask>=bid:
+              current=(bid+ask)/2
+              current_source='BOOK_MID'
+          else:
+              marks=[x for x in (long_mark,short_mark) if x>0]
+              current=sum(marks)/len(marks) if marks else 0
+              current_source='MARK_FALLBACK'
+          long_exec=ask if ask>0 else long_mark
+          short_exec=bid if bid>0 else short_mark
+          long_be=n(long.get('breakEvenPrice')) or n(long.get('entryPrice'))
+          short_be=n(short.get('breakEvenPrice')) or n(short.get('entryPrice'))
+          long_be_source='BREAK_EVEN_PRICE' if n(long.get('breakEvenPrice'))>0 else 'ENTRY_FALLBACK'
+          short_be_source='BREAK_EVEN_PRICE' if n(short.get('breakEvenPrice'))>0 else 'ENTRY_FALLBACK'
+
+          plan=plan_legacy_hedge_scale(
+              symbol=symbol,
+              margin_per_side_usd=2,
+              available_balance=available,
+              current_long_qty=abs(n(long.get('positionAmt'))),
+              current_short_qty=abs(n(short.get('positionAmt'))),
+              long_entry=n(long.get('entryPrice')),
+              short_entry=n(short.get('entryPrice')),
+              long_execution_price=long_exec,
+              short_execution_price=short_exec,
+              long_leverage=max(1,n(long.get('leverage'),1)),
+              short_leverage=max(1,n(short.get('leverage'),1)),
+              rules=rules,
+              current_price=current,
+              long_break_even=long_be,
+              short_break_even=short_be,
+          )
+
+          def finite_leg(leg):
+              keys=('breakEvenDistanceBeforePct','breakEvenDistanceAfterPct','distanceChangePct')
+              for key in keys:
+                  value=leg.get(key)
+                  if value is not None and not math.isfinite(float(value)):
+                      return False
+              return True
+
+          result={
+              'symbol':'NEARUSDT',
+              'pairStatusIsHedged':str(pair.get('status','')).upper()=='HEDGED',
+              'longShortQuantityEqual':abs(abs(n(long.get('positionAmt')))-abs(n(short.get('positionAmt')))) <= max(1e-12,n(rules.market_quantity_step)/1000),
+              'availablePositive':available>0,
+              'currentPricePositive':current>0,
+              'currentPriceSource':current_source,
+              'longBreakEvenSource':long_be_source,
+              'shortBreakEvenSource':short_be_source,
+              'openOrdersCount':len(orders),
+              'extraQuantityPositive':n(plan.get('extraQuantity'))>0,
+              'totalMarginPositive':n(plan.get('estimatedTotalMarginUsd'))>0,
+              'longBreakEvenMetricsFinite':finite_leg(plan['long']),
+              'shortBreakEvenMetricsFinite':finite_leg(plan['short']),
+              'longDirection':plan['long'].get('breakEvenDirectionBefore'),
+              'shortDirection':plan['short'].get('breakEvenDirectionBefore'),
+              'longDistanceChangeKind':plan['long'].get('distanceChangeKind'),
+              'shortDistanceChangeKind':plan['short'].get('distanceChangeKind'),
+              'hedgeRatioAfter':plan.get('hedgeRatioAfter'),
+              'ordersSent':0,
+              'liveAuthorized':False,
+          }
+          assert result['pairStatusIsHedged']
+          assert result['longShortQuantityEqual']
+          assert result['availablePositive']
+          assert result['currentPricePositive']
+          assert result['extraQuantityPositive']
+          assert result['longBreakEvenMetricsFinite']
+          assert result['shortBreakEvenMetricsFinite']
+          assert result['hedgeRatioAfter']==100.0
+          assert result['ordersSent']==0 and result['liveAuthorized'] is False
+          print(os.environ['MARKER']+'='+json.dumps(result,separators=(',',':'),sort_keys=True),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --service-account "$RUNTIME_SA"             --set-env-vars "MARKER=$MARKER"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - name: Authenticate observer identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Verify sanitized read-only result
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in 1 2 3 4 5 6 7 8 9 10; do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.txt" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def strings(obj):
+              if isinstance(obj,str): yield obj
+              elif isinstance(obj,dict):
+                  for v in obj.values(): yield from strings(v)
+              elif isinstance(obj,list):
+                  for v in obj: yield from strings(v)
+          for row in rows if isinstance(rows,list) else []:
+              for value in strings(row):
+                  if marker in value:
+                      payload=value[value.index(marker)+len(marker):].splitlines()[0]
+                      data=json.loads(payload)
+                      required=(
+                          'pairStatusIsHedged','longShortQuantityEqual','availablePositive',
+                          'currentPricePositive','extraQuantityPositive','longBreakEvenMetricsFinite',
+                          'shortBreakEvenMetricsFinite',
+                      )
+                      assert all(data.get(key) is True for key in required),data
+                      assert data.get('hedgeRatioAfter')==100.0,data
+                      assert data.get('ordersSent')==0,data
+                      assert data.get('liveAuthorized') is False,data
+                      # Print only non-financial verification flags/sources; never
+                      # publish quantities, balances, prices or distances to GitHub logs.
+                      safe={k:data.get(k) for k in (
+                          'symbol','pairStatusIsHedged','longShortQuantityEqual',
+                          'currentPriceSource','longBreakEvenSource','shortBreakEvenSource',
+                          'extraQuantityPositive','longBreakEvenMetricsFinite','shortBreakEvenMetricsFinite',
+                          'longDirection','shortDirection','longDistanceChangeKind','shortDistanceChangeKind',
+                          'hedgeRatioAfter','ordersSent','liveAuthorized',
+                      )}
+                      print(json.dumps(safe,separators=(',',':'),sort_keys=True))
+                      raise SystemExit
+          raise SystemExit('RESULT_NOT_FOUND')
+          PY
+            [ -s "$RUNNER_TEMP/result.txt" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/result.txt"
+          cat "$RUNNER_TEMP/result.txt"
+
+      - name: Re-authenticate deploy identity for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup diagnostic job
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then
+            gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
