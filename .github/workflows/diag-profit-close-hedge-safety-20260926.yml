@@ -1,0 +1,158 @@
+name: Diagnose profit-close hedge safety 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-profit-close-hedge-safety-20260926.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Authenticate deploy identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read current owner profit-close candidates without placing orders
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image']); print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-profitclose-diag-${GITHUB_RUN_ID: -7}"; MARKER="PROFIT_CLOSE_HEDGE_DIAG_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"
+          echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os
+          from google.cloud import firestore
+          import main
+          from aster_profit_close import profitable_positions
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              print(os.environ['MARKER']+'='+json.dumps({'error':'OWNER_NOT_CONFIGURED'}),flush=True); raise SystemExit
+
+          secret=main.load_aster_secret({'uid':uid})
+          client=main.AsterV3Client(
+              signer_address=secret.signer_address,
+              sign_message=main.local_eip712_signer(secret),
+              live_authorized=False,
+          )
+          positions=[r for r in client.position_risk() if abs(float(r.get('positionAmt') or 0))>0]
+          owned_keys=main._aster_strategy2_owned_keys(uid)
+          owned=[r for r in positions if (str(r.get('symbol','')).upper(),str(r.get('positionSide','')).upper()) in owned_keys]
+          raw=profitable_positions(owned)
+          pair_docs={
+              d.id.upper():(d.to_dict() or {})
+              for d in db.collection('asterPositionLossAutoHedge').document(uid).collection('pairs').stream()
+          }
+          def managed(symbol):
+              state=pair_docs.get(symbol.upper()) or {}
+              status=str(state.get('status') or '').upper()
+              return bool(status and status!='CLOSED'), status, state
+          detailed=[]
+          safe=[]
+          for c in raw:
+              is_managed,status,state=managed(c['symbol'])
+              item={
+                  'symbol':c['symbol'],
+                  'side':c['side'],
+                  'openPnlUsd':round(float(c['unrealizedPnl']),4),
+                  'autoHedgeManaged':is_managed,
+                  'pairStatus':status or None,
+                  'protectedSide':str(state.get('protectedSide') or '').upper() or None,
+                  'hedgeSide':str(state.get('hedgeSide') or '').upper() or None,
+                  'reservedHedgeQty':round(float(state.get('reservedHedgeQty') or 0),12),
+              }
+              detailed.append(item)
+              if not is_managed:
+                  safe.append(item)
+          payload={
+              'openPositionCount':len(positions),
+              'strategy2OwnedOpenCount':len(owned),
+              'rawEligibleCount':len(detailed),
+              'rawEligibleOpenPnlUsd':round(sum(x['openPnlUsd'] for x in detailed),4),
+              'safeEligibleCount':len(safe),
+              'safeEligibleOpenPnlUsd':round(sum(x['openPnlUsd'] for x in safe),4),
+              'rawEligible':detailed,
+              'safeEligible':safe,
+          }
+          print(os.environ['MARKER']+'='+json.dumps(payload,separators=(',',':'),sort_keys=True),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - name: Authenticate observer identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Read sanitized result
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in 1 2 3 4 5 6 7 8 9 10; do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.txt" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def strings(obj):
+              if isinstance(obj,str): yield obj
+              elif isinstance(obj,dict):
+                  for v in obj.values(): yield from strings(v)
+              elif isinstance(obj,list):
+                  for v in obj: yield from strings(v)
+          for row in rows if isinstance(rows,list) else []:
+              for value in strings(row):
+                  if marker in value:
+                      print(value[value.index(marker):].splitlines()[0]); raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.txt" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/result.txt"
+          cat "$RUNNER_TEMP/result.txt"
+
+      - name: Re-authenticate deploy identity for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then
+            gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
