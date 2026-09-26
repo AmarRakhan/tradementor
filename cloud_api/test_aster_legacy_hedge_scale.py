@@ -5,6 +5,8 @@ from decimal import Decimal
 
 from aster_gateway import ContractRules
 from aster_legacy_hedge_scale import (
+    break_even_distance,
+    break_even_distance_change,
     entry_effect,
     excess_rollback_action,
     parity_repair_action,
@@ -112,6 +114,53 @@ class LegacyHedgeScalePlanTests(unittest.TestCase):
         self.assertEqual(value, 9)
         self.assertEqual(entry_effect("LONG", 10, 9), "GUNSTIGER")
         self.assertEqual(entry_effect("SHORT", 10, 9), "ONGUNSTIGER")
+
+    def test_long_relative_distance_9_1_to_6_is_34_percent_closer(self):
+        change = break_even_distance_change(9.1, 6.0)
+        self.assertEqual(change["kind"], "CLOSER")
+        self.assertAlmostEqual(change["relativePct"], 34.065934, places=5)
+        self.assertEqual(round(change["relativePct"]), 34)
+
+    def test_short_relative_distance_44_1_to_30_5_is_31_percent_closer(self):
+        change = break_even_distance_change(44.1, 30.5)
+        self.assertEqual(change["kind"], "CLOSER")
+        self.assertAlmostEqual(change["relativePct"], 30.839002, places=5)
+        self.assertEqual(round(change["relativePct"]), 31)
+
+    def test_farther_away_never_reports_closer(self):
+        change = break_even_distance_change(5.0, 6.0)
+        self.assertEqual(change["kind"], "FARTHER")
+        self.assertAlmostEqual(change["relativePct"], 20.0)
+
+    def test_already_break_even_has_no_relative_percentage_or_division_by_zero(self):
+        change = break_even_distance_change(0.0, 0.0, old_reached=True)
+        self.assertEqual(change, {"kind": "ALREADY_REACHED", "relativePct": None})
+
+    def test_full_recovery_is_exactly_100_percent_closer(self):
+        change = break_even_distance_change(10.0, 0.0)
+        self.assertEqual(change["kind"], "CLOSER")
+        self.assertEqual(change["relativePct"], 100.0)
+
+    def test_break_even_distance_uses_current_price_and_direction_per_side(self):
+        long = break_even_distance("LONG", 100, 109.1)
+        short = break_even_distance("SHORT", 100, 55.9)
+        self.assertAlmostEqual(long["distancePct"], 9.1, places=8)
+        self.assertEqual(long["direction"], "UP")
+        self.assertAlmostEqual(short["distancePct"], 44.1, places=8)
+        self.assertEqual(short["direction"], "DOWN")
+        self.assertEqual(break_even_distance("LONG", 110, 109.1)["direction"], "REACHED")
+        self.assertEqual(break_even_distance("SHORT", 55, 55.9)["direction"], "REACHED")
+
+    def test_plan_publishes_break_even_before_after_and_relative_change(self):
+        plan = self.base(current_price=0.004421)
+        for side in ("long", "short"):
+            leg = plan[side]
+            self.assertGreaterEqual(leg["breakEvenDistanceBeforePct"], 0)
+            self.assertGreaterEqual(leg["breakEvenDistanceAfterPct"], 0)
+            self.assertIn(leg["breakEvenDirectionBefore"], {"UP", "DOWN", "REACHED"})
+            self.assertIn(leg["breakEvenDirectionAfter"], {"UP", "DOWN", "REACHED"})
+            self.assertIn(leg["distanceChangeKind"], {"CLOSER", "FARTHER", "UNCHANGED", "ALREADY_REACHED"})
+        self.assertEqual(plan["long"]["currentPrice"], plan["short"]["currentPrice"])
 
     def test_partial_fill_repair_targets_missing_side(self):
         repair = parity_repair_action(
