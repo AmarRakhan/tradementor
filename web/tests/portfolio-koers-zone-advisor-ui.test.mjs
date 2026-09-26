@@ -8,7 +8,9 @@ test("Build 445 keeps zone-trading availability release-gated while zones stay i
   assert.ok(component.includes('ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32"'));
   assert.ok(component.includes('authenticatedRequest("/api/releases/me"'));
   assert.ok(component.includes("features.zone_soldiers"));
-  assert.ok(component.includes("const strategyAccess=zoneFeature.enabled===true"));\n  assert.ok(component.includes("const commandCenterAccess=commandCenterFeature.enabled===true"));\n  assert.equal(component.includes("ownerStrategyAccess"),false);
+  assert.ok(component.includes("const strategyAccess=zoneFeature.enabled===true"));
+  assert.ok(component.includes("const commandCenterAccess=commandCenterFeature.enabled===true"));
+  assert.equal(component.includes("ownerStrategyAccess"),false);
   assert.ok(component.includes("portfolio-zone-map"));
 });
 
