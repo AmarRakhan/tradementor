@@ -6,7 +6,7 @@ const shell = fs.readFileSync(new URL("../components/aster-strategy2-entry.tsx",
 const v2 = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx", import.meta.url), "utf8");
 const page = fs.readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-test("stable path keeps the legacy configurator and beta is lazy loaded", () => {
+test("unreleased path keeps the legacy configurator and V2 is lazy loaded", () => {
   assert.match(shell, /if \(!betaEnabled\) return <AsterStrategy2Maker/);
   assert.match(shell, /lazy\(\(\) => import\("@\/components\/aster-bot-configurator-v2"\)/);
   assert.match(page, /AsterStrategy2Entry as AsterStrategy2Maker/);
@@ -17,7 +17,7 @@ test("V2 uses the approved visual reference and one-page step structure", () => 
   for (const id of ["markt", "posities", "instap", "grootte", "dca", "winst", "bescherming", "controle"]) {
     assert.match(v2, new RegExp("v2-step-" + id));
   }
-  assert.match(v2, /BETA · alleen zichtbaar voor jou/);
+  assert.match(v2, /BETA · alleen zichtbaar voor jou/);\n  assert.match(v2, /const zoneSoldiersAvailable = feature\\("zone_soldiers"\\)\\.enabled === true/);\n  assert.doesNotMatch(v2, /ownerBeta && feature\\("zone_soldiers"\\)/);
 });
 
 test("release center keeps approval separate from publish and supports rollback", () => {
@@ -36,7 +36,7 @@ test("V2 seat bars show live occupancy against each side capacity", () => {
   assert.doesNotMatch(v2, /totals\.shortSlots \/ totals\.totalSlots/);
 });
 
-test("Build 417 makes Zone-Soldatenstrategie an explicit persistent owner-only opt-in", () => {
+test("Build 445 keeps Zone-Soldatenstrategie an explicit persistent entitlement opt-in", () => {
   assert.match(v2, /zoneSoldiersEnabled: settings\.zoneSoldiersEnabled === true && n\(settings\.zoneSoldiersOptInVersion, 0\) >= 1/);
   assert.match(v2, /Zone-Soldatenstrategie/);
   assert.match(v2, /Expliciete opt-in/);
