@@ -29,10 +29,13 @@ def test_recovery_rehedge_requires_explicit_user_control_and_global_auto_hedge()
     assert '"DISABLED"' in value
 
 
-def test_global_off_does_not_abandon_existing_locked_cycles():
+def test_global_off_or_release_rollback_does_not_abandon_existing_locked_cycles():
     value = source()
-    assert 'has_active_lock = any(' in value
-    assert 'settings.get("enabled") is not True and not has_active_lock' in value
+    assert 'has_managed_pair = any(' in value
+    assert 'if not entitled and not has_managed_pair:' in value
+    assert 'if not has_managed_pair and not (entitled and settings.get("enabled") is True):' in value
+    assert 'settings = {**settings, "enabled": False}' in value
+    assert 'allow_rehedge=entitled' in value
     assert 'Global OFF stops new triggers but never abandons an existing lock.' in value
 
 
