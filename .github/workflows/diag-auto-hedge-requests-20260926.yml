@@ -1,0 +1,53 @@
+name: Diagnose Auto Hedge settings requests 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-auto-hedge-requests-20260926.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read recent Auto Hedge settings-route requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILTER='resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND timestamp>="2026-09-25T00:00:00Z" AND (httpRequest.requestMethod="PUT" OR httpRequest.requestMethod="POST") AND httpRequest.requestUrl:"position-loss-auto-hedge"'
+          gcloud logging read "$FILTER" --project "$GCP_PROJECT_ID" --limit=80 --order=asc --format=json > "$RUNNER_TEMP/requests.json"
+          python - "$RUNNER_TEMP/requests.json" > "$RUNNER_TEMP/comment.md" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding='utf-8'))
+          events=[]
+          for r in rows if isinstance(rows,list) else []:
+            h=r.get('httpRequest') or {}; u=str(h.get('requestUrl') or ''); m=str(h.get('requestMethod') or '')
+            if 'position-loss-auto-hedge' not in u: continue
+            path=u.split('?',1)[0]
+            if '/apply' in path and m=='POST': kind='POST_APPLY_OR_ENABLE'
+            elif m=='PUT' and '/pairs/' not in path: kind='PUT_GLOBAL_SETTINGS_OR_DISABLE'
+            elif '/pairs/' in path: kind='PAIR_REHEDGE'
+            else: kind=m
+            events.append({'timestamp':r.get('timestamp'),'method':m,'kind':kind,'status':h.get('status')})
+          print('### Auto Hedge settings request history (sanitized)')
+          print('```json'); print(json.dumps(events,indent=2,sort_keys=True)); print('```')
+          PY
+          gh issue comment 284 -R AmarRakhan/tradementor --body-file "$RUNNER_TEMP/comment.md"
