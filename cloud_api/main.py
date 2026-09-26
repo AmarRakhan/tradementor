@@ -2666,7 +2666,12 @@ def _release_feature_record(key: str) -> dict[str, Any]:
     if key not in _RELEASE_FEATURE_DEFAULTS:
         raise HTTPException(404, "Onbekende release-feature")
     stored = db.collection("releaseFeatures").document(key).get().to_dict() or {}
-    return {**_RELEASE_FEATURE_DEFAULTS[key], **stored, "key": key}
+    resolved = {**_RELEASE_FEATURE_DEFAULTS[key], **stored, "key": key}
+    if key == "price_zones":
+        # Build 445 contract: Price Zones remains explicitly IN_BOUW until a
+        # separate future implementation changes this guard.
+        resolved.update({"status": "IN_BOUW", "beta": False, "stable": False})
+    return resolved
 
 
 def _explicit_zone_soldier_opt_in(settings: dict[str, Any]) -> bool:
