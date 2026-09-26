@@ -1,4 +1,5 @@
 name: Build 438 daily performance history fix
+# retry-2: align pinned build regression contract
 
 on:
   push:
@@ -60,6 +61,7 @@ jobs:
           grep -qx 'cloud_api/main.py' /tmp/build438-files.txt
           grep -qx 'cloud_api/portfolio_growth.py' /tmp/build438-files.txt
           grep -qx 'cloud_api/test_portfolio_growth.py' /tmp/build438-files.txt
+          grep -qx 'web/tests/position-loss-auto-hedge.test.mjs' /tmp/build438-files.txt
           grep -qx 'web/lib/app-version.ts' /tmp/build438-files.txt
           grep -qx 'web/lib/release-history.ts' /tmp/build438-files.txt
           ! grep -E 'cloud_api/(aster_strategy2|aster_strategy2_runtime|aster_execution|aster_position_loss_auto_hedge|aster_dynamic_hedge_execution|aster_automation)\.py' /tmp/build438-files.txt
