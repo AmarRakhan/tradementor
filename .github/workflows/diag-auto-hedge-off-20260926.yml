@@ -1,0 +1,180 @@
+name: Diagnose Auto Hedge OFF state 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-auto-hedge-off-20260926.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - name: Authenticate deploy identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read current persisted Auto Hedge state without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          live=[r for r in s.get('status',{}).get('traffic',[]) if int(r.get('percent',0) or 0)==100]
+          c=spec['containers'][0]
+          print(c['image'])
+          print(spec['serviceAccountName'])
+          print(live[0].get('revisionName','') if len(live)==1 else '')
+          env={e.get('name'):e.get('value') for e in c.get('env',[]) if e.get('name')}
+          print(env.get('ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER','<default:true>'))
+          print(env.get('ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED','<default:false>'))
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; LIVE_REV="${VALUES[2]}"; WORKER_FLAG="${VALUES[3]}"; EXEC_FLAG="${VALUES[4]}"
+          JOB="tm-ah-off-diag-${GITHUB_RUN_ID: -7}"; MARKER="AUTO_HEDGE_OFF_DIAG_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"
+          echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+          echo "LIVE_REV=$LIVE_REV" >> "$GITHUB_ENV"
+          echo "WORKER_FLAG=$WORKER_FLAG" >> "$GITHUB_ENV"
+          echo "EXEC_FLAG=$EXEC_FLAG" >> "$GITHUB_ENV"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os
+          from datetime import datetime, timezone
+          from google.cloud import firestore
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              print(os.environ['MARKER']+'='+json.dumps({'error':'OWNER_NOT_CONFIGURED'}),flush=True); raise SystemExit
+
+          snap=db.collection('asterPositionLossAutoHedge').document(uid).get()
+          row=snap.to_dict() or {}
+          dyn=(db.collection('users').document(uid).collection('asterDynamicHedge').document('control').get().to_dict() or {})
+          pairs=[]
+          for d in db.collection('asterPositionLossAutoHedge').document(uid).collection('pairs').stream():
+              v=d.to_dict() or {}
+              status=str(v.get('status') or '').upper()
+              if status and status!='CLOSED':
+                  pairs.append({'symbol':d.id.upper(),'status':status,'protectedSide':str(v.get('protectedSide') or '').upper() or None,'hedgeSide':str(v.get('hedgeSide') or '').upper() or None,'reservedHedgeQty':v.get('reservedHedgeQty'),'rehedgeEnabled':v.get('rehedgeEnabled') is True})
+
+          def iso(v):
+              if hasattr(v,'isoformat'): return v.isoformat()
+              return str(v) if v is not None else None
+          report=row.get('lastReport') if isinstance(row.get('lastReport'),dict) else {}
+          payload={
+            'documentExists':snap.exists,
+            'persistedEnabled':row.get('enabled') is True,
+            'rawEnabledValue':row.get('enabled') if isinstance(row.get('enabled'),bool) else type(row.get('enabled')).__name__,
+            'thresholdUsd':row.get('thresholdUsd'),
+            'documentUpdateTime':iso(snap.update_time),
+            'updatedAt':iso(row.get('updatedAt')),
+            'lastCheckedAt':iso(row.get('lastCheckedAt')),
+            'lastError':str(row.get('lastError') or ''),
+            'lastReport':{'mode':report.get('mode'),'status':report.get('status'),'reason':report.get('reason'),'ordersSent':report.get('ordersSent')},
+            'dynamicHedgeEnabled':dyn.get('enabled') is True,
+            'activePairCount':len(pairs),
+            'activePairs':sorted(pairs,key=lambda x:x['symbol']),
+          }
+          print(os.environ['MARKER']+'='+json.dumps(payload,separators=(',',':'),sort_keys=True,default=str),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - name: Authenticate observer identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Read result and recent settings-route request history
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in $(seq 1 12); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\"" --project "$GCP_PROJECT_ID" --freshness=15m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/joblogs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/joblogs.json" > "$RUNNER_TEMP/state.json" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def walk(x):
+              if isinstance(x,str): yield x
+              elif isinstance(x,dict):
+                  for v in x.values(): yield from walk(v)
+              elif isinstance(x,list):
+                  for v in x: yield from walk(v)
+          for row in rows:
+              for s in walk(row):
+                  if marker in s:
+                      raw=s[s.index(marker)+len(marker):].splitlines()[0]
+                      json.loads(raw)
+                      print(raw); raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/state.json" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/state.json"
+
+          FILTER='resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND (httpRequest.requestMethod="PUT" OR httpRequest.requestMethod="POST") AND httpRequest.requestUrl:"position-loss-auto-hedge"'
+          gcloud logging read "$FILTER" --project "$GCP_PROJECT_ID" --freshness=36h --limit=100 --order=asc --format=json > "$RUNNER_TEMP/requests.json" || echo '[]' > "$RUNNER_TEMP/requests.json"
+          python - "$RUNNER_TEMP/state.json" "$RUNNER_TEMP/requests.json" > "$RUNNER_TEMP/summary.md" <<'PY'
+          import json,sys
+          state=json.load(open(sys.argv[1],encoding='utf-8'))
+          reqs=json.load(open(sys.argv[2],encoding='utf-8'))
+          events=[]
+          for r in reqs if isinstance(reqs,list) else []:
+              h=r.get('httpRequest') or {}
+              url=str(h.get('requestUrl') or '')
+              method=str(h.get('requestMethod') or '')
+              if 'position-loss-auto-hedge' not in url: continue
+              kind='ENABLE/APPLY path' if method=='POST' and url.rstrip('/').endswith('/apply') else ('SETTINGS PUT path' if method=='PUT' else method)
+              events.append({'timestamp':r.get('timestamp'),'method':method,'kind':kind,'status':h.get('status')})
+          print('### Auto Hedge read-only diagnose')
+          print('```json')
+          print(json.dumps({'state':state,'recentSettingsRequests':events},indent=2,sort_keys=True,default=str))
+          print('```')
+          PY
+          {
+            echo "Backend live revision: $LIVE_REV"
+            echo "Worker flag: $WORKER_FLAG"
+            echo "Execution flag: $EXEC_FLAG"
+            cat "$RUNNER_TEMP/summary.md"
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment 284 -R AmarRakhan/tradementor --body-file "$RUNNER_TEMP/comment.md"
+          gh issue close 284 -R AmarRakhan/tradementor --reason completed
+
+      - name: Re-authenticate deploy identity for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true; fi
