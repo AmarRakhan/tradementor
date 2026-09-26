@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aster_position_loss_auto_hedge_lock import (
     AutoHedgeCloseBlocked,
+    auto_hedge_symbol_managed,
     configure_auto_hedge_lock_reader,
     require_auto_hedge_close_allowed,
 )
@@ -98,3 +99,23 @@ def test_main_routes_all_ordinary_live_closes_through_auto_hedge_guard_but_close
     assert "allow_auto_hedge_locked:bool=False" in source
     extension = Path(__file__).with_name("aster_position_loss_auto_hedge_extension.py").read_text(encoding="utf-8")
     assert "_block_order_during_close_all(uid, allow_auto_hedge_locked=True)" in extension
+
+
+def test_bulk_profit_managed_symbol_guard_protects_entire_pair_lifecycle():
+    for status in ("HEDGING", "HEDGED", "ADJUSTING", "RECOVERY", "REHEDGE_ARMED", "DISABLED", "ERROR"):
+        configure_auto_hedge_lock_reader(lambda uid, symbol, status=status: locked(status=status))
+        assert auto_hedge_symbol_managed(account_uid="u1", symbol="DOGEUSDT") is True
+
+    configure_auto_hedge_lock_reader(lambda uid, symbol: locked(status="CLOSED"))
+    assert auto_hedge_symbol_managed(account_uid="u1", symbol="DOGEUSDT") is False
+    configure_auto_hedge_lock_reader(lambda uid, symbol: {})
+    assert auto_hedge_symbol_managed(account_uid="u1", symbol="DOGEUSDT") is False
+
+
+def test_bulk_profit_managed_symbol_guard_fails_closed_when_state_unavailable():
+    def broken(uid, symbol):
+        raise RuntimeError("firestore unavailable")
+
+    configure_auto_hedge_lock_reader(broken)
+    with pytest.raises(AutoHedgeCloseBlocked, match="niet betrouwbaar"):
+        auto_hedge_symbol_managed(account_uid="u1", symbol="DOGEUSDT")
