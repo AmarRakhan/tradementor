@@ -5166,10 +5166,13 @@ def _persist_portfolio_chart_sample(user: dict[str, Any], *, equity: float, sour
         merge_one(timeframe)
 
 
-def _read_portfolio_chart_candles(user: dict[str, Any], timeframe: str, limit: int) -> list[dict[str, Any]]:
+def _read_portfolio_chart_candles(user: dict[str, Any], timeframe: str, limit: int | None) -> list[dict[str, Any]]:
     rows = []
     collection = user_reference(user).collection(portfolio_chart_collection(timeframe))
-    for document in collection.order_by("bucketMs", direction=firestore.Query.DESCENDING).limit(limit).stream():
+    query = collection.order_by("bucketMs", direction=firestore.Query.DESCENDING)
+    if limit is not None:
+        query = query.limit(max(1, int(limit)))
+    for document in query.stream():
         candle = public_portfolio_chart_candle(document.to_dict() or {})
         if candle:
             rows.append(candle)
@@ -6354,19 +6357,19 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
         today_usd=(equity-day_net_cashflow)-reference_equity
         today=local_now.date().isoformat()
 
-        # Build 438: schema v2 correctly neutralised today's deposit/withdrawal
-        # but intentionally erased the older average. Rebuild only completed,
-        # well-covered local days from durable account-equity candles. Each
-        # day's external cashflow is removed independently.
+        # Build 439: rebuild every reliable completed day available in the
+        # durable account-equity history. Only genuine non-performance capital
+        # flows are neutralised; trading, funding, fees and liquidation/ADL
+        # effects remain part of return.
         stored_preview=ref.get().to_dict() or {}
         daily_preview=dict(stored_preview.get("dailyGrowth") or {})
         preview_schema=int(safe_float(daily_preview.get("schemaVersion")))
         backfill_history:list[dict[str,Any]]=[]
         if preview_schema!=PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION:
-            hourly_candles=_read_portfolio_chart_candles(user,"1u",400)
+            hourly_candles=_read_portfolio_chart_candles(user,"1u",None)
             windows=historical_day_windows(
                 hourly_candles,timezone_name="Europe/Amsterdam",
-                current_date=today,max_days=14,boundary_tolerance_minutes=90,
+                current_date=today,max_days=None,boundary_tolerance_minutes=90,
             )
             for window in windows:
                 try:
@@ -6403,7 +6406,6 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
             if schema!=PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION:
                 restored=[row for row in backfill_history if isinstance(row,dict)]
                 restored.sort(key=lambda row:str(row.get("date","")))
-                restored=restored[-120:]
                 state={"schemaVersion":PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION,
                     "measurementStartDate":str(restored[0].get("date")) if restored else today,
                     "completedReturnSum":sum(safe_float(row.get("percentage")) for row in restored),
@@ -6420,7 +6422,7 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
                         "usdChange":round(safe_float(state.get("lastObservedUsd")),8),
                         "percentage":round(previous_return,8)}
                     history=[row for row in history if row.get("date")!=completed_day["date"]]
-                    history.append(completed_day);state["history"]=history[-120:]
+                    history.append(completed_day);state["history"]=history
                     state["completedReturnSum"]=safe_float(state.get("completedReturnSum"))+previous_return
                     state["completedReturnCount"]=int(state.get("completedReturnCount",0))+1
             completed_count=int(state.get("completedReturnCount",0))
@@ -6449,7 +6451,7 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
                 "twrReliable":not has_intraday_cashflow,
                 "twrPercentage":round(today_pct,8) if not has_intraday_cashflow else None,
                 "twrBlockReason":None if not has_intraday_cashflow else "Exacte intraday TWR vereist een exchange-equity snapshot direct voor/na iedere externe cashflow; netto cashflow is wel volledig uit het dagrendement verwijderd.",
-                "history":history[-120:]}
+                "history":history}
         return update(transaction)
     except Exception as exc:
         return {"reliable":False,"measurementStartDate":local_now.date().isoformat(),
