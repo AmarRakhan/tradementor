@@ -277,11 +277,12 @@ function CoinBadge({ symbol }: { symbol: string }) {
   return <span className="plah-coin-badge" aria-hidden="true">{label.slice(0, 2)}</span>;
 }
 
-function PairCard({ pair, saving, onRehedge, onScale }: {
+function PairCard({ pair, saving, onRehedge, onScale, scaleAvailable }: {
   pair: PairState;
   saving: boolean;
   onRehedge: (pair: PairState, enabled: boolean) => void;
   onScale: (pair: PairState) => void;
+  scaleAvailable: boolean;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const status = String(pair.status || "").toUpperCase();
@@ -304,7 +305,7 @@ function PairCard({ pair, saving, onRehedge, onScale }: {
             <strong>{pair.symbol.replace(/USDT$/i, "")}</strong>
             <span className="plah-pair-chevron" aria-hidden="true">⌄</span>
             <span className={`plah-status-badge ${statusClass(status)}`}>{statusLabel(status)}</span>
-            {status === "HEDGED" ? <button
+            {status === "HEDGED" && scaleAvailable ? <button
               type="button"
               className="plah-scale-open"
               disabled={saving}
@@ -398,13 +399,21 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [scaleError, setScaleError] = useState("");
   const [scaleMessage, setScaleMessage] = useState("");
   const [scaleOperationId, setScaleOperationId] = useState("");
+  const [legacyScaleAvailable, setLegacyScaleAvailable] = useState(false);
   const lastTap = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const next = await authenticatedRequest("/api/exchanges/aster/position-loss-auto-hedge", { cache: "no-store" }) as AutoHedgeState;
-      if (next.available === false) {
+      const [next, release] = await Promise.all([
+        authenticatedRequest("/api/exchanges/aster/position-loss-auto-hedge", { cache: "no-store" }) as Promise<AutoHedgeState>,
+        authenticatedRequest("/api/releases/me", { cache: "no-store" }) as Promise<Record<string, unknown>>,
+      ]);
+      const features = release.features && typeof release.features === "object" ? release.features as Record<string, any> : {};
+      const autoEntitled = features.auto_hedge_v2?.enabled === true;
+      const legacyEntitled = autoEntitled && features.legacy_hedge_recovery?.enabled === true;
+      setLegacyScaleAvailable(legacyEntitled);
+      if (next.available === false || !autoEntitled) {
         setAvailable(false);
         document.documentElement.removeAttribute("data-position-loss-auto-hedge");
         setState(DEFAULT_STATE);
@@ -418,6 +427,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       setDraft(String(threshold));
       setError("");
     } catch (reason) {
+      setLegacyScaleAvailable(false);
       setError(reason instanceof Error ? reason.message : "Auto Hedge kon niet worden geladen.");
     } finally {
       setLoading(false);
@@ -571,7 +581,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   };
 
   const openScale = (pair: PairState) => {
-    if (String(pair.status || "").toUpperCase() !== "HEDGED") return;
+    if (!legacyScaleAvailable || String(pair.status || "").toUpperCase() !== "HEDGED") return;
     setScalePair(pair);
     setScaleDraft("2");
     setScalePreview(null);
@@ -914,6 +924,7 @@ export function AsterPositionLossAutoHedgeBridge() {
                 saving={saving || scaleSubmitting}
                 onRehedge={(item, enabled) => void setRehedge(item, enabled)}
                 onScale={openScale}
+                scaleAvailable={legacyScaleAvailable}
               />
             ) : <div className="plah-empty">
               <span>{shieldIcon()}</span>
