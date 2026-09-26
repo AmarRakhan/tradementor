@@ -1,0 +1,172 @@
+name: Diagnose Build 443 NEAR capacity read-only
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-build443-near-capacity-readonly.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run read-only capacity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=service['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"; JOB="tm-near-cap-${GITHUB_RUN_ID: -7}"; MARKER="NEAR_CAP_443_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"
+          echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os,math
+          from google.cloud import firestore
+          from main import load_aster_secret,AsterV3Client,local_eip712_signer
+
+          def n(v,d=0.0):
+              try:
+                  x=float(v)
+              except Exception:
+                  return d
+              return x if math.isfinite(x) else d
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              raise RuntimeError('OWNER_NOT_CONFIGURED')
+          secret=load_aster_secret({'uid':uid})
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+
+          symbol='NEARUSDT'
+          positions=[r for r in client.position_risk(symbol) if isinstance(r,dict) and abs(n(r.get('positionAmt')))>0]
+          by={str(r.get('positionSide','')).upper():r for r in positions}
+          long=by.get('LONG'); short=by.get('SHORT')
+          if not long or not short:
+              raise RuntimeError('NEAR_PAIR_NOT_OPEN')
+          price=max(n(long.get('markPrice')),n(short.get('markPrice')))
+          long_qty=abs(n(long.get('positionAmt'))); short_qty=abs(n(short.get('positionAmt')))
+          long_notional=long_qty*price; short_notional=short_qty*price
+          lev_long=int(n(long.get('leverage'))); lev_short=int(n(short.get('leverage')))
+          account=client.account_information() or {}
+          available=n(account.get('availableBalance'),-1)
+
+          caps={}
+          for lev in sorted({5,10,15,20,25,30,40,50,75,100,lev_long,lev_short}):
+              try:
+                  value=n(client.remaining_openable_notional_value(symbol,lev),-1)
+                  caps[str(lev)]='POSITIVE' if value>0 else ('ZERO' if value==0 else 'INVALID')
+              except Exception as exc:
+                  caps[str(lev)]='ERROR:'+str(exc)[:80]
+
+          brackets=client.leverage_brackets(symbol)
+          rows=[]
+          for group in brackets:
+              items=group.get('brackets') if isinstance(group,dict) else None
+              if isinstance(items,list):
+                  for row in items:
+                      if isinstance(row,dict):
+                          rows.append({
+                              'initialLeverage':row.get('initialLeverage'),
+                              'notionalFloor':row.get('notionalFloor'),
+                              'notionalCap':row.get('notionalCap'),
+                          })
+
+          def position_cap(row):
+              for key in ('maxNotionalValue','maxNotional','notionalCap'):
+                  value=n(row.get(key),-1)
+                  if value>=0:
+                      return key,value
+              return None,-1
+
+          lk,lcap=position_cap(long); sk,scap=position_cap(short)
+          planned_per_leg=5*max(1,min(lev_long,lev_short))
+          result={
+              'symbol':symbol,
+              'longLeverage':lev_long,
+              'shortLeverage':lev_short,
+              'leverageEqual':lev_long==lev_short,
+              'availablePositive':available>0,
+              'remainingByLeverage':caps,
+              'longPositionCapField':lk,
+              'shortPositionCapField':sk,
+              'longPositionCapPresent':lcap>=0,
+              'shortPositionCapPresent':scap>=0,
+              'longHeadroomFor5UsdAtCurrentLeverage':(lcap-long_notional)>=planned_per_leg if lcap>=0 else None,
+              'shortHeadroomFor5UsdAtCurrentLeverage':(scap-short_notional)>=planned_per_leg if scap>=0 else None,
+              'brackets':rows,
+              'ordersSent':0,
+              'liveAuthorized':False,
+          }
+          print(os.environ['MARKER']+'='+json.dumps(result,separators=(',',':'),sort_keys=True),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - name: Print sanitized result
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+          python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def strings(obj):
+              if isinstance(obj,str): yield obj
+              elif isinstance(obj,dict):
+                  for v in obj.values(): yield from strings(v)
+              elif isinstance(obj,list):
+                  for v in obj: yield from strings(v)
+          for row in rows if isinstance(rows,list) else []:
+              for value in strings(row):
+                  if marker in value:
+                      payload=value[value.index(marker)+len(marker):].splitlines()[0]
+                      data=json.loads(payload)
+                      assert data.get('ordersSent')==0 and data.get('liveAuthorized') is False
+                      print(json.dumps(data,separators=(',',':'),sort_keys=True))
+                      raise SystemExit
+          raise SystemExit('RESULT_NOT_FOUND')
+          PY
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then
+            gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
