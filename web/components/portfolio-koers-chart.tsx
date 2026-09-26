@@ -563,9 +563,9 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
 
     const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
-      const upper=chart.addSeries(LineSeries,{color:"#1298ff",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-      const middle=chart.addSeries(LineSeries,{color:"rgba(226,235,239,.78)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-      const lower=chart.addSeries(LineSeries,{color:"#f02e49",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const upper=chart.addSeries(LineSeries,{color:"rgba(18,152,255,.26)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const middle=chart.addSeries(LineSeries,{color:"rgba(226,235,239,.16)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const lower=chart.addSeries(LineSeries,{color:"rgba(240,46,73,.26)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       bbRefs.current={upper,middle,lower};
       upper.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
       middle.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
