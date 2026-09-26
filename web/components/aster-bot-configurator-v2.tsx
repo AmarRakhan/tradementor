@@ -210,7 +210,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const directionalAvailable = feature("directional_bollinger").enabled === true;
   const exposureAvailable = feature("exposure_refill").enabled === true;
   const priceZonesAvailable = feature("price_zones").enabled === true;
-  const zoneSoldiersAvailable = ownerBeta && feature("zone_soldiers").enabled === true;
+  const zoneSoldiersAvailable = feature("zone_soldiers").enabled === true;
   const savedZoneStrategyEnabled = zoneSoldiersAvailable && persisted.zoneSoldiersEnabled === true && n(persisted.zoneSoldiersOptInVersion, 0) >= 1;
   const zoneLifecycle = String(strategy2.zoneSoldierLifecycle || (savedZoneStrategyEnabled ? "ACTIVE" : "OFF")).toUpperCase();
   const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · ZONE SOLDATEN" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONE DRAINING" : "STRATEGIE · TRADITIONEEL";
@@ -514,7 +514,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       {ownerBeta && <details className="v2-release-center" open>
         <summary>Releasecentrum · alleen BETA-owner</summary>
         <p>Een vinkje/akkoord publiceert niets automatisch. Publiceren en terugtrekken gebeurt per blok.</p>
-        <div className="v2-release-list">{Object.entries(releases.features ?? {}).map(([key, row]) => <article key={key}><div><b>{releaseLabel(key)}</b><small>{row.status || "TESTEN"} · BETA {row.beta ? "AAN" : "UIT"} · STABLE {row.stable ? "AAN" : "UIT"}{row.ownerOnly ? " · OWNER-ONLY" : ""}</small></div><span>{row.ownerOnly ? <em className="v2-owner-only">Alleen beschikbaarheid · gebruiker kiest zelf AAN/UIT</em> : <>{row.status !== "AKKOORD" && row.status !== "LIVE" && <button disabled={busy} onClick={() => changeRelease(key, { status: "AKKOORD", beta: true, stable: false })}>✓ Getest en akkoord</button>}{row.status === "AKKOORD" && !row.stable && <button disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " vrijgeven aan alle gebruikers? Alleen dit onderdeel wordt gepubliceerd.")) void changeRelease(key, { status: "LIVE", beta: true, stable: true, confirm: true }); }}>Vrijgeven aan alle gebruikers</button>}{row.stable && <button className="rollback" disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " terugtrekken naar alleen BETA?")) void changeRelease(key, { status: "TESTEN", beta: true, stable: false, confirm: true }); }}>Terug naar BETA</button>}</>}</span></article>)}</div>
+        <div className="v2-release-list">{Object.entries(releases.features ?? {}).map(([key, row]) => <article key={key}><div><b>{releaseLabel(key)}</b><small>{row.status || "TESTEN"} · BETA {row.beta ? "AAN" : "UIT"} · STABLE {row.stable ? "AAN" : "UIT"}</small></div><span>{key === "price_zones" ? <em className="v2-owner-only">IN BOUW · nog niet vrijgeven</em> : <>{row.status !== "AKKOORD" && row.status !== "LIVE" && <button disabled={busy} onClick={() => changeRelease(key, { status: "AKKOORD", beta: true, stable: false })}>✓ Getest en akkoord</button>}{row.status === "AKKOORD" && !row.stable && <button disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " vrijgeven aan alle gebruikers? Alleen het gebruiksrecht wordt gepubliceerd; niets wordt automatisch aangezet.")) void changeRelease(key, { status: "LIVE", beta: true, stable: true, confirm: true }); }}>Vrijgeven aan alle gebruikers</button>}{row.stable && <button className="rollback" disabled={busy} onClick={() => { if (window.confirm(releaseLabel(key) + " terugtrekken naar alleen BETA? Instellingen en bestaande runtime-state blijven behouden.")) void changeRelease(key, { status: "TESTEN", beta: true, stable: false, confirm: true }); }}>Terug naar BETA</button>}</>}</span></article>)}</div>
       </details>}
     </section>
 
@@ -529,7 +529,7 @@ function StepHead({ number, title, subtitle }: { number: string; title: string; 
 }
 function Summary({ label, value }: { label: string; value: string }) { return <span><small>{label}</small><b>{value}</b></span>; }
 function releaseLabel(key: string) {
-  return ({ bot_configurator_v2: "Botconfigurator layout", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", zone_soldiers: "Zone-Soldatenstrategie", price_zones: "Price zones", margin_summary: "Margin summary" } as Record<string, string>)[key] || key;
+  return ({ bot_configurator_v2: "Botconfigurator layout", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", margin_summary: "Margin summary", price_zones: "Price zones", zone_soldiers: "Zone-Soldatenstrategie", zone_command_center: "Zone-Soldaten Command Center", auto_hedge_v2: "Auto Hedge 2.0", legacy_hedge_recovery: "Legacy Hedge Recovery" } as Record<string, string>)[key] || key;
 }
 
 const styles = `
