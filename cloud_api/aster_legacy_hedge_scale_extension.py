@@ -696,6 +696,8 @@ def _execute_operation(uid: str, operation_id: str, operation: dict[str, Any]) -
                 remaining_openable_notional_usd=remaining_capacity,
             )
         except (AsterApiError, AsterValidationError, ValueError, RuntimeError) as exc:
+            if "RECOVERY_REPLAN_REQUIRED:" in str(exc):
+                raise
             raise RuntimeError(
                 "RECOVERY_REPLAN_REQUIRED: De actuele Aster leverage/openingsruimte laat "
                 f"de opgeslagen recovery niet meer veilig toe. {exc}"
