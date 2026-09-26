@@ -1,4 +1,4 @@
-"""Owner-only manual Legacy Hedge Recovery routes.
+"""Release-entitled manual Legacy Hedge Recovery routes.
 
 A confirmed action scales an already HEDGED Auto Hedge pair by one common coin
 quantity on LONG and SHORT.  It is deliberately separate from every DCA state
@@ -51,7 +51,6 @@ from aster_position_loss_auto_hedge_extension import (
     _client,
     _doc,
     _leg_view,
-    _owner_uid,
     _pair_doc,
     _position_map,
 )
@@ -303,7 +302,7 @@ def _fresh_plan(
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "pairCycleId": str(pair.get("generationId", "")),
         "pairStatus": "HEDGED",
-        "ownerOnly": True,
+        "ownerOnly": False,
     })
     return plan, pair, client, rules
 
@@ -778,7 +777,7 @@ def preview_legacy_hedge_scale(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = main.require_continuity_owner(user)
+    uid = main.require_release_feature(user, "legacy_hedge_recovery")
     normalized = _normalize_symbol(symbol)
     plan, _, _, _ = _fresh_plan(
         uid,
@@ -798,7 +797,7 @@ def execute_legacy_hedge_scale(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    uid = main.require_continuity_owner(user)
+    uid = main.require_release_feature(user, "legacy_hedge_recovery")
     normalized = _normalize_symbol(symbol)
     operation_id = str(request.operationId).strip()
     if not OPERATION_ID_RE.fullmatch(operation_id):
@@ -882,12 +881,25 @@ def execute_legacy_hedge_scale(
 
 
 def _recover_user_confirmed_operations() -> None:
-    """Best-effort startup recovery for a crash between the two user-confirmed legs."""
+    """Best-effort recovery of every already-confirmed interrupted operation.
+
+    Recovery is intentionally independent from current entitlement: withdrawing
+    a release can block new scale actions, but may never abandon a half-finished
+    1:1 reconciliation that the user confirmed before the rollback.
+    """
     try:
-        uid = _owner_uid()
+        accounts = list(main.db.collection("asterPositionLossAutoHedge").stream())
+    except Exception:
+        return
+    for account in accounts:
+        uid = str(account.id or "").strip()
         if not uid:
-            return
-        for snapshot in _operation_collection(uid).stream():
+            continue
+        try:
+            operations = list(_operation_collection(uid).stream())
+        except Exception:
+            continue
+        for snapshot in operations:
             row = snapshot.to_dict() or {}
             if row.get("userConfirmed") is not True:
                 continue
@@ -898,8 +910,6 @@ def _recover_user_confirmed_operations() -> None:
             except Exception:
                 # The operation record and audit already carry the concrete failure.
                 continue
-    except Exception:
-        return
 
 
 @main.app.on_event("startup")
