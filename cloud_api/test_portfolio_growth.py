@@ -100,7 +100,7 @@ def test_build432_twr_primitive_chain_links_subperiod_returns():
 
 
 def test_build433_day_start_never_uses_stale_previous_day_snapshot():
-    assert PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION == 3
+    assert PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION == 4
     rows=[
         {"atMs":1_000,"firstSampleAtMs":1_020,"open":100},
         {"atMs":2_000,"firstSampleAtMs":2_030,"open":300},
@@ -143,3 +143,36 @@ def test_build438_reconstructs_only_complete_local_days_for_average():
 def test_build438_backfilled_day_keeps_deposit_neutral():
     start,end,deposit=95,189,100
     assert daily_return_percentage(start,end,deposit) == pytest.approx(-6.3157894737)
+
+
+# Build 439 regression: liquidation/trading effects stay in performance.
+def test_build439_insurance_clear_and_trading_income_are_not_external_cashflow():
+    rows=[
+        {"time":1000,"incomeType":"TRANSFER","income":"100"},
+        {"time":1100,"incomeType":"INSURANCE_CLEAR","income":"-35"},
+        {"time":1200,"incomeType":"REALIZED_PNL","income":"-20"},
+        {"time":1300,"incomeType":"FUNDING_FEE","income":"-2"},
+        {"time":1400,"incomeType":"COMMISSION","income":"-1"},
+    ]
+    audit=external_cashflow_breakdown(rows,1000)
+    assert audit["netExternalCashflowUsd"] == pytest.approx(100)
+    assert audit["ledgerTypes"] == ["TRANSFER"]
+    assert external_cashflow_since(rows,1000) == pytest.approx(100)
+    # Equity loss caused by liquidation/trading remains visible after only the
+    # genuine transfer is neutralised.
+    assert daily_return_percentage(200,242,audit["netExternalCashflowUsd"]) == pytest.approx(-29)
+
+
+def test_build439_historical_windows_default_to_all_reliable_days():
+    rows=[]
+    for day in range(1,21):
+        rows.extend([
+            {"firstSampleAtMs":_ams_ms(2026,9,day,0,5),"sourceAtMs":_ams_ms(2026,9,day,0,55),"open":100+day,"close":100+day},
+            {"firstSampleAtMs":_ams_ms(2026,9,day,23,0),"sourceAtMs":_ams_ms(2026,9,day,23,55),"open":100+day,"close":100+day},
+        ])
+    windows=historical_day_windows(
+        rows,timezone_name="Europe/Amsterdam",current_date="2026-09-26",
+    )
+    assert len(windows) == 20
+    assert windows[0]["date"] == "2026-09-01"
+    assert windows[-1]["date"] == "2026-09-20"
