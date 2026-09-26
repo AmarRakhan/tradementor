@@ -546,7 +546,7 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
   </div>;
 }
 
-function SnapshotQuickActions() {
+function SnapshotQuickActions({ zoneCommandCenterEnabled }: { zoneCommandCenterEnabled: boolean }) {
   const lastTap=useRef(0);
   const openZoneSoldiers=()=>window.dispatchEvent(new CustomEvent(ZONE_SOLDIERS_OPEN_EVENT));
   const onZoneTouchEnd=()=>{
@@ -555,15 +555,15 @@ function SnapshotQuickActions() {
     else lastTap.current=now;
   };
   return <div className="aps-quick-actions" aria-label="Portfolio Snapshot snelle acties">
-    <button type="button" className="aps-quick aps-quick-zone" aria-label="Zone-Soldaten. Dubbeltik om te openen." onDoubleClick={openZoneSoldiers} onTouchEnd={onZoneTouchEnd}>
+    {zoneCommandCenterEnabled ? <button type="button" className="aps-quick aps-quick-zone" aria-label="Zone-Soldaten. Dubbeltik om te openen." onDoubleClick={openZoneSoldiers} onTouchEnd={onZoneTouchEnd}>
       <span className="aps-quick-icon">⌾</span><span><b>ZONE-SOLDATEN</b><small>Dubbeltik om te openen</small></span><em>›</em>
-    </button>
+    </button> : null}
     <button type="button" className="aps-quick"><span className="aps-quick-icon">▣</span><span><b>BOT STATUS</b><small>Actief</small></span></button>
     <button type="button" className="aps-quick"><span className="aps-quick-icon">▥</span><span><b>STRATEGIE</b><small>Z+2 · Long</small></span></button>
     <button type="button" className="aps-quick"><span className="aps-quick-icon">⚙</span><span><b>INSTELLINGEN</b><small>Beheren</small></span></button>
   </div>;
 }
-function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
+function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, zoneCommandCenterEnabled }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
@@ -571,6 +571,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
   onOpenHedge: () => void;
+  zoneCommandCenterEnabled: boolean;
 }) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={SNAPSHOT_V2_REFERENCE}>
     <header>
@@ -581,7 +582,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
-    <SnapshotQuickActions />
+    <SnapshotQuickActions zoneCommandCenterEnabled={zoneCommandCenterEnabled} />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
@@ -656,6 +657,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
+  const [zoneCommandCenterEnabled, setZoneCommandCenterEnabled] = useState(false);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
   const syncing = useRef(false);
 
@@ -713,6 +715,14 @@ export function AsterPortfolioSnapshotEnhancer() {
   useEffect(() => {
     if (!host) return;
     let alive = true;
+    authenticatedRequest("/api/releases/me", { cache: "no-store" })
+      .then((value) => {
+        const root = record(value);
+        const features = record(root.features);
+        const command = record(features.zone_command_center);
+        if (alive) setZoneCommandCenterEnabled(command.enabled === true);
+      })
+      .catch(() => { if (alive) setZoneCommandCenterEnabled(false); });
     const refresh = async () => {
       try {
         const preview = await loadProfitPreview();
@@ -847,6 +857,7 @@ export function AsterPortfolioSnapshotEnhancer() {
         onCloseAll={closeAll}
         onCloseProfit={openProfitPreview}
         onOpenHedge={() => setHedgeOpen(true)}
+        zoneCommandCenterEnabled={zoneCommandCenterEnabled}
       />
       {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
       {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet

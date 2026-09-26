@@ -152,7 +152,7 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
   return <section
     className={`portfolio-command-center pcc-homecoming cc-${vm.actionMode}`}
     data-reference="file_00000000cf9481f4b495250734661e31"
-    data-account-only="beta-owner"
+    data-release-feature="zone_command_center"
     aria-label="Zone-Soldaten Strategiestatus"
     aria-live="polite"
   >
@@ -251,8 +251,7 @@ function ZoneSoldiersCommandCenterScreen({vm,advisorMessage,onClose}:{vm:any;adv
 }
 
 export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongText,liveShortText}:{liveEquityText:string;liveAvailableText:string;liveLongText:string;liveShortText:string}) {
-  const { user, betaOwner }=useAuthSession();
-  const commandCenterTester=betaOwner===true;
+  const { user }=useAuthSession();
   const shellRef=useRef<HTMLElement>(null);
   const canvasRef=useRef<HTMLDivElement>(null);
   const chartRef=useRef<IChartApi|null>(null);
@@ -278,6 +277,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
   const [advisorEnabled,setAdvisorEnabled]=useState(false);
+  const [commandCenterTester,setCommandCenterTester]=useState(false);
   const [advisorSeats,setAdvisorSeats]=useState<AdvisorSeats>(EMPTY_ADVISOR);
   const [advisorZones,setAdvisorZones]=useState<Zone[]>([]);
   const [advisorTimeline,setAdvisorTimeline]=useState<any>(null);
@@ -324,9 +324,12 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       const release=record(await authenticatedRequest("/api/releases/me",{cache:"no-store"}));
       const features=record(release.features);
       const zoneFeature=record(features.zone_soldiers);
-      const ownerStrategyAccess=String(release.channel||"").toUpperCase()==="BETA"&&zoneFeature.enabled===true;
-      setAdvisorEnabled(ownerStrategyAccess);
-      if(ownerStrategyAccess){
+      const commandFeature=record(features.zone_command_center);
+      const strategyAccess=zoneFeature.enabled===true;
+      const commandAccess=commandFeature.enabled===true;
+      setAdvisorEnabled(strategyAccess);
+      setCommandCenterTester(commandAccess);
+      if(strategyAccess){
         const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
         const nextAdvisor=advisorSeatsFromPayload(account);
         setAdvisorSeats(nextAdvisor);
@@ -345,6 +348,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       }
     }catch{
       setAdvisorEnabled(false);
+      setCommandCenterTester(false);
       setAdvisorSeats(EMPTY_ADVISOR);
     }
     try{
@@ -396,10 +400,10 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   },[combinedMarkers]);
 
   useEffect(()=>{
-    const open=()=>setZoneSoldiersScreenOpen(true);
+    const open=()=>{if(commandCenterTester)setZoneSoldiersScreenOpen(true)};
     window.addEventListener(ZONE_SOLDIERS_OPEN_EVENT,open);
     return()=>window.removeEventListener(ZONE_SOLDIERS_OPEN_EVENT,open);
-  },[]);
+  },[commandCenterTester]);
 
   useEffect(()=>{
     if(!zoneSoldiersScreenOpen)return;
