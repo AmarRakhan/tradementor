@@ -520,10 +520,10 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
     const focusRows=Array.isArray(advisorZoneLadderRef.current?.zones)?advisorZoneLadderRef.current.zones as any[]:[];
     const focusActiveRow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex))??null;
     const focusStep=Number(advisorZoneLadderRef.current?.step);
-    const focusS1=Number.isFinite(Number(initialFocusContext?.lowerBoundary))
+    const focusS1=Number.isFinite(Number(initialFocusContext?.lowerBoundary))&&Number(initialFocusContext?.lowerBoundary)>0
       ? Number(initialFocusContext?.lowerBoundary)
       : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)-focusStep/2:null;
-    const focusR1=Number.isFinite(Number(initialFocusContext?.upperBoundary))
+    const focusR1=Number.isFinite(Number(initialFocusContext?.upperBoundary))&&Number(initialFocusContext?.upperBoundary)>0
       ? Number(initialFocusContext?.upperBoundary)
       : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)+focusStep/2:null;
     const focusBelow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)-1);
@@ -668,10 +668,10 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         const activeIndex=marketContext?.activeIndex;
         const activeRow=rows.find((row:any)=>Number(row.index)===Number(activeIndex))??null;
         const step=Number(zoneLadder.step);
-        const s1=Number.isFinite(Number(marketContext?.lowerBoundary))
+        const s1=Number.isFinite(Number(marketContext?.lowerBoundary))&&Number(marketContext?.lowerBoundary)>0
           ? Number(marketContext?.lowerBoundary)
           : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)-step/2:null;
-        const r1=Number.isFinite(Number(marketContext?.upperBoundary))
+        const r1=Number.isFinite(Number(marketContext?.upperBoundary))&&Number(marketContext?.upperBoundary)>0
           ? Number(marketContext?.upperBoundary)
           : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)+step/2:null;
         const below=rows.find((row:any)=>Number(row.index)===Number(activeIndex)-1);
