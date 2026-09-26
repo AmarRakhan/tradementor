@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("new Command Center remains hard betaOwner-only while non-owner keeps existing cockpit",async()=>{
+test("Build 437 moves Command Center to the dedicated Zone-Soldaten screen instead of inline chart content",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("const { user, betaOwner }=useAuthSession()"));
-  assert.ok(component.includes("const commandCenterTester=betaOwner===true"));
-  assert.ok(component.includes("commandCenterTester&&"));
-  assert.ok(component.includes("!commandCenterTester&&"));
+  assert.ok(component.includes("ZoneSoldiersCommandCenterScreen"));
+  assert.ok(component.includes("ZONE_SOLDIERS_OPEN_EVENT"));
+  assert.ok(component.includes('zoneSoldiersScreenOpen?<ZoneSoldiersCommandCenterScreen'));
+  assert.ok(component.includes('{false?<section className={`portfolio-strategy-cockpit'));
   assert.ok(component.includes("portfolio-strategy-cockpit"));
 });
 
@@ -25,7 +26,7 @@ test("Build 432 owner Command Center uses the current screenshot reference and l
 test("owner Command Center removes mutation controls and duplicate balancer/free-seat emphasis",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const start=component.indexOf("function StrategyCommandCenter");
-  const end=component.indexOf("export function PortfolioKoersChart",start);
+  const end=component.indexOf("function ZoneSoldiersCommandCenterScreen",start);
   const block=component.slice(start,end);
   assert.equal(block.includes('method:"PUT"'),false);
   assert.equal(block.includes('method:"POST"'),false);
