@@ -18,6 +18,7 @@ EXTERNAL_CASHFLOW_TYPES = frozenset({
 CASHFLOW_ADJUSTMENT_TYPES = frozenset({"WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT"})
 ENTRY_INTENT_WORDS = ("open", "entry", "base", "dca", "reopen", "reset")
 PORTFOLIO_GROWTH_START_DATE = "2026-08-23"
+PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION = 2
 
 
 def _finite(value: Any) -> float:
@@ -65,6 +66,35 @@ class CloseEstimate:
             "blockReason": self.block_reason,
         }
 
+
+
+def select_day_start_snapshot(
+    candles: Iterable[dict[str, Any]], *, day_start_ms: int,
+    current_equity: Any, current_at_ms: int,
+) -> dict[str, Any]:
+    """Choose the first confirmed equity sample inside the local calendar day.
+
+    A stale previous-day observation is never allowed to become today's
+    performance baseline. If no earlier same-day sample exists, the current
+    exchange equity becomes the baseline so the statistic starts neutrally.
+    """
+    start = int(day_start_ms)
+    current_at = int(current_at_ms)
+    candidates: list[tuple[int, float]] = []
+    for row in candles:
+        if not isinstance(row, dict):
+            continue
+        sample_at = int(_finite(row.get("firstSampleAtMs", row.get("atMs", 0))))
+        opened = _finite(row.get("open", 0))
+        if opened > 0 and start <= sample_at <= current_at:
+            candidates.append((sample_at, opened))
+    if candidates:
+        sample_at, opened = min(candidates, key=lambda item: item[0])
+        return {"equity": opened, "atMs": sample_at, "source": "portfolio-chart-same-day"}
+    current = _finite(current_equity)
+    if current <= 0 or current_at <= 0:
+        raise ValueError("Actuele portfolio-equity is ongeldig")
+    return {"equity": current, "atMs": current_at, "source": "current-exchange-equity"}
 
 
 def daily_return_percentage(previous_equity: Any, current_equity: Any, external_cashflow: Any = 0) -> float:

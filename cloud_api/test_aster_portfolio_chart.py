@@ -31,6 +31,7 @@ def test_equity_sample_builds_real_ohlc_without_inventing_values():
         "low": 98.0,
         "close": 98.0,
         "samples": 3,
+        "firstSampleAtMs": 61_000,
         "sourceAtMs": 89_000,
     }
 

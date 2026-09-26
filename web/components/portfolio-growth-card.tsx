@@ -159,11 +159,17 @@ export function PortfolioGrowthCard({ onChanged = () => {}, refreshKey = null }:
   const today = Number(daily?.todayPercentage ?? 0);
   const average = Number(daily?.averageDailyPercentage ?? 0);
   const closeBusy = closePhase === "busy";
+  const measurementStartLabel = (() => {
+    const raw = String(daily?.measurementStartDate || "");
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(raw)) return "—";
+    const date = new Date(`${raw}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "long", year: "numeric" }).format(date);
+  })();
   const dailyStats = (
     <div className="portfolio-growth-daily" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px", width: "100%", margin: "4px 0 2px", alignItems: "end" }}>
       <span style={{ display: "grid", gap: 1 }}><small>Vandaag</small><strong style={{ fontSize: "1rem", lineHeight: 1.1, color: daily?.reliable ? dailyTone(today) : "inherit" }}>{daily?.reliable ? percent(today) : "—"}</strong></span>
       <span style={{ display: "grid", gap: 1 }}><small>Gemiddeld per dag</small><strong style={{ fontSize: "1rem", lineHeight: 1.1, color: daily?.reliable ? dailyTone(average) : "inherit" }}>{daily?.reliable ? percent(average) : "—"}</strong></span>
-      <small style={{ gridColumn: "1 / -1", opacity: .72, fontSize: ".72rem" }}>Gemeten over {daily?.reliable ? (daily.measuredDays ?? 1) : "—"} {daily?.measuredDays === 1 ? "dag" : "dagen"} · Sinds 23 augustus 2026</small>
+      <small style={{ gridColumn: "1 / -1", opacity: .72, fontSize: ".72rem" }}>Gemeten over {daily?.reliable ? (daily.measuredDays ?? 1) : "—"} {daily?.measuredDays === 1 ? "dag" : "dagen"} · Sinds {measurementStartLabel}</small>
     </div>
   );
 

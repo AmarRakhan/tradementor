@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import pytest
 
-from portfolio_growth import (PORTFOLIO_GROWTH_START_DATE, average_daily_return, chain_linked_return_percent, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, is_exposure_order, utc_ms)
+from portfolio_growth import (PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, chain_linked_return_percent, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, is_exposure_order, select_day_start_snapshot, utc_ms)
 
 
 def position(notional=100, side="LONG"):
@@ -96,3 +96,20 @@ def test_build432_deposit_and_withdrawal_are_neutralized_in_daily_return():
 
 def test_build432_twr_primitive_chain_links_subperiod_returns():
     assert chain_linked_return_percent([10,-5]) == pytest.approx(4.5)
+
+
+def test_build433_day_start_never_uses_stale_previous_day_snapshot():
+    assert PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION == 2
+    rows=[
+        {"atMs":1_000,"firstSampleAtMs":1_020,"open":100},
+        {"atMs":2_000,"firstSampleAtMs":2_030,"open":300},
+        {"atMs":3_000,"firstSampleAtMs":3_010,"open":305},
+    ]
+    start=select_day_start_snapshot(rows,day_start_ms=2_000,current_equity=310,current_at_ms=4_000)
+    assert start == {"equity":300.0,"atMs":2_030,"source":"portfolio-chart-same-day"}
+
+
+def test_build433_day_start_falls_back_to_current_equity_instead_of_stale_history():
+    rows=[{"atMs":1_000,"firstSampleAtMs":1_010,"open":100}]
+    start=select_day_start_snapshot(rows,day_start_ms=2_000,current_equity=340.59,current_at_ms=4_000)
+    assert start == {"equity":340.59,"atMs":4_000,"source":"current-exchange-equity"}

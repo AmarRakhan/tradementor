@@ -129,6 +129,7 @@ def public_candle(row: dict[str, Any]) -> dict[str, Any] | None:
         "low": low,
         "close": close,
         "samples": max(1, int(_number(row.get("sampleCount")))),
+        "firstSampleAtMs": int(_number(row.get("firstSampleAtMs"))) or bucket,
         "sourceAtMs": int(_number(row.get("lastSampleAtMs"))),
     }
 

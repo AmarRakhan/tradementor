@@ -11,7 +11,8 @@ test("daily portfolio growth is compact inside the existing card",()=>{
   assert.match(card,/portfolio-growth-daily/);
   assert.match(card,/Vandaag/);
   assert.match(card,/Gemiddeld per dag/);
-  assert.match(card,/Sinds 23 augustus 2026/);
+  assert.match(card,/measurementStartLabel/);
+  assert.match(card,/measurementStartDate/);
   assert.doesNotMatch(card,/article className=.{0,40}daily-growth/);
 });
 
