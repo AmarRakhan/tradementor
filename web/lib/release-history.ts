@@ -26,6 +26,47 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-26",
+  title: "Release Gates 2.0 · BETA/STABLE per productfeature",
+  newItems: [
+    "Zone-Soldaten, Zone Command Center, Auto Hedge 2.0 en Legacy Hedge Recovery gebruiken nu dezelfde centrale BETA/STABLE release-entitlements als Botconfigurator V2.",
+    "Margin Summary is daadwerkelijk gekoppeld aan zijn eigen releaseflag; Zone Command Center en Legacy Hedge Recovery hebben afzonderlijke rechten.",
+    "Auto Hedge runtime kan na latere STABLE-vrijgave per gebruiker draaien; release rollback stopt nieuwe triggers maar laat bestaande locks veilig beheren.",
+  ],
+  problems: [
+    "Meerdere reeds gebouwde functies waren nog hard gekoppeld aan het owneraccount of aan Continuity-ownerbeveiliging en konden daarom niet met alleen rechten naar andere gebruikers worden uitgerold.",
+    "Een STABLE-release van alleen de UI zou onvoldoende zijn geweest omdat Auto Hedge worker en Legacy Recovery backend eveneens owner-only waren.",
+  ],
+  causes: [
+    "Historische testgates waren accountgericht opgebouwd voordat het centrale blokgewijze release-systeem bestond.",
+    "Feature-beschikbaarheid, gebruikersopt-in en executionstate waren voor enkele onderdelen nog niet overal als drie losse concepten afgedwongen.",
+  ],
+  fixes: [
+    "Nieuwe releasekeys: zone_command_center, auto_hedge_v2 en legacy_hedge_recovery; bestaande zone_soldiers is uit de hard owner-only releasegate gehaald.",
+    "Backendmutaties controleren server-side dezelfde entitlementbron en geven FEATURE_NOT_RELEASED fail-closed terug wanneer een feature niet is vrijgegeven.",
+    "Legacy Hedge Recovery vereist Auto Hedge 2.0; settings stripping en Strategy-2 runtime gebruiken entitlement in plaats van een opgeslagen BETA-label.",
+    "Continuity en Admin blijven bewust hard owner/admin-only en vallen buiten de normale productreleaseflow.",
+  ],
+  now: [
+    "Alle nieuwe productfeatures blijven na Build 443 BETA aan en STABLE uit; deze build publiceert niets automatisch naar andere gebruikers.",
+    "Een releasewijziging verandert geen gebruikersinstelling en zet geen bot, Auto Hedge, Zone-Soldaten of recovery automatisch aan.",
+    "Na expliciete STABLE-vrijgave kan dezelfde productfunctionaliteit zonder nieuwe featurecode voor gewone gebruikers beschikbaar worden gemaakt.",
+  ],
+  before: "Zone-Soldaten, Auto Hedge en Legacy Hedge Recovery hadden nog account-specifieke toegangsgates naast het centrale releasesysteem.",
+  after: "Normale productfeatures zijn centraal entitlement-gestuurd; alleen Admin en Continuity blijven privé.",
+  technicalDetails: [
+    "Centrale bron: /v1/me/releases + releaseFeatures + _release_feature_enabled.",
+    "legacy_hedge_recovery heeft dependency auto_hedge_v2; dependencyvalidatie geldt ook bij admin publish/rollback.",
+    "Auto Hedge worker ontdekt geconfigureerde accounts uit asterPositionLossAutoHedge en behoudt bestaande managed pairs bij entitlement rollback zonder nieuwe triggers.",
+    "Geen STABLE-flag wordt door deze build aangezet en geen tradingactie hoort door de migratie zelf te worden gestart.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-442-legacy-break-even-preview",
+  version: "46",
+  build: "442",
+  releasedAt: "2026-09-26",
   title: "Legacy Hedge Recovery UI 2.0 · break-even vóór/na",
   newItems: [
     "Hedge-lock vergroten toont nu per LONG en SHORT hoeveel procent de koers vanaf de actuele markt nog moet bewegen om break-even te bereiken.",
@@ -58,8 +99,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan LEGACY_HEDGE_SCALE execution, idempotency, locks, reconciliation, rollback of DCA-state.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
   {
     id: "v46-build-441-legacy-hedge-recovery",
     version: "46",
