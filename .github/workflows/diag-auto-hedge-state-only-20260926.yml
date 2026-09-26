@@ -1,0 +1,112 @@
+name: Auto Hedge persisted state only 2026-09-26
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-auto-hedge-state-only-20260926.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Execute read-only state probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); spec=s['spec']['template']['spec']; c=spec['containers'][0]
+          print(c['image']); print(spec['serviceAccountName'])
+          PY
+          )
+          JOB="tm-ah-state-${GITHUB_RUN_ID: -7}"; MARKER="AH_STATE_${GITHUB_RUN_ID}"
+          echo "JOB=$JOB" >> "$GITHUB_ENV"; echo "MARKER=$MARKER" >> "$GITHUB_ENV"
+          SCRIPT="$(base64 -w0 <<'PY'
+          import json,os
+          from google.cloud import firestore
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          s=db.collection('asterPositionLossAutoHedge').document(uid).get(); r=s.to_dict() or {}
+          dyn=db.collection('users').document(uid).collection('asterDynamicHedge').document('control').get().to_dict() or {}
+          pairs=[]
+          for d in db.collection('asterPositionLossAutoHedge').document(uid).collection('pairs').stream():
+            v=d.to_dict() or {}; st=str(v.get('status') or '').upper()
+            if st and st!='CLOSED': pairs.append({'symbol':d.id.upper(),'status':st,'protectedSide':v.get('protectedSide'),'hedgeSide':v.get('hedgeSide'),'reservedHedgeQty':v.get('reservedHedgeQty'),'rehedgeEnabled':v.get('rehedgeEnabled') is True})
+          def iso(x): return x.isoformat() if hasattr(x,'isoformat') else (str(x) if x is not None else None)
+          rep=r.get('lastReport') if isinstance(r.get('lastReport'),dict) else {}
+          out={'persistedEnabled':r.get('enabled') is True,'rawEnabled':r.get('enabled'),'thresholdUsd':r.get('thresholdUsd'),'lastCheckedAt':iso(r.get('lastCheckedAt')),'updatedAt':iso(r.get('updatedAt')),'lastError':str(r.get('lastError') or ''),'lastReport':{'mode':rep.get('mode'),'status':rep.get('status'),'reason':rep.get('reason'),'ordersSent':rep.get('ordersSent')},'dynamicHedgeEnabled':dyn.get('enabled') is True,'activePairs':pairs,'documentUpdateTime':iso(s.update_time)}
+          print(os.environ['MARKER']+'='+json.dumps(out,separators=(',',':'),default=str),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "${V[0]}" --service-account "${V[1]}" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 90s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+      - name: Authenticate observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - name: Publish sanitized state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in $(seq 1 10); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=50 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.txt" <<'PY'
+          import json,sys
+          m=sys.argv[1]+'='; rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def walk(x):
+            if isinstance(x,str): yield x
+            elif isinstance(x,dict):
+              for v in x.values(): yield from walk(v)
+            elif isinstance(x,list):
+              for v in x: yield from walk(v)
+          for row in rows:
+            for s in walk(row):
+              if m in s:
+                raw=s[s.index(m)+len(m):].splitlines()[0]; json.loads(raw); print(raw); raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.txt" ] && break
+            sleep 2
+          done
+          test -s "$RUNNER_TEMP/result.txt"
+          { echo '### Persisted Auto Hedge state'; echo '```json'; cat "$RUNNER_TEMP/result.txt"; echo '```'; } > "$RUNNER_TEMP/comment.md"
+          gh issue comment 284 -R AmarRakhan/tradementor --body-file "$RUNNER_TEMP/comment.md"
+      - name: Re-authenticate deploy for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${JOB:-}" ]; then gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true; fi
