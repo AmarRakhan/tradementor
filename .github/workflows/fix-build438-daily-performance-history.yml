@@ -1,5 +1,4 @@
-name: Build 438 daily performance history fix
-# retry-2: align pinned build regression contract
+name: Finalize Build 438 web contract
 
 on:
   push:
@@ -12,24 +11,18 @@ permissions:
   actions: write
 
 concurrency:
-  group: build438-daily-performance-history
+  group: build438-web-finalizer
   cancel-in-progress: false
 
 jobs:
-  fix-test-publish:
+  finalize:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           ref: amar-crypto-bot-2026-cloud
           fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: cloud_api/requirements.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -37,55 +30,38 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Apply Build 438 reporting-only fix
-        run: python .github/scripts/build438_daily_performance_history.py
-
-      - name: Run complete backend regression suite
+      - name: Align pinned Auto Hedge build contract
+        shell: bash
         run: |
-          pip install -r cloud_api/requirements.txt pytest
-          python -m py_compile cloud_api/main.py cloud_api/portfolio_growth.py
-          cd cloud_api
-          pytest -q
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("web/tests/position-loss-auto-hedge.test.mjs")
+          s=p.read_text(encoding="utf-8")
+          if 'WEBAPP_BUILD_NUMBER = "437"' not in s:
+              raise SystemExit("expected pinned Build 437 contract not found")
+          p.write_text(s.replace('WEBAPP_BUILD_NUMBER = "437"','WEBAPP_BUILD_NUMBER = "438"',1),encoding="utf-8")
+          PY
 
-      - name: Run complete web build and regression suite
+      - name: Run complete web regression suite
         run: |
           cd web
           npm ci
           npm test
 
-      - name: Verify reporting-only scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --name-only | tee /tmp/build438-files.txt
-          grep -qx 'cloud_api/main.py' /tmp/build438-files.txt
-          grep -qx 'cloud_api/portfolio_growth.py' /tmp/build438-files.txt
-          grep -qx 'cloud_api/test_portfolio_growth.py' /tmp/build438-files.txt
-          grep -qx 'web/tests/position-loss-auto-hedge.test.mjs' /tmp/build438-files.txt
-          grep -qx 'web/lib/app-version.ts' /tmp/build438-files.txt
-          grep -qx 'web/lib/release-history.ts' /tmp/build438-files.txt
-          ! grep -E 'cloud_api/(aster_strategy2|aster_strategy2_runtime|aster_execution|aster_position_loss_auto_hedge|aster_dynamic_hedge_execution|aster_automation)\.py' /tmp/build438-files.txt
-
-      - name: Commit Build 438 atomically
+      - name: Commit regression sync without recursive deploy
         id: commit
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'TradeMentor Control Plane'
           git config user.email 'actions@users.noreply.github.com'
-          git add cloud_api/main.py cloud_api/portfolio_growth.py cloud_api/test_portfolio_growth.py web/lib/app-version.ts web/lib/release-history.ts
-          git commit -m 'Build 438: restore cashflow-neutral daily average history'
+          git add web/tests/position-loss-auto-hedge.test.mjs
+          git commit -m 'Build 438: sync Auto Hedge build regression contract'
           git push origin HEAD:amar-crypto-bot-2026-cloud
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Dispatch guarded exact-source backend deployment
+      - name: Dispatch canonical Build 438 web deployment
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_COMMIT: ${{ steps.commit.outputs.sha }}
-        shell: bash
-        run: |
-          gh workflow run deploy-cloud-production.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref amar-crypto-bot-2026-cloud \
-            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
-            -f source_commit="$SOURCE_COMMIT"
+        run: gh workflow run deploy-shared-v44-testapp.yml --repo "$GITHUB_REPOSITORY" --ref amar-crypto-bot-2026-cloud
