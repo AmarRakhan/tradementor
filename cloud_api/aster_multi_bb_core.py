@@ -146,7 +146,9 @@ class MultiBbConfig:
         if not 1 <= self.universe_top_n <= 800: raise ValueError("Top-N moet tussen 1 en 800 liggen")
         maximum_capacity = 200 if self.manual_symbol_selection_enabled else self.universe_top_n * 2
         if not 1 <= self.maximum_positions <= maximum_capacity: raise ValueError("Max posities overschrijdt de beschikbare marktcapaciteit")
-        if self.long_slots < 0 or self.short_slots < 0 or self.long_slots + self.short_slots != self.maximum_positions:
+        if self.long_slots < 0 or self.short_slots < 0:
+            raise ValueError("LONG/SHORT slots mogen niet negatief zijn")
+        if not self.zone_soldiers_enabled and self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
         if not 1 <= self.minimum_leverage <= 300: raise ValueError("Minimum leverage moet tussen 1x en 300x liggen")
         if self.maximum_leverage is not None and not 1 <= self.maximum_leverage <= 300: raise ValueError("Maximum leverage moet tussen 1x en 300x liggen")
@@ -155,13 +157,13 @@ class MultiBbConfig:
         if not 0 < self.exposure_refill_trigger_percent <= 100: raise ValueError("Exposure refill startdrempel moet tussen 0 en 100% liggen")
         if not 0 <= self.exposure_refill_release_percent < self.exposure_refill_trigger_percent: raise ValueError("Exposure refill stopdrempel moet lager zijn dan de startdrempel")
         if not 1 <= self.zone_base_long_soldiers <= 100 or not 1 <= self.zone_base_short_soldiers <= 100:
-            raise ValueError("Zoneformatie LONG/SHORT moet tussen 1 en 100 soldaten liggen")
+            raise ValueError("LONG/SHORT-stoelen per prijszone moeten tussen 1 en 100 liggen")
         if not 0 <= self.zone_entry_growth_percent <= 20:
             raise ValueError("Zone-inzetgroei moet tussen 0% en 20% per zone liggen")
         if not 1.0 <= self.zone_entry_max_multiplier <= 3.0:
             raise ValueError("Maximale zone-inzetfactor moet tussen 1,00x en 3,00x liggen")
         if self.zone_soldiers_enabled and self.asymmetric_hedge_enabled:
-            raise ValueError("Zone-soldaten en Asymmetrische Hedge kunnen niet tegelijk actief zijn")
+            raise ValueError("Prijszone-stoelen en Asymmetrische Hedge kunnen niet tegelijk actief zijn")
         if self.entry_sizing_mode not in {"notional", "margin"}: raise ValueError("Entry sizing mode is ongeldig")
         if not .0001 <= self.dca_distance <= .50: raise ValueError("DCA-afstand is ongeldig")
         if self.max_dca < 0: raise ValueError("Max DCA mag niet negatief zijn")
