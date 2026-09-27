@@ -10,6 +10,7 @@ from aster_zone_soldiers import (
     annotate_legacy_positions,
     available_soldiers,
     claim_soldier,
+    confirmed_zone_from_display_zones,
     prepare_zone_runtime,
     record_soldier_homecoming,
     settle_soldier_after_profitable_tp,
@@ -285,7 +286,7 @@ def test_inactive_zone_close_releases_soldier_to_dormant():
     assert z1["pools"]["0"]["soldiers"][soldier["soldierId"]]["status"] == STATUS_DORMANT
 
 
-def test_history_gap_fails_closed_for_new_entries_but_keeps_open_soldier():
+def test_live_zone_activation_does_not_wait_for_old_history_freshness_flag():
     z0, managed, _ = prepare({}, {}, [], 0, balancer=False)
     soldier = claim_soldier(z0, "LONG", trade_key="A|LONG", symbol="A", entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000)
     managed = {
@@ -294,13 +295,68 @@ def test_history_gap_fails_closed_for_new_entries_but_keeps_open_soldier():
             "soldierId": soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE,
         }
     }
-    blocked, _, report = prepare(z0, managed, [pos("A", "LONG", 100)], 1, safe=False, at=20_000)
-    assert report["safeForNewEntries"] is False
+    live, _, report = prepare(z0, managed, [pos("A", "LONG", 100)], 1, safe=False, at=20_000)
+    assert report["safeForNewEntries"] is True
     assert report["activeZone"] == 1
     assert report["seatModel"]["activeZone"] == 1
-    assert report["seatModel"]["entrySafe"] is False
-    assert available_soldiers(blocked, "LONG") == []
-    assert blocked["pools"]["0"]["soldiers"][soldier["soldierId"]]["status"] == STATUS_OPEN
+    assert report["seatModel"]["entrySafe"] is True
+    assert len(available_soldiers(live, "LONG")) == 3
+    assert len(available_soldiers(live, "SHORT")) == 3
+    assert live["pools"]["0"]["soldiers"][soldier["soldierId"]]["status"] == STATUS_OPEN
+
+
+def test_live_equity_crosses_existing_boundary_immediately_without_candle_close():
+    zones = [
+        {"index": 2, "center": 310.0, "atr": 1.0},
+        {"index": 3, "center": 330.0, "atr": 1.0},
+    ]
+    assert confirmed_zone_from_display_zones(zones, 319.90) == 2
+    assert confirmed_zone_from_display_zones(zones, 320.10) == 3
+
+
+def test_live_equity_can_switch_back_and_forth_inside_one_open_candle():
+    zones = [
+        {"index": 2, "center": 310.0, "atr": 1.0},
+        {"index": 3, "center": 330.0, "atr": 1.0},
+    ]
+    equities = [319.90, 320.10, 319.80, 320.20]
+    assert [confirmed_zone_from_display_zones(zones, value) for value in equities] == [2, 3, 2, 3]
+
+
+def test_return_to_zone_with_two_long_and_three_short_open_exposes_only_one_long():
+    z3, _, _ = prepare({}, {}, [], 3, balancer=False)
+    managed = {}
+    positions = []
+    for index in range(1, 3):
+        symbol = f"L{index}"
+        row = claim_soldier(
+            z3, "LONG", trade_key=f"{symbol}|LONG", symbol=symbol,
+            entry_price=100, entry_portfolio_equity=320.1, timestamp_ms=10_000 + index,
+        )
+        managed[f"{symbol}|LONG"] = {
+            "originZone": 3, "originZoneCycleId": row["originZoneCycleId"],
+            "soldierId": row["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+        }
+        positions.append(pos(symbol, "LONG", 100))
+    for index in range(1, 4):
+        symbol = f"S{index}"
+        row = claim_soldier(
+            z3, "SHORT", trade_key=f"{symbol}|SHORT", symbol=symbol,
+            entry_price=100, entry_portfolio_equity=320.1, timestamp_ms=11_000 + index,
+        )
+        managed[f"{symbol}|SHORT"] = {
+            "originZone": 3, "originZoneCycleId": row["originZoneCycleId"],
+            "soldierId": row["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+        }
+        positions.append(pos(symbol, "SHORT", 100))
+
+    z2, managed, _ = prepare(z3, managed, positions, 2, balancer=False, at=20_000)
+    back, _, report = prepare(z2, managed, positions, 3, balancer=False, at=30_000)
+    assert report["activeZone"] == 3
+    assert len(available_soldiers(back, "LONG")) == 1
+    assert len(available_soldiers(back, "SHORT")) == 0
+    assert report["seatModel"]["freeLongActiveZone"] == 1
+    assert report["seatModel"]["freeShortActiveZone"] == 0
 
 
 def test_restart_recovery_is_idempotent_and_does_not_duplicate_pool_soldiers():
