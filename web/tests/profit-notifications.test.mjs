@@ -93,3 +93,15 @@ test("test push can safely repair a stale device subscription exactly once", asy
   assert.match(source, /await ensureDeviceSubscription\(true\)/);
   assert.match(source, /automatisch hersteld/);
 });
+
+
+test("native push content does not include the Amar Crypto Bot brand text", async () => {
+  const [component, sw] = await Promise.all([
+    readFile(new URL("../components/profit-notifications.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
+  ]);
+  const preview = component.slice(component.indexOf('<section className="profit-preview">'), component.indexOf('{message &&'));
+  assert.doesNotMatch(preview, /Amar Crypto Bot 2026/);
+  assert.doesNotMatch(sw, /title:\s*"Amar Crypto Bot 2026"/);
+  assert.doesNotMatch(sw, /payload\.title \|\| "Amar Crypto Bot 2026"/);
+});
