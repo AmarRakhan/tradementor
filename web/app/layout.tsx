@@ -5,6 +5,7 @@ import { PwaRegistration } from "@/components/pwa-registration";
 import { ZoomGuard } from "@/components/zoom-guard";
 import { AppVersionControl } from "@/components/app-version-control";
 import { ReleaseHistoryControl } from "@/components/release-history-control";
+import { ProfitCelebration, ProfitNotificationControl, ProfitNotificationPanel } from "@/components/profit-notifications";
 import { Strategy2ReferenceEnhancer } from "@/components/strategy2-reference-enhancer";
 import { AsterPortfolioSnapshotEnhancer } from "@/components/aster-portfolio-snapshot-enhancer";
 import { AsterProfitPotSnapshotBridge } from "@/components/aster-profit-pot-snapshot-bridge";
@@ -38,6 +39,7 @@ import "./home-transfer.css";
 import "./continuity-monitor.css";
 import "./tradecentrum-responsive.css";
 import "./release-history.css";
+import "./profit-notifications.css";
 import "./sniper-bridge.css";
 import "./friends-bridge.css";
 import "./ultra-rivalry.css";
@@ -83,12 +85,15 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <template aria-hidden="true" dangerouslySetInnerHTML={{ __html: LEGACY_RENDER_TEST_MARKER }} />
         <div className="test-environment-banner live-runtime-banner">
           <ReleaseHistoryControl />
+          <ProfitNotificationControl />
           <span className="runtime-status">PLATFORMSTATUS · STRATEGY 2-RUNTIME · DIT IS NIET JOUW ACCOUNTSTATUS</span>
           <AppVersionControl />
         </div>
         <PwaRegistration />
         <ZoomGuard />
         <AuthProvider>
+          <ProfitNotificationPanel />
+          <ProfitCelebration />
           <Strategy2ReferenceEnhancer />
           <AsterPortfolioSnapshotEnhancer />
           <AsterProfitPotSnapshotBridge />
