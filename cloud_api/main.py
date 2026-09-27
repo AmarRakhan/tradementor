@@ -1672,11 +1672,13 @@ def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:
 
 
 def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict[str, Any], now: datetime) -> dict[str, Any]:
-    """Return one confirmed 15m Portfolio Koers zone for NEW-entry gating.
+    """Resolve the active price zone directly from live portfolio equity.
 
-    Existing position management never depends on this result. Missing/stale or
-    discontinuous chart evidence therefore fails closed only for new zone-owned
-    entries and can never close an existing position.
+    The existing 15m Portfolio Koers history defines the already-established
+    zone ladder. It does *not* confirm a zone transition. As soon as current
+    exchange equity crosses an existing boundary, that zone is active in this
+    same runtime evaluation. No candle close, debounce, dwell time or breakout
+    confirmation is part of zone activation.
     """
     try:
         candles = _read_portfolio_chart_candles({"uid": uid}, "15m", 320)
@@ -1684,26 +1686,28 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
         current_bucket = int(now.timestamp() * 1000) // PORTFOLIO_CHART_TIMEFRAME_MS["15m"] * PORTFOLIO_CHART_TIMEFRAME_MS["15m"]
         latest_bucket = int(safe_float(contiguous[-1].get("atMs"))) if contiguous else 0
         history_ready = len(contiguous) >= 14
-        continuity_ok = history_ready and latest_bucket >= current_bucket
+        history_fresh = bool(history_ready and latest_bucket >= current_bucket)
         cycle = raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"), dict) else {}
         cycle_start = safe_float(cycle.get("cycleStartEquity"))
-        # Active-zone identity must keep following the same current-equity
-        # ladder as Portfolio Koers. Freshness is an independent NEW-entry gate.
+
+        # Preserve the existing zone-boundary calculation exactly. Only the
+        # activation signal changes: current live equity selects the zone now.
         zones = derive_equity_zones(contiguous, cycle_start) if history_ready else []
         equity = multi_bb_exchange_equity(account)
         active = confirmed_zone_from_display_zones(zones, equity) if equity > 0 and zones else None
-        safe = bool(continuity_ok and active is not None)
+        zone_ready = bool(active is not None)
         return {
-            "safeForEntries": safe,
+            "safeForEntries": zone_ready,
             "activeZone": active,
             "currentEquity": equity if equity > 0 else None,
             "contiguousBars": len(contiguous),
             "requiredContiguousBars": 14,
             "latestBucketMs": latest_bucket or None,
             "currentBucketMs": current_bucket,
-            "reason": "ZONE_CONFIRMED" if safe else (
-                "ZONE_CONFIRMED_ENTRY_HELD" if active is not None else "15M_ZONE_CONTINUITY_UNAVAILABLE"
-            ),
+            "historyFresh": history_fresh,
+            "zoneActivationRequiresCandleClose": False,
+            "zoneActivationSource": "LIVE_PORTFOLIO_EQUITY",
+            "reason": "LIVE_EQUITY_ZONE_ACTIVE" if zone_ready else "ZONE_LADDER_UNAVAILABLE",
         }
     except (google_exceptions.GoogleAPICallError, TypeError, ValueError) as exc:
         return {
@@ -1712,6 +1716,9 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
             "currentEquity": None,
             "contiguousBars": 0,
             "requiredContiguousBars": 14,
+            "historyFresh": False,
+            "zoneActivationRequiresCandleClose": False,
+            "zoneActivationSource": "LIVE_PORTFOLIO_EQUITY",
             "reason": f"ZONE_CONTEXT_UNAVAILABLE: {exc}",
         }
 
