@@ -1,0 +1,98 @@
+
+.profit-notification-header-button{position:relative;flex:0 0 auto;display:grid;place-items:center;width:28px;height:24px;padding:0;border:1px solid rgba(255,199,55,.82);border-radius:8px;background:linear-gradient(180deg,rgba(68,48,4,.88),rgba(14,23,15,.92));box-shadow:0 0 12px rgba(255,187,20,.28),inset 0 0 9px rgba(255,197,45,.08);color:#ffd24e;cursor:pointer}
+.profit-notification-header-button:hover{background:rgba(118,79,4,.82);box-shadow:0 0 15px rgba(255,193,27,.44)}
+.profit-notification-header-button:focus-visible{outline:2px solid #ffe68c;outline-offset:2px}
+.profit-bell-glyph{font-size:13px;line-height:1;filter:saturate(.8)}
+.profit-bell-dot{position:absolute;right:4px;top:3px;width:4px;height:4px;border-radius:50%;background:#ffdc55;box-shadow:0 0 6px #ffcb27}
+
+.profit-notification-overlay{position:fixed;z-index:99998;inset:28px 0 0;overflow-y:auto;overscroll-behavior:contain;background:radial-gradient(circle at 14% 4%,rgba(4,94,57,.28),transparent 32%),radial-gradient(circle at 92% 15%,rgba(221,163,35,.07),transparent 27%),linear-gradient(180deg,#020805 0%,#020704 56%,#010403 100%);color:#f3f7f4;font-family:var(--font-geist-sans),Arial,sans-serif;padding:12px 14px calc(24px + env(safe-area-inset-bottom))}
+.profit-notification-shell{display:grid;gap:11px;width:min(100%,760px);margin:0 auto}
+.profit-notification-titlebar{display:grid;grid-template-columns:48px 52px minmax(0,1fr) 80px;align-items:center;gap:10px;min-height:92px;padding:12px 14px;border:1px solid rgba(37,233,141,.58);border-radius:18px;background:linear-gradient(130deg,rgba(4,42,27,.96),rgba(3,17,12,.98));box-shadow:0 8px 28px rgba(0,0,0,.32)}
+.profit-notification-back{display:grid;place-items:center;width:44px;height:44px;border:0;background:transparent;color:#36e5a1;font-size:36px;line-height:1;cursor:pointer}
+.profit-notification-title-icon,.profit-setting-icon{display:grid;place-items:center;border:1px solid rgba(38,220,137,.6);border-radius:14px;background:rgba(4,39,26,.86);color:#30eda5;box-shadow:inset 0 0 14px rgba(35,231,153,.04)}
+.profit-notification-title-icon{width:50px;height:50px;border-color:rgba(228,178,44,.48);border-radius:50%;background:rgba(47,39,8,.58);font-size:23px}
+.profit-notification-titlebar h1{margin:0;font-size:28px;line-height:1.05;letter-spacing:-.025em;color:#f3f6f4}
+.profit-notification-titlebar p{margin:5px 0 0;color:#b3c0ba;font-size:14px;line-height:1.25}
+.profit-notification-close{display:flex;align-items:center;justify-content:center;gap:7px;height:50px;border:1px solid rgba(217,226,222,.42);border-radius:11px;background:rgba(8,13,12,.75);color:#f4f5f4;cursor:pointer}
+.profit-notification-close span{font-size:28px;font-weight:300}.profit-notification-close small{font-size:12px}
+
+.profit-setting-row,.profit-setting-block,.profit-preview{border:1px solid rgba(28,220,128,.48);border-radius:17px;background:linear-gradient(135deg,rgba(3,34,22,.95),rgba(2,17,12,.97));box-shadow:0 7px 22px rgba(0,0,0,.24)}
+.profit-setting-row{display:grid;grid-template-columns:56px minmax(0,1fr) 72px 44px;align-items:center;gap:12px;min-height:83px;padding:11px 15px}
+.profit-setting-row.primary{min-height:94px;border-color:rgba(28,235,134,.7);box-shadow:0 0 18px rgba(24,211,119,.05)}
+.profit-setting-icon{width:50px;height:50px;font-size:24px}
+.profit-setting-icon.gold{color:#f5c74e;border-color:rgba(238,188,60,.5);background:rgba(50,38,6,.45)}
+.profit-setting-row>div{display:grid;gap:3px;min-width:0}
+.profit-setting-row strong,.profit-setting-heading strong{color:#f4f7f5;font-size:19px;line-height:1.12;font-weight:900}
+.profit-setting-row small,.profit-setting-heading small{color:#aab7b1;font-size:12px;line-height:1.32}
+.profit-setting-row>b{justify-self:end;color:#82918a;font-size:17px;font-weight:950}.profit-setting-row>b.on{color:#33eaa0;text-shadow:0 0 12px rgba(47,236,161,.28)}
+.profit-push-toggle{position:relative;width:65px;height:35px;padding:0;border:1px solid rgba(101,136,121,.45);border-radius:999px;background:#173329;box-shadow:inset 0 2px 7px rgba(0,0,0,.45);cursor:pointer}
+.profit-push-toggle span{position:absolute;top:3px;left:4px;width:27px;height:27px;border-radius:50%;background:#dce3e0;box-shadow:0 2px 7px rgba(0,0,0,.4);transition:transform .16s ease}
+.profit-push-toggle.on{border-color:#22f29e;background:linear-gradient(90deg,#0f9e62,#18d985);box-shadow:0 0 14px rgba(27,236,145,.31),inset 0 2px 7px rgba(0,0,0,.18)}
+.profit-push-toggle.on span{transform:translateX(29px);background:#f3f5f4}
+.profit-push-delivery-status{margin-top:-4px;padding:6px 12px;border-radius:10px;font-size:10px;font-weight:800}
+.profit-push-delivery-status.ready{border:1px solid rgba(34,230,143,.35);background:rgba(14,105,68,.16);color:#61f0b2}.profit-push-delivery-status.warn{border:1px solid rgba(236,190,76,.35);background:rgba(96,72,13,.15);color:#f0cb70}.profit-push-delivery-status.error{border:1px solid rgba(255,99,126,.35);background:rgba(112,22,41,.15);color:#ff9aab}.profit-push-delivery-status.off{color:#77877e;background:rgba(255,255,255,.02)}
+
+.profit-setting-block.mode{padding:16px 14px}
+.profit-setting-heading{display:grid;grid-template-columns:50px minmax(0,1fr);align-items:center;gap:12px}
+.profit-mode-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:13px}
+.profit-mode-card{display:grid;place-items:center;align-content:center;gap:6px;min-width:0;min-height:104px;padding:10px 5px;border:1px solid rgba(38,218,133,.54);border-radius:14px;background:linear-gradient(150deg,rgba(3,38,25,.95),rgba(2,19,13,.98));color:#eef4f0;cursor:pointer}
+.profit-mode-card>span{font-size:27px;line-height:1;color:#d5e7df}.profit-mode-card strong{font-size:14px;line-height:1.17;text-align:center}
+.profit-mode-card.active{border-color:#ffd54b;background:linear-gradient(145deg,rgba(86,67,9,.42),rgba(14,25,13,.98));color:#ffd24b;box-shadow:0 0 14px rgba(255,202,47,.27),inset 0 0 18px rgba(255,202,47,.06)}
+.profit-mode-card.active>span{color:#ffd24b}
+
+.profit-setting-row.minimum{grid-template-columns:56px minmax(0,1fr) 160px}
+.profit-setting-row.minimum select{width:100%;height:45px;padding:0 12px;border:1px solid rgba(39,221,137,.52);border-radius:11px;background:#061a13;color:#f1f5f3;font-size:18px;font-weight:850;outline:0}
+.profit-notification-info{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:9px;padding:13px 15px;border:1px solid rgba(131,188,255,.72);border-radius:14px;background:linear-gradient(130deg,rgba(12,44,67,.5),rgba(4,24,31,.76));color:#c7d9e6}
+.profit-notification-info>span{font-size:28px;color:#9bc9ff}.profit-notification-info p{margin:0;font-size:12px;line-height:1.45}
+
+.profit-preview{padding:15px}
+.profit-preview-notification{display:grid;grid-template-columns:64px minmax(0,1fr);gap:14px;margin:13px 12px 2px;padding:14px;border:1px solid rgba(144,166,176,.25);border-radius:16px;background:linear-gradient(135deg,#2b353d,#172128 58%,#11191f);box-shadow:0 10px 26px rgba(0,0,0,.32)}
+.profit-preview-logo{display:grid;place-items:center;width:58px;height:58px;border-radius:12px;background:linear-gradient(145deg,#493d04,#07160d);color:#ffc938;font-size:36px;font-weight:950}
+.profit-preview-notification>div{display:grid;gap:3px;min-width:0}.profit-preview-notification small{display:flex;justify-content:space-between;color:#d9e0e4;font-size:11px}.profit-preview-notification small i{color:#b5bdc1;font-style:normal;font-weight:500}.profit-preview-notification strong{font-size:15px;line-height:1.2}.profit-preview-notification p{margin:0;color:#e1e6e8;font-size:13px;line-height:1.25}.profit-preview-notification p b{color:#37e9a1}
+.profit-notification-message{padding:9px 12px;border:1px solid rgba(75,205,147,.25);border-radius:10px;background:rgba(22,93,65,.12);color:#bcebd4;font-size:11px;line-height:1.4}
+.profit-notification-actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:3px 0 5px}
+.profit-notification-actions button{height:56px;border-radius:12px;font-size:17px;font-weight:950;cursor:pointer}.profit-notification-actions button:disabled{opacity:.6;cursor:wait}
+.profit-notification-actions .save{border:1px solid #ffe37a;background:linear-gradient(90deg,#f2bd35,#ffd65d);color:#1d1805;box-shadow:0 0 18px rgba(247,194,54,.22)}
+.profit-notification-actions .test{border:1px solid #29efaa;background:rgba(4,24,17,.94);color:#36e9aa}
+.profit-notification-loading{padding:40px 18px;border:1px solid rgba(34,222,135,.35);border-radius:16px;background:#03140d;color:#a9bcb2;text-align:center}
+
+.profit-celebration-backdrop{position:fixed;z-index:1000001;inset:0;display:grid;place-items:center;padding:18px;background:rgba(0,8,5,.78);backdrop-filter:blur(8px);color:#f5faf7}
+.profit-celebration-card{position:relative;width:min(92vw,610px);padding:22px 25px 25px;border:1px solid rgba(38,228,134,.72);border-radius:26px;background:radial-gradient(circle at 50% 24%,rgba(24,196,101,.24),transparent 28%),linear-gradient(160deg,rgba(2,26,17,.99),rgba(1,13,9,.995));box-shadow:0 24px 80px rgba(0,0,0,.68),0 0 32px rgba(30,225,128,.13)}
+.profit-celebration-x{position:absolute;right:17px;top:15px;width:40px;height:40px;border:0;background:transparent;color:#f5f8f6;font-size:34px;font-weight:200;cursor:pointer}
+.profit-celebration-card>header{display:flex;align-items:center;gap:9px;padding-right:45px}.profit-celebration-card>header strong{font-size:14px}.profit-celebration-card>header small{margin-left:auto;color:#c6d0cb;font-size:10px;letter-spacing:.05em}
+.profit-celebration-brand{display:grid;place-items:center;width:38px;height:38px;border-radius:9px;background:linear-gradient(145deg,#153,#062);color:#59f5b3;font-size:24px;font-style:italic;font-weight:950}
+.profit-celebration-trophy{display:flex;justify-content:center;align-items:center;gap:22px;margin:16px 0 1px}.profit-celebration-trophy b{font-size:78px;filter:drop-shadow(0 0 18px rgba(44,237,131,.45))}.profit-celebration-trophy i{color:#ffd35e;font-size:24px;font-style:normal}
+.profit-celebration-card h2{margin:0;text-align:center;color:#8ff6bb;font-size:58px;font-style:italic;line-height:1;letter-spacing:-.06em;text-shadow:0 0 22px rgba(73,233,142,.25)}
+.profit-celebration-card h3{margin:7px 0 19px;text-align:center;color:#f1f5f2;font-size:25px;line-height:1.1}
+.profit-celebration-trade{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:15px 17px;border:1px solid rgba(45,223,135,.43);border-radius:17px;background:rgba(4,45,29,.43)}
+.profit-celebration-trade>div{display:flex;align-items:center;gap:12px}.profit-coin{display:grid;place-items:center;width:46px;height:46px;border-radius:50%;background:#f59f22;color:#fff;font-size:25px}.profit-celebration-trade p{display:grid;grid-template-columns:auto auto;align-items:center;gap:3px 7px;margin:0}.profit-celebration-trade p strong{font-size:22px}.profit-celebration-trade p b{padding:3px 7px;border-radius:999px;background:#0d6d42;color:#64efae;font-size:10px}.profit-celebration-trade p small{grid-column:1/-1;color:#9faea7;font-size:11px}.profit-celebration-trade>p{text-align:right}.profit-celebration-trade>p strong{color:#65f0aa;font-size:30px}.profit-celebration-trade>p small{color:#9eada6;font-size:10px}
+.profit-celebration-stats{display:grid;grid-template-columns:repeat(3,1fr);margin-top:12px;border:1px solid rgba(34,191,118,.32);border-radius:17px;background:rgba(3,31,20,.6);overflow:hidden}.profit-celebration-stats>div{display:grid;place-items:center;gap:4px;padding:13px 8px;border-right:1px solid rgba(47,158,106,.22)}.profit-celebration-stats>div:last-child{border-right:0}.profit-celebration-stats span{color:#33df94;font-size:24px}.profit-celebration-stats small{color:#a8b6af;font-size:10px}.profit-celebration-stats strong{font-size:20px}
+.profit-celebration-card>aside{display:flex;align-items:center;gap:14px;margin-top:12px;padding:13px 16px;border:1px solid rgba(42,200,126,.3);border-radius:17px;background:linear-gradient(90deg,rgba(14,91,56,.45),rgba(6,47,30,.48))}.profit-celebration-card>aside>span{color:#46efa4;font-size:32px}.profit-celebration-card>aside p{display:grid;gap:3px;margin:0}.profit-celebration-card>aside strong{color:#60efa9;font-size:17px}.profit-celebration-card>aside small{color:#b3c0ba;font-size:11px}
+.profit-celebration-cta{width:100%;height:57px;margin-top:14px;border:0;border-radius:999px;background:linear-gradient(90deg,#58e99e,#7ff0b3);color:#031c10;font-size:18px;font-weight:950;box-shadow:0 0 24px rgba(72,234,157,.22);cursor:pointer}
+
+@media(max-width:600px){
+.test-environment-banner.live-runtime-banner{gap:6px;padding-left:7px;padding-right:7px}
+.release-history-trigger{flex:0 1 auto}.release-history-trigger>span:nth-child(2){max-width:132px;overflow:hidden;text-overflow:ellipsis}
+.profit-notification-header-button{width:28px;height:23px}.webapp-version-badge{font-size:7.2px;white-space:nowrap}
+.profit-notification-overlay{padding:9px 9px calc(18px + env(safe-area-inset-bottom))}.profit-notification-shell{gap:8px}
+.profit-notification-titlebar{grid-template-columns:37px 42px minmax(0,1fr) 57px;gap:7px;min-height:78px;padding:9px 9px;border-radius:14px}
+.profit-notification-back{width:34px;height:38px;font-size:30px}.profit-notification-title-icon{width:40px;height:40px;font-size:18px}.profit-notification-titlebar h1{font-size:21px}.profit-notification-titlebar p{font-size:10.5px;margin-top:3px}
+.profit-notification-close{height:42px;gap:2px;border-radius:9px}.profit-notification-close span{font-size:23px}.profit-notification-close small{font-size:8px}
+.profit-setting-row{grid-template-columns:43px minmax(0,1fr) 57px 30px;gap:7px;min-height:70px;padding:8px 9px;border-radius:13px}.profit-setting-row.primary{min-height:76px}.profit-setting-icon{width:39px;height:39px;border-radius:10px;font-size:18px}
+.profit-setting-row strong,.profit-setting-heading strong{font-size:14px}.profit-setting-row small,.profit-setting-heading small{font-size:9px}.profit-setting-row>b{font-size:11px}
+.profit-push-toggle{width:53px;height:29px}.profit-push-toggle span{width:21px;height:21px;top:3px}.profit-push-toggle.on span{transform:translateX(24px)}
+.profit-setting-block.mode{padding:10px 9px;border-radius:13px}.profit-setting-heading{grid-template-columns:42px minmax(0,1fr);gap:7px}.profit-mode-grid{gap:6px;margin-top:9px}.profit-mode-card{min-height:78px;padding:6px 2px;border-radius:10px}.profit-mode-card>span{font-size:20px}.profit-mode-card strong{font-size:9.5px}
+.profit-setting-row.minimum{grid-template-columns:43px minmax(0,1fr) 95px}.profit-setting-row.minimum select{height:36px;padding:0 7px;font-size:13px}
+.profit-notification-info{grid-template-columns:31px minmax(0,1fr);padding:9px;border-radius:11px}.profit-notification-info>span{font-size:21px}.profit-notification-info p{font-size:9px}
+.profit-preview{padding:9px;border-radius:13px}.profit-preview-notification{grid-template-columns:49px minmax(0,1fr);gap:9px;margin:8px 4px 0;padding:9px;border-radius:12px}.profit-preview-logo{width:45px;height:45px;font-size:27px}.profit-preview-notification small{font-size:8.5px}.profit-preview-notification strong{font-size:11px}.profit-preview-notification p{font-size:10px}
+.profit-notification-actions{gap:8px}.profit-notification-actions button{height:48px;border-radius:10px;font-size:12px}.profit-push-delivery-status{font-size:8px;padding:5px 8px}
+.profit-celebration-card{width:min(96vw,520px);padding:16px 14px 16px;border-radius:20px}.profit-celebration-card>header strong{font-size:11px}.profit-celebration-card>header small{font-size:7px}.profit-celebration-brand{width:31px;height:31px;font-size:19px}
+.profit-celebration-trophy{margin-top:10px}.profit-celebration-trophy b{font-size:54px}.profit-celebration-card h2{font-size:43px}.profit-celebration-card h3{font-size:18px;margin-bottom:13px}
+.profit-celebration-trade{padding:11px 10px}.profit-coin{width:38px;height:38px}.profit-celebration-trade p strong{font-size:16px}.profit-celebration-trade>p strong{font-size:21px}
+.profit-celebration-stats>div{padding:9px 3px}.profit-celebration-stats span{font-size:19px}.profit-celebration-stats small{font-size:7px}.profit-celebration-stats strong{font-size:14px}
+.profit-celebration-card>aside{padding:9px 11px}.profit-celebration-card>aside strong{font-size:13px}.profit-celebration-card>aside small{font-size:8px}.profit-celebration-cta{height:48px;font-size:14px}
+}
+@media(max-width:370px){
+.release-history-trigger>span:nth-child(2){max-width:92px}.webapp-version-badge{font-size:6.5px;padding-left:5px;padding-right:5px}.profit-notification-titlebar h1{font-size:18px}.profit-mode-card strong{font-size:8.5px}
+.profit-setting-row{grid-template-columns:40px minmax(0,1fr) 52px 27px}.profit-setting-row strong{font-size:12.5px}.profit-setting-row small{font-size:8px}
+}
