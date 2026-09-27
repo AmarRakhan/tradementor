@@ -84,8 +84,12 @@ function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
   const managedPositions=record(strategy2.multiBbPositions);
   const primaryReport=record(strategy2.multiBb);
   const report=Object.keys(primaryReport).length?primaryReport:record(strategy2.multiBbReport);
-  const zoneSoldiers=record(strategy2.zoneSoldiers);
-  const reportZoneSoldiers=record(report.zoneSoldiers);
+  const zoneSoldiers=Object.keys(record(strategy2.priceZoneSeats)).length
+    ? record(strategy2.priceZoneSeats)
+    : record(strategy2.zoneSoldiers);
+  const reportZoneSoldiers=Object.keys(record(report.priceZoneSeats)).length
+    ? record(report.priceZoneSeats)
+    : record(report.zoneSoldiers);
   return {
     longSlots:integerOrNull(settings.longSlots),
     shortSlots:integerOrNull(settings.shortSlots),
@@ -145,7 +149,7 @@ function markerDetail(row:Marker) {
     const zones=Array.isArray(row.originZones)?row.originZones.filter((value)=>Number.isInteger(Number(value))).map((value)=>`Z${signedZone(Number(value))}`):[];
     const roles=Array.isArray(row.soldierRoles)?row.soldierRoles.map((value)=>String(value).toUpperCase()):[];
     const origin=zones.length===1?` · ${zones[0]}`:zones.length>1?` · ${zones.length} zones`:"";
-    const role=roles.length===1?` · ${roles[0]==="EXPOSURE_BALANCER"?"exposure-balancer":roles[0]==="ZONE_BASE"?"basis-soldaat":roles[0].toLowerCase().replaceAll("_","-")}`:"";
+    const role=roles.length===1?` · ${roles[0]==="EXPOSURE_BALANCER"?"exposure-balancer":roles[0]==="ZONE_BASE"?"zone-stoel":roles[0].toLowerCase().replaceAll("_","-")}`:"";
     const types=Array.isArray(row.activityTypes)?row.activityTypes.map((value)=>String(value).toUpperCase()):[];
     const activity=types.length===1&&types[0]==="DCA"?" DCA":types.includes("DCA")&&types.includes("ENTRY")?" ENTRY+DCA":"";
     return `${side==="SHORT"?"SHORT":"LONG"}${activity}${count>1?` ×${count}`:""} ${compactUsd(row.notionalUsd)}${origin}${role}`.trim();
@@ -208,12 +212,12 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
     className={`portfolio-command-center pcc-homecoming cc-${vm.actionMode}`}
     data-reference="file_00000000cf9481f4b495250734661e31"
     data-release-feature="zone_command_center"
-    aria-label="Zone-Soldaten Strategiestatus"
+    aria-label="Prijszone-stoelen Strategiestatus"
     aria-live="polite"
   >
     <header className="pcc-head">
       <span className="pcc-head-icon" aria-hidden="true">⌖</span>
-      <div><small>ZONE-SOLDATEN</small><strong>Strategiestatus</strong></div>
+      <div><small>PRIJSZONE-STOELEN</small><strong>Strategiestatus</strong></div>
       <span className="pcc-command-badge">COMMAND CENTER<em>{vm.strategyEnabled?"BOT ACTIEF · 24/7":"STRATEGY UIT"}</em></span>
     </header>
 
@@ -232,7 +236,7 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
     <div className="pcc-status-grid pcc-status-grid-v2">
       <article>
         <span className="pcc-status-icon field" aria-hidden="true">♟</span>
-        <div><small>ZONE-SOLDATEN ACTIEF</small><strong><b className="long">{vm.strategyOwnedLong}L</b> · <b className="short">{vm.strategyOwnedShort}S</b></strong><em>{vm.strategyOwnedTotal} totaal · strategy-owned</em></div>
+        <div><small>PRIJSZONE-POSITIES ACTIEF</small><strong><b className="long">{vm.strategyOwnedLong}L</b> · <b className="short">{vm.strategyOwnedShort}S</b></strong><em>{vm.strategyOwnedTotal} totaal · strategy-owned</em></div>
       </article>
       <article>
         <span className="pcc-status-icon map" aria-hidden="true">◇</span>
@@ -244,13 +248,13 @@ function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string
       </article>
       <article>
         <span className="pcc-status-icon trophy" aria-hidden="true">♛</span>
-        <div><small>WINST THUISGEKOMEN</small><strong>{vm.winningHomeToday}</strong><em>vandaag · oude-zone soldaten</em></div>
+        <div><small>WINST UIT OUDE ZONES</small><strong>{vm.winningHomeToday}</strong><em>vandaag · buiten oorsprongszone gesloten</em></div>
       </article>
     </div>
 
     <footer className="pcc-homecoming-footer">
       <span className="pcc-info-icon" aria-hidden="true">i</span>
-      <div><strong>Oude-zone posities zijn onderdeel van Zone-Soldaten actief</strong><em>Legacy, manual en Sniper tellen hier niet mee.</em></div>
+      <div><strong>Oude-zone posities blijven onderdeel van de prijszone-strategie</strong><em>Legacy, manual en Sniper tellen hier niet mee.</em></div>
     </footer>
 
     <span className="portfolio-koers-cockpit-sr">
@@ -270,24 +274,24 @@ function ZoneSoldiersCommandCenterScreen({vm,advisorMessage,onClose}:{vm:any;adv
     },80);
   };
   return createPortal(
-    <section className="zsc-screen" data-reference={ZONE_SOLDIERS_SCREEN_REFERENCE} aria-label="Zone-Soldaten Command Center">
+    <section className="zsc-screen" data-reference={ZONE_SOLDIERS_SCREEN_REFERENCE} aria-label="Prijszone-stoelen overzicht">
       <div className="zsc-scroll">
         <header className="zsc-topbar">
           <button type="button" className="zsc-back" onClick={onClose} aria-label="Terug naar Portfolio Snapshot">‹</button>
-          <div className="zsc-brand"><strong>Zone-Soldaten</strong><span>COMMAND CENTER</span></div>
+          <div className="zsc-brand"><strong>Prijszone-stoelen</strong><span>OVERZICHT</span></div>
           <span className="zsc-live"><i/>Live</span>
           <span className="zsc-build">Webapp versie 46 · build {WEBAPP_BUILD_NUMBER}</span>
           <span className="zsc-bell" aria-hidden="true">♢</span>
         </header>
         <section className="zsc-intro">
-          <div><strong>Strategie-overzicht · losse pagina</strong><span>Alle Zone-Soldaten informatie, posities en statistieken in één overzicht.</span></div>
+          <div><strong>Strategie-overzicht · losse pagina</strong><span>Alle prijszone-informatie, posities en stoelstatus in één overzicht.</span></div>
           <div className="zsc-discipline"><b>◒</b><span>DISCIPLINE<br/>DATA<br/><em>LONG TERM WEALTH</em></span></div>
         </section>
         <StrategyCommandCenter vm={vm} advisorMessage={advisorMessage}/>
         <section className="zsc-actions">
           <header><strong>SNELLE ACTIES</strong><span>Direct naar de belangrijkste functies.</span></header>
           <div className="zsc-actions-grid">
-            <button type="button" onClick={()=>goToUnderlying("ACTIEVE POSITIES")}><b>☷</b><span><strong>Open posities</strong><small>Bekijk alle actieve Zone-Soldaten</small></span><em>›</em></button>
+            <button type="button" onClick={()=>goToUnderlying("ACTIEVE POSITIES")}><b>☷</b><span><strong>Open posities</strong><small>Bekijk alle actieve prijszone-posities</small></span><em>›</em></button>
             <button type="button" className="gold" onClick={onClose}><b>◇</b><span><strong>Zone mapping</strong><small>Overzicht van alle zones</small></span><em>›</em></button>
             <button type="button" onClick={()=>goToUnderlying("BOTINSTELLINGEN")}><b>⚙</b><span><strong>Instellingen</strong><small>Strategie en risico parameters</small></span><em>›</em></button>
             <button type="button" className="gold" onClick={onClose}><b>↩</b><span><strong>Terug naar snapshot</strong><small>Naar portfolio overzicht</small></span><em>›</em></button>
@@ -915,7 +919,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const timelineGap=advisorTimeline?.gaps?.at(-1)??null;
   const timelineWait=advisorTimeline
     ? timelineGap
-      ? `Historiegat ${clockTime(timelineGap.fromTime)}–${clockTime(timelineGap.toTime)} · zone-entrys worden geblokkeerd zolang de Zone-Soldatenstrategie actief is.`
+      ? `Historiegat ${clockTime(timelineGap.fromTime)}–${clockTime(timelineGap.toTime)} · nieuwe entries worden geblokkeerd zolang de prijszone-strategie actief is.`
       : !advisorTimelineReady
         ? `Wachten op ${Math.max(0,Number(advisorTimeline.requiredContiguousBars)-Number(advisorTimeline.contiguousBars))} extra bevestigde 15m-candles voor handelssturing.`
         : ""
@@ -961,7 +965,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         ? `+${balancerPending} ${balancerSide} gewenst`
         : ((zoneFreeLong??0)+(zoneFreeShort??0)>0
           ? `Wacht op entry · ${zoneFreeLong??0}L / ${zoneFreeShort??0}S vrij`
-          : "Formatie compleet")
+          : "Zone-stoelen gevuld")
     : instructionTitle;
   const exposureValue=Number.isFinite(netExposureUsd)
     ? (Math.abs(netExposureUsd)<.005?"FLAT":`${levelUsd(Math.abs(netExposureUsd))} ${netExposureSide}`)
@@ -1060,7 +1064,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       <header className="portfolio-strategy-head">
         <span className="portfolio-strategy-mark" aria-hidden="true">{zoneSoldierEnabled?"⌖":"◎"}</span>
         <div className="portfolio-strategy-heading">
-          <small>{zoneSoldierEnabled?"ZONE-SOLDATEN":zoneSoldierLifecycle==="DRAINING"?"ZONE DRAINING":"PORTFOLIOZONE"}</small>
+          <small>{zoneSoldierEnabled?"PRIJSZONE-STOELEN":zoneSoldierLifecycle==="DRAINING"?"ZONE DRAINING":"PORTFOLIOZONE"}</small>
           <strong>Strategiestatus</strong>
         </div>
         <span className={`portfolio-strategy-status ${strategyTone}`}><i/>{strategyStatus}</span>
@@ -1082,7 +1086,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         </article>
         <article className="formation">
           <span className="portfolio-strategy-tile-icon" aria-hidden="true">⚔</span>
-          <div><small>FORMATIE</small><strong>{zoneSoldierEnabled?`${zoneOpenLong??"—"}L · ${zoneOpenShort??"—"}S`:"—"}</strong><em>{zoneSoldierEnabled?`doel ${zoneBaseLong??"—"}L · ${zoneBaseShort??"—"}S · vrij ${zoneFreeLong??"—"}L/${zoneFreeShort??"—"}S`:"alleen informatief"}</em></div>
+          <div><small>STOELEN ACTIEVE ZONE</small><strong>{zoneSoldierEnabled?`${zoneOpenLong??"—"}L · ${zoneOpenShort??"—"}S`:"—"}</strong><em>{zoneSoldierEnabled?`doel ${zoneBaseLong??"—"}L · ${zoneBaseShort??"—"}S · vrij ${zoneFreeLong??"—"}L/${zoneFreeShort??"—"}S`:"alleen informatief"}</em></div>
         </article>
         <article className={`balance ${netExposureSide==="LONG"?"long":netExposureSide==="SHORT"?"short":"flat"}`}>
           <span className="portfolio-strategy-tile-icon" aria-hidden="true">⇄</span>
@@ -1097,7 +1101,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       {zoneProgressPercent!==null&&nextUpIndex!==null?<span className="portfolio-koers-zone-progress portfolio-strategy-progress" title={`Exacte zonegrenzen: ${zoneBandSummary}`}><i><em style={{width:`${zoneProgressPercent}%`}}/></i><b>{Math.round(zoneProgressPercent)}%</b><span>richting ↑ Z{signedZone(nextUpIndex)}</span></span>:null}
 
       <footer className="portfolio-strategy-foot">
-        {zoneSoldierEnabled?<><span><b>{zoneTotalActive??"—"}</b> soldaten · <b className="long">{zoneTotalLong??"—"}L</b> / <b className="short">{zoneTotalShort??"—"}S</b></span>{(oldOpenTotal??0)>0?<span>oude zones <b>{oldOpenTotal}</b></span>:null}</>:<span>{zoneBasisSummary}</span>}
+        {zoneSoldierEnabled?<><span><b>{zoneTotalActive??"—"}</b> prijszone-posities · <b className="long">{zoneTotalLong??"—"}L</b> / <b className="short">{zoneTotalShort??"—"}S</b></span>{(oldOpenTotal??0)>0?<span>oude zones <b>{oldOpenTotal}</b></span>:null}</>:<span>{zoneBasisSummary}</span>}
         {advisorMessage?<em>{advisorMessage}</em>:null}
       </footer>
 
