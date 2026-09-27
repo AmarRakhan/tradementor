@@ -26,36 +26,71 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-27",
-  title: "Profit Push Notifications 1.3 · meldingstekst zonder botnaam",
+  title: "Auto Hedge Tradecentrum-status · exacte muntkoppeling",
   newItems: [
-    "Native pushmeldingen tonen de tekst Amar Crypto Bot 2026 niet meer als onderdeel van onze eigen meldingstitel of preview.",
-    "De testmelding heet voortaan alleen 🧪 Testmelding en de service-worker fallback heet neutraal Melding.",
+    "Elke Tradecentrum-regel van een munt die door Auto Hedge als actieve pair wordt beheerd, krijgt nu consequent het bijbehorende statuslabel.",
+    "De groene volledig-gehedgede status heet voortaan alleen HEDGED; de overbodige AH-prefix is verwijderd.",
   ],
   problems: [
-    "Na de succesvolle native push stond Amar Crypto Bot 2026 nog onnodig in de meldingstekst.",
+    "Het Tradecentrum koppelde Auto Hedge-pairs via zichtbare celtekst. Daardoor was de statusbadge afhankelijk van de actuele DOM-opmaak en kon een echte Auto Hedge-pair zonder badge worden weergegeven.",
+    "De tekst AH HEDGED was dubbelop omdat de status al binnen de Auto Hedge-functionaliteit wordt getoond.",
   ],
   causes: [
-    "De testpayload, service-worker fallback en voorbeeldweergave gebruikten de productnaam nog expliciet als tekst.",
+    "De frontend gebruikte een tekstzoekactie op de volledige muntcel in plaats van een stabiele canonieke symbol identifier.",
   ],
   fixes: [
-    "De expliciete productnaam is verwijderd uit de testpush, fallbacktitel en pushvoorbeeldkaart.",
-    "Winst- en Portfolio-TP-meldingen behouden alleen hun functionele titel en bedragen.",
+    "Iedere Tradecentrum-muntregel draagt nu een expliciete data-auto-hedge-symbol op basis van het genormaliseerde exchangesymbool.",
+    "De Auto Hedge-bridge koppelt pair-state uitsluitend via die exacte symbol key; visuele prijs-, leverage- of logo-inhoud beïnvloedt de match niet meer.",
+    "Het zichtbare statuslabel gebruikt rechtstreeks HEDGED, BIJWERKEN, RECOVERY, GEWAPEND, UITGESCHAKELD of FOUT zonder AH-prefix.",
   ],
   now: [
-    "Android/Samsung kan nog zelfstandig een app- of bronlabel tonen; dat systeemlabel wordt door Android/browser beheerd en niet door onze pushpayload.",
-    "Geen tradinglogica, pushproviderconfiguratie of abonnementslogica is gewijzigd.",
+    "Alle rijen voor dezelfde door Auto Hedge beheerde munt gebruiken dezelfde server-authoritatieve pair-status, inclusief LONG- en SHORT-zijde.",
+    "Deze wijziging is uitsluitend presentatie/statuskoppeling en verandert geen hedge-trigger, $10-verliesgrens, 1:1 quantity, orders, recovery of pair-locks.",
   ],
-  before: "De push werkte, maar bevatte nog Amar Crypto Bot 2026 als zichtbare meldingstekst.",
-  after: "Onze eigen pushinhoud is kort en functioneel, zonder de botnaam.",
+  before: "Een Auto Hedge-pair kon fysiek en server-side gehedged zijn terwijl slechts een andere munt zichtbaar het AH HEDGED-label kreeg.",
+  after: "Tradecentrum koppelt de status exact per munt en toont voor een volledig gehedgede pair het compacte groene label HEDGED.",
   technicalDetails: [
-    "Testtitle: 🧪 Testmelding.",
-    "Service-worker fallbacktitle: Melding.",
-    "Preview-header bevat alleen de relatieve tijd.",
+    "Pair source of truth blijft /v1/me/aster/position-loss-auto-hedge.",
+    "Matching key: normalized exchange symbol via data-auto-hedge-symbol; quote-suffix USDT wordt alleen voor de vergelijkingskey genormaliseerd.",
+    "Geen inferentie op basis van alleen bestaande LONG/SHORT-posities: alleen echte Auto Hedge pair-state krijgt het Auto Hedge-label.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-451-profit-push-unbranded",
+    version: "46",
+    build: "451",
+    releasedAt: "2026-09-27",
+    title: "Profit Push Notifications 1.3 · meldingstekst zonder botnaam",
+    newItems: [
+      "Native pushmeldingen tonen de tekst Amar Crypto Bot 2026 niet meer als onderdeel van onze eigen meldingstitel of preview.",
+      "De testmelding heet voortaan alleen 🧪 Testmelding en de service-worker fallback heet neutraal Melding.",
+    ],
+    problems: [
+      "Na de succesvolle native push stond Amar Crypto Bot 2026 nog onnodig in de meldingstekst.",
+    ],
+    causes: [
+      "De testpayload, service-worker fallback en voorbeeldweergave gebruikten de productnaam nog expliciet als tekst.",
+    ],
+    fixes: [
+      "De expliciete productnaam is verwijderd uit de testpush, fallbacktitel en pushvoorbeeldkaart.",
+      "Winst- en Portfolio-TP-meldingen behouden alleen hun functionele titel en bedragen.",
+    ],
+    now: [
+      "Android/Samsung kan nog zelfstandig een app- of bronlabel tonen; dat systeemlabel wordt door Android/browser beheerd en niet door onze pushpayload.",
+      "Geen tradinglogica, pushproviderconfiguratie of abonnementslogica is gewijzigd.",
+    ],
+    before: "De push werkte, maar bevatte nog Amar Crypto Bot 2026 als zichtbare meldingstekst.",
+    after: "Onze eigen pushinhoud is kort en functioneel, zonder de botnaam.",
+    technicalDetails: [
+      "Testtitle: 🧪 Testmelding.",
+      "Service-worker fallbacktitle: Melding.",
+      "Preview-header bevat alleen de relatieve tijd.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-450-profit-push-vapid-fix",
     version: "46",
