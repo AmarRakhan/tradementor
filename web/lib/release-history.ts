@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-27",
-  title: "Auto Hedge Tradecentrum-status · exacte muntkoppeling",
+  title: "Auto Hedge Tradecentrum-status · alle beheerde munten",
   newItems: [
     "Elke Tradecentrum-regel van een munt die door Auto Hedge als actieve pair wordt beheerd, krijgt nu consequent het bijbehorende statuslabel.",
     "De groene volledig-gehedgede status heet voortaan alleen HEDGED; de overbodige AH-prefix is verwijderd.",
