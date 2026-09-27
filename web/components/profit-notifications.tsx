@@ -75,7 +75,7 @@ function isStandalone() {
     Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 }
 
-async function ensureDeviceSubscription() {
+async function ensureDeviceSubscription(forceRenew = false) {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
     throw new Error("Pushmeldingen worden door deze browser niet ondersteund.");
   }
@@ -90,6 +90,21 @@ async function ensureDeviceSubscription() {
 
   const registration = await navigator.serviceWorker.ready;
   let subscription = await registration.pushManager.getSubscription();
+  if (forceRenew && subscription) {
+    const previous = subscription.toJSON();
+    try {
+      if (previous.endpoint) {
+        await authenticatedRequest("/api/notifications/subscriptions/remove", {
+          method: "POST",
+          body: JSON.stringify({ endpoint: previous.endpoint }),
+        });
+      }
+    } catch {
+      // Server cleanup is best-effort; browser unsubscribe is the source of truth for this device.
+    }
+    try { await subscription.unsubscribe(); } catch {}
+    subscription = null;
+  }
   if (!subscription) {
     const keyPayload = await authenticatedRequest("/api/notifications/public-key");
     const publicKey = String(keyPayload.publicKey || "");
@@ -320,10 +335,21 @@ export function ProfitNotificationPanel() {
     setMessage("");
     try {
       await ensureDeviceSubscription();
-      await authenticatedRequest("/api/notifications/test", { method: "POST", body: "{}" });
-      setMessage("Testmelding verzonden. Er is geen trade of portfolioactie uitgevoerd.");
+      try {
+        await authenticatedRequest("/api/notifications/test", { method: "POST", body: "{}" });
+        setMessage("Testmelding verzonden. Er is geen trade of portfolioactie uitgevoerd.");
+      } catch (firstError) {
+        const reason = firstError instanceof Error ? firstError.message : "";
+        const repairable = /PUSH_SUBSCRIPTION_EXPIRED|PUSH_PROVIDER_AUTH_REJECTED/.test(reason);
+        if (!repairable) throw firstError;
+        setMessage("Pushkoppeling herstellen…");
+        await ensureDeviceSubscription(true);
+        await authenticatedRequest("/api/notifications/test", { method: "POST", body: "{}" });
+        setMessage("Testmelding verzonden. De pushkoppeling op dit apparaat is automatisch hersteld.");
+      }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Testmelding versturen is niet gelukt.");
+      const value = error instanceof Error ? error.message : "Testmelding versturen is niet gelukt.";
+      setMessage(value.replace(/^PUSH_[A-Z_]+\s*·\s*/, ""));
     } finally {
       setWorking("");
       refreshPermission();
