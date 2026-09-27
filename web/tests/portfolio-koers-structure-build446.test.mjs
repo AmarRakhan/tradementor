@@ -62,3 +62,26 @@ test("Build 446 is the advertised webapp build",async()=>{
   const version=await readFile(new URL("../lib/app-version.ts",import.meta.url),"utf8");
   assert.match(version,/WEBAPP_BUILD_NUMBER = "446"/);
 });
+
+
+test("Build 447 derives visible active zone from the current live price instead of capped +3",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,2)"));
+  assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
+  assert.ok(component.includes("const activeLower=s1"));
+  assert.ok(component.includes("const activeUpper=r1"));
+});
+
+test("Build 447 puts the next breakout at R1, the first resistance above the active zone",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("breakout:r1Level?"));
+  assert.equal(component.includes("breakout:(r2Level??r1Level)"),false);
+});
+
+test("Build 447 structure notes are collision-aware against trade markers",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("placeStructureNote(structureDraft.newHigh"));
+  assert.ok(component.includes("markerLayout.all,reserved"));
+  assert.ok(component.includes("structureRectsOverlap"));
+  assert.ok(component.includes('kind==="newHigh"'));
+});
