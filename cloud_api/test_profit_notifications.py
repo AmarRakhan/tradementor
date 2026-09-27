@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import base64
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from profit_notification_replay import replay_portfolio_tp, replay_profit_events
 from profit_notifications import (
@@ -13,6 +16,7 @@ from profit_notifications import (
     qualifying_profit,
     summary_push_payload,
     trade_push_payload,
+    _vapid_private_der_b64,
 )
 
 
@@ -209,3 +213,26 @@ def test_push_provider_failures_are_classified_for_safe_device_repair():
     assert "{400, 401, 403}" in source
     assert "{404, 410}" in source
     assert "execute_aster" not in source
+
+
+def test_vapid_pem_is_converted_to_der_base64_before_pywebpush():
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    encoded = _vapid_private_der_b64(pem)
+    assert "BEGIN PRIVATE KEY" not in encoded
+    padding = "=" * ((4 - len(encoded) % 4) % 4)
+    der = base64.urlsafe_b64decode(encoded + padding)
+    restored = serialization.load_der_private_key(der, password=None)
+    assert isinstance(restored, ec.EllipticCurvePrivateKey)
+    assert restored.private_numbers().private_value == key.private_numbers().private_value
+
+
+def test_pywebpush_never_receives_raw_pem_text():
+    source = Path("profit_notifications.py").read_text()
+    assert 'vapid_private_key=vapid["privatePem"]' not in source
+    assert "vapid_private_key=vapid_private_key" in source
+    assert "_vapid_private_der_b64" in source
