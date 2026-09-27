@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 120" role="img" aria-label="Zone Warriors">
+<defs><linearGradient id="zg" x1="0" x2="1"><stop stop-color="#21ef9b"/><stop offset=".58" stop-color="#15b96f"/><stop offset="1" stop-color="#e3ba48"/></linearGradient><filter id="gl"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+<rect width="180" height="120" rx="18" fill="#04100c"/>
+<g opacity=".95" filter="url(#gl)" stroke-linecap="round"><path d="M10 28H55M10 48H49M10 70H52M128 28H170M132 48H170M129 70H170" stroke="url(#zg)" stroke-width="3"/><path d="M16 90H60M120 90H164" stroke="#d5ad3d" stroke-width="3"/></g>
+<g transform="translate(57 7)" stroke="url(#zg)" stroke-width="4" stroke-linejoin="round"><path d="M33 2 51 16l8 22-8 45-18 20-18-20L7 38l8-22Z" fill="#07251a"/><path d="M33 2v52L16 43l-9-5 8-22Z" fill="#12bd73"/><path d="M33 2v52l17-11 9-5-8-22Z" fill="#d4a93c"/><path d="M17 44 30 51 21 58 15 77" fill="none"/><path d="M49 44 36 51l9 7 6 19" fill="none"/><path d="M33 2v20" stroke="#f4d66d"/></g></svg>
