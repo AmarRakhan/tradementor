@@ -276,6 +276,11 @@ def rank_top_volume(tickers: list[dict[str, Any]], exchange_info: dict[str, Any]
     return ranked[:top_n]
 
 
+def _remaining_strategy_capacity(maximum_positions: int, active_strategy_positions: int) -> int:
+    """Hard global Strategy-2 cap shared by every active price zone."""
+    return max(0, int(maximum_positions) - max(0, int(active_strategy_positions)))
+
+
 def _zone_entry_multiplier(zone: Any, growth_percent: float, max_multiplier: float) -> float:
     """Gentle monotone sizing: farther from Z0 never means a smaller base entry."""
     try:
@@ -1120,7 +1125,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # maximumPositions remains the hard global Strategy-2 ceiling across
         # every active and old-zone seat. Manual/untracked Aster positions do
         # not consume this strategy-owned cap.
-        account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
+        account_remaining_capacity = _remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)
     elif settings.asymmetric_hedge_enabled:
         # Existing asymmetric LONG cycles keep occupying their pair slot even
         # after their paired SHORT has been released.  However, configured
@@ -1146,7 +1151,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # Capacity follows Strategy-2 ownership. Untracked/manual account legs
         # outside this strategy do not occupy general bot-seat capacity, while
         # the side-specific Aster hard caps above still apply.
-        account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
+        account_remaining_capacity = _remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)
 
     # If exchange truth could not be refreshed while the pairing toggle is on,
     # do not allocate any new seat from a potentially stale snapshot. Existing
@@ -1615,11 +1620,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 short_count += 1
                 exchange_short_count += 1
             if zone_mode:
-                account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
+                account_remaining_capacity = _remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)
                 long_need = len(available_soldiers(zone_state or {}, "LONG"))
                 short_need = len(available_soldiers(zone_state or {}, "SHORT"))
             else:
-                account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
+                account_remaining_capacity = _remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)
                 strategy_long_need = max(0, settings.long_slots - long_count)
                 strategy_short_need = max(0, settings.short_slots - short_count)
                 exchange_long_spare = max(0, settings.long_slots - exchange_long_count)
