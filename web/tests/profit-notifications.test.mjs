@@ -82,3 +82,14 @@ test("approved visual references are recorded in the canonical release history",
     "file_00000000ebcc8243924098b6858456ae",
   ]) assert.ok(history.includes(id), "missing visual reference " + id);
 });
+
+
+test("test push can safely repair a stale device subscription exactly once", async () => {
+  const source = await readFile(new URL("../components/profit-notifications.tsx", import.meta.url), "utf8");
+  assert.match(source, /ensureDeviceSubscription\(forceRenew = false\)/);
+  assert.match(source, /subscription\.unsubscribe\(\)/);
+  assert.match(source, /subscriptions\/remove/);
+  assert.match(source, /PUSH_SUBSCRIPTION_EXPIRED\|PUSH_PROVIDER_AUTH_REJECTED/);
+  assert.match(source, /await ensureDeviceSubscription\(true\)/);
+  assert.match(source, /automatisch hersteld/);
+});

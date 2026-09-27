@@ -199,3 +199,13 @@ def test_replay_module_is_exchange_free():
     assert "AsterV3Client" not in source
     assert "execute_" not in source
     assert "place_order" not in source
+
+
+def test_push_provider_failures_are_classified_for_safe_device_repair():
+    source = Path("profit_notifications.py").read_text()
+    assert "providerStatuses" in source
+    assert "PUSH_SUBSCRIPTION_EXPIRED" in source
+    assert "PUSH_PROVIDER_AUTH_REJECTED" in source
+    assert "{400, 401, 403}" in source
+    assert "{404, 410}" in source
+    assert "execute_aster" not in source
