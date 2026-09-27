@@ -13,7 +13,7 @@ test("unreleased path keeps the legacy configurator and V2 is lazy loaded", () =
 });
 
 test("V2 uses the approved visual reference and one-page step structure", () => {
-  assert.match(v2, /file_000000003e34820a9d0c8dc22b84ac47/);
+  assert.match(v2, /file_000000007b288243acf4cc791b0258dd/);
   for (const id of ["markt", "posities", "instap", "grootte", "dca", "winst", "bescherming", "controle"]) {
     assert.match(v2, new RegExp("v2-step-" + id));
   }
@@ -38,28 +38,29 @@ test("V2 seat bars show live occupancy against each side capacity", () => {
   assert.doesNotMatch(v2, /totals\.shortSlots \/ totals\.totalSlots/);
 });
 
-test("Build 445 keeps Zone-Soldatenstrategie an explicit persistent entitlement opt-in", () => {
+test("Build 455 keeps price-zone seats an explicit persistent entitlement opt-in", () => {
   assert.match(v2, /zoneSoldiersEnabled: settings\.zoneSoldiersEnabled === true && n\(settings\.zoneSoldiersOptInVersion, 0\) >= 1/);
-  assert.match(v2, /Zone-Soldatenstrategie/);
+  assert.match(v2, /Prijszone-stoelen/);
   assert.match(v2, /Expliciete opt-in/);
   assert.match(v2, /zoneSoldiersOptInVersion: draft\.zoneSoldiersEnabled \? 1 : 0/);
   assert.match(v2, /STRATEGIE · TRADITIONEEL/);
-  assert.match(v2, /ZONE DRAINING/);
+  assert.match(v2, /ZONEPOSITIES AFBOUWEN/);
 });
 
-test("Build 417 shows the active Aster strategy outside settings", () => {
+test("Build 455 shows the active price-zone strategy outside settings", () => {
   assert.match(page, /aster-strategy-mode/);
-  assert.match(page, /STRATEGIE · ZONE SOLDATEN/);
+  assert.match(page, /STRATEGIE · PRIJSZONE-STOELEN/);
+  assert.match(page, /PRICE_ZONE_SEATS/);
   assert.match(page, /STRATEGIE · TRADITIONEEL/);
   assert.match(page, /Portfolio Koers is informatief/);
 });
 
 
-test("Build 419 keeps safe zone defaults when legacy settings do not contain zone fields", () => {
-  assert.match(v2, /const nDefault = \(value: unknown, fallback: number\)/);
-  assert.match(v2, /if \(!raw\) return fallback/);
-  assert.match(v2, /zoneBaseLongSoldiers: Math\.max\(1, Math\.round\(nDefault\(persisted\.zoneBaseLongSoldiers, 3\)\)\)/);
-  assert.match(v2, /zoneBaseShortSoldiers: Math\.max\(1, Math\.round\(nDefault\(persisted\.zoneBaseShortSoldiers, 3\)\)\)/);
+test("Build 455 keeps safe 3L/3S price-zone defaults when legacy settings do not contain seat fields", () => {
+  assert.match(v2, /zoneLongSeats: textValue\(settings\.zoneBaseLongSoldiers, 3\)/);
+  assert.match(v2, /zoneShortSeats: textValue\(settings\.zoneBaseShortSoldiers, 3\)/);
+  assert.match(v2, /zoneBaseLongSoldiers: zoneLongSeats/);
+  assert.match(v2, /zoneBaseShortSoldiers: zoneShortSeats/);
   assert.match(v2, /zoneEntryGrowthPercent: nDefault\(persisted\.zoneEntryGrowthPercent, 2\)/);
   assert.match(v2, /zoneEntryMaxMultiplier: nDefault\(persisted\.zoneEntryMaxMultiplier, 1\.2\)/);
 });
