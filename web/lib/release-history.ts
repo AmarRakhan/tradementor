@@ -59,6 +59,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Nieuw seatModel rapporteert activeZone, perZoneLong/perZoneShort, occupied/free active-zone seats, old-zone open counts en strategy-owned totals.",
     "Referentie botinstellingen: file_000000007b288243acf4cc791b0258dd.",
     "Referentie Portfolio Snapshot: file_00000000a5708210be60f92f52e4b5cc.",
+    "Build 455 releasecontract is na de complete web-regressiesuite vastgezet.",
   ],
   confidence: "confirmed",
 };
