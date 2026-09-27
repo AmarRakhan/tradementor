@@ -3,64 +3,99 @@ import fs from "node:fs";
 import test from "node:test";
 
 const shell = fs.readFileSync(new URL("../components/aster-strategy2-entry.tsx", import.meta.url), "utf8");
-const v2 = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx", import.meta.url), "utf8");
+const ui = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx", import.meta.url), "utf8");
 const page = fs.readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-test("unreleased path keeps the legacy configurator and V2 is lazy loaded", () => {
+test("BETA release gate remains backwards compatible and isolated", () => {
+  assert.match(shell, /features\?\.bot_configurator_v2\?\.enabled/);
   assert.match(shell, /if \(!releaseEnabled\) return <AsterStrategy2Maker/);
   assert.match(shell, /lazy\(\(\) => import\("@\/components\/aster-bot-configurator-v2"\)/);
-  assert.match(page, /AsterStrategy2Entry as AsterStrategy2Maker/);
+  assert.match(ui, /data-beta-only="true"/);
 });
 
-test("V2 uses the approved visual reference and one-page step structure", () => {
-  assert.match(v2, /file_000000007b288243acf4cc791b0258dd/);
-  for (const id of ["markt", "posities", "instap", "grootte", "dca", "winst", "bescherming", "controle"]) {
-    assert.match(v2, new RegExp("v2-step-" + id));
+test("Botconfigurator 3.0 has exactly four visible wizard steps", () => {
+  assert.match(ui, /\["strategy", "Strategie"\]/);
+  assert.match(ui, /\["settings", "Instellingen"\]/);
+  assert.match(ui, /\["entry", "Instap & DCA"\]/);
+  assert.match(ui, /\["review", "Controleren"\]/);
+  assert.doesNotMatch(ui, /\["markt", "Markt"\]/);
+  assert.doesNotMatch(ui, /\["dca", "DCA"\]/);
+  assert.doesNotMatch(ui, /\["bescherming", "Bescherming"\]/);
+  assert.match(ui, /currentStep===1/);
+  assert.match(ui, /currentStep===4/);
+});
+
+test("all binding Set A and Set B visual references are embedded", () => {
+  for (const id of [
+    "file_00000000e820820abd4c0803c0faf72c",
+    "file_00000000d4188243af425d77dce05825",
+    "file_00000000e3d88246868c97243a4217e0",
+    "file_000000001aec8210ae97ce7474fad735",
+    "file_00000000e5a88210923fcf9378f4bbb6",
+    "file_00000000d50c82438453f4be8cb1afc3",
+    "file_0000000073288210ad62e9dfbb148202",
+    "file_0000000015c482109ffb7e3e4b6e4efe",
+    "file_00000000d18082108f0116c9afb082e9",
+  ]) assert.match(ui, new RegExp(id));
+});
+
+test("display strategy names are Zone Warriors and Classic DCA and Sniper is absent", () => {
+  assert.match(ui, />Zone Warriors</);
+  assert.match(ui, />Classic DCA</);
+  assert.doesNotMatch(ui, />Sniper</);
+  assert.match(page, /STRATEGIE · ZONE WARRIORS/);
+  assert.match(page, /STRATEGIE · CLASSIC DCA/);
+  assert.doesNotMatch(page, /STRATEGIE · PRIJSZONE-STOELEN/);
+});
+
+test("internal strategy and persistence identifiers remain unchanged", () => {
+  assert.match(ui, /engine: "multi_bb_v1"/);
+  assert.match(ui, /strategyKind: "multi_bb_v1"/);
+  assert.match(ui, /zoneSoldiersEnabled: draft\.zoneSoldiersEnabled/);
+  assert.match(ui, /zoneSoldiersOptInVersion: draft\.zoneSoldiersEnabled \? 1 : 0/);
+  assert.match(ui, /\/api\/exchanges\/aster\/strategy2\/settings/);
+  assert.match(ui, /\/api\/exchanges\/aster\/strategy2\/start/);
+});
+
+test("LONG and SHORT keep independent start and DCA configuration", () => {
+  for (const key of ["entryMarginLong","entryMarginShort","longDcaAmount","shortDcaAmount","longDcaDistance","shortDcaDistance","maxDcaLong","maxDcaShort"]) {
+    assert.match(ui, new RegExp(key));
   }
-  assert.match(v2, /BETA · alleen zichtbaar voor jou/);
-  assert.match(v2, /const zoneSoldiersAvailable = feature\("zone_soldiers"\)\.enabled === true/);
-  assert.doesNotMatch(v2, /ownerBeta && feature\("zone_soldiers"\)/);
+  assert.match(ui, /DCA-bedrag/);
+  assert.match(ui, /DCA-afstand/);
+  assert.match(ui, /Max DCA/);
 });
 
-test("release center keeps approval separate from publish and supports rollback", () => {
-  assert.match(v2, /Getest en akkoord/);
-  assert.match(v2, /Vrijgeven aan alle gebruikers/);
-  assert.match(v2, /Terug naar BETA/);
+test("TP modes and portfolio TP base semantics stay reachable", () => {
+  assert.match(ui, /"PER_TRADE","PORTFOLIO","OFF"/);
+  assert.match(ui, /portfolioTpBaseMode/);
+  assert.match(ui, /portfolioTpCustomBaseEquity/);
+  assert.match(ui, /Cycle start/);
+  assert.match(ui, /Huidige waarde/);
+  assert.match(ui, /Aangepast/);
 });
 
-test("V2 seat bars show live occupancy against each side capacity", () => {
-  assert.match(v2, /report\.activeLong/);
-  assert.match(v2, /report\.activeShort/);
-  assert.match(v2, /slotFill\(activeLong, totals\.longSlots\)/);
-  assert.match(v2, /slotFill\(activeShort, totals\.shortSlots\)/);
-  assert.match(v2, /Bezet \/ capaciteit/);
-  assert.doesNotMatch(v2, /totals\.longSlots \/ totals\.totalSlots/);
-  assert.doesNotMatch(v2, /totals\.shortSlots \/ totals\.totalSlots/);
+test("all requested accordion groups remain functional controls", () => {
+  for (const label of ["Markt & selectie","Leverage","Positiegrootte","Instapfilters","Smart Rescue DCA","Bescherming & exposure","Refill & heropenen"]) {
+    assert.match(ui, new RegExp(label.replace(/[&]/g, "\\&")));
+  }
+  assert.match(ui, /settingsAccordion/);
+  assert.match(ui, /entryAccordion/);
+  assert.match(ui, /aria-expanded=\{open\}/);
 });
 
-test("Build 455 keeps price-zone seats an explicit persistent entitlement opt-in", () => {
-  assert.match(v2, /zoneSoldiersEnabled: settings\.zoneSoldiersEnabled === true && n\(settings\.zoneSoldiersOptInVersion, 0\) >= 1/);
-  assert.match(v2, /Prijszone-stoelen/);
-  assert.match(v2, /Expliciete opt-in/);
-  assert.match(v2, /zoneSoldiersOptInVersion: draft\.zoneSoldiersEnabled \? 1 : 0/);
-  assert.match(v2, /STRATEGIE · TRADITIONEEL/);
-  assert.match(v2, /ZONEPOSITIES AFBOUWEN/);
+test("refill panel does not invent fake configurable runtime rules", () => {
+  assert.match(ui, /Alleen lege capaciteit vullen/);
+  assert.match(ui, /Auto-restart na TP/);
+  assert.match(ui, /runtime-regel/);
+  assert.match(ui, /bewust geen fake schakelaars/);
+  assert.match(ui, /checked=\{draft\.exposureRefillEnabled\}/);
 });
 
-test("Build 455 shows the active price-zone strategy outside settings", () => {
-  assert.match(page, /aster-strategy-mode/);
-  assert.match(page, /STRATEGIE · PRIJSZONE-STOELEN/);
-  assert.match(page, /PRICE_ZONE_SEATS/);
-  assert.match(page, /STRATEGIE · TRADITIONEEL/);
-  assert.match(page, /Portfolio Koers is informatief/);
-});
-
-
-test("Build 455 keeps safe 3L/3S price-zone defaults when legacy settings do not contain seat fields", () => {
-  assert.match(v2, /zoneLongSeats: textValue\(settings\.zoneBaseLongSoldiers, 3\)/);
-  assert.match(v2, /zoneShortSeats: textValue\(settings\.zoneBaseShortSoldiers, 3\)/);
-  assert.match(v2, /zoneBaseLongSoldiers: zoneLongSeats/);
-  assert.match(v2, /zoneBaseShortSoldiers: zoneShortSeats/);
-  assert.match(v2, /zoneEntryGrowthPercent: nDefault\(persisted\.zoneEntryGrowthPercent, 2\)/);
-  assert.match(v2, /zoneEntryMaxMultiplier: nDefault\(persisted\.zoneEntryMaxMultiplier, 1\.2\)/);
+test("owner release center remains outside the four-step flow and does not auto-publish", () => {
+  assert.match(ui, /Releasecentrum · BETA-owner/);
+  assert.match(ui, /STABLE wordt niet automatisch gewijzigd/);
+  assert.match(ui, /Getest en akkoord/);
+  assert.match(ui, /Vrijgeven/);
+  assert.match(ui, /Terug naar BETA/);
 });
