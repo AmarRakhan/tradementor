@@ -63,6 +63,25 @@ def _doc_id(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _vapid_private_der_b64(private_pem: str) -> str:
+    """Convert stored PEM text to the DER/base64 string pywebpush expects.
+
+    pywebpush treats a string as either a filesystem path or a DER/base64 key.
+    Passing the full PEM text directly is therefore invalid because it is not
+    a path and gets parsed as DER. Keep Firestore storage in PEM form, but
+    convert immediately before dispatch.
+    """
+    key = serialization.load_pem_private_key(str(private_pem).encode("utf-8"), password=None)
+    if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(key.curve, ec.SECP256R1):
+        raise ValueError("VAPID private key must be a P-256 EC key")
+    der = key.private_bytes(
+        serialization.Encoding.DER,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    return base64.urlsafe_b64encode(der).rstrip(b"=").decode("ascii")
+
+
 def _money(value: Any, *, signed: bool = False) -> str:
     amount = _number(value)
     prefix = "+" if signed and amount >= 0 else ("-" if amount < 0 else "")
@@ -486,6 +505,13 @@ class ProfitNotificationService:
             self._metric(uid, "pushesFiltered")
             return {"attempted": 0, "accepted": 0, "expired": 0, "errors": 0}
         vapid = self._load_or_create_vapid()
+        try:
+            vapid_private_key = _vapid_private_der_b64(vapid["privatePem"])
+        except Exception as exc:
+            LOGGER.error("Web Push VAPID private key conversion failed", exc_info=True)
+            raise RuntimeError(
+                "PUSH_VAPID_KEY_INVALID · De server kon de pushbeveiligingssleutel niet correct laden."
+            ) from exc
         claims = {"sub": os.getenv("WEB_PUSH_VAPID_SUBJECT", "mailto:notifications@tradementor.app")}
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         accepted = expired = errors = 0
@@ -496,7 +522,7 @@ class ProfitNotificationService:
             try:
                 webpush(subscription_info={"endpoint": str(row.get("endpoint", "")),
                     "keys": {"p256dh": str(keys.get("p256dh", "")), "auth": str(keys.get("auth", ""))}},
-                    data=body, vapid_private_key=vapid["privatePem"], vapid_claims=claims, ttl=900)
+                    data=body, vapid_private_key=vapid_private_key, vapid_claims=claims, ttl=900)
                 accepted += 1
                 reference.set({"lastSuccessfulDispatch": datetime.now(timezone.utc), "lastError": "",
                     "active": True, "updatedAt": datetime.now(timezone.utc)}, merge=True)
