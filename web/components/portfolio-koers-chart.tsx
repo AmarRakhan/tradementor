@@ -9,7 +9,7 @@ import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
-import { derivePortfolioZoneLadder, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
@@ -491,7 +491,11 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
   const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(payload.zones,currentZonePrice),[payload.zones,currentZonePrice]);
   const advisorZoneSource=useMemo(()=>advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones,[advisorTimeline?.safeForAdvisor,advisorZones,payload.zones]);
-  const advisorZoneLadder=useMemo(()=>advisorZoneSource.length?derivePortfolioZoneLadder(advisorZoneSource):null,[advisorZoneSource]);
+  const advisorZoneLadder=useMemo(()=>{
+    if(!advisorZoneSource.length)return null;
+    const base=derivePortfolioZoneLadder(advisorZoneSource);
+    return extendPortfolioZoneLadderToPrice(base,currentZonePrice,2);
+  },[advisorZoneSource,currentZonePrice]);
   const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice),[advisorZoneLadder,currentZonePrice]);
   const zoneSoldierReport=advisorSeats.zoneSoldiers;
   const zoneSoldierEnabled=advisorEnabled&&zoneSoldierReport.enabled===true;
