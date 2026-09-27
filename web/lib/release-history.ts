@@ -26,37 +26,72 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-27",
-  title: "Profit Push Notifications 1.1 · automatische pushkoppeling-herstel",
+  title: "Profit Push Notifications 1.2 · native Web Push VAPID-fix",
   newItems: [
-    "Een geweigerde of verlopen Web Push-devicekoppeling kan nu automatisch één keer opnieuw aan de actuele VAPID-sleutel worden gekoppeld.",
-    "Testmelding versturen geeft voortaan een concrete providerclassificatie in plaats van alleen de algemene melding dat de pushprovider niet accepteerde.",
+    "De backend zet de opgeslagen VAPID private key nu expliciet om van PEM naar DER/base64 voordat pywebpush hem gebruikt.",
+    "Native Android/iOS push kan daardoor daadwerkelijk de pushprovider bereiken in plaats van lokaal stuk te lopen tijdens key-parsing.",
   ],
   problems: [
-    "Build 448 kon een bestaande browser-subscription blijven hergebruiken terwijl de provider die koppeling weigerde, waardoor Testmelding versturen eindigde met een generieke providerfout.",
+    "Build 448/449 kon ondanks een geldige browser-subscription dezelfde melding blijven tonen dat de pushprovider de test niet accepteerde.",
+    "De echte fout kon plaatsvinden vóór het netwerkverzoek: pywebpush behandelt een string als bestandspad of DER/base64-key en niet als volledige PEM-tekst.",
   ],
   causes: [
-    "De client controleerde bij een bestaande PushSubscription niet of die nog bruikbaar was met de actuele provider/VAPID-koppeling en had geen herstelpad voor 400/401/403/404/410 providerantwoorden.",
+    "De VAPID private key werd als PEM-tekst in Firestore bewaard en die volledige PEM-tekst werd rechtstreeks aan pywebpush doorgegeven.",
   ],
   fixes: [
-    "De backend classificeert providerstatussen zonder endpoints, sleutels of payloadinhoud bloot te geven.",
-    "Bij een verlopen of auth-geweigerde koppeling verwijdert de client de oude serverregistratie best-effort, unsubscribe't lokaal, maakt één nieuwe subscription met de actuele public key en probeert de test exact één keer opnieuw.",
-    "429/5xx en andere niet-herstelbare providerfouten veroorzaken geen resubscribe-loop en blijven als concrete HTTP/providerfout zichtbaar.",
+    "PEM blijft de persistente opslagvorm; vlak vóór verzending wordt de P-256 sleutel gecontroleerd en naar PKCS8 DER/base64url geconverteerd.",
+    "De dispatcher geeft uitsluitend de geconverteerde DER/base64 private key aan pywebpush door.",
+    "Nieuwe regressietests reconstrueren de DER-key en controleren dat de private scalar identiek blijft en dat rauwe PEM nooit meer naar pywebpush gaat.",
   ],
   now: [
-    "De herstelactie is uitsluitend notificatiebeheer: geen trade, close, DCA, hedge of Portfolio TP wordt aangeroepen.",
-    "De bestaande Build 448 profitpolicy, Portfolio Koers Graph 3.1 en release-gates blijven functioneel ongewijzigd.",
+    "De bestaande Build 449 subscription self-heal blijft actief voor echte verlopen/geweigerde devicekoppelingen.",
+    "De fix verandert uitsluitend notificatiedelivery en raakt geen trade, close, DCA, hedge, Portfolio TP, scanner of sizing.",
   ],
-  before: "Een providerafwijzing liet alleen zien dat de testmelding niet geaccepteerd werd en vereiste handmatige diagnose.",
-  after: "Bekende stale/expired pushkoppelingen worden automatisch één keer hersteld; andere providerfouten worden concreet benoemd.",
+  before: "Een geldige subscription kon toch falen doordat de backend de VAPID private key in een formaat doorgaf dat pywebpush niet als inline PEM accepteert.",
+  after: "De VAPID key wordt in het formaat aangeboden dat pywebpush voor een inline key verwacht, waarna de native pushprovider daadwerkelijk kan worden aangeroepen.",
   technicalDetails: [
-    "Repairable providerstatussen: 400/401/403 (auth/subscription) en 404/410 (expired).",
-    "Self-heal: unsubscribe + actuele VAPID public key + subscribe + serverregistratie + één retry.",
-    "Geen automatische retry-loop en geen wijziging aan tradingexecution.",
+    "Storage: PKCS8 PEM; dispatch: PKCS8 DER, base64url zonder padding.",
+    "Curve-check: SECP256R1 / P-256.",
+    "Geen sleutelinhoud wordt gelogd of aan de frontend teruggegeven.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-449-profit-push-self-heal",
+    version: "46",
+    build: "449",
+    releasedAt: "2026-09-27",
+    title: "Profit Push Notifications 1.1 · automatische pushkoppeling-herstel",
+    newItems: [
+      "Een geweigerde of verlopen Web Push-devicekoppeling kan nu automatisch één keer opnieuw aan de actuele VAPID-sleutel worden gekoppeld.",
+      "Testmelding versturen geeft voortaan een concrete providerclassificatie in plaats van alleen de algemene melding dat de pushprovider niet accepteerde.",
+    ],
+    problems: [
+      "Build 448 kon een bestaande browser-subscription blijven hergebruiken terwijl de provider die koppeling weigerde, waardoor Testmelding versturen eindigde met een generieke providerfout.",
+    ],
+    causes: [
+      "De client controleerde bij een bestaande PushSubscription niet of die nog bruikbaar was met de actuele provider/VAPID-koppeling en had geen herstelpad voor 400/401/403/404/410 providerantwoorden.",
+    ],
+    fixes: [
+      "De backend classificeert providerstatussen zonder endpoints, sleutels of payloadinhoud bloot te geven.",
+      "Bij een verlopen of auth-geweigerde koppeling verwijdert de client de oude serverregistratie best-effort, unsubscribe't lokaal, maakt één nieuwe subscription met de actuele public key en probeert de test exact één keer opnieuw.",
+      "429/5xx en andere niet-herstelbare providerfouten veroorzaken geen resubscribe-loop en blijven als concrete HTTP/providerfout zichtbaar.",
+    ],
+    now: [
+      "De herstelactie is uitsluitend notificatiebeheer: geen trade, close, DCA, hedge of Portfolio TP wordt aangeroepen.",
+      "De bestaande Build 448 profitpolicy, Portfolio Koers Graph 3.1 en release-gates blijven functioneel ongewijzigd.",
+    ],
+    before: "Een providerafwijzing liet alleen zien dat de testmelding niet geaccepteerd werd en vereiste handmatige diagnose.",
+    after: "Bekende stale/expired pushkoppelingen worden automatisch één keer hersteld; andere providerfouten worden concreet benoemd.",
+    technicalDetails: [
+      "Repairable providerstatussen: 400/401/403 (auth/subscription) en 404/410 (expired).",
+      "Self-heal: unsubscribe + actuele VAPID public key + subscribe + serverregistratie + één retry.",
+      "Geen automatische retry-loop en geen wijziging aan tradingexecution.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-448-profit-push-notifications-1-0",
     version: "46",
