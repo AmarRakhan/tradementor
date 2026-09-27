@@ -24,7 +24,7 @@ test("Build 420 renders a compact Portfolio Snapshot-family strategy cockpit", a
     "portfolio-strategy-action",
     "portfolio-strategy-grid",
     "ACTIEVE ZONE",
-    "FORMATIE",
+    "STOELEN ACTIEVE ZONE",
     "BALANS",
     "VOLGENDE ZONE",
     "BALANS NODIG",
@@ -45,8 +45,8 @@ test("generic exposure refill remains explicit, optional and capacity-neutral in
     read("../../cloud_api/aster_multi_bb_core.py"),
   ]);
   assert.ok(configurator.includes("settings.exposureRefillEnabled === true"));
-  assert.ok(configurator.includes("Los van Zone-Soldaten"));
-  assert.ok(configurator.includes("Maakt geen extra slots of soldaten en omzeilt zone-capaciteit niet."));
+  assert.ok(configurator.includes("Los van prijszone-stoelen"));
+  assert.ok(configurator.includes("Maakt geen extra stoelen en omzeilt de prijszone- of globale capaciteit niet."));
   assert.ok(configurator.includes("Wijziging wordt pas actief nadat je Opslaan kiest."));
   assert.ok(configurator.includes('exposureRuntimeLabel = !savedExposureRefillEnabled'));
   assert.ok(core.includes("exposure_refill_enabled: bool = False"));
