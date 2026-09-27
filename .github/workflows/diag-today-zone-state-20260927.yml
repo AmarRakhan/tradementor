@@ -1,0 +1,78 @@
+name: Diagnose today's zone state 2026-09-27
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-today-zone-state-20260927.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read current persisted zone state
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-access-token)"
+          BASE="https://firestore.googleapis.com/v1/projects/$GCP_PROJECT_ID/databases/(default)/documents"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/systemConfiguration/continuityDashboardV1" > "$RUNNER_TEMP/owner.json"
+          python - "$RUNNER_TEMP/owner.json" > "$RUNNER_TEMP/uid.txt" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1],encoding='utf-8'));print((d.get('fields',{}).get('ownerUid') or {}).get('stringValue',''))
+          PY
+          UID="$(cat "$RUNNER_TEMP/uid.txt")"; test -n "$UID"
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE/users/$UID/asterStrategy2/control" > "$RUNNER_TEMP/s2.json" || true
+          python - "$RUNNER_TEMP/s2.json" > .diagnostics/today-zone-state-20260927.json <<'PY'
+          import json,sys,datetime
+          raw=json.load(open(sys.argv[1],encoding='utf-8'))
+          def decode(v):
+            if not isinstance(v,dict):return None
+            if 'stringValue' in v:return v['stringValue']
+            if 'integerValue' in v:return int(v['integerValue'])
+            if 'doubleValue' in v:return float(v['doubleValue'])
+            if 'booleanValue' in v:return bool(v['booleanValue'])
+            if 'timestampValue' in v:return v['timestampValue']
+            if 'mapValue' in v:return {k:decode(x) for k,x in (v['mapValue'].get('fields') or {}).items()}
+            if 'arrayValue' in v:return [decode(x) for x in (v['arrayValue'].get('values') or [])]
+            if 'nullValue' in v:return None
+            return None
+          d={k:decode(v) for k,v in (raw.get('fields') or {}).items()}
+          z=d.get('zoneSoldierState') or {}
+          pools=z.get('pools') or {}
+          out={
+            'activeZone':z.get('activeZone'),
+            'previousZone':z.get('previousZone'),
+            'activatedAtMs':z.get('activatedAtMs'),
+            'lastConfirmedZoneTransition':z.get('lastConfirmedZoneTransition'),
+            'pools':{k:{
+              'zone':v.get('zone'),'lastActivatedAtMs':v.get('lastActivatedAtMs'),'activationCount':v.get('activationCount')
+            } for k,v in pools.items() if isinstance(v,dict)}
+          }
+          print(json.dumps(out,separators=(',',':'),sort_keys=True))
+          PY
+          git config user.name "TradeMentor Diagnostics"
+          git config user.email "actions@users.noreply.github.com"
+          git add .diagnostics/today-zone-state-20260927.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Record today's zone state diagnostic"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
