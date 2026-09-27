@@ -256,6 +256,10 @@ function statusClass(status?: string) {
   return "error";
 }
 
+function autoHedgeSymbolKey(value: unknown) {
+  return String(value || "").toUpperCase().replace(/[\/_-]/g, "").replace(/USDT$/i, "");
+}
+
 function PairLeg({ side, role, leg }: {
   side: "LONG" | "SHORT";
   role: string;
@@ -488,11 +492,10 @@ export function AsterPositionLossAutoHedgeBridge() {
         const coinCell = row.querySelector<HTMLElement>('button[role="cell"]');
         if (!coinCell) continue;
         const existing = coinCell.querySelector<HTMLElement>(".plah-tc-auto-hedge");
-        const text = (coinCell.textContent || "").toUpperCase();
-        const pair = currentPairs.find((item) => {
-          const coin = String(item.symbol || "").replace(/USDT$/i, "").toUpperCase();
-          return coin.length >= 2 && (text.startsWith(coin) || text.includes(` ${coin}`));
-        });
+        const rowSymbol = autoHedgeSymbolKey(coinCell.dataset.autoHedgeSymbol);
+        const pair = rowSymbol
+          ? currentPairs.find((item) => autoHedgeSymbolKey(item.symbol) === rowSymbol)
+          : undefined;
         if (!pair) {
           existing?.remove();
           continue;
@@ -500,7 +503,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         const small = coinCell.querySelector<HTMLElement>("small");
         if (!small) continue;
         const cls = statusClass(pair.status);
-        const label = `AH ${statusLabel(pair.status)}`;
+        const label = statusLabel(pair.status);
         const badge = existing || document.createElement("em");
         const nextClass = `plah-tc-auto-hedge ${cls}`;
         if (badge.className !== nextClass) badge.className = nextClass;

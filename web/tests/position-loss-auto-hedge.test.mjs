@@ -46,7 +46,20 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "451"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "452"/);
+});
+
+test("Tradecentrum shows Auto Hedge status on every matching coin row without the redundant AH prefix", async () => {
+  const [component, tradeCenter] = await Promise.all([
+    readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(tradeCenter, /data-auto-hedge-symbol=\{normalizedSymbol\(row\.symbol\)\}/);
+  assert.match(component, /function autoHedgeSymbolKey/);
+  assert.match(component, /coinCell\.dataset\.autoHedgeSymbol/);
+  assert.match(component, /autoHedgeSymbolKey\(item\.symbol\) === rowSymbol/);
+  assert.match(component, /const label = statusLabel\(pair\.status\);/);
+  assert.doesNotMatch(component, /const label = `AH \$\{statusLabel\(pair\.status\)\}`/);
 });
 
 test("Auto Hedge screen never reuses the HOME bull-bear/chart/Tradecentrum surface", async () => {

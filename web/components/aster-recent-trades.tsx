@@ -514,7 +514,7 @@ function TradeCenterTable({ rows, onOpenDetail }: { rows: TradeCenterRow[]; onOp
           const dca = row.entries === null ? null : Math.max(0, row.entries - 1);
           return (
             <div className={styles.row} role="row" key={row.id}>
-              <button className={styles.pair} role="cell" type="button" onClick={() => onOpenDetail(row)} aria-label={`${baseAsset(row.symbol)} openen in grafiek`}>
+              <button className={styles.pair} role="cell" type="button" data-auto-hedge-symbol={normalizedSymbol(row.symbol)} onClick={() => onOpenDetail(row)} aria-label={`${baseAsset(row.symbol)} openen in grafiek`}>
                 <CoinIcon symbol={row.symbol} />
                 <span className={styles.pairCopy}>
                   <b>{baseAsset(row.symbol)}</b>
