@@ -29,6 +29,6 @@ jobs:
         run: python -m pip install -r cloud_api/requirements.txt pytest
       - name: Run targeted backend regressions
         working-directory: cloud_api
-        run: PYTHONPATH=. python -m pytest -q test_side_entry_margin_20260906.py test_aster_portfolio_tp_mode.py test_aster_pair_overrides.py test_same_symbol_dual_side_20260906.py
+        run: PYTHONPATH=. python -m pytest -q test_side_entry_margin_20260906.py test_aster_portfolio_tp_mode.py test_aster_pair_overrides.py test_same_symbol_dual_side_20260906.py test_botconfigurator_v3_dry_run.py
       - name: Build web
         run: npm --prefix web run build
