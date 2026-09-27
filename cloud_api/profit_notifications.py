@@ -650,7 +650,7 @@ class ProfitNotificationService:
 
     def send_test(self, uid: str) -> dict[str, Any]:
         payload = {"type": "notification_test", "eventId": f"test:{_now_ms()}",
-            "title": "🧪 Testmelding · Amar Crypto Bot 2026",
+            "title": "🧪 Testmelding",
             "body": "Pushmeldingen werken. Dit is alleen een test; er is geen trade uitgevoerd of gesloten.",
             "tag": "amar-profit-test", "url": "/", "icon": "/tradementor-icon-192.png",
             "badge": "/tradementor-icon-192.png", "data": {"test": True}}
