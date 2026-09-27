@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 
 const VISUAL_REFERENCES = {
@@ -231,7 +231,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const zoneSoldiersAvailable = feature("zone_soldiers").enabled === true;
   const savedZoneStrategyEnabled = zoneSoldiersAvailable && persisted.zoneSoldiersEnabled === true && n(persisted.zoneSoldiersOptInVersion, 0) >= 1;
   const zoneLifecycle = String(strategy2.zoneSoldierLifecycle || (savedZoneStrategyEnabled ? "ACTIVE" : "OFF")).toUpperCase();
-  const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · PRIJSZONE-STOELEN" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONEPOSITIES AFBOUWEN" : "STRATEGIE · TRADITIONEEL";
+  const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · ZONE WARRIORS" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONE WARRIORS AFBOUWEN" : "STRATEGIE · CLASSIC DCA";
 
   const update = <K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -667,7 +667,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
 function ScreenTitle({title,subtitle,badge}:{title:string;subtitle:string;badge?:string}){
   return <header className="v3-screen-title"><div><h3>{title}</h3><p>{subtitle}</p></div>{badge&&<span>{badge}</span>}</header>;
 }
-function Accordion({title,icon,open,onToggle,children,summary,reference}:{title:string;icon:string;open:boolean;onToggle:()=>void;children:React.ReactNode;summary?:string;reference?:string}){
+function Accordion({title,icon,open,onToggle,children,summary,reference}:{title:string;icon:string;open:boolean;onToggle:()=>void;children:ReactNode;summary?:string;reference?:string}){
   return <section className={"v3-accordion "+(open?"open":"")} data-reference={reference}><button type="button" onClick={onToggle} aria-expanded={open}><i>{icon}</i><span><b>{title}</b>{!open&&summary&&<small>{summary}</small>}</span><em>{open?"⌃":"⌄"}</em></button>{open&&<div className="v3-accordion-body">{children}</div>}</section>;
 }
 function StepperField({label,value,onChange,suffix,wide=false,tone,allowEmpty=false}:{label:string;value:string;onChange:(v:string)=>void;suffix?:string;wide?:boolean;tone?:"long"|"short";allowEmpty?:boolean}){
