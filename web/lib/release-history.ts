@@ -45,7 +45,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   now: [
     "Alle rijen voor dezelfde door Auto Hedge beheerde munt gebruiken dezelfde server-authoritatieve pair-status, inclusief LONG- en SHORT-zijde.",
-    "Deze wijziging is uitsluitend presentatie/statuskoppeling en verandert geen hedge-trigger, $10-verliesgrens, 1:1 quantity, orders, recovery of pair-locks.",
+    "Deze Build 454-wijziging is uitsluitend presentatie/statuskoppeling en verandert geen hedge-trigger, $10-verliesgrens, 1:1 quantity, orders, recovery of pair-locks.",
   ],
   before: "Een Auto Hedge-pair kon fysiek en server-side gehedged zijn terwijl slechts een andere munt zichtbaar het AH HEDGED-label kreeg.",
   after: "Tradecentrum koppelt de status exact per munt en toont voor een volledig gehedgede pair het compacte groene label HEDGED.",
