@@ -7,5 +7,5 @@ test("Build 415 Portfolio Koers tooltip can identify zone-base and exposure-bala
   assert.ok(component.includes("originZones?:number[]"));
   assert.ok(component.includes("soldierRoles?:string[]"));
   assert.ok(component.includes('"exposure-balancer"'));
-  assert.ok(component.includes('"basis-soldaat"'));
+  assert.ok(component.includes('"zone-stoel"'));
 });
