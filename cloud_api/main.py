@@ -1526,8 +1526,10 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "longLegs":long_count,"shortLegs":short_count,"positionCounts":{"uniqueMarketCount":len({str(k).split("|",1)[0] for k in managed}),
                 "positionLegCount":len(managed),"longLegs":long_count,"shortLegs":short_count},"multiBb":report,
             "multiBbCycle":raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"),dict) else {},"multiBbPositions":managed,
-            "strategyMode":"ZONE_SOLDIERS" if zone_active else "TRADITIONAL","zoneSoldierLifecycle":zone_lifecycle,
-            "zoneSoldiers":zone_report,
+            "strategyMode":"PRICE_ZONE_SEATS" if zone_active else "TRADITIONAL","zoneSoldierLifecycle":zone_lifecycle,
+            # Legacy key remains for persisted clients; all new UI reads the
+            # priceZoneSeats alias and avoids soldier terminology.
+            "zoneSoldiers":zone_report,"priceZoneSeats":zone_report,
             "universe":{"topN":int(settings.get("universeTopN",30)),"ranking":report.get("rankedTopN",[])},
             "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "directe slotvulling + Top-N + leveragefilter"},
                 "existingPositionManagement":{"reason":"Exchange truth + TP/DCA beheer"}},"candidateScan":{"checked":len(report.get("rankedTopN",[])),"reasons":[]},
@@ -1681,10 +1683,13 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
         contiguous = portfolio_chart_latest_contiguous_candles(candles, "15m")
         current_bucket = int(now.timestamp() * 1000) // PORTFOLIO_CHART_TIMEFRAME_MS["15m"] * PORTFOLIO_CHART_TIMEFRAME_MS["15m"]
         latest_bucket = int(safe_float(contiguous[-1].get("atMs"))) if contiguous else 0
-        continuity_ok = len(contiguous) >= 14 and latest_bucket >= current_bucket
+        history_ready = len(contiguous) >= 14
+        continuity_ok = history_ready and latest_bucket >= current_bucket
         cycle = raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"), dict) else {}
         cycle_start = safe_float(cycle.get("cycleStartEquity"))
-        zones = derive_equity_zones(contiguous, cycle_start) if continuity_ok else []
+        # Active-zone identity must keep following the same current-equity
+        # ladder as Portfolio Koers. Freshness is an independent NEW-entry gate.
+        zones = derive_equity_zones(contiguous, cycle_start) if history_ready else []
         equity = multi_bb_exchange_equity(account)
         active = confirmed_zone_from_display_zones(zones, equity) if equity > 0 and zones else None
         safe = bool(continuity_ok and active is not None)
@@ -1696,7 +1701,9 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
             "requiredContiguousBars": 14,
             "latestBucketMs": latest_bucket or None,
             "currentBucketMs": current_bucket,
-            "reason": "ZONE_CONFIRMED" if safe else "15M_ZONE_CONTINUITY_UNAVAILABLE",
+            "reason": "ZONE_CONFIRMED" if safe else (
+                "ZONE_CONFIRMED_ENTRY_HELD" if active is not None else "15M_ZONE_CONTINUITY_UNAVAILABLE"
+            ),
         }
     except (google_exceptions.GoogleAPICallError, TypeError, ValueError) as exc:
         return {
