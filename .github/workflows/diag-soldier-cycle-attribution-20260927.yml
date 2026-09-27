@@ -1,0 +1,239 @@
+name: Diagnose soldier cycle attribution 2026-09-27
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-soldier-cycle-attribution-20260927.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run read-only cycle attribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'));sp=s['spec']['template']['spec'];print(sp['containers'][0]['image']);print(sp['serviceAccountName'])
+          PY
+          )
+          JOB="tm-soldiercycle-${GITHUB_RUN_ID: -7}";MARKER="SOLDIERCYCLE_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV";echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+          SCRIPT="$(base64 -w0 <<'PY'
+          import json,os,math
+          from datetime import datetime,timezone,timedelta
+          from google.cloud import firestore
+          import main
+
+          def n(v,d=0.0):
+              try:
+                  x=float(v);return x if math.isfinite(x) else d
+              except Exception:return d
+          def ms(v):
+              if isinstance(v,datetime):
+                  x=v if v.tzinfo else v.replace(tzinfo=timezone.utc);return int(x.astimezone(timezone.utc).timestamp()*1000)
+              if isinstance(v,(int,float)):return int(v)
+              if isinstance(v,str):
+                  try:return int(datetime.fromisoformat(v.replace('Z','+00:00')).timestamp()*1000)
+                  except Exception:return int(n(v))
+              return 0
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid: print(os.environ['MARKER']+'='+json.dumps({'error':'OWNER_NOT_CONFIGURED'}),flush=True);raise SystemExit
+          user={'uid':uid};now=datetime.now(timezone.utc);since=now-timedelta(days=14)
+
+          ah={}
+          for d in db.collection('asterPositionLossAutoHedge').document(uid).collection('pairs').stream():
+              v=d.to_dict() or {};st=str(v.get('status') or '').upper()
+              if st and st!='CLOSED':ah[d.id.upper()]={**v,'status':st}
+          ah_symbols=set(ah)
+
+          audits=[]
+          for d in main.aster_strategy2_reference(uid).collection('audit').where('timestamp','>=',since).stream():
+              v=d.to_dict() or {};v['_id']=d.id;v['_ms']=ms(v.get('timestamp',v.get('timestampMs')));audits.append(v)
+          audits.sort(key=lambda x:x['_ms'])
+          event_counts={}
+          for a in audits:
+              ev=str(a.get('event') or 'UNKNOWN').upper();event_counts[ev]=event_counts.get(ev,0)+1
+
+          entries=[]
+          for a in audits:
+              if str(a.get('event') or '').upper()!='MULTI_BB_ENTRY':continue
+              role=str(a.get('soldierRole') or '').upper();sid=str(a.get('soldierId') or '').strip()
+              if role not in {'ZONE_BASE','EXPOSURE_BALANCER'} or not sid:continue
+              entries.append({
+                  'symbol':str(a.get('symbol') or '').upper(),'side':str(a.get('side') or '').upper(),
+                  'soldierId':sid,'role':role,'originZone':a.get('originZone'),'atMs':a['_ms'],
+              })
+          entries=[e for e in entries if e['symbol'] and e['side'] in {'LONG','SHORT'} and e['atMs']>0]
+          entries.sort(key=lambda x:x['atMs'])
+
+          closed=[]
+          for d in main.user_reference(user).collection('asterClosedTrades').where('closedAt','>=',since).stream():
+              v=d.to_dict() or {};v['_ms']=ms(v.get('closedAt'));closed.append(v)
+          by_key={}
+          for c in closed:
+              key=(str(c.get('symbol') or '').upper(),str(c.get('side') or '').upper())
+              by_key.setdefault(key,[]).append(c)
+          for rows in by_key.values():rows.sort(key=lambda x:x['_ms'])
+
+          # One Aster position-risk read only, solely to identify still-open cycles.
+          secret=main.load_aster_secret(user)
+          client=main.AsterV3Client(signer_address=secret.signer_address,sign_message=main.local_eip712_signer(secret),live_authorized=False)
+          live=[r for r in (client.position_risk() or []) if isinstance(r,dict) and abs(n(r.get('positionAmt',r.get('quantity'))))>0]
+          live_keys={(str(r.get('symbol') or '').upper(),str(r.get('positionSide',r.get('side',''))).upper()) for r in live}
+
+          # Attribute persisted close fills to each proven soldier entry interval.
+          # Same symbol+side is unique in hedge-mode position truth. Next soldier
+          # entry for that key starts a new cycle boundary.
+          key_entries={}
+          for e in entries:key_entries.setdefault((e['symbol'],e['side']),[]).append(e)
+          cycles=[]
+          for key,rows in key_entries.items():
+              rows=sorted(rows,key=lambda x:x['atMs'])
+              closes=by_key.get(key,[])
+              for i,e in enumerate(rows):
+                  end=rows[i+1]['atMs'] if i+1<len(rows) else int(now.timestamp()*1000)+1
+                  fills=[c for c in closes if e['atMs']<=c['_ms']<end]
+                  realized=sum(n(c.get('realizedPnlUsd')) for c in fills)
+                  is_last=i==len(rows)-1
+                  open_now=is_last and key in live_keys
+                  cycles.append({
+                      **e,'endBoundaryMs':end if not is_last else None,'closeFillCount':len(fills),
+                      'realizedPnlUsd':round(realized,8),'openNow':open_now,
+                      'currentlyAutoHedged':e['symbol'] in ah_symbols,
+                  })
+          cycles.sort(key=lambda x:x['atMs'])
+
+          clean=[c for c in cycles if not c['currentlyAutoHedged']]
+          clean_base=[c for c in clean if c['role']=='ZONE_BASE']
+          clean_bal=[c for c in clean if c['role']=='EXPOSURE_BALANCER']
+
+          def stats(rows):
+              closed_cycles=[c for c in rows if c['closeFillCount']>0]
+              flat_proven=[c for c in closed_cycles if not c['openNow']]
+              return {
+                  'entryCycles':len(rows),'cyclesWithConfirmedCloseFills':len(closed_cycles),
+                  'currentlyOpenCycles':sum(1 for c in rows if c['openNow']),
+                  'realizedPnlUsd':round(sum(c['realizedPnlUsd'] for c in rows),8),
+                  'positiveRealizedUsd':round(sum(c['realizedPnlUsd'] for c in rows if c['realizedPnlUsd']>0),8),
+                  'negativeRealizedUsd':round(sum(c['realizedPnlUsd'] for c in rows if c['realizedPnlUsd']<0),8),
+                  'positiveCycles':sum(1 for c in rows if c['realizedPnlUsd']>0),
+                  'negativeCycles':sum(1 for c in rows if c['realizedPnlUsd']<0),
+                  'zeroOrNoCloseCycles':sum(1 for c in rows if abs(c['realizedPnlUsd'])<=1e-12),
+                  'confirmedCloseFillCount':sum(c['closeFillCount'] for c in rows),
+                  'flatProvenCycleCount':len(flat_proven),
+              }
+
+          # Current clean soldier open PnL.
+          strategy=main.aster_strategy2_reference(uid).get().to_dict() or {}
+          multi=strategy.get('multiBbPositions') if isinstance(strategy.get('multiBbPositions'),dict) else {}
+          multi={str(k).upper():v for k,v in multi.items() if isinstance(v,dict)}
+          current=[]
+          for r in live:
+              sym=str(r.get('symbol') or '').upper();side=str(r.get('positionSide',r.get('side',''))).upper()
+              if sym in ah_symbols or side not in {'LONG','SHORT'}:continue
+              m=multi.get(f"{sym}|{side}",{});role=str(m.get('soldierRole') or '').upper();sid=str(m.get('soldierId') or '').strip()
+              if role not in {'ZONE_BASE','EXPOSURE_BALANCER'} or not sid:continue
+              p=n(r.get('unRealizedProfit',r.get('unrealizedPnl',r.get('unrealizedProfit'))))
+              current.append({'symbol':sym,'side':side,'role':role,'soldierId':sid,'openPnlUsd':round(p,8)})
+          current_base=[x for x in current if x['role']=='ZONE_BASE'];current_bal=[x for x in current if x['role']=='EXPOSURE_BALANCER']
+
+          def combined(hist,current_rows):
+              s=stats(hist);op=sum(x['openPnlUsd'] for x in current_rows)
+              return {**s,'currentOpenCount':len(current_rows),'currentOpenPnlUsd':round(op,8),
+                      'realizedPlusCurrentOpenUsd':round(s['realizedPnlUsd']+op,8)}
+
+          output={
+              'generatedAt':now.isoformat(),'readOnly':True,'windowDays':14,
+              'activeAutoHedgeSymbolsExcluded':len(ah_symbols),
+              'allAuditEventCounts':event_counts,
+              'cleanSoldierAll':combined(clean,current),
+              'cleanBaseSoldiers':combined(clean_base,current_base),
+              'cleanExposureBalancers':combined(clean_bal,current_bal),
+              'cleanBaseCycleRows':clean_base[-150:],
+              'currentCleanBaseOpen':current_base,
+          }
+          print(os.environ['MARKER']+'='+json.dumps(output,separators=(',',':'),sort_keys=True,default=str),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "${V[0]}" --service-account "${V[1]}" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 240s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - name: Authenticate observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Collect and publish result
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in $(seq 1 15); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\"" --project "$GCP_PROJECT_ID" --freshness=15m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.json" <<'PY'
+          import json,sys
+          m=sys.argv[1]+'=';rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def walk(x):
+              if isinstance(x,str):yield x
+              elif isinstance(x,dict):
+                  for v in x.values():yield from walk(v)
+              elif isinstance(x,list):
+                  for v in x:yield from walk(v)
+          for row in rows:
+              for s in walk(row):
+                  if m in s:
+                      raw=s[s.index(m)+len(m):].splitlines()[0];json.loads(raw);print(raw);raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.json" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/result.json"
+          mkdir -p .diagnostics
+          cp "$RUNNER_TEMP/result.json" .diagnostics/soldier-cycle-attribution-20260927.json
+          git config user.name "TradeMentor Diagnostics";git config user.email "actions@users.noreply.github.com"
+          git add .diagnostics/soldier-cycle-attribution-20260927.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Record soldier cycle attribution diagnostic"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+
+      - name: Re-authenticate deploy for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true; fi
