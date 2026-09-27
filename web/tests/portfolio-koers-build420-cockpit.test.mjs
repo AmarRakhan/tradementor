@@ -46,8 +46,8 @@ test("generic exposure refill remains explicit, optional and capacity-neutral in
   ]);
   assert.ok(configurator.includes("settings.exposureRefillEnabled === true"));
   assert.ok(configurator.includes("creëert geen extra capaciteit"));
-  assert.ok(configurator.includes("Maakt geen extra stoelen en omzeilt de prijszone- of globale capaciteit niet."));
-  assert.ok(configurator.includes("Wijziging wordt pas actief nadat je Opslaan kiest."));
+  assert.ok(configurator.includes("Versnelt alleen de ontbrekende kant en creëert geen extra capaciteit."));
+  assert.ok(configurator.includes("exposureRefillEnabled: draft.exposureRefillEnabled"));
   assert.ok(configurator.includes('exposureRuntimeLabel = !savedExposureRefillEnabled'));
   assert.ok(core.includes("exposure_refill_enabled: bool = False"));
   assert.ok(core.includes("if settings.exposure_refill_enabled and str(exposure.get(\"activeSide\") or \"\").upper() == normalized_side:"));
