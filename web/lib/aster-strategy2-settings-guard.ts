@@ -26,9 +26,27 @@ export function enforceAsterStrategy2Limits(settings: Record<string, unknown>) {
 
   if (hasLong) next.longSlots = longSlots;
   if (hasShort) next.shortSlots = shortSlots;
-  if (hasLong || hasShort) next.maximumPositions = Math.max(1, Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots));
-  else if (settings.maximumPositions !== undefined || settings.maximumPairs !== undefined) {
-    next.maximumPositions = Math.max(1, Math.min(MAX_TOTAL_POSITIONS, finiteInteger(settings.maximumPositions ?? settings.maximumPairs, 1)));
+
+  const hasExplicitMaximum = settings.maximumPositions !== undefined || settings.maximumPairs !== undefined;
+  const priceZoneSeatsEnabled = settings.zoneSoldiersEnabled === true
+    && finiteInteger(settings.zoneSoldiersOptInVersion, 0) >= 1;
+
+  // Build 456: in price-zone-seat mode LONG/SHORT slots are legacy/traditional
+  // distribution fields and must never overwrite the explicit global seat cap.
+  // Example: 69L + 30S may remain persisted for backwards compatibility while
+  // maximumPositions=130 is the user's actual hard global price-zone limit.
+  if (priceZoneSeatsEnabled && hasExplicitMaximum) {
+    next.maximumPositions = Math.max(1, Math.min(
+      MAX_TOTAL_POSITIONS,
+      finiteInteger(settings.maximumPositions ?? settings.maximumPairs, 1),
+    ));
+  } else if (hasLong || hasShort) {
+    next.maximumPositions = Math.max(1, Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots));
+  } else if (hasExplicitMaximum) {
+    next.maximumPositions = Math.max(1, Math.min(
+      MAX_TOTAL_POSITIONS,
+      finiteInteger(settings.maximumPositions ?? settings.maximumPairs, 1),
+    ));
   }
 
   next.maxDca = Math.max(0, Math.min(MAX_DCA, finiteInteger(settings.maxDca ?? settings.longMaxDca, MAX_DCA)));
