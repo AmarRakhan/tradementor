@@ -1114,11 +1114,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         ]
         long_need = 0 if zone_migration_hold else len(eligible_zone_long)
         short_need = 0 if zone_migration_hold else len(eligible_zone_short)
-        # Zone-owned capacity is derived from old OPEN soldiers plus the current
-        # zone's free base/balancer soldiers. maximumPositions is no longer the
-        # strategy source of truth in this mode; a platform hard ceiling remains.
-        zone_platform_ceiling = min(400, max(2, settings.universe_top_n * 2))
-        account_remaining_capacity = max(0, zone_platform_ceiling - account_position_count)
+        # Price-zone seats determine which side may enter, while
+        # maximumPositions remains the hard global Strategy-2 ceiling across
+        # every active and old-zone seat. Manual/untracked Aster positions do
+        # not consume this strategy-owned cap.
+        account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
     elif settings.asymmetric_hedge_enabled:
         # Existing asymmetric LONG cycles keep occupying their pair slot even
         # after their paired SHORT has been released.  However, configured
@@ -1613,8 +1613,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 short_count += 1
                 exchange_short_count += 1
             if zone_mode:
-                zone_platform_ceiling = min(400, max(2, settings.universe_top_n * 2))
-                account_remaining_capacity = max(0, zone_platform_ceiling - account_position_count)
+                account_remaining_capacity = max(0, settings.maximum_positions - seat_capacity_position_count)
                 long_need = len(available_soldiers(zone_state or {}, "LONG"))
                 short_need = len(available_soldiers(zone_state or {}, "SHORT"))
             else:
