@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aster_multi_bb import MultiBbConfig
-from aster_multi_bb_core import _zone_entry_multiplier
+from aster_multi_bb_core import _remaining_strategy_capacity, _zone_entry_multiplier
 
 
 ROOT = Path(__file__).resolve().parent
@@ -65,21 +65,42 @@ def test_zone_mode_uses_per_zone_free_seats_and_hard_global_maximum_positions():
     assert "if not paired and not zone_mode:" in source
 
 
-def test_main_uses_confirmed_contiguous_15m_zone_and_fails_closed_for_new_entries():
+def test_build457_live_equity_selects_active_zone_without_current_candle_close_gate():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     assert 'portfolio_chart_latest_contiguous_candles(candles, "15m")' in source
-    assert "len(contiguous) >= 14" in source
-    assert '"safeForEntries": False' in source
+    assert "history_ready = len(contiguous) >= 14" in source
+    assert "history_fresh = bool(history_ready and latest_bucket >= current_bucket)" in source
+    assert "equity = multi_bb_exchange_equity(account)" in source
+    assert "active = confirmed_zone_from_display_zones(zones, equity)" in source
+    assert "zone_ready = bool(active is not None)" in source
+    assert '"zoneActivationRequiresCandleClose": False' in source
+    assert '"zoneActivationSource": "LIVE_PORTFOLIO_EQUITY"' in source
+    assert '"LIVE_EQUITY_ZONE_ACTIVE" if zone_ready' in source
     assert "zone_context=zone_context" in source
 
-def test_build455_active_zone_identity_survives_entry_freshness_hold():
-    source = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert "history_ready = len(contiguous) >= 14" in source
-    assert "derive_equity_zones(contiguous, cycle_start) if history_ready else []" in source
-    assert '"ZONE_CONFIRMED_ENTRY_HELD" if active is not None' in source
+
+def test_build457_confirmed_active_zone_exposes_empty_seats_even_if_legacy_freshness_flag_is_false():
     zone_source = (ROOT / "aster_zone_soldiers.py").read_text(encoding="utf-8")
     assert "if confirmed_zone is not None:" in zone_source
-    assert "active_zone=active_zone if zone_safe else None" in zone_source
+    assert "active_zone=active_zone," in zone_source
+    assert "active_zone=active_zone if zone_safe else None" not in zone_source
+    assert '"safeForNewEntries": bool(active_zone is not None)' in zone_source
+    assert '"entrySafe": bool(active_zone is not None)' in zone_source
+
+
+def test_build457_global_130_cap_allows_exactly_one_more_strategy_position_at_129():
+    assert _remaining_strategy_capacity(130, 129) == 1
+    assert _remaining_strategy_capacity(130, 130) == 0
+    assert _remaining_strategy_capacity(130, 131) == 0
+
+
+def test_build457_zone_activation_does_not_bypass_existing_bollinger_entry_checks():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    candidate_guard = source.index("def candidate_bb_pass(candidate_side: str) -> bool:")
+    candidate_check = source.index("require_bollinger_entry(", candidate_guard)
+    order = source.index("execute_leg_once(client, plan", candidate_check)
+    assert candidate_guard < candidate_check < order
+    assert "WAITING_BOLLINGER_ENTRY" in source
 
 
 def test_build455_public_contract_exposes_price_zone_seat_alias():
