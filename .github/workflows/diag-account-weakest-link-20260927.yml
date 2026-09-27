@@ -1,0 +1,438 @@
+name: Diagnose account weakest link 2026-09-27
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-account-weakest-link-20260927.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run read-only account analysis in production runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'))
+          spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image'])
+          print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"
+          RUNTIME_SA="${VALUES[1]}"
+          JOB="tm-weaklink-${GITHUB_RUN_ID: -7}"
+          MARKER="WEAKLINK_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"
+          echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json, os, math
+          from datetime import datetime, timezone, timedelta
+          from google.cloud import firestore
+          import main
+          from aster_portfolio_chart import EXTERNAL_CASHFLOW_TYPES
+
+          def n(v, default=0.0):
+              try:
+                  x=float(v)
+                  return x if math.isfinite(x) else default
+              except Exception:
+                  return default
+
+          def iso(v):
+              if isinstance(v, datetime):
+                  if v.tzinfo is None: v=v.replace(tzinfo=timezone.utc)
+                  return v.astimezone(timezone.utc).isoformat()
+              return str(v) if v is not None else None
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              print(os.environ['MARKER']+'='+json.dumps({'error':'OWNER_NOT_CONFIGURED'}),flush=True)
+              raise SystemExit
+
+          user={'uid':uid}
+          secret=main.load_aster_secret(user)
+          client=main.AsterV3Client(
+              signer_address=secret.signer_address,
+              sign_message=main.local_eip712_signer(secret),
+              live_authorized=False,
+          )
+
+          now=datetime.now(timezone.utc)
+          now_ms=int(now.timestamp()*1000)
+          start=now-timedelta(days=14)
+          start_ms=int(start.timestamp()*1000)
+
+          account=client.account_information()
+          positions=[r for r in (client.position_risk() or []) if isinstance(r,dict) and abs(n(r.get('positionAmt',r.get('quantity'))))>0]
+          equity,available,_,unrealized,maintenance=main.aster_account_information_values(account)
+
+          def pos_side(r):
+              s=str(r.get('positionSide',r.get('side',''))).upper().strip()
+              return s if s in {'LONG','SHORT'} else ('LONG' if n(r.get('positionAmt'))>0 else 'SHORT')
+
+          def pos_pnl(r):
+              return n(r.get('unRealizedProfit',r.get('unrealizedPnl',r.get('unrealizedProfit'))))
+
+          def pos_notional(r):
+              q=abs(n(r.get('positionAmt',r.get('quantity'))))
+              mark=n(r.get('markPrice'))
+              direct=abs(n(r.get('notional')))
+              return q*mark if q>0 and mark>0 else direct
+
+          by_side={}
+          for side in ('LONG','SHORT'):
+              rows=[r for r in positions if pos_side(r)==side]
+              by_side[side]={
+                  'count':len(rows),
+                  'openPnlUsd':round(sum(pos_pnl(r) for r in rows),8),
+                  'notionalUsd':round(sum(pos_notional(r) for r in rows),8),
+                  'profitableCount':sum(1 for r in rows if pos_pnl(r)>0),
+                  'losingCount':sum(1 for r in rows if pos_pnl(r)<0),
+              }
+
+          gross=by_side['LONG']['notionalUsd']+by_side['SHORT']['notionalUsd']
+          net=by_side['LONG']['notionalUsd']-by_side['SHORT']['notionalUsd']
+
+          top_losses=sorted(({
+              'symbol':str(r.get('symbol','')).upper(),
+              'side':pos_side(r),
+              'openPnlUsd':round(pos_pnl(r),4),
+              'notionalUsd':round(pos_notional(r),4),
+              'leverage':n(r.get('leverage')),
+          } for r in positions),key=lambda x:x['openPnlUsd'])[:15]
+          top_winners=sorted(({
+              'symbol':str(r.get('symbol','')).upper(),
+              'side':pos_side(r),
+              'openPnlUsd':round(pos_pnl(r),4),
+              'notionalUsd':round(pos_notional(r),4),
+              'leverage':n(r.get('leverage')),
+          } for r in positions),key=lambda x:x['openPnlUsd'],reverse=True)[:15]
+
+          # Auto Hedge state and its current economic footprint.
+          pair_docs={}
+          for d in db.collection('asterPositionLossAutoHedge').document(uid).collection('pairs').stream():
+              v=d.to_dict() or {}
+              status=str(v.get('status') or '').upper()
+              if status and status!='CLOSED':
+                  pair_docs[d.id.upper()]={**v,'status':status}
+          pos_by_key={(str(r.get('symbol','')).upper(),pos_side(r)):r for r in positions}
+          pair_rows=[]
+          for symbol,state in pair_docs.items():
+              legs=[r for (sym,_),r in pos_by_key.items() if sym==symbol]
+              pair_rows.append({
+                  'symbol':symbol,
+                  'status':state.get('status'),
+                  'protectedSide':str(state.get('protectedSide') or '').upper() or None,
+                  'hedgeSide':str(state.get('hedgeSide') or '').upper() or None,
+                  'openPnlUsd':round(sum(pos_pnl(r) for r in legs),4),
+                  'notionalUsd':round(sum(pos_notional(r) for r in legs),4),
+                  'legCount':len(legs),
+                  'reservedHedgeQty':round(n(state.get('reservedHedgeQty')),12),
+              })
+          pair_rows.sort(key=lambda x:x['openPnlUsd'])
+          pair_symbols=set(pair_docs)
+          ah_positions=[r for r in positions if str(r.get('symbol','')).upper() in pair_symbols]
+          non_ah_positions=[r for r in positions if str(r.get('symbol','')).upper() not in pair_symbols]
+
+          # Complete 14-day account income ledger, safely paginated by time.
+          income=[]
+          seen=set()
+          cursor=start_ms
+          complete=True
+          for _ in range(30):
+              page=[r for r in (client.income_history(start_time=cursor,limit=1000) or []) if isinstance(r,dict)]
+              for r in page:
+                  key=str(r.get('tranId',r.get('id',''))).strip() or f"{r.get('time')}|{r.get('incomeType')}|{r.get('symbol')}|{r.get('income')}"
+                  if key not in seen:
+                      seen.add(key); income.append(r)
+              if len(page)<1000:
+                  break
+              times=[int(n(r.get('time',r.get('timestamp')))) for r in page if int(n(r.get('time',r.get('timestamp'))))>0]
+              if not times:
+                  complete=False; break
+              nxt=max(times)+1
+              if nxt<=cursor:
+                  complete=False; break
+              cursor=nxt
+          else:
+              complete=False
+
+          income=[r for r in income if int(n(r.get('time',r.get('timestamp'))))>=start_ms]
+          income_by_type={}
+          for r in income:
+              typ=str(r.get('incomeType') or 'UNKNOWN').upper()
+              b=income_by_type.setdefault(typ,{'count':0,'usd':0.0})
+              b['count']+=1;b['usd']+=n(r.get('income',r.get('amount')))
+          for v in income_by_type.values():
+              v['usd']=round(v['usd'],8)
+          realized_rows=[r for r in income if str(r.get('incomeType','')).upper()=='REALIZED_PNL']
+          realized_total=sum(n(r.get('income')) for r in realized_rows)
+          realized_positive=sum(n(r.get('income')) for r in realized_rows if n(r.get('income'))>0)
+          realized_negative=sum(n(r.get('income')) for r in realized_rows if n(r.get('income'))<0)
+          realized_wins=sum(1 for r in realized_rows if n(r.get('income'))>0)
+          realized_losses=sum(1 for r in realized_rows if n(r.get('income'))<0)
+          external_cashflow=sum(n(r.get('income',r.get('amount'))) for r in income if str(r.get('incomeType','')).upper() in EXTERNAL_CASHFLOW_TYPES)
+
+          # Side-level closed-trade evidence already persisted from confirmed Aster fills.
+          closed=[]
+          try:
+              q=main.user_reference(user).collection('asterClosedTrades').where('closedAt','>=',start).stream()
+              closed=[d.to_dict() or {} for d in q]
+          except Exception:
+              closed=[]
+          closed_side={}
+          for side in ('LONG','SHORT'):
+              rows=[r for r in closed if str(r.get('side','')).upper()==side]
+              closed_side[side]={
+                  'count':len(rows),
+                  'realizedPnlUsd':round(sum(n(r.get('realizedPnlUsd')) for r in rows),8),
+                  'positiveCount':sum(1 for r in rows if n(r.get('realizedPnlUsd'))>0),
+                  'negativeCount':sum(1 for r in rows if n(r.get('realizedPnlUsd'))<0),
+              }
+
+          # 14-day cashflow-adjusted equity path from durable Portfolio Koers hourly candles.
+          candles=[]
+          try:
+              q=main.user_reference(user).collection('asterPortfolioChart1h').order_by('bucketMs',direction=firestore.Query.DESCENDING).limit(400).stream()
+              candles=[d.to_dict() or {} for d in q]
+          except Exception:
+              candles=[]
+          candles=[r for r in candles if int(n(r.get('bucketMs')))>=start_ms]
+          candles.sort(key=lambda r:int(n(r.get('bucketMs'))))
+          equity_history={}
+          if candles:
+              first=candles[0]; last=candles[-1]
+              start_eq=n(first.get('open')); end_eq=n(last.get('close'))
+              raw_change=end_eq-start_eq
+              adjusted_change=raw_change-external_cashflow
+              equity_history={
+                  'available':True,
+                  'coverageHours':round((int(n(last.get('bucketMs')))-int(n(first.get('bucketMs'))))/3600000,2),
+                  'startAtMs':int(n(first.get('bucketMs'))),
+                  'endAtMs':int(n(last.get('bucketMs'))),
+                  'startEquity':round(start_eq,8),
+                  'endEquity':round(end_eq,8),
+                  'rawChangeUsd':round(raw_change,8),
+                  'externalCashflowUsd':round(external_cashflow,8),
+                  'cashflowAdjustedChangeUsd':round(adjusted_change,8),
+                  'cashflowAdjustedReturnPct':round(adjusted_change/start_eq*100,6) if start_eq>0 else None,
+                  'lowEquity':round(min(n(r.get('low')) for r in candles if n(r.get('low'))>0),8),
+                  'highEquity':round(max(n(r.get('high')) for r in candles),8),
+                  'candleCount':len(candles),
+              }
+          else:
+              equity_history={'available':False}
+
+          # Current Strategy-2 ownership / DCA inventory age.
+          strategy=main.aster_strategy2_reference(uid).get().to_dict() or {}
+          owned=strategy.get('ownedLegs') if isinstance(strategy.get('ownedLegs'),list) else []
+          multi=strategy.get('multiBbPositions') if isinstance(strategy.get('multiBbPositions'),dict) else {}
+          created={}
+          dca_total=0
+          dca_legs=0
+          for leg in owned:
+              if not isinstance(leg,dict): continue
+              sym=str(leg.get('symbol','')).upper(); side=str(leg.get('side','')).upper()
+              stamp=int(n(leg.get('createdAtMs',leg.get('openedAtMs'))))
+              if sym and side in {'LONG','SHORT'} and stamp>0: created[(sym,side)]=stamp
+              dc=int(n(leg.get('dca_count',leg.get('dcaCount'))))
+              dca_total+=max(0,dc); dca_legs+=1 if dc>0 else 0
+          for key,v in multi.items():
+              if not isinstance(v,dict) or '|' not in str(key): continue
+              sym,side=str(key).upper().split('|',1)
+              stamp=int(n(v.get('createdAtMs',v.get('openedAtMs'))))
+              if stamp>0: created.setdefault((sym,side),stamp)
+              dc=int(n(v.get('dcaCount',v.get('dca_count'))))
+              dca_total+=max(0,dc); dca_legs+=1 if dc>0 else 0
+          aged=[]
+          for r in positions:
+              key=(str(r.get('symbol','')).upper(),pos_side(r))
+              stamp=created.get(key,0)
+              if stamp>0:
+                  aged.append({
+                      'symbol':key[0],'side':key[1],
+                      'ageDays':round((now_ms-stamp)/86400000,2),
+                      'openPnlUsd':round(pos_pnl(r),4),
+                      'notionalUsd':round(pos_notional(r),4),
+                  })
+          aged.sort(key=lambda x:x['ageDays'],reverse=True)
+
+          # Daily-growth state is read only; useful as a cross-check.
+          growth={}
+          try:
+              g=main.portfolio_growth_reference(uid).get().to_dict() or {}
+              dg=g.get('dailyGrowth') if isinstance(g.get('dailyGrowth'),dict) else {}
+              hist=dg.get('history') if isinstance(dg.get('history'),list) else []
+              growth={
+                  'measurementStartDate':dg.get('measurementStartDate'),
+                  'completedDays':int(n(dg.get('completedReturnCount'))),
+                  'completedReturnSumPct':round(n(dg.get('completedReturnSum')),6),
+                  'lastObservedDate':dg.get('lastObservedDate'),
+                  'lastObservedReturnPct':round(n(dg.get('lastObservedReturnPercentage')),6),
+                  'historyTail':[{
+                      'date':r.get('date'),
+                      'percentage':round(n(r.get('percentage')),6),
+                      'usdChange':round(n(r.get('usdChange')),6),
+                      'externalCashflowUsd':round(n(r.get('externalCashflowUsd')),6),
+                  } for r in hist[-14:] if isinstance(r,dict)],
+              }
+          except Exception:
+              growth={}
+
+          output={
+              'generatedAt':now.isoformat(),
+              'windowDays':14,
+              'readOnly':True,
+              'incomeLedgerComplete':complete,
+              'current':{
+                  'equityUsd':round(equity,8),
+                  'availableUsd':round(available,8),
+                  'walletBalanceUsd':round(n(account.get('totalWalletBalance')),8),
+                  'openPnlUsd':round(unrealized,8),
+                  'maintenanceMarginUsd':round(maintenance,8),
+                  'positionCount':len(positions),
+                  'long':by_side['LONG'],
+                  'short':by_side['SHORT'],
+                  'grossExposureUsd':round(gross,8),
+                  'netExposureUsd':round(net,8),
+                  'grossExposureToEquity':round(gross/equity,4) if equity>0 else None,
+                  'netExposureToEquity':round(net/equity,4) if equity>0 else None,
+                  'topOpenLosses':top_losses,
+                  'topOpenWinners':top_winners,
+              },
+              'autoHedge':{
+                  'activePairCount':len(pair_rows),
+                  'managedPositionCount':len(ah_positions),
+                  'managedOpenPnlUsd':round(sum(pos_pnl(r) for r in ah_positions),8),
+                  'managedNotionalUsd':round(sum(pos_notional(r) for r in ah_positions),8),
+                  'nonManagedPositionCount':len(non_ah_positions),
+                  'nonManagedOpenPnlUsd':round(sum(pos_pnl(r) for r in non_ah_positions),8),
+                  'pairs':pair_rows,
+              },
+              'last14d':{
+                  'incomeByType':income_by_type,
+                  'realizedPnlUsd':round(realized_total,8),
+                  'realizedPositiveUsd':round(realized_positive,8),
+                  'realizedNegativeUsd':round(realized_negative,8),
+                  'realizedWinningEvents':realized_wins,
+                  'realizedLosingEvents':realized_losses,
+                  'externalCashflowUsd':round(external_cashflow,8),
+                  'closedTradeSideEvidence':closed_side,
+                  'equityHistory':equity_history,
+              },
+              'inventory':{
+                  'ownedLegCount':len(owned),
+                  'multiBbPositionCount':len(multi),
+                  'dcaTotalFromState':dca_total,
+                  'legsWithDcaFromState':dca_legs,
+                  'agedPositionCount':len(aged),
+                  'positionsOlderThan3d':sum(1 for x in aged if x['ageDays']>=3),
+                  'positionsOlderThan7d':sum(1 for x in aged if x['ageDays']>=7),
+                  'agedWorst':sorted(aged,key=lambda x:x['openPnlUsd'])[:15],
+                  'oldest':aged[:15],
+              },
+              'dailyGrowthState':growth,
+          }
+          print(os.environ['MARKER']+'='+json.dumps(output,separators=(',',':'),sort_keys=True,default=str),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - name: Authenticate observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Collect sanitized analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in $(seq 1 15); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\""               --project "$GCP_PROJECT_ID" --freshness=15m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.json" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'='
+          rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def strings(x):
+              if isinstance(x,str): yield x
+              elif isinstance(x,dict):
+                  for v in x.values(): yield from strings(v)
+              elif isinstance(x,list):
+                  for v in x: yield from strings(v)
+          for row in rows if isinstance(rows,list) else []:
+              for s in strings(row):
+                  if marker in s:
+                      raw=s[s.index(marker)+len(marker):].splitlines()[0]
+                      json.loads(raw)
+                      print(raw)
+                      raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.json" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/result.json"
+          mkdir -p .diagnostics
+          cp "$RUNNER_TEMP/result.json" .diagnostics/account-weakest-link-20260927.json
+
+      - name: Publish sanitized diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "TradeMentor Diagnostics"
+          git config user.email "actions@users.noreply.github.com"
+          git add .diagnostics/account-weakest-link-20260927.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Record account weakest-link diagnostic"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+
+      - name: Re-authenticate deploy for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then
+            gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
