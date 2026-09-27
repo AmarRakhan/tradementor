@@ -102,6 +102,17 @@ def test_build457_zone_activation_does_not_bypass_existing_bollinger_entry_check
     assert candidate_guard < candidate_check < order
     assert "WAITING_BOLLINGER_ENTRY" in source
 
+def test_build457_realtime_registry_includes_multi_bb_positions_for_intracandle_zone_reaction():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _aster_realtime_subscription_mapping()")
+    end = source.index("def _aster_realtime_force_evaluate", start)
+    block = source[start:end]
+    assert 'multi_positions=raw.get("multiBbPositions")' in block
+    assert "for key,row in multi_positions.items():" in block
+    assert 'symbol=str(key).split("|",1)[0].upper().strip()' in block
+    assert "if is_multi_bb:" in block
+
+
 
 def test_build455_public_contract_exposes_price_zone_seat_alias():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
