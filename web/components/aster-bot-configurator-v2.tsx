@@ -287,6 +287,17 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       ? (active > 0 ? 100 : 0)
       : Math.min(100, Math.max(0, active / capacity * 100));
 
+  function assertConfirmedSeatLimit(confirmed: Record<string, unknown> | null) {
+    if (!draft.zoneSoldiersEnabled || !confirmed) return;
+    const confirmedSettings = confirmed.settings && typeof confirmed.settings === "object"
+      ? confirmed.settings as Record<string, unknown>
+      : {};
+    const confirmedMaximum = Number(confirmedSettings.maximumPositions);
+    if (!Number.isFinite(confirmedMaximum) || Math.round(confirmedMaximum) !== maxActiveSeats) {
+      throw new Error(`Opslaan niet bevestigd: gevraagd max ${maxActiveSeats}, server bevestigde ${Number.isFinite(confirmedMaximum) ? Math.round(confirmedMaximum) : "geen waarde"}.`);
+    }
+  }
+
   function buildSettings() {
     if (!draft.zoneSoldiersEnabled && (totals.totalSlots < 1 || totals.totalSlots > 400)) throw new Error("LONG + SHORT moet tussen 1 en 400 posities liggen.");
     if (draft.zoneSoldiersEnabled && (maxActiveSeats < 1 || maxActiveSeats > 400)) throw new Error("Max actieve stoelen moet tussen 1 en 400 liggen.");
@@ -391,6 +402,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       const result = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", { method: "PUT", body: JSON.stringify({ settings }) }) as Record<string, unknown>;
       const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null;
       if (!confirmed) throw new Error("Server heeft de instellingen niet bevestigd.");
+      assertConfirmedSeatLimit(confirmed);
       onConfirmed(confirmed); setDirty(false);
       setMessage("BETA-instellingen server-side opgeslagen. Bestaande posities, DCA-state en cycle-state zijn behouden.");
       await Promise.resolve(onChanged());
@@ -408,12 +420,16 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       if (enabled) {
         const result = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", { method: "PUT", body: JSON.stringify({ settings }) }) as Record<string, unknown>;
         const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null;
-        if (confirmed) onConfirmed(confirmed);
+        if (!confirmed) throw new Error("Server heeft de instellingen niet bevestigd.");
+        assertConfirmedSeatLimit(confirmed);
+        onConfirmed(confirmed);
         setDirty(false); setMessage("Instellingen opgeslagen; actieve bot-state is behouden.");
       } else {
         const result = await authenticatedRequest("/api/exchanges/aster/strategy2/start", { method: "POST", body: JSON.stringify({ confirm: true, settings }) }) as Record<string, unknown>;
         const confirmed = result.strategy2 && typeof result.strategy2 === "object" ? result.strategy2 as Record<string, unknown> : null;
-        if (confirmed) onConfirmed(confirmed);
+        if (!confirmed) throw new Error("Server heeft de instellingen niet bevestigd.");
+        assertConfirmedSeatLimit(confirmed);
+        onConfirmed(confirmed);
         setDirty(false); setMessage(result.started === true ? "BETA-bot gestart met de nieuwe configuratie." : "Start nog niet server-side bevestigd.");
       }
       await Promise.resolve(onChanged());
