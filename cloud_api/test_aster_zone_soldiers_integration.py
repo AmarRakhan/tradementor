@@ -55,12 +55,13 @@ def test_multi_bb_runtime_claims_zone_ownership_only_after_confirmed_entry_fill(
     assert '"zoneSoldierState": zone_state' in source
 
 
-def test_zone_mode_bypasses_legacy_global_side_slot_ratchet_but_keeps_platform_ceiling():
+def test_zone_mode_uses_per_zone_free_seats_and_hard_global_maximum_positions():
     source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
     assert "if zone_mode:" in source
     assert "long_need = len(available_soldiers" in source
     assert "short_need = len(available_soldiers" in source
-    assert "zone_platform_ceiling = min(400" in source
+    assert "settings.maximum_positions - seat_capacity_position_count" in source
+    assert "zone_platform_ceiling" not in source
     assert "if not paired and not zone_mode:" in source
 
 
@@ -70,6 +71,21 @@ def test_main_uses_confirmed_contiguous_15m_zone_and_fails_closed_for_new_entrie
     assert "len(contiguous) >= 14" in source
     assert '"safeForEntries": False' in source
     assert "zone_context=zone_context" in source
+
+def test_build455_active_zone_identity_survives_entry_freshness_hold():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert "history_ready = len(contiguous) >= 14" in source
+    assert "derive_equity_zones(contiguous, cycle_start) if history_ready else []" in source
+    assert '"ZONE_CONFIRMED_ENTRY_HELD" if active is not None' in source
+    zone_source = (ROOT / "aster_zone_soldiers.py").read_text(encoding="utf-8")
+    assert "if confirmed_zone is not None:" in zone_source
+    assert "active_zone=active_zone if zone_safe else None" in zone_source
+
+
+def test_build455_public_contract_exposes_price_zone_seat_alias():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert '"strategyMode":"PRICE_ZONE_SEATS"' in source
+    assert '"priceZoneSeats":zone_report' in source
 
 
 def test_zone_soldiers_are_available_to_beta_but_never_implicitly_enabled():
