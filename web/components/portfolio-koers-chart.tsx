@@ -153,6 +153,50 @@ function markerDetail(row:Marker) {
   return `💰${count>1?` ×${count}`:""} ${compactUsd(row.realizedPnlUsd)}`.trim();
 }
 
+type StructureNoteKind="roleFlip"|"newHigh"|"breakout";
+type StructureRect={left:number;right:number;top:number;bottom:number};
+
+function structureRectsOverlap(a:StructureRect,b:StructureRect,padding=5){
+  return !(a.right+padding<=b.left||b.right+padding<=a.left||a.bottom+padding<=b.top||b.bottom+padding<=a.top);
+}
+
+function structureNoteRect(kind:StructureNoteKind,left:number,top:number):StructureRect{
+  const size=kind==="roleFlip"?{width:148,height:28}:kind==="breakout"?{width:112,height:30}:{width:70,height:22};
+  return {left:left-size.width/2,right:left+size.width/2,top:top-size.height/2,bottom:top+size.height/2};
+}
+
+function placeStructureNote(
+  point:{left:number;top:number}|null,
+  kind:StructureNoteKind,
+  markerLabels:any[],
+  reserved:StructureRect[],
+  width:number,
+  height:number,
+){
+  if(!point)return null;
+  const offsets=kind==="newHigh"
+    ? [[0,0],[-72,-10],[72,-10],[-88,28],[88,28],[0,-44],[0,44]]
+    : kind==="breakout"
+      ? [[0,0],[0,-34],[-82,0],[82,0],[-64,-30],[64,-30]]
+      : [[0,0],[74,-10],[-74,-10],[0,34],[82,26],[-82,26]];
+  const markerRects=(Array.isArray(markerLabels)?markerLabels:[])
+    .map((row:any)=>row?.rect)
+    .filter((rect:any)=>rect&&Number.isFinite(Number(rect.left))&&Number.isFinite(Number(rect.top))) as StructureRect[];
+  for(const [dx,dy] of offsets){
+    const left=Math.max(46,Math.min(width-70,point.left+dx));
+    const top=Math.max(18,Math.min(height-20,point.top+dy));
+    const rect=structureNoteRect(kind,left,top);
+    if(markerRects.some((other)=>structureRectsOverlap(rect,other,4)))continue;
+    if(reserved.some((other)=>structureRectsOverlap(rect,other,4)))continue;
+    reserved.push(rect);
+    return {left,top};
+  }
+  const left=Math.max(46,Math.min(width-70,point.left));
+  const top=Math.max(18,Math.min(height-20,point.top+(kind==="newHigh"?48:-38)));
+  reserved.push(structureNoteRect(kind,left,top));
+  return {left,top};
+}
+
 
 function StrategyCommandCenter({vm,advisorMessage}:{vm:any;advisorMessage:string}) {
   const exposureClass=String(vm.netExposureSide||"NEUTRAAL").toLowerCase();
