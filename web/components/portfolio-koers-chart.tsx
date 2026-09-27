@@ -657,6 +657,7 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
       const height=Math.max(1,container.clientHeight),width=Math.max(1,container.clientWidth);
       const zoneLadder=advisorZoneLadderRef.current;
       const liveActiveZone=activeZoneRef.current;
+      let structureDraft:StructureOverlayLayout=EMPTY_STRUCTURE_OVERLAY;
       if(viewMode==="performance"){
         // Raw strategy-zone prices are deliberately hidden on the adjusted
         // performance axis. Trading uses the unchanged server-side raw equity.
@@ -763,15 +764,15 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         const roleX=roleFlipCandle?chart.timeScale().timeToCoordinate(roleFlipCandle.time as UTCTimestamp):null;
         const roleY=Number.isFinite(Number(s1))?series.priceToCoordinate(Number(s1)):null;
         const zoneLabel=Number.isInteger(Number(activeIndex))?`Zone ${Number(activeIndex)} actief`:"Zone actief";
-        setStructureOverlay({
+        structureDraft={
           levels,
           activeZone:activeTop!==null&&activeBottom!==null?{top:activeTop,height:Math.max(1,activeBottom-activeTop),label:zoneLabel}:null,
           roleFlip:roleX!==null&&roleY!==null&&Number(roleX)>70&&Number(roleX)<width-70?{left:Number(roleX),top:Number(roleY)}:null,
           newHigh:highX!==null&&highY!==null?{left:Math.max(92,Math.min(width-86,Number(highX))),top:Math.max(22,Number(highY)-28)}:null,
-          breakout:(r2Level??r1Level)?{left:Math.max(150,Math.min(width-92,width*.72)),top:Math.max(20,(r2Level??r1Level)!.top-38)}:null,
-        });
+          breakout:r1Level?{left:Math.max(150,Math.min(width-92,width*.72)),top:Math.max(20,r1Level.top-30)}:null,
+        };
       }else{
-        setStructureOverlay(EMPTY_STRUCTURE_OVERLAY);
+        structureDraft=EMPTY_STRUCTURE_OVERLAY;
       }
 
       const markerRows=markerRowsRef.current.filter((row)=>candleByTime.has(row.time));
@@ -817,6 +818,15 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
         });
       }
       const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:56});
+      const reserved:StructureRect[]=[];
+      if(structureDraft.activeZone){
+        const zoneCenter=structureDraft.activeZone.top+structureDraft.activeZone.height/2;
+        reserved.push({left:Math.max(0,width/2-58),right:Math.min(width-PRICE_AXIS_WIDTH,width/2+58),top:zoneCenter-16,bottom:zoneCenter+16});
+      }
+      const roleFlip=placeStructureNote(structureDraft.roleFlip,"roleFlip",markerLayout.all,reserved,width-PRICE_AXIS_WIDTH,height);
+      const newHigh=placeStructureNote(structureDraft.newHigh,"newHigh",markerLayout.all,reserved,width-PRICE_AXIS_WIDTH,height);
+      const breakout=placeStructureNote(structureDraft.breakout,"breakout",markerLayout.all,reserved,width-PRICE_AXIS_WIDTH,height);
+      setStructureOverlay({...structureDraft,roleFlip,newHigh,breakout});
       setEventLabels(markerLayout.all as EventLabel[]);
     };
     syncOverlaysRef.current=()=>requestAnimationFrame(syncOverlays);
