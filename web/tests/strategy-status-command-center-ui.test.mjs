@@ -18,7 +18,7 @@ test("Build 445 keeps Command Center dedicated and release-entitlement gated ins
 test("Build 432 owner Command Center uses the current screenshot reference and live-state labels",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('data-reference="file_00000000cf9481f4b495250734661e31"'));
-  for(const label of ["ACTIEVE ZONE","NETTO EXPOSURE","ZONE-SOLDATEN ACTIEF","OUDE-ZONE POSITIES","WINST THUISGEKOMEN","VOLGENDE ZONES"]){
+  for(const label of ["ACTIEVE ZONE","NETTO EXPOSURE","PRIJSZONE-POSITIES ACTIEF","OUDE-ZONE POSITIES","WINST UIT OUDE ZONES","VOLGENDE ZONES"]){
     assert.ok(component.includes(label),label);
   }
   for(const removed of ["THUIS / BESCHIKBAAR","VOLGENDE MOGELIJKE INSTROOM","<small>ENTRY-PRIORITEIT</small>"]){
