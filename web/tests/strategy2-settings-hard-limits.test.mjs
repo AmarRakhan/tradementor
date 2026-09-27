@@ -16,6 +16,13 @@ test("server-side guard caps Strategy 2 exposure controls independently of the b
   assert.match(guard, /next\.maximumPositions = Math\.max\(1, Math\.min\(MAX_TOTAL_POSITIONS/);
 });
 
+test("Build 456 preserves an explicit price-zone global maximum instead of rewriting it from legacy LONG+SHORT slots", () => {
+  assert.match(guard, /const priceZoneSeatsEnabled = settings\.zoneSoldiersEnabled === true/);
+  assert.match(guard, /priceZoneSeatsEnabled && hasExplicitMaximum/);
+  assert.match(guard, /finiteInteger\(settings\.maximumPositions \?\? settings\.maximumPairs, 1\)/);
+  assert.match(guard, /69L \+ 30S may remain persisted/);
+});
+
 test("settings, simulation and live start all pass through the same hard-limit guard", () => {
   for (const route of [settingsRoute, startRoute, simulateRoute]) {
     assert.match(route, /guardedAsterStrategy2Request/);
