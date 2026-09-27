@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { derivePortfolioZoneInstruction, derivePortfolioZoneLadder, portfolioZoneFromLadder, portfolioZoneContextFromLadder, zoneToneForSignedIndex, PORTFOLIO_ZONE_SEATS_PER_STEP } from "../lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneInstruction, derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneFromLadder, portfolioZoneContextFromLadder, zoneToneForSignedIndex, PORTFOLIO_ZONE_SEATS_PER_STEP } from "../lib/portfolio-zone-advisor.mjs";
 
 test("zone +2 asks for ten free SHORT soldiers exactly like the approved reference",()=>{
   assert.equal(PORTFOLIO_ZONE_SEATS_PER_STEP,5);
@@ -143,4 +143,42 @@ test("outer zone context leaves missing next boundary explicit instead of invent
   assert.equal(context.upperBoundary,null);
   assert.equal(context.nextUpIndex,null);
   assert.equal(context.nextDownIndex,2);
+});
+
+
+test("Build 447 extends a capped +3 display ladder so the live price gets a finite active zone",()=>{
+  const base=derivePortfolioZoneLadder([
+    {index:-1,center:100,atr:3},
+    {index:0,center:105,atr:3},
+  ]);
+  const expanded=extendPortfolioZoneLadderToPrice(base,141.18,2);
+  const context=portfolioZoneContextFromLadder(expanded,141.18);
+  assert.ok(context.activeIndex>3);
+  assert.ok(context.lowerBoundary<141.18);
+  assert.ok(context.upperBoundary>141.18);
+  assert.equal(context.nextUpIndex,context.activeIndex+1);
+  assert.equal(context.nextDownIndex,context.activeIndex-1);
+  assert.ok(expanded.zones.some((row)=>row.index===context.activeIndex+2));
+});
+
+test("Build 447 also extends downward and keeps S1 <= price <= R1",()=>{
+  const base=derivePortfolioZoneLadder([
+    {index:0,center:105,atr:3},
+    {index:1,center:110,atr:3},
+  ]);
+  const expanded=extendPortfolioZoneLadderToPrice(base,76.4,2);
+  const context=portfolioZoneContextFromLadder(expanded,76.4);
+  assert.ok(context.activeIndex<-3);
+  assert.ok(context.lowerBoundary<=76.4);
+  assert.ok(context.upperBoundary>=76.4);
+});
+
+test("Build 447 does not change a ladder when the current price already has finite neighbours",()=>{
+  const base=derivePortfolioZoneLadder([
+    {index:-1,center:100,atr:3},
+    {index:0,center:105,atr:3},
+    {index:1,center:110,atr:3},
+  ]);
+  const expanded=extendPortfolioZoneLadderToPrice(base,106,2);
+  assert.equal(expanded,base);
 });
