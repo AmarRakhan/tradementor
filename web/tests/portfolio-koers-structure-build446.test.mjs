@@ -58,7 +58,7 @@ test("Build 446 remains read-only and does not introduce trading mutation paths"
   assert.equal(component.includes("applySoldierInstruction"),false);
 });
 
-test("Build 446 is the advertised webapp build",async()=>{
+test("Build 447 remains the advertised webapp build while Build 446 Portfolio Koers regressions stay protected",async()=>{
   const version=await readFile(new URL("../lib/app-version.ts",import.meta.url),"utf8");
-  assert.match(version,/WEBAPP_BUILD_NUMBER = "446"/);
+  assert.match(version,/WEBAPP_BUILD_NUMBER = "447"/);
 });
