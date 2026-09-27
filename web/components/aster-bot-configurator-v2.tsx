@@ -480,13 +480,13 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const next = () => goTo(currentStep + 1);
   const previous = () => goTo(currentStep - 1);
   const selectedPositionLabel = draft.zoneSoldiersEnabled
-    ? \`\${zoneLongSeats}L / \${zoneShortSeats}S per zone · max \${maxActiveSeats}\`
-    : \`\${totals.longSlots} LONG · \${totals.shortSlots} SHORT · max \${totals.totalSlots}\`;
+    ? `${zoneLongSeats}L / ${zoneShortSeats}S per zone · max ${maxActiveSeats}`
+    : `${totals.longSlots} LONG · ${totals.shortSlots} SHORT · max ${totals.totalSlots}`;
   const tpLabel = draft.tpMode === "OFF"
     ? "Uit"
     : draft.tpMode === "PORTFOLIO"
-      ? \`Portfolio · \${draft.portfolioTpValue}\${draft.portfolioTpInputMode === "USD" ? " USDT" : "%"}\`
-      : \`Per trade · L \${draft.longTp}% / S \${draft.shortTp}%\`;
+      ? `Portfolio · ${draft.portfolioTpValue}${draft.portfolioTpInputMode === "USD" ? " USDT" : "%"}`
+      : `Per trade · L ${draft.longTp}% / S ${draft.shortTp}%`;
 
   return <article id="bot-configurator-v2" className="botconfig-v3" data-version="3.0" data-beta-only="true">
     <header className="v3-top">
@@ -553,7 +553,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
         {draft.manualEnabled && <Field label="Munten · SYMBOL:LONG / SYMBOL:SHORT" type="text" value={draft.manualSymbols} onChange={(v)=>update("manualSymbols",v)} />}
       </Accordion>
 
-      <Accordion title="Leverage" icon="⛓" reference={VISUAL_REFERENCES.leverage} open={settingsAccordion==="leverage"} onToggle={()=>setSettingsAccordion(settingsAccordion==="leverage"?null:"leverage")} summary={\`Min \${draft.minimumLeverage}x · Max \${draft.maximumLeverage||"pair max"}\`}>
+      <Accordion title="Leverage" icon="⛓" reference={VISUAL_REFERENCES.leverage} open={settingsAccordion==="leverage"} onToggle={()=>setSettingsAccordion(settingsAccordion==="leverage"?null:"leverage")} summary={`Min ${draft.minimumLeverage}x · Max ${draft.maximumLeverage||"pair max"}`}>
         <div className="v3-grid one">
           <StepperField label="Minimum leverage" value={draft.minimumLeverage} onChange={(v)=>update("minimumLeverage",v)} suffix="x" wide />
           <StepperField label="Maximum leverage" value={draft.maximumLeverage} onChange={(v)=>update("maximumLeverage",v)} suffix="x" wide allowEmpty />
@@ -681,7 +681,7 @@ function releaseLabel(key: string) {
   return ({ bot_configurator_v2: "Botconfigurator 3.0", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", margin_summary: "Margin summary", price_zones: "Price zones", zone_soldiers: "Zone Warriors", zone_command_center: "Prijszone-overzicht", auto_hedge_v2: "Auto Hedge 2.0", legacy_hedge_recovery: "Legacy Hedge Recovery" } as Record<string,string>)[key] || key;
 }
 
-const styles = \`
+const styles = `
 #bot-configurator-v2{--g:#2be49e;--g2:#13b979;--gold:#d6b458;--red:#ff647f;--bg:#020805;--panel:#06110d;--panel2:#081812;--line:rgba(72,124,101,.38);color:#f2f7f4;background:radial-gradient(circle at 75% 0,rgba(21,143,96,.12),transparent 27%),linear-gradient(180deg,#03100b,#020604);border:1px solid rgba(214,180,88,.28);border-radius:16px;padding:10px;box-shadow:0 20px 55px rgba(0,0,0,.35)}
 #bot-configurator-v2 *{box-sizing:border-box}.v3-top{display:grid;gap:10px;padding:2px 2px 8px}.v3-topline{display:flex;align-items:flex-end;justify-content:space-between;gap:8px}.v3-kicker{color:var(--gold);font-size:7px;font-weight:900;letter-spacing:.15em}.v3-top h2{margin:2px 0 0;font-size:21px;line-height:1}.v3-top p{margin:4px 0 0;color:#8fa097;font-size:9px}.v3-top-status{display:flex;align-items:center;gap:5px}.v3-top-status span,.v3-top-status b{border:1px solid rgba(214,180,88,.35);border-radius:999px;padding:4px 6px;font-size:6.5px;letter-spacing:.08em}.v3-top-status span{color:#f0ca61}.v3-top-status b{color:#889990}.v3-top-status b.on{color:#75efbd;border-color:rgba(43,228,158,.44)}
 .v3-progress{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;position:relative}.v3-progress:before{content:"";position:absolute;top:13px;left:11%;right:11%;height:1px;background:#31463d}.v3-progress button{position:relative;z-index:1;display:grid;justify-items:center;gap:3px;border:0;background:transparent;color:#788a81;padding:0;font-size:7px}.v3-progress i{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;border:1px solid #43584f;background:#06110d;font-style:normal;font-size:9px}.v3-progress button.active,.v3-progress button.done{color:#69eeb8}.v3-progress button.active i{border-color:var(--g);box-shadow:0 0 12px rgba(43,228,158,.35);color:#a8ffdb}.v3-progress button.done i{background:var(--g2);border-color:var(--g);color:#02120b}
@@ -698,4 +698,4 @@ const styles = \`
 .v3-release-center{margin-top:8px;border:1px solid rgba(214,180,88,.22);border-radius:10px;padding:7px}.v3-release-center summary{cursor:pointer;color:#d9bd69;font-size:8px;font-weight:850}.v3-release-center>p{color:#7f8f87;font-size:7px}.v3-release-center>div{display:grid;gap:4px}.v3-release-center article{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:6px;border:1px solid rgba(255,255,255,.05);border-radius:8px}.v3-release-center article>span:first-child{display:grid}.v3-release-center b{font-size:7.5px}.v3-release-center small{font-size:6px;color:#74847c}.v3-release-center button{border:1px solid rgba(43,228,158,.3);border-radius:7px;background:#073322;color:#aaf3d4;padding:5px 6px;font-size:6px}.v3-release-center em{color:#d7b961;font-size:6px;font-style:normal}
 @media(max-width:430px){#bot-configurator-v2{padding:8px;border-radius:14px}.v3-screen{padding-top:7px}.v3-strategy-card{grid-template-columns:70px minmax(0,1fr) 24px;min-height:88px}.v3-strategy-card img{width:70px;height:55px}.v3-grid.two,.v3-side-pair,.v3-review-grid{grid-template-columns:1fr 1fr}.v3-side-pair.trading .v2-field{grid-template-columns:1fr}.v3-tp-head{align-items:flex-start}.v3-tp-head>div{flex-wrap:wrap;justify-content:flex-end}.v3-review-block b{max-width:62%}}
 @media(max-width:350px){.v3-side-pair,.v3-grid.two,.v3-review-grid{grid-template-columns:1fr}.v3-strategy-card{grid-template-columns:60px minmax(0,1fr) 22px}.v3-strategy-card img{width:60px;height:48px}}
-\`;
+`;
