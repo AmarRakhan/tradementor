@@ -489,6 +489,7 @@ class ProfitNotificationService:
         claims = {"sub": os.getenv("WEB_PUSH_VAPID_SUBJECT", "mailto:notifications@tradementor.app")}
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         accepted = expired = errors = 0
+        provider_statuses: list[int] = []
         for reference, row in subscriptions:
             keys = row.get("keys") if isinstance(row.get("keys"), dict) else {}
             self._metric(uid, "dispatchAttempted")
@@ -502,6 +503,7 @@ class ProfitNotificationService:
                 self._metric(uid, "dispatchSuccess")
             except WebPushException as exc:
                 status = int(getattr(getattr(exc, "response", None), "status_code", 0) or 0)
+                provider_statuses.append(status)
                 if status in {404, 410}:
                     expired += 1
                     reference.set({"active": False, "expiredAt": datetime.now(timezone.utc),
@@ -514,11 +516,14 @@ class ProfitNotificationService:
                     self._metric(uid, "dispatchFailed")
             except Exception as exc:
                 errors += 1
+                provider_statuses.append(0)
                 reference.set({"lastError": type(exc).__name__, "updatedAt": datetime.now(timezone.utc)}, merge=True)
                 self._metric(uid, "dispatchFailed")
         self._log("push dispatch finished", uid, type=str(payload.get("type")),
-                  accepted=accepted, expired=expired, errors=errors)
-        return {"attempted": len(subscriptions), "accepted": accepted, "expired": expired, "errors": errors}
+                  accepted=accepted, expired=expired, errors=errors,
+                  providerStatuses=sorted(set(provider_statuses)))
+        return {"attempted": len(subscriptions), "accepted": accepted, "expired": expired, "errors": errors,
+                "providerStatuses": sorted(set(provider_statuses))}
 
     def _captured_account(self, events: list[dict[str, Any]]) -> dict[str, float]:
         if not events:
@@ -627,7 +632,16 @@ class ProfitNotificationService:
         if result["attempted"] <= 0:
             raise ValueError("Dit apparaat heeft nog geen actieve pushsubscription.")
         if result["accepted"] <= 0:
-            raise RuntimeError("De testmelding kon niet door de pushprovider worden geaccepteerd.")
+            statuses = {int(value) for value in result.get("providerStatuses", []) if int(value) > 0}
+            if statuses & {404, 410}:
+                raise RuntimeError("PUSH_SUBSCRIPTION_EXPIRED · De pushkoppeling op dit apparaat is verlopen. De app kan deze veilig opnieuw koppelen.")
+            if statuses & {400, 401, 403}:
+                code = min(statuses & {400, 401, 403})
+                raise RuntimeError(f"PUSH_PROVIDER_AUTH_REJECTED · Pushprovider weigerde de huidige apparaatkoppeling (HTTP {code}). De app kan deze veilig opnieuw koppelen.")
+            if statuses:
+                code = min(statuses)
+                raise RuntimeError(f"PUSH_PROVIDER_REJECTED · Pushprovider antwoordde met HTTP {code}. Probeer het later opnieuw.")
+            raise RuntimeError("PUSH_PROVIDER_REJECTED · De testmelding kon niet door de pushprovider worden geaccepteerd.")
         return {"sent": True, **result}
 
 
