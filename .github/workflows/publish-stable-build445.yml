@@ -1,0 +1,240 @@
+name: Publish Build 445 Stable Features
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/release-requests/stable-build445.json"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-stable-release
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  publish:
+    if: github.actor == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Check out canonical release request
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate owner-authorized Build 445 release request
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_EVENT_NAME" = "push"
+          test "$GITHUB_ACTOR" = "AmarRakhan"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          python - ".github/release-requests/stable-build445.json" > "$RUNNER_TEMP/release.env" <<'PY'
+          import json
+          import re
+          import shlex
+          import sys
+
+          request = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected_keys = {"action", "confirmation", "sourceCommit", "requestedBy", "requestId", "features"}
+          if set(request) != expected_keys:
+              raise SystemExit(f"unexpected release-request keys: {sorted(request)}")
+          if request["action"] != "publish-stable-release":
+              raise SystemExit("invalid release action")
+          if request["confirmation"] != "PUBLISH_STABLE_RELEASE":
+              raise SystemExit("invalid release confirmation")
+          if request["requestedBy"] != "AmarRakhan":
+              raise SystemExit("release request is not owner-authorized")
+          source = str(request["sourceCommit"])
+          request_id = str(request["requestId"])
+          if not re.fullmatch(r"[0-9a-f]{40}", source):
+              raise SystemExit("invalid sourceCommit")
+          if not re.fullmatch(r"[A-Za-z0-9._-]{3,80}", request_id):
+              raise SystemExit("invalid requestId")
+          allowed = [
+              "bot_configurator_v2",
+              "directional_bollinger",
+              "exposure_refill",
+              "margin_summary",
+              "zone_soldiers",
+              "zone_command_center",
+              "auto_hedge_v2",
+              "legacy_hedge_recovery",
+          ]
+          if request["features"] != allowed:
+              raise SystemExit("Build 445 stable feature set must exactly match the approved allowlist")
+          print("SOURCE_COMMIT=" + shlex.quote(source))
+          print("RELEASE_REQUEST_ID=" + shlex.quote(request_id))
+          PY
+          cat "$RUNNER_TEMP/release.env" >> "$GITHUB_ENV"
+
+      - name: Authenticate canonical deploy identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify exact production backend is live before publishing rights
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format=json > "$RUNNER_TEMP/service.json"
+          python - "$RUNNER_TEMP/service.json" >> "$GITHUB_ENV" <<'PY'
+          import json
+          import sys
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          spec = service["spec"]["template"]["spec"]
+          traffic = [row for row in service["status"].get("traffic", []) if int(row.get("percent", 0)) == 100]
+          if len(traffic) != 1:
+              raise SystemExit(f"expected exactly one live revision, got {traffic}")
+          image = spec["containers"][0]["image"]
+          runtime_sa = spec.get("serviceAccountName")
+          service_url = service["status"]["url"]
+          if not image or not runtime_sa or not service_url.startswith("https://"):
+              raise SystemExit("production service metadata incomplete")
+          print(f"PRODUCTION_IMAGE={image}")
+          print(f"RUNTIME_SERVICE_ACCOUNT={runtime_sa}")
+          print(f"SERVICE_URL={service_url}")
+          PY
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 \
+            "$SERVICE_URL/health?release=$GITHUB_RUN_ID" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/health.json" <<'PY'
+          import json
+          import os
+          import sys
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          if health.get("status") != "ready":
+              raise SystemExit("production backend is not ready")
+          live = health.get("sourceCommit") or health.get("imageSourceCommit")
+          if live != os.environ["SOURCE_COMMIT"]:
+              raise SystemExit(f"production source mismatch: live={live} requested={os.environ['SOURCE_COMMIT']}")
+          PY
+
+      - name: Publish only the approved Build 445 release entitlements
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="stable-445-${GITHUB_RUN_ID: -7}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import os
+          import firebase_admin
+          from firebase_admin import auth
+          from google.cloud import firestore
+
+          PROJECT = "tradementor-production"
+          APPROVED = [
+              "bot_configurator_v2",
+              "directional_bollinger",
+              "exposure_refill",
+              "margin_summary",
+              "zone_soldiers",
+              "zone_command_center",
+              "auto_hedge_v2",
+              "legacy_hedge_recovery",
+          ]
+          REQUEST_ID = os.environ["RELEASE_REQUEST_ID"]
+
+          if not firebase_admin._apps:
+              firebase_admin.initialize_app(options={"projectId": PROJECT})
+          admin = auth.get_user_by_email("amar_rakhan@hotmail.com")
+          db = firestore.Client(project=PROJECT)
+          batch = db.batch()
+
+          for key in APPROVED:
+              batch.set(
+                  db.collection("releaseFeatures").document(key),
+                  {
+                      "status": "LIVE",
+                      "beta": True,
+                      "stable": True,
+                      "updatedAt": firestore.SERVER_TIMESTAMP,
+                      "updatedBy": admin.uid,
+                      "releaseRequest": REQUEST_ID,
+                  },
+                  merge=True,
+              )
+
+          batch.set(
+              db.collection("releaseFeatures").document("price_zones"),
+              {
+                  "status": "IN_BOUW",
+                  "beta": False,
+                  "stable": False,
+                  "updatedAt": firestore.SERVER_TIMESTAMP,
+                  "updatedBy": admin.uid,
+                  "releaseRequest": REQUEST_ID,
+              },
+              merge=True,
+          )
+          batch.commit()
+
+          for key in APPROVED:
+              row = db.collection("releaseFeatures").document(key).get().to_dict() or {}
+              assert row.get("status") == "LIVE", (key, row)
+              assert row.get("beta") is True, (key, row)
+              assert row.get("stable") is True, (key, row)
+              assert row.get("releaseRequest") == REQUEST_ID, (key, row)
+
+          price = db.collection("releaseFeatures").document("price_zones").get().to_dict() or {}
+          assert price.get("status") == "IN_BOUW", price
+          assert price.get("beta") is False, price
+          assert price.get("stable") is False, price
+          assert price.get("releaseRequest") == REQUEST_ID, price
+          print("STABLE_BUILD445_RELEASE_VERIFIED=1")
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$PRODUCTION_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --set-env-vars "RELEASE_REQUEST_ID=$RELEASE_REQUEST_ID" \
+            --tasks 1 \
+            --parallelism 1 \
+            --max-retries 0 \
+            --task-timeout 180s \
+            --quiet
+          gcloud run jobs execute "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --wait
+
+      - name: Verify production backend remained healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 \
+            "$SERVICE_URL/health?releaseVerify=$GITHUB_RUN_ID" > "$RUNNER_TEMP/health-after.json"
+          python - "$RUNNER_TEMP/health-after.json" <<'PY'
+          import json
+          import os
+          import sys
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert health.get("status") == "ready"
+          assert (health.get("sourceCommit") or health.get("imageSourceCommit")) == os.environ["SOURCE_COMMIT"]
+          PY
