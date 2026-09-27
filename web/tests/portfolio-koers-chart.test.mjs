@@ -165,7 +165,7 @@ test("Portfolio Koers follows a newly opened live candle and keeps gappy 15m his
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("scrollToRealTime()"));
   assert.ok(component.includes("portfolioKoersTimelineHealth(canonical.candles,\"15m\",Date.now(),14)"));
-  assert.ok(component.includes("zone-entrys worden geblokkeerd zolang de Zone-Soldatenstrategie actief is."));
+  assert.ok(component.includes("nieuwe entries worden geblokkeerd zolang de prijszone-strategie actief is."));
   assert.ok(component.includes("Portfolio Koers blijft informatief"));
   assert.equal(component.includes("applySoldierInstruction"),false);
   assert.equal(component.includes('method:"PUT"'),false);
