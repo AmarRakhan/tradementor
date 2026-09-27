@@ -1,0 +1,193 @@
+name: Diagnose today's zone range 2026-09-27
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-today-zone-range-20260927.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run read-only zone range reconstruction
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t V < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8'));sp=s['spec']['template']['spec']
+          print(sp['containers'][0]['image']);print(sp['serviceAccountName'])
+          PY
+          )
+          JOB="tm-zonerange-${GITHUB_RUN_ID: -7}"
+          MARKER="ZONERANGE_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"; echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+
+          SCRIPT="$(base64 -w0 <<'PY'
+          import json,os,math
+          from datetime import datetime,timezone
+          from zoneinfo import ZoneInfo
+          from google.cloud import firestore
+          import main
+          from aster_portfolio_chart import derive_equity_zones,latest_contiguous_candles
+          from aster_zone_soldiers import confirmed_zone_from_display_zones
+
+          def n(v,d=0.0):
+              try:
+                  x=float(v); return x if math.isfinite(x) else d
+              except Exception:return d
+          def local_iso(ms):
+              return datetime.fromtimestamp(ms/1000,timezone.utc).astimezone(ZoneInfo('Europe/Amsterdam')).isoformat()
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              print(os.environ['MARKER']+'='+json.dumps({'error':'OWNER_NOT_CONFIGURED'}),flush=True);raise SystemExit
+          user={'uid':uid}
+          now=datetime.now(timezone.utc)
+          local=ZoneInfo('Europe/Amsterdam'); local_now=now.astimezone(local)
+          day_start_local=local_now.replace(hour=0,minute=0,second=0,microsecond=0)
+          day_start_ms=int(day_start_local.astimezone(timezone.utc).timestamp()*1000)
+
+          candles=main._read_portfolio_chart_candles(user,'15m',320)
+          strategy=main.aster_strategy2_reference(uid).get().to_dict() or {}
+          cycle=strategy.get('multiBbCycle') if isinstance(strategy.get('multiBbCycle'),dict) else {}
+          cycle_start=n(cycle.get('cycleStartEquity'))
+
+          points=[]
+          for i,row in enumerate(candles):
+              at=int(n(row.get('atMs')))
+              if at < day_start_ms: continue
+              prefix=candles[:i+1]
+              cont=latest_contiguous_candles(prefix,'15m')
+              if len(cont)<14: continue
+              zones=derive_equity_zones(cont,cycle_start)
+              close=n(row.get('close'))
+              zone=confirmed_zone_from_display_zones(zones,close) if zones and close>0 else None
+              if zone is None: continue
+              points.append({
+                  'atMs':at,'timeLocal':local_iso(at),'zone':int(zone),
+                  'closeEquity':round(close,8),
+              })
+
+          transitions=[]
+          prev=None
+          for p in points:
+              if prev is None or p['zone']!=prev['zone']:
+                  transitions.append(p)
+              prev=p
+
+          if points:
+              start_zone=points[0]['zone']; high_zone=max(p['zone'] for p in points); low_zone=min(p['zone'] for p in points)
+              distinct=sorted(set(p['zone'] for p in points))
+              span=high_zone-low_zone
+              crossed_up=max(0,high_zone-start_zone); crossed_down=max(0,start_zone-low_zone)
+              # Full formation counting: start zone + every distinct zone index between min/max.
+              min_zone_count=span+1
+              min_long_slots=min_zone_count*3
+              min_short_slots=min_zone_count*3
+              min_total_slots=min_zone_count*6
+              new_zone_steps=crossed_up+crossed_down
+              new_zone_min_total=new_zone_steps*6
+          else:
+              start_zone=high_zone=low_zone=None;distinct=[];span=crossed_up=crossed_down=min_zone_count=min_long_slots=min_short_slots=min_total_slots=new_zone_steps=new_zone_min_total=0
+
+          out={
+              'generatedAt':now.isoformat(),'localDate':local_now.date().isoformat(),'timezone':'Europe/Amsterdam','readOnly':True,
+              'cycleStartEquity':cycle_start or None,
+              'evaluated15mPoints':len(points),
+              'startZone':start_zone,'highestZone':high_zone,'lowestZone':low_zone,
+              'zonesUpFromStart':crossed_up,'zonesDownFromStart':crossed_down,
+              'distinctZonesObserved':distinct,'zoneSpanSteps':span,'minimumZonesInFullRange':min_zone_count,
+              'minimumFormation':{
+                  'longSlots':min_long_slots,'shortSlots':min_short_slots,'totalSlots':min_total_slots,
+                  'basis':'3 LONG + 3 SHORT per zone including the start zone'
+              },
+              'minimumNewZoneFormationBeyondStart':{
+                  'newZoneSteps':new_zone_steps,'totalSlots':new_zone_min_total,
+                  'basis':'only newly reached zones above/below the start zone'
+              },
+              'transitions':transitions,
+              'firstPoint':points[0] if points else None,
+              'lastPoint':points[-1] if points else None,
+          }
+          print(os.environ['MARKER']+'='+json.dumps(out,separators=(',',':'),sort_keys=True,default=str),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "${V[0]}" --service-account "${V[1]}" --set-env-vars "MARKER=$MARKER"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Collect and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in $(seq 1 15); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\"" --project "$GCP_PROJECT_ID" --freshness=15m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.json" <<'PY'
+          import json,sys
+          m=sys.argv[1]+'=';rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def walk(x):
+              if isinstance(x,str):yield x
+              elif isinstance(x,dict):
+                  for v in x.values():yield from walk(v)
+              elif isinstance(x,list):
+                  for v in x:yield from walk(v)
+          for row in rows:
+              for s in walk(row):
+                  if m in s:
+                      raw=s[s.index(m)+len(m):].splitlines()[0];json.loads(raw);print(raw);raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.json" ] && break
+            sleep 2
+          done
+          test -s "$RUNNER_TEMP/result.json"
+          mkdir -p .diagnostics
+          cp "$RUNNER_TEMP/result.json" .diagnostics/today-zone-range-20260927.json
+          git config user.name "TradeMentor Diagnostics";git config user.email "actions@users.noreply.github.com"
+          git add .diagnostics/today-zone-range-20260927.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Record today's zone range diagnostic"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+
+      - uses: google-github-actions/auth@v2
+        if: always()
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true; fi
