@@ -187,8 +187,13 @@ export function extendPortfolioZoneLadderToPrice(ladder, price, padding=2) {
   if(!existingIndexes.length)return ladder;
   const minExisting=Math.min(...existingIndexes);
   const maxExisting=Math.max(...existingIndexes);
-  const minIndex=Math.max(-50,Math.min(minExisting,estimatedIndex-safePadding));
-  const maxIndex=Math.min(50,Math.max(maxExisting,estimatedIndex+safePadding));
+  let minIndex=Math.min(minExisting,estimatedIndex-safePadding);
+  let maxIndex=Math.max(maxExisting,estimatedIndex+safePadding);
+  if(maxIndex-minIndex>24){
+    const window=Math.max(4,safePadding);
+    minIndex=estimatedIndex-window;
+    maxIndex=estimatedIndex+window;
+  }
 
   if(minIndex===minExisting&&maxIndex===maxExisting){
     const context=portfolioZoneContextFromLadder(ladder,value);
