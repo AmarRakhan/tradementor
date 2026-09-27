@@ -21,7 +21,7 @@ test("service worker uses Samsung Internet native installation without an in-app
   assert.doesNotMatch(worker, /clients\.claim/);
   assert.match(worker, /respondWith/);
   assert.match(worker, /offline\.html/);
-  assert.match(worker, /amar-bot-shell-v46-build450/);
+  assert.match(worker, /amar-bot-shell-v46-build451/);
   assert.match(worker, /request\.url\.includes\("\/api\/"\)/);
   assert.doesNotMatch(registration, /beforeinstallprompt/);
   assert.match(registration, /serviceWorker\.register/);

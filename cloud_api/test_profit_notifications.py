@@ -236,3 +236,9 @@ def test_pywebpush_never_receives_raw_pem_text():
     assert 'vapid_private_key=vapid["privatePem"]' not in source
     assert "vapid_private_key=vapid_private_key" in source
     assert "_vapid_private_der_b64" in source
+
+
+def test_test_push_title_has_no_bot_brand_text():
+    source = Path("profit_notifications.py").read_text()
+    assert '"title": "🧪 Testmelding"' in source
+    assert '"title": "🧪 Testmelding · Amar Crypto Bot 2026"' not in source
