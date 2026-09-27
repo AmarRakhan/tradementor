@@ -540,7 +540,7 @@ def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] |
     balancer = _balancer_plan(
         exposure=exposure,
         previous_side=str(previous_balancer.get("activeSide") or ""),
-        enabled=bool(balancer_enabled and zone_safe and zone_state.get("activeZone") is not None),
+        enabled=bool(balancer_enabled and zone_state.get("activeZone") is not None),
         trigger_percent=trigger_percent,
         release_percent=release_percent,
         fallback_unit_notional=fallback_unit_notional,
@@ -549,11 +549,12 @@ def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] |
     # Exposure balancing is routing/prioriteit only. It never adds seats.
     zone_state["balancer"] = {**balancer, "updatedAtMs": timestamp_ms}
     _bind_open_soldiers(zone_state, state, positions or [], timestamp_ms=timestamp_ms)
-    # Free seats exist structurally even while an entry guard is unsafe, but
-    # only a safe active zone may expose them as executable AVAILABLE capacity.
+    # Price now in Zone X means Zone X is active now. Empty base seats become
+    # AVAILABLE immediately; actual orders still pass the existing Bollinger,
+    # leverage, margin, minimum-order and exchange safety checks downstream.
     _activate_free_soldiers(
         zone_state,
-        active_zone=active_zone if zone_safe else None,
+        active_zone=active_zone,
         balancer=balancer,
         timestamp_ms=timestamp_ms,
     )
