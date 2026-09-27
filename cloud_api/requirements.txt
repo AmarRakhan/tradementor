@@ -10,3 +10,5 @@ hyperliquid-python-sdk==0.24.0
 httpx>=0.28.0,<1
 hypothesis==6.165.10
 websockets>=15.0,<16
+pywebpush>=2.0.3,<3
+cryptography>=45.0.0,<47
