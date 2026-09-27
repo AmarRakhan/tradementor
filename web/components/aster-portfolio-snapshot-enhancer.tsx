@@ -599,22 +599,30 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
   </div>;
 }
 
-function PriceZoneStrategySummary({ summary }: { summary: PriceZoneSeatSummary | null }) {
-  if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE}><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>—</em></div></section>;
+function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZoneSeatSummary | null; liveActiveZone: number | null }) {
+  const liveZoneLabel = liveActiveZone === null ? "—" : `Zone ${liveActiveZone} actief`;
+  if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
   const sideTotal = Math.max(1, summary.perZoneLong + summary.perZoneShort);
   const longCapacity = Math.max(1, Math.round(summary.maxTotal * summary.perZoneLong / sideTotal));
   const shortCapacity = Math.max(0, summary.maxTotal - longCapacity);
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
-  const zoneLabel = summary.activeZone === null ? "Zone —" : `Zone ${summary.activeZone} actief`;
-  return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE}>
+  const displayActiveZone = liveActiveZone ?? summary.activeZone;
+  const seatZoneInSync = liveActiveZone === null || summary.activeZone === liveActiveZone;
+  const zoneLabel = displayActiveZone === null ? "Zone —" : `Zone ${displayActiveZone} actief`;
+  const statusText = !summary.enabled
+    ? "Prijszone-stoelen staan momenteel uit."
+    : seatZoneInSync
+      ? "Alleen vrije stoelen in de actieve prijszone worden gevuld."
+      : "Live zone gewijzigd · stoelstatus synchroniseert.";
+  return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync={seatZoneInSync ? "synced" : "waiting"}>
     <div className="aps-zone-title">
       <span className="aps-zone-target" aria-hidden="true">◎</span>
-      <div><b>Prijszone-strategie</b><small>{summary.enabled ? "Alleen vrije stoelen in de actieve prijszone worden gevuld." : "Prijszone-stoelen staan momenteel uit."}</small></div>
+      <div><b>Prijszone-strategie</b><small>{statusText}</small></div>
       <em>{summary.enabled ? zoneLabel : "UIT"}</em>
     </div>
     <div className="aps-zone-facts">
       <span><small>Per zone</small><b>{summary.perZoneLong}L / {summary.perZoneShort}S</b></span>
-      <span><small>Vrij in actieve zone</small><b><i>{summary.freeLongActiveZone}L</i> / <em>{summary.freeShortActiveZone}S</em></b></span>
+      <span><small>Vrij in actieve zone</small>{seatZoneInSync ? <b><i>{summary.freeLongActiveZone}L</i> / <em>{summary.freeShortActiveZone}S</em></b> : <b>— / —</b>}</span>
       <span><small>Oude zones open</small><b>{summary.openFromOldZones}</b></span>
       <span><small>Max totaal</small><b>{summary.maxTotal}</b></span>
     </div>
@@ -627,11 +635,12 @@ function PriceZoneStrategySummary({ summary }: { summary: PriceZoneSeatSummary |
   </section>;
 }
 
-function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeats, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
+function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeats, liveActiveZone, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
   priceZoneSeats: PriceZoneSeatSummary | null;
+  liveActiveZone: number | null;
   profitBusy: ProfitScope | null;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
@@ -646,7 +655,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeat
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
-    <PriceZoneStrategySummary summary={priceZoneSeats} />
+    <PriceZoneStrategySummary summary={priceZoneSeats} liveActiveZone={liveActiveZone} />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
@@ -720,6 +729,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
   const [priceZoneSeats, setPriceZoneSeats] = useState<PriceZoneSeatSummary | null>(null);
+  const [liveActiveZone, setLiveActiveZone] = useState<number | null>(null);
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
@@ -840,7 +850,7 @@ export function AsterPortfolioSnapshotEnhancer() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [host]);
+  }, [host, liveActiveZone]);
 
   useEffect(() => {
     const modalOpen = hedgeOpen || Boolean(confirmScope);
@@ -926,12 +936,14 @@ export function AsterPortfolioSnapshotEnhancer() {
         liveAvailableText={values.available}
         liveLongText={values.longs}
         liveShortText={values.shorts}
+        onActiveZoneChange={setLiveActiveZone}
       />
       <Snapshot
         values={values}
         profitPreview={profitPreview}
         liquidationDiagnostics={liquidationDiagnostics}
         priceZoneSeats={priceZoneSeats}
+        liveActiveZone={liveActiveZone}
         profitBusy={profitBusy}
         onCloseAll={closeAll}
         onCloseProfit={openProfitPreview}
