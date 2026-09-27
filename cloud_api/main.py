@@ -155,6 +155,7 @@ from firebase_identity import check_revoked_tokens, identity_app, recent_id_toke
 from read_only_source import read_source_url
 from bybit_continuity import BybitContinuityClient, BybitContinuityCredentials, BybitContinuityError
 from friends_analytics import install_friends_routes
+from profit_notifications import ProfitNotificationService, install_profit_notification_routes
 
 
 class Strategy2OrderBudgetExhausted(RuntimeError):
@@ -213,6 +214,7 @@ async def existing_data_read_bridge(request: Request, call_next: Any) -> Respons
 
 
 db = firestore.client()
+profit_notification_service = ProfitNotificationService(db)
 configure_auto_hedge_lock_reader(
     lambda uid, symbol: (
         db.collection("asterPositionLossAutoHedge").document(str(uid))
@@ -3628,6 +3630,174 @@ def authenticated_user(authorization: str | None = Header(default=None)) -> dict
     except Exception as exc:
         raise HTTPException(401, "Ongeldige of verlopen gebruikerssessie") from exc
 
+
+
+install_profit_notification_routes(app, profit_notification_service, authenticated_user)
+
+
+def _profit_notification_account_values(client: AsterV3Client) -> dict[str, float]:
+    """Read current Aster equity/available without any execution capability."""
+    account = client.account_information()
+    equity, _wallet, available, _unrealized, _maintenance = aster_account_information_values(account)
+    return {"portfolioValue": equity, "available": available}
+
+
+def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
+    """Observe confirmed Aster close evidence and deliver notifications.
+
+    This observer always constructs the Aster client with live_authorized=False.
+    Notification failures never alter Strategy-2/Sniper state and never submit
+    or cancel an exchange order.
+    """
+    settings = profit_notification_service.get_settings(uid)
+    if not settings.get("enabled"):
+        return {"uid": uid, "status": "disabled", "events": 0, "ordersSent": 0}
+
+    now_ms = int(time.time() * 1000)
+    enabled_at = int(safe_float(settings.get("enabledAtMs")))
+    state = profit_notification_service.reconcile_state(uid)
+    last_reconciled = int(safe_float(state.get("lastReconciledAtMs")))
+    # Deliberate overlap makes restart/retry safe. Persistent event IDs dedupe
+    # repeated reads, while enabledAt prevents historical pre-opt-in alerts.
+    start_ms = max(enabled_at, last_reconciled - 10 * 60_000, now_ms - 24 * 60 * 60_000)
+    secret = load_aster_secret({"uid": uid})
+    client = AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),
+        live_authorized=False,
+    )
+    account = client.account_information()
+    equity, _wallet, available, _unrealized, _maintenance = aster_account_information_values(account)
+
+    recent_income = client.income_history(income_type="REALIZED_PNL", start_time=start_ms or None, limit=1000)
+    priority_symbols: list[str] = []
+    for row in sorted(
+        (item for item in recent_income if isinstance(item, dict)),
+        key=lambda item: safe_float(item.get("time")),
+        reverse=True,
+    ):
+        if safe_float(row.get("income")) <= 0:
+            continue
+        symbol = str(row.get("symbol", "")).upper()
+        if symbol and symbol not in priority_symbols:
+            priority_symbols.append(symbol)
+
+    strategy_state = aster_strategy2_reference(uid).get().to_dict() or {}
+    sniper_state = aster_sniper_reference(uid).get().to_dict() or {}
+    background_symbols: list[str] = []
+    for row in [
+        *(strategy_state.get("ownedLegs") if isinstance(strategy_state.get("ownedLegs"), list) else []),
+        *(sniper_state.get("activeTrades") if isinstance(sniper_state.get("activeTrades"), list) else []),
+    ]:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol", "")).upper()
+        if symbol and symbol not in background_symbols:
+            background_symbols.append(symbol)
+
+    rotation_slot = int(safe_float(state.get("rotationSlot")))
+    symbols = bounded_history_symbols(
+        priority_symbols,
+        background_symbols,
+        maximum_symbols=8,
+        rotation_slot=rotation_slot,
+    )
+    fills: list[dict[str, Any]] = []
+    for symbol in symbols:
+        try:
+            rows = client.user_trades(symbol, limit=500)
+        except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
+            continue
+        fills.extend(
+            item for item in rows
+            if isinstance(item, dict)
+            and int(safe_float(item.get("time", item.get("updateTime")))) >= start_ms
+        )
+
+    activity = recent_trade_activity_from_fills(fills)
+    exits = activity.get("exits") if isinstance(activity.get("exits"), list) else []
+
+    completed = (
+        strategy_state.get("multiBbLastCompletedCycle")
+        if isinstance(strategy_state.get("multiBbLastCompletedCycle"), dict)
+        else {}
+    )
+    completed_cycle_id = str(completed.get("cycleId", ""))
+    completed_at_ms = int(safe_float(completed.get("flatConfirmedAtMs")))
+    triggered_at_ms = int(safe_float(completed.get("portfolioTpTriggeredAtMs")))
+    last_ptp_cycle = str(state.get("lastPortfolioTpCycleId", ""))
+    if completed_cycle_id and completed_cycle_id != last_ptp_cycle and completed_at_ms >= enabled_at:
+        current_cycle = strategy_state.get("multiBbCycle") if isinstance(strategy_state.get("multiBbCycle"), dict) else {}
+        profit_notification_service.record_portfolio_tp_event(
+            uid,
+            cycle_id=completed_cycle_id,
+            next_cycle_id=str(current_cycle.get("cycleId", "")),
+            cycle_start_equity=safe_float(completed.get("cycleStartEquity")),
+            cycle_end_equity=safe_float(completed.get("cycleEndEquity")),
+            occurred_at_ms=completed_at_ms or now_ms,
+        )
+        profit_notification_service.update_reconcile_state(uid, lastPortfolioTpCycleId=completed_cycle_id)
+
+    recorded = 0
+    newest_close = last_reconciled
+    for row in exits:
+        occurred_at_ms = int(safe_float(row.get("timestampMs")))
+        newest_close = max(newest_close, occurred_at_ms)
+        realized = safe_float(row.get("realizedPnlUsd"))
+        commission = abs(safe_float(row.get("commissionUsd")))
+        net = realized - commission
+        close_id = str(row.get("id", "")).strip() or "|".join((
+            str(row.get("symbol", "")),
+            str(row.get("side", "")),
+            str(occurred_at_ms),
+            f"{net:.10f}",
+        ))
+        suppress_cycle = ""
+        if (
+            settings.get("portfolioTpEnabled")
+            and completed_cycle_id
+            and triggered_at_ms > 0
+            and completed_at_ms >= triggered_at_ms
+            and triggered_at_ms <= occurred_at_ms <= completed_at_ms + 2_000
+        ):
+            suppress_cycle = completed_cycle_id
+        result = profit_notification_service.record_trade_event(
+            uid,
+            close_event_id=close_id,
+            symbol=str(row.get("symbol", "")),
+            side=str(row.get("side", "")),
+            strategy=str(row.get("strategy", "Aster")),
+            realized_net_pnl_usd=net,
+            occurred_at_ms=occurred_at_ms,
+            captured_portfolio=equity,
+            captured_available=available,
+            suppressed_by_portfolio_tp=suppress_cycle,
+        )
+        if result.get("created"):
+            recorded += 1
+
+    # Cache one current account read per scheduler pass. It is obtained after
+    # reconciliation and immediately before push dispatch.
+    fresh_account: dict[str, float] | None = None
+
+    def load_fresh_account() -> dict[str, float]:
+        nonlocal fresh_account
+        if fresh_account is None:
+            fresh_account = _profit_notification_account_values(client)
+        return fresh_account
+
+    dispatch = profit_notification_service.process_pending(
+        uid,
+        account_loader=load_fresh_account,
+        now_ms=now_ms,
+    )
+    profit_notification_service.update_reconcile_state(
+        uid,
+        lastReconciledAtMs=max(now_ms, newest_close),
+        rotationSlot=rotation_slot + 1,
+        lastSymbols=symbols,
+    )
+    return {"uid": uid, "status": "ok", "events": recorded, "dispatch": dispatch, "ordersSent": 0}
 
 def require_verified_email(user: dict[str, Any]) -> None:
     if user.get("email_verified") is True:
@@ -8599,10 +8769,25 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
             aster_sniper_reference(item.id).set({"phase":"DATA_HOLD","lastReason":f"Veilige Sniper-schedulerfout: {str(exc)[:300]}",
                 "lastTickAt":datetime.now(timezone.utc)},merge=True)
             sniper_results.append({"uid":item.id,"status":"data-hold","reason":str(exc)[:300]})
+    notification_results=[]
+    notification_controls=list(db.collection("profitNotificationControls").where("enabled","==",True).stream())
+    notification_uids=[item.id for item in notification_controls[:100]]
+    if notification_uids:
+        workers=min(4,len(notification_uids))
+        with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="profit-push") as pool:
+            futures=[pool.submit(_reconcile_profit_notifications,uid) for uid in notification_uids]
+            for future in as_completed(futures):
+                try:
+                    notification_results.append(future.result())
+                except Exception as exc:
+                    # Notification delivery is observability-only. It must never
+                    # poison or pause a trading scheduler account.
+                    notification_results.append({"status":"notification-error","reason":str(exc)[:240],"ordersSent":0})
     # Strategy 1 and Strategy 3 remain retired. Strategy 2 and SNIPER are the
-    # only live Aster engines scheduled here, with independent state/ownership.
+    # only live Aster engines scheduled here; push notifications only observe
+    # already-confirmed exchange/Portfolio-TP evidence.
     return {"processed":len(strategy2_results)+len(sniper_results),"strategy2":strategy2_results,"sniper":sniper_results,
-        "strategy2Only":False,"sniperEnabled":True}
+        "profitNotifications":notification_results,"strategy2Only":False,"sniperEnabled":True}
 
 
 @app.post("/internal/aster-strategy2/{uid}/simulate")
