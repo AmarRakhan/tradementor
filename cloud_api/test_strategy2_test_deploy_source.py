@@ -7,7 +7,6 @@ MAIN = ROOT / "cloud_api" / "main.py"
 DOCKERFILE = ROOT / "cloud_api" / "Dockerfile"
 TEST_ENTRYPOINT = ROOT / "cloud_api" / "strategy2_test_entrypoint.py"
 NON_TEST_DEPLOYMENTS = (
-    ROOT / ".github" / "workflows" / "deploy-cloud-production.yml",
     ROOT / ".github" / "workflows" / "deploy-cloud-staging.yml",
 )
 

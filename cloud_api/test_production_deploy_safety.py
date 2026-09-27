@@ -20,8 +20,8 @@ def test_production_deploy_keeps_wif_and_no_stored_key_authentication():
 def test_production_deploy_verifies_exact_source_commit_before_promotion():
     text = workflow()
     assert "source_commit:" in text
-    assert "ref: ${{ inputs.source_commit }}" in text
-    assert 'test "$(git rev-parse HEAD)" = "$REQUESTED_SOURCE_COMMIT"' in text
+    assert "ref: ${{ steps.deploy-request.outputs.source_commit }}" in text
+    assert 'test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"' in text
     assert 'git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"' in text
     assert '--build-arg "SOURCE_COMMIT=$SOURCE_COMMIT"' in text
     assert "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT" in text
