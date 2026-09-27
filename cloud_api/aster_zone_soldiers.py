@@ -783,7 +783,7 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
 
     return {
         "enabled": True, "schemaVersion": SCHEMA_VERSION,
-        "safeForNewEntries": bool(zone_safe and active_zone is not None),
+        "safeForNewEntries": bool(active_zone is not None),
         "activeZone": active_zone, "previousZone": zone_state.get("previousZone"),
         "zoneActivationId": zone_state.get("zoneActivationId"), "hardFormationCap": True,
         "zoneFormation": {
@@ -794,7 +794,7 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
         # compatibility layer until all persisted state has migrated.
         "seatModel": {
             "activeZone": active_zone,
-            "entrySafe": bool(zone_safe and active_zone is not None),
+            "entrySafe": bool(active_zone is not None),
             "perZoneLong": per_zone_long,
             "perZoneShort": per_zone_short,
             "occupiedLongActiveZone": base_open_long,
