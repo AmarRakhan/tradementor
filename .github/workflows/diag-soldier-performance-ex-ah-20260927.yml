@@ -1,0 +1,295 @@
+name: Diagnose soldier performance excluding Auto Hedge 2026-09-27
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diag-soldier-performance-ex-ah-20260927.yml"
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: amar-crypto-bot-2026-cloud
+          fetch-depth: 0
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run read-only soldier analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          readarray -t VALUES < <(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding='utf-8')); spec=s['spec']['template']['spec']
+          print(spec['containers'][0]['image']); print(spec['serviceAccountName'])
+          PY
+          )
+          IMAGE="${VALUES[0]}"; RUNTIME_SA="${VALUES[1]}"
+          JOB="tm-soldierperf-${GITHUB_RUN_ID: -7}"; MARKER="SOLDIERPERF_${GITHUB_RUN_ID}"
+          echo "DIAG_JOB=$JOB" >> "$GITHUB_ENV"; echo "DIAG_MARKER=$MARKER" >> "$GITHUB_ENV"
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,os,math
+          from datetime import datetime,timezone,timedelta
+          from google.cloud import firestore
+          import main
+
+          def n(v,d=0.0):
+              try:
+                  x=float(v); return x if math.isfinite(x) else d
+              except Exception:return d
+          def ms(v):
+              if isinstance(v,datetime):
+                  x=v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+                  return int(x.astimezone(timezone.utc).timestamp()*1000)
+              if isinstance(v,(int,float)): return int(v)
+              if isinstance(v,str):
+                  try:return int(datetime.fromisoformat(v.replace('Z','+00:00')).timestamp()*1000)
+                  except Exception:return int(n(v))
+              return 0
+
+          db=firestore.Client(project='tradementor-production')
+          owner=db.collection('systemConfiguration').document('continuityDashboardV1').get().to_dict() or {}
+          uid=str(owner.get('ownerUid') or '').strip()
+          if not uid:
+              print(os.environ['MARKER']+'='+json.dumps({'error':'OWNER_NOT_CONFIGURED'}),flush=True);raise SystemExit
+
+          user={'uid':uid}
+          secret=main.load_aster_secret(user)
+          client=main.AsterV3Client(signer_address=secret.signer_address,sign_message=main.local_eip712_signer(secret),live_authorized=False)
+          now=datetime.now(timezone.utc); since=now-timedelta(days=14); since_ms=int(since.timestamp()*1000)
+
+          positions=[r for r in (client.position_risk() or []) if isinstance(r,dict) and abs(n(r.get('positionAmt',r.get('quantity'))))>0]
+          def side(r):
+              s=str(r.get('positionSide',r.get('side',''))).upper().strip()
+              return s if s in {'LONG','SHORT'} else ('LONG' if n(r.get('positionAmt'))>0 else 'SHORT')
+          def pnl(r):return n(r.get('unRealizedProfit',r.get('unrealizedPnl',r.get('unrealizedProfit'))))
+          def notion(r):
+              q=abs(n(r.get('positionAmt',r.get('quantity')))); mark=n(r.get('markPrice'))
+              return q*mark if q>0 and mark>0 else abs(n(r.get('notional')))
+
+          strategy=main.aster_strategy2_reference(uid).get().to_dict() or {}
+          multi=strategy.get('multiBbPositions') if isinstance(strategy.get('multiBbPositions'),dict) else {}
+          multi_u={str(k).upper():v for k,v in multi.items() if isinstance(v,dict)}
+          zone_state=strategy.get('zoneSoldierState') if isinstance(strategy.get('zoneSoldierState'),dict) else {}
+          settings=strategy.get('settings') if isinstance(strategy.get('settings'),dict) else {}
+
+          ah={}
+          for d in db.collection('asterPositionLossAutoHedge').document(uid).collection('pairs').stream():
+              v=d.to_dict() or {}; st=str(v.get('status') or '').upper()
+              if st and st!='CLOSED': ah[d.id.upper()]={**v,'status':st}
+          ah_symbols=set(ah)
+
+          def managed_row(r):return multi_u.get(f"{str(r.get('symbol','')).upper()}|{side(r)}",{})
+          def soldier(r):
+              m=managed_row(r); role=str(m.get('soldierRole') or '').upper()
+              return bool(str(m.get('soldierId') or '').strip() and role in {'ZONE_BASE','EXPOSURE_BALANCER'})
+          def legacy_zone(r):
+              m=managed_row(r); return str(m.get('soldierRole') or '').upper()=='LEGACY_UNASSIGNED'
+
+          non_ah=[r for r in positions if str(r.get('symbol','')).upper() not in ah_symbols]
+          soldiers=[r for r in non_ah if soldier(r)]
+          legacy=[r for r in non_ah if legacy_zone(r)]
+          other=[r for r in non_ah if not soldier(r) and not legacy_zone(r)]
+
+          def group(rows):
+              longs=[r for r in rows if side(r)=='LONG']; shorts=[r for r in rows if side(r)=='SHORT']
+              return {
+                  'count':len(rows),'openPnlUsd':round(sum(pnl(r) for r in rows),8),'notionalUsd':round(sum(notion(r) for r in rows),8),
+                  'profitableCount':sum(1 for r in rows if pnl(r)>0),'losingCount':sum(1 for r in rows if pnl(r)<0),
+                  'long':{'count':len(longs),'openPnlUsd':round(sum(pnl(r) for r in longs),8),'notionalUsd':round(sum(notion(r) for r in longs),8)},
+                  'short':{'count':len(shorts),'openPnlUsd':round(sum(pnl(r) for r in shorts),8),'notionalUsd':round(sum(notion(r) for r in shorts),8)},
+              }
+
+          current_soldier=[]
+          for r in soldiers:
+              m=managed_row(r)
+              current_soldier.append({
+                  'symbol':str(r.get('symbol','')).upper(),'side':side(r),'openPnlUsd':round(pnl(r),4),'notionalUsd':round(notion(r),4),
+                  'dcaCount':int(n(m.get('dcaCount',m.get('dca_count')))),'originZone':m.get('originZone'),
+                  'soldierId':str(m.get('soldierId') or ''),'soldierRole':str(m.get('soldierRole') or '').upper(),
+                  'cycleStartedAtMs':int(n(m.get('cycleStartedAtMs',m.get('openedAtMs')))),
+              })
+          current_soldier.sort(key=lambda x:x['openPnlUsd'])
+
+          # Zone-soldier audit events in the last 14 days. This is the authoritative
+          # lifecycle attribution; legacy positions have no soldierId/role.
+          audits=[]
+          try:
+              for d in main.aster_strategy2_reference(uid).collection('audit').where('timestamp','>=',since).stream():
+                  v=d.to_dict() or {}; role=str(v.get('soldierRole') or '').upper(); sid=str(v.get('soldierId') or '').strip()
+                  if sid and role in {'ZONE_BASE','EXPOSURE_BALANCER'}:
+                      audits.append({**v,'_id':d.id,'_ms':ms(v.get('timestamp',v.get('timestampMs')))})
+          except Exception:
+              audits=[]
+          audits.sort(key=lambda x:x.get('_ms',0))
+          soldier_entries=[a for a in audits if str(a.get('event') or '').upper()=='MULTI_BB_ENTRY']
+          soldier_tps=[a for a in audits if str(a.get('event') or '').upper()=='MULTI_BB_TP']
+          soldier_dcas=[a for a in audits if str(a.get('event') or '').upper()=='MULTI_BB_DCA']
+
+          # Match confirmed soldier TP audits to persisted Aster close fills.
+          # We only accept same symbol+side fills close in time to the confirmed TP audit.
+          closed=[]
+          try:
+              for d in main.user_reference(user).collection('asterClosedTrades').where('closedAt','>=',since).stream():
+                  v=d.to_dict() or {}; v['_ms']=ms(v.get('closedAt')); closed.append(v)
+          except Exception:
+              closed=[]
+          by_key={}
+          for c in closed:
+              key=(str(c.get('symbol','')).upper(),str(c.get('side','')).upper())
+              by_key.setdefault(key,[]).append(c)
+          for rows in by_key.values():rows.sort(key=lambda x:x.get('_ms',0))
+
+          matched=[]; unmatched=[]; used=set()
+          for a in soldier_tps:
+              key=(str(a.get('symbol','')).upper(),str(a.get('side','')).upper()); t=int(a.get('_ms') or 0)
+              candidates=[]
+              for c in by_key.get(key,[]):
+                  ident=str(c.get('exchangeTradeId') or '') or f"{key}|{c.get('_ms')}|{c.get('realizedPnlUsd')}"
+                  if ident in used:continue
+                  delta=abs(int(c.get('_ms') or 0)-t)
+                  if delta<=120000:candidates.append((delta,ident,c))
+              if not candidates:
+                  unmatched.append({'symbol':key[0],'side':key[1],'timestampMs':t,'soldierId':a.get('soldierId')});continue
+              candidates.sort(key=lambda x:x[0]); nearest=candidates[0][0]
+              # Include all fills belonging to the same close burst (within 5 sec of the nearest fill).
+              burst=[x for x in candidates if abs(int(x[2].get('_ms') or 0)-int(candidates[0][2].get('_ms') or 0))<=5000]
+              total=0.0; ids=[]
+              for _,ident,c in burst:
+                  used.add(ident);ids.append(ident);total+=n(c.get('realizedPnlUsd'))
+              matched.append({
+                  'symbol':key[0],'side':key[1],'realizedPnlUsd':round(total,8),'fillCount':len(burst),
+                  'auditToFillMs':nearest,'homecoming':bool(a.get('homecoming')),'zoneMission':bool(a.get('zoneMission')),
+                  'originZone':a.get('originZone'),'currentZoneAtClose':a.get('currentZoneAtClose'),'soldierId':a.get('soldierId'),
+              })
+
+          matched_total=sum(x['realizedPnlUsd'] for x in matched)
+          matched_pos=sum(x['realizedPnlUsd'] for x in matched if x['realizedPnlUsd']>0)
+          matched_neg=sum(x['realizedPnlUsd'] for x in matched if x['realizedPnlUsd']<0)
+
+          # Since first proven soldier entry, compare realized matched TP with current hanging soldier PnL.
+          first_entry_ms=min((int(a.get('_ms') or 0) for a in soldier_entries if int(a.get('_ms') or 0)>0),default=0)
+          last_tp_ms=max((int(a.get('_ms') or 0) for a in soldier_tps if int(a.get('_ms') or 0)>0),default=0)
+          soldier_open_pnl=sum(pnl(r) for r in soldiers)
+          closed_plus_open=matched_total+soldier_open_pnl
+
+          output={
+              'generatedAt':now.isoformat(),'readOnly':True,'windowDays':14,
+              'autoHedgeExcluded':{'activePairSymbols':len(ah_symbols),'excludedCurrentPositions':len([r for r in positions if str(r.get('symbol','')).upper() in ah_symbols])},
+              'currentNonAutoHedge':group(non_ah),
+              'currentSoldiersOnly':{
+                  **group(soldiers),
+                  'positions':current_soldier,
+                  'topLosses':current_soldier[:15],
+                  'topWinners':sorted(current_soldier,key=lambda x:x['openPnlUsd'],reverse=True)[:15],
+              },
+              'currentLegacyUnassigned':group(legacy),
+              'currentOtherNonAutoHedge':group(other),
+              'soldierLifecycle':{
+                  'firstProvenEntryAtMs':first_entry_ms or None,'lastProvenTpAtMs':last_tp_ms or None,
+                  'entryAuditCount':len(soldier_entries),'tpAuditCount':len(soldier_tps),'dcaAuditCount':len(soldier_dcas),
+                  'homecomingCount':sum(1 for a in soldier_tps if bool(a.get('homecoming'))),
+                  'zoneMissionTpCount':sum(1 for a in soldier_tps if bool(a.get('zoneMission'))),
+                  'matchedTpCount':len(matched),'unmatchedTpCount':len(unmatched),
+                  'matchedRealizedPnlUsd':round(matched_total,8),'matchedPositiveRealizedUsd':round(matched_pos,8),'matchedNegativeRealizedUsd':round(matched_neg,8),
+                  'matchedWinningTpCount':sum(1 for x in matched if x['realizedPnlUsd']>0),'matchedLosingTpCount':sum(1 for x in matched if x['realizedPnlUsd']<0),
+                  'currentOpenSoldierPnlUsd':round(soldier_open_pnl,8),
+                  'matchedRealizedPlusCurrentOpenUsd':round(closed_plus_open,8),
+                  'matchedTpRows':matched[-100:],
+                  'unmatchedTpRows':unmatched[-30:],
+              },
+              'zoneState':{
+                  'activeZone':zone_state.get('activeZone'),'previousZone':zone_state.get('previousZone'),
+                  'homecomingEventsCount':len(zone_state.get('homecomingEvents') or []) if isinstance(zone_state.get('homecomingEvents'),list) else 0,
+                  'zoneSoldiersEnabled':settings.get('zoneSoldiersEnabled'),'zoneBaseLongSoldiers':settings.get('zoneBaseLongSoldiers'),
+                  'zoneBaseShortSoldiers':settings.get('zoneBaseShortSoldiers'),'takeProfit':settings.get('takeProfit'),
+                  'takeProfitMode':settings.get('takeProfitMode'),'maxDca':settings.get('maxDca'),
+              },
+          }
+          print(os.environ['MARKER']+'='+json.dumps(output,separators=(',',':'),sort_keys=True,default=str),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+      - name: Authenticate observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Collect sanitized result
+        shell: bash
+        run: |
+          set -euo pipefail
+          for N in $(seq 1 15); do
+            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$DIAG_JOB\""               --project "$GCP_PROJECT_ID" --freshness=15m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json"
+            python - "$DIAG_MARKER" "$RUNNER_TEMP/logs.json" > "$RUNNER_TEMP/result.json" <<'PY'
+          import json,sys
+          marker=sys.argv[1]+'=';rows=json.load(open(sys.argv[2],encoding='utf-8'))
+          def strings(x):
+              if isinstance(x,str):yield x
+              elif isinstance(x,dict):
+                  for v in x.values():yield from strings(v)
+              elif isinstance(x,list):
+                  for v in x:yield from strings(v)
+          for row in rows if isinstance(rows,list) else []:
+              for s in strings(row):
+                  if marker in s:
+                      raw=s[s.index(marker)+len(marker):].splitlines()[0];json.loads(raw);print(raw);raise SystemExit
+          PY
+            [ -s "$RUNNER_TEMP/result.json" ] && break
+            sleep 3
+          done
+          test -s "$RUNNER_TEMP/result.json"
+          mkdir -p .diagnostics
+          cp "$RUNNER_TEMP/result.json" .diagnostics/soldier-performance-ex-ah-20260927.json
+
+      - name: Publish sanitized result
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "TradeMentor Diagnostics"
+          git config user.email "actions@users.noreply.github.com"
+          git add .diagnostics/soldier-performance-ex-ah-20260927.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Record soldier performance excluding Auto Hedge"
+          git push origin HEAD:amar-crypto-bot-2026-cloud
+
+      - name: Re-authenticate deploy for cleanup
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${DIAG_JOB:-}" ]; then gcloud run jobs delete "$DIAG_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true; fi
