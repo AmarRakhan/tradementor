@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 
-const VISUAL_REFERENCE = "file_000000003e34820a9d0c8dc22b84ac47";
+const VISUAL_REFERENCE = "file_000000007b288243acf4cc791b0258dd";
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 type Timeframe = typeof TIMEFRAMES[number];
 type TpMode = "PER_TRADE" | "PORTFOLIO" | "OFF";
@@ -23,6 +23,9 @@ type Draft = {
   universeTopN: string;
   longSlots: string;
   shortSlots: string;
+  maximumPositions: string;
+  zoneLongSeats: string;
+  zoneShortSeats: string;
   minimumLeverage: string;
   maximumLeverage: string;
   manualEnabled: boolean;
@@ -100,6 +103,9 @@ function normalizeDraft(settings: Record<string, unknown>): Draft {
     universeTopN: textValue(settings.universeTopN, 30),
     longSlots: textValue(settings.longSlots, 20),
     shortSlots: textValue(settings.shortSlots, 10),
+    maximumPositions: textValue(settings.maximumPositions, n(settings.longSlots, 20) + n(settings.shortSlots, 10)),
+    zoneLongSeats: textValue(settings.zoneBaseLongSoldiers, 3),
+    zoneShortSeats: textValue(settings.zoneBaseShortSoldiers, 3),
     minimumLeverage: textValue(settings.minimumLeverage, 50),
     maximumLeverage: settings.maximumLeverage === null || settings.maximumLeverage === undefined ? "" : textValue(settings.maximumLeverage, 0),
     manualEnabled: settings.manualSymbolSelectionEnabled === true,
@@ -181,6 +187,14 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const enabled = strategy2.enabled === true;
   const report = strategy2.multiBb && typeof strategy2.multiBb === "object" ? strategy2.multiBb as Record<string, unknown> :
     strategy2.multiBbReport && typeof strategy2.multiBbReport === "object" ? strategy2.multiBbReport as Record<string, unknown> : {};
+  const priceZoneSeats = strategy2.priceZoneSeats && typeof strategy2.priceZoneSeats === "object"
+    ? strategy2.priceZoneSeats as Record<string, unknown>
+    : strategy2.zoneSoldiers && typeof strategy2.zoneSoldiers === "object"
+      ? strategy2.zoneSoldiers as Record<string, unknown>
+      : {};
+  const seatModel = priceZoneSeats.seatModel && typeof priceZoneSeats.seatModel === "object"
+    ? priceZoneSeats.seatModel as Record<string, unknown>
+    : {};
   const [draft, setDraft] = useState<Draft>(() => normalizeDraft(persisted));
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -214,7 +228,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const zoneSoldiersAvailable = feature("zone_soldiers").enabled === true;
   const savedZoneStrategyEnabled = zoneSoldiersAvailable && persisted.zoneSoldiersEnabled === true && n(persisted.zoneSoldiersOptInVersion, 0) >= 1;
   const zoneLifecycle = String(strategy2.zoneSoldierLifecycle || (savedZoneStrategyEnabled ? "ACTIVE" : "OFF")).toUpperCase();
-  const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · ZONE SOLDATEN" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONE DRAINING" : "STRATEGIE · TRADITIONEEL";
+  const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · PRIJSZONE-STOELEN" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONEPOSITIES AFBOUWEN" : "STRATEGIE · TRADITIONEEL";
 
   const update = <K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -250,6 +264,23 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
   const activeLong = Number.isFinite(liveLongRaw) ? Math.max(0, Math.round(liveLongRaw)) : null;
   const activeShort = Number.isFinite(liveShortRaw) ? Math.max(0, Math.round(liveShortRaw)) : null;
   const activeTotal = activeLong !== null && activeShort !== null ? activeLong + activeShort : null;
+  const zoneLongSeats = Math.max(1, Math.round(n(draft.zoneLongSeats, 3)));
+  const zoneShortSeats = Math.max(1, Math.round(n(draft.zoneShortSeats, 3)));
+  const maxActiveSeats = Math.max(1, Math.round(n(draft.maximumPositions, totals.totalSlots || 30)));
+  const zoneActiveRaw = Number(seatModel.activeZone ?? priceZoneSeats.activeZone);
+  const zoneActive = Number.isFinite(zoneActiveRaw) ? Math.round(zoneActiveRaw) : null;
+  const activeZoneOpenLong = Math.max(0, Math.round(n(seatModel.occupiedLongActiveZone, 0)));
+  const activeZoneOpenShort = Math.max(0, Math.round(n(seatModel.occupiedShortActiveZone, 0)));
+  const freeZoneLong = Math.max(0, zoneLongSeats - activeZoneOpenLong);
+  const freeZoneShort = Math.max(0, zoneShortSeats - activeZoneOpenShort);
+  const oldZonesOpen = Math.max(0, Math.round(n(seatModel.openFromOldZones, 0)));
+  const strategyOpenLong = Math.max(0, Math.round(n(seatModel.strategyOpenLong, activeLong ?? 0)));
+  const strategyOpenShort = Math.max(0, Math.round(n(seatModel.strategyOpenShort, activeShort ?? 0)));
+  const strategyOpenTotal = Math.max(0, Math.round(n(seatModel.strategyOpenTotal, strategyOpenLong + strategyOpenShort)));
+  const sideWeightTotal = Math.max(1, zoneLongSeats + zoneShortSeats);
+  const globalLongCapacity = Math.max(1, Math.round(maxActiveSeats * zoneLongSeats / sideWeightTotal));
+  const globalShortCapacity = Math.max(0, maxActiveSeats - globalLongCapacity);
+  const zoneLabel = zoneActive === null ? "Zone —" : `Zone ${zoneActive}`;
   const slotFill = (active: number | null, capacity: number) => active === null
     ? 0
     : capacity <= 0
@@ -257,7 +288,9 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       : Math.min(100, Math.max(0, active / capacity * 100));
 
   function buildSettings() {
-    if (totals.totalSlots < 1 || totals.totalSlots > 400) throw new Error("LONG + SHORT moet tussen 1 en 400 posities liggen.");
+    if (!draft.zoneSoldiersEnabled && (totals.totalSlots < 1 || totals.totalSlots > 400)) throw new Error("LONG + SHORT moet tussen 1 en 400 posities liggen.");
+    if (draft.zoneSoldiersEnabled && (maxActiveSeats < 1 || maxActiveSeats > 400)) throw new Error("Max actieve stoelen moet tussen 1 en 400 liggen.");
+    if (draft.zoneSoldiersEnabled && (zoneLongSeats < 1 || zoneLongSeats > 100 || zoneShortSeats < 1 || zoneShortSeats > 100)) throw new Error("LONG/SHORT-stoelen per prijszone moeten tussen 1 en 100 liggen.");
     const minLev = Math.max(1, Math.round(n(draft.minimumLeverage)));
     const maxLev = draft.maximumLeverage.trim() ? Math.max(1, Math.round(n(draft.maximumLeverage))) : null;
     if (maxLev !== null && maxLev < minLev) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan minimum leverage.");
@@ -277,7 +310,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       strategyKind: "multi_bb_v1",
       name: draft.name,
       universeTopN: Math.max(1, Math.round(n(draft.universeTopN))),
-      maximumPositions: totals.totalSlots,
+      maximumPositions: draft.zoneSoldiersEnabled ? maxActiveSeats : totals.totalSlots,
       longSlots: totals.longSlots,
       shortSlots: totals.shortSlots,
       minimumLeverage: minLev,
@@ -301,8 +334,8 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       ...(zoneSoldiersAvailable ? {
         zoneSoldiersEnabled: draft.zoneSoldiersEnabled,
         zoneSoldiersOptInVersion: draft.zoneSoldiersEnabled ? 1 : 0,
-        zoneBaseLongSoldiers: Math.max(1, Math.round(nDefault(persisted.zoneBaseLongSoldiers, 3))),
-        zoneBaseShortSoldiers: Math.max(1, Math.round(nDefault(persisted.zoneBaseShortSoldiers, 3))),
+        zoneBaseLongSoldiers: zoneLongSeats,
+        zoneBaseShortSoldiers: zoneShortSeats,
         zoneExposureBalancerEnabled: persisted.zoneExposureBalancerEnabled !== false,
         zoneEntryGrowthPercent: nDefault(persisted.zoneEntryGrowthPercent, 2),
         zoneEntryMaxMultiplier: nDefault(persisted.zoneEntryMaxMultiplier, 1.2),
@@ -435,20 +468,50 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       {draft.manualEnabled && <Field label="Munten · SYMBOL:LONG of SYMBOL:SHORT, komma-gescheiden" type="text" value={draft.manualSymbols} onChange={(v) => update("manualSymbols", v)} />}
     </section>
 
-    <section className="v2-step" id="v2-step-posities"><StepHead number="2" title="Posities" subtitle="Hoe wil je je portfolio verdelen?" />
+    <section className="v2-step v2-price-zone-step" id="v2-step-posities" data-reference="file_000000007b288243acf4cc791b0258dd"><StepHead number="2" title={draft.zoneSoldiersEnabled ? "Prijszone-stoelen" : "Posities"} subtitle={draft.zoneSoldiersEnabled ? "Hoe wil je je posities verdelen over prijszones?" : "Hoe wil je je portfolio verdelen?"} />
       <div className={"v2-strategy-choice " + (draft.zoneSoldiersEnabled ? "zone" : "traditional")}>
-        <div><small>HANDELSSTRATEGIE</small><strong>{draft.zoneSoldiersEnabled ? "Zone-Soldatenstrategie" : "Traditionele bot"}</strong><p>{draft.zoneSoldiersEnabled ? "Nieuwe entries krijgen pas na Opslaan zone-eigendom. Bestaande posities worden niet gesloten of achteraf aan een zone gekoppeld." : "LONG/SHORT-slots en normale Multi-BB-logica sturen nieuwe entries. Portfolio Koers blijft alleen informatief."}</p></div>
-        <Toggle label="Zone-Soldatenstrategie" description={zoneSoldiersAvailable ? "Expliciete opt-in. Vrijgave zet deze strategie nooit automatisch aan." : "Deze strategie is nog niet beschikbaar voor dit account."} checked={draft.zoneSoldiersEnabled} onChange={(v) => update("zoneSoldiersEnabled", v)} disabled={!zoneSoldiersAvailable} />
+        <div><small>HANDELSSTRATEGIE</small><strong>{draft.zoneSoldiersEnabled ? "Prijszone-stoelen" : "Traditionele bot"}</strong><p>{draft.zoneSoldiersEnabled ? "Elke prijszone heeft eigen LONG- en SHORT-stoelen. Alleen lege stoelen in de actieve zone mogen na een geldige instap worden gevuld." : "LONG/SHORT-slots en normale Multi-BB-logica sturen nieuwe entries. Portfolio Koers blijft alleen informatief."}</p></div>
+        <Toggle label="Prijszone-stoelen" description={zoneSoldiersAvailable ? "Expliciete opt-in. Bestaande posities blijven gekoppeld aan hun oorspronkelijke zone." : "Deze strategie is nog niet beschikbaar voor dit account."} checked={draft.zoneSoldiersEnabled} onChange={(v) => update("zoneSoldiersEnabled", v)} disabled={!zoneSoldiersAvailable} />
       </div>
-      {zoneLifecycle === "DRAINING" && !draft.zoneSoldiersEnabled && <p className="v2-warning">Zone-strategie uitgeschakeld · bestaande zone-posities worden nog veilig beheerd. Er worden geen nieuwe zone-soldaten geopend.</p>}
-      <div className="v2-slot-visual" aria-label="Actieve posities ten opzichte van ingestelde stoelcapaciteit">
-        <div className="long"><span>LONG</span><i title={activeLong === null ? "Live bezetting wordt geladen" : activeLong + " van " + totals.longSlots + " LONG-stoelen bezet"}><u style={{ width: slotFill(activeLong, totals.longSlots) + "%" }} /></i><b>{activeLong === null ? "—/" + totals.longSlots : activeLong + "/" + totals.longSlots}</b></div>
-        <div className="short"><span>SHORT</span><i title={activeShort === null ? "Live bezetting wordt geladen" : activeShort + " van " + totals.shortSlots + " SHORT-stoelen bezet"}><u style={{ width: slotFill(activeShort, totals.shortSlots) + "%" }} /></i><b>{activeShort === null ? "—/" + totals.shortSlots : activeShort + "/" + totals.shortSlots}</b></div>
-        <div className="total"><span>TOTAAL</span><strong>{activeTotal === null ? "—/" + totals.totalSlots : activeTotal + "/" + totals.totalSlots}</strong></div>
-      </div>
-      <small className="v2-note">Bezet / capaciteit. Vrije stoelen worden pas gevuld na een geldige instap.</small>
-      <div className="v2-grid cols2"><Field label="LONG slots" value={draft.longSlots} onChange={(v) => update("longSlots", v)} /><Field label="SHORT slots" value={draft.shortSlots} onChange={(v) => update("shortSlots", v)} /></div>
-      <small className="v2-note">LONG wijzigen laat SHORT staan; SHORT wijzigen laat LONG staan. Totaal wordt automatisch berekend.</small>
+      {zoneLifecycle === "DRAINING" && !draft.zoneSoldiersEnabled && <p className="v2-warning">Prijszone-strategie uitgeschakeld · bestaande zoneposities worden nog veilig beheerd. Er worden geen nieuwe zone-stoelen gevuld.</p>}
+      {draft.zoneSoldiersEnabled ? <>
+        <div className="v2-zone-seat-explainer">
+          <span className="v2-zone-seat-icon" aria-hidden="true">◇</span>
+          <p>Elke prijszone heeft zijn eigen LONG- en SHORT-stoelen. Bestaande posities houden hun zone-stoel bezet. Bij terugkeer naar een oude zone worden alleen lege stoelen opnieuw beschikbaar.</p>
+        </div>
+        <div className="v2-zone-seat-config">
+          <article>
+            <div className="v2-zone-card-title"><span aria-hidden="true">▱</span><div><b>Per prijszone</b><small>Aantal stoelen per zone voor nieuwe posities.</small></div></div>
+            <Field label="LONG stoelen per zone" value={draft.zoneLongSeats} onChange={(v) => update("zoneLongSeats", v)} min={1} />
+            <Field label="SHORT stoelen per zone" value={draft.zoneShortSeats} onChange={(v) => update("zoneShortSeats", v)} min={1} />
+          </article>
+          <article>
+            <div className="v2-zone-card-title"><span aria-hidden="true">◔</span><div><b>Globale limiet</b><small>Maximaal aantal gelijktijdig actieve posities uit deze strategie.</small></div></div>
+            <Field label="Max actieve stoelen" value={draft.maximumPositions} onChange={(v) => update("maximumPositions", v)} min={1} />
+          </article>
+        </div>
+        <div className="v2-zone-seat-status">
+          <div className="v2-zone-status-head"><b>Huidige status</b><span>Actieve zone: <strong>{zoneLabel}</strong></span></div>
+          <div className="v2-zone-status-line"><span>Vrij in actieve zone:</span><b><em>{freeZoneLong} LONG</em><i> · </i><strong>{freeZoneShort} SHORT</strong></b></div>
+          <div className="v2-zone-status-line"><span>Open uit oude zones:</span><b>{oldZonesOpen}</b></div>
+          <small>Bij het sluiten van een positie komt de zone-stoel vrij. Terugkeer naar een oude zone vult alleen lege stoelen.</small>
+        </div>
+        <div className="v2-zone-seat-occupancy">
+          <div className="v2-zone-occupancy-title"><b>Bezetting stoelen</b><small>Per prijszone: {zoneLongSeats}L / {zoneShortSeats}S <i>·</i> Max totaal: {maxActiveSeats}</small></div>
+          <div className="v2-zone-meter long"><span>LONG bezet</span><i><u style={{width: slotFill(strategyOpenLong, globalLongCapacity) + "%"}} /></i><b>{strategyOpenLong} / {globalLongCapacity}</b></div>
+          <div className="v2-zone-meter short"><span>SHORT bezet</span><i><u style={{width: slotFill(strategyOpenShort, globalShortCapacity) + "%"}} /></i><b>{strategyOpenShort} / {globalShortCapacity}</b></div>
+          <div className="v2-zone-meter total"><span>Totaal bezet</span><i><u style={{width: slotFill(strategyOpenTotal, maxActiveSeats) + "%"}} /></i><b>{strategyOpenTotal} / {maxActiveSeats}</b></div>
+        </div>
+      </> : <>
+        <div className="v2-slot-visual" aria-label="Actieve posities ten opzichte van ingestelde stoelcapaciteit">
+          <div className="long"><span>LONG</span><i title={activeLong === null ? "Live bezetting wordt geladen" : activeLong + " van " + totals.longSlots + " LONG-stoelen bezet"}><u style={{ width: slotFill(activeLong, totals.longSlots) + "%" }} /></i><b>{activeLong === null ? "—/" + totals.longSlots : activeLong + "/" + totals.longSlots}</b></div>
+          <div className="short"><span>SHORT</span><i title={activeShort === null ? "Live bezetting wordt geladen" : activeShort + " van " + totals.shortSlots + " SHORT-stoelen bezet"}><u style={{ width: slotFill(activeShort, totals.shortSlots) + "%" }} /></i><b>{activeShort === null ? "—/" + totals.shortSlots : activeShort + "/" + totals.shortSlots}</b></div>
+          <div className="total"><span>TOTAAL</span><strong>{activeTotal === null ? "—/" + totals.totalSlots : activeTotal + "/" + totals.totalSlots}</strong></div>
+        </div>
+        <small className="v2-note">Bezet / capaciteit. Vrije stoelen worden pas gevuld na een geldige instap.</small>
+        <div className="v2-grid cols2"><Field label="LONG slots" value={draft.longSlots} onChange={(v) => update("longSlots", v)} /><Field label="SHORT slots" value={draft.shortSlots} onChange={(v) => update("shortSlots", v)} /></div>
+        <small className="v2-note">LONG wijzigen laat SHORT staan; SHORT wijzigen laat LONG staan. Totaal wordt automatisch berekend.</small>
+      </>}
     </section>
 
     <section className="v2-step" id="v2-step-instap"><StepHead number="3" title="Instaplogica" subtitle="Wanneer mag een nieuwe positie openen?" />
@@ -462,9 +525,9 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       {exposureAvailable && <div className="v2-refill-guide" role="note">
         <span aria-hidden="true">⇄</span>
         <div>
-          <b>Los van Zone-Soldaten</b>
-          <p>Verandert alleen de instaptiming van de ontbrekende kant. Maakt geen extra slots of soldaten en omzeilt zone-capaciteit niet.</p>
-          {savedZoneStrategyEnabled?<small>Zone-Soldaten heeft een eigen zonebalancer; deze exposure-refill blijft een aparte Bollinger-versnelling.</small>:null}
+          <b>Los van prijszone-stoelen</b>
+          <p>Verandert alleen de instaptiming van de ontbrekende kant. Maakt geen extra stoelen en omzeilt de prijszone- of globale capaciteit niet.</p>
+          {savedZoneStrategyEnabled?<small>Prijszone-stoelen gebruiken alleen bestaande capaciteit; deze exposure-refill blijft uitsluitend een aparte Bollinger-versnelling.</small>:null}
           {exposureRefillPendingSave?<small className="pending">Wijziging wordt pas actief nadat je Opslaan kiest.</small>:null}
         </div>
       </div>}
