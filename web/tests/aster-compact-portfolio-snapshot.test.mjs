@@ -115,7 +115,7 @@ test("Build 455 replaces the four quick tiles with one live price-zone strategy 
   assert.equal(component.includes("tradementor:open-zone-soldiers-command-center"),false);
   assert.equal(css.includes(".aps-quick-actions{display:grid"),false);
   assert.ok(css.includes(".aps-zone-strategy{display:grid"));
-  const summary=component.indexOf("<PriceZoneStrategySummary summary={priceZoneSeats} />");
+  const summary=component.indexOf("<PriceZoneStrategySummary summary={priceZoneSeats} liveActiveZone={liveActiveZone} />");
   const grid=component.indexOf('<div className="aps-grid">');
   assert.ok(summary>0&&summary<grid);
 });
