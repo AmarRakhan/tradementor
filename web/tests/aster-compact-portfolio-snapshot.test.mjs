@@ -104,22 +104,18 @@ test("Build 410 labels net exposure as exposure instead of a profit-loss amount"
   assert.equal(hedgeSummary.includes("exposureMoney(exposure.netExposureUsd, true)"),false);
 });
 
-test("Build 445 keeps the Zone-Soldaten quick row entitlement-gated in Portfolio Snapshot",async()=>{
+test("Build 455 replaces the four quick tiles with one live price-zone strategy summary",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-snapshot.css",import.meta.url),"utf8");
-  assert.ok(component.includes("file_0000000061fc81f49a44564879d533de"));
-  assert.ok(component.includes("SnapshotQuickActions"));
-  assert.ok(component.includes("ZONE-SOLDATEN"));
-  assert.ok(component.includes("Dubbeltik om te openen"));
-  assert.ok(component.includes("BOT STATUS"));
-  assert.ok(component.includes("STRATEGIE"));
-  assert.ok(component.includes("INSTELLINGEN"));
-  assert.ok(component.includes("onDoubleClick={openZoneSoldiers}"));
-  assert.ok(component.includes("onTouchEnd={onZoneTouchEnd}"));
-  assert.ok(component.includes("tradementor:open-zone-soldiers-command-center"));
-  assert.ok(component.includes('release.features?.zone_command_center?.enabled === true'));
-  assert.ok(css.includes(".aps-quick-actions{display:grid"));
-  const quick=component.indexOf("<SnapshotQuickActions zoneCommandCenterAvailable={zoneCommandCenterAvailable} />");
+  assert.ok(component.includes("file_00000000a5708210be60f92f52e4b5cc"));
+  assert.ok(component.includes("PriceZoneStrategySummary"));
+  assert.ok(component.includes("loadPriceZoneSeatSummary"));
+  for(const label of ["Prijszone-strategie","Per zone","Vrij in actieve zone","Oude zones open","Max totaal","LONG bezet","SHORT bezet","Totaal bezet"]) assert.ok(component.includes(label),label);
+  assert.equal(component.includes("SnapshotQuickActions"),false);
+  assert.equal(component.includes("tradementor:open-zone-soldiers-command-center"),false);
+  assert.equal(css.includes(".aps-quick-actions{display:grid"),false);
+  assert.ok(css.includes(".aps-zone-strategy{display:grid"));
+  const summary=component.indexOf("<PriceZoneStrategySummary summary={priceZoneSeats} />");
   const grid=component.indexOf('<div className="aps-grid">');
-  assert.ok(quick>0&&quick<grid);
+  assert.ok(summary>0&&summary<grid);
 });
