@@ -33,9 +33,9 @@ self.addEventListener("push", (event) => {
     try {
       payload = event.data ? event.data.json() : {};
     } catch {
-      payload = { title: "Amar Crypto Bot 2026", body: event.data ? event.data.text() : "" };
+      payload = { title: "Melding", body: event.data ? event.data.text() : "" };
     }
-    const title = String(payload.title || "Amar Crypto Bot 2026");
+    const title = String(payload.title || "Melding");
     const data = payload.data && typeof payload.data === "object" ? payload.data : {};
     await self.registration.showNotification(title, {
       body: String(payload.body || ""),
