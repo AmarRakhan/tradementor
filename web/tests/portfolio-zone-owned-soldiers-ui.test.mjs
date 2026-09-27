@@ -5,7 +5,7 @@ import { buildStrategyStatusCommandCenter } from "../lib/strategy-status-command
 
 test("Build 432 command center prioritises live strategy-owned state over free configuration seats",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("ZONE-SOLDATEN ACTIEF"));
+  assert.ok(component.includes("PRIJSZONE-POSITIES ACTIEF"));
   assert.ok(component.includes("OUDE-ZONE POSITIES"));
   assert.ok(component.includes("VOLGENDE ZONES"));
   assert.ok(component.includes("ACTIEVE ZONE"));
