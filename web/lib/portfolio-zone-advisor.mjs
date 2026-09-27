@@ -173,6 +173,58 @@ export function zoneToneForSignedIndex(index) {
   return "green";
 }
 
+
+export function extendPortfolioZoneLadderToPrice(ladder, price, padding=2) {
+  const value=finitePositive(price);
+  const step=finitePositive(ladder?.step);
+  const anchor=finitePositive(ladder?.anchor);
+  const existing=Array.isArray(ladder?.zones)?ladder.zones:[];
+  if(value===null||step===null||anchor===null||!existing.length)return ladder;
+
+  const estimatedIndex=Math.floor(((value-anchor)/step)+0.5);
+  const safePadding=Math.max(2,Math.min(6,Math.round(Number(padding)||2)));
+  const existingIndexes=existing.map((row)=>Number(row?.index)).filter(Number.isInteger);
+  if(!existingIndexes.length)return ladder;
+  const minExisting=Math.min(...existingIndexes);
+  const maxExisting=Math.max(...existingIndexes);
+  const minIndex=Math.max(-50,Math.min(minExisting,estimatedIndex-safePadding));
+  const maxIndex=Math.min(50,Math.max(maxExisting,estimatedIndex+safePadding));
+
+  if(minIndex===minExisting&&maxIndex===maxExisting){
+    const context=portfolioZoneContextFromLadder(ladder,value);
+    if(context.lowerBoundary!==null&&context.upperBoundary!==null)return ladder;
+  }
+
+  const byIndex=new Map(existing.map((row)=>[Number(row.index),row]));
+  const centers=[];
+  for(let index=minIndex;index<=maxIndex;index+=1){
+    const current=byIndex.get(index);
+    const center=finitePositive(current?.center)??(anchor+index*step);
+    if(center===null||!Number.isFinite(center)||center<=0)continue;
+    centers.push({
+      index,
+      center,
+      source:current?.source||"display-extrapolated",
+      tone:current?.tone||zoneToneForSignedIndex(index),
+    });
+  }
+  const zones=centers.map((row,index)=>{
+    const previous=centers[index-1],next=centers[index+1];
+    const lower=previous?(previous.center+row.center)/2:Number.NEGATIVE_INFINITY;
+    const upper=next?(row.center+next.center)/2:Number.POSITIVE_INFINITY;
+    return {
+      index:row.index,
+      label:row.index===0?"Zone 0":`Zone ${row.index>0?"+":""}${row.index}`,
+      center:row.center,
+      lower,
+      upper,
+      tone:row.tone,
+      source:row.source,
+    };
+  });
+  return {...ladder,zones,displayExpanded:true,displayActiveIndex:estimatedIndex};
+}
+
 export function derivePortfolioZoneLadder(zones, options={}) {
   const minIndex=Number.isInteger(Number(options.minIndex))?Math.max(-12,Number(options.minIndex)):-3;
   const maxIndex=Number.isInteger(Number(options.maxIndex))?Math.min(12,Number(options.maxIndex)):3;
