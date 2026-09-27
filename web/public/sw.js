@@ -1,4 +1,4 @@
-const CACHE_NAME = "amar-bot-shell-v46-stable-update-2";
+const CACHE_NAME = "amar-bot-shell-v46-build448";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.add("/offline.html")));
@@ -25,4 +25,40 @@ self.addEventListener("fetch", (event) => {
   if (event.request.url.includes("/api/")) return;
   if (event.request.mode !== "navigate") return;
   event.respondWith(fetch(event.request, { cache: "no-store" }).catch(() => caches.match("/offline.html")));
+});
+
+self.addEventListener("push", (event) => {
+  event.waitUntil((async () => {
+    let payload = {};
+    try {
+      payload = event.data ? event.data.json() : {};
+    } catch {
+      payload = { title: "Amar Crypto Bot 2026", body: event.data ? event.data.text() : "" };
+    }
+    const title = String(payload.title || "Amar Crypto Bot 2026");
+    const data = payload.data && typeof payload.data === "object" ? payload.data : {};
+    await self.registration.showNotification(title, {
+      body: String(payload.body || ""),
+      icon: String(payload.icon || "/tradementor-icon-192.png"),
+      badge: String(payload.badge || "/tradementor-icon-192.png"),
+      tag: String(payload.tag || payload.eventId || "amar-crypto-bot"),
+      renotify: false,
+      data: { ...data, url: String(payload.url || data.url || "/"), notificationType: String(payload.type || "") },
+    });
+  })());
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const target = new URL(String(event.notification.data?.url || "/"), self.location.origin).href;
+    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windows) {
+      if ("focus" in client && new URL(client.url).origin === self.location.origin) {
+        if ("navigate" in client && client.url !== target) await client.navigate(target);
+        return client.focus();
+      }
+    }
+    return clients.openWindow(target);
+  })());
 });
