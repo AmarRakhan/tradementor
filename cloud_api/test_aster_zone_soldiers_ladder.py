@@ -18,6 +18,24 @@ def test_backend_signed_zone_matches_extrapolated_display_ladder():
     assert confirmed_zone_from_display_zones(zones, 147.2) == 1
     assert confirmed_zone_from_display_zones(zones, 151.5) == 3
 
+def test_backend_extends_same_ladder_beyond_original_plus_three_window():
+    zones = [
+        {"index": -1, "center": 144.0, "atr": 0.5},
+        {"index": 0, "center": 146.0, "atr": 0.5},
+    ]
+    assert confirmed_zone_from_display_zones(zones, 153.9) == 4
+    assert confirmed_zone_from_display_zones(zones, 155.9) == 5
+
+
+def test_backend_extends_same_ladder_beyond_original_minus_three_window():
+    zones = [
+        {"index": 0, "center": 146.0, "atr": 0.5},
+        {"index": 1, "center": 148.0, "atr": 0.5},
+    ]
+    assert confirmed_zone_from_display_zones(zones, 138.1) == -4
+    assert confirmed_zone_from_display_zones(zones, 136.1) == -5
+
+
 
 def test_first_legacy_migration_tick_is_explicitly_held_before_new_zone_entries():
     source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
