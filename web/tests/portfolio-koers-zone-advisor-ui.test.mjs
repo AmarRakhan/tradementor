@@ -57,7 +57,8 @@ test("Build 417 uses the canonical ladder for informational active zone and zone
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice)"));
-  assert.ok(component.includes("zoneSoldierEnabled&&zoneSoldierActiveZone!==null?zoneSoldierActiveZone:zoneContext?.activeIndex??confirmedActiveZone"));
+  assert.ok(component.includes("const liveDisplayActiveZone=zoneContext?.activeIndex??confirmedActiveZone"));
+  assert.ok(component.includes("zoneSoldierEnabled&&zoneSoldierActiveZone!==null?zoneSoldierActiveZone:liveDisplayActiveZone"));
 });
 
 test("BETA ladder fills the complete chart height including the outer zones",async()=>{

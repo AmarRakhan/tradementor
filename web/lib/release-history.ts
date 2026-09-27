@@ -25,40 +25,74 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-09-27",
-  title: "Prijszone-stoelen · Max actieve stoelen savefix",
+  releasedAt: "2026-09-28",
+  title: "Prijszone-sync · Portfolio Koers en Snapshot één live zone",
   newItems: [
-    "Max actieve stoelen wordt in prijszone-modus nu als zelfstandige globale limiet opgeslagen en niet meer afgeleid van de oude LONG/SHORT-slotverdeling.",
-    "Na opslaan controleert de Botconfigurator expliciet of de server exact dezelfde maximumPositions-waarde heeft bevestigd.",
+    "Portfolio Snapshot gebruikt voortaan dezelfde actuele live-equityzone als de zichtbare Portfolio Koers-chart.",
+    "Bij een zonegrenswissel wordt de Snapshot direct bijgewerkt en vraagt hij meteen een verse prijszone-stoelstatus op.",
   ],
   problems: [
-    "Een ingevoerde globale limiet kon na Opslaan terugvallen naar de som van de oude LONG- en SHORT-slots.",
-    "Concreet kon 130 worden ingevoerd terwijl 69 LONG + 30 SHORT de waarde vlak voor verzending stil terugzette naar 99; daarna toonden instellingen en Portfolio Snapshot opnieuw 99.",
+    "Portfolio Koers kon bijvoorbeeld Zone 2 actief tonen terwijl Prijszone-strategie in dezelfde weergave nog Zone 3 actief liet zien.",
+    "Actieve-zone-specifieke vrije stoelwaarden konden daardoor tijdelijk bij de verkeerde zichtbare zone lijken te horen.",
   ],
   causes: [
-    "De gedeelde web-saveguard behandelde longSlots/shortSlots nog als bron van waarheid voor maximumPositions, ook wanneer Prijszone-stoelen expliciet actief was.",
+    "De chart bepaalde de zichtbare zone direct uit live portfolio-equity, terwijl de Snapshot zijn zonelabel uit het afzonderlijk gepollde en kortdurend achterlopende priceZoneSeats-rapport las.",
   ],
   fixes: [
-    "Wanneer Prijszone-stoelen expliciet actief is en maximumPositions is meegegeven, heeft die expliciete waarde voorrang en wordt alleen begrensd door de harde platformlimiet van 400.",
-    "De traditionele strategie behoudt de bestaande regel waarbij LONG + SHORT de totale capaciteit bepaalt.",
-    "De Botconfigurator weigert voortaan een succesmelding wanneer de server een andere globale limiet terugstuurt dan de gebruiker heeft opgeslagen.",
+    "De chart publiceert zijn live display-zone rechtstreeks aan de sibling Portfolio Snapshot; er bestaat daardoor nog maar één zichtbare actieve-zonewaarde.",
+    "De Snapshot ververst priceZoneSeats onmiddellijk zodra de live zone verandert, naast de bestaande periodieke refresh.",
+    "Als het serverrapport nog de vorige zone bevat, worden uitsluitend de actieve-zone-specifieke vrije stoelcijfers tijdelijk als — / — getoond tot de serverstatus gelijkloopt; globale aantallen blijven zichtbaar.",
   ],
   now: [
-    "Een instelling van 130 blijft na Opslaan 130 en wordt als dezelfde harde globale limiet gebruikt door runtime, Botinstellingen en Portfolio Snapshot.",
-    "De bestaande 3 LONG / 3 SHORT per prijszone blijft onafhankelijk van de globale maximumcapaciteit.",
-    "Deze fix opent of sluit tijdens deployment geen posities en verandert geen bestaande origin-zone ownership.",
+    "Het is niet meer mogelijk dat de grafiek Zone X actief toont terwijl de Snapshot tegelijk Zone Y actief toont.",
+    "S1/R1 en het Snapshot-zonelabel volgen dezelfde actuele portfolio-equityzone.",
+    "Deze Build 457-wijziging is presentatie- en status-synchronisatie; order-, DCA-, TP-, hedge- en origin-zone-logica worden niet gewijzigd.",
   ],
-  before: "Prijszone-stoelen kon 130 tonen tijdens invoer, maar de requestguard herschreef dit naar de oude LONG+SHORT-som, bijvoorbeeld 99.",
-  after: "De expliciete globale prijszone-limiet wordt zonder stille herschrijving opgeslagen en server-side terugbevestigd.",
+  before: "De chart kon al op de nieuwe live zone staan terwijl de 15-seconden Snapshot-poll nog het vorige serverrapport toonde.",
+  after: "Chart en Snapshot tonen onmiddellijk dezelfde actieve zone; zonegebonden stoelcijfers worden pas als actueel getoond wanneer het serverrapport diezelfde zone bevestigt.",
   technicalDetails: [
-    "Fixbron: web/lib/aster-strategy2-settings-guard.ts.",
-    "Prijszonepad: zoneSoldiersEnabled=true + zoneSoldiersOptInVersion>=1 + expliciete maximumPositions.",
-    "Regressievoorbeeld: legacy 69L + 30S, expliciet maximumPositions=130 => opgeslagen maximumPositions=130.",
+    "Source of truth voor de zichtbare zone: Portfolio Koers live-equity ladder via portfolioZoneContextFromLadder.",
+    "Nieuwe callback: onActiveZoneChange van PortfolioKoersChart naar AsterPortfolioSnapshotEnhancer.",
+    "Diagnostiek: data-seat-zone-sync is synced of waiting; waiting voorkomt dat oude actieve-zone seat counts als actuele cijfers worden gepresenteerd.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-456-price-zone-max-savefix",
+    version: "46",
+    build: "456",
+    releasedAt: "2026-09-27",
+    title: "Prijszone-stoelen · Max actieve stoelen savefix",
+    newItems: [
+      "Max actieve stoelen wordt in prijszone-modus als zelfstandige globale limiet opgeslagen en niet meer afgeleid van de oude LONG/SHORT-slotverdeling.",
+      "Na opslaan controleert de Botconfigurator expliciet of de server exact dezelfde maximumPositions-waarde heeft bevestigd.",
+    ],
+    problems: [
+      "Een ingevoerde globale limiet kon na Opslaan terugvallen naar de som van de oude LONG- en SHORT-slots.",
+      "Concreet kon 130 worden ingevoerd terwijl 69 LONG + 30 SHORT de waarde vlak voor verzending stil terugzette naar 99.",
+    ],
+    causes: [
+      "De gedeelde web-saveguard behandelde longSlots/shortSlots nog als bron van waarheid voor maximumPositions, ook wanneer Prijszone-stoelen expliciet actief was.",
+    ],
+    fixes: [
+      "Wanneer Prijszone-stoelen expliciet actief is en maximumPositions is meegegeven, heeft die expliciete waarde voorrang en wordt alleen begrensd door de harde platformlimiet van 400.",
+      "De traditionele strategie behoudt de bestaande regel waarbij LONG + SHORT de totale capaciteit bepaalt.",
+      "De Botconfigurator weigert een succesmelding wanneer de server een andere globale limiet terugstuurt dan de gebruiker heeft opgeslagen.",
+    ],
+    now: [
+      "Een instelling van 130 blijft na Opslaan 130 en wordt als dezelfde harde globale limiet gebruikt door runtime, Botinstellingen en Portfolio Snapshot.",
+      "De bestaande 3 LONG / 3 SHORT per prijszone blijft onafhankelijk van de globale maximumcapaciteit.",
+    ],
+    before: "Prijszone-stoelen kon 130 tonen tijdens invoer, maar de requestguard herschreef dit naar de oude LONG+SHORT-som, bijvoorbeeld 99.",
+    after: "De expliciete globale prijszone-limiet wordt zonder stille herschrijving opgeslagen en server-side terugbevestigd.",
+    technicalDetails: [
+      "Fixbron: web/lib/aster-strategy2-settings-guard.ts.",
+      "Prijszonepad: zoneSoldiersEnabled=true + zoneSoldiersOptInVersion>=1 + expliciete maximumPositions.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-455-price-zone-seats",
     version: "46",

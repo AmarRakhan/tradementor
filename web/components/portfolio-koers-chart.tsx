@@ -309,7 +309,19 @@ function ZoneSoldiersCommandCenterScreen({vm,advisorMessage,onClose}:{vm:any;adv
   );
 }
 
-export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongText,liveShortText}:{liveEquityText:string;liveAvailableText:string;liveLongText:string;liveShortText:string}) {
+export function PortfolioKoersChart({
+  liveEquityText,
+  liveAvailableText,
+  liveLongText,
+  liveShortText,
+  onActiveZoneChange,
+}:{
+  liveEquityText:string;
+  liveAvailableText:string;
+  liveLongText:string;
+  liveShortText:string;
+  onActiveZoneChange?:(zone:number|null)=>void;
+}) {
   const { user }=useAuthSession();
   const shellRef=useRef<HTMLElement>(null);
   const canvasRef=useRef<HTMLDivElement>(null);
@@ -549,10 +561,16 @@ export function PortfolioKoersChart({liveEquityText,liveAvailableText,liveLongTe
   const zoneSoldierEnabled=advisorEnabled&&zoneSoldierReport.enabled===true;
   const zoneSoldierLifecycle=String(zoneSoldierReport.lifecycle||"OFF").toUpperCase();
   const zoneSoldierActiveZone=signedIntegerOrNull(zoneSoldierReport.activeZone);
-  const activeZone=zoneSoldierEnabled&&zoneSoldierActiveZone!==null?zoneSoldierActiveZone:zoneContext?.activeIndex??confirmedActiveZone;
+  const liveDisplayActiveZone=zoneContext?.activeIndex??confirmedActiveZone;
+  const activeZone=zoneSoldierEnabled&&zoneSoldierActiveZone!==null?zoneSoldierActiveZone:liveDisplayActiveZone;
   advisorZoneLadderRef.current=advisorZoneLadder;
   activeZoneRef.current=activeZone;
 
+  // Build 457: Portfolio Koers owns the visible live-equity zone. The sibling
+  // Portfolio Snapshot consumes this exact value so a slower seat-status poll
+  // can never display a different active-zone number at the same moment.
+  useEffect(()=>{onActiveZoneChange?.(liveDisplayActiveZone)},[liveDisplayActiveZone,onActiveZoneChange]);
+  useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
   useEffect(()=>{syncOverlaysRef.current()},[advisorZoneLadder,activeZone]);
 
   useEffect(()=>{
