@@ -1,4 +1,4 @@
-const CACHE_NAME = "amar-bot-shell-v46-build446";
+const CACHE_NAME = "amar-bot-shell-v46-build447";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.add("/offline.html")));
@@ -26,7 +26,6 @@ self.addEventListener("fetch", (event) => {
   if (event.request.mode !== "navigate") return;
   event.respondWith(fetch(event.request, { cache: "no-store" }).catch(() => caches.match("/offline.html")));
 });
-
 
 self.addEventListener("push", (event) => {
   event.waitUntil((async () => {
