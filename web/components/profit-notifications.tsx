@@ -442,7 +442,7 @@ export function ProfitNotificationPanel() {
               <div className="profit-preview-notification">
                 <span className="profit-preview-logo" aria-hidden="true">A</span>
                 <div>
-                  <small>Amar Crypto Bot 2026 <i>nu</i></small>
+                  <small><i>nu</i></small>
                   <strong>{previewInterval ? "🏆 Mooiste winst · afgelopen " + previewInterval + " min" : "🏆 Trade gesloten met winst!"}</strong>
                   <p>BTCUSDT&nbsp; LONG <b>+$12,85</b></p>
                   {previewInterval && <p>47 winsttrades · <b>+$63,42 totaal</b></p>}
