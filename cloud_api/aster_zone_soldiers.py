@@ -269,11 +269,11 @@ def _median(values: list[float]) -> float | None:
 
 def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price: float,
                                       *, min_index: int = -3, max_index: int = 3) -> int | None:
-    """Mirror the web BETA extrapolated Portfolio Koers ladder.
+    """Mirror the web Portfolio Koers ladder, including dynamic outer zones.
 
-    The backend and Formation Dashboard must never disagree about the signed
-    active zone merely because the latest confirmed S/R set contains only part
-    of the -3..+3 ladder.
+    Build 455 makes the server and visible Portfolio Koers use the same
+    anchor/step interpretation. The display may move beyond the historical
+    -3..+3 window, so the runtime must extend around the current equity too.
     """
     value = _number(price)
     observed = []
@@ -307,9 +307,20 @@ def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price:
                       if row["center"] - row["index"] * step > 0])
     if anchor is None or anchor <= 0:
         return None
+
+    estimated_index = int(math.floor(((value - anchor) / step) + .5))
+    observed_indexes = [int(row["index"]) for row in observed]
+    dynamic_min = min(int(min_index), min(observed_indexes), estimated_index - 2)
+    dynamic_max = max(int(max_index), max(observed_indexes), estimated_index + 2)
+    if dynamic_max - dynamic_min > 24:
+        dynamic_min = estimated_index - 4
+        dynamic_max = estimated_index + 4
+    dynamic_min = max(-12, dynamic_min)
+    dynamic_max = min(12, dynamic_max)
+
     by_index = {row["index"]: row["center"] for row in observed}
     centers = []
-    for zone_index in range(max(-12, int(min_index)), min(12, int(max_index)) + 1):
+    for zone_index in range(dynamic_min, dynamic_max + 1):
         center = by_index.get(zone_index, anchor + zone_index * step)
         if center > 0:
             centers.append((zone_index, center))
@@ -493,7 +504,10 @@ def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] |
     zone_state = normalize_zone_state(raw_zone_state, base_long=base_long, base_short=base_short, timestamp_ms=timestamp_ms)
     previous_active = zone_state.get("activeZone")
 
-    if zone_safe and confirmed_zone is not None:
+    if confirmed_zone is not None:
+        # Active-zone identity and entry permission are separate concerns.
+        # Keep the runtime on the same price zone as Portfolio Koers even when
+        # history continuity temporarily blocks NEW entries.
         zone = int(confirmed_zone)
         key = _zone_key(zone)
         if key not in zone_state["pools"]:
@@ -516,8 +530,8 @@ def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] |
                 },
             })
     elif not zone_safe:
-        # Fail closed for NEW entries.  Keep the last confirmed zone as history,
-        # but no pool is active until continuity is restored.
+        # No defensible zone can be derived at all: keep historical ownership,
+        # but expose no active zone and no capacity for NEW entries.
         zone_state["previousZone"] = zone_state.get("activeZone")
         zone_state["activeZone"] = None
 
@@ -535,7 +549,14 @@ def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] |
     # Exposure balancing is routing/prioriteit only. It never adds seats.
     zone_state["balancer"] = {**balancer, "updatedAtMs": timestamp_ms}
     _bind_open_soldiers(zone_state, state, positions or [], timestamp_ms=timestamp_ms)
-    _activate_free_soldiers(zone_state, active_zone=active_zone, balancer=balancer, timestamp_ms=timestamp_ms)
+    # Free seats exist structurally even while an entry guard is unsafe, but
+    # only a safe active zone may expose them as executable AVAILABLE capacity.
+    _activate_free_soldiers(
+        zone_state,
+        active_zone=active_zone if zone_safe else None,
+        balancer=balancer,
+        timestamp_ms=timestamp_ms,
+    )
     zone_state["updatedAtMs"] = timestamp_ms
     report = zone_runtime_report(zone_state, state, positions or [], zone_safe=zone_safe)
     report["legacyMigratedThisTick"] = migrated
@@ -754,6 +775,10 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
     base_free_short = count_current("SHORT", role=ROLE_ZONE_BASE, status=STATUS_AVAILABLE)
     homecomings = _clean_homecoming_events(zone_state.get("homecomingEvents"))
     zone_state["homecomingEvents"] = homecomings
+    per_zone_long = _integer(zone_state.get("baseLongSoldiers"))
+    per_zone_short = _integer(zone_state.get("baseShortSoldiers"))
+    structural_free_long = max(0, per_zone_long - base_open_long)
+    structural_free_short = max(0, per_zone_short - base_open_short)
 
     return {
         "enabled": True, "schemaVersion": SCHEMA_VERSION,
@@ -761,8 +786,26 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
         "activeZone": active_zone, "previousZone": zone_state.get("previousZone"),
         "zoneActivationId": zone_state.get("zoneActivationId"), "hardFormationCap": True,
         "zoneFormation": {
-            "baseLongSoldiers": _integer(zone_state.get("baseLongSoldiers")),
-            "baseShortSoldiers": _integer(zone_state.get("baseShortSoldiers")),
+            "baseLongSoldiers": per_zone_long,
+            "baseShortSoldiers": per_zone_short,
+        },
+        # New public naming for the UI. Legacy soldier fields remain as a
+        # compatibility layer until all persisted state has migrated.
+        "seatModel": {
+            "activeZone": active_zone,
+            "entrySafe": bool(zone_safe and active_zone is not None),
+            "perZoneLong": per_zone_long,
+            "perZoneShort": per_zone_short,
+            "occupiedLongActiveZone": base_open_long,
+            "occupiedShortActiveZone": base_open_short,
+            "freeLongActiveZone": structural_free_long,
+            "freeShortActiveZone": structural_free_short,
+            "openFromOldZones": old_open_long + old_open_short,
+            "openFromOldZonesLong": old_open_long,
+            "openFromOldZonesShort": old_open_short,
+            "strategyOpenTotal": strategy_owned_long + strategy_owned_short,
+            "strategyOpenLong": strategy_owned_long,
+            "strategyOpenShort": strategy_owned_short,
         },
         "currentZone": {
             "openLong": base_open_long, "openShort": base_open_short,
