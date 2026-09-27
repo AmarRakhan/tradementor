@@ -142,6 +142,42 @@ def test_return_to_existing_zone_reuses_pool_without_duplication():
     assert len(back["pools"]["0"]["soldiers"]) == 6
     assert back["pools"]["0"]["activationCount"] == 2
 
+def test_return_to_existing_zone_exposes_only_empty_seats():
+    z0, _, _ = prepare({}, {}, [], 0, balancer=False)
+    long_row = claim_soldier(
+        z0, "LONG", trade_key="BTCUSDT|LONG", symbol="BTCUSDT",
+        entry_price=100, entry_portfolio_equity=145, timestamp_ms=11_000,
+    )
+    short_row = claim_soldier(
+        z0, "SHORT", trade_key="ETHUSDT|SHORT", symbol="ETHUSDT",
+        entry_price=100, entry_portfolio_equity=145, timestamp_ms=12_000,
+    )
+    managed = {
+        "BTCUSDT|LONG": {
+            "originZone": 0, "originZoneCycleId": long_row["originZoneCycleId"],
+            "soldierId": long_row["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+        },
+        "ETHUSDT|SHORT": {
+            "originZone": 0, "originZoneCycleId": short_row["originZoneCycleId"],
+            "soldierId": short_row["soldierId"], "soldierRole": ROLE_ZONE_BASE,
+        },
+    }
+    z1, managed, _ = prepare(
+        z0, managed, [pos("BTCUSDT", "LONG", 100), pos("ETHUSDT", "SHORT", 100)],
+        1, balancer=False, at=20_000,
+    )
+    back, _, report = prepare(
+        z1, managed, [pos("BTCUSDT", "LONG", 100), pos("ETHUSDT", "SHORT", 100)],
+        0, balancer=False, at=30_000,
+    )
+    assert len(available_soldiers(back, "LONG")) == 2
+    assert len(available_soldiers(back, "SHORT")) == 2
+    assert report["seatModel"]["occupiedLongActiveZone"] == 1
+    assert report["seatModel"]["occupiedShortActiveZone"] == 1
+    assert report["seatModel"]["freeLongActiveZone"] == 2
+    assert report["seatModel"]["freeShortActiveZone"] == 2
+
+
 
 def test_multiple_zone_positions_are_aggregated_into_managed_exposure():
     managed = dict([
@@ -260,6 +296,9 @@ def test_history_gap_fails_closed_for_new_entries_but_keeps_open_soldier():
     }
     blocked, _, report = prepare(z0, managed, [pos("A", "LONG", 100)], 1, safe=False, at=20_000)
     assert report["safeForNewEntries"] is False
+    assert report["activeZone"] == 1
+    assert report["seatModel"]["activeZone"] == 1
+    assert report["seatModel"]["entrySafe"] is False
     assert available_soldiers(blocked, "LONG") == []
     assert blocked["pools"]["0"]["soldiers"][soldier["soldierId"]]["status"] == STATUS_OPEN
 
