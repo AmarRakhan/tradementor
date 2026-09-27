@@ -8233,15 +8233,27 @@ def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
             # legally exceed the retired Strategy2Config 20% ceiling.
             MultiBbConfig.from_mapping(settings_raw)
         owned_rows=raw.get("ownedLegs",[]) if isinstance(raw.get("ownedLegs"),list) else []
+        multi_positions=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
         queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {};intent=queue.get("currentIntent") if isinstance(queue.get("currentIntent"),dict) else {}
         # A stopped + exchange-flat account has nothing to protect in realtime.
-        # Do not let stale legacy pendingReopens keep hammering the config doc.
-        if not bool(raw.get("enabled",False)) and not owned_rows and not intent:
+        # Multi-BB/Prijszone-stoelen owns positions under multiBbPositions rather
+        # than the retired ownedLegs list, so include those keys in the realtime
+        # registry. This lets a live mark-price move trigger the next account
+        # evaluation inside an open 15m candle instead of waiting for the minute
+        # scheduler.
+        if not bool(raw.get("enabled",False)) and not owned_rows and not multi_positions and not intent:
             continue
         if cfg is not None and cfg.focus_v2_enabled and cfg.focus_v2_simple_mode_enabled:
             simple_uids.add(uid)
         for row in owned_rows:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
+        if is_multi_bb:
+            for key,row in multi_positions.items():
+                symbol=str((row or {}).get("symbol") if isinstance(row,dict) else "").upper().strip()
+                if not symbol:
+                    symbol=str(key).split("|",1)[0].upper().strip()
+                if symbol:
+                    symbols.add(symbol)
         if intent.get("symbol"):symbols.add(str(intent.get("symbol")).upper())
         for row in raw.get("pendingReopens",[]) if isinstance(raw.get("pendingReopens"),list) else []:
             if isinstance(row,dict) and row.get("symbol"):symbols.add(str(row.get("symbol")).upper())
