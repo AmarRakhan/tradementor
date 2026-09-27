@@ -97,7 +97,7 @@ const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
 const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
 const LIQUIDATION_GAUGE_REFERENCE = "file_000000004e80820a80318a3de3ae5abd";
 const SNAPSHOT_V2_REFERENCE = "file_0000000061fc81f49a44564879d533de";
-const ZONE_SOLDIERS_OPEN_EVENT = "tradementor:open-zone-soldiers-command-center";
+const PRICE_ZONE_SNAPSHOT_REFERENCE = "file_00000000a5708210be60f92f52e4b5cc";
 
 type LiquidationDiagnostics = {
   liquidationRiskPercent: number | null;
@@ -108,6 +108,20 @@ type LiquidationDiagnostics = {
   longExposureUsd: number | null;
   shortExposureUsd: number | null;
   netExposureUsd: number | null;
+};
+
+type PriceZoneSeatSummary = {
+  enabled: boolean;
+  activeZone: number | null;
+  perZoneLong: number;
+  perZoneShort: number;
+  freeLongActiveZone: number;
+  freeShortActiveZone: number;
+  openFromOldZones: number;
+  maxTotal: number;
+  strategyOpenLong: number;
+  strategyOpenShort: number;
+  strategyOpenTotal: number;
 };
 
 function directText(element: Element | null, selector: string) {
@@ -182,6 +196,45 @@ async function loadLiquidationDiagnostics(): Promise<LiquidationDiagnostics> {
     longExposureUsd: firstNumber(records, ["longNotional", "longExposureUsd"]),
     shortExposureUsd: firstNumber(records, ["shortNotional", "shortExposureUsd"]),
     netExposureUsd: firstNumber(records, ["netExposure", "netExposureUsd"]),
+  };
+}
+
+async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
+  const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" });
+  const root = record(payload);
+  const strategy2 = Object.keys(record(root.strategy2)).length
+    ? record(root.strategy2)
+    : Object.keys(record(record(root.data).strategy2)).length
+      ? record(record(root.data).strategy2)
+      : record(record(root.snapshot).strategy2);
+  const settings = record(strategy2.settings);
+  const seatReport = Object.keys(record(strategy2.priceZoneSeats)).length
+    ? record(strategy2.priceZoneSeats)
+    : record(strategy2.zoneSoldiers);
+  const seatModel = record(seatReport.seatModel);
+  const currentZone = record(seatReport.currentZone);
+  const oldZones = record(seatReport.oldZonesOpen);
+  const strategyOwned = record(seatReport.strategyOwnedOpen);
+  const perZoneLong = Math.max(1, Math.round(firstNumber([seatModel, settings], ["perZoneLong", "zoneBaseLongSoldiers"]) ?? 3));
+  const perZoneShort = Math.max(1, Math.round(firstNumber([seatModel, settings], ["perZoneShort", "zoneBaseShortSoldiers"]) ?? 3));
+  const activeZoneNumber = firstNumber([seatModel, seatReport], ["activeZone"]);
+  const activeOpenLong = Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedLongActiveZone", "openLong"]) ?? 0));
+  const activeOpenShort = Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedShortActiveZone", "openShort"]) ?? 0));
+  const strategyOpenLong = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenLong", "long"]) ?? 0));
+  const strategyOpenShort = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenShort", "short"]) ?? 0));
+  const maxTotal = Math.max(1, Math.round(firstNumber([settings], ["maximumPositions"]) ?? (perZoneLong + perZoneShort)));
+  return {
+    enabled: seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
+    activeZone: activeZoneNumber === null ? null : Math.round(activeZoneNumber),
+    perZoneLong,
+    perZoneShort,
+    freeLongActiveZone: Math.max(0, Math.round(firstNumber([seatModel], ["freeLongActiveZone"]) ?? (perZoneLong - activeOpenLong))),
+    freeShortActiveZone: Math.max(0, Math.round(firstNumber([seatModel], ["freeShortActiveZone"]) ?? (perZoneShort - activeOpenShort))),
+    openFromOldZones: Math.max(0, Math.round(firstNumber([seatModel, oldZones], ["openFromOldZones", "total"]) ?? 0)),
+    maxTotal,
+    strategyOpenLong,
+    strategyOpenShort,
+    strategyOpenTotal: Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenTotal", "total"]) ?? (strategyOpenLong + strategyOpenShort))),
   };
 }
 
@@ -546,29 +599,40 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
   </div>;
 }
 
-function SnapshotQuickActions({ zoneCommandCenterAvailable }: { zoneCommandCenterAvailable: boolean }) {
-  const lastTap=useRef(0);
-  const openZoneSoldiers=()=>window.dispatchEvent(new CustomEvent(ZONE_SOLDIERS_OPEN_EVENT));
-  const onZoneTouchEnd=()=>{
-    const now=Date.now();
-    if(now-lastTap.current<340){lastTap.current=0;openZoneSoldiers()}
-    else lastTap.current=now;
-  };
-  return <div className="aps-quick-actions" aria-label="Portfolio Snapshot snelle acties">
-    {zoneCommandCenterAvailable ? <button type="button" className="aps-quick aps-quick-zone" aria-label="Zone-Soldaten. Dubbeltik om te openen." onDoubleClick={openZoneSoldiers} onTouchEnd={onZoneTouchEnd}>
-      <span className="aps-quick-icon">⌾</span><span><b>ZONE-SOLDATEN</b><small>Dubbeltik om te openen</small></span><em>›</em>
-    </button> : null}
-    <button type="button" className="aps-quick"><span className="aps-quick-icon">▣</span><span><b>BOT STATUS</b><small>Actief</small></span></button>
-    <button type="button" className="aps-quick"><span className="aps-quick-icon">▥</span><span><b>STRATEGIE</b><small>Z+2 · Long</small></span></button>
-    <button type="button" className="aps-quick"><span className="aps-quick-icon">⚙</span><span><b>INSTELLINGEN</b><small>Beheren</small></span></button>
-  </div>;
+function PriceZoneStrategySummary({ summary }: { summary: PriceZoneSeatSummary | null }) {
+  if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE}><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>—</em></div></section>;
+  const sideTotal = Math.max(1, summary.perZoneLong + summary.perZoneShort);
+  const longCapacity = Math.max(1, Math.round(summary.maxTotal * summary.perZoneLong / sideTotal));
+  const shortCapacity = Math.max(0, summary.maxTotal - longCapacity);
+  const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
+  const zoneLabel = summary.activeZone === null ? "Zone —" : `Zone ${summary.activeZone} actief`;
+  return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE}>
+    <div className="aps-zone-title">
+      <span className="aps-zone-target" aria-hidden="true">◎</span>
+      <div><b>Prijszone-strategie</b><small>{summary.enabled ? "Alleen vrije stoelen in de actieve prijszone worden gevuld." : "Prijszone-stoelen staan momenteel uit."}</small></div>
+      <em>{summary.enabled ? zoneLabel : "UIT"}</em>
+    </div>
+    <div className="aps-zone-facts">
+      <span><small>Per zone</small><b>{summary.perZoneLong}L / {summary.perZoneShort}S</b></span>
+      <span><small>Vrij in actieve zone</small><b><i>{summary.freeLongActiveZone}L</i> / <em>{summary.freeShortActiveZone}S</em></b></span>
+      <span><small>Oude zones open</small><b>{summary.openFromOldZones}</b></span>
+      <span><small>Max totaal</small><b>{summary.maxTotal}</b></span>
+    </div>
+    <div className="aps-zone-meters">
+      <div className="long"><span>LONG bezet</span><i><u style={{width:`${pct(summary.strategyOpenLong,longCapacity)}%`}} /></i><b>{summary.strategyOpenLong} / {longCapacity}</b></div>
+      <div className="short"><span>SHORT bezet</span><i><u style={{width:`${pct(summary.strategyOpenShort,shortCapacity)}%`}} /></i><b>{summary.strategyOpenShort} / {shortCapacity}</b></div>
+      <div className="total"><span>Totaal bezet</span><i><u style={{width:`${pct(summary.strategyOpenTotal,summary.maxTotal)}%`}} /></i><b>{summary.strategyOpenTotal} / {summary.maxTotal}</b></div>
+    </div>
+    <p><span aria-hidden="true">ⓘ</span>Bestaande posities houden hun zone-stoel bezet. Bij terugkeer worden alleen lege stoelen gevuld.</p>
+  </section>;
 }
-function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, zoneCommandCenterAvailable, onCloseAll, onCloseProfit, onOpenHedge }: {
+
+function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeats, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
+  priceZoneSeats: PriceZoneSeatSummary | null;
   profitBusy: ProfitScope | null;
-  zoneCommandCenterAvailable: boolean;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
   onOpenHedge: () => void;
@@ -582,7 +646,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, z
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
-    <SnapshotQuickActions zoneCommandCenterAvailable={zoneCommandCenterAvailable} />
+    <PriceZoneStrategySummary summary={priceZoneSeats} />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
@@ -655,7 +719,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
-  const [zoneCommandCenterAvailable, setZoneCommandCenterAvailable] = useState(false);
+  const [priceZoneSeats, setPriceZoneSeats] = useState<PriceZoneSeatSummary | null>(null);
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
@@ -715,30 +779,6 @@ export function AsterPortfolioSnapshotEnhancer() {
   useEffect(() => {
     if (!host) return;
     let alive = true;
-    const refreshRelease = async () => {
-      try {
-        const release = await authenticatedRequest("/api/releases/me", { cache: "no-store" }) as {
-          features?: Record<string, { enabled?: boolean }>;
-        };
-        if (alive) setZoneCommandCenterAvailable(release.features?.zone_command_center?.enabled === true);
-      } catch {
-        if (alive) setZoneCommandCenterAvailable(false);
-      }
-    };
-    void refreshRelease();
-    const timer = window.setInterval(refreshRelease, 45000);
-    const onVisible = () => { if (document.visibilityState === "visible") void refreshRelease(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [host]);
-
-  useEffect(() => {
-    if (!host) return;
-    let alive = true;
     const refresh = async () => {
       try {
         const preview = await loadProfitPreview();
@@ -767,6 +807,28 @@ export function AsterPortfolioSnapshotEnhancer() {
         if (alive) setLiquidationDiagnostics(diagnostics);
       } catch {
         if (alive) setLiquidationDiagnostics(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [host]);
+
+  useEffect(() => {
+    if (!host) return;
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const summary = await loadPriceZoneSeatSummary();
+        if (alive) setPriceZoneSeats(summary);
+      } catch {
+        if (alive) setPriceZoneSeats(null);
       }
     };
     void refresh();
@@ -869,8 +931,8 @@ export function AsterPortfolioSnapshotEnhancer() {
         values={values}
         profitPreview={profitPreview}
         liquidationDiagnostics={liquidationDiagnostics}
+        priceZoneSeats={priceZoneSeats}
         profitBusy={profitBusy}
-        zoneCommandCenterAvailable={zoneCommandCenterAvailable}
         onCloseAll={closeAll}
         onCloseProfit={openProfitPreview}
         onOpenHedge={() => setHedgeOpen(true)}
