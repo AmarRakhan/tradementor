@@ -60,7 +60,7 @@ def test_zone_mode_uses_per_zone_free_seats_and_hard_global_maximum_positions():
     assert "if zone_mode:" in source
     assert "long_need = len(available_soldiers" in source
     assert "short_need = len(available_soldiers" in source
-    assert "settings.maximum_positions - seat_capacity_position_count" in source
+    assert "_remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)" in source
     assert "zone_platform_ceiling" not in source
     assert "if not paired and not zone_mode:" in source
 
