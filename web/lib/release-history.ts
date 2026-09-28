@@ -26,39 +26,58 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-28",
-  title: "Portfolio TP · Automatische stoelreset 1.0",
+  title: "STABLE V2 · Portfolio TP stoelreset",
   newItems: [
-    "Portfolio Take Profit kan na een volledig bevestigde exit de LONG- en SHORT-stoelen automatisch terugzetten naar de startwaarden van de afgesloten cyclus.",
-    "De startstoelen worden server-side per Portfolio TP-cycle vastgelegd en veranderen niet wanneer de gebruiker tijdens dezelfde cyclus tijdelijk extra stoelen toevoegt.",
-    "De BETA Botconfigurator toont de nieuwe instelling met de bindende visuele referentie file_00000000369082108949b160b28e0965.",
+    "De bestaande STABLE Botconfigurator V2 toont nu dezelfde Portfolio TP-stoelreset als Build 460, zonder gebruikers naar V3 te migreren.",
+    "Onder Winst nemen → Portfolio staat een aparte schakelaar voor automatische stoelreset na een volledig bevestigde Portfolio TP-sluiting.",
+    "V2 toont direct de huidige LONG/SHORT-stoelen en de cycle-startwaarden waarnaar na Portfolio TP wordt teruggezet.",
   ],
   problems: [
-    "Handmatig verhoogde stoelen bleven na een Portfolio TP-close actief, waardoor een volgende cyclus met de tijdelijk verhoogde capaciteit kon starten.",
-    "Een reset bij het eerste TP-signaal zou een race met closing en scanners kunnen veroorzaken.",
+    "Build 460 was technisch live, maar de bediening stond alleen in de BETA/V3-configurator en was daardoor niet zichtbaar voor gebruikers die bewust op de werkende STABLE/V2-flow blijven.",
   ],
   causes: [
-    "Portfolio TP had al een transactionele close/flat/restart-state-machine, maar nog geen immutable cycle-seat snapshot en geen post-flat seat restore stap.",
+    "De UI-routing houdt BETA/V3 en STABLE/V2 bewust gescheiden om bestaande gebruikers niet automatisch naar een nieuwe configurator te migreren.",
   ],
   fixes: [
-    "cycleStartLongSlots, cycleStartShortSlots en cycleStartMaximumPositions worden éénmalig per cyclus vastgelegd.",
-    "De seat reset wordt pas na exchange-flat confirmation uitgevoerd; de bestaande Portfolio TP entry-lock blijft actief tot reset en restart zijn afgerond.",
-    "resetSeatsAfterPortfolioTp is persistent, default UIT, idempotent per cycleId en raakt uitsluitend Aster Strategy-2 capaciteit.",
-    "Zone ownership, per-zone soldiers, Auto Hedge en Sniper worden door de reset niet gewijzigd.",
+    "Alleen resetSeatsAfterPortfolioTp is aan V2 toegevoegd en wordt via dezelfde bestaande Strategy-2 settings-API opgeslagen.",
+    "De bestaande Build-460 backendstate-machine blijft ongewijzigd: sluiten → flat bevestigen → stoelreset → restart.",
+    "V3, strategie-selectie, DCA, Zone ownership, Auto Hedge, Sniper en overige STABLE-instellingen zijn niet gemigreerd of aangepast.",
   ],
   now: [
-    "Voorbeeld: cyclus start 3/3, gebruiker verhoogt tijdelijk naar 8/7, Portfolio TP sluit alles en bevestigt flat, daarna wordt 3/3 hersteld voordat de nieuwe cyclus opent.",
-    "Met de toggle UIT blijft het bestaande gedrag exact behouden.",
-    "De feature staat in Build 460 op BETA/TESTEN en wordt niet automatisch naar STABLE vrijgegeven.",
+    "Een STABLE/V2-gebruiker kan de stoelreset zelf aanzetten terwijl de rest van zijn vertrouwde configurator en strategie exact hetzelfde blijft.",
+    "De schakelaar staat standaard UIT; bestaande accounts veranderen dus niet automatisch van gedrag.",
   ],
   technicalDetails: [
-    "Visuele referentie: file_00000000369082108949b160b28e0965.",
-    "State flow: PORTFOLIO_TP_EXECUTING → FLAT_CONFIRMING → seat reset → RESTARTING.",
-    "QA omvat unit/integratie/failure tests, een deterministische 1.000-cycle event replay en mobiele visual QA op 320/360/390/412/430px.",
+    "UI-only uitbreiding van aster-bot-configurator-v2.tsx bovenop de reeds live Build-460 backend.",
+    "Resetdoel komt uit de immutable cycleStartLongSlots/cycleStartShortSlots snapshot van de lopende Portfolio TP-cycle.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-460-portfolio-tp-seat-reset",
+    version: "46",
+    build: "460",
+    releasedAt: "2026-09-28",
+    title: "Portfolio TP · Automatische stoelreset 1.0",
+    newItems: [
+      "Portfolio TP kan na een volledig bevestigde exit de LONG- en SHORT-stoelen terugzetten naar de startwaarden van de afgesloten cyclus.",
+      "De startstoelen worden server-side per Portfolio TP-cycle vastgelegd.",
+    ],
+    problems: ["De bediening was in Build 460 alleen zichtbaar in de BETA/V3-configurator."],
+    causes: ["Build 460 introduceerde eerst de veilige backendstate-machine en BETA-bediening."],
+    fixes: [
+      "Reset gebeurt pas na exchange-flat confirmation en echte post-close equity.",
+      "resetSeatsAfterPortfolioTp is persistent, default UIT en idempotent per cycleId.",
+    ],
+    now: ["Backendlogica is live; Build 461 maakt dezelfde bediening ook zichtbaar in STABLE/V2."],
+    technicalDetails: [
+      "State flow: PORTFOLIO_TP_EXECUTING → FLAT_CONFIRMING → seat reset → RESTARTING.",
+      "QA bevatte unit/integratie/failure tests en een deterministische 1.000-cycle replay.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-459-botconfigurator-v31",
     version: "46",
