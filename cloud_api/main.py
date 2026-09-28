@@ -1519,6 +1519,41 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "safeForNewEntries":bool(raw_zone_report.get("safeForNewEntries")) if zone_active else False}
         long_count=sum(1 for key in managed if str(key).endswith("|LONG")); short_count=sum(1 for key in managed if str(key).endswith("|SHORT"))
         runtime_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
+        dynamic_control=user_reference({"uid":uid}).collection("asterDynamicHedge").document("control").get().to_dict() or {}
+        dynamic_report=raw.get("dynamicHedgeReport") if isinstance(raw.get("dynamicHedgeReport"),dict) else {}
+        dynamic_enabled=bool(dynamic_control.get("enabled",False))
+        dynamic_reason=str(dynamic_report.get("reason") or dynamic_control.get("lastReason") or "")
+        dynamic_safety=str(dynamic_report.get("safetyStatus") or "").upper()
+        dynamic_orders=int(safe_float(dynamic_report.get("ordersSent")))
+        dynamic_owner=str(dynamic_control.get("ownershipState") or ("ADOPTING" if dynamic_enabled else "NORMAL")).upper()
+        dynamic_blocking=bool(dynamic_enabled and (
+            dynamic_orders>0
+            or dynamic_reason!="HEDGE_STABLE"
+            or (dynamic_safety and dynamic_safety!="VEILIG")
+            or dynamic_owner!="DYNAMIC_HEDGE_ACTIVE"
+        ))
+        queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+        entry_diagnostics={
+            "entryStatus":str(report.get("entryStatus") or ""),
+            "entryReason":str(report.get("entryReason") or ""),
+            "entrySkipReasons":dict(report.get("entrySkipReasons") or {}) if isinstance(report.get("entrySkipReasons"),dict) else {},
+            "zoneMigrationHold":bool(report.get("zoneMigrationHold",False)),
+            "lastReason":str(raw.get("lastReason","")),
+            "dynamicHedge":{
+                "enabled":dynamic_enabled,
+                "blocking":dynamic_blocking,
+                "ownershipState":dynamic_owner,
+                "status":str(dynamic_report.get("status") or ""),
+                "reason":dynamic_reason,
+                "safetyStatus":dynamic_safety,
+                "ordersSent":dynamic_orders,
+            },
+            "queue":{
+                "haltedUncertain":bool(queue_state.get("haltedUncertain",False)),
+                "hasCurrentIntent":bool(queue_state.get("currentIntent")),
+                "uncertainReason":str(queue_state.get("uncertainReason") or ""),
+            },
+        }
         return {"strategy2":{"settings":settings,"engine":MULTI_BB_ENGINE,"phase":str(raw.get("phase","CONFIGURED")),
             "displayPhase":"UIT" if not enabled else str(raw.get("phase","RUNNING")),"enabled":enabled,"monitor":monitor,
             "liveReady":bool(raw.get("liveReady",False)),"canaryValidated":bool(raw.get("canaryValidated",False)),"runtimeEnabled":runtime_enabled,
@@ -1530,7 +1565,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             "strategyMode":"PRICE_ZONE_SEATS" if zone_active else "TRADITIONAL","zoneSoldierLifecycle":zone_lifecycle,
             # Legacy key remains for persisted clients; all new UI reads the
             # priceZoneSeats alias and avoids soldier terminology.
-            "zoneSoldiers":zone_report,"priceZoneSeats":zone_report,
+            "zoneSoldiers":zone_report,"priceZoneSeats":zone_report,"entryDiagnostics":entry_diagnostics,
             "universe":{"topN":int(settings.get("universeTopN",30)),"ranking":report.get("rankedTopN",[])},
             "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "directe slotvulling + Top-N + leveragefilter"},
                 "existingPositionManagement":{"reason":"Exchange truth + TP/DCA beheer"}},"candidateScan":{"checked":len(report.get("rankedTopN",[])),"reasons":[]},

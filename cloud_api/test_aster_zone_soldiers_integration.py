@@ -272,3 +272,13 @@ def test_live_zone_seat_sync_does_not_persist_managed_positions():
     assert '"zoneSoldierState": zone_state' in helper
     assert '"zoneSoldierReport": zone_report' in helper
     assert '"multiBbPositions":' not in helper
+
+
+def test_price_zone_public_snapshot_exposes_read_only_entry_blocker_diagnostics():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert '"entryDiagnostics":entry_diagnostics' in source
+    assert '"dynamicHedge":{' in source
+    assert '"blocking":dynamic_blocking' in source
+    assert '"entryStatus":str(report.get("entryStatus") or "")' in source
+    assert '"entrySkipReasons"' in source
+    assert '"haltedUncertain"' in source
