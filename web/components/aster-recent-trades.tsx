@@ -544,6 +544,75 @@ function PositionClosePanel({
   );
 }
 
+
+function rowFromPosition(position: OpenPosition, status = "Live"): TradeCenterRow {
+  const pnl = finite(position.unrealizedPnl);
+  const roleStatus = position.focusAirbagHedge === true ? "AIRBAG / HEDGE" : position.focusAirbag?.enabled === true ? "HOOFDPOSITIE" : status;
+  return {
+    id: positionId(position),
+    symbol: normalizedSymbol(position.symbol),
+    side: String(position.side || "—").toUpperCase(),
+    leverage: finite(position.leverage),
+    markPrice: finite(position.markPrice),
+    margin: openPositionMargin(position),
+    pnl,
+    pnlPct: positionPricePnlPct(position),
+    entries: positionEntryCount(position),
+    status: roleStatus,
+    timestamp: position.openedAt,
+    tone: toneFor(pnl),
+    source: "position",
+    position,
+  };
+}
+function rowFromActivity(trade: Activity, closed: boolean, positions: OpenPosition[], scanActions: ScanAction[]): TradeCenterRow {
+  const position = closed ? null : findOpenPosition(positions, trade);
+  const matching = closed ? [...scanActions].reverse().find((action) => sideKey(action) === sideKey(trade) && String(action.action || "").toUpperCase() === "CLOSE") || null : null;
+  const leverage = activityLeverage(trade, position) ?? finite(matching?.leverage);
+  const margin = activityMargin(trade, position, leverage) ?? finite(matching?.marginUsd);
+  const pnl = finite(closed ? trade.realizedPnlUsd : trade.unrealizedPnlUsd);
+  return {
+    id: String(trade.exchangeTradeId || trade.id || stableActivityId(trade)),
+    symbol: normalizedSymbol(trade.symbol),
+    side: String(trade.side || "—").toUpperCase(),
+    leverage,
+    markPrice: finite(position?.markPrice),
+    margin,
+    pnl,
+    pnlPct: position ? positionPricePnlPct(position) : reliableReturnPct(trade),
+    entries: position ? positionEntryCount(position) : null,
+    status: closed ? (matching && TP_KINDS.has(String(matching.kind || "").toUpperCase()) ? "TP" : "Gesloten") : "Ingestapt",
+    timestamp: closed ? trade.closedAt || trade.executedAt || trade.timestampMs : trade.executedAt || trade.timestampMs,
+    tone: toneFor(pnl),
+    source: "activity",
+    activity: trade,
+    position,
+  };
+}
+function rowFromAction(action: ScanAction, positions: OpenPosition[], exits: Activity[]): TradeCenterRow {
+  const position = findOpenPosition(positions, action);
+  const label = scanActionLabel(action);
+  const exit = label === "TP" || label === "Gesloten" ? exits.find((row) => sideKey(row) === sideKey(action)) : null;
+  const pnl = position ? finite(position.unrealizedPnl) : finite(exit?.realizedPnlUsd);
+  return {
+    id: String(action.clientOrderId || action.orderId || `${normalizedSymbol(action.symbol)}:${exchangeTimestampMs(action.executedAt)}`),
+    symbol: normalizedSymbol(action.symbol),
+    side: String(action.side || "—").toUpperCase(),
+    leverage: finite(action.leverage) ?? finite(position?.leverage),
+    markPrice: finite(position?.markPrice),
+    margin: finite(action.marginUsd) ?? openPositionMargin(position),
+    pnl,
+    pnlPct: positionPricePnlPct(position),
+    entries: position ? positionEntryCount(position) : finite(action.dcaNumber) !== null ? Math.max(1, Math.round(Number(action.dcaNumber)) + 1) : null,
+    status: label,
+    timestamp: action.executedAt,
+    tone: toneFor(pnl),
+    source: "action",
+    action,
+    position,
+  };
+}
+
 function TradeCenterTable({
   rows,
   onOpenDetail,
