@@ -6170,6 +6170,9 @@ def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: d
                     portfolio_tp_base_mode=saved.portfolio_tp_base_mode,
                     portfolio_tp_custom_base_equity=saved.portfolio_tp_custom_base_equity,
                     config_version=version,
+                    current_long_slots=saved.long_slots,
+                    current_short_slots=saved.short_slots,
+                    current_maximum_positions=saved.maximum_positions,
                 )
                 update["multiBbCycle"]=cycle_candidate
                 prior_report=existing.get("multiBbReport") if isinstance(existing.get("multiBbReport"),dict) else {}
@@ -6264,6 +6267,9 @@ def reset_aster_strategy2_portfolio_cycle(request: AsterStrategy2PortfolioCycleR
             portfolio_tp_input_mode=reset_settings.portfolio_tp_input_mode,
             portfolio_tp_value=reset_settings.portfolio_tp_value,
             config_version=version,
+            current_long_slots=reset_settings.long_slots,
+            current_short_slots=reset_settings.short_slots,
+            current_maximum_positions=reset_settings.maximum_positions,
         )
         snapshot = portfolio_cycle_snapshot(
             cycle,

@@ -236,6 +236,7 @@ class MultiBbConfig(_core.MultiBbConfig):
     portfolio_tp_value: float = 20.0
     portfolio_tp_base_mode: str = "CYCLE_START"
     portfolio_tp_custom_base_equity: float = 0.0
+    reset_seats_after_portfolio_tp: bool = False
     stop_loss_enabled: bool = False
     stop_loss_mode: str = "PERCENT"
     stop_loss_long: float = 0.0
@@ -283,6 +284,7 @@ class MultiBbConfig(_core.MultiBbConfig):
             "portfolio_tp_value": portfolio_tp_value,
             "portfolio_tp_base_mode": portfolio_tp_base_mode,
             "portfolio_tp_custom_base_equity": _finite(source.get("portfolioTpCustomBaseEquity"), 0.0),
+            "reset_seats_after_portfolio_tp": bool(source.get("resetSeatsAfterPortfolioTp", False)),
             "stop_loss_enabled": bool(source.get("stopLossEnabled", False)),
             "stop_loss_mode": str(source.get("stopLossMode", "PERCENT")).strip().upper().replace("%", "PERCENT").replace("$", "USD"),
             "stop_loss_long": _finite(source.get("stopLossLong"), 0.0),
@@ -354,6 +356,7 @@ class MultiBbConfig(_core.MultiBbConfig):
             "portfolioTpValue":self.portfolio_tp_value,
             "portfolioTpBaseMode":self.portfolio_tp_base_mode,
             "portfolioTpCustomBaseEquity":self.portfolio_tp_custom_base_equity,
+            "resetSeatsAfterPortfolioTp":self.reset_seats_after_portfolio_tp,
             "stopLossEnabled":self.stop_loss_enabled,
             "stopLossMode":self.stop_loss_mode,
             "stopLossLong":self.stop_loss_long,
@@ -594,6 +597,9 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
         portfolio_tp_percent=settings.portfolio_tp_percent,portfolio_tp_input_mode=settings.portfolio_tp_input_mode,
         portfolio_tp_value=settings.portfolio_tp_value,portfolio_tp_base_mode=settings.portfolio_tp_base_mode,
         portfolio_tp_custom_base_equity=settings.portfolio_tp_custom_base_equity,config_version=settings.version,
+        current_long_slots=settings.long_slots,current_short_slots=settings.short_slots,
+        current_maximum_positions=settings.maximum_positions,
+        reset_seats_after_portfolio_tp=settings.reset_seats_after_portfolio_tp,
         dry_run=dry_run,order_budget=order_budget,before_order=before_order)
     cycle_snapshot=gate.report
     if gate.handled and not gate.restart:
