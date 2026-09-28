@@ -92,7 +92,8 @@ def target_equity_v2(base_equity: float, input_mode: str, value: float) -> float
 def _new_cycle(uid: str, *, equity: float, portfolio_tp_percent: float, timestamp_ms: int,
                portfolio_tp_input_mode: str = "PERCENT", portfolio_tp_value: float | None = None,
                portfolio_tp_base_mode: str = "CYCLE_START", portfolio_tp_custom_base_equity: float = 0.0,
-               config_version: int = 0) -> dict[str, Any]:
+               config_version: int = 0, current_long_slots: int | None = None,
+               current_short_slots: int | None = None, current_maximum_positions: int | None = None) -> dict[str, Any]:
     seed = f"{uid}|portfolio-cycle|{timestamp_ms}|{equity:.12f}"
     cycle_id = hashlib.sha256(seed.encode()).hexdigest()[:20]
     input_mode = _normalize_input_mode(portfolio_tp_input_mode)
@@ -107,6 +108,14 @@ def _new_cycle(uid: str, *, equity: float, portfolio_tp_percent: float, timestam
         "baseEquity": base,
         "customBaseEquity": custom if custom > 0 else None,
         "baseConfigVersion": int(config_version or 0),
+        "cycleStartLongSlots": None if current_long_slots is None else max(0, _i(current_long_slots)),
+        "cycleStartShortSlots": None if current_short_slots is None else max(0, _i(current_short_slots)),
+        "cycleStartMaximumPositions": None if current_maximum_positions is None else max(1, _i(current_maximum_positions)),
+        "seatSnapshotSource": "CYCLE_START" if current_long_slots is not None and current_short_slots is not None else None,
+        "seatResetArmed": False,
+        "slotResetCompletedAt": None,
+        "slotResetCompletedAtMs": None,
+        "slotResetCycleId": None,
         "takeProfitInputMode": input_mode,
         "takeProfitValue": value,
         "targetEquity": target_equity_v2(base, input_mode, value),
