@@ -22,9 +22,9 @@ export type ReleaseHistoryEntry = {
 };
 
 export const CURRENT_RELEASE: ReleaseHistoryEntry = {
-  id: "v46-build-458-botconfigurator-v3",
-  version: "46",
-  build: "458",
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  version: WEBAPP_VERSION,
+  build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-28",
   title: "Botconfigurator 3.0 · Zone Warriors + Classic DCA",
   newItems: [
@@ -44,12 +44,12 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Alle bestaande configuratiestate blijft op dezelfde backendkeys opgeslagen; de nieuwe namen zijn uitsluitend displaynamen.",
     "LONG en SHORT behouden afzonderlijke startbedragen, DCA-bedragen, DCA-afstanden en Max DCA.",
     "Portfolio TP behoudt Per trade, Portfolio en Uit inclusief de bestaande basiskeuze.",
-    "Botconfigurator 3.0 blijft achter de bestaande bot_configurator_v2 BETA-releasegate; STABLE wordt niet automatisch gewijzigd.",
+    "Botconfigurator 3.0 wordt alleen gerouteerd wanneer /v1/me/releases het BETA-kanaal teruggeeft; STABLE blijft exact op de bestaande V2/legacy-route.",
   ],
   now: [
     "De gebruiker ziet steeds één compacte hoofdstap tegelijk en kan alle geavanceerde instellingen via accordions bereiken.",
     "Sniper staat niet in deze configurator en blijft een zelfstandige hoofdtab.",
-    "De wijziging is UI/UX + state-mapping; trading-engine identifiers en bestaande runtime-eigenaarschap blijven ongewijzigd.",
+    "De wijziging is BETA-only UI/UX + state-mapping; STABLE-labels, V2-component, trading-engine identifiers en runtime-eigenaarschap blijven ongewijzigd.",
   ],
   technicalDetails: [
     "Visuele referenties Set A: file_00000000e820820abd4c0803c0faf72c, file_00000000d4188243af425d77dce05825, file_00000000e3d88246868c97243a4217e0, file_000000001aec8210ae97ce7474fad735.",
