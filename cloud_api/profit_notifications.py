@@ -357,6 +357,8 @@ class ProfitNotificationService:
         stored = self._settings_ref(uid).get().to_dict() or {}
         normalized = normalize_settings(stored)
         normalized["enabledAtMs"] = _integer(stored.get("enabledAtMs"), 0)
+        normalized["longEntryEnabledAtMs"] = _integer(stored.get("longEntryEnabledAtMs"), 0)
+        normalized["shortEntryEnabledAtMs"] = _integer(stored.get("shortEntryEnabledAtMs"), 0)
         normalized["updatedAtMs"] = _integer(stored.get("updatedAtMs"), 0)
         return normalized
 
@@ -379,8 +381,25 @@ class ProfitNotificationService:
         enabled_at = _integer(previous.get("enabledAtMs"), 0)
         if normalized["enabled"] and (not previous.get("enabled") or enabled_at <= 0):
             enabled_at = now_ms
-        payload = {**normalized, "enabledAtMs": enabled_at, "updatedAtMs": now_ms,
-                   "updatedAt": datetime.now(timezone.utc), "schemaVersion": 2}
+        long_entry_enabled_at = _integer(previous.get("longEntryEnabledAtMs"), 0)
+        short_entry_enabled_at = _integer(previous.get("shortEntryEnabledAtMs"), 0)
+        if normalized["longEntryNotificationsEnabled"] and (
+            not previous.get("longEntryNotificationsEnabled") or long_entry_enabled_at <= 0
+        ):
+            long_entry_enabled_at = now_ms
+        if normalized["shortEntryNotificationsEnabled"] and (
+            not previous.get("shortEntryNotificationsEnabled") or short_entry_enabled_at <= 0
+        ):
+            short_entry_enabled_at = now_ms
+        payload = {
+            **normalized,
+            "enabledAtMs": enabled_at,
+            "longEntryEnabledAtMs": long_entry_enabled_at,
+            "shortEntryEnabledAtMs": short_entry_enabled_at,
+            "updatedAtMs": now_ms,
+            "updatedAt": datetime.now(timezone.utc),
+            "schemaVersion": 2,
+        }
         self._settings_ref(uid).set(payload, merge=True)
         self._control_ref(uid).set({"uid": str(uid), "enabled": normalized["enabled"],
                                     "updatedAtMs": now_ms, "updatedAt": datetime.now(timezone.utc)}, merge=True)
@@ -502,9 +521,16 @@ class ProfitNotificationService:
             self._metric(uid, "eventsFiltered")
             return {"accepted": False, "reason": "ENTRY_SIDE_NOTIFICATIONS_DISABLED"}
         enabled_at = _integer(settings.get("enabledAtMs"), 0)
-        if enabled_at and int(occurred_at_ms) < enabled_at:
+        side_enabled_at = _integer(
+            settings.get("longEntryEnabledAtMs")
+            if normalized_side == "LONG"
+            else settings.get("shortEntryEnabledAtMs"),
+            0,
+        )
+        notification_start = max(enabled_at, side_enabled_at)
+        if notification_start and int(occurred_at_ms) < notification_start:
             self._metric(uid, "eventsFiltered")
-            return {"accepted": False, "reason": "BEFORE_NOTIFICATIONS_ENABLED"}
+            return {"accepted": False, "reason": "BEFORE_ENTRY_NOTIFICATIONS_ENABLED"}
         identity = str(entry_event_id).strip()
         price = _number(entry_price)
         notional = _number(size_usd)
