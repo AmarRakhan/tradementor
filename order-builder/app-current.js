@@ -2225,10 +2225,19 @@
 
   function topdeskPackageItemAlwaysVisible(code,name=''){
     const n=normalizeSmartText(name);
+
     // Niet-serienummerplichtige artikelen die toch expliciet in TOPdesk
-    // zichtbaar moeten zijn. De standaard HP 435 muis zit in meerdere pakketten.
-    return code==='3B4Q5UT' ||
-      n.includes('hp 435 mltdvc wrls mouse');
+    // zichtbaar moeten zijn binnen een pakket.
+    const alwaysVisibleCodes=new Set([
+      '3B4Q5UT',      // HP 435 MltDvc WRLS Mouse
+      'D31431-RPET',  // DICOTA Multi SCALE laptop bag
+      'D31429-RPET',  // DICOTA Eco SCALE backpack
+      'D31432-RPET'   // DICOTA Eco Multi SCALE case/bag
+    ]);
+
+    return alwaysVisibleCodes.has(code) ||
+      n.includes('hp 435 mltdvc wrls mouse') ||
+      n.includes('dicota');
   }
 
   function topdeskLines(){
