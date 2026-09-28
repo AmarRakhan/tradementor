@@ -15,14 +15,14 @@ const slice = (source, start, end) => {
   return source.slice(a, b);
 };
 
-test("Build 459 embeds the two binding references and keeps Build 458 historical", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "459"/);
+test("Build 460 keeps Build 459 history and the Botconfigurator 3.1 binding references", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "460"/);
   assert.match(v3, /file_0000000064fc8210b631ce0a8caebb42/);
   assert.match(v3, /file_000000003b5081f4bee8a56187006a03/);
   assert.match(v3, /file_00000000113c82108f6f3daf44f3627e/);
-  assert.match(history, /id: "v46-build-458-botconfigurator-v3"/);
-  assert.match(history, /build: "458"/);
-  assert.match(history, /title: "Botconfigurator 3\.1 · Huidige instellingen en snel wijzigen"/);
+  assert.match(history, /id: "v46-build-459-botconfigurator-v31"/);
+  assert.match(history, /build: "459"/);
+  assert.match(history, /title: "Portfolio TP · Automatische stoelreset 1\.0"/);
 });
 
 test("current settings is rendered after the wizard actions and before the BETA release center", () => {
