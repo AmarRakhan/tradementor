@@ -24,7 +24,7 @@ jobs:
       - name: Install web dependencies
         run: npm ci --prefix web
       - name: Run targeted web regressions
-        run: node --test web/tests/botsettings-inline-side-controls-20260906.test.mjs web/tests/aster-strategy2-side-persistence.test.mjs web/tests/aster-side-tp-settings.test.mjs web/tests/strategy2-focus-preview-price.test.mjs web/tests/strategy2-seat-volume-wizard.test.mjs web/tests/strategy2-manual-margin-unlimited-dca.test.mjs web/tests/strategy2-manual-symbol-selection.test.mjs web/tests/strategy2-asymmetric-hedge.test.mjs
+        run: node --test web/tests/botsettings-inline-side-controls-20260906.test.mjs web/tests/aster-strategy2-side-persistence.test.mjs web/tests/aster-side-tp-settings.test.mjs web/tests/strategy2-focus-preview-price.test.mjs web/tests/strategy2-seat-volume-wizard.test.mjs web/tests/strategy2-manual-margin-unlimited-dca.test.mjs web/tests/strategy2-manual-symbol-selection.test.mjs web/tests/strategy2-asymmetric-hedge.test.mjs web/tests/botconfigurator-v31-quick-edit.test.mjs
       - name: Install backend test dependencies
         run: python -m pip install -r cloud_api/requirements.txt pytest
       - name: Run targeted backend regressions
@@ -32,3 +32,23 @@ jobs:
         run: PYTHONPATH=. python -m pytest -q test_side_entry_margin_20260906.py test_aster_portfolio_tp_mode.py test_aster_pair_overrides.py test_same_symbol_dual_side_20260906.py test_botconfigurator_v3_dry_run.py
       - name: Build web
         run: npm --prefix web run build
+      - name: Run Botconfigurator 3.1 mobile visual QA
+        working-directory: web
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+          npx vite --config tests/visual/botconfigurator-v31-vite.config.ts --host 127.0.0.1 --port 4174 > /tmp/botconfig-v31-vite.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill $VITE_PID || true' EXIT
+          for i in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4174/tests/visual/botconfigurator-v31.html > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4174/tests/visual/botconfigurator-v31.html > /dev/null || { cat /tmp/botconfig-v31-vite.log; exit 1; }
+          node tests/visual/botconfigurator-v31-screenshots.mjs
+      - name: Upload Botconfigurator 3.1 visual QA
+        uses: actions/upload-artifact@v4
+        with:
+          name: botconfigurator-v31-visual-qa
+          path: web/artifacts/botconfigurator-v31/*.png
+          if-no-files-found: error
