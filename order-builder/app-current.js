@@ -1682,11 +1682,174 @@
     });
   }
 
+  function parseBuilderTopdeskRoundTrip(text){
+    const rawLines=String(text||'').split(/\r?\n/);
+    const looseByCode=new Map();
+    const packageByIndex=new Map();
+    let currentPackage=null;
+    let recognizedLines=0;
+    let structuredLines=0;
+
+    function exactCatalogItem(name){
+      const n=normalizeSmartText(name);
+      if(!n) return null;
+      return catalogItems().find(item=>normalizeSmartText(item.name)===n)
+        || data.items.find(item=>normalizeSmartText(item.name)===n)
+        || null;
+    }
+
+    function exactPackage(name){
+      const n=normalizeSmartText(name);
+      if(!n) return -1;
+      return data.packages.findIndex(pkg=>normalizeSmartText(pkg.name)===n);
+    }
+
+    function ensurePackage(index){
+      let intent=packageByIndex.get(index);
+      if(!intent){
+        intent={
+          index,
+          qty:0,
+          excludedCodes:[],
+          label:data.packages[index]?.name||'Pakket',
+          serialsByCode:{},
+          unassignedSerials:[]
+        };
+        packageByIndex.set(index,intent);
+      }
+      return intent;
+    }
+
+    rawLines.forEach((raw,lineIndex)=>{
+      const line=String(raw||'').trim();
+
+      // Een lege regel sluit een pakketblok af.
+      if(!line){
+        currentPackage=null;
+        return;
+      }
+
+      const pkgMatch=line.match(/^pakket\s*:\s*(.+)$/i);
+      if(pkgMatch){
+        structuredLines++;
+        const index=exactPackage(pkgMatch[1].trim());
+        if(index>=0){
+          const intent=ensurePackage(index);
+          intent.qty+=1;
+          currentPackage={index,intent,occurrence:intent.qty-1};
+          recognizedLines++;
+        }else{
+          currentPackage=null;
+        }
+        return;
+      }
+
+      // Regels binnen door onszelf gegenereerde pakketblokken.
+      if(currentPackage){
+        structuredLines++;
+
+        if(/^[-•*]?\s*zonder\s+20\s*w[- ]?lader\s*$/i.test(line)){
+          const pkg=data.packages[currentPackage.index];
+          (pkg?.items||[]).forEach(it=>{
+            if((it.code==='MD3J4ZM/A'||it.code==='MHJE3ZM/A') && !currentPackage.intent.excludedCodes.includes(it.code)){
+              currentPackage.intent.excludedCodes.push(it.code);
+            }
+          });
+          recognizedLines++;
+          return;
+        }
+
+        const childMatch=line.match(/^[-•*]\s*(?:(\d+)\s*[x×]\s*)?(.+?)(?:\s*\|\s*serienummer\s*:\s*([A-Z0-9._-]+))?\s*$/i);
+        if(childMatch){
+          const childName=childMatch[2].trim();
+          const serial=(childMatch[3]||'').trim().toUpperCase();
+          const pkg=data.packages[currentPackage.index];
+          const item=(pkg?.items||[]).find(it=>{
+            const info=orderItemInfo(it.code,it.label);
+            return normalizeSmartText(info.name||it.label||'')===normalizeSmartText(childName);
+          });
+
+          // In onze compacte pakketexport staan alleen relevante serialregels.
+          // Als de artikelnaam exact in dit pakket bestaat, koppel de SN aan die code.
+          if(item){
+            if(serial){
+              currentPackage.intent.serialsByCode[item.code]=currentPackage.intent.serialsByCode[item.code]||[];
+              currentPackage.intent.serialsByCode[item.code].push(serial);
+            }
+            recognizedLines++;
+          }
+          return;
+        }
+      }
+
+      // Losse Builder/TOPdesk-regel:
+      // 1x Artikelnaam | serienummer: ABC123
+      // of: 1x Artikelnaam
+      const looseMatch=line.match(/^(\d+)\s*[x×]\s+(.+?)(?:\s*\|\s*serienummer\s*:\s*([A-Z0-9._-]+))?\s*$/i);
+      if(looseMatch){
+        structuredLines++;
+        const qty=Math.max(1,Number(looseMatch[1])||1);
+        const itemName=looseMatch[2].trim();
+        const serial=(looseMatch[3]||'').trim().toUpperCase();
+        const item=exactCatalogItem(itemName);
+
+        if(item){
+          let row=looseByCode.get(item.code);
+          if(!row){
+            row={
+              id:'roundtrip-'+item.code,
+              raw:itemName,
+              query:item.name,
+              qty:0,
+              suggestions:[{item,confidence:100,reason:'exacte TOPdesk round-trip'}],
+              selectedCode:item.code,
+              auto:true,
+              serials:[]
+            };
+            looseByCode.set(item.code,row);
+          }
+          row.qty+=qty;
+          if(serial) row.serials.push(serial);
+          recognizedLines++;
+        }
+      }
+    });
+
+    // Alleen deze route gebruiken als de tekst echt ons gestructureerde formaat bevat.
+    const isBuilderFormat=structuredLines>0 && recognizedLines>0;
+
+    return {
+      isBuilderFormat,
+      results:[...looseByCode.values()],
+      packageIntents:[...packageByIndex.values()],
+      recognizedLines,
+      structuredLines
+    };
+  }
+
+  function analyzeTicketImport(text){
+    const roundTrip=parseBuilderTopdeskRoundTrip(text);
+    if(roundTrip.isBuilderFormat){
+      return {
+        results:roundTrip.results,
+        packageIntents:roundTrip.packageIntents,
+        roundTrip:true
+      };
+    }
+    return {
+      results:analyzeTicketText(text),
+      packageIntents:detectTicketPackageIntents(text),
+      roundTrip:false
+    };
+  }
+
   function previewTicket(){
     const text=$('ticketPasteInput')?.value||'';
     if(!text.trim()){toast('Plak eerst de tickettekst');return;}
-    window.__ticketResults=analyzeTicketText(text);
-    window.__ticketPackageIntents=detectTicketPackageIntents(text);
+    const analysis=analyzeTicketImport(text);
+    window.__ticketResults=analysis.results;
+    window.__ticketPackageIntents=analysis.packageIntents;
+    window.__ticketRoundTrip=analysis.roundTrip;
     window.__ticketText=text;
     renderTicketPreview(window.__ticketResults);
   }
@@ -1697,8 +1860,10 @@
 
     const currentText=window.__ticketText||'';
     if(!window.__ticketResults || currentText!==text){
-      window.__ticketResults=analyzeTicketText(text);
-      window.__ticketPackageIntents=detectTicketPackageIntents(text);
+      const analysis=analyzeTicketImport(text);
+      window.__ticketResults=analysis.results;
+      window.__ticketPackageIntents=analysis.packageIntents;
+      window.__ticketRoundTrip=analysis.roundTrip;
       window.__ticketText=text;
     }
     const results=window.__ticketResults;
@@ -1709,7 +1874,7 @@
     // Laatste harde vangnet voor bedrijfsregels over de volledige geplakte tekst.
     // Dit voorkomt 0 stuks als een regel door catalogus-/cachelogica heen glipt.
     const wholeText=fragmentSearchText(text);
-    const forcedRules=[
+    const forcedRules=window.__ticketRoundTrip ? [] : [
       {code:'54337282#ABH', terms:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
       {code:'54337265#ABH', terms:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
       {code:'54337313#ABH', terms:['tekenlaptop','teken laptop','cad laptop']},
@@ -1803,6 +1968,7 @@
     $('ticketMatchPreview').innerHTML='';
     window.__ticketResults=null;
     window.__ticketPackageIntents=[];
+    window.__ticketRoundTrip=false;
     window.__ticketText='';
     setTimeout(()=>$('ticketPasteInput').focus(),0);
   }
