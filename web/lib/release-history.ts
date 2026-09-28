@@ -26,35 +26,48 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-28",
-  title: "STABLE V2 · Portfolio TP stoelreset",
+  title: "Legacy/STABLE · Portfolio TP stoelreset zichtbaar",
   newItems: [
-    "De bestaande STABLE Botconfigurator V2 toont nu dezelfde Portfolio TP-stoelreset als Build 460, zonder gebruikers naar V3 te migreren.",
-    "Onder Winst nemen → Portfolio staat een aparte schakelaar voor automatische stoelreset na een volledig bevestigde Portfolio TP-sluiting.",
-    "V2 toont direct de huidige LONG/SHORT-stoelen en de cycle-startwaarden waarnaar na Portfolio TP wordt teruggezet.",
+    "De bestaande legacy/STABLE Botinstellingen tonen nu dezelfde Portfolio TP-stoelreset als Build 460.",
+    "De schakelaar staat rechtstreeks in de grote Portfolio Take Profit-kaart die bestaande gebruikers al gebruiken.",
+    "De kaart toont huidige LONG/SHORT-stoelen, volledige Portfolio TP-close en de cycle-startwaarden waarnaar wordt teruggezet.",
   ],
   problems: [
-    "Build 460 was technisch live, maar de bediening stond alleen in de BETA/V3-configurator en was daardoor niet zichtbaar voor gebruikers die bewust op de werkende STABLE/V2-flow blijven.",
+    "Build 461 voegde de bediening toe aan Botconfigurator V2, maar sommige STABLE-gebruikers gebruiken nog de oudere AsterStrategy2Maker-route en zagen de knop daardoor niet.",
   ],
   causes: [
-    "De UI-routing houdt BETA/V3 en STABLE/V2 bewust gescheiden om bestaande gebruikers niet automatisch naar een nieuwe configurator te migreren.",
+    "STABLE kan afhankelijk van release-entitlement nog op de legacy maker blijven; dat scherm had resetSeatsAfterPortfolioTp nog niet als zichtbare bediening.",
   ],
   fixes: [
-    "Alleen resetSeatsAfterPortfolioTp is aan V2 toegevoegd en wordt via dezelfde bestaande Strategy-2 settings-API opgeslagen.",
-    "De bestaande Build-460 backendstate-machine blijft ongewijzigd: sluiten → flat bevestigen → stoelreset → restart.",
-    "V3, strategie-selectie, DCA, Zone ownership, Auto Hedge, Sniper en overige STABLE-instellingen zijn niet gemigreerd of aangepast.",
+    "resetSeatsAfterPortfolioTp is nu ook in de legacy maker leesbaar, wijzigbaar en persistent via de bestaande Strategy-2 settings-API.",
+    "De reeds live Build-460 backendstate-machine blijft volledig ongewijzigd.",
+    "Geen gebruiker wordt naar V2 of V3 gemigreerd en geen bestaande strategie- of runtime-instelling wordt automatisch gewijzigd.",
   ],
   now: [
-    "Een STABLE/V2-gebruiker kan de stoelreset zelf aanzetten terwijl de rest van zijn vertrouwde configurator en strategie exact hetzelfde blijft.",
-    "De schakelaar staat standaard UIT; bestaande accounts veranderen dus niet automatisch van gedrag.",
+    "Legacy/STABLE-gebruikers kunnen de stoelreset zelf aanzetten in hun vertrouwde Portfolio Take Profit-scherm.",
+    "De schakelaar staat standaard UIT en verandert geen trades op het moment van inschakelen.",
   ],
   technicalDetails: [
-    "UI-only uitbreiding van aster-bot-configurator-v2.tsx bovenop de reeds live Build-460 backend.",
-    "Resetdoel komt uit de immutable cycleStartLongSlots/cycleStartShortSlots snapshot van de lopende Portfolio TP-cycle.",
+    "UI/persistence-only wijziging in aster-strategy2-maker.tsx.",
+    "Resetdoel blijft cycleStartLongSlots/cycleStartShortSlots uit de lopende Portfolio TP-cycle.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-461-v2-seat-reset",
+    version: "46",
+    build: "461",
+    releasedAt: "2026-09-28",
+    title: "STABLE V2 · Portfolio TP stoelreset",
+    newItems: ["De bestaande STABLE Botconfigurator V2 kreeg de Portfolio TP-stoelreset zonder V3-migratie."],
+    problems: ["Legacy/STABLE maker-gebruikers konden deze V2-bediening nog niet zien."],
+    causes: ["Niet ieder STABLE-account gebruikt Botconfigurator V2."],
+    fixes: ["Build 462 voegt dezelfde bediening ook aan de legacy maker toe."],
+    now: ["V2 blijft ongewijzigd beschikbaar; Build 462 dekt daarnaast legacy/STABLE af."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-460-portfolio-tp-seat-reset",
     version: "46",
