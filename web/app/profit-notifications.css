@@ -21,6 +21,8 @@
 .profit-setting-row.primary{min-height:94px;border-color:rgba(28,235,134,.7);box-shadow:0 0 18px rgba(24,211,119,.05)}
 .profit-setting-icon{width:50px;height:50px;font-size:24px}
 .profit-setting-icon.gold{color:#f5c74e;border-color:rgba(238,188,60,.5);background:rgba(50,38,6,.45)}
+.profit-setting-icon.long-entry{color:#4bf0a7;border-color:rgba(43,232,148,.55);background:rgba(5,57,36,.52)}
+.profit-setting-icon.short-entry{color:#ff7f94;border-color:rgba(255,101,127,.52);background:rgba(66,13,27,.46)}
 .profit-setting-row>div{display:grid;gap:3px;min-width:0}
 .profit-setting-row strong,.profit-setting-heading strong{color:#f4f7f5;font-size:19px;line-height:1.12;font-weight:900}
 .profit-setting-row small,.profit-setting-heading small{color:#aab7b1;font-size:12px;line-height:1.32}
