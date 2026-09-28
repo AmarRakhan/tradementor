@@ -122,6 +122,17 @@ type PriceZoneSeatSummary = {
   strategyOpenLong: number;
   strategyOpenShort: number;
   strategyOpenTotal: number;
+  entryStatus: string;
+  entryReason: string;
+  entrySkipReasons: Record<string, number>;
+  zoneMigrationHold: boolean;
+  dynamicHedgeEnabled: boolean;
+  dynamicHedgeBlocking: boolean;
+  dynamicHedgeOwnershipState: string;
+  dynamicHedgeReason: string;
+  dynamicHedgeSafetyStatus: string;
+  queueHaltedUncertain: boolean;
+  queueUncertainReason: string;
 };
 
 function directText(element: Element | null, selector: string) {
@@ -208,6 +219,9 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
       ? record(record(root.data).strategy2)
       : record(record(root.snapshot).strategy2);
   const settings = record(strategy2.settings);
+  const entryDiagnostics = record(strategy2.entryDiagnostics);
+  const dynamicHedge = record(entryDiagnostics.dynamicHedge);
+  const queue = record(entryDiagnostics.queue);
   const seatReport = Object.keys(record(strategy2.priceZoneSeats)).length
     ? record(strategy2.priceZoneSeats)
     : record(strategy2.zoneSoldiers);
@@ -235,6 +249,17 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     strategyOpenLong,
     strategyOpenShort,
     strategyOpenTotal: Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenTotal", "total"]) ?? (strategyOpenLong + strategyOpenShort))),
+    entryStatus: firstString([entryDiagnostics], ["entryStatus"]),
+    entryReason: firstString([entryDiagnostics], ["entryReason", "lastReason"]),
+    entrySkipReasons: record(entryDiagnostics.entrySkipReasons) as Record<string, number>,
+    zoneMigrationHold: entryDiagnostics.zoneMigrationHold === true,
+    dynamicHedgeEnabled: dynamicHedge.enabled === true,
+    dynamicHedgeBlocking: dynamicHedge.blocking === true,
+    dynamicHedgeOwnershipState: firstString([dynamicHedge], ["ownershipState"]),
+    dynamicHedgeReason: firstString([dynamicHedge], ["reason"]),
+    dynamicHedgeSafetyStatus: firstString([dynamicHedge], ["safetyStatus"]),
+    queueHaltedUncertain: queue.haltedUncertain === true,
+    queueUncertainReason: firstString([queue], ["uncertainReason"]),
   };
 }
 
@@ -614,6 +639,15 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
     : seatZoneInSync
       ? "Alleen vrije stoelen in de actieve prijszone worden gevuld."
       : "Live zone gewijzigd · stoelstatus synchroniseert.";
+  const blockerText = summary.dynamicHedgeBlocking
+    ? `Instap geblokkeerd · Dynamic Hedge · ${summary.dynamicHedgeReason || summary.dynamicHedgeOwnershipState || "wacht op veilige state"}${summary.dynamicHedgeSafetyStatus ? ` · ${summary.dynamicHedgeSafetyStatus}` : ""}`
+    : summary.queueHaltedUncertain
+      ? `Instap geblokkeerd · orderreconciliatie · ${summary.queueUncertainReason || "onzekere Aster-order"}`
+      : summary.zoneMigrationHold
+        ? "Instap wacht · zone-migratie wordt één tick gereconcilieerd"
+        : summary.entryStatus
+          ? `Instapstatus · ${summary.entryStatus}${summary.entryReason ? ` · ${summary.entryReason}` : ""}`
+          : "Instapstatus · wacht op nieuwe scanner-evaluatie";
   return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync={seatZoneInSync ? "synced" : "waiting"}>
     <div className="aps-zone-title">
       <span className="aps-zone-target" aria-hidden="true">◎</span>
@@ -631,6 +665,7 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
       <div className="short"><span>SHORT bezet</span><i><u style={{width:`${pct(summary.strategyOpenShort,shortCapacity)}%`}} /></i><b>{summary.strategyOpenShort} / {shortCapacity}</b></div>
       <div className="total"><span>Totaal bezet</span><i><u style={{width:`${pct(summary.strategyOpenTotal,summary.maxTotal)}%`}} /></i><b>{summary.strategyOpenTotal} / {summary.maxTotal}</b></div>
     </div>
+    <p><span aria-hidden="true">ⓘ</span>{blockerText}</p>
     <p><span aria-hidden="true">ⓘ</span>Bestaande posities houden hun zone-stoel bezet. Bij terugkeer worden alleen lege stoelen gevuld.</p>
   </section>;
 }
