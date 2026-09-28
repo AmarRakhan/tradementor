@@ -117,7 +117,7 @@ from aster_execution import configure_maximum_usable_leverage
 from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rejection
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
-from aster_position_loss_auto_hedge_lock import auto_hedge_symbol_managed, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
+from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_sniper import SniperSettings, backtest_candles
 from aster_sniper_runtime import run_sniper_tick
@@ -408,6 +408,7 @@ class AsterManualCloseRequest(BaseModel):
     confirm: bool
     side: str = Field(pattern="^(LONG|SHORT)$")
     expected_quantity: float = Field(gt=0)
+    percentage: int = Field(default=100, ge=25, le=100)
     idempotency_key: str = Field(min_length=16, max_length=120)
 
 
@@ -7083,9 +7084,11 @@ def close_one_aster_position(
     symbol: str, request: AsterManualCloseRequest,
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
-    """Close exactly one still-matching Aster hedge leg, never increasing risk."""
+    """Close a confirmed fraction of exactly one still-matching Aster hedge leg."""
     if not request.confirm:
-        raise HTTPException(422, "Bevestiging voor volledig market sluiten ontbreekt")
+        raise HTTPException(422, "Bevestiging voor market sluiten ontbreekt")
+    if request.percentage not in ALLOWED_CLOSE_PERCENTAGES:
+        raise HTTPException(422, "Sluitpercentage moet 25, 50, 75 of 100 zijn")
     if os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() != "true":
         raise HTTPException(423, "Aster productie-uitvoering staat centraal uit")
     normalized_symbol = symbol.upper()
@@ -7095,7 +7098,8 @@ def close_one_aster_position(
     try:
         intent_ref.create({
             "status": "prepared", "symbol": normalized_symbol, "side": request.side,
-            "expectedQuantity": request.expected_quantity, "createdAt": datetime.now(timezone.utc),
+            "expectedQuantity": request.expected_quantity, "percentage": request.percentage,
+            "createdAt": datetime.now(timezone.utc),
         })
     except google_exceptions.AlreadyExists as exc:
         raise HTTPException(409, "Deze sluitopdracht is al ontvangen; er wordt geen tweede order geplaatst") from exc
@@ -7109,7 +7113,6 @@ def close_one_aster_position(
     manual_guard = None
     try:
         live_rows = client.position_risk()
-        manual_guard = begin_manual_action(dynamic_hedge_ref, request.side, live_rows)
         position = next((row for row in live_rows
             if str(row.get("symbol", "")).upper() == normalized_symbol
             and str(row.get("positionSide", "")).upper() == request.side
@@ -7123,8 +7126,38 @@ def close_one_aster_position(
         mark = safe_float(position.get("markPrice"))
         if mark <= 0:
             raise HTTPException(409, "Aster gaf geen betrouwbare actuele marktprijs; sluiten is gestopt")
+
+        requested_close_quantity = close_size(live_quantity, request.percentage)
+        close_quantity = live_quantity
+        if request.percentage != 100:
+            exchange_info = client.public_exchange_info()
+            symbol_info = next((row for row in exchange_info.get("symbols", [])
+                if isinstance(row, dict) and str(row.get("symbol", "")).upper() == normalized_symbol), None)
+            if symbol_info is None:
+                raise HTTPException(409, "Aster contractregels voor deze positie zijn niet beschikbaar")
+            rules = ContractRules.from_exchange_info(symbol_info)
+            try:
+                close_quantity = float(rules.market_quantity(
+                    Decimal(str(requested_close_quantity)), Decimal(str(mark)),
+                ))
+            except AsterValidationError as exc:
+                raise HTTPException(409, f"Deze gedeeltelijke sluiting past niet binnen de Aster contractregels: {exc}") from exc
+            if close_quantity <= tolerance:
+                raise HTTPException(409, "De gekozen gedeeltelijke sluiting is te klein voor dit contract")
+            if close_quantity >= live_quantity - tolerance:
+                raise HTTPException(409, "De gekozen gedeeltelijke sluiting rondt af naar de volledige positie; kies 100%")
+
+        require_auto_hedge_close_allowed(
+            account_uid=uid,
+            symbol=normalized_symbol,
+            side=request.side,
+            quantity=close_quantity,
+            caller="manual-position-close",
+        )
+        manual_guard = begin_manual_action(dynamic_hedge_ref, request.side, live_rows)
+        expected_remaining = max(0.0, live_quantity - close_quantity)
         plan = PairExecutionPlan(
-            normalized_symbol, Decimal(str(live_quantity)), Decimal(str(live_quantity * mark)),
+            normalized_symbol, Decimal(str(close_quantity)), Decimal(str(close_quantity * mark)),
             max(1, int(safe_float(position.get("leverage")) or 1)),
         )
         id_prefix = f"tm-manual-{intent_hash[:18]}"
@@ -7132,16 +7165,34 @@ def close_one_aster_position(
             client, plan, side=PositionSide(request.side), action="CLOSE", id_prefix=id_prefix,
             confirm=True, manual_loss_confirmation=True,
         )
-        remaining = next((row for row in client.position_risk()
+        after_manual_rows = client.position_risk()
+        remaining = next((row for row in after_manual_rows
             if str(row.get("symbol", "")).upper() == normalized_symbol
             and str(row.get("positionSide", "")).upper() == request.side
             and abs(safe_float(row.get("positionAmt"))) > tolerance), None)
-        if remaining is not None:
-            raise HTTPException(502, "Aster heeft de volledige sluiting nog niet bevestigd; er wordt niet opnieuw besteld")
-        after_manual_rows = client.position_risk()
+        remaining_quantity = abs(safe_float(remaining.get("positionAmt"))) if remaining is not None else 0.0
+        remaining_tolerance = max(tolerance, close_quantity * 1e-8, expected_remaining * 1e-8)
+        if abs(remaining_quantity - expected_remaining) > remaining_tolerance:
+            close_kind = "volledige" if request.percentage == 100 else "gedeeltelijke"
+            raise HTTPException(502, f"Aster heeft de {close_kind} sluiting nog niet betrouwbaar bevestigd; er wordt niet opnieuw besteld")
         complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
-        intent_ref.set({"status": "confirmed_closed", "result": result, "completedAt": datetime.now(timezone.utc)}, merge=True)
-        return {"closed": True, "symbol": normalized_symbol, "side": request.side, "closedSize": live_quantity}
+        intent_ref.set({
+            "status": "confirmed_closed", "result": result, "percentage": request.percentage,
+            "closedQuantity": close_quantity, "remainingQuantity": remaining_quantity,
+            "completedAt": datetime.now(timezone.utc),
+        }, merge=True)
+        return {
+            "closed": remaining_quantity <= remaining_tolerance,
+            "partialClosed": request.percentage < 100,
+            "symbol": normalized_symbol,
+            "side": request.side,
+            "percentage": request.percentage,
+            "closedSize": close_quantity,
+            "remainingSize": remaining_quantity,
+        }
+    except AutoHedgeCloseBlocked as exc:
+        intent_ref.set({"status": "blocked_hedge_lock", "detail": str(exc), "updatedAt": datetime.now(timezone.utc)}, merge=True)
+        raise HTTPException(409, str(exc)) from exc
     except HTTPException as exc:
         fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc.detail))
         intent_ref.set({"status": "failed_closed", "detail": str(exc.detail), "updatedAt": datetime.now(timezone.utc)}, merge=True)
