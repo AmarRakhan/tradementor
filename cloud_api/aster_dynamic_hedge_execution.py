@@ -35,6 +35,44 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+_DYNAMIC_STRATEGY_HARD_BLOCK_REASONS = {
+    "open_order_reconciliation",
+    "pending_order_requires_reconciliation",
+}
+
+
+def dynamic_strategy_scan_blocked(
+    *,
+    enabled: bool,
+    orders_sent: int,
+    reason: str,
+    safety_status: str,
+    ownership_state: str,
+    status: str,
+) -> bool:
+    """Return whether Dynamic Hedge must preempt the whole Strategy-2 scan.
+
+    Soft hedge holds such as NO_MARGIN_SAFE_HEDGE_ORDER_AVAILABLE are not a
+    reason to suppress the dominant-side scanner. The per-order guard below
+    still fail-closes every Strategy-2 order against ownership and margin
+    safety before submission.
+    """
+    if not enabled:
+        return False
+    if int(orders_sent) > 0:
+        return True
+    if str(ownership_state or "").upper() != "DYNAMIC_HEDGE_ACTIVE":
+        return True
+    safety = str(safety_status or "").upper()
+    if safety and safety != "VEILIG":
+        return True
+    if str(status or "").lower() in {"uncertain", "data-hold", "paused"}:
+        return True
+    if str(reason or "").strip().lower() in _DYNAMIC_STRATEGY_HARD_BLOCK_REASONS:
+        return True
+    return False
+
+
 def _active(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict) and abs(_n(row.get("positionAmt", row.get("quantity")))) > 1e-12]
 
