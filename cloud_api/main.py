@@ -125,7 +125,7 @@ from aster_symbol_ownership import normalize_symbol, strategy2_active_symbols, s
 from aster_hedge_recovery_api import install_aster_hedge_recovery_routes, load_hedge_settings, profit_preview_with_settings
 from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action
-from aster_dynamic_hedge_execution import dynamic_strategy_order_guard
+from aster_dynamic_hedge_execution import dynamic_strategy_order_guard, dynamic_strategy_scan_blocked
 from aster_dynamic_hedge_sequence import run_dynamic_hedge_sequence
 from aster_dynamic_hedge_api import install_aster_dynamic_hedge_routes
 from aster_state import (
@@ -1526,12 +1526,15 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         dynamic_safety=str(dynamic_report.get("safetyStatus") or "").upper()
         dynamic_orders=int(safe_float(dynamic_report.get("ordersSent")))
         dynamic_owner=str(dynamic_control.get("ownershipState") or ("ADOPTING" if dynamic_enabled else "NORMAL")).upper()
-        dynamic_blocking=bool(dynamic_enabled and (
-            dynamic_orders>0
-            or dynamic_reason!="HEDGE_STABLE"
-            or (dynamic_safety and dynamic_safety!="VEILIG")
-            or dynamic_owner!="DYNAMIC_HEDGE_ACTIVE"
-        ))
+        dynamic_status=str(dynamic_report.get("status") or "")
+        dynamic_blocking=dynamic_strategy_scan_blocked(
+            enabled=dynamic_enabled,
+            orders_sent=dynamic_orders,
+            reason=dynamic_reason,
+            safety_status=dynamic_safety,
+            ownership_state=dynamic_owner,
+            status=dynamic_status,
+        )
         queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
         entry_diagnostics={
             "entryStatus":str(report.get("entryStatus") or ""),
@@ -1543,7 +1546,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
                 "enabled":dynamic_enabled,
                 "blocking":dynamic_blocking,
                 "ownershipState":dynamic_owner,
-                "status":str(dynamic_report.get("status") or ""),
+                "status":dynamic_status,
                 "reason":dynamic_reason,
                 "safetyStatus":dynamic_safety,
                 "ordersSent":dynamic_orders,
@@ -1911,8 +1914,21 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         dynamic=run_dynamic_hedge_sequence(client=client,control_ref=dynamic_ref,settings=settings,uid=uid,account=account,
             positions=positions,open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
         ref.set({"dynamicHedgeReport":dynamic,"dynamicHedgeUpdatedAt":now},merge=True)
-        if int(safe_float(dynamic.get("ordersSent")))>0 or str(dynamic.get("reason",""))!="HEDGE_STABLE" or str(dynamic.get("safetyStatus","VEILIG"))!="VEILIG":
-            return {"status":str(dynamic.get("status","waiting")),"action":"DYNAMIC_HEDGE","ordersSent":int(safe_float(dynamic.get("ordersSent"))),"dynamicHedge":dynamic}
+        dynamic_orders=int(safe_float(dynamic.get("ordersSent")))
+        dynamic_reason=str(dynamic.get("reason",""))
+        dynamic_status=str(dynamic.get("status","waiting"))
+        dynamic_safety=str(dynamic.get("safetyStatus","")).upper()
+        dynamic_control_after=dynamic_ref.get().to_dict() or dynamic_stored
+        dynamic_owner_after=str(dynamic_control_after.get("ownershipState") or "ADOPTING").upper()
+        if dynamic_strategy_scan_blocked(
+            enabled=True,
+            orders_sent=dynamic_orders,
+            reason=dynamic_reason,
+            safety_status=dynamic_safety,
+            ownership_state=dynamic_owner_after,
+            status=dynamic_status,
+        ):
+            return {"status":dynamic_status,"action":"DYNAMIC_HEDGE","ordersSent":dynamic_orders,"dynamicHedge":dynamic}
         long_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="LONG")
         short_exposure=sum(abs(safe_float(row.get("positionAmt")))*safe_float(row.get("markPrice",row.get("entryPrice"))) for row in positions if str(row.get("positionSide","")).upper()=="SHORT")
         # Dynamic Hedge protects account risk, but aggregate exposure does not transfer
