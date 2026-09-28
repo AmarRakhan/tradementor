@@ -398,7 +398,7 @@ export function ProfitNotificationPanel() {
             <section className="profit-setting-block mode">
               <div className="profit-setting-heading">
                 <span className="profit-setting-icon" aria-hidden="true">◷</span>
-                <div><strong>Meldingsmodus</strong><small>Kies hoe vaak je meldingen wilt ontvangen</small></div>
+                <div><strong>Meldingsmodus</strong><small>Kies hoe vaak je winstmeldingen wilt ontvangen</small></div>
               </div>
               <div className="profit-mode-grid">
                 <ModeCard active={settings.mode === "EVERY_WIN"} icon="⚡" onClick={() => setSettings((current) => ({ ...current, mode: "EVERY_WIN" }))}>Iedere<br />winsttrade</ModeCard>
@@ -453,7 +453,7 @@ export function ProfitNotificationPanel() {
 
             <aside className="profit-notification-info">
               <span aria-hidden="true">ⓘ</span>
-              <p>Bij een samenvatting ontvang je de winsttrade met de hoogste winst uit de gekozen tijdsperiode. Portfolio en Available worden live opgehaald op het moment van verzenden. Zonder winsttrade blijft het stil.</p>
+              <p>Bij een samenvatting ontvang je de winsttrade met de hoogste winst uit de gekozen tijdsperiode. Aangezette LONG- en SHORT-instapmeldingen worden altijd direct verstuurd en wachten niet op dit interval. Portfolio en Available worden live opgehaald op het moment van verzenden.</p>
             </aside>
 
             <section className="profit-preview">
