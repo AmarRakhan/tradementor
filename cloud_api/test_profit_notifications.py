@@ -201,6 +201,14 @@ def test_dca_protection_hedge_recovery_and_close_actions_are_not_entry_notificat
     assert notifiable_entry_action(action) is False
 
 
+def test_entry_opt_in_has_side_specific_start_timestamp_to_prevent_backfill():
+    source = Path("profit_notifications.py").read_text()
+    assert '"longEntryEnabledAtMs"' in source
+    assert '"shortEntryEnabledAtMs"' in source
+    assert "notification_start = max(enabled_at, side_enabled_at)" in source
+    assert "BEFORE_ENTRY_NOTIFICATIONS_ENABLED" in source
+
+
 def test_entry_settings_are_backwards_compatible_for_older_clients():
     source = Path("profit_notifications.py").read_text()
     assert 'normalize_settings({**previous, **source})' in source
