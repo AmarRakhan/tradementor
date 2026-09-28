@@ -7,7 +7,7 @@ const v2 = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx"
 const shell = fs.readFileSync(new URL("../components/aster-strategy2-entry.tsx", import.meta.url), "utf8");
 const route = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts", import.meta.url), "utf8");
 
-test("Portfolio TP seat reset uses the binding visual reference and is BETA UI only", () => {
+test("Portfolio TP seat reset keeps the V3 reference and is also exposed in existing STABLE V2", () => {
   assert.match(v3, /file_00000000369082108949b160b28e0965/);
   assert.match(v3, /Stoelen resetten naar startinstelling/);
   assert.match(v3, /Na behalen doel \(Portfolio TP\)/);
@@ -15,7 +15,9 @@ test("Portfolio TP seat reset uses the binding visual reference and is BETA UI o
   assert.match(v3, /v3-tp-seat-reset/);
   assert.match(v3, /data-beta-only="true"/);
   assert.match(shell, /release\?\.channel === "BETA"/);
-  assert.doesNotMatch(v2, /resetSeatsAfterPortfolioTp|Stoelen resetten naar startinstelling/);
+  assert.match(v2, /resetSeatsAfterPortfolioTp/);
+  assert.match(v2, /Stoelen resetten na Portfolio TP/);
+  assert.match(v2, /data-feature="portfolio-tp-seat-reset"/);
 });
 
 test("seat reset setting round-trips through confirmed settings and the existing PUT", () => {
@@ -23,6 +25,8 @@ test("seat reset setting round-trips through confirmed settings and the existing
   assert.match(v3, /resetSeatsAfterPortfolioTp: source\.resetSeatsAfterPortfolioTp/);
   assert.match(v3, /update\("resetSeatsAfterPortfolioTp",v\)/);
   assert.match(v3, /updateQuick\("resetSeatsAfterPortfolioTp",v\)/);
+  assert.match(v2, /resetSeatsAfterPortfolioTp: settings\.resetSeatsAfterPortfolioTp === true/);
+  assert.match(v2, /resetSeatsAfterPortfolioTp: draft\.resetSeatsAfterPortfolioTp/);
   assert.match(route, /"resetSeatsAfterPortfolioTp"/);
 });
 
