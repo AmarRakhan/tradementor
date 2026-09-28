@@ -207,7 +207,8 @@ def test_build423_balancer_is_priority_only_and_fixed_formation_is_the_only_new_
     assert 'soldier.get("role") == ROLE_ZONE_BASE' in zone_source
     assert '\n        _ensure_balancers(' not in zone_source
     assert 'priority = str(zone_report.get("entryPriority")' in core_source
-    assert 'Do not worsen a live imbalance' in core_source
+    assert 'PRIORITY_ONLY changes ordering, never fixed-formation capacity.' in core_source
+    assert 'merely because the priority side\'s fixed formation is full.' not in core_source
 
 
 def test_build425_tp_settlement_happens_only_after_exchange_flat_confirmation():
