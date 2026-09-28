@@ -205,13 +205,16 @@ def ensure_cycle(raw_state: dict[str, Any], *, uid: str, current_equity: float,
 
 def reset_cycle_to_equity(*, uid: str, current_equity: float, portfolio_tp_percent: float,
                           timestamp_ms: int, portfolio_tp_input_mode: str = "PERCENT",
-                          portfolio_tp_value: float | None = None, config_version: int = 0) -> dict[str, Any]:
+                          portfolio_tp_value: float | None = None, config_version: int = 0,
+                          current_long_slots: int | None = None, current_short_slots: int | None = None,
+                          current_maximum_positions: int | None = None) -> dict[str, Any]:
     """Manual reset: new portfolio cycle baseline only; never submits/cancels an order."""
     cycle = _new_cycle(
         uid, equity=_f(current_equity), portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=timestamp_ms,
         portfolio_tp_input_mode=portfolio_tp_input_mode, portfolio_tp_value=portfolio_tp_value,
         portfolio_tp_base_mode="CYCLE_START", portfolio_tp_custom_base_equity=0.0,
-        config_version=config_version,
+        config_version=config_version, current_long_slots=current_long_slots,
+        current_short_slots=current_short_slots, current_maximum_positions=current_maximum_positions,
     )
     cycle["baselineSource"] = "MANUAL_RESET_CURRENT_EQUITY"
     return cycle
@@ -247,6 +250,14 @@ def portfolio_cycle_snapshot(cycle: dict[str, Any], *, mode: str, current_equity
         "portfolioTpTriggeredAt": cycle.get("portfolioTpTriggeredAt"),
         "flatConfirmedAt": cycle.get("flatConfirmedAt"),
         "restartStartedAt": cycle.get("restartStartedAt"),
+        "cycleStartLongSlots": cycle.get("cycleStartLongSlots"),
+        "cycleStartShortSlots": cycle.get("cycleStartShortSlots"),
+        "cycleStartMaximumPositions": cycle.get("cycleStartMaximumPositions"),
+        "seatSnapshotSource": cycle.get("seatSnapshotSource"),
+        "seatResetArmed": bool(cycle.get("seatResetArmed", False)),
+        "slotResetCompletedAt": cycle.get("slotResetCompletedAt"),
+        "slotResetCompletedAtMs": cycle.get("slotResetCompletedAtMs"),
+        "slotResetCycleId": cycle.get("slotResetCycleId"),
     }
 
 
