@@ -230,6 +230,118 @@ jobs:
           fi
           [ "$ASTER_OK" != "yes" ] && STATUS="DEGRADED"
 
+          ENTRY_BLOCKERS="$(ACCESS_TOKEN="$ACCESS_TOKEN" python - <<'PY'
+          import hashlib, json, os, urllib.request, urllib.parse
+
+          project=os.environ.get("GCP_PROJECT_ID","tradementor-production")
+          token=os.environ.get("ACCESS_TOKEN","")
+          base=f"https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents"
+          headers={"Authorization":f"Bearer {token}"}
+
+          def get_json(url):
+              req=urllib.request.Request(url,headers=headers)
+              with urllib.request.urlopen(req,timeout=20) as resp:
+                  return json.load(resp)
+
+          def decode(v):
+              if not isinstance(v,dict):
+                  return None
+              if "nullValue" in v: return None
+              if "booleanValue" in v: return bool(v["booleanValue"])
+              if "integerValue" in v:
+                  try:return int(v["integerValue"])
+                  except:return None
+              if "doubleValue" in v:
+                  try:return float(v["doubleValue"])
+                  except:return None
+              if "stringValue" in v:return v["stringValue"]
+              if "timestampValue" in v:return v["timestampValue"]
+              if "mapValue" in v:
+                  fields=(v.get("mapValue") or {}).get("fields") or {}
+                  return {k:decode(x) for k,x in fields.items()}
+              if "arrayValue" in v:
+                  values=(v.get("arrayValue") or {}).get("values") or []
+                  return [decode(x) for x in values]
+              return None
+
+          def fields(doc):
+              return {k:decode(v) for k,v in (doc.get("fields") or {}).items()}
+
+          try:
+              payload=get_json(base+"/asterStrategy2?pageSize=100")
+              docs=payload.get("documents") or []
+              rows=[]
+              for doc in docs:
+                  raw=fields(doc)
+                  if raw.get("monitor") is not True:
+                      continue
+                  uid=(doc.get("name") or "").rsplit("/",1)[-1]
+                  settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+                  report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
+                  zone=raw.get("zoneSoldierReport") if isinstance(raw.get("zoneSoldierReport"),dict) else {}
+                  seat=zone.get("seatModel") if isinstance(zone.get("seatModel"),dict) else {}
+                  queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+                  dynamic_report=raw.get("dynamicHedgeReport") if isinstance(raw.get("dynamicHedgeReport"),dict) else {}
+                  dynamic={}
+                  try:
+                      encoded=urllib.parse.quote(uid,safe="")
+                      dynamic_doc=get_json(base+f"/users/{encoded}/asterDynamicHedge/control")
+                      dynamic=fields(dynamic_doc)
+                  except Exception:
+                      dynamic={}
+                  rows.append({
+                      "accountRef":hashlib.sha256(uid.encode()).hexdigest()[:10],
+                      "enabled":raw.get("enabled") is True,
+                      "phase":str(raw.get("phase") or ""),
+                      "lastReason":str(raw.get("lastReason") or ""),
+                      "maximumPositions":settings.get("maximumPositions"),
+                      "minimumLeverage":settings.get("minimumLeverage"),
+                      "bollingerEnabled":settings.get("bollingerEntryFilter15mEnabled") is True,
+                      "directionalBollingerEnabled":settings.get("directionalBollingerEnabled") is True,
+                      "bollingerLongTimeframe":settings.get("bollingerLongTimeframe"),
+                      "bollingerShortTimeframe":settings.get("bollingerShortTimeframe"),
+                      "exposureRefillEnabled":settings.get("exposureRefillEnabled") is True,
+                      "exposureRefillLongTimeframe":settings.get("exposureRefillLongTimeframe"),
+                      "exposureRefillShortTimeframe":settings.get("exposureRefillShortTimeframe"),
+                      "shortRequiresLongEnabled":settings.get("shortRequiresLongEnabled") is True,
+                      "entryStatus":report.get("entryStatus"),
+                      "entryReason":report.get("entryReason"),
+                      "entrySkipReasons":report.get("entrySkipReasons") if isinstance(report.get("entrySkipReasons"),dict) else {},
+                      "scannedCandidateCount":report.get("scannedCandidateCount"),
+                      "executableCandidateCount":report.get("executableCandidateCount"),
+                      "remainingLong":report.get("remainingLong"),
+                      "remainingShort":report.get("remainingShort"),
+                      "activeLong":report.get("activeLong"),
+                      "activeShort":report.get("activeShort"),
+                      "strategyPositionCount":report.get("strategyPositionCount"),
+                      "accountRemainingCapacity":report.get("accountRemainingCapacity"),
+                      "nextRequiredEntryMarginUsd":report.get("nextRequiredEntryMarginUsd"),
+                      "zoneMigrationHold":report.get("zoneMigrationHold") is True,
+                      "activeZone":seat.get("activeZone",zone.get("activeZone")),
+                      "freeLongActiveZone":seat.get("freeLongActiveZone"),
+                      "freeShortActiveZone":seat.get("freeShortActiveZone"),
+                      "occupiedLongActiveZone":seat.get("occupiedLongActiveZone"),
+                      "occupiedShortActiveZone":seat.get("occupiedShortActiveZone"),
+                      "strategyOpenLong":seat.get("strategyOpenLong"),
+                      "strategyOpenShort":seat.get("strategyOpenShort"),
+                      "dynamicHedgeEnabled":dynamic.get("enabled") is True,
+                      "dynamicOwnershipState":str(dynamic.get("ownershipState") or ""),
+                      "dynamicLastReason":str(dynamic.get("lastReason") or ""),
+                      "dynamicReportStatus":str(dynamic_report.get("status") or ""),
+                      "dynamicReportReason":str(dynamic_report.get("reason") or ""),
+                      "dynamicSafetyStatus":str(dynamic_report.get("safetyStatus") or ""),
+                      "dynamicOrdersSent":dynamic_report.get("ordersSent"),
+                      "queueHaltedUncertain":queue.get("haltedUncertain") is True,
+                      "queueHasCurrentIntent":bool(queue.get("currentIntent")),
+                      "queueUncertainReason":str(queue.get("uncertainReason") or ""),
+                  })
+              rows.sort(key=lambda x:x["accountRef"])
+              print(json.dumps(rows,separators=(",",":"),sort_keys=True))
+          except Exception as exc:
+              print(json.dumps({"errorType":type(exc).__name__,"status":"ENTRY_DIAGNOSTIC_UNAVAILABLE"},separators=(",",":")))
+          PY
+          )"
+
           {
             echo "### Current state"
             printf -- "- Billing control: %s · %s\n" "$BILLING_CONTROL" "$BILLING_LINE"
@@ -251,10 +363,15 @@ jobs:
             printf -- "- Backend HTTP 5xx in last 30m: %s\n" "${ERROR_COUNT:-unknown}"
             printf -- "- Aster public market API: %s\n" "$([ "$ASTER_OK" = yes ] && echo '✅ reachable' || echo '❌ unavailable')"
             echo
+            echo "### Strategy-2 entry blockers (sanitized)"
+            printf '%s\n' "\`\`\`json"
+            printf '%s\n' "$ENTRY_BLOCKERS"
+            printf '%s\n' "\`\`\`"
+            echo
             echo "### Overall runtime health"
             printf "**%s**\n" "$STATUS"
             echo
-            echo "_No secrets, wallet keys, private exchange credentials, order payloads, or account data were collected._"
+            echo "_No secrets, wallet keys, private exchange credentials, order payloads, symbols, quantities, balances, profile data, or direct account identifiers were collected. Strategy state is sanitized and account IDs are hashed._"
           } >> "$REPORT"
 
           rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/web-root.html
