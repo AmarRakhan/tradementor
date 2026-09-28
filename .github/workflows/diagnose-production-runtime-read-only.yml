@@ -18,7 +18,7 @@ env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
   CLOUD_RUN_SERVICE: tradementor-api
-  SCHEDULER_JOB: tradementor-aster-automation-tick
+  SCHEDULER_JOB: tradementor-aster-automation
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
 
