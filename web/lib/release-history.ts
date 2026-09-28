@@ -54,6 +54,39 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
+    id: "v46-build-464-entry-push-notifications",
+    version: "46",
+    build: "464",
+    releasedAt: "2026-09-28",
+    title: "Pushmeldingen · LONG & SHORT instapmeldingen 1.0",
+    newItems: [
+      "Pushmeldingen beheren heeft twee onafhankelijke schakelaars voor nieuwe LONG- en SHORT-posities.",
+      "Een instapmelding ontstaat uitsluitend uit een exchange-bevestigde fill met bewezen normale strategy-entry-attributie.",
+      "Instapmeldingen worden direct verstuurd en vallen niet onder de 15/30/60-minuten winstsamenvatting.",
+    ],
+    problems: [
+      "De bestaande pushmodule meldde winsttrades en Portfolio Take Profit, maar niet wanneer een nieuwe normale positie daadwerkelijk werd geopend.",
+    ],
+    causes: [
+      "De notificatie-observer verwerkte tot nu toe alleen confirmed close-evidence en Portfolio TP-evidence.",
+    ],
+    fixes: [
+      "LONG en SHORT zijn afzonderlijk persistent configureerbaar en staan voor bestaande gebruikers standaard UIT.",
+      "DCA, protection, Auto Hedge, Recovery en niet-bewezen exchange-increases worden fail-closed uitgesloten.",
+      "Persistente event- en dispatch-idempotency voorkomt dubbele meldingen na scheduler-overlap, reconnect of restart.",
+      "De bestaande realtime Portfolio & Available-refresh wordt ook voor instapmeldingen gebruikt.",
+    ],
+    now: [
+      "Een gebruiker kan direct na een werkelijk gevulde normale LONG- of SHORT-instap één pushmelding ontvangen met instapprijs, grootte, strategie, Portfolio en Available.",
+    ],
+    technicalDetails: [
+      "Bindende mobiele UI-referentie: file_00000000cd448210b066edf7a499973e.",
+      "Read-only observer blijft live_authorized=False; deze release voegt geen order-submitpad toe.",
+      "Notificeerbare Strategy-2 acties: INITIAL_OPEN_LEG, OPEN_LEG, AUTO_RESTART en PENDING_REOPEN; Sniper gebruikt zijn confirmed active-trade orderidentiteit.",
+    ],
+    confidence: "confirmed",
+  },
+  {
     id: "v46-build-463-position-close",
     version: "46",
     build: "463",
