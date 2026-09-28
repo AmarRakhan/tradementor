@@ -85,3 +85,13 @@ test("Build 447 structure notes are collision-aware against trade markers",async
   assert.ok(component.includes("structureRectsOverlap"));
   assert.ok(component.includes('kind==="newHigh"'));
 });
+
+
+test("Portfolio Snapshot exposes the exact read-only entry blocker beside free zone seats", async () => {
+  const component = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
+  assert.ok(component.includes("entryDiagnostics"));
+  assert.ok(component.includes("dynamicHedgeBlocking"));
+  assert.ok(component.includes("Instap geblokkeerd · Dynamic Hedge"));
+  assert.ok(component.includes("Instapstatus ·"));
+  assert.ok(component.includes("orderreconciliatie"));
+});
