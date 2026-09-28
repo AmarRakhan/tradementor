@@ -28,6 +28,8 @@ test("settings UI includes the complete approved notification policy", async () 
     "15 min",
     "30 min",
     "60 min",
+    "Nieuwe LONG-posities",
+    "Nieuwe SHORT-posities",
     "Alleen winsttrades",
     "Portfolio Take Profit behaald",
     "Portfolio &amp; Available realtime verversen bij verzenden",
@@ -44,6 +46,25 @@ test("settings UI includes the complete approved notification policy", async () 
   assert.match(source, /iPhone werkt Web Push.*Zet op beginscherm/);
   assert.match(source, /notification_test|Testmelding/);
 });
+
+test("LONG and SHORT entry switches are independent, opt-in and persist through the settings API", async () => {
+  const source = await readFile(new URL("../components/profit-notifications.tsx", import.meta.url), "utf8");
+  assert.match(source, /longEntryNotificationsEnabled: boolean/);
+  assert.match(source, /shortEntryNotificationsEnabled: boolean/);
+  assert.match(source, /longEntryNotificationsEnabled: false/);
+  assert.match(source, /shortEntryNotificationsEnabled: false/);
+  assert.match(source, /longEntryNotificationsEnabled: settings\.longEntryNotificationsEnabled/);
+  assert.match(source, /shortEntryNotificationsEnabled: settings\.shortEntryNotificationsEnabled/);
+
+  const modeIndex = source.indexOf('className="profit-setting-block mode"');
+  const longIndex = source.indexOf(">Nieuwe LONG-posities<");
+  const shortIndex = source.indexOf(">Nieuwe SHORT-posities<");
+  const winsIndex = source.indexOf(">Alleen winsttrades");
+  assert.ok(modeIndex >= 0 && longIndex > modeIndex && shortIndex > longIndex && winsIndex > shortIndex);
+  assert.match(source, /label="Nieuwe LONG-posities"/);
+  assert.match(source, /label="Nieuwe SHORT-posities"/);
+});
+
 
 test("native push is delivered by the service worker and notification click deep-links back to the app", async () => {
   const sw = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
@@ -80,6 +101,7 @@ test("approved visual references are recorded in the canonical release history",
     "file_000000008dd082469c173c928eaa3c1a",
     "file_00000000d6a88210b0f99525e33d570c",
     "file_00000000ebcc8243924098b6858456ae",
+    "file_00000000cd448210b066edf7a499973e",
   ]) assert.ok(history.includes(id), "missing visual reference " + id);
 });
 
