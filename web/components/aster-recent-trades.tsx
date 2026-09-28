@@ -156,6 +156,14 @@ type ProfitCloseResult = {
 const suffixes = ["USDT", "USDC", "USD"];
 const TP_KINDS = new Set(["FULL_TP", "PARTIAL_TP", "TAKE_PROFIT_CLOSE"]);
 const DCA_KINDS = new Set(["ADD_DCA", "PROTECTION_INCREASE"]);
+const TRADE_CENTER_REFERENCE_IDS = {
+  current: "file_00000000035c8210978ce05d3eded847",
+  main: "file_000000000cb881f48416e7d6470ae96e",
+  close: "file_00000000b4448210b7ba77e95c90619b",
+} as const;
+
+type CloseTarget = { symbol: string; side: string };
+
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "live", label: "Live" },
   { key: "mostDca", label: "Meeste DCA" },
@@ -359,28 +367,87 @@ function CoinIcon({ symbol }: { symbol: string }) {
   );
 }
 
-function ClosePositionControl({ position, onClosed }: { position: OpenPosition | null; onClosed: () => void }) {
-  const [confirming, setConfirming] = useState(false);
+function PositionClosePanel({
+  position,
+  onCancel,
+  onClosed,
+}: {
+  position: OpenPosition | null;
+  onCancel: () => void;
+  onClosed: () => void | Promise<void>;
+}) {
+  const [percentage, setPercentage] = useState(50);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const requestKey = useRef("");
-  const tone = toneFor(position?.unrealizedPnl);
+  const requestSignature = useRef("");
+  const quantity = finite(position?.quantity);
+  const mark = finite(position?.markPrice);
+  const notional = finite(position?.notionalUsd) ?? (quantity !== null && mark !== null ? quantity * mark : null);
+  const margin = openPositionMargin(position);
+  const pnl = finite(position?.unrealizedPnl);
+  const pnlPct = finite(position?.returnPct) ?? positionPricePnlPct(position);
+  const fraction = percentage / 100;
+  const closeQty = quantity === null ? null : quantity * fraction;
+  const closeValue = notional === null ? null : notional * fraction;
+  const closePnl = pnl === null ? null : pnl * fraction;
+  const remainingQty = quantity === null ? null : Math.max(0, quantity - quantity * fraction);
+  const remainingValue = notional === null ? null : Math.max(0, notional - notional * fraction);
+  const side = String(position?.side || "").toUpperCase();
+  const tone = toneFor(pnl);
+  const protectedHedge = position?.focusAirbagHedge === true;
+  const protectionLabel = protectedHedge
+    ? "HEDGE"
+    : position?.asymmetricPairStatus === "covered"
+      ? "COVERED"
+      : position?.asymmetricPairStatus === "covering"
+        ? "COVERING"
+        : "";
+
+  useEffect(() => {
+    setPercentage(50);
+    setMessage("");
+    requestKey.current = "";
+    requestSignature.current = "";
+  }, [position?.symbol, position?.side]);
+
   async function closePosition() {
-    if (busy || !position?.symbol || !position.side || !(finite(position.quantity) && Number(position.quantity) > 0)) return;
+    if (
+      busy ||
+      protectedHedge ||
+      !position?.symbol ||
+      !/^(LONG|SHORT)$/.test(side) ||
+      quantity === null ||
+      quantity <= 0
+    ) return;
     setBusy(true);
     setMessage("");
-    if (!requestKey.current) requestKey.current = crypto.randomUUID();
+    const signature = normalizedSymbol(position.symbol) + "|" + side + "|" + quantity + "|" + percentage;
+    if (!requestKey.current || requestSignature.current !== signature) {
+      requestKey.current = crypto.randomUUID();
+      requestSignature.current = signature;
+    }
     try {
-      await authenticatedRequest(`/api/exchanges/aster/positions/${encodeURIComponent(String(position.symbol))}/close`, {
-        method: "POST",
-        body: JSON.stringify({
-          confirm: true,
-          side: String(position.side).toUpperCase(),
-          expected_quantity: Number(position.quantity),
-          idempotency_key: requestKey.current,
-        }),
-      });
-      setConfirming(false);
+      const result = await authenticatedRequest(
+        "/api/exchanges/aster/positions/" + encodeURIComponent(String(position.symbol)) + "/close",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            confirm: true,
+            side,
+            expected_quantity: quantity,
+            percentage,
+            idempotency_key: requestKey.current,
+          }),
+        },
+      );
+      const closedSize = finite(result?.closedSize);
+      const remainingSize = finite(result?.remainingSize);
+      setMessage(
+        percentage + "% sluiting bevestigd" +
+        (closedSize === null ? "" : " · " + amount(closedSize) + " gesloten") +
+        (remainingSize === null ? "" : " · " + amount(remainingSize) + " resterend"),
+      );
       await onClosed();
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : "Sluiten is niet gelukt.");
@@ -388,116 +455,104 @@ function ClosePositionControl({ position, onClosed }: { position: OpenPosition |
       setBusy(false);
     }
   }
+
+  if (!position || quantity === null || quantity <= 0) {
+    return (
+      <section className={styles.closePanel} data-reference-id={TRADE_CENTER_REFERENCE_IDS.close}>
+        <header className={styles.closePanelHeader}>
+          <button type="button" className={styles.closeBack} onClick={onCancel} aria-label="Terug naar Tradecentrum">‹</button>
+          <div><h2>Positie sluiten</h2><p>De geselecteerde positie is niet meer actief.</p></div>
+        </header>
+        <div className={styles.closeUnavailable}>Vernieuw het Tradecentrum en kies een actieve positie opnieuw.</div>
+        <button type="button" className={styles.closeCancel} onClick={onCancel}>Terug naar Tradecentrum</button>
+      </section>
+    );
+  }
+
   return (
-    <>
-      <button type="button" className={`${styles.close} ${styles[tone]}`} disabled={busy || !position} onClick={() => position && setConfirming(true)}>
-        {busy ? "…" : "Close"}
-      </button>
-      {confirming &&
-        position &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div className={styles.modal} role="dialog" aria-modal="true">
-            <div>
-              <h3>Positie market sluiten</h3>
-              <dl>
-                <dt>Coin</dt>
-                <dd>{baseAsset(position.symbol)}</dd>
-                <dt>Richting</dt>
-                <dd>{String(position.side).toUpperCase()}</dd>
-                <dt>Actuele grootte</dt>
-                <dd>{amount(position.quantity)}</dd>
-                <dt>Geschatte P&amp;L</dt>
-                <dd className={styles[tone]}>{money(position.unrealizedPnl, true)}</dd>
-              </dl>
-              <p>De volledige resterende positie wordt tegen marktprijs gesloten.</p>
-              <strong>Weet je zeker dat je deze volledige positie market wilt sluiten?</strong>
-              <footer>
-                <button type="button" disabled={busy} onClick={() => setConfirming(false)}>
-                  Annuleren
-                </button>
-                <button type="button" disabled={busy} onClick={closePosition}>
-                  Volledig market sluiten
-                </button>
-              </footer>
-              {message && <small>{message}</small>}
-            </div>
-          </div>,
-          document.body,
+    <section className={styles.closePanel} data-reference-id={TRADE_CENTER_REFERENCE_IDS.close} aria-label="Positie sluiten">
+      <header className={styles.closePanelHeader}>
+        <button type="button" className={styles.closeBack} onClick={onCancel} disabled={busy} aria-label="Terug naar Tradecentrum">‹</button>
+        <div className={styles.closePanelTitle}>
+          <h2>Positie sluiten</h2>
+          <p>Sluit (een deel van) je positie</p>
+        </div>
+      </header>
+
+      <article className={styles.closeIdentity}>
+        <div className={styles.closeIdentityTop}>
+          <div className={styles.closeAsset}>
+            <CoinIcon symbol={position.symbol} />
+            <div><strong>{baseAsset(position.symbol)}</strong><span>{marketPrice(mark)} {position.leverage ? <em>{Math.round(Number(position.leverage))}x</em> : null}</span></div>
+          </div>
+          <span className={styles.closeSide + " " + (side === "LONG" ? styles.longBadge : styles.shortBadge)}>{side}</span>
+          {protectionLabel ? <span className={styles.closeProtection}>{protectionLabel}</span> : null}
+          <div className={styles.closeCurrent}><span>Huidige prijs</span><strong>{marketPrice(mark)}</strong>{pnlPct !== null ? <small className={styles[toneFor(pnlPct)]}>{percent(pnlPct)}</small> : null}</div>
+        </div>
+        <div className={styles.closeStats}>
+          <div><span>Positiewaarde</span><strong>{money(notional)}</strong></div>
+          <div><span>Margin</span><strong>{money(margin)}</strong></div>
+          <div><span>Ongerealiseerde PnL</span><strong className={styles[tone]}>{money(pnl, true)}</strong>{pnlPct !== null ? <small className={styles[toneFor(pnlPct)]}>{percent(pnlPct)}</small> : null}</div>
+          <div><span>Aantal (qty)</span><strong>{amount(quantity)} {baseAsset(position.symbol)}</strong></div>
+        </div>
+      </article>
+
+      <section className={styles.closeChooser}>
+        <header><span className={styles.closePie} aria-hidden="true">◔</span><div><h3>Hoeveel wil je sluiten?</h3><p>Kies het percentage van je positie</p></div></header>
+        <div className={styles.closeChoices} role="group" aria-label="Sluitpercentage">
+          {[25, 50, 75, 100].map((value) => (
+            <button
+              key={value}
+              type="button"
+              disabled={busy || protectedHedge}
+              className={percentage === value ? styles.closeChoiceActive : styles.closeChoice}
+              aria-pressed={percentage === value}
+              onClick={() => { setPercentage(value); setMessage(""); requestKey.current = ""; requestSignature.current = ""; }}
+            >
+              {value}%
+            </button>
+          ))}
+        </div>
+
+        <article className={styles.closePreview} aria-label={"Voorvertoning " + percentage + "%"}>
+          <header><strong>Voorvertoning ({percentage}%)</strong><span><i /> Live data</span></header>
+          <dl>
+            <div><dt>Te sluiten qty</dt><dd>{closeQty === null ? "—" : amount(closeQty) + " " + baseAsset(position.symbol)}</dd></div>
+            <div><dt>Te sluiten waarde</dt><dd>{money(closeValue)}</dd></div>
+            <div><dt>Geschatte opbrengst</dt><dd>{money(closeValue)}</dd></div>
+            <div><dt>Geschatte PnL ({percentage}%)</dt><dd className={styles[tone]}>{money(closePnl, true)} {pnlPct !== null ? <small>{percent(pnlPct)}</small> : null}</dd></div>
+          </dl>
+          <div className={styles.closeRemaining}>
+            <span>Resterende positie na sluiten</span><strong>{remainingQty === null ? "—" : amount(remainingQty) + " " + baseAsset(position.symbol)}</strong>
+            <span>Resterende waarde (±)</span><strong>{money(remainingValue)}</strong>
+          </div>
+        </article>
+
+        {protectedHedge ? (
+          <div className={styles.closeBlocked}><strong>Beschermde hedge</strong><span>Deze hedge-leg kan niet via de normale positie-close worden verkleind. Gebruik de bestaande hedge/recovery-flow.</span></div>
+        ) : (
+          <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Dit is een marktorder en wordt direct uitgevoerd.</strong><br />De uiteindelijke prijs kan licht afwijken door marktslippage.</p></div>
         )}
-    </>
+
+        <button type="button" className={styles.closePrimary} disabled={busy || protectedHedge} onClick={closePosition}>
+          <span aria-hidden="true">◆</span>{busy ? "Sluiten…" : "Sluit " + percentage + "%"}<small>{percentage === 100 ? "Positie volledig sluiten" : "Positie gedeeltelijk sluiten"}</small>
+        </button>
+        <button type="button" className={styles.closeCancel} disabled={busy} onClick={onCancel}><span aria-hidden="true">←</span> Annuleren</button>
+        {message ? <p className={styles.closeMessage} role="status">{message}</p> : null}
+      </section>
+    </section>
   );
 }
 
-function rowFromPosition(position: OpenPosition, status = "Live"): TradeCenterRow {
-  const pnl = finite(position.unrealizedPnl);
-  const roleStatus = position.focusAirbagHedge === true ? "AIRBAG / HEDGE" : position.focusAirbag?.enabled === true ? "HOOFDPOSITIE" : status;
-  return {
-    id: positionId(position),
-    symbol: normalizedSymbol(position.symbol),
-    side: String(position.side || "—").toUpperCase(),
-    leverage: finite(position.leverage),
-    markPrice: finite(position.markPrice),
-    margin: openPositionMargin(position),
-    pnl,
-    pnlPct: positionPricePnlPct(position),
-    entries: positionEntryCount(position),
-    status: roleStatus,
-    timestamp: position.openedAt,
-    tone: toneFor(pnl),
-    source: "position",
-    position,
-  };
-}
-function rowFromActivity(trade: Activity, closed: boolean, positions: OpenPosition[], scanActions: ScanAction[]): TradeCenterRow {
-  const position = closed ? null : findOpenPosition(positions, trade);
-  const matching = closed ? [...scanActions].reverse().find((action) => sideKey(action) === sideKey(trade) && String(action.action || "").toUpperCase() === "CLOSE") || null : null;
-  const leverage = activityLeverage(trade, position) ?? finite(matching?.leverage);
-  const margin = activityMargin(trade, position, leverage) ?? finite(matching?.marginUsd);
-  const pnl = finite(closed ? trade.realizedPnlUsd : trade.unrealizedPnlUsd);
-  return {
-    id: String(trade.exchangeTradeId || trade.id || stableActivityId(trade)),
-    symbol: normalizedSymbol(trade.symbol),
-    side: String(trade.side || "—").toUpperCase(),
-    leverage,
-    markPrice: finite(position?.markPrice),
-    margin,
-    pnl,
-    pnlPct: position ? positionPricePnlPct(position) : reliableReturnPct(trade),
-    entries: position ? positionEntryCount(position) : null,
-    status: closed ? (matching && TP_KINDS.has(String(matching.kind || "").toUpperCase()) ? "TP" : "Gesloten") : "Ingestapt",
-    timestamp: closed ? trade.closedAt || trade.executedAt || trade.timestampMs : trade.executedAt || trade.timestampMs,
-    tone: toneFor(pnl),
-    source: "activity",
-    activity: trade,
-    position,
-  };
-}
-function rowFromAction(action: ScanAction, positions: OpenPosition[], exits: Activity[]): TradeCenterRow {
-  const position = findOpenPosition(positions, action);
-  const label = scanActionLabel(action);
-  const exit = label === "TP" || label === "Gesloten" ? exits.find((row) => sideKey(row) === sideKey(action)) : null;
-  const pnl = position ? finite(position.unrealizedPnl) : finite(exit?.realizedPnlUsd);
-  return {
-    id: String(action.clientOrderId || action.orderId || `${normalizedSymbol(action.symbol)}:${exchangeTimestampMs(action.executedAt)}`),
-    symbol: normalizedSymbol(action.symbol),
-    side: String(action.side || "—").toUpperCase(),
-    leverage: finite(action.leverage) ?? finite(position?.leverage),
-    markPrice: finite(position?.markPrice),
-    margin: finite(action.marginUsd) ?? openPositionMargin(position),
-    pnl,
-    pnlPct: positionPricePnlPct(position),
-    entries: position ? positionEntryCount(position) : finite(action.dcaNumber) !== null ? Math.max(1, Math.round(Number(action.dcaNumber)) + 1) : null,
-    status: label,
-    timestamp: action.executedAt,
-    tone: toneFor(pnl),
-    source: "action",
-    action,
-    position,
-  };
-}
-
-function TradeCenterTable({ rows, onOpenDetail }: { rows: TradeCenterRow[]; onOpenDetail: (row: TradeCenterRow) => void }) {
+function TradeCenterTable({
+  rows,
+  onOpenDetail,
+  onOpenClose,
+}: {
+  rows: TradeCenterRow[];
+  onOpenDetail: (row: TradeCenterRow) => void;
+  onOpenClose: (position: OpenPosition) => void;
+}) {
   return (
     <div className={styles.table} role="table" aria-label="Aster Tradecentrum">
       <div className={styles.head} role="row">
@@ -506,15 +561,15 @@ function TradeCenterTable({ rows, onOpenDetail }: { rows: TradeCenterRow[]; onOp
         <span>PnL</span>
         <span>Margin</span>
         <span>DCA</span>
-        <span>Liq</span>
+        <span>Close</span>
       </div>
       {rows.length ? (
         rows.map((row) => {
-          const liq = liquidationPresentation(row.position);
           const dca = row.entries === null ? null : Math.max(0, row.entries - 1);
+          const closeable = Boolean(row.position && finite(row.position.quantity) !== null && Number(row.position.quantity) > 0 && row.position.focusAirbagHedge !== true);
           return (
             <div className={styles.row} role="row" key={row.id}>
-              <button className={styles.pair} role="cell" type="button" data-auto-hedge-symbol={normalizedSymbol(row.symbol)} onClick={() => onOpenDetail(row)} aria-label={`${baseAsset(row.symbol)} openen in grafiek`}>
+              <button className={styles.pair} role="cell" type="button" data-auto-hedge-symbol={normalizedSymbol(row.symbol)} onClick={() => onOpenDetail(row)} aria-label={baseAsset(row.symbol) + " openen in grafiek"}>
                 <CoinIcon symbol={row.symbol} />
                 <span className={styles.pairCopy}>
                   <b>{baseAsset(row.symbol)}</b>
@@ -523,18 +578,26 @@ function TradeCenterTable({ rows, onOpenDetail }: { rows: TradeCenterRow[]; onOp
                     {row.leverage !== null ? <em>{Math.round(row.leverage)}x</em> : null}
                   </small>
                 </span>
-                {row.position?.asymmetricPairStatus === "covered" ? <span className={`${styles.pairLinkStatus} ${styles.covered}`}><i />Covered</span> : row.position?.asymmetricPairStatus === "covering" ? <span className={`${styles.pairLinkStatus} ${styles.covering}`}><i />Covering</span> : null}
+                {row.position?.asymmetricPairStatus === "covered" ? <span className={styles.pairLinkStatus + " " + styles.covered}><i />Covered</span> : row.position?.asymmetricPairStatus === "covering" ? <span className={styles.pairLinkStatus + " " + styles.covering}><i />Covering</span> : null}
               </button>
-              <strong role="cell" className={`${styles.sideBadge} ${row.side === "LONG" ? styles.longBadge : row.side === "SHORT" ? styles.shortBadge : styles.neutralBadge}`}>{row.side}</strong>
+              <strong role="cell" className={styles.sideBadge + " " + (row.side === "LONG" ? styles.longBadge : row.side === "SHORT" ? styles.shortBadge : styles.neutralBadge)}>{row.side}</strong>
               <span role="cell" className={styles.pnlCell}>
                 <strong className={styles[row.tone]}>{money(row.pnl, true)}</strong>
                 <small className={styles[toneFor(row.pnlPct)]}>{percent(row.pnlPct)}</small>
               </span>
               <strong role="cell" className={styles.marginCell}>{money(row.margin)}</strong>
               <strong role="cell" className={styles.entries} title="Aantal bevestigde DCA's">{dca === null ? "—" : dca}</strong>
-              <span role="cell" className={`${styles.liqBadge} ${styles[`liq_${liq.tone}`]}`} title={liq.shield ? "Geen downside-liquidatie tot $0 bij huidige portfolio-status" : liq.distance === null ? "Geen bevestigde liquidatieafstand" : `Afstand tot liquidatie ${liq.label}`}>
-                {liq.shield ? <i aria-hidden="true">🛡</i> : null}<b>{liq.label}</b>
-              </span>
+              <button
+                role="cell"
+                type="button"
+                className={styles.rowClose}
+                disabled={!closeable}
+                title={row.position?.focusAirbagHedge === true ? "Beschermde hedge: beheer via de hedge/recovery-flow" : closeable ? baseAsset(row.symbol) + " " + row.side + " sluiten" : "Geen actieve positie om te sluiten"}
+                aria-label={closeable ? baseAsset(row.symbol) + " " + row.side + " sluiten" : baseAsset(row.symbol) + " sluiten niet beschikbaar"}
+                onClick={() => { if (closeable && row.position) onOpenClose(row.position); }}
+              >
+                Close
+              </button>
             </div>
           );
         })
@@ -863,6 +926,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const [expanded, setExpanded] = useState(false);
   const [pages, setPages] = useState(1);
   const [detail, setDetail] = useState<AsterPairDetail | null>(null);
+  const [closeTarget, setCloseTarget] = useState<CloseTarget | null>(null);
   const [detailFillDcaCount, setDetailFillDcaCount] = useState<number | null>(null);
   const [profitConfirming, setProfitConfirming] = useState(false);
   const [profitBusy, setProfitBusy] = useState(false);
@@ -982,6 +1046,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     LONG: profitCandidates.filter((position) => String(position.side || "").toUpperCase() === "LONG"),
     SHORT: profitCandidates.filter((position) => String(position.side || "").toUpperCase() === "SHORT"),
   }), [profitCandidates]);
+  const liveClosePosition = closeTarget ? findOpenPosition(positionsWithMultiDcaCounts, closeTarget) : null;
   function forwardSnapshotProfit(scope: "LONG" | "SHORT" | "ALL") {
     const selector = `.aps-profit-${scope.toLowerCase()}`;
     const button = document.querySelector<HTMLButtonElement>(selector);
@@ -1208,8 +1273,23 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     setExpanded(false);
     setPages(1);
   }
+  function openClosePosition(position: OpenPosition) {
+    if (!position.symbol || !position.side || position.focusAirbagHedge === true) return;
+    scrollYRef.current = window.scrollY;
+    setDetail(null);
+    setCloseTarget({ symbol: String(position.symbol), side: String(position.side).toUpperCase() });
+  }
+  function closeClosePanel() {
+    setCloseTarget(null);
+    requestAnimationFrame(() => window.scrollTo({ top: scrollYRef.current, behavior: "auto" }));
+  }
+  async function handlePositionClosed() {
+    try { await Promise.resolve(onRetry()); } finally { closeClosePanel(); }
+  }
+
   function openDetail(row: TradeCenterRow) {
     scrollYRef.current = window.scrollY;
+    setCloseTarget(null);
     const clickedPosition = row.position || null;
     const trade = row.activity;
     const action = row.action;
@@ -1308,10 +1388,10 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       </section>
     );
   return (
-    <section className={`${styles.shell} ${styles.detailShell} ${detail ? styles.detailOpen : ""}`} aria-label="Aster Tradecentrum">
+    <section className={`${styles.shell} ${styles.detailShell} ${detail || closeTarget ? styles.detailOpen : ""}`} aria-label="Aster Tradecentrum">
       <div className={styles.detailInner}>
-        <div className={styles.front} aria-hidden={Boolean(detail)} inert={detail ? true : undefined}>
-          <article className={styles.card} data-reference="nexora_tradecentrum_actieve_posities.png">
+        <div className={styles.front} aria-hidden={Boolean(detail || closeTarget)} inert={detail || closeTarget ? true : undefined}>
+          <article className={styles.card} data-reference="nexora_tradecentrum_actieve_posities.png" data-source-reference-id={TRADE_CENTER_REFERENCE_IDS.current} data-reference-id={TRADE_CENTER_REFERENCE_IDS.main}>
             <header className={styles.header}>
               <div className={styles.title}>
                 <h2>Tradecentrum</h2>
@@ -1330,8 +1410,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 {FILTERS.map((filter) => <option key={filter.key} value={filter.key}>{filter.key === "live" ? "Alle posities" : filter.label} · {counts[filter.key]}</option>)}
               </select>
             </div>
-            <TradeCenterTable rows={visibleRows} onOpenDetail={openDetail} />
-            <div className={styles.liqHelp}><span aria-hidden="true">🛡</span><b>100%+</b><span>= geen downside-liquidatie tot $0 bij huidige portfolio-status</span></div>
+            <TradeCenterTable rows={visibleRows} onOpenDetail={openDetail} onOpenClose={openClosePosition} />
             <div className={styles.scopeActions} aria-label="Winstposities sluiten per richting">
               <button type="button" className={styles.scopeLong} disabled={!profitSnapshotReliable || scopedProfitCandidates.LONG.length === 0} onClick={() => forwardSnapshotProfit("LONG")}>Close Long</button>
               <button type="button" className={styles.scopeShort} disabled={!profitSnapshotReliable || scopedProfitCandidates.SHORT.length === 0} onClick={() => forwardSnapshotProfit("SHORT")}>Close Short</button>
@@ -1361,16 +1440,18 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
         </div>
         <div
           className={styles.back}
-          aria-hidden={!detail}
-          inert={!detail ? true : undefined}
-          onTouchStart={handleDetailTouchStart}
-          onTouchMove={handleDetailTouchMove}
-          onTouchEnd={handleDetailTouchEnd}
+          aria-hidden={!detail && !closeTarget}
+          inert={!detail && !closeTarget ? true : undefined}
+          onTouchStart={closeTarget ? undefined : handleDetailTouchStart}
+          onTouchMove={closeTarget ? undefined : handleDetailTouchMove}
+          onTouchEnd={closeTarget ? undefined : handleDetailTouchEnd}
           onTouchCancel={() => {
             detailTouchRef.current.valid = false;
           }}
         >
-          {detail && (
+          {closeTarget ? (
+            <PositionClosePanel position={liveClosePosition} onCancel={closeClosePanel} onClosed={handlePositionClosed} />
+          ) : detail && (
             <>
               <header className={styles.detailHeader}>
                 <div>
@@ -1381,7 +1462,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                   <small>{detail.linkedFromAirbag ? `Je bekijkt de Airbag van ${baseAsset(detail.selection.symbol)} ${detailMainSide}` : `HOOFDPOSITIE · ${detailMainSide}`} · dubbel tikken of × om terug te gaan</small>
                 </div>
                 <div className={styles.detailHeaderActions}>
-                  {liveDetailPosition && liveDetailPosition.focusAirbagHedge !== true ? <ClosePositionControl position={liveDetailPosition} onClosed={onRetry} /> : null}
+                  {liveDetailPosition && liveDetailPosition.focusAirbagHedge !== true ? <button type="button" className={styles.close + " " + styles[toneFor(liveDetailPosition.unrealizedPnl)]} onClick={() => openClosePosition(liveDetailPosition)}>Close</button> : null}
                   <button type="button" className={styles.detailBack} onClick={closeDetail} aria-label="Terug naar Tradecentrum">×</button>
                 </div>
               </header>
