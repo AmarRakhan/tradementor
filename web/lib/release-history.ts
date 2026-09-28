@@ -26,33 +26,65 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-28",
-  title: "Instapdiagnose · Vrije prijszone-stoelen",
+  title: "Tradecentrum · Position Close zichtbare feedback",
   newItems: [
-    "Portfolio Snapshot toont direct waarom vrije LONG/SHORT-stoelen nog geen nieuwe positie openen.",
-    "De diagnose onderscheidt Dynamic Hedge, onzekere orderreconciliatie, zone-migratie en de normale Strategy-2 entry-status.",
-    "De actuele backend entryReason en entrySkipReasons blijven read-only en veranderen geen handelsregels.",
+    "Na indrukken van Sluit 25%, 50%, 75% of 100% verschijnt direct zichtbare voortgang in het close-scherm.",
+    "Een backend-reject of browserfout wordt boven de uitvoerknop getoond en valt op mobiel niet meer buiten beeld.",
   ],
   problems: [
-    "Vrije prijszone-stoelen waren zichtbaar, maar de app liet niet zien welke onderliggende gate een instap tegenhield.",
+    "Op mobiel kon een gebruiker op Sluit 50% drukken zonder zichtbare reactie, terwijl de request kon worden geweigerd of al vóór verzending kon falen.",
   ],
   causes: [
-    "De backend berekende de blokkadereden al, maar publiceerde die niet als compacte authenticated entry-diagnose naar Portfolio Snapshot.",
+    "De statusmelding stond onder Annuleren en kon daardoor onder de onderste navigatie of buiten de zichtbare viewport vallen.",
+    "De idempotency-key werd vóór de bestaande try/catch aangemaakt, waardoor een browser/WebView-fout daar geen zichtbare foutmelding kreeg.",
   ],
   fixes: [
-    "Strategy 2 publiceert per gebruiker de actuele entryStatus, entryReason, skip-redenen en Dynamic Hedge/queue-state.",
-    "Portfolio Snapshot toont de actuele blokkadereden rechtstreeks onder de prijszone-stoelen.",
-    "Geen Bollinger-, leverage-, margin-, DCA-, TP-, hedge- of seat-allocationregel is versoepeld.",
+    "De close-flow zet direct 'Sluitopdracht wordt gecontroleerd…' en schakelt de knop zichtbaar naar de busy-state.",
+    "Status en backendfouten staan nu vóór de primaire close-knop met aria-live feedback.",
+    "De idempotency-key wordt binnen de foutafhandeling aangemaakt met randomUUID waar beschikbaar en een browserveilige fallback.",
+    "De bestaande 25/50/75/100%-backend, Auto Hedge-locks, Dynamic Hedge-lock en fail-closed contractchecks zijn ongewijzigd.",
   ],
   now: [
-    "Bij vrije stoelen is zichtbaar of de scanner wacht op Bollinger, margin/leverage, Dynamic Hedge, reconciliatie of een andere runtime-gate.",
+    "Eén druk op de primaire Sluit-knop geeft altijd direct zichtbare feedback; bij een blokkade is de concrete foutmelding in hetzelfde scherm zichtbaar.",
   ],
   technicalDetails: [
-    "Diagnose is authenticated en read-only.",
-    "Backendbron voor de diagnose: Strategy-2 multiBbReport, Dynamic Hedge control/report en orderQueueState.",
+    "UI-hotfix in web/components/aster-recent-trades.tsx; geen wijziging aan order-sizing of backend tradinglogica.",
+    "De Position Close partial-close backend stond al in de succesvol gepromote Build 464-productiebron.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-465-entry-diagnostics",
+    version: "46",
+    build: "465",
+    releasedAt: "2026-09-28",
+    title: "Instapdiagnose · Vrije prijszone-stoelen",
+    newItems: [
+      "Portfolio Snapshot toont direct waarom vrije LONG/SHORT-stoelen nog geen nieuwe positie openen.",
+      "De diagnose onderscheidt Dynamic Hedge, onzekere orderreconciliatie, zone-migratie en de normale Strategy-2 entry-status.",
+      "De actuele backend entryReason en entrySkipReasons blijven read-only en veranderen geen handelsregels.",
+    ],
+    problems: [
+      "Vrije prijszone-stoelen waren zichtbaar, maar de app liet niet zien welke onderliggende gate een instap tegenhield.",
+    ],
+    causes: [
+      "De backend berekende de blokkadereden al, maar publiceerde die niet als compacte authenticated entry-diagnose naar Portfolio Snapshot.",
+    ],
+    fixes: [
+      "Strategy 2 publiceert per gebruiker de actuele entryStatus, entryReason, skip-redenen en Dynamic Hedge/queue-state.",
+      "Portfolio Snapshot toont de actuele blokkadereden rechtstreeks onder de prijszone-stoelen.",
+      "Geen Bollinger-, leverage-, margin-, DCA-, TP-, hedge- of seat-allocationregel is versoepeld.",
+    ],
+    now: [
+      "Bij vrije stoelen is zichtbaar of de scanner wacht op Bollinger, margin/leverage, Dynamic Hedge, reconciliatie of een andere runtime-gate.",
+    ],
+    technicalDetails: [
+      "Diagnose is authenticated en read-only.",
+      "Backendbron voor de diagnose: Strategy-2 multiBbReport, Dynamic Hedge control/report en orderQueueState.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-464-entry-push-notifications",
     version: "46",
