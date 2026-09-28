@@ -2232,7 +2232,8 @@
       '3B4Q5UT',      // HP 435 MltDvc WRLS Mouse
       'D31431-RPET',  // DICOTA Multi SCALE laptop bag
       'D31429-RPET',  // DICOTA Eco SCALE backpack
-      'D31432-RPET'   // DICOTA Eco Multi SCALE case/bag
+      'D31432-RPET',  // DICOTA Eco Multi SCALE case/bag
+      'PS025644'      // Phonesmart 3-port USB 3.0 Hub Type-C RJ45
     ]);
 
     return alwaysVisibleCodes.has(code) ||
