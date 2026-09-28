@@ -341,6 +341,16 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
     return { longSlots, shortSlots, totalSlots, startMargin, dcaCapacity, theoretical: startMargin + dcaCapacity };
   }, [draft]);
 
+  const portfolioCycle = strategy2.multiBbCycle && typeof strategy2.multiBbCycle === "object"
+    ? strategy2.multiBbCycle as Record<string, unknown>
+    : report.portfolioCycle && typeof report.portfolioCycle === "object"
+      ? report.portfolioCycle as Record<string, unknown>
+      : report;
+  const cycleStartLongRaw = Number(portfolioCycle.cycleStartLongSlots);
+  const cycleStartShortRaw = Number(portfolioCycle.cycleStartShortSlots);
+  const cycleStartLongSlots = Number.isFinite(cycleStartLongRaw) ? Math.max(0, Math.round(cycleStartLongRaw)) : totals.longSlots;
+  const cycleStartShortSlots = Number.isFinite(cycleStartShortRaw) ? Math.max(0, Math.round(cycleStartShortRaw)) : totals.shortSlots;
+
   const available = n(snapshot?.availableBalance ?? snapshot?.availableToTrade ?? snapshot?.available, 0);
   const equity = n(snapshot?.equity ?? snapshot?.portfolioValue, 0);
   const netExposure = n(report.netExposureNotional ?? report.netExposure, 0);
@@ -916,7 +926,36 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
       <div className="v3-tp">
         <div className="v3-tp-head"><b>Take profit</b><div>{(["PER_TRADE","PORTFOLIO","OFF"] as TpMode[]).map(mode=><button key={mode} className={draft.tpMode===mode?"active":""} type="button" onClick={()=>update("tpMode",mode)}>{mode==="PER_TRADE"?"Per trade":mode==="PORTFOLIO"?"Portfolio":"Uit"}</button>)}</div></div>
         {draft.tpMode==="PER_TRADE"&&<div className="v3-grid two"><Field label="TP LONG" value={draft.longTp} onChange={(v)=>update("longTp",v)} suffix="%" /><Field label="TP SHORT" value={draft.shortTp} onChange={(v)=>update("shortTp",v)} suffix="%" /></div>}
-        {draft.tpMode==="PORTFOLIO"&&<><div className="v3-grid two"><Field label="Portfolio TP" value={draft.portfolioTpValue} onChange={(v)=>update("portfolioTpValue",v)} suffix={draft.portfolioTpInputMode==="USD"?"USDT":"%"} /><label className="v2-field"><span>Doel in</span><select value={draft.portfolioTpInputMode} onChange={(e)=>update("portfolioTpInputMode",e.target.value as "PERCENT"|"USD")}><option value="PERCENT">Percentage</option><option value="USD">USDT</option></select></label></div><div className="v3-grid two"><label className="v2-field"><span>Basis</span><select value={draft.portfolioTpBaseMode} onChange={(e)=>update("portfolioTpBaseMode",e.target.value as Draft["portfolioTpBaseMode"])}><option value="CYCLE_START">Cycle start</option><option value="CURRENT_VALUE">Huidige waarde</option><option value="CUSTOM">Aangepast</option></select></label>{draft.portfolioTpBaseMode==="CUSTOM"&&<Field label="Aangepaste basis" value={draft.portfolioTpCustomBase} onChange={(v)=>update("portfolioTpCustomBase",v)} suffix="USDT" />}</div></>}
+        {draft.tpMode==="PORTFOLIO"&&<>
+          <div className="v3-grid two">
+            <Field label="Portfolio TP" value={draft.portfolioTpValue} onChange={(v)=>update("portfolioTpValue",v)} suffix={draft.portfolioTpInputMode==="USD"?"USDT":"%"} />
+            <label className="v2-field"><span>Doel in</span><select value={draft.portfolioTpInputMode} onChange={(e)=>update("portfolioTpInputMode",e.target.value as "PERCENT"|"USD")}><option value="PERCENT">Percentage</option><option value="USD">USDT</option></select></label>
+          </div>
+          <div className="v3-grid two">
+            <label className="v2-field"><span>Basis</span><select value={draft.portfolioTpBaseMode} onChange={(e)=>update("portfolioTpBaseMode",e.target.value as Draft["portfolioTpBaseMode"])}><option value="CYCLE_START">Cycle start</option><option value="CURRENT_VALUE">Huidige waarde</option><option value="CUSTOM">Aangepast</option></select></label>
+            {draft.portfolioTpBaseMode==="CUSTOM"&&<Field label="Aangepaste basis" value={draft.portfolioTpCustomBase} onChange={(v)=>update("portfolioTpCustomBase",v)} suffix="USDT" />}
+          </div>
+          <section className="v3-tp-seat-reset" data-reference={VISUAL_REFERENCES.portfolioSeatReset}>
+            <header><small>Na behalen doel (Portfolio TP)</small></header>
+            <Toggle
+              label="Stoelen resetten naar startinstelling"
+              description="Na bevestigde sluiting van alle Portfolio TP-posities worden LONG/SHORT automatisch teruggezet naar de startwaarden van deze cyclus."
+              checked={draft.resetSeatsAfterPortfolioTp}
+              onChange={(v)=>update("resetSeatsAfterPortfolioTp",v)}
+            />
+            <div className="v3-seat-reset-help">
+              <b>Wat gebeurt er?</b>
+              <p>Eerst alles sluiten en bevestigen. Daarna pas de stoelreset. Tijdens sluiten blijven nieuwe entries geblokkeerd.</p>
+            </div>
+            <div className="v3-seat-reset-flow" aria-label="Voorbeeld stoelreset">
+              <span><small>Tijdens het spel</small><b>{totals.longSlots}L / {totals.shortSlots}S</b></span>
+              <i>→</i>
+              <span className="target"><small>Portfolio TP</small><b>Alles dicht</b></span>
+              <i>→</i>
+              <span><small>Na TP</small><b>{cycleStartLongSlots}L / {cycleStartShortSlots}S</b></span>
+            </div>
+          </section>
+        </>}
       </div>
 
       <Accordion title="Smart Rescue DCA" icon="◌" reference={VISUAL_REFERENCES.smartRescue} open={entryAccordion==="rescue"} onToggle={()=>setEntryAccordion(entryAccordion==="rescue"?null:"rescue")}>
@@ -951,7 +990,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
         <ReviewBlock title="Leverage" rows={[["Minimum",draft.minimumLeverage+"x"],["Maximum",draft.maximumLeverage?draft.maximumLeverage+"x":"Pair max"]]} />
         <ReviewBlock title="Instapfilters" rows={[["Bollinger",draft.bollingerEnabled?"Aan":"Uit"],["LONG",draft.bollingerLongTimeframe],["SHORT",draft.bollingerShortTimeframe],["Exposure-refill",draft.exposureRefillEnabled?"Aan":"Uit"]]} />
         <ReviewBlock title="Bedragen & DCA" rows={[["Start LONG",draft.entryMarginLong+" USDT"],["Start SHORT",draft.entryMarginShort+" USDT"],["DCA LONG",draft.longDcaAmount+" USDT · "+draft.longDcaDistance+"% · max "+draft.maxDcaLong],["DCA SHORT",draft.shortDcaAmount+" USDT · "+draft.shortDcaDistance+"% · max "+draft.maxDcaShort]]} />
-        <ReviewBlock title="Winst" rows={[["Take profit",tpLabel]]} />
+        <ReviewBlock title="Winst" rows={[["Take profit",tpLabel],["Stoelreset na Portfolio TP",draft.tpMode==="PORTFOLIO"?(draft.resetSeatsAfterPortfolioTp?"Aan":"Uit"):"n.v.t."]]} />
         <ReviewBlock title="Bescherming" rows={[["SHORT met LONG",draft.shortRequiresLongEnabled?"Aan":"Uit"],["Stoploss",draft.stopLossEnabled?"Aan":"Uit"]]} />
         <ReviewBlock title="Overig" rows={[["Smart Rescue",draft.smartRescueEnabled?"Aan":"Uit"],["Refill",draft.exposureRefillEnabled?"Aan":"Uit"]]} />
       </div>
@@ -1025,6 +1064,7 @@ const styles = `
 .v3-grid{display:grid;gap:6px}.v3-grid.two{grid-template-columns:1fr 1fr}.v3-grid.one{grid-template-columns:1fr}.v2-field{display:grid;gap:3px;color:#abb9b2;font-size:7.5px}.v2-input{display:flex;align-items:center;border:1px solid rgba(83,116,101,.35);border-radius:8px;background:#030906;overflow:hidden}.v2-input input{width:100%;height:32px;border:0;outline:0;background:transparent;color:#f1f7f3;padding:0 8px;font-size:10px}.v2-input em{padding:0 7px;color:#7f9087;font-size:7px;font-style:normal}.v2-field select{width:100%;height:32px;border:1px solid rgba(83,116,101,.35);border-radius:8px;background:#050d09;color:#edf5f1;padding:0 7px;font-size:9px}.v2-field input:disabled,.v2-field select:disabled{opacity:.45}.v2-toggle{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;min-height:42px;padding:7px 8px;border:1px solid rgba(79,111,97,.28);border-radius:9px;background:rgba(255,255,255,.012)}.v2-toggle>span{display:grid;gap:1px}.v2-toggle b{font-size:9px}.v2-toggle small{font-size:6.8px;color:#83938b;line-height:1.3}.v2-toggle input{position:absolute;opacity:0}.v2-toggle>i{position:relative;width:36px;height:21px;border-radius:999px;background:#27332e}.v2-toggle>i:after{content:"";position:absolute;width:15px;height:15px;left:3px;top:3px;border-radius:50%;background:#d7e0db;transition:.18s}.v2-toggle.on>i{background:#0c895c;box-shadow:inset 0 0 0 1px #31eba7}.v2-toggle.on>i:after{left:18px;background:#f0fff8}.v2-toggle.disabled{opacity:.48}
 .v3-side{display:grid;gap:6px;padding:8px;border-radius:11px;background:#06100c}.v3-side.long{border:1px solid rgba(43,228,158,.46)}.v3-side.short{border:1px solid rgba(255,100,127,.46);background:linear-gradient(140deg,rgba(69,11,23,.18),#06100c)}.v3-side>b,.v3-side h3{margin:0;font-size:10px}.v3-side.long>b,.v3-side.long h3{color:#50eab0}.v3-side.short>b,.v3-side.short h3{color:#ff728a}.v3-side-pair.compact .v3-side{padding:7px}.v3-side-pair.trading .v2-field{grid-template-columns:minmax(0,1fr) minmax(86px,.9fr);align-items:center}.v3-side-pair.trading .v2-input{min-width:0}
 .v3-tp{display:grid;gap:7px;padding:8px;border:1px solid rgba(78,113,97,.35);border-radius:11px;background:#06100c}.v3-tp-head{display:flex;align-items:center;justify-content:space-between;gap:6px}.v3-tp-head>b{font-size:9px}.v3-tp-head>div{display:flex;gap:3px}.v3-tp-head button{height:27px;padding:0 8px;border:1px solid rgba(83,116,101,.36);border-radius:7px;background:#0b1511;color:#879890;font-size:7px;font-weight:800}.v3-tp-head button.active{border-color:#d3ad45;background:rgba(121,76,10,.48);color:#ffe7a5}
+.v3-tp-seat-reset{display:grid;gap:6px;margin-top:2px;padding:8px;border:1px solid rgba(214,180,88,.46);border-radius:11px;background:radial-gradient(circle at 92% 0,rgba(30,180,120,.10),transparent 38%),linear-gradient(180deg,#07150f,#050d09)}.v3-tp-seat-reset>header small{color:#d9bd69;font-size:7.5px;font-weight:900;letter-spacing:.035em}.v3-tp-seat-reset .v2-toggle{border-color:rgba(43,228,158,.34);background:rgba(5,32,21,.55)}.v3-tp-seat-reset .v2-toggle b{font-size:9.5px}.v3-seat-reset-help{display:grid;gap:2px;padding:7px 8px;border:1px solid rgba(214,180,88,.28);border-radius:8px;background:rgba(71,54,15,.12)}.v3-seat-reset-help b{color:#e1be59;font-size:7.5px}.v3-seat-reset-help p{margin:0;color:#8fa198;font-size:6.8px;line-height:1.4}.v3-seat-reset-flow{display:grid;grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr) 16px minmax(0,1fr);gap:3px;align-items:center}.v3-seat-reset-flow>span{display:grid;gap:2px;min-width:0;padding:6px;border:1px solid rgba(72,116,97,.30);border-radius:8px;background:#040b08;text-align:center}.v3-seat-reset-flow>span.target{border-color:rgba(214,180,88,.35)}.v3-seat-reset-flow small{color:#7f9087;font-size:6px}.v3-seat-reset-flow b{font-size:7.5px;color:#dff8ed}.v3-seat-reset-flow>i{color:#42e5aa;text-align:center;font-size:12px;font-style:normal}
 .v3-runtime-mini{display:grid;grid-template-columns:1fr 1fr;gap:5px}.v3-runtime-mini span{display:flex;justify-content:space-between;padding:7px;border:1px solid rgba(79,112,97,.25);border-radius:8px;color:#879890;font-size:7px}.v3-runtime-mini b{color:#e9f2ed}.v3-readonly-list{display:grid;gap:1px;border:1px solid rgba(80,113,98,.25);border-radius:9px;overflow:hidden}.v3-readonly-list span{display:flex;justify-content:space-between;gap:8px;padding:7px 8px;background:#07110e;font-size:7.5px}.v3-readonly-list em{color:#63ddb0;font-style:normal}
 .v3-review-hero{display:grid;grid-template-columns:65px 1fr;gap:8px;align-items:center;padding:7px;border:1px solid rgba(43,228,158,.42);border-radius:11px;background:#06140e}.v3-review-hero img{width:65px;height:48px;object-fit:cover;border-radius:7px}.v3-review-hero span{display:grid}.v3-review-hero strong{font-size:12px}.v3-review-hero small{color:#93a39b;font-size:7.5px}.v3-review-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.v3-review-block{display:grid;align-content:start;gap:2px;padding:7px;border:1px solid rgba(70,105,89,.3);border-radius:9px;background:#06100c}.v3-review-block h4{margin:0 0 3px;color:#50e3a8;font-size:8.5px}.v3-review-block span{display:flex;justify-content:space-between;gap:5px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.035)}.v3-review-block span:last-child{border-bottom:0}.v3-review-block small{color:#819189;font-size:6.5px}.v3-review-block b{max-width:65%;text-align:right;font-size:7px;font-weight:750}.v3-capacity{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.v3-capacity span{display:grid;padding:7px;border:1px solid rgba(43,228,158,.2);border-radius:8px}.v3-capacity small{font-size:6px;color:#829189}.v3-capacity b{font-size:9px}.v3-ready{display:grid;grid-template-columns:34px 1fr;gap:8px;align-items:center;padding:8px;border:1px solid rgba(43,228,158,.42);border-radius:10px;background:rgba(6,50,33,.45)}.v3-ready>i{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--g);color:#052115;font-style:normal;font-size:15px;font-weight:950}.v3-ready span{display:grid}.v3-ready b{font-size:10px}.v3-ready small{font-size:7px;color:#9aaba3}
 .v3-nav{position:sticky;bottom:0;z-index:20;display:grid;grid-template-columns:1fr 1.2fr;gap:7px;padding:8px 2px 4px;background:linear-gradient(0deg,#020604 80%,transparent)}.v3-nav button{height:41px;border-radius:10px;font-size:9px;font-weight:900}.v3-nav .secondary{border:1px solid rgba(91,118,105,.45);background:#0b1310;color:#bdc9c3}.v3-nav .primary{border:1px solid #2ce7a1;background:linear-gradient(180deg,#2bea9f,#12b978);color:#03140d}.v3-nav .save-only{grid-column:1/-1;height:31px;border:1px solid rgba(214,180,88,.35);background:#17140a;color:#e6c76b}.v3-nav p{grid-column:1/-1;margin:0;padding:6px 8px;border:1px solid rgba(81,114,99,.25);border-radius:8px;background:#07110e;color:#b8c4be;font-size:7px}
