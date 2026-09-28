@@ -481,13 +481,24 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
         if not dry_run:
             _write_cycle(ref, cycle, phase=PORTFOLIO_TP_EXECUTING,
                          reason=f"Portfolio TP bereikt op echte Aster-equity {equity:.8f}; volledige exit gestart")
-            ref.collection("audit").add({"event": "PORTFOLIO_TP_TRIGGERED", "user": uid,
+            audit_now = datetime.now(timezone.utc)
+            ref.collection("audit").add({"event": "PORTFOLIO_TP_TRIGGERED", "user": uid, "userId": uid,
                 "cycleId": cycle.get("cycleId"), "cycleStartEquity": cycle.get("cycleStartEquity"),
                 "targetEquity": target, "currentEquity": equity,
                 "seatResetArmed": bool(cycle.get("seatResetArmed", False)),
                 "cycleStartLongSlots": cycle.get("cycleStartLongSlots"),
                 "cycleStartShortSlots": cycle.get("cycleStartShortSlots"),
-                "timestamp": datetime.now(timezone.utc)})
+                "timestamp": audit_now})
+            if seat_reset_armed:
+                ref.collection("audit").add({
+                    "event": "PORTFOLIO_TP_SEAT_RESET_ARMED", "user": uid, "userId": uid,
+                    "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
+                    "previousLongSlots": _i(trigger_settings.get("longSlots"), _i(current_long_slots)),
+                    "previousShortSlots": _i(trigger_settings.get("shortSlots"), _i(current_short_slots)),
+                    "targetLongSlots": cycle.get("cycleStartLongSlots"),
+                    "targetShortSlots": cycle.get("cycleStartShortSlots"),
+                    "timestamp": audit_now,
+                })
 
     if status not in ACTIVE_EXIT_STATES:
         return PortfolioGateResult(False, False, snapshot, raw_state, account, positions, open_orders, 0)
@@ -625,7 +636,7 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
             })
         else:
             ref.collection("audit").add({
-                "event": "PORTFOLIO_TP_SEAT_RESET_STARTED", "user": uid,
+                "event": "PORTFOLIO_TP_SEAT_RESET_STARTED", "user": uid, "userId": uid,
                 "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
                 "previousLongSlots": _i(latest_settings_after_close.get("longSlots")),
                 "previousShortSlots": _i(latest_settings_after_close.get("shortSlots")),
@@ -646,8 +657,12 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                     reason="Portfolio TP: exchange flat maar stoelreset kon niet veilig worden afgerond; entry-lock blijft actief",
                 )
                 ref.collection("audit").add({
-                    "event": "PORTFOLIO_TP_SEAT_RESET_FAILED", "user": uid,
+                    "event": "PORTFOLIO_TP_SEAT_RESET_FAILED", "user": uid, "userId": uid,
                     "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
+                    "previousLongSlots": _i(latest_settings_after_close.get("longSlots")),
+                    "previousShortSlots": _i(latest_settings_after_close.get("shortSlots")),
+                    "targetLongSlots": cycle.get("cycleStartLongSlots"),
+                    "targetShortSlots": cycle.get("cycleStartShortSlots"),
                     "reason": seat_reset_report.get("reason"), "timestamp": now,
                 })
                 report = {
@@ -680,8 +695,12 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
     else:
         seat_reset_report.update({"reason": "toggle-off"})
         ref.collection("audit").add({
-            "event": "PORTFOLIO_TP_SEAT_RESET_SKIPPED", "user": uid,
+            "event": "PORTFOLIO_TP_SEAT_RESET_SKIPPED", "user": uid, "userId": uid,
             "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
+            "previousLongSlots": _i(latest_settings_after_close.get("longSlots")),
+            "previousShortSlots": _i(latest_settings_after_close.get("shortSlots")),
+            "targetLongSlots": cycle.get("cycleStartLongSlots"),
+            "targetShortSlots": cycle.get("cycleStartShortSlots"),
             "reason": "toggle-off", "timestamp": now,
         })
 
@@ -700,7 +719,7 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                          extra={**base_extra, "monitor": False})
         if seat_reset_armed and seat_reset_report.get("applied") and not seat_reset_report.get("idempotentReplay"):
             ref.collection("audit").add({
-                "event": "PORTFOLIO_TP_SEAT_RESET_COMPLETED", "user": uid,
+                "event": "PORTFOLIO_TP_SEAT_RESET_COMPLETED", "user": uid, "userId": uid,
                 "botId": "aster-strategy-2", "cycleId": completed_cycle.get("cycleId"),
                 "previousLongSlots": seat_reset_report.get("beforeLongSlots"),
                 "previousShortSlots": seat_reset_report.get("beforeShortSlots"),
