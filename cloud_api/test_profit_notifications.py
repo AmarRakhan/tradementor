@@ -201,6 +201,12 @@ def test_dca_protection_hedge_recovery_and_close_actions_are_not_entry_notificat
     assert notifiable_entry_action(action) is False
 
 
+def test_entry_settings_are_backwards_compatible_for_older_clients():
+    source = Path("profit_notifications.py").read_text()
+    assert 'normalize_settings({**previous, **source})' in source
+    assert 'request.model_dump(exclude_unset=True)' in source
+
+
 def test_entry_notification_observer_requires_confirmed_fill_and_proven_normal_attribution():
     source = Path("main.py").read_text()
     start = source.index("def _reconcile_profit_notifications")
