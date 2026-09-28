@@ -690,9 +690,14 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
     base_extra = {"multiBbPositions": {}, "multiBbLastCompletedCycle": completed_cycle}
     settings_extra = {"settings": latest_settings_after_close} if seat_reset_armed else {}
     if not enabled:
-        _write_cycle(ref, cycle, phase=FLAT_CONFIRMED,
-                     reason="Portfolio TP afgerond en exchange flat; bot staat UIT dus geen herstart",
-                     extra={**base_extra, **settings_extra, "monitor": False})
+        if seat_reset_armed:
+            _write_cycle(ref, cycle, phase=FLAT_CONFIRMED,
+                         reason="Portfolio TP afgerond en exchange flat; bot staat UIT dus geen herstart",
+                         extra={**base_extra, "settings": latest_settings_after_close, "monitor": False})
+        else:
+            _write_cycle(ref, cycle, phase=FLAT_CONFIRMED,
+                         reason="Portfolio TP afgerond en exchange flat; bot staat UIT dus geen herstart",
+                         extra={**base_extra, "monitor": False})
         if seat_reset_armed and seat_reset_report.get("applied") and not seat_reset_report.get("idempotentReplay"):
             ref.collection("audit").add({
                 "event": "PORTFOLIO_TP_SEAT_RESET_COMPLETED", "user": uid,
