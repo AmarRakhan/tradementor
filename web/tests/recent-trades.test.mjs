@@ -52,12 +52,14 @@ test("recent trade freshness window remains above the 60 second exchange refresh
   assert.doesNotMatch(component, /Date\.now\(\) - snapshot\.updatedAt < 45_000/);
 });
 
-test("Tradecentrum exposes the approved compact columns and preserves the real close flow", () => {
-  assert.match(component, /<span>Munt<\/span>\s*<span>Richting<\/span>\s*<span>PnL<\/span>\s*<span>Margin<\/span>\s*<span>DCA<\/span>\s*<span>Liq<\/span>/);
+test("Tradecentrum exposes the approved compact columns and the new per-position close flow", () => {
+  assert.match(component, /<span>Munt<\/span>\s*<span>Richting<\/span>\s*<span>PnL<\/span>\s*<span>Margin<\/span>\s*<span>DCA<\/span>\s*<span>Close<\/span>/);
   assert.doesNotMatch(component, /<span>LEV<\/span>/);
+  assert.doesNotMatch(component, /<span>Liq<\/span>/);
   assert.match(component, /row\.leverage !== null \? <em>\{Math\.round\(row\.leverage\)\}x<\/em> : null/);
   assert.match(component, /function money\(value: unknown, signed = false\)/);
-  assert.match(component, /<ClosePositionControl position=\{liveDetailPosition\} onClosed=\{onRetry\}/);
+  assert.match(component, /function PositionClosePanel/);
+  assert.match(component, /onOpenClose\(row\.position\)/);
   assert.match(component, /"Toon alles"/);
   assert.match(component, /Laad nog 100/);
 });
@@ -81,14 +83,15 @@ test("margin prefers positive Aster initial margin and falls back to notional di
   assert.match(component, /money\(row\.margin\)/);
 });
 
-test("manual Aster close is confirmed, idempotent and refreshes exchange truth", () => {
-  assert.match(component, /Weet je zeker dat je deze volledige positie market wilt sluiten\?/);
-  assert.match(component, /if \(busy \|\| !position\?\.symbol/);
+test("manual Aster close is percentage-bound, idempotent and refreshes exchange truth", () => {
+  assert.match(component, /\[25, 50, 75, 100\]\.map/);
+  assert.match(component, /const \[percentage, setPercentage\] = useState\(50\)/);
   assert.match(component, /crypto\.randomUUID\(\)/);
-  assert.match(component, /expected_quantity/);
-  assert.match(component, /idempotency_key/);
+  assert.match(component, /expected_quantity: quantity/);
+  assert.match(component, /percentage,/);
+  assert.match(component, /idempotency_key: requestKey\.current/);
   assert.match(component, /await onClosed\(\)/);
-  assert.match(component, />\s*Annuleren\s*<\/button>/);
+  assert.match(component, /> Annuleren<\/button>/);
 });
 
 test("scan actions and closed rows preserve real status semantics without a dedicated status column", () => {
@@ -101,9 +104,11 @@ test("scan actions and closed rows preserve real status semantics without a dedi
   assert.doesNotMatch(component, /className=\{styles\.statusText\}>\{row\.status\}/);
 });
 
-test("Aster close confirmation is portalled to document.body so table containment cannot distort it", () => {
+test("position close uses the existing Tradecentrum 3D back face while bulk-profit confirmation remains portalled", () => {
+  assert.match(component, /detail \|\| closeTarget \? styles\.detailOpen/);
+  assert.match(component, /<PositionClosePanel position=\{liveClosePosition\}/);
+  assert.match(component, /data-reference-id=\{TRADE_CENTER_REFERENCE_IDS\.close\}/);
   assert.match(component, /import \{ createPortal \} from "react-dom"/);
-  assert.match(component, /typeof document !== "undefined" &&\s*createPortal\(/);
+  assert.match(component, /profitConfirming[\s\S]*createPortal\(/);
   assert.match(component, /document\.body/);
-  assert.match(component, /role="dialog"\s+aria-modal="true"/);
 });
