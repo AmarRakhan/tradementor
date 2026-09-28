@@ -64,7 +64,10 @@
       // Docks
       '5TW10AA','9X3V1UT#ABB','AW5M5UT#ABB',
       // Apple Pencil
-      'MUWA3ZM/A'
+      'MUWA3ZM/A',
+      // Serienummerplichtige headsets
+      '77Y86AA',     // Poly Voyager Focus 2 USB-A with charge stand
+      '77Y91AA'      // Poly Voyager 4310
     ]);
     if(serialDeviceCodes.has(code)) return true;
 
