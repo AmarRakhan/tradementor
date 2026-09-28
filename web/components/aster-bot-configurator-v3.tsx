@@ -16,6 +16,7 @@ const VISUAL_REFERENCES = {
   currentSettings: "file_0000000064fc8210b631ce0a8caebb42",
   quickEdit: "file_000000003b5081f4bee8a56187006a03",
   livePlacement: "file_00000000113c82108f6f3daf44f3627e",
+  portfolioSeatReset: "file_00000000369082108949b160b28e0965",
 } as const;
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 type Timeframe = typeof TIMEFRAMES[number];
@@ -71,6 +72,7 @@ type Draft = {
   portfolioTpInputMode: "PERCENT" | "USD";
   portfolioTpBaseMode: "CYCLE_START" | "CURRENT_VALUE" | "CUSTOM";
   portfolioTpCustomBase: string;
+  resetSeatsAfterPortfolioTp: boolean;
   shortRequiresLongEnabled: boolean;
   stopLossEnabled: boolean;
   stopLossMode: "PERCENT" | "USD";
@@ -157,6 +159,7 @@ function normalizeDraft(settings: Record<string, unknown>): Draft {
     portfolioTpInputMode: String(settings.portfolioTpInputMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT",
     portfolioTpBaseMode: ["CURRENT_VALUE", "CUSTOM"].includes(String(settings.portfolioTpBaseMode || "").toUpperCase()) ? String(settings.portfolioTpBaseMode).toUpperCase() as "CURRENT_VALUE" | "CUSTOM" : "CYCLE_START",
     portfolioTpCustomBase: n(settings.portfolioTpCustomBaseEquity, 0) > 0 ? textValue(settings.portfolioTpCustomBaseEquity, 0) : "",
+    resetSeatsAfterPortfolioTp: settings.resetSeatsAfterPortfolioTp === true,
     shortRequiresLongEnabled: settings.shortRequiresLongEnabled === true,
     stopLossEnabled: settings.stopLossEnabled === true,
     stopLossMode: String(settings.stopLossMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT",
@@ -492,6 +495,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
       portfolioTpInputMode: source.portfolioTpInputMode,
       portfolioTpBaseMode: source.portfolioTpBaseMode,
       portfolioTpCustomBaseEquity: n(source.portfolioTpCustomBase),
+      resetSeatsAfterPortfolioTp: source.resetSeatsAfterPortfolioTp,
       shortRequiresLongEnabled: source.shortRequiresLongEnabled,
       stopLossEnabled: source.stopLossEnabled,
       stopLossMode: source.stopLossMode,
