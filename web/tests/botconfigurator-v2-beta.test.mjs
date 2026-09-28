@@ -62,8 +62,8 @@ test("V3 display names are Zone Warriors and Classic DCA and Sniper is absent", 
 test("V3 reuses unchanged runtime and persistence identifiers", () => {
   assert.match(v3, /engine: "multi_bb_v1"/);
   assert.match(v3, /strategyKind: "multi_bb_v1"/);
-  assert.match(v3, /zoneSoldiersEnabled: source\\.zoneSoldiersEnabled/);
-  assert.match(v3, /zoneSoldiersOptInVersion: source\\.zoneSoldiersEnabled \\? 1 : 0/);
+  assert.match(v3, /zoneSoldiersEnabled: source\.zoneSoldiersEnabled/);
+  assert.match(v3, /zoneSoldiersOptInVersion: source\.zoneSoldiersEnabled \? 1 : 0/);
   assert.match(v3, /\/api\/exchanges\/aster\/strategy2\/settings/);
   assert.match(v3, /\/api\/exchanges\/aster\/strategy2\/start/);
 });
