@@ -155,7 +155,7 @@ from firebase_identity import check_revoked_tokens, identity_app, recent_id_toke
 from read_only_source import read_source_url
 from bybit_continuity import BybitContinuityClient, BybitContinuityCredentials, BybitContinuityError
 from friends_analytics import install_friends_routes
-from profit_notifications import ProfitNotificationService, install_profit_notification_routes
+from profit_notifications import ProfitNotificationService, install_profit_notification_routes, notifiable_entry_action
 
 
 class Strategy2OrderBudgetExhausted(RuntimeError):
@@ -3658,7 +3658,7 @@ def _profit_notification_account_values(client: AsterV3Client) -> dict[str, floa
 
 
 def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
-    """Observe confirmed Aster close evidence and deliver notifications.
+    """Observe confirmed Aster entry/close evidence and deliver notifications.
 
     This observer always constructs the Aster client with live_authorized=False.
     Notification failures never alter Strategy-2/Sniper state and never submit
@@ -3699,6 +3699,57 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
 
     strategy_state = aster_strategy2_reference(uid).get().to_dict() or {}
     sniper_state = aster_sniper_reference(uid).get().to_dict() or {}
+
+    # Build a fail-closed attribution gate for entry notifications. A confirmed
+    # exchange fill is not enough: it must also be proven to be a normal new
+    # position. Strategy-2 DCA/protection and Auto Hedge/Recovery therefore
+    # never become POSITION_ENTRY events.
+    entry_by_order_id: dict[str, dict[str, str]] = {}
+    entry_by_client_order_id: dict[str, dict[str, str]] = {}
+    entry_priority_symbols: list[str] = []
+
+    def evidence_ms(value: Any) -> int:
+        if isinstance(value, datetime):
+            return int(value.timestamp() * 1000)
+        return int(safe_float(value))
+
+    for row in strategy_state.get("orderAttributions", []) if isinstance(strategy_state.get("orderAttributions"), list) else []:
+        if not isinstance(row, dict) or not notifiable_entry_action(row.get("action")):
+            continue
+        symbol = str(row.get("symbol", "")).upper()
+        side = str(row.get("side", "")).upper()
+        if not symbol or side not in {"LONG", "SHORT"}:
+            continue
+        metadata = {
+            "strategy": str(row.get("strategyName") or row.get("strategyId") or "Strategy 2"),
+            "action": str(row.get("action", "")).upper(),
+        }
+        order_id = str(row.get("orderId", "")).strip()
+        client_order_id = str(row.get("clientOrderId", "")).strip()
+        if order_id:
+            entry_by_order_id[order_id] = metadata
+        if client_order_id:
+            entry_by_client_order_id[client_order_id] = metadata
+        if evidence_ms(row.get("recordedAt")) >= start_ms and symbol not in entry_priority_symbols:
+            entry_priority_symbols.append(symbol)
+
+    for row in sniper_state.get("activeTrades", []) if isinstance(sniper_state.get("activeTrades"), list) else []:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol", "")).upper()
+        side = str(row.get("side", "")).upper()
+        if not symbol or side not in {"LONG", "SHORT"}:
+            continue
+        metadata = {"strategy": "Sniper", "action": "SNIPER_OPEN"}
+        order_id = str(row.get("openOrderId", "")).strip()
+        client_order_id = str(row.get("openClientOrderId", "")).strip()
+        if order_id:
+            entry_by_order_id[order_id] = metadata
+        if client_order_id:
+            entry_by_client_order_id[client_order_id] = metadata
+        if int(safe_float(row.get("openedAtMs"))) >= start_ms and symbol not in entry_priority_symbols:
+            entry_priority_symbols.append(symbol)
+
     background_symbols: list[str] = []
     for row in [
         *(strategy_state.get("ownedLegs") if isinstance(strategy_state.get("ownedLegs"), list) else []),
@@ -3711,12 +3762,16 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
             background_symbols.append(symbol)
 
     rotation_slot = int(safe_float(state.get("rotationSlot")))
-    symbols = bounded_history_symbols(
+    history_symbols = bounded_history_symbols(
         priority_symbols,
         background_symbols,
         maximum_symbols=8,
         rotation_slot=rotation_slot,
     )
+    # Recent normal-entry symbols bypass the background rotation so a busy
+    # account cannot delay a new-entry alert. This only adds read-only fill
+    # lookups and never changes trading state.
+    symbols = list(dict.fromkeys([*entry_priority_symbols, *history_symbols]))
     fills: list[dict[str, Any]] = []
     for symbol in symbols:
         try:
@@ -3730,7 +3785,39 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
         )
 
     activity = recent_trade_activity_from_fills(fills)
+    entries = activity.get("entries") if isinstance(activity.get("entries"), list) else []
     exits = activity.get("exits") if isinstance(activity.get("exits"), list) else []
+
+    recorded = 0
+    for row in entries:
+        occurred_at_ms = int(safe_float(row.get("timestampMs")))
+        if occurred_at_ms < enabled_at:
+            continue
+        order_id = str(row.get("id", "")).strip()
+        client_order_id = str(row.get("clientOrderId", "")).strip()
+        metadata = entry_by_order_id.get(order_id) or entry_by_client_order_id.get(client_order_id)
+        if not metadata:
+            # Fail closed: an unmatched exchange increase may be manual, DCA,
+            # Auto Hedge, Recovery, or another protective action.
+            continue
+        side = str(row.get("side", "")).upper()
+        if side not in {"LONG", "SHORT"}:
+            continue
+        entry_identity = order_id or client_order_id
+        result = profit_notification_service.record_entry_event(
+            uid,
+            entry_event_id=entry_identity,
+            symbol=str(row.get("symbol", "")),
+            side=side,
+            strategy=str(metadata.get("strategy", "")),
+            entry_price=safe_float(row.get("averagePrice")),
+            size_usd=safe_float(row.get("executedNotionalUsd")),
+            occurred_at_ms=occurred_at_ms,
+            captured_portfolio=equity,
+            captured_available=available,
+        )
+        if result.get("created"):
+            recorded += 1
 
     completed = (
         strategy_state.get("multiBbLastCompletedCycle")
@@ -3753,7 +3840,6 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
         )
         profit_notification_service.update_reconcile_state(uid, lastPortfolioTpCycleId=completed_cycle_id)
 
-    recorded = 0
     newest_close = last_reconciled
     for row in exits:
         occurred_at_ms = int(safe_float(row.get("timestampMs")))
