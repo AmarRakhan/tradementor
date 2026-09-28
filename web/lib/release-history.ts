@@ -26,35 +26,66 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-28",
-  title: "Pushmeldingen · LONG & SHORT instapmeldingen 1.0",
+  title: "Instapdiagnose · Vrije prijszone-stoelen",
   newItems: [
-    "Pushmeldingen beheren heeft twee onafhankelijke schakelaars voor nieuwe LONG- en SHORT-posities.",
-    "Een instapmelding ontstaat uitsluitend uit een exchange-bevestigde fill met bewezen normale strategy-entry-attributie.",
-    "Instapmeldingen worden direct verstuurd en vallen niet onder de 15/30/60-minuten winstsamenvatting.",
+    "Portfolio Snapshot toont direct waarom vrije LONG/SHORT-stoelen nog geen nieuwe positie openen.",
+    "De diagnose onderscheidt Dynamic Hedge, onzekere orderreconciliatie, zone-migratie en de normale Strategy-2 entry-status.",
+    "De actuele backend entryReason en entrySkipReasons blijven read-only en veranderen geen handelsregels.",
   ],
   problems: [
-    "De bestaande pushmodule meldde winsttrades en Portfolio Take Profit, maar niet wanneer een nieuwe normale positie daadwerkelijk werd geopend.",
+    "Vrije prijszone-stoelen waren zichtbaar, maar de app liet niet zien welke onderliggende gate een instap tegenhield.",
   ],
   causes: [
-    "De notificatie-observer verwerkte tot nu toe alleen confirmed close-evidence en Portfolio TP-evidence.",
+    "De backend berekende de blokkadereden al, maar publiceerde die niet als compacte authenticated entry-diagnose naar Portfolio Snapshot.",
   ],
   fixes: [
-    "LONG en SHORT zijn afzonderlijk persistent configureerbaar en staan voor bestaande gebruikers standaard UIT.",
-    "DCA, protection, Auto Hedge, Recovery en niet-bewezen exchange-increases worden fail-closed uitgesloten.",
-    "Persistente event- en dispatch-idempotency voorkomt dubbele meldingen na scheduler-overlap, reconnect of restart.",
-    "De bestaande realtime Portfolio & Available-refresh wordt ook voor instapmeldingen gebruikt.",
+    "Strategy 2 publiceert per gebruiker de actuele entryStatus, entryReason, skip-redenen en Dynamic Hedge/queue-state.",
+    "Portfolio Snapshot toont de actuele blokkadereden rechtstreeks onder de prijszone-stoelen.",
+    "Geen Bollinger-, leverage-, margin-, DCA-, TP-, hedge- of seat-allocationregel is versoepeld.",
   ],
   now: [
-    "Een gebruiker kan direct na een werkelijk gevulde normale LONG- of SHORT-instap één pushmelding ontvangen met instapprijs, grootte, strategie, Portfolio en Available.",
+    "Bij vrije stoelen is zichtbaar of de scanner wacht op Bollinger, margin/leverage, Dynamic Hedge, reconciliatie of een andere runtime-gate.",
   ],
   technicalDetails: [
-    "Bindende mobiele UI-referentie: file_00000000cd448210b066edf7a499973e.",
-    "Read-only observer blijft live_authorized=False; deze release voegt geen order-submitpad toe.",
-    "Notificeerbare Strategy-2 acties: INITIAL_OPEN_LEG, OPEN_LEG, AUTO_RESTART en PENDING_REOPEN; Sniper gebruikt zijn confirmed active-trade orderidentiteit.",
+    "Diagnose is authenticated en read-only.",
+    "Backendbron voor de diagnose: Strategy-2 multiBbReport, Dynamic Hedge control/report en orderQueueState.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-464-entry-push-notifications",
+    version: "46",
+    build: "464",
+    releasedAt: "2026-09-28",
+    title: "Pushmeldingen · LONG & SHORT instapmeldingen 1.0",
+    newItems: [
+      "Pushmeldingen beheren heeft twee onafhankelijke schakelaars voor nieuwe LONG- en SHORT-posities.",
+      "Een instapmelding ontstaat uitsluitend uit een exchange-bevestigde fill met bewezen normale strategy-entry-attributie.",
+      "Instapmeldingen worden direct verstuurd en vallen niet onder de 15/30/60-minuten winstsamenvatting.",
+    ],
+    problems: [
+      "De bestaande pushmodule meldde winsttrades en Portfolio Take Profit, maar niet wanneer een nieuwe normale positie daadwerkelijk werd geopend.",
+    ],
+    causes: [
+      "De notificatie-observer verwerkte tot nu toe alleen confirmed close-evidence en Portfolio TP-evidence.",
+    ],
+    fixes: [
+      "LONG en SHORT zijn afzonderlijk persistent configureerbaar en staan voor bestaande gebruikers standaard UIT.",
+      "DCA, protection, Auto Hedge, Recovery en niet-bewezen exchange-increases worden fail-closed uitgesloten.",
+      "Persistente event- en dispatch-idempotency voorkomt dubbele meldingen na scheduler-overlap, reconnect of restart.",
+      "De bestaande realtime Portfolio & Available-refresh wordt ook voor instapmeldingen gebruikt.",
+    ],
+    now: [
+      "Een gebruiker kan direct na een werkelijk gevulde normale LONG- of SHORT-instap één pushmelding ontvangen met instapprijs, grootte, strategie, Portfolio en Available.",
+    ],
+    technicalDetails: [
+      "Bindende mobiele UI-referentie: file_00000000cd448210b066edf7a499973e.",
+      "Read-only observer blijft live_authorized=False; deze release voegt geen order-submitpad toe.",
+      "Notificeerbare Strategy-2 acties: INITIAL_OPEN_LEG, OPEN_LEG, AUTO_RESTART en PENDING_REOPEN; Sniper gebruikt zijn confirmed active-trade orderidentiteit.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-463-position-close",
     version: "46",
