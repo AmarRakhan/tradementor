@@ -1,0 +1,137 @@
+name: Strategy2 Entry Blocker Runtime-SA Diagnostic
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - .github/workflows/strategy2-entry-blocker-runtime-sa-diagnostic.yml
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify immutable read-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run sanitized Firestore diagnosis inside production runtime identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUNTIME_SA="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          IMAGE="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].image)')"
+          test -n "$RUNTIME_SA"
+          test -n "$IMAGE"
+          JOB="tm-entrydiag-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(python - <<'PY'
+          import base64
+          script = r'''import hashlib, json
+from google.cloud import firestore
+
+db=firestore.Client(project="tradementor-production")
+rows=[]
+for snap in db.collection("asterStrategy2").where("monitor","==",True).stream():
+    raw=snap.to_dict() or {}
+    settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+    report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
+    zone=raw.get("zoneSoldierReport") if isinstance(raw.get("zoneSoldierReport"),dict) else {}
+    seat=zone.get("seatModel") if isinstance(zone.get("seatModel"),dict) else {}
+    queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+    dyn_report=raw.get("dynamicHedgeReport") if isinstance(raw.get("dynamicHedgeReport"),dict) else {}
+    dyn=(db.collection("users").document(snap.id).collection("asterDynamicHedge").document("control").get().to_dict() or {})
+    rows.append({
+        "accountRef":hashlib.sha256(snap.id.encode()).hexdigest()[:10],
+        "enabled":raw.get("enabled") is True,
+        "phase":str(raw.get("phase") or ""),
+        "lastReason":str(raw.get("lastReason") or ""),
+        "maximumPositions":settings.get("maximumPositions"),
+        "minimumLeverage":settings.get("minimumLeverage"),
+        "bollingerEnabled":settings.get("bollingerEntryFilter15mEnabled") is True,
+        "directionalBollingerEnabled":settings.get("directionalBollingerEnabled") is True,
+        "bollingerLongTimeframe":settings.get("bollingerLongTimeframe"),
+        "bollingerShortTimeframe":settings.get("bollingerShortTimeframe"),
+        "exposureRefillEnabled":settings.get("exposureRefillEnabled") is True,
+        "exposureRefillLongTimeframe":settings.get("exposureRefillLongTimeframe"),
+        "exposureRefillShortTimeframe":settings.get("exposureRefillShortTimeframe"),
+        "shortRequiresLongEnabled":settings.get("shortRequiresLongEnabled") is True,
+        "entryStatus":report.get("entryStatus"),
+        "entryReason":report.get("entryReason"),
+        "entrySkipReasons":report.get("entrySkipReasons") if isinstance(report.get("entrySkipReasons"),dict) else {},
+        "scannedCandidateCount":report.get("scannedCandidateCount"),
+        "executableCandidateCount":report.get("executableCandidateCount"),
+        "remainingLong":report.get("remainingLong"),
+        "remainingShort":report.get("remainingShort"),
+        "activeLong":report.get("activeLong"),
+        "activeShort":report.get("activeShort"),
+        "strategyPositionCount":report.get("strategyPositionCount"),
+        "accountRemainingCapacity":report.get("accountRemainingCapacity"),
+        "nextRequiredEntryMarginUsd":report.get("nextRequiredEntryMarginUsd"),
+        "zoneMigrationHold":report.get("zoneMigrationHold") is True,
+        "activeZone":seat.get("activeZone",zone.get("activeZone")),
+        "freeLongActiveZone":seat.get("freeLongActiveZone"),
+        "freeShortActiveZone":seat.get("freeShortActiveZone"),
+        "occupiedLongActiveZone":seat.get("occupiedLongActiveZone"),
+        "occupiedShortActiveZone":seat.get("occupiedShortActiveZone"),
+        "strategyOpenLong":seat.get("strategyOpenLong"),
+        "strategyOpenShort":seat.get("strategyOpenShort"),
+        "dynamicHedgeEnabled":dyn.get("enabled") is True,
+        "dynamicOwnershipState":str(dyn.get("ownershipState") or ""),
+        "dynamicLastReason":str(dyn.get("lastReason") or ""),
+        "dynamicReportStatus":str(dyn_report.get("status") or ""),
+        "dynamicReportReason":str(dyn_report.get("reason") or ""),
+        "dynamicSafetyStatus":str(dyn_report.get("safetyStatus") or ""),
+        "dynamicOrdersSent":dyn_report.get("ordersSent"),
+        "queueHaltedUncertain":queue.get("haltedUncertain") is True,
+        "queueHasCurrentIntent":bool(queue.get("currentIntent")),
+        "queueUncertainReason":str(queue.get("uncertainReason") or ""),
+    })
+rows.sort(key=lambda x:x["accountRef"])
+print("ENTRY_BLOCKER_RUNTIME "+json.dumps(rows,sort_keys=True,separators=(",",":")),flush=True)
+'''
+          print(base64.b64encode(script.encode()).decode())
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$IMAGE" --service-account "$RUNTIME_SA"             --command python             --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=entry-blocker-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          sleep 3
+          RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"ENTRY_BLOCKER_RUNTIME \""             --project "$GCP_PROJECT_ID" --freshness=15m --limit=5 --order=desc --format='value(textPayload)' | grep 'ENTRY_BLOCKER_RUNTIME ' | head -n1)"
+          test -n "$RESULT"
+          gh issue comment 41 --repo "$GITHUB_REPOSITORY" --body "$RESULT"
+          echo "$RESULT"
+
+          cleanup
+          trap - EXIT
