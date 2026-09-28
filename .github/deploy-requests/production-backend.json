@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "2995a4c1d8c2d5c8c93dace5b1b23e417847ae90",
+  "sourceCommit": "f58f4e508c1e8b830b80f080225e3f0eab091a01",
   "requestedBy": "AmarRakhan",
-  "requestId": "price-zone-seat-refill-hotfix-20260928"
+  "requestId": "zone-seat-live-sync-hotfix-20260928"
 }
