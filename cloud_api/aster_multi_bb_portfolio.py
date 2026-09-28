@@ -133,7 +133,8 @@ def ensure_cycle(raw_state: dict[str, Any], *, uid: str, current_equity: float,
                  portfolio_tp_percent: float, timestamp_ms: int,
                  portfolio_tp_input_mode: str = "PERCENT", portfolio_tp_value: float | None = None,
                  portfolio_tp_base_mode: str = "CYCLE_START", portfolio_tp_custom_base_equity: float = 0.0,
-                 config_version: int = 0) -> tuple[dict[str, Any], bool]:
+                 config_version: int = 0, current_long_slots: int | None = None,
+                 current_short_slots: int | None = None, current_maximum_positions: int | None = None) -> tuple[dict[str, Any], bool]:
     """Return durable cycle state and snapshot a requested base at most once per config version."""
     existing = raw_state.get("multiBbCycle") if isinstance(raw_state.get("multiBbCycle"), dict) else {}
     start = _f(existing.get("cycleStartEquity"))
@@ -171,6 +172,22 @@ def ensure_cycle(raw_state: dict[str, Any], *, uid: str, current_equity: float,
         cycle.setdefault("baseMode", "CYCLE_START")
         cycle.setdefault("baseEquity", start)
         cycle.setdefault("cycleStatus", RUNNING)
+        if cycle.get("cycleStartLongSlots") is None and current_long_slots is not None:
+            cycle["cycleStartLongSlots"] = max(0, _i(current_long_slots))
+            changed = True
+        if cycle.get("cycleStartShortSlots") is None and current_short_slots is not None:
+            cycle["cycleStartShortSlots"] = max(0, _i(current_short_slots))
+            changed = True
+        if cycle.get("cycleStartMaximumPositions") is None and current_maximum_positions is not None:
+            cycle["cycleStartMaximumPositions"] = max(1, _i(current_maximum_positions))
+            changed = True
+        if cycle.get("seatSnapshotSource") is None and cycle.get("cycleStartLongSlots") is not None and cycle.get("cycleStartShortSlots") is not None:
+            cycle["seatSnapshotSource"] = "MIGRATION_CURRENT_SETTINGS"
+            changed = True
+        cycle.setdefault("seatResetArmed", False)
+        cycle.setdefault("slotResetCompletedAt", None)
+        cycle.setdefault("slotResetCompletedAtMs", None)
+        cycle.setdefault("slotResetCycleId", None)
         cycle["updatedAtMs"] = timestamp_ms
         return cycle, changed
     # Legacy active accounts cannot reconstruct a pre-deployment baseline from
@@ -179,7 +196,8 @@ def ensure_cycle(raw_state: dict[str, Any], *, uid: str, current_equity: float,
         uid, equity=current_equity, portfolio_tp_percent=portfolio_tp_percent, timestamp_ms=timestamp_ms,
         portfolio_tp_input_mode=input_mode, portfolio_tp_value=value,
         portfolio_tp_base_mode=requested_base_mode, portfolio_tp_custom_base_equity=custom,
-        config_version=config_version,
+        config_version=config_version, current_long_slots=current_long_slots,
+        current_short_slots=current_short_slots, current_maximum_positions=current_maximum_positions,
     )
     cycle["baselineSource"] = "CYCLE_START" if not raw_state.get("multiBbPositions") else "MIGRATION_CURRENT_EXCHANGE_EQUITY"
     return cycle, True
