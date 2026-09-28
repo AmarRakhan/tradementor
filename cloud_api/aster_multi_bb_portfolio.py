@@ -763,7 +763,7 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
         "nextCycleId": next_cycle.get("cycleId"), "timestamp": now})
     if seat_reset_armed and seat_reset_report.get("applied") and not seat_reset_report.get("idempotentReplay"):
         ref.collection("audit").add({
-            "event": "PORTFOLIO_TP_SEAT_RESET_COMPLETED", "user": uid,
+            "event": "PORTFOLIO_TP_SEAT_RESET_COMPLETED", "user": uid, "userId": uid,
             "botId": "aster-strategy-2", "cycleId": completed_cycle.get("cycleId"),
             "previousLongSlots": seat_reset_report.get("beforeLongSlots"),
             "previousShortSlots": seat_reset_report.get("beforeShortSlots"),
