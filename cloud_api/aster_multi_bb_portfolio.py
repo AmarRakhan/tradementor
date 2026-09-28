@@ -598,49 +598,159 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
         )
 
     now = datetime.now(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
     cycle.update({"cycleStatus": FLAT_CONFIRMED, "cycleEndEquity": end_equity,
-                  "flatConfirmedAt": now, "flatConfirmedAtMs": int(now.timestamp() * 1000),
-                  "updatedAtMs": int(now.timestamp() * 1000)})
+                  "flatConfirmedAt": now, "flatConfirmedAtMs": now_ms, "updatedAtMs": now_ms})
+
+    latest_after_close = ref.get().to_dict() or {}
+    latest_settings_after_close = latest_after_close.get("settings") if isinstance(latest_after_close.get("settings"), dict) else {}
+    seat_reset_armed = bool(cycle.get("seatResetArmed", False))
+    seat_reset_report: dict[str, Any] = {
+        "armed": seat_reset_armed,
+        "applied": False,
+        "cycleId": str(cycle.get("cycleId") or ""),
+    }
+    if seat_reset_armed:
+        already_completed = (
+            str(cycle.get("slotResetCycleId") or "") == str(cycle.get("cycleId") or "")
+            and _i(cycle.get("slotResetCompletedAtMs")) > 0
+        )
+        if already_completed:
+            seat_reset_report.update({
+                "applied": True,
+                "idempotentReplay": True,
+                "targetLongSlots": _i(latest_settings_after_close.get("longSlots")),
+                "targetShortSlots": _i(latest_settings_after_close.get("shortSlots")),
+                "targetMaximumPositions": _i(latest_settings_after_close.get("maximumPositions")),
+            })
+        else:
+            ref.collection("audit").add({
+                "event": "PORTFOLIO_TP_SEAT_RESET_STARTED", "user": uid,
+                "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
+                "previousLongSlots": _i(latest_settings_after_close.get("longSlots")),
+                "previousShortSlots": _i(latest_settings_after_close.get("shortSlots")),
+                "targetLongSlots": cycle.get("cycleStartLongSlots"),
+                "targetShortSlots": cycle.get("cycleStartShortSlots"),
+                "timestamp": now,
+            })
+            seat_reset_report = portfolio_tp_seat_reset_plan(cycle, latest_settings_after_close)
+            seat_reset_report["armed"] = True
+            if not seat_reset_report.get("applied"):
+                cycle.update({
+                    "cycleStatus": FLAT_CONFIRMING,
+                    "seatResetError": str(seat_reset_report.get("reason") or "seat-reset-failed"),
+                    "updatedAtMs": now_ms,
+                })
+                _write_cycle(
+                    ref, cycle, phase=FLAT_CONFIRMING,
+                    reason="Portfolio TP: exchange flat maar stoelreset kon niet veilig worden afgerond; entry-lock blijft actief",
+                )
+                ref.collection("audit").add({
+                    "event": "PORTFOLIO_TP_SEAT_RESET_FAILED", "user": uid,
+                    "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
+                    "reason": seat_reset_report.get("reason"), "timestamp": now,
+                })
+                report = {
+                    **portfolio_cycle_snapshot(cycle, mode=mode, current_equity=end_equity,
+                                               portfolio_tp_percent=portfolio_tp_percent),
+                    "actions": actions[-50:], "ordersSent": sent, "autoRestarted": False,
+                    "seatReset": seat_reset_report, "seatResetPending": True,
+                }
+                ref.set({"multiBbReport": report}, merge=True)
+                return PortfolioGateResult(
+                    True, False, report, {**raw_state, "multiBbCycle": cycle},
+                    final_account, [], remaining_orders, sent,
+                )
+            latest_settings_after_close = dict(seat_reset_report["settings"])
+            cycle.update({
+                "slotResetCompletedAt": now,
+                "slotResetCompletedAtMs": now_ms,
+                "slotResetCycleId": cycle.get("cycleId"),
+                "seatResetError": None,
+                "updatedAtMs": now_ms,
+            })
+            actions.append({
+                "kind": "PORTFOLIO_TP_SEAT_RESET",
+                "fromLongSlots": seat_reset_report.get("beforeLongSlots"),
+                "fromShortSlots": seat_reset_report.get("beforeShortSlots"),
+                "toLongSlots": seat_reset_report.get("targetLongSlots"),
+                "toShortSlots": seat_reset_report.get("targetShortSlots"),
+                "clamped": bool(seat_reset_report.get("clamped")),
+            })
+    else:
+        seat_reset_report.update({"reason": "toggle-off"})
+        ref.collection("audit").add({
+            "event": "PORTFOLIO_TP_SEAT_RESET_SKIPPED", "user": uid,
+            "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
+            "reason": "toggle-off", "timestamp": now,
+        })
+
     completed_cycle = dict(cycle)
-    enabled = bool((ref.get().to_dict() or {}).get("enabled", raw_state.get("enabled", False)))
+    enabled = bool(latest_after_close.get("enabled", raw_state.get("enabled", False)))
     base_extra = {"multiBbPositions": {}, "multiBbLastCompletedCycle": completed_cycle}
+    settings_extra = {"settings": latest_settings_after_close} if seat_reset_armed else {}
     if not enabled:
         _write_cycle(ref, cycle, phase=FLAT_CONFIRMED,
                      reason="Portfolio TP afgerond en exchange flat; bot staat UIT dus geen herstart",
-                     extra={**base_extra, "monitor": False})
+                     extra={**base_extra, **settings_extra, "monitor": False})
+        if seat_reset_armed and seat_reset_report.get("applied") and not seat_reset_report.get("idempotentReplay"):
+            ref.collection("audit").add({
+                "event": "PORTFOLIO_TP_SEAT_RESET_COMPLETED", "user": uid,
+                "botId": "aster-strategy-2", "cycleId": completed_cycle.get("cycleId"),
+                "previousLongSlots": seat_reset_report.get("beforeLongSlots"),
+                "previousShortSlots": seat_reset_report.get("beforeShortSlots"),
+                "targetLongSlots": seat_reset_report.get("targetLongSlots"),
+                "targetShortSlots": seat_reset_report.get("targetShortSlots"),
+                "clamped": bool(seat_reset_report.get("clamped")), "timestamp": now,
+            })
         report = {**portfolio_cycle_snapshot(cycle, mode=mode, current_equity=end_equity,
                                              portfolio_tp_percent=portfolio_tp_percent),
-                  "actions": actions[-50:], "ordersSent": sent, "autoRestarted": False}
+                  "actions": actions[-50:], "ordersSent": sent, "autoRestarted": False,
+                  "seatReset": seat_reset_report}
         ref.set({"multiBbReport": report}, merge=True)
-        return PortfolioGateResult(True, False, report, {**raw_state, **base_extra, "multiBbCycle": cycle},
-                                   final_account, [], [], sent)
+        return PortfolioGateResult(
+            True, False, report,
+            {**raw_state, **base_extra, **settings_extra, "multiBbCycle": cycle},
+            final_account, [], [], sent,
+        )
 
     restart_ms = max(timestamp_ms + 1, int(time.time() * 1000))
-    latest_after_close = ref.get().to_dict() or {}
-    latest_settings_after_close = latest_after_close.get("settings") if isinstance(latest_after_close.get("settings"), dict) else {}
     next_input_mode = _normalize_input_mode(latest_settings_after_close.get("portfolioTpInputMode", cycle.get("takeProfitInputMode") or portfolio_tp_input_mode))
     next_value = _f(latest_settings_after_close.get("portfolioTpValue"), _f(cycle.get("takeProfitValue"), _f(portfolio_tp_value, portfolio_tp_percent)))
     next_percent = _f(latest_settings_after_close.get("portfolioTpPercent"), portfolio_tp_percent)
     next_config_version = _i(latest_settings_after_close.get("version"), config_version)
+    normalized_settings = {**latest_settings_after_close, "portfolioTpBaseMode": "CYCLE_START"}
     next_cycle = _new_cycle(
         uid, equity=end_equity, portfolio_tp_percent=next_percent, timestamp_ms=restart_ms,
         portfolio_tp_input_mode=next_input_mode,
         portfolio_tp_value=next_value,
         portfolio_tp_base_mode="CYCLE_START", config_version=next_config_version,
+        current_long_slots=_i(normalized_settings.get("longSlots")),
+        current_short_slots=_i(normalized_settings.get("shortSlots")),
+        current_maximum_positions=_i(normalized_settings.get("maximumPositions")),
     )
     next_cycle["restartStartedAt"] = now
     next_cycle["restartStartedAtMs"] = restart_ms
-    normalized_settings = {**latest_settings_after_close, "portfolioTpBaseMode": "CYCLE_START"}
     _write_cycle(ref, next_cycle, phase=RESTARTING,
                  reason=f"Portfolio TP flat bevestigd; nieuwe cycle start vanaf echte equity {end_equity:.8f}",
                  extra={**base_extra, "multiBbAdoptionPending": False, "settings": normalized_settings})
     ref.collection("audit").add({"event": "PORTFOLIO_TP_FLAT_CONFIRMED", "user": uid,
         "cycleId": completed_cycle.get("cycleId"), "cycleEndEquity": end_equity,
         "nextCycleId": next_cycle.get("cycleId"), "timestamp": now})
+    if seat_reset_armed and seat_reset_report.get("applied") and not seat_reset_report.get("idempotentReplay"):
+        ref.collection("audit").add({
+            "event": "PORTFOLIO_TP_SEAT_RESET_COMPLETED", "user": uid,
+            "botId": "aster-strategy-2", "cycleId": completed_cycle.get("cycleId"),
+            "previousLongSlots": seat_reset_report.get("beforeLongSlots"),
+            "previousShortSlots": seat_reset_report.get("beforeShortSlots"),
+            "targetLongSlots": seat_reset_report.get("targetLongSlots"),
+            "targetShortSlots": seat_reset_report.get("targetShortSlots"),
+            "clamped": bool(seat_reset_report.get("clamped")), "timestamp": now,
+        })
     restart_raw = {**raw_state, **base_extra, "multiBbCycle": next_cycle,
                    "settings": normalized_settings, "multiBbAdoptionPending": False, "phase": RESTARTING}
     report = {**portfolio_cycle_snapshot(next_cycle, mode=mode, current_equity=end_equity,
                                          portfolio_tp_percent=portfolio_tp_percent),
               "actions": actions[-50:], "ordersSent": sent, "autoRestarted": True,
-              "previousCycleEndEquity": end_equity}
+              "previousCycleEndEquity": end_equity, "seatReset": seat_reset_report}
     return PortfolioGateResult(True, True, report, restart_raw, final_account, [], [], sent)
