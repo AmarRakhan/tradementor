@@ -65,3 +65,15 @@ test("history includes confirmed Git baseline and reconstructed pre-Git mileston
   assert.match(history, /confidence: "reconstructed"/);
   assert.match(history, /exacte .*buildnummers/i);
 });
+
+
+test("Build 458 keeps historical Build 457 metadata pinned instead of inheriting the current build", async () => {
+  const history = await readFile(new URL("../lib/release-history.ts", import.meta.url), "utf8");
+  const marker = 'id: "v46-build-457-price-zone-sync"';
+  const start = history.indexOf(marker);
+  assert.notEqual(start, -1);
+  const block = history.slice(start, start + 700);
+  assert.match(block, /version: "46"/);
+  assert.match(block, /build: "457"/);
+  assert.doesNotMatch(block, /WEBAPP_BUILD_NUMBER/);
+});

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 190 120" role="img" aria-label="Classic DCA">
+<defs><linearGradient id="cg" x1="0" x2="1"><stop stop-color="#43f0ad"/><stop offset=".72" stop-color="#18d488"/><stop offset="1" stop-color="#d9b84f"/></linearGradient><filter id="cgl"><feGaussianBlur stdDeviation="1.8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+<rect width="190" height="120" rx="18" fill="#04100c"/>
+<path d="M12 24 36 44 57 36 78 62 99 53 119 80 142 61" fill="none" stroke="#38eaa5" stroke-width="5" stroke-linejoin="round" filter="url(#cgl)"/>
+<path d="M142 61c12-17 20-31 35-39" fill="none" stroke="url(#cg)" stroke-width="6" stroke-linecap="round" filter="url(#cgl)"/><path d="m171 18 10-2-3 10" fill="#d9b84f"/>
+<g fill="#d9b84f" stroke="#ffe488" stroke-width="1.5"><ellipse cx="37" cy="55" rx="9" ry="4"/><rect x="28" y="55" width="18" height="7" rx="2"/><ellipse cx="80" cy="72" rx="9" ry="4"/><rect x="71" y="72" width="18" height="7" rx="2"/><ellipse cx="118" cy="88" rx="9" ry="4"/><rect x="109" y="88" width="18" height="7" rx="2"/><ellipse cx="150" cy="73" rx="9" ry="4"/><rect x="141" y="73" width="18" height="7" rx="2"/></g>
+<g font-family="Arial,sans-serif" font-size="8" font-weight="700" fill="#38eaa5"><text x="27" y="72">BUY</text><text x="70" y="89">BUY</text><text x="108" y="105">BUY</text></g>
+<circle cx="173" cy="20" r="12" fill="#8e6714" stroke="#ffe488" stroke-width="2"/><text x="169" y="25" font-family="Arial" font-weight="800" font-size="14" fill="#fff5c4">$</text></svg>

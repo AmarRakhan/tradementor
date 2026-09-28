@@ -26,39 +26,77 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-28",
-  title: "Prijszone-sync · Portfolio Koers en Snapshot één live zone",
+  title: "Botconfigurator 3.0 · Zone Warriors + Classic DCA",
   newItems: [
-    "Portfolio Snapshot gebruikt voortaan dezelfde actuele live-equityzone als de zichtbare Portfolio Koers-chart.",
-    "Bij een zonegrenswissel wordt de Snapshot direct bijgewerkt en vraagt hij meteen een verse prijszone-stoelstatus op.",
+    "Botconfigurator is teruggebracht van acht secties naar vier duidelijke schermen: Strategie, Instellingen, Instap & DCA en Controleren.",
+    "De zichtbare strategienamen zijn exchange-onafhankelijk: Zone Warriors en Classic DCA.",
+    "Leverage, Positiegrootte, Smart Rescue DCA, Bescherming & exposure en Refill & heropenen zijn compacte uitklapbare blokken.",
   ],
   problems: [
-    "Portfolio Koers kon bijvoorbeeld Zone 2 actief tonen terwijl Prijszone-strategie in dezelfde weergave nog Zone 3 actief liet zien.",
-    "Actieve-zone-specifieke vrije stoelwaarden konden daardoor tijdelijk bij de verkeerde zichtbare zone lijken te horen.",
+    "De achtstaps configurator was op mobiel te lang en technisch, terwijl vereenvoudigen eerder ook echte instellingen uit beeld kon laten verdwijnen.",
+    "Strategienamen verwezen naar interne implementatiedetails en de exchange in plaats van naar de handelsstijl.",
   ],
   causes: [
-    "De chart bepaalde de zichtbare zone direct uit live portfolio-equity, terwijl de Snapshot zijn zonelabel uit het afzonderlijk gepollde en kortdurend achterlopende priceZoneSeats-rapport las.",
+    "Functionele instellingen, releasebeheer en hoofdflow waren in één lange pagina gegroepeerd.",
+    "De eerdere UI-naamgeving was meegegroeid met de technische implementatie.",
   ],
   fixes: [
-    "De chart publiceert zijn live display-zone rechtstreeks aan de sibling Portfolio Snapshot; er bestaat daardoor nog maar één zichtbare actieve-zonewaarde.",
-    "De Snapshot ververst priceZoneSeats onmiddellijk zodra de live zone verandert, naast de bestaande periodieke refresh.",
-    "Als het serverrapport nog de vorige zone bevat, worden uitsluitend de actieve-zone-specifieke vrije stoelcijfers tijdelijk als — / — getoond tot de serverstatus gelijkloopt; globale aantallen blijven zichtbaar.",
+    "Alle bestaande configuratiestate blijft op dezelfde backendkeys opgeslagen; de nieuwe namen zijn uitsluitend displaynamen.",
+    "LONG en SHORT behouden afzonderlijke startbedragen, DCA-bedragen, DCA-afstanden en Max DCA.",
+    "Portfolio TP behoudt Per trade, Portfolio en Uit inclusief de bestaande basiskeuze.",
+    "Botconfigurator 3.0 wordt alleen gerouteerd wanneer /v1/me/releases het BETA-kanaal teruggeeft; STABLE blijft exact op de bestaande V2/legacy-route.",
   ],
   now: [
-    "Het is niet meer mogelijk dat de grafiek Zone X actief toont terwijl de Snapshot tegelijk Zone Y actief toont.",
-    "S1/R1 en het Snapshot-zonelabel volgen dezelfde actuele portfolio-equityzone.",
-    "Deze Build 457-wijziging is presentatie- en status-synchronisatie; order-, DCA-, TP-, hedge- en origin-zone-logica worden niet gewijzigd.",
+    "De gebruiker ziet steeds één compacte hoofdstap tegelijk en kan alle geavanceerde instellingen via accordions bereiken.",
+    "Sniper staat niet in deze configurator en blijft een zelfstandige hoofdtab.",
+    "De wijziging is BETA-only UI/UX + state-mapping; STABLE-labels, V2-component, trading-engine identifiers en runtime-eigenaarschap blijven ongewijzigd.",
   ],
-  before: "De chart kon al op de nieuwe live zone staan terwijl de 15-seconden Snapshot-poll nog het vorige serverrapport toonde.",
-  after: "Chart en Snapshot tonen onmiddellijk dezelfde actieve zone; zonegebonden stoelcijfers worden pas als actueel getoond wanneer het serverrapport diezelfde zone bevestigt.",
   technicalDetails: [
-    "Source of truth voor de zichtbare zone: Portfolio Koers live-equity ladder via portfolioZoneContextFromLadder.",
-    "Nieuwe callback: onActiveZoneChange van PortfolioKoersChart naar AsterPortfolioSnapshotEnhancer.",
-    "Diagnostiek: data-seat-zone-sync is synced of waiting; waiting voorkomt dat oude actieve-zone seat counts als actuele cijfers worden gepresenteerd.",
+    "Visuele referenties Set A: file_00000000e820820abd4c0803c0faf72c, file_00000000d4188243af425d77dce05825, file_00000000e3d88246868c97243a4217e0, file_000000001aec8210ae97ce7474fad735.",
+    "Expanded-state Set B: file_00000000e5a88210923fcf9378f4bbb6, file_00000000d50c82438453f4be8cb1afc3, file_0000000073288210ad62e9dfbb148202, file_0000000015c482109ffb7e3e4b6e4efe, file_00000000d18082108f0116c9afb082e9.",
+    "Interne strategyKind/engine blijft multi_bb_v1; Zone Warriors blijft zoneSoldiersEnabled/zoneSoldiersOptInVersion gebruiken.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-457-price-zone-sync",
+    version: "46",
+    build: "457",
+    releasedAt: "2026-09-28",
+    title: "Prijszone-sync · Portfolio Koers en Snapshot één live zone",
+    newItems: [
+      "Portfolio Snapshot gebruikt voortaan dezelfde actuele live-equityzone als de zichtbare Portfolio Koers-chart.",
+      "Bij een zonegrenswissel wordt de Snapshot direct bijgewerkt en vraagt hij meteen een verse prijszone-stoelstatus op.",
+    ],
+    problems: [
+      "Portfolio Koers kon bijvoorbeeld Zone 2 actief tonen terwijl Prijszone-strategie in dezelfde weergave nog Zone 3 actief liet zien.",
+      "Actieve-zone-specifieke vrije stoelwaarden konden daardoor tijdelijk bij de verkeerde zichtbare zone lijken te horen.",
+    ],
+    causes: [
+      "De chart bepaalde de zichtbare zone direct uit live portfolio-equity, terwijl de Snapshot zijn zonelabel uit het afzonderlijk gepollde en kortdurend achterlopende priceZoneSeats-rapport las.",
+    ],
+    fixes: [
+      "De chart publiceert zijn live display-zone rechtstreeks aan de sibling Portfolio Snapshot; er bestaat daardoor nog maar één zichtbare actieve-zonewaarde.",
+      "De Snapshot ververst priceZoneSeats onmiddellijk zodra de live zone verandert, naast de bestaande periodieke refresh.",
+      "Als het serverrapport nog de vorige zone bevat, worden uitsluitend de actieve-zone-specifieke vrije stoelcijfers tijdelijk als — / — getoond tot de serverstatus gelijkloopt; globale aantallen blijven zichtbaar.",
+    ],
+    now: [
+      "Het is niet meer mogelijk dat de grafiek Zone X actief toont terwijl de Snapshot tegelijk Zone Y actief toont.",
+      "S1/R1 en het Snapshot-zonelabel volgen dezelfde actuele portfolio-equityzone.",
+      "Deze Build 457-wijziging is presentatie- en status-synchronisatie; order-, DCA-, TP-, hedge- en origin-zone-logica worden niet gewijzigd.",
+    ],
+    before: "De chart kon al op de nieuwe live zone staan terwijl de 15-seconden Snapshot-poll nog het vorige serverrapport toonde.",
+    after: "Chart en Snapshot tonen onmiddellijk dezelfde actieve zone; zonegebonden stoelcijfers worden pas als actueel getoond wanneer het serverrapport diezelfde zone bevestigt.",
+    technicalDetails: [
+      "Source of truth voor de zichtbare zone: Portfolio Koers live-equity ladder via portfolioZoneContextFromLadder.",
+      "Nieuwe callback: onActiveZoneChange van PortfolioKoersChart naar AsterPortfolioSnapshotEnhancer.",
+      "Diagnostiek: data-seat-zone-sync is synced of waiting; waiting voorkomt dat oude actieve-zone seat counts als actuele cijfers worden gepresenteerd.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-456-price-zone-max-savefix",
     version: "46",
