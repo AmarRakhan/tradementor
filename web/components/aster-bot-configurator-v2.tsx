@@ -56,6 +56,7 @@ type Draft = {
   shortTp: string;
   portfolioTpValue: string;
   portfolioTpInputMode: "PERCENT" | "USD";
+  resetSeatsAfterPortfolioTp: boolean;
   shortRequiresLongEnabled: boolean;
   stopLossEnabled: boolean;
   stopLossMode: "PERCENT" | "USD";
@@ -136,6 +137,7 @@ function normalizeDraft(settings: Record<string, unknown>): Draft {
     shortTp: pctText(settings.shortTakeProfitValue ?? settings.takeProfitShort ?? legacyTp, legacyTp),
     portfolioTpValue: textValue(settings.portfolioTpValue ?? settings.portfolioTpPercent, 20),
     portfolioTpInputMode: String(settings.portfolioTpInputMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT",
+    resetSeatsAfterPortfolioTp: settings.resetSeatsAfterPortfolioTp === true,
     shortRequiresLongEnabled: settings.shortRequiresLongEnabled === true,
     stopLossEnabled: settings.stopLossEnabled === true,
     stopLossMode: String(settings.stopLossMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT",
@@ -184,6 +186,7 @@ const STEP_LABELS = [
 export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed, onChanged, release }: Props) {
   const strategy2 = snapshot?.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
   const persisted = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
+  const cycle = strategy2.multiBbCycle && typeof strategy2.multiBbCycle === "object" ? strategy2.multiBbCycle as Record<string, unknown> : {};
   const enabled = strategy2.enabled === true;
   const report = strategy2.multiBb && typeof strategy2.multiBb === "object" ? strategy2.multiBb as Record<string, unknown> :
     strategy2.multiBbReport && typeof strategy2.multiBbReport === "object" ? strategy2.multiBbReport as Record<string, unknown> : {};
@@ -247,6 +250,8 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
     return { longSlots, shortSlots, totalSlots, startMargin, dcaCapacity, theoretical: startMargin + dcaCapacity };
   }, [draft]);
 
+  const cycleStartLongSlots = Math.max(0, Math.round(n(cycle.cycleStartLongSlots, n(persisted.longSlots, totals.longSlots))));
+  const cycleStartShortSlots = Math.max(0, Math.round(n(cycle.cycleStartShortSlots, n(persisted.shortSlots, totals.shortSlots))));
   const available = n(snapshot?.availableBalance ?? snapshot?.availableToTrade ?? snapshot?.available, 0);
   const equity = n(snapshot?.equity ?? snapshot?.portfolioValue, 0);
   const netExposure = n(report.netExposureNotional ?? report.netExposure, 0);
@@ -379,6 +384,7 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
       takeProfitShort: n(draft.shortTp) / 100,
       portfolioTpValue: n(draft.portfolioTpValue),
       portfolioTpInputMode: draft.portfolioTpInputMode,
+      resetSeatsAfterPortfolioTp: draft.resetSeatsAfterPortfolioTp,
       shortRequiresLongEnabled: draft.shortRequiresLongEnabled,
       stopLossEnabled: draft.stopLossEnabled,
       stopLossMode: draft.stopLossMode,
@@ -567,7 +573,24 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
     <section className="v2-step" id="v2-step-winst"><StepHead number="6" title="Winst nemen" subtitle="Wanneer wordt winst gecasht?" />
       <div className="v2-tabs">{(["PER_TRADE", "PORTFOLIO", "OFF"] as TpMode[]).map((mode) => <button key={mode} type="button" className={draft.tpMode === mode ? "active" : ""} onClick={() => update("tpMode", mode)}>{mode === "PER_TRADE" ? "Per trade" : mode === "PORTFOLIO" ? "Portfolio" : "Uit"}</button>)}</div>
       <div className="v2-sidegrid"><article className="v2-side long"><b>LONG</b><Field label="Take Profit" value={draft.longTp} onChange={(v) => update("longTp", v)} suffix="%" disabled={draft.tpMode === "OFF"} /></article><article className="v2-side short"><b>SHORT</b><Field label="Take Profit" value={draft.shortTp} onChange={(v) => update("shortTp", v)} suffix="%" disabled={draft.tpMode === "OFF"} /></article></div>
-      {draft.tpMode === "PORTFOLIO" && <div className="v2-grid cols2"><Field label="Portfolio TP" value={draft.portfolioTpValue} onChange={(v) => update("portfolioTpValue", v)} suffix={draft.portfolioTpInputMode === "USD" ? "$" : "%"} /><label className="v2-field"><span>Invoermodus</span><select value={draft.portfolioTpInputMode} onChange={(e) => update("portfolioTpInputMode", e.target.value as "PERCENT" | "USD")}><option value="PERCENT">%</option><option value="USD">$</option></select></label></div>}
+      {draft.tpMode === "PORTFOLIO" && <>
+        <div className="v2-grid cols2"><Field label="Portfolio TP" value={draft.portfolioTpValue} onChange={(v) => update("portfolioTpValue", v)} suffix={draft.portfolioTpInputMode === "USD" ? "$" : "%"} /><label className="v2-field"><span>Invoermodus</span><select value={draft.portfolioTpInputMode} onChange={(e) => update("portfolioTpInputMode", e.target.value as "PERCENT" | "USD")}><option value="PERCENT">%</option><option value="USD">$</option></select></label></div>
+        <section className="v2-tp-seat-reset" data-feature="portfolio-tp-seat-reset">
+          <header><small>Na behalen doel (Portfolio TP)</small></header>
+          <Toggle
+            label="Stoelen resetten na Portfolio TP"
+            description="Na bevestigde sluiting van alle Portfolio TP-posities worden LONG/SHORT automatisch teruggezet naar de startwaarden van deze cyclus."
+            checked={draft.resetSeatsAfterPortfolioTp}
+            onChange={(v) => update("resetSeatsAfterPortfolioTp", v)}
+          />
+          <div className="v2-seat-reset-help"><b>Veilige volgorde</b><p>Eerst alles sluiten en flat bevestigen. Daarna pas de stoelreset. Tijdens sluiten blijven nieuwe entries geblokkeerd.</p></div>
+          <div className="v2-seat-reset-flow" aria-label="Portfolio TP stoelreset">
+            <span><small>Huidige instelling</small><b>{totals.longSlots}L / {totals.shortSlots}S</b></span><i>→</i>
+            <span className="target"><small>Portfolio TP</small><b>Alles dicht</b></span><i>→</i>
+            <span><small>Reset naar</small><b>{cycleStartLongSlots}L / {cycleStartShortSlots}S</b></span>
+          </div>
+        </section>
+      </>}
     </section>
 
     <section className="v2-step" id="v2-step-bescherming"><StepHead number="7" title="Bescherming & exposure" subtitle="Hoe bewaakt de bot je portfolio?" />
@@ -628,6 +651,7 @@ const styles = `
 .v2-runtime-strip,.v2-account-strip{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid rgba(35,216,154,.19);border-radius:11px;overflow:hidden}.v2-runtime-strip span,.v2-account-strip span{display:grid;padding:8px;border-right:1px solid rgba(35,216,154,.14)}.v2-runtime-strip span:last-child,.v2-account-strip span:last-child{border-right:0}.v2-runtime-strip small,.v2-account-strip small{font-size:7px;color:#7f8f87}.v2-runtime-strip b,.v2-account-strip b{font-size:10px}.v2-runtime-strip b.long{color:#4ce8aa}.v2-runtime-strip b.short{color:#ff7e94}
 .v2-refill-guide{display:grid;grid-template-columns:28px minmax(0,1fr);gap:8px;align-items:start;padding:9px 10px;border:1px solid rgba(54,195,129,.2);border-radius:11px;background:linear-gradient(145deg,rgba(4,38,24,.66),rgba(2,19,13,.7))}.v2-refill-guide>span{display:grid;place-items:center;width:27px;height:27px;border:1px solid rgba(232,184,61,.32);border-radius:8px;color:#e5b744;background:rgba(232,184,61,.05);font-size:16px;font-weight:900}.v2-refill-guide>div{min-width:0;display:grid;gap:3px}.v2-refill-guide b{color:#f0f1ec;font-size:10px}.v2-refill-guide p{margin:0;color:#9babA3;font-size:8px;line-height:1.35}.v2-refill-guide small{color:#73b797;font-size:7.3px;line-height:1.3}.v2-refill-guide small.pending{color:#e8bb52;font-weight:850}
 .v2-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.v2-tabs button{height:36px;border:1px solid rgba(217,184,79,.26);border-radius:10px;background:#07130f;color:#87988f;font-size:9px;font-weight:850}.v2-tabs button.active{border-color:#d9b84f;background:linear-gradient(180deg,#987019,#5d430d);color:#fff1c5}
+.v2-tp-seat-reset{display:grid;gap:7px;padding:9px;border:1px solid rgba(217,184,79,.38);border-radius:12px;background:linear-gradient(180deg,rgba(8,31,22,.72),rgba(4,15,10,.94))}.v2-tp-seat-reset>header small{color:#e0c468;font-size:8px;font-weight:900}.v2-tp-seat-reset .v2-toggle{border-color:rgba(35,216,154,.34);background:rgba(7,47,31,.38)}.v2-seat-reset-help{display:grid;gap:2px;padding:7px 8px;border:1px solid rgba(217,184,79,.22);border-radius:9px;background:rgba(92,67,13,.10)}.v2-seat-reset-help b{color:#e2c66e;font-size:8px}.v2-seat-reset-help p{margin:0;color:#8fa198;font-size:7px;line-height:1.4}.v2-seat-reset-flow{display:grid;grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr) 16px minmax(0,1fr);gap:4px;align-items:center}.v2-seat-reset-flow>span{display:grid;gap:2px;min-width:0;padding:7px;border:1px solid rgba(82,113,99,.3);border-radius:9px;background:#040b08;text-align:center}.v2-seat-reset-flow>span.target{border-color:rgba(217,184,79,.34)}.v2-seat-reset-flow small{color:#7f9087;font-size:6.5px}.v2-seat-reset-flow b{color:#e9f5ef;font-size:8px}.v2-seat-reset-flow>i{color:#3ee2a5;text-align:center;font-size:12px;font-style:normal}
 .v2-advanced{border:1px solid rgba(217,184,79,.18);border-radius:12px;padding:8px}.v2-advanced summary{cursor:pointer;font-size:9px;font-weight:800;color:#d6c07b}.v2-advanced>p{font-size:8px;color:#819088;line-height:1.5}.v2-feature-note{display:flex;justify-content:space-between;gap:10px;padding:8px;border-radius:9px;background:#07110e}.v2-feature-note b{font-size:9px}.v2-feature-note span{font-size:8px;color:#e2bd5d}
 .v2-summary{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.v2-summary>span{display:grid;gap:2px;padding:9px;border:1px solid rgba(217,184,79,.18);border-radius:10px;background:rgba(255,255,255,.015)}.v2-summary small{font-size:7px;color:#7f8e87}.v2-summary b{font-size:9px}.v2-capacity{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.v2-capacity span{display:grid;padding:8px;border:1px solid rgba(35,216,154,.21);border-radius:10px}.v2-capacity small{font-size:6.5px;color:#819188}.v2-capacity b{font-size:10px}.v2-warning{margin:0;padding:8px;border:1px solid rgba(255,173,91,.35);border-radius:10px;background:rgba(144,79,16,.12);color:#ffc78c;font-size:8px;line-height:1.4}
 .v2-release-center{border:1px solid rgba(217,184,79,.28);border-radius:12px;padding:9px}.v2-release-center summary{cursor:pointer;color:#efd373;font-size:10px;font-weight:900}.v2-release-center>p{color:#7f8e87;font-size:8px}.v2-release-list{display:grid;gap:6px}.v2-release-list article{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px;border:1px solid rgba(255,255,255,.06);border-radius:10px}.v2-release-list article>div{display:grid}.v2-release-list b{font-size:9px}.v2-release-list small{font-size:7px;color:#7d8d85}.v2-release-list button{border:1px solid rgba(35,216,154,.4);border-radius:8px;background:#0a3a29;color:#b9f8dd;padding:6px 8px;font-size:7.5px;font-weight:850}.v2-release-list button.rollback{border-color:rgba(255,99,126,.38);background:#2d1016;color:#ff9bae}
