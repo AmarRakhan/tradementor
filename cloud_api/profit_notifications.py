@@ -1,8 +1,8 @@
-"""Server-authoritative Profit Push Notifications 1.0.
+"""Server-authoritative Push Notifications.
 
 Read-only with respect to trading: this module consumes confirmed exchange
-close/Portfolio-TP evidence, persists notification policy/events and delivers
-standards-based Web Push.  It never submits, cancels or changes an order.
+entry/close and Portfolio-TP evidence, persists notification policy/events and
+delivers standards-based Web Push. It never submits, cancels or changes an order.
 """
 from __future__ import annotations
 
@@ -30,6 +30,8 @@ LOGGER = logging.getLogger("tradementor.profit_notifications")
 DEFAULT_SETTINGS: dict[str, Any] = {
     "enabled": False,
     "tradeProfitEnabled": True,
+    "longEntryNotificationsEnabled": False,
+    "shortEntryNotificationsEnabled": False,
     "mode": "SUMMARY",
     "intervalMinutes": 30,
     "minimumProfitUsd": 0.50,
@@ -103,12 +105,27 @@ def normalize_settings(source: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "enabled": bool(raw.get("enabled", DEFAULT_SETTINGS["enabled"])),
         "tradeProfitEnabled": bool(raw.get("tradeProfitEnabled", DEFAULT_SETTINGS["tradeProfitEnabled"])),
+        "longEntryNotificationsEnabled": bool(raw.get("longEntryNotificationsEnabled", DEFAULT_SETTINGS["longEntryNotificationsEnabled"])),
+        "shortEntryNotificationsEnabled": bool(raw.get("shortEntryNotificationsEnabled", DEFAULT_SETTINGS["shortEntryNotificationsEnabled"])),
         "mode": mode,
         "intervalMinutes": interval,
         "minimumProfitUsd": round(minimum, 8),
         "portfolioTpEnabled": bool(raw.get("portfolioTpEnabled", DEFAULT_SETTINGS["portfolioTpEnabled"])),
         "refreshBalancesAtDispatch": bool(raw.get("refreshBalancesAtDispatch", DEFAULT_SETTINGS["refreshBalancesAtDispatch"])),
     }
+
+
+ENTRY_NOTIFICATION_ACTIONS = frozenset({
+    "INITIAL_OPEN_LEG",
+    "OPEN_LEG",
+    "AUTO_RESTART",
+    "PENDING_REOPEN",
+})
+
+
+def notifiable_entry_action(value: Any) -> bool:
+    """Allow only normal new-position actions; DCA/protection/hedges fail closed."""
+    return str(value or "").strip().upper() in ENTRY_NOTIFICATION_ACTIONS
 
 
 def qualifying_profit(realized_net_pnl: Any, minimum_profit_usd: Any) -> bool:
@@ -167,6 +184,42 @@ def trade_push_payload(event: dict[str, Any], account: dict[str, Any]) -> dict[s
             "profitUsd": profit,
             "portfolioValue": portfolio,
             "available": available,
+        },
+    }
+
+
+def entry_push_payload(event: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(event.get("symbol", "")).upper() or "TRADE"
+    asset = symbol[:-4] if symbol.endswith("USDT") and len(symbol) > 4 else symbol
+    side = str(event.get("side", "")).upper()
+    strategy = str(event.get("strategy", "")).strip() or "Onbekend"
+    entry_price = _number(event.get("entryPrice"))
+    size_usd = _number(event.get("sizeUsd"))
+    portfolio = _number(account.get("portfolioValue"))
+    available = _number(account.get("available"))
+    icon = "🟢" if side == "LONG" else "🔴"
+    return {
+        "type": "position_entry",
+        "eventId": str(event.get("eventId", "")),
+        "title": f"{icon} {side} geopend · {asset}",
+        "body": (
+            f"Instap: {_money(entry_price)} · Grootte: {_money(size_usd)}\n"
+            f"Strategie: {strategy}\n"
+            f"Portfolio: {_money(portfolio)} · Available: {_money(available)}"
+        ),
+        "tag": f"amar-entry-{str(event.get('eventId', ''))[:40]}",
+        "url": "/",
+        "icon": "/tradementor-icon-192.png",
+        "badge": "/tradementor-icon-192.png",
+        "data": {
+            "symbol": symbol,
+            "side": side,
+            "strategy": strategy,
+            "entryPrice": entry_price,
+            "sizeUsd": size_usd,
+            "portfolioValue": portfolio,
+            "available": available,
+            "entryIdentity": str(event.get("entryIdentity", "")),
         },
     }
 
@@ -238,6 +291,8 @@ def portfolio_tp_push_payload(event: dict[str, Any], account: dict[str, Any]) ->
 class NotificationSettingsRequest(BaseModel):
     enabled: bool = False
     tradeProfitEnabled: bool = True
+    longEntryNotificationsEnabled: bool = False
+    shortEntryNotificationsEnabled: bool = False
     mode: str = Field(default="SUMMARY", max_length=20)
     intervalMinutes: int = 30
     minimumProfitUsd: float = 0.50
@@ -302,6 +357,8 @@ class ProfitNotificationService:
         stored = self._settings_ref(uid).get().to_dict() or {}
         normalized = normalize_settings(stored)
         normalized["enabledAtMs"] = _integer(stored.get("enabledAtMs"), 0)
+        normalized["longEntryEnabledAtMs"] = _integer(stored.get("longEntryEnabledAtMs"), 0)
+        normalized["shortEntryEnabledAtMs"] = _integer(stored.get("shortEntryEnabledAtMs"), 0)
         normalized["updatedAtMs"] = _integer(stored.get("updatedAtMs"), 0)
         return normalized
 
@@ -319,13 +376,30 @@ class ProfitNotificationService:
 
     def save_settings(self, uid: str, source: dict[str, Any]) -> dict[str, Any]:
         previous = self.get_settings(uid)
-        normalized = normalize_settings(source)
+        normalized = normalize_settings({**previous, **source})
         now_ms = _now_ms()
         enabled_at = _integer(previous.get("enabledAtMs"), 0)
         if normalized["enabled"] and (not previous.get("enabled") or enabled_at <= 0):
             enabled_at = now_ms
-        payload = {**normalized, "enabledAtMs": enabled_at, "updatedAtMs": now_ms,
-                   "updatedAt": datetime.now(timezone.utc), "schemaVersion": 1}
+        long_entry_enabled_at = _integer(previous.get("longEntryEnabledAtMs"), 0)
+        short_entry_enabled_at = _integer(previous.get("shortEntryEnabledAtMs"), 0)
+        if normalized["longEntryNotificationsEnabled"] and (
+            not previous.get("longEntryNotificationsEnabled") or long_entry_enabled_at <= 0
+        ):
+            long_entry_enabled_at = now_ms
+        if normalized["shortEntryNotificationsEnabled"] and (
+            not previous.get("shortEntryNotificationsEnabled") or short_entry_enabled_at <= 0
+        ):
+            short_entry_enabled_at = now_ms
+        payload = {
+            **normalized,
+            "enabledAtMs": enabled_at,
+            "longEntryEnabledAtMs": long_entry_enabled_at,
+            "shortEntryEnabledAtMs": short_entry_enabled_at,
+            "updatedAtMs": now_ms,
+            "updatedAt": datetime.now(timezone.utc),
+            "schemaVersion": 2,
+        }
         self._settings_ref(uid).set(payload, merge=True)
         self._control_ref(uid).set({"uid": str(uid), "enabled": normalized["enabled"],
                                     "updatedAtMs": now_ms, "updatedAt": datetime.now(timezone.utc)}, merge=True)
@@ -333,18 +407,26 @@ class ProfitNotificationService:
             self._cancel_pending(uid, event_type=None, reason="USER_DISABLED_PUSH")
         elif previous.get("tradeProfitEnabled") and not normalized["tradeProfitEnabled"]:
             self._cancel_pending(uid, event_type="TRADE_PROFIT", reason="USER_DISABLED_TRADE_PROFIT")
+        if previous.get("longEntryNotificationsEnabled") and not normalized["longEntryNotificationsEnabled"]:
+            self._cancel_pending(uid, event_type="POSITION_ENTRY", side="LONG", reason="USER_DISABLED_LONG_ENTRY")
+        if previous.get("shortEntryNotificationsEnabled") and not normalized["shortEntryNotificationsEnabled"]:
+            self._cancel_pending(uid, event_type="POSITION_ENTRY", side="SHORT", reason="USER_DISABLED_SHORT_ENTRY")
         if previous.get("portfolioTpEnabled") and not normalized["portfolioTpEnabled"]:
             self._cancel_pending(uid, event_type="PORTFOLIO_TP", reason="USER_DISABLED_PORTFOLIO_TP")
         self._log("notification settings saved", uid, enabled=normalized["enabled"], mode=normalized["mode"])
         return self.public_settings(uid)
 
-    def _cancel_pending(self, uid: str, *, event_type: str | None, reason: str) -> None:
+    def _cancel_pending(self, uid: str, *, event_type: str | None, reason: str,
+                        side: str | None = None) -> None:
         try:
             docs = list(self._events(uid).where("status", "==", "PENDING").limit(MAX_EVENT_QUERY).stream())
             pending = []
+            wanted_side = str(side or "").upper()
             for doc in docs:
                 row = doc.to_dict() or {}
                 if event_type and str(row.get("type")) != event_type:
+                    continue
+                if wanted_side and str(row.get("side", "")).upper() != wanted_side:
                     continue
                 pending.append(doc.reference)
             for offset in range(0, len(pending), 400):
@@ -419,6 +501,59 @@ class ProfitNotificationService:
             self._metric(uid, "dedupePrevented")
             self._log("notification dedupe prevented", uid, eventId=event_id[:12])
             return event_id, False
+
+    def record_entry_event(self, uid: str, *, entry_event_id: str, symbol: str, side: str, strategy: str,
+                           entry_price: float, size_usd: float, occurred_at_ms: int, captured_portfolio: float,
+                           captured_available: float) -> dict[str, Any]:
+        settings = self.get_settings(uid)
+        normalized_side = str(side).upper().strip()
+        if not settings.get("enabled"):
+            self._metric(uid, "eventsFiltered")
+            return {"accepted": False, "reason": "PUSH_NOTIFICATIONS_DISABLED"}
+        side_setting = (
+            settings.get("longEntryNotificationsEnabled")
+            if normalized_side == "LONG"
+            else settings.get("shortEntryNotificationsEnabled")
+            if normalized_side == "SHORT"
+            else False
+        )
+        if not side_setting:
+            self._metric(uid, "eventsFiltered")
+            return {"accepted": False, "reason": "ENTRY_SIDE_NOTIFICATIONS_DISABLED"}
+        enabled_at = _integer(settings.get("enabledAtMs"), 0)
+        side_enabled_at = _integer(
+            settings.get("longEntryEnabledAtMs")
+            if normalized_side == "LONG"
+            else settings.get("shortEntryEnabledAtMs"),
+            0,
+        )
+        notification_start = max(enabled_at, side_enabled_at)
+        if notification_start and int(occurred_at_ms) < notification_start:
+            self._metric(uid, "eventsFiltered")
+            return {"accepted": False, "reason": "BEFORE_ENTRY_NOTIFICATIONS_ENABLED"}
+        identity = str(entry_event_id).strip()
+        price = _number(entry_price)
+        notional = _number(size_usd)
+        if not identity or price <= 0 or notional <= 0:
+            self._metric(uid, "eventsFiltered")
+            return {"accepted": False, "reason": "UNCONFIRMED_OR_INVALID_ENTRY"}
+        normalized_symbol = str(symbol).upper().strip()
+        key = "|".join(("entry", normalized_side, normalized_symbol, identity))
+        event_id, created = self._create_event(uid, key, {
+            "type": "POSITION_ENTRY",
+            "entryIdentity": identity,
+            "symbol": normalized_symbol,
+            "side": normalized_side,
+            "strategy": str(strategy).strip() or "Onbekend",
+            "entryPrice": price,
+            "sizeUsd": notional,
+            "occurredAtMs": int(occurred_at_ms),
+            "capturedPortfolioValue": _number(captured_portfolio),
+            "capturedAvailable": _number(captured_available),
+            "eligibleForPush": True,
+            "eligibleForInApp": False,
+        })
+        return {"accepted": True, "created": created, "eventId": event_id}
 
     def record_trade_event(self, uid: str, *, close_event_id: str, symbol: str, side: str, strategy: str,
                            realized_net_pnl_usd: float, occurred_at_ms: int, captured_portfolio: float,
@@ -590,6 +725,33 @@ class ProfitNotificationService:
         rows = [(doc.reference, doc.to_dict() or {}) for doc in docs]
         sent = processed = 0
 
+        for reference, row in [item for item in rows if str(item[1].get("type")) == "POSITION_ENTRY"]:
+            side = str(row.get("side", "")).upper()
+            side_enabled = (
+                settings.get("longEntryNotificationsEnabled")
+                if side == "LONG"
+                else settings.get("shortEntryNotificationsEnabled")
+                if side == "SHORT"
+                else False
+            )
+            if not bool(row.get("eligibleForPush", True)) or not side_enabled:
+                self._mark_events([reference], "FILTERED")
+                continue
+            dispatch_key = f"entry:{row.get('eventId', reference.id)}"
+            if self._already_dispatched(uid, dispatch_key):
+                self._mark_events([reference], "PUSH_SENT", deliveredAtMs=now_value)
+                continue
+            result = self._send_payload(
+                uid,
+                entry_push_payload(row, self._dispatch_account(settings, [row], account_loader)),
+            )
+            if result["accepted"] > 0 or result["attempted"] == 0:
+                self._mark_dispatch(uid, dispatch_key, result, "position_entry")
+                self._mark_events([reference], "PUSH_SENT", deliveredAtMs=now_value)
+                processed += 1
+                sent += 1 if result["accepted"] > 0 else 0
+                self._metric(uid, "entryPushDispatched")
+
         for reference, row in [item for item in rows if str(item[1].get("type")) == "PORTFOLIO_TP"]:
             if not bool(row.get("eligibleForPush", True)):
                 self._mark_events([reference], "FILTERED"); continue
@@ -680,7 +842,7 @@ def install_profit_notification_routes(app: Any, service: ProfitNotificationServ
     @app.put("/v1/me/notifications/settings")
     def save_profit_notification_settings(request: NotificationSettingsRequest,
                                           user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-        return service.save_settings(str(user["uid"]), request.model_dump())
+        return service.save_settings(str(user["uid"]), request.model_dump(exclude_unset=True))
 
     @app.get("/v1/me/notifications/public-key")
     def profit_notification_public_key(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:

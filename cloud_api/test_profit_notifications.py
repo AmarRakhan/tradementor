@@ -11,7 +11,9 @@ from profit_notification_replay import replay_portfolio_tp, replay_profit_events
 from profit_notifications import (
     aggregate_profit_events,
     completed_window_for_event,
+    entry_push_payload,
     normalize_settings,
+    notifiable_entry_action,
     portfolio_tp_push_payload,
     qualifying_profit,
     summary_push_payload,
@@ -34,6 +36,8 @@ def test_defaults_are_opt_in_and_summary_30_min():
     value = normalize_settings({})
     assert value["enabled"] is False
     assert value["tradeProfitEnabled"] is True
+    assert value["longEntryNotificationsEnabled"] is False
+    assert value["shortEntryNotificationsEnabled"] is False
     assert value["mode"] == "SUMMARY"
     assert value["intervalMinutes"] == 30
     assert value["minimumProfitUsd"] == pytest.approx(0.50)
@@ -148,6 +152,98 @@ def test_payloads_keep_profit_portfolio_available_and_no_quantity_noise():
     assert "$842,17" in payload["body"]
     assert "quantity" not in payload["body"].lower()
     assert "leverage" not in payload["body"].lower()
+
+
+def test_entry_push_payload_is_immediate_and_contains_confirmed_entry_context():
+    payload = entry_push_payload(
+        {
+            "eventId": "entry-1",
+            "entryIdentity": "order-123",
+            "symbol": "HYPEUSDT",
+            "side": "LONG",
+            "strategy": "Zone Warriors",
+            "entryPrice": 42.18,
+            "sizeUsd": 25.0,
+        },
+        {"portfolioValue": 347.26, "available": 214.80},
+    )
+    assert payload["type"] == "position_entry"
+    assert payload["title"] == "🟢 LONG geopend · HYPE"
+    assert "Instap: $42,18" in payload["body"]
+    assert "Grootte: $25,00" in payload["body"]
+    assert "Strategie: Zone Warriors" in payload["body"]
+    assert "Portfolio: $347,26" in payload["body"]
+    assert "Available: $214,80" in payload["body"]
+
+
+@pytest.mark.parametrize("action", [
+    "INITIAL_OPEN_LEG",
+    "OPEN_LEG",
+    "AUTO_RESTART",
+    "PENDING_REOPEN",
+])
+def test_normal_new_position_actions_are_entry_notification_eligible(action):
+    assert notifiable_entry_action(action) is True
+
+
+@pytest.mark.parametrize("action", [
+    "ADD_DCA",
+    "PROTECTION_INCREASE",
+    "OPEN_PROTECTION",
+    "AUTO_HEDGE",
+    "HEDGE_ADJUST",
+    "RECOVERY",
+    "HEDGE_REBALANCE",
+    "FULL_TP",
+    "PARTIAL_TP",
+])
+def test_dca_protection_hedge_recovery_and_close_actions_are_not_entry_notifications(action):
+    assert notifiable_entry_action(action) is False
+
+
+def test_entry_opt_in_has_side_specific_start_timestamp_to_prevent_backfill():
+    source = Path("profit_notifications.py").read_text()
+    assert '"longEntryEnabledAtMs"' in source
+    assert '"shortEntryEnabledAtMs"' in source
+    assert "notification_start = max(enabled_at, side_enabled_at)" in source
+    assert "BEFORE_ENTRY_NOTIFICATIONS_ENABLED" in source
+
+
+def test_entry_settings_are_backwards_compatible_for_older_clients():
+    source = Path("profit_notifications.py").read_text()
+    assert 'normalize_settings({**previous, **source})' in source
+    assert 'request.model_dump(exclude_unset=True)' in source
+
+
+def test_entry_notification_observer_requires_confirmed_fill_and_proven_normal_attribution():
+    source = Path("main.py").read_text()
+    start = source.index("def _reconcile_profit_notifications")
+    end = source.index("\ndef require_verified_email", start)
+    block = source[start:end]
+    assert 'entries = activity.get("entries")' in block
+    assert "entry_by_order_id" in block
+    assert "entry_by_client_order_id" in block
+    assert "notifiable_entry_action" in block
+    assert "record_entry_event" in block
+    assert "Fail closed" in block
+    assert "live_authorized=False" in block
+    assert "execute_aster" not in block
+    assert "submit_order" not in block
+
+
+def test_entry_notification_service_is_persistent_idempotent_and_independent_of_profit_summary_mode():
+    source = Path("profit_notifications.py").read_text()
+    assert '"longEntryNotificationsEnabled": False' in source
+    assert '"shortEntryNotificationsEnabled": False' in source
+    assert '"type": "POSITION_ENTRY"' in source
+    assert 'key = "|".join(("entry"' in source
+    assert 'dispatch_key = f"entry:' in source
+    assert "_already_dispatched(uid, dispatch_key)" in source
+    assert "_create_event(uid, key" in source
+    entry_dispatch = source[source.index('for reference, row in [item for item in rows if str(item[1].get("type")) == "POSITION_ENTRY"]'):]
+    entry_dispatch = entry_dispatch[:entry_dispatch.index('for reference, row in [item for item in rows if str(item[1].get("type")) == "PORTFOLIO_TP"]')]
+    assert "deliveryMode" not in entry_dispatch
+    assert "intervalMinutes" not in entry_dispatch
 
 
 def test_portfolio_tp_payload_is_separate_and_immediate_shape():

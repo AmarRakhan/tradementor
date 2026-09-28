@@ -11,6 +11,8 @@ const LAST_SEEN_KEY = "amar.profitNotifications.lastSeenAt.v1";
 type NotificationSettings = {
   enabled: boolean;
   tradeProfitEnabled: boolean;
+  longEntryNotificationsEnabled: boolean;
+  shortEntryNotificationsEnabled: boolean;
   mode: "EVERY_WIN" | "SUMMARY";
   intervalMinutes: 15 | 30 | 60;
   minimumProfitUsd: number;
@@ -33,6 +35,8 @@ type ProfitEvent = {
 const DEFAULT_SETTINGS: NotificationSettings = {
   enabled: false,
   tradeProfitEnabled: true,
+  longEntryNotificationsEnabled: false,
+  shortEntryNotificationsEnabled: false,
   mode: "SUMMARY",
   intervalMinutes: 30,
   minimumProfitUsd: 0.5,
@@ -258,6 +262,8 @@ export function ProfitNotificationPanel() {
     const comparable = (value: NotificationSettings) => ({
       enabled: value.enabled,
       tradeProfitEnabled: value.tradeProfitEnabled,
+      longEntryNotificationsEnabled: value.longEntryNotificationsEnabled,
+      shortEntryNotificationsEnabled: value.shortEntryNotificationsEnabled,
       mode: value.mode,
       intervalMinutes: value.intervalMinutes,
       minimumProfitUsd: value.minimumProfitUsd,
@@ -310,6 +316,8 @@ export function ProfitNotificationPanel() {
         body: JSON.stringify({
           enabled: settings.enabled,
           tradeProfitEnabled: settings.tradeProfitEnabled,
+          longEntryNotificationsEnabled: settings.longEntryNotificationsEnabled,
+          shortEntryNotificationsEnabled: settings.shortEntryNotificationsEnabled,
           mode: settings.mode,
           intervalMinutes: settings.intervalMinutes,
           minimumProfitUsd: settings.minimumProfitUsd,
@@ -390,7 +398,7 @@ export function ProfitNotificationPanel() {
             <section className="profit-setting-block mode">
               <div className="profit-setting-heading">
                 <span className="profit-setting-icon" aria-hidden="true">◷</span>
-                <div><strong>Meldingsmodus</strong><small>Kies hoe vaak je meldingen wilt ontvangen</small></div>
+                <div><strong>Meldingsmodus</strong><small>Kies hoe vaak je winstmeldingen wilt ontvangen</small></div>
               </div>
               <div className="profit-mode-grid">
                 <ModeCard active={settings.mode === "EVERY_WIN"} icon="⚡" onClick={() => setSettings((current) => ({ ...current, mode: "EVERY_WIN" }))}>Iedere<br />winsttrade</ModeCard>
@@ -398,6 +406,20 @@ export function ProfitNotificationPanel() {
                 <ModeCard active={settings.mode === "SUMMARY" && settings.intervalMinutes === 30} icon="◷" onClick={() => setSettings((current) => ({ ...current, mode: "SUMMARY", intervalMinutes: 30 }))}>Samenvatting<br />30 min</ModeCard>
                 <ModeCard active={settings.mode === "SUMMARY" && settings.intervalMinutes === 60} icon="◴" onClick={() => setSettings((current) => ({ ...current, mode: "SUMMARY", intervalMinutes: 60 }))}>Samenvatting<br />60 min</ModeCard>
               </div>
+            </section>
+
+            <section className="profit-setting-row">
+              <span className="profit-setting-icon long-entry" aria-hidden="true">↗</span>
+              <div><strong>Nieuwe LONG-posities</strong><small>Ontvang een melding wanneer een nieuwe LONG-positie daadwerkelijk is geopend</small></div>
+              <Toggle checked={settings.longEntryNotificationsEnabled} onChange={(value) => setSettings((current) => ({ ...current, longEntryNotificationsEnabled: value }))} label="Nieuwe LONG-posities" />
+              <b className={settings.longEntryNotificationsEnabled ? "on" : ""}>{settings.longEntryNotificationsEnabled ? "AAN" : "UIT"}</b>
+            </section>
+
+            <section className="profit-setting-row">
+              <span className="profit-setting-icon short-entry" aria-hidden="true">↘</span>
+              <div><strong>Nieuwe SHORT-posities</strong><small>Ontvang een melding wanneer een nieuwe SHORT-positie daadwerkelijk is geopend</small></div>
+              <Toggle checked={settings.shortEntryNotificationsEnabled} onChange={(value) => setSettings((current) => ({ ...current, shortEntryNotificationsEnabled: value }))} label="Nieuwe SHORT-posities" />
+              <b className={settings.shortEntryNotificationsEnabled ? "on" : ""}>{settings.shortEntryNotificationsEnabled ? "AAN" : "UIT"}</b>
             </section>
 
             <section className="profit-setting-row">
@@ -431,7 +453,7 @@ export function ProfitNotificationPanel() {
 
             <aside className="profit-notification-info">
               <span aria-hidden="true">ⓘ</span>
-              <p>Bij een samenvatting ontvang je de winsttrade met de hoogste winst uit de gekozen tijdsperiode. Portfolio en Available worden live opgehaald op het moment van verzenden. Zonder winsttrade blijft het stil.</p>
+              <p>Bij een samenvatting ontvang je de winsttrade met de hoogste winst uit de gekozen tijdsperiode. Aangezette LONG- en SHORT-instapmeldingen worden altijd direct verstuurd en wachten niet op dit interval. Portfolio en Available worden live opgehaald op het moment van verzenden.</p>
             </aside>
 
             <section className="profit-preview">
