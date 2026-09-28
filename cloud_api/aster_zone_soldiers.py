@@ -498,9 +498,17 @@ def prepare_zone_runtime(*, raw_zone_state: Any, managed_state: dict[str, Any] |
                          positions: list[dict[str, Any]] | None, confirmed_zone: int | None,
                          zone_safe: bool, base_long: int, base_short: int,
                          balancer_enabled: bool, trigger_percent: float, release_percent: float,
-                         fallback_unit_notional: float, timestamp_ms: int) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+                         fallback_unit_notional: float, timestamp_ms: int,
+                         migrate_legacy: bool = True) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Reconcile persistent pools and return (zone_state, managed_state, report)."""
-    state, migrated = annotate_legacy_positions(managed_state, timestamp_ms=timestamp_ms)
+    if migrate_legacy:
+        state, migrated = annotate_legacy_positions(managed_state, timestamp_ms=timestamp_ms)
+    else:
+        # Read-only/live-zone synchronization must not consume or recreate the
+        # one-tick legacy migration signal. Only the authoritative entry planner
+        # is allowed to migrate and persist managed-position ownership.
+        state = {str(key): dict(value) for key, value in (managed_state or {}).items() if isinstance(value, dict)}
+        migrated = 0
     zone_state = normalize_zone_state(raw_zone_state, base_long=base_long, base_short=base_short, timestamp_ms=timestamp_ms)
     previous_active = zone_state.get("activeZone")
 
