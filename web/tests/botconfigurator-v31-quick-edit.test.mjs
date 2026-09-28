@@ -15,14 +15,14 @@ const slice = (source, start, end) => {
   return source.slice(a, b);
 };
 
-test("Build 460 keeps Build 459 history and the Botconfigurator 3.1 binding references", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "460"/);
+test("Build 461 keeps Build 460 and Build 459 history plus Botconfigurator 3.1 references", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "461"/);
   assert.match(v3, /file_0000000064fc8210b631ce0a8caebb42/);
   assert.match(v3, /file_000000003b5081f4bee8a56187006a03/);
   assert.match(v3, /file_00000000113c82108f6f3daf44f3627e/);
   assert.match(history, /id: "v46-build-459-botconfigurator-v31"/);
   assert.match(history, /build: "459"/);
-  assert.match(history, /title: "Portfolio TP · Automatische stoelreset 1\.0"/);
+  assert.match(history, /id: "v46-build-460-portfolio-tp-seat-reset"/);
 });
 
 test("current settings is rendered after the wizard actions and before the BETA release center", () => {
