@@ -15,13 +15,15 @@ const slice = (source, start, end) => {
   return source.slice(a, b);
 };
 
-test("Build 462 keeps Build 461/460 history plus Botconfigurator 3.1 references", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "462"/);
+test("Build 463 keeps Build 462/461/460 history plus Botconfigurator 3.1 references", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "463"/);
   assert.match(v3, /file_0000000064fc8210b631ce0a8caebb42/);
   assert.match(v3, /file_000000003b5081f4bee8a56187006a03/);
   assert.match(v3, /file_00000000113c82108f6f3daf44f3627e/);
   assert.match(history, /id: "v46-build-459-botconfigurator-v31"/);
   assert.match(history, /build: "459"/);
+  assert.match(history, /id: "v46-build-462-legacy-seat-reset"/);
+  assert.match(history, /id: "v46-build-461-v2-seat-reset"/);
   assert.match(history, /id: "v46-build-460-portfolio-tp-seat-reset"/);
 });
 
