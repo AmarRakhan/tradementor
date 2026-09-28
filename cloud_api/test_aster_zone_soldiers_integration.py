@@ -250,3 +250,25 @@ def test_build425_true_homecoming_requires_different_known_close_zone():
     assert 'if origin_zone == current_zone:' in source
     assert '"currentZoneAtClose": current_zone' in source
     assert 'next_status = STATUS_AVAILABLE if reusable_here else STATUS_DORMANT' in source
+
+
+
+def test_live_zone_seat_sync_precedes_dynamic_hedge_branch():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    tick_start = source.index("def _run_aster_strategy2_tick(")
+    tick = source[tick_start:]
+    zone_context_index = tick.index("zone_context = _strategy2_zone_runtime_context")
+    seat_sync_index = tick.index("raw = _sync_price_zone_seat_runtime", zone_context_index)
+    dynamic_index = tick.index("dynamic_ref=user_reference", seat_sync_index)
+    assert zone_context_index < seat_sync_index < dynamic_index
+
+
+def test_live_zone_seat_sync_does_not_persist_managed_positions():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    helper_start = source.index("def _sync_price_zone_seat_runtime(")
+    helper_end = source.index("def _run_aster_strategy2_tick(", helper_start)
+    helper = source[helper_start:helper_end]
+    assert "prepare_zone_runtime(" in helper
+    assert '"zoneSoldierState": zone_state' in helper
+    assert '"zoneSoldierReport": zone_report' in helper
+    assert '"multiBbPositions":' not in helper
