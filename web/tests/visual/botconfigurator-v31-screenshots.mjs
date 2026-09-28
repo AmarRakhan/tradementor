@@ -40,10 +40,24 @@ for (const width of widths) {
     assert.match(await advanced.innerText(), /Leverage/);
     assert.match(await advanced.innerText(), /Smart Rescue/);
     assert.match(await advanced.innerText(), /Cycle start/);
+    assert.match(await advanced.innerText(), /Stoelen resetten naar startinstelling/);
     overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 0, "390px expanded quick-edit horizontal overflow: " + overflow);
     await page.screenshot({ path: "artifacts/botconfigurator-v31/quick-edit-expanded-390.png", fullPage: true });
   }
+
+  await page.getByRole("button", { name: /Annuleren/ }).click();
+  await page.getByRole("button", { name: /Instap & DCA/ }).click();
+  const seatReset = page.locator(".v3-tp-seat-reset");
+  await seatReset.waitFor({ state: "visible" });
+  const seatText = await seatReset.innerText();
+  assert.match(seatText, /Na behalen doel \(Portfolio TP\)/);
+  assert.match(seatText, /Stoelen resetten naar startinstelling/);
+  assert.match(seatText, /3L \/ 3S/);
+  overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  assert.ok(overflow <= 0, width + "px Portfolio TP seat reset horizontal overflow: " + overflow);
+  if (width === 390) await page.screenshot({ path: "artifacts/botconfigurator-v31/portfolio-tp-seat-reset-390.png", fullPage: true });
+
   await browser.close();
 }
 
