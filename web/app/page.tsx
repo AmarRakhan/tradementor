@@ -389,10 +389,10 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   const asterPriceZoneSeatsActive = asterStrategyMode === "PRICE_ZONE_SEATS" || asterStrategyMode === "ZONE_SOLDIERS";
   const asterZoneLifecycle = String(strategy2Snapshot?.zoneSoldierLifecycle || "OFF").toUpperCase();
   const asterStrategyLabel = asterPriceZoneSeatsActive
-    ? "STRATEGIE · ZONE WARRIORS"
+    ? "STRATEGIE · PRIJSZONE-STOELEN"
     : asterZoneLifecycle === "DRAINING"
-      ? "STRATEGIE · ZONE WARRIORS AFBOUWEN"
-      : "STRATEGIE · CLASSIC DCA";
+      ? "STRATEGIE · ZONEPOSITIES AFBOUWEN"
+      : "STRATEGIE · TRADITIONEEL";
   const asterExecutionConfirmed = destination !== "aster" || Boolean(
     asterActionsEnabled && (
       asterEvidenceIsFresh(snapshot.data?.snapshotAt) ||
