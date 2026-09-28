@@ -115,8 +115,16 @@ def test_reset_on_closes_first_then_restores_seats_and_new_cycle_snapshot():
     assert completed["slotResetCompletedAtMs"] > 0
     assert (ref.data["multiBbCycle"]["cycleStartLongSlots"], ref.data["multiBbCycle"]["cycleStartShortSlots"]) == (3, 3)
     events = [row["event"] for row in ref.audit]
+    assert "PORTFOLIO_TP_SEAT_RESET_ARMED" in events
     assert "PORTFOLIO_TP_SEAT_RESET_STARTED" in events
     assert events.count("PORTFOLIO_TP_SEAT_RESET_COMPLETED") == 1
+    for event in ("PORTFOLIO_TP_SEAT_RESET_ARMED", "PORTFOLIO_TP_SEAT_RESET_STARTED", "PORTFOLIO_TP_SEAT_RESET_COMPLETED"):
+        audit = next(row for row in ref.audit if row["event"] == event)
+        assert audit["userId"] == "u"
+        assert audit["botId"] == "aster-strategy-2"
+        assert audit["cycleId"] == "cycle-seat-reset"
+        assert "previousLongSlots" in audit and "previousShortSlots" in audit
+        assert "targetLongSlots" in audit and "targetShortSlots" in audit
 
 
 def test_reset_off_keeps_current_seats_after_portfolio_tp():
@@ -233,3 +241,70 @@ def test_event_backtest_1000_cycles_has_zero_invariant_failures_and_sends_no_ord
         ):
             failures.append((index, cycle, plan))
     assert failures == []
+
+
+def test_missing_cycle_seat_snapshot_fails_closed_after_flat_and_keeps_entry_lock():
+    raw = {
+        "enabled": True,
+        "settings": _settings(8, 7, reset=True),
+        "multiBbCycle": {
+            "cycleId": "legacy-without-seat-snapshot",
+            "cycleStartEquity": 100.0,
+            "baseEquity": 100.0,
+            "baseMode": "CYCLE_START",
+            "targetEquity": 105.0,
+            "cycleStatus": PORTFOLIO_TP_EXECUTING,
+            "seatResetArmed": True,
+        },
+    }
+    ref = Ref(raw)
+    client = FakeClient(equity=106.0, positions=[])
+    result = portfolio_cycle_gate(
+        client=client, ref=ref, raw_state=raw, uid="u",
+        account=client.account_information(), positions=[], open_orders=[],
+        timestamp_ms=40, take_profit_mode="PORTFOLIO", portfolio_tp_percent=5.0,
+        reset_seats_after_portfolio_tp=True,
+    )
+    assert result.handled is True
+    assert result.restart is False
+    assert ref.data["multiBbCycle"]["cycleStatus"] == FLAT_CONFIRMING
+    assert ref.data["multiBbReport"]["seatResetPending"] is True
+    assert (ref.data["settings"]["longSlots"], ref.data["settings"]["shortSlots"]) == (8, 7)
+    failed = next(row for row in ref.audit if row["event"] == "PORTFOLIO_TP_SEAT_RESET_FAILED")
+    assert failed["userId"] == "u"
+    assert failed["targetLongSlots"] is None
+    assert failed["targetShortSlots"] is None
+
+
+def test_manual_cycle_reset_snapshots_current_seats_but_never_mutates_settings():
+    from aster_multi_bb_portfolio import reset_cycle_to_equity
+
+    settings = _settings(8, 7, reset=True)
+    before = dict(settings)
+    cycle = reset_cycle_to_equity(
+        uid="u", current_equity=103.0, portfolio_tp_percent=5.0, timestamp_ms=50,
+        current_long_slots=8, current_short_slots=7, current_maximum_positions=15,
+    )
+    assert settings == before
+    assert (cycle["cycleStartLongSlots"], cycle["cycleStartShortSlots"], cycle["cycleStartMaximumPositions"]) == (8, 7, 15)
+    assert cycle["slotResetCompletedAt"] is None
+    assert cycle["slotResetCycleId"] is None
+
+
+def test_reset_planner_does_not_touch_zone_autohedge_or_sniper_configuration():
+    settings = {
+        **_settings(9, 8, reset=True, top_n=50),
+        "zoneSoldiersEnabled": True,
+        "zoneBaseLongSoldiers": 3,
+        "zoneBaseShortSoldiers": 3,
+        "zoneOwnershipLedger": {"BTCUSDT|LONG": {"originZone": 2}},
+        "autoHedgeEnabled": True,
+        "sniperMaximumPositions": 3,
+    }
+    plan = portfolio_tp_seat_reset_plan(_cycle(start_long=3, start_short=3), settings)
+    assert plan["applied"] is True
+    for key in (
+        "zoneBaseLongSoldiers", "zoneBaseShortSoldiers", "zoneOwnershipLedger",
+        "autoHedgeEnabled", "sniperMaximumPositions",
+    ):
+        assert plan["settings"][key] == settings[key]
