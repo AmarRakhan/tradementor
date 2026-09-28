@@ -2223,6 +2223,14 @@
       : `${serialCount} serienummers uitgelijnd gekopieerd · plak vanaf de bovenste cel Serienummer`);
   }
 
+  function topdeskPackageItemAlwaysVisible(code,name=''){
+    const n=normalizeSmartText(name);
+    // Niet-serienummerplichtige artikelen die toch expliciet in TOPdesk
+    // zichtbaar moeten zijn. De standaard HP 435 muis zit in meerdere pakketten.
+    return code==='3B4Q5UT' ||
+      n.includes('hp 435 mltdvc wrls mouse');
+  }
+
   function topdeskLines(){
     const lines=[];
 
@@ -2245,10 +2253,14 @@
             const serial=serials[n*(it.qty||1)+cursor]||'';
             serialCursor[it.code]=cursor+1;
 
-            if(!serial) continue;
-
             const info=orderItemInfo(it.code,it.label);
-            lines.push(`- ${info.name||it.label} | serienummer: ${serial}`);
+            if(serial){
+              lines.push(`- ${info.name||it.label} | serienummer: ${serial}`);
+              continue;
+            }
+            if(topdeskPackageItemAlwaysVisible(it.code,info.name||it.label)){
+              lines.push(`- ${info.name||it.label}`);
+            }
           }
         });
 
@@ -2288,7 +2300,8 @@
     }
 
     // Bouw TOPdesk-tekst hier rechtstreeks op.
-    // Pakketaccessoires worden NOOIT uitgeschreven.
+    // Standaard pakketaccessoires blijven verborgen; serienummerregels en
+    // expliciet aangewezen relevante items (zoals de HP 435 muis) worden getoond.
     const lines=[];
 
     state.packages.forEach(sel=>{
@@ -2305,10 +2318,15 @@
 
           for(let q=0;q<perPackageQty;q++){
             const serial=serials[n*perPackageQty+q]||'';
-            if(!serial) continue;
-
             const info=orderItemInfo(it.code,it.label);
-            lines.push(`- ${info.name||it.label} | serienummer: ${serial}`);
+
+            if(serial){
+              lines.push(`- ${info.name||it.label} | serienummer: ${serial}`);
+              continue;
+            }
+            if(topdeskPackageItemAlwaysVisible(it.code,info.name||it.label)){
+              lines.push(`- ${info.name||it.label}`);
+            }
           }
         });
 
@@ -2333,7 +2351,7 @@
 
     const txt=lines.join('\n');
     await writeClipboard(txt);
-    toast('TOPdesk-tekst gekopieerd · alleen pakketnaam + serienummers');
+    toast('TOPdesk-tekst gekopieerd · pakketnaam + serienummers + relevante items');
   }
 
   function renderCounts(){
