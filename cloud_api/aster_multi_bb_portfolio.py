@@ -310,6 +310,73 @@ def _write_cycle(ref: Any, cycle: dict[str, Any], *, phase: str | None = None,
     ref.set(payload, merge=True)
 
 
+def portfolio_tp_seat_reset_plan(cycle: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """Build an order-free, validated-by-existing-capacity seat restore mutation.
+
+    LONG/SHORT and maximumPositions are the only trading-capacity fields touched.
+    Zone ownership/per-zone soldier settings and every other strategy setting stay intact.
+    """
+    current = dict(settings or {})
+    cycle_id = str(cycle.get("cycleId") or "")
+    if cycle.get("cycleStartLongSlots") is None or cycle.get("cycleStartShortSlots") is None:
+        return {"applied": False, "reason": "cycle-seat-snapshot-missing", "settings": current, "cycleId": cycle_id}
+
+    target_long = max(0, _i(cycle.get("cycleStartLongSlots")))
+    target_short = max(0, _i(cycle.get("cycleStartShortSlots")))
+    target_max = max(1, _i(cycle.get("cycleStartMaximumPositions"), target_long + target_short or 1))
+    before_long = max(0, _i(current.get("longSlots")))
+    before_short = max(0, _i(current.get("shortSlots")))
+    before_max = max(1, _i(current.get("maximumPositions"), before_long + before_short or 1))
+
+    universe = min(800, max(1, _i(current.get("universeTopN"), 30)))
+    capacity = 200 if bool(current.get("manualSymbolSelectionEnabled", False)) else universe * 2
+    zone_enabled = bool(current.get("zoneSoldiersEnabled", False))
+    asymmetric = bool(current.get("asymmetricHedgeModeEnabled", False))
+    clamped = False
+
+    if zone_enabled:
+        if target_max > capacity:
+            target_max = capacity
+            clamped = True
+        target_long = min(target_long, capacity)
+        target_short = min(target_short, capacity)
+    else:
+        total = target_long + target_short
+        if total <= 0:
+            return {"applied": False, "reason": "cycle-seat-snapshot-invalid", "settings": current, "cycleId": cycle_id}
+        if total > capacity:
+            long_ratio = target_long / total
+            target_long = int(round(capacity * long_ratio))
+            target_short = capacity - target_long
+            clamped = True
+        if asymmetric:
+            pair = min(target_long, target_short, capacity // 2)
+            target_long = pair
+            target_short = pair
+            clamped = clamped or target_long + target_short != total
+        target_max = target_long + target_short
+
+    updated = {
+        **current,
+        "longSlots": target_long,
+        "shortSlots": target_short,
+        "maximumPositions": target_max,
+    }
+    return {
+        "applied": True,
+        "reason": "clamped-to-current-capacity" if clamped else "cycle-start-restored",
+        "settings": updated,
+        "cycleId": cycle_id,
+        "clamped": clamped,
+        "beforeLongSlots": before_long,
+        "beforeShortSlots": before_short,
+        "beforeMaximumPositions": before_max,
+        "targetLongSlots": target_long,
+        "targetShortSlots": target_short,
+        "targetMaximumPositions": target_max,
+    }
+
+
 def assert_order_allowed(ref: Any, intent: Any, *, client: Any | None = None) -> None:
     """Last-millisecond race guard for stale workers.
 
