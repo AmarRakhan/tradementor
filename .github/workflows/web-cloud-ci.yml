@@ -46,3 +46,27 @@ jobs:
       - name: Run web safety tests
         working-directory: web
         run: node --test tests/*.test.mjs
+
+      - name: Install Playwright Chromium for Botconfigurator visual QA
+        working-directory: web
+        run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Run Botconfigurator 3.1 mobile visual QA
+        working-directory: web
+        run: |
+          npx vite --config tests/visual/botconfigurator-v31-vite.config.ts >/tmp/botconfigurator-v31-vite.log 2>&1 &
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4174/tests/visual/botconfigurator-v31.html >/dev/null; then break; fi
+            sleep 1
+          done
+          node tests/visual/botconfigurator-v31-screenshots.mjs
+
+      - name: Upload Botconfigurator visual QA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: botconfigurator-v31-visual-qa
+          path: web/artifacts/botconfigurator-v31
+          if-no-files-found: warn
