@@ -61,9 +61,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
-    id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
-    version: WEBAPP_VERSION,
-    build: WEBAPP_BUILD_NUMBER,
+    id: "v46-build-457-price-zone-sync",
+    version: "46",
+    build: "457",
     releasedAt: "2026-09-28",
     title: "Prijszone-sync · Portfolio Koers en Snapshot één live zone",
     newItems: [
