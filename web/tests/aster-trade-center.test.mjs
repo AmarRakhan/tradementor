@@ -80,12 +80,27 @@ test("position close screen offers exact percentages, live preview and one posit
   assert.match(component, /expected_quantity: quantity/);
   assert.match(component, /percentage,/);
   assert.match(component, /idempotency_key: requestKey\.current/);
-  assert.match(component, /crypto\.randomUUID\(\)/);
+  assert.match(component, /newCloseIdempotencyKey\\(\\)/);
   assert.match(component, /"Sluit " \+ percentage \+ "%"/);
   assert.match(component, /"Positie volledig sluiten"/);
   assert.match(component, /"Positie gedeeltelijk sluiten"/);
   assert.match(component, /Dit is een marktorder en wordt direct uitgevoerd/);
   assert.match(component, /marktslippage/);
+});
+
+test("position close surfaces progress and backend errors above the execute button", () => {
+  const start = component.indexOf("function PositionClosePanel");
+  const end = component.indexOf("function rowFromPosition", start);
+  const panel = component.slice(start, end);
+  assert.match(panel, /setMessage\("Sluitopdracht wordt gecontroleerd…"\)/);
+  assert.match(panel, /aria-live="polite"/);
+  assert.match(panel, /aria-atomic="true"/);
+  const statusIndex = panel.indexOf("className={styles.closeMessage}");
+  const primaryIndex = panel.indexOf("className={styles.closePrimary}");
+  assert.ok(statusIndex >= 0 && primaryIndex >= 0 && statusIndex < primaryIndex);
+  const tryIndex = panel.indexOf("try {");
+  const keyIndex = panel.indexOf("newCloseIdempotencyKey()");
+  assert.ok(tryIndex >= 0 && keyIndex > tryIndex);
 });
 
 test("close flow uses the existing 3D flip and returns to the preserved scroll position", () => {
