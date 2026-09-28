@@ -1262,11 +1262,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     side = "LONG"
                 elif priority == "SHORT" and short_need > 0:
                     side = "SHORT"
-                elif priority in {"LONG", "SHORT"}:
-                    # Do not worsen a live imbalance by filling the opposite side
-                    # merely because the priority side's fixed formation is full.
-                    side = ""
                 else:
+                    # PRIORITY_ONLY changes ordering, never fixed-formation capacity.
+                    # If the preferred side is already full, the remaining free
+                    # active-zone seat on the opposite side must still be eligible.
                     side = _next_entry_side(long_count=current_long, short_count=current_short,
                         long_slots=current_long + long_need, short_slots=current_short + short_need)
             else:
