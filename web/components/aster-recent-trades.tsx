@@ -456,7 +456,7 @@ function PositionClosePanel({
     }
   }
 
-  if (!position || quantity === null || quantity <= 0) {
+  if (!position || !position.symbol || quantity === null || quantity <= 0) {
     return (
       <section className={styles.closePanel} data-reference-id={TRADE_CENTER_REFERENCE_IDS.close}>
         <header className={styles.closePanelHeader}>
