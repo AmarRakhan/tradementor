@@ -4,7 +4,7 @@ import { chromium } from "playwright";
 
 await mkdir("artifacts/botconfigurator-v31", { recursive: true });
 const url = "http://127.0.0.1:4174/tests/visual/botconfigurator-v31.html";
-const widths = [320, 360, 390, 412, 430];
+const widths = [320, 360, 390, 412, 430, 768, 1280];
 
 for (const width of widths) {
   const browser = await chromium.launch({ headless: true });
@@ -56,9 +56,9 @@ for (const width of widths) {
   assert.match(seatText, /3L \/ 3S/);
   overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, width + "px Portfolio TP seat reset horizontal overflow: " + overflow);
-  if (width === 390) await page.screenshot({ path: "artifacts/botconfigurator-v31/portfolio-tp-seat-reset-390.png", fullPage: true });
+  if ([390, 768, 1280].includes(width)) await page.screenshot({ path: `artifacts/botconfigurator-v31/portfolio-tp-seat-reset-${width}.png`, fullPage: true });
 
   await browser.close();
 }
 
-console.log("Botconfigurator 3.1 visual QA complete for 320/360/390/412/430px");
+console.log("Botconfigurator 3.1 visual QA complete for 320/360/390/412/430/768/1280px");
