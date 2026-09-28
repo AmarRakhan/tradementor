@@ -3,6 +3,8 @@ import fs from "node:fs";
 import test from "node:test";
 
 const v3 = fs.readFileSync(new URL("../components/aster-bot-configurator-v3.tsx", import.meta.url), "utf8");
+const v2 = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx", import.meta.url), "utf8");
+const shell = fs.readFileSync(new URL("../components/aster-strategy2-entry.tsx", import.meta.url), "utf8");
 const route = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts", import.meta.url), "utf8");
 
 test("Portfolio TP seat reset uses the binding visual reference and is BETA UI only", () => {
@@ -12,6 +14,8 @@ test("Portfolio TP seat reset uses the binding visual reference and is BETA UI o
   assert.match(v3, /Wat gebeurt er\?/);
   assert.match(v3, /v3-tp-seat-reset/);
   assert.match(v3, /data-beta-only="true"/);
+  assert.match(shell, /release\?\.channel === "BETA"/);
+  assert.doesNotMatch(v2, /resetSeatsAfterPortfolioTp|Stoelen resetten naar startinstelling/);
 });
 
 test("seat reset setting round-trips through confirmed settings and the existing PUT", () => {
