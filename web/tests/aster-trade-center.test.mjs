@@ -80,7 +80,7 @@ test("position close screen offers exact percentages, live preview and one posit
   assert.match(component, /expected_quantity: quantity/);
   assert.match(component, /percentage,/);
   assert.match(component, /idempotency_key: requestKey\.current/);
-  assert.match(component, /newCloseIdempotencyKey\\(\\)/);
+  assert.match(component, /newCloseIdempotencyKey\(\)/);
   assert.match(component, /"Sluit " \+ percentage \+ "%"/);
   assert.match(component, /"Positie volledig sluiten"/);
   assert.match(component, /"Positie gedeeltelijk sluiten"/);
