@@ -25,5 +25,32 @@ def test_manual_close_route_has_idempotency_and_fresh_position_fail_closed_guard
     assert "client.position_risk()" in route
     assert "expected_quantity" in route
     assert "manual_loss_confirmation=True" in route
-    assert "remaining is not None" in route
+    assert "expected_remaining" in route
+    assert "remaining_quantity" in route
     assert "er wordt niet opnieuw besteld" in route
+
+
+def test_manual_close_route_supports_only_the_four_safe_partial_percentages():
+    source = Path(__file__).with_name("main.py").read_text()
+    request_model = source[source.index("class AsterManualCloseRequest"):source.index("class AsterProfitableCloseRequest")]
+    route = source[source.index('@app.post("/v1/me/aster/positions/{symbol}/close")'):source.index('@app.post("/v1/me/aster/simulate")')]
+
+    assert "percentage: int = Field(default=100, ge=25, le=100)" in request_model
+    assert "request.percentage not in ALLOWED_CLOSE_PERCENTAGES" in route
+    assert "close_size(live_quantity, request.percentage)" in route
+    assert "rules.market_quantity" in route
+    assert "request.percentage != 100" in route
+    assert '"percentage": request.percentage' in route
+    assert '"remainingSize": remaining_quantity' in route
+
+
+def test_manual_partial_close_respects_auto_hedge_reservations_before_submit():
+    source = Path(__file__).with_name("main.py").read_text()
+    route = source[source.index('@app.post("/v1/me/aster/positions/{symbol}/close")'):source.index('@app.post("/v1/me/aster/simulate")')]
+
+    hedge_guard = route.index("require_auto_hedge_close_allowed(")
+    manual_lock = route.index("begin_manual_action(")
+    submit = route.index("execute_aster_leg(")
+    assert hedge_guard < manual_lock < submit
+    assert 'caller="manual-position-close"' in route
+    assert "except AutoHedgeCloseBlocked as exc" in route
