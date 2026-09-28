@@ -221,8 +221,13 @@ def test_planner_clamps_old_snapshot_to_current_market_capacity():
 
 
 def test_event_backtest_1000_cycles_has_zero_invariant_failures_and_sends_no_orders():
+    """Deterministic event replay: toggle ON/OFF, retries, duplicate delivery and reconnect copies."""
     rng = random.Random(20260928)
     failures = []
+    duplicate_mutations = 0
+    missed_resets = 0
+    incorrect_resets = 0
+
     for index in range(1000):
         start_long = rng.randint(0, 20)
         start_short = rng.randint(0, 20)
@@ -230,17 +235,53 @@ def test_event_backtest_1000_cycles_has_zero_invariant_failures_and_sends_no_ord
             start_long = 1
         current_long = start_long + rng.randint(0, 20)
         current_short = start_short + rng.randint(0, 20)
-        settings = _settings(current_long, current_short, reset=True, top_n=100)
-        cycle = _cycle(start_long=start_long, start_short=start_short)
-        plan = portfolio_tp_seat_reset_plan(cycle, settings)
-        if (
-            not plan["applied"]
-            or plan["targetLongSlots"] != start_long
-            or plan["targetShortSlots"] != start_short
-            or plan["targetMaximumPositions"] != start_long + start_short
-        ):
-            failures.append((index, cycle, plan))
+        reset_enabled = bool(rng.getrandbits(1))
+        settings = _settings(current_long, current_short, reset=reset_enabled, top_n=100)
+        cycle = _cycle(start_long=start_long, start_short=start_short, armed=reset_enabled)
+
+        # Toggle OFF means the Portfolio TP close may finish, but no seat mutation is allowed.
+        if not reset_enabled:
+            replay_settings = dict(settings)
+            if (
+                replay_settings["longSlots"] != current_long
+                or replay_settings["shortSlots"] != current_short
+                or replay_settings["maximumPositions"] != current_long + current_short
+            ):
+                incorrect_resets += 1
+                failures.append((index, "toggle-off-mutated", cycle, replay_settings))
+            continue
+
+        # First delivery, then a retry/duplicate delivery after a reconnect-like state copy.
+        first = portfolio_tp_seat_reset_plan(dict(cycle), dict(settings))
+        retry = portfolio_tp_seat_reset_plan(dict(cycle), dict(settings))
+        reconnect = portfolio_tp_seat_reset_plan(dict(cycle), dict(settings))
+        plans = (first, retry, reconnect)
+
+        if not all(plan["applied"] for plan in plans):
+            missed_resets += 1
+            failures.append((index, "missed-reset", cycle, plans))
+            continue
+
+        expected = (start_long, start_short, start_long + start_short)
+        results = {
+            (
+                plan["targetLongSlots"],
+                plan["targetShortSlots"],
+                plan["targetMaximumPositions"],
+            )
+            for plan in plans
+        }
+        if results != {expected}:
+            incorrect_resets += 1
+            failures.append((index, "incorrect-reset", cycle, results))
+        if len(results) != 1:
+            duplicate_mutations += 1
+            failures.append((index, "duplicate-divergence", cycle, results))
+
     assert failures == []
+    assert incorrect_resets == 0
+    assert missed_resets == 0
+    assert duplicate_mutations == 0
 
 
 def test_missing_cycle_seat_snapshot_fails_closed_after_flat_and_keeps_entry_lock():
