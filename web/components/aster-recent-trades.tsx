@@ -350,6 +350,15 @@ function toneFor(value: unknown): "profit" | "loss" | "neutral" {
   return n === null || n === 0 ? "neutral" : n > 0 ? "profit" : "loss";
 }
 
+function newCloseIdempotencyKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return "tm-" + Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return "tm-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + "-" + Math.random().toString(36).slice(2);
+}
+
 function CoinIcon({ symbol }: { symbol: string }) {
   const asset = baseAsset(symbol);
   return (
@@ -421,13 +430,13 @@ function PositionClosePanel({
       quantity <= 0
     ) return;
     setBusy(true);
-    setMessage("");
-    const signature = normalizedSymbol(position.symbol) + "|" + side + "|" + quantity + "|" + percentage;
-    if (!requestKey.current || requestSignature.current !== signature) {
-      requestKey.current = crypto.randomUUID();
-      requestSignature.current = signature;
-    }
+    setMessage("Sluitopdracht wordt gecontroleerd…");
     try {
+      const signature = normalizedSymbol(position.symbol) + "|" + side + "|" + quantity + "|" + percentage;
+      if (!requestKey.current || requestSignature.current !== signature) {
+        requestKey.current = newCloseIdempotencyKey();
+        requestSignature.current = signature;
+      }
       const result = await authenticatedRequest(
         "/api/exchanges/aster/positions/" + encodeURIComponent(String(position.symbol)) + "/close",
         {
@@ -534,11 +543,11 @@ function PositionClosePanel({
           <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Dit is een marktorder en wordt direct uitgevoerd.</strong><br />De uiteindelijke prijs kan licht afwijken door marktslippage.</p></div>
         )}
 
+        {message ? <p className={styles.closeMessage} role="status" aria-live="polite" aria-atomic="true">{message}</p> : null}
         <button type="button" className={styles.closePrimary} disabled={busy || protectedHedge} onClick={closePosition}>
           <span aria-hidden="true">◆</span>{busy ? "Sluiten…" : "Sluit " + percentage + "%"}<small>{percentage === 100 ? "Positie volledig sluiten" : "Positie gedeeltelijk sluiten"}</small>
         </button>
         <button type="button" className={styles.closeCancel} disabled={busy} onClick={onCancel}><span aria-hidden="true">←</span> Annuleren</button>
-        {message ? <p className={styles.closeMessage} role="status">{message}</p> : null}
       </section>
     </section>
   );
