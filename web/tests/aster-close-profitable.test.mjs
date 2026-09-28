@@ -9,7 +9,7 @@ const closeProxy = fs.readFileSync(new URL("../app/api/exchanges/aster/positions
 
 test("bulk profit action preserves existing Tradecentrum controls", () => {
   assert.match(component, /Toon alles/);
-  assert.match(component, /ClosePositionControl/);
+  assert.match(component, /PositionClosePanel/);
   assert.match(component, /Close \$\{profitCandidates\.length\} profits/);
   assert.doesNotMatch(component, /netto\s*[≥>]/i);
 });

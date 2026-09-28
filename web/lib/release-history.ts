@@ -26,35 +26,56 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-28",
-  title: "Legacy/STABLE · Portfolio TP stoelreset zichtbaar",
+  title: "Tradecentrum · Position Close 1.0",
   newItems: [
-    "De bestaande legacy/STABLE Botinstellingen tonen nu dezelfde Portfolio TP-stoelreset als Build 460.",
-    "De schakelaar staat rechtstreeks in de grote Portfolio Take Profit-kaart die bestaande gebruikers al gebruiken.",
-    "De kaart toont huidige LONG/SHORT-stoelen, volledige Portfolio TP-close en de cycle-startwaarden waarnaar wordt teruggezet.",
+    "De zichtbare Liq-kolom in het Aster Tradecentrum is vervangen door een Close-knop per actieve positie.",
+    "Close opent een 3D-flip detailscherm met exact 25%, 50%, 75% en 100% sluiten en een directe impact-preview.",
+    "Het hoofdscherm en close-scherm zijn gekoppeld aan de drie aangeleverde afbeeldings-ID’s als bindende visuele referentie.",
   ],
   problems: [
-    "Build 461 voegde de bediening toe aan Botconfigurator V2, maar sommige STABLE-gebruikers gebruiken nog de oudere AsterStrategy2Maker-route en zagen de knop daardoor niet.",
+    "De oude tabel gebruikte de laatste kolom voor liquidatieafstand en handmatig sluiten zat alleen als volledige close in het uitgebreide tradedetail.",
   ],
   causes: [
-    "STABLE kan afhankelijk van release-entitlement nog op de legacy maker blijven; dat scherm had resetSeatsAfterPortfolioTp nog niet als zichtbare bediening.",
+    "De bestaande Aster manual-close route was ontworpen voor volledige positie-sluiting en de Tradecentrum referentie had nog geen positiegebonden partial-close flow.",
   ],
   fixes: [
-    "resetSeatsAfterPortfolioTp is nu ook in de legacy maker leesbaar, wijzigbaar en persistent via de bestaande Strategy-2 settings-API.",
-    "De reeds live Build-460 backendstate-machine blijft volledig ongewijzigd.",
-    "Geen gebruiker wordt naar V2 of V3 gemigreerd en geen bestaande strategie- of runtime-instelling wordt automatisch gewijzigd.",
+    "De overzichtsweergave toont Close in plaats van Liq; onderliggende liquidatieberekeningen blijven beschikbaar voor detail, chart en risklogica.",
+    "De close-flow toont live positiegegevens, 25/50/75/100%-keuze, te sluiten qty/waarde/PnL en resterende qty/waarde.",
+    "Beschermde Airbag/hedge-legs blijven uit de normale close-flow; bestaande bulk-close, hedge, DCA, Zone Warriors, Portfolio TP en Sniper-logica blijven intact.",
   ],
   now: [
-    "Legacy/STABLE-gebruikers kunnen de stoelreset zelf aanzetten in hun vertrouwde Portfolio Take Profit-scherm.",
-    "De schakelaar staat standaard UIT en verandert geen trades op het moment van inschakelen.",
+    "Een gebruiker kan vanuit de gekozen positie rechtstreeks een gedeeltelijke of volledige market close voorbereiden en bevestigen.",
+    "De actie blijft exact aan symbool + LONG/SHORT-zijde + actuele quantity gekoppeld en gebruikt dezelfde fail-closed backendbeveiliging.",
   ],
   technicalDetails: [
-    "UI/persistence-only wijziging in aster-strategy2-maker.tsx.",
-    "Resetdoel blijft cycleStartLongSlots/cycleStartShortSlots uit de lopende Portfolio TP-cycle.",
+    "Referentie A: file_00000000035c8210978ce05d3eded847.",
+    "Referentie B: file_000000000cb881f48416e7d6470ae96e.",
+    "Referentie C: file_00000000b4448210b7ba77e95c90619b.",
+    "Frontend stuurt percentage, expected_quantity en een idempotency_key; backend valideert exchange-truth, contractstap en hedge-reserveringen vóór submit.",
   ],
   confidence: "confirmed",
 };
-
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-462-legacy-seat-reset",
+    version: "46",
+    build: "462",
+    releasedAt: "2026-09-28",
+    title: "Legacy/STABLE · Portfolio TP stoelreset zichtbaar",
+    newItems: [
+      "De bestaande legacy/STABLE Botinstellingen tonen dezelfde Portfolio TP-stoelreset als Build 460.",
+      "De schakelaar staat rechtstreeks in de bestaande Portfolio Take Profit-kaart.",
+    ],
+    problems: ["Build 461 bereikte V2, maar niet iedere STABLE-gebruiker gebruikte die configurator."],
+    causes: ["Legacy/STABLE kon nog via AsterStrategy2Maker lopen."],
+    fixes: [
+      "resetSeatsAfterPortfolioTp werd ook in de legacy maker leesbaar, wijzigbaar en persistent.",
+      "Geen bestaande tradingruntime of gebruikersstrategie werd gemigreerd.",
+    ],
+    now: ["Legacy/STABLE-gebruikers kunnen de stoelreset in hun vertrouwde Portfolio TP-scherm bedienen."],
+    technicalDetails: ["UI/persistence-only wijziging in aster-strategy2-maker.tsx."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-461-v2-seat-reset",
     version: "46",
