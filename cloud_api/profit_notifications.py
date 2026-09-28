@@ -374,7 +374,7 @@ class ProfitNotificationService:
 
     def save_settings(self, uid: str, source: dict[str, Any]) -> dict[str, Any]:
         previous = self.get_settings(uid)
-        normalized = normalize_settings(source)
+        normalized = normalize_settings({**previous, **source})
         now_ms = _now_ms()
         enabled_at = _integer(previous.get("enabledAtMs"), 0)
         if normalized["enabled"] and (not previous.get("enabled") or enabled_at <= 0):
@@ -816,7 +816,7 @@ def install_profit_notification_routes(app: Any, service: ProfitNotificationServ
     @app.put("/v1/me/notifications/settings")
     def save_profit_notification_settings(request: NotificationSettingsRequest,
                                           user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-        return service.save_settings(str(user["uid"]), request.model_dump())
+        return service.save_settings(str(user["uid"]), request.model_dump(exclude_unset=True))
 
     @app.get("/v1/me/notifications/public-key")
     def profit_notification_public_key(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
