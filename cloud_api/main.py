@@ -100,7 +100,7 @@ from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
-from aster_zone_soldiers import confirmed_zone_from_display_zones
+from aster_zone_soldiers import confirmed_zone_from_display_zones, prepare_zone_runtime
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -1724,6 +1724,77 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
         }
 
 
+def _sync_price_zone_seat_runtime(
+    ref: Any,
+    raw: dict[str, Any],
+    settings: MultiBbConfig,
+    positions: list[dict[str, Any]],
+    zone_context: dict[str, Any] | None,
+    now: datetime,
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Persist current live-zone seat metadata before any higher-priority early return.
+
+    This helper is intentionally order-free. It keeps the price-zone seat state
+    synchronized with current exchange equity even when Dynamic Hedge or another
+    safety layer owns the rest of the tick.
+    """
+    if dry_run or not bool(getattr(settings, "zone_soldiers_enabled", False)) or not isinstance(zone_context, dict):
+        return raw
+
+    managed = raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"), dict) else {}
+    fallback_unit = max(
+        1.0,
+        (
+            safe_float(getattr(settings, "entry_notional_long_usd", 0.0))
+            + safe_float(getattr(settings, "entry_notional_short_usd", 0.0))
+        ) / 2.0,
+        safe_float(getattr(settings, "entry_notional_usd", 0.0)),
+    )
+    if str(getattr(settings, "entry_sizing_mode", "")) == "margin":
+        leverage = max(1, int(getattr(settings, "minimum_leverage", 1)))
+        fallback_unit = max(
+            fallback_unit,
+            (
+                safe_float(getattr(settings, "entry_margin_long_usd", 0.0))
+                + safe_float(getattr(settings, "entry_margin_short_usd", 0.0))
+            ) / 2.0 * leverage,
+            safe_float(getattr(settings, "entry_margin_usd", 0.0)) * leverage,
+        )
+
+    zone_state, _, zone_report = prepare_zone_runtime(
+        raw_zone_state=raw.get("zoneSoldierState"),
+        managed_state=managed,
+        positions=positions,
+        confirmed_zone=zone_context.get("activeZone"),
+        zone_safe=bool(zone_context.get("safeForEntries", False)),
+        base_long=max(1, int(getattr(settings, "zone_base_long_soldiers", 3))),
+        base_short=max(1, int(getattr(settings, "zone_base_short_soldiers", 3))),
+        balancer_enabled=bool(getattr(settings, "zone_exposure_balancer_enabled", True)),
+        trigger_percent=float(getattr(settings, "exposure_refill_trigger_percent", 20.0)),
+        release_percent=float(getattr(settings, "exposure_refill_release_percent", 8.0)),
+        fallback_unit_notional=fallback_unit,
+        timestamp_ms=int(now.timestamp() * 1000),
+    )
+    zone_report["lifecycle"] = "ACTIVE"
+    zone_report["drainingOpenCount"] = 0
+    zone_report["runtimeSync"] = {
+        "source": "LIVE_PORTFOLIO_EQUITY",
+        "activeZone": zone_context.get("activeZone"),
+        "currentEquity": zone_context.get("currentEquity"),
+        "reason": zone_context.get("reason"),
+        "syncedAtMs": int(now.timestamp() * 1000),
+    }
+    ref.set({
+        "zoneSoldierState": zone_state,
+        "zoneSoldierReport": zone_report,
+        "zoneSoldierLifecycle": "ACTIVE",
+        "zoneSoldierUpdatedAt": now,
+    }, merge=True)
+    return {**raw, "zoneSoldierState": zone_state, "zoneSoldierReport": zone_report}
+
+
 def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None=None,
                               before_order:Any=None,management_only:bool=False,event_symbol:str="",
                               event_mark_price:float|None=None)->dict[str,Any]:
@@ -1785,6 +1856,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         reason="Aster Hedge Mode staat uit";ref.set({"phase":"DATA_HOLD","lastReason":reason,"lastTickAt":now},merge=True)
         return {"status":"blocked","reason":reason}
     zone_context = _strategy2_zone_runtime_context(uid, raw, account, now) if bool(getattr(settings, "zone_soldiers_enabled", False)) else None
+    raw = _sync_price_zone_seat_runtime(ref, raw, settings, positions, zone_context, now, dry_run=dry_run)
     # Realtime Strategy-2 management must evaluate the triggering symbol with
     # the exact websocket mark that caused this tick. Keep all exchange truth
     # (qty, entry, leverage) unchanged and override only markPrice in a local
