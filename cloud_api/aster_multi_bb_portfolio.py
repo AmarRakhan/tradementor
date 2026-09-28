@@ -423,7 +423,9 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                          take_profit_mode: str, portfolio_tp_percent: float,
                          portfolio_tp_input_mode: str = "PERCENT", portfolio_tp_value: float | None = None,
                          portfolio_tp_base_mode: str = "CYCLE_START", portfolio_tp_custom_base_equity: float = 0.0,
-                         config_version: int = 0,
+                         config_version: int = 0, current_long_slots: int | None = None,
+                         current_short_slots: int | None = None, current_maximum_positions: int | None = None,
+                         reset_seats_after_portfolio_tp: bool = False,
                          dry_run: bool = False, order_budget: int | None = None,
                          before_order: Any = None) -> PortfolioGateResult:
     mode = str(take_profit_mode or "PER_TRADE").upper()
@@ -433,6 +435,8 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
         timestamp_ms=timestamp_ms, portfolio_tp_input_mode=portfolio_tp_input_mode,
         portfolio_tp_value=portfolio_tp_value, portfolio_tp_base_mode=portfolio_tp_base_mode,
         portfolio_tp_custom_base_equity=portfolio_tp_custom_base_equity, config_version=config_version,
+        current_long_slots=current_long_slots, current_short_slots=current_short_slots,
+        current_maximum_positions=current_maximum_positions,
     )
     cycle["updatedAtMs"] = timestamp_ms
     snapshot = portfolio_cycle_snapshot(cycle, mode=mode, current_equity=equity,
@@ -463,9 +467,13 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                 cycle["targetEquity"] = target
     triggered = mode == "PORTFOLIO" and target > 0 and equity >= target
     if status == RUNNING and triggered:
+        trigger_state = ref.get().to_dict() or {}
+        trigger_settings = trigger_state.get("settings") if isinstance(trigger_state.get("settings"), dict) else {}
+        seat_reset_armed = bool(trigger_settings.get("resetSeatsAfterPortfolioTp", reset_seats_after_portfolio_tp))
         cycle.update({"cycleStatus": PORTFOLIO_TP_EXECUTING,
                       "portfolioTpTriggeredAt": datetime.now(timezone.utc),
                       "portfolioTpTriggeredAtMs": timestamp_ms,
+                      "seatResetArmed": seat_reset_armed,
                       "updatedAtMs": timestamp_ms})
         status = PORTFOLIO_TP_EXECUTING
         snapshot = portfolio_cycle_snapshot(cycle, mode=mode, current_equity=equity,
@@ -475,7 +483,11 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                          reason=f"Portfolio TP bereikt op echte Aster-equity {equity:.8f}; volledige exit gestart")
             ref.collection("audit").add({"event": "PORTFOLIO_TP_TRIGGERED", "user": uid,
                 "cycleId": cycle.get("cycleId"), "cycleStartEquity": cycle.get("cycleStartEquity"),
-                "targetEquity": target, "currentEquity": equity, "timestamp": datetime.now(timezone.utc)})
+                "targetEquity": target, "currentEquity": equity,
+                "seatResetArmed": bool(cycle.get("seatResetArmed", False)),
+                "cycleStartLongSlots": cycle.get("cycleStartLongSlots"),
+                "cycleStartShortSlots": cycle.get("cycleStartShortSlots"),
+                "timestamp": datetime.now(timezone.utc)})
 
     if status not in ACTIVE_EXIT_STATES:
         return PortfolioGateResult(False, False, snapshot, raw_state, account, positions, open_orders, 0)
@@ -485,7 +497,10 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
     actions: list[dict[str, Any]] = []
     if dry_run:
         actions.append({"kind": "PORTFOLIO_TP_WOULD_EXIT", "positions": len(_position_rows(positions)),
-                        "targetEquity": target, "currentEquity": equity})
+                        "targetEquity": target, "currentEquity": equity,
+                        "seatResetArmed": bool(cycle.get("seatResetArmed", reset_seats_after_portfolio_tp)),
+                        "cycleStartLongSlots": cycle.get("cycleStartLongSlots"),
+                        "cycleStartShortSlots": cycle.get("cycleStartShortSlots")})
         return PortfolioGateResult(True, False, {**snapshot, "actions": actions, "ordersSent": 0},
                                    raw_state, account, positions, open_orders, 0)
 
