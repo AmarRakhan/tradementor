@@ -249,3 +249,5 @@ jobs:
           PY
 
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
+
+# explicit audit trigger 2026-09-29
