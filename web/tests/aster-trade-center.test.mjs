@@ -181,3 +181,17 @@ test("Meeste DCA remains the second dataset and sorts by confirmed DCA count", (
   assert.match(component, /positionEntryCount\(a\)/);
   assert.match(component, /positionEntryCount\(b\)/);
 });
+
+
+test("Build 468 full Auto Hedge leg close leaves the survivor in Recovery until explicit re-hedge", () => {
+  const start = component.indexOf("function PositionClosePanel");
+  const end = component.indexOf("function rowFromPosition", start);
+  const panel = component.slice(start, end);
+  assert.match(component, /positionLossAutoHedge/);
+  assert.match(panel, /AUTO HEDGE ·/);
+  assert.match(panel, /De andere leg blijft staan als Recovery/);
+  assert.match(panel, /wordt niet automatisch teruggezet/);
+  assert.match(panel, /re-hedge blijft UIT/);
+  assert.match(panel, /percentage === 100/);
+  assert.match(panel, /autoHedgeStatus/);
+});
