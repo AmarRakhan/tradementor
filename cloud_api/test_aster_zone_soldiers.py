@@ -91,6 +91,8 @@ def test_open_old_zone_trade_survives_zone_change_and_keeps_origin():
     assert row["status"] == STATUS_OPEN
     assert managed["BTCUSDT|LONG"]["originZone"] == 0
     assert report["oldZonesOpen"]["long"] == 1
+    assert report["zoneOpenCountsReliable"] is True
+    assert report["zoneOpenCounts"] == {"0": {"long": 1, "short": 0, "total": 1}}
 
 
 def test_closed_old_zone_trade_becomes_dormant():
