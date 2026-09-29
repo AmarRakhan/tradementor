@@ -4089,7 +4089,11 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
         key=lambda item: safe_float(item.get("time")),
         reverse=True,
     ):
-        if safe_float(row.get("income")) <= 0:
+        # Any recent REALIZED_PNL symbol is notification evidence. Do not
+        # require the ledger row itself to be positive: a profitable close can
+        # contain zero/negative fragments, while entry alerts are independent
+        # of profit altogether.
+        if str(row.get("incomeType", "REALIZED_PNL")).upper() != "REALIZED_PNL":
             continue
         symbol = str(row.get("symbol", "")).upper()
         if symbol and symbol not in priority_symbols:
