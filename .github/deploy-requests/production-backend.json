@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "c52a05686c58c4797342a759371aa36a9dddd619",
+  "sourceCommit": "2f22ce0254ed7e470e886b1078b2316a3634dbb8",
   "requestedBy": "AmarRakhan",
-  "requestId": "notification-reconcile-lossless-20260929"
+  "requestId": "build471-partial-auto-hedge-close-20260929"
 }
