@@ -110,7 +110,7 @@ test("Build 455 replaces the four quick tiles with one live price-zone strategy 
   assert.ok(component.includes("file_00000000a5708210be60f92f52e4b5cc"));
   assert.ok(component.includes("PriceZoneStrategySummary"));
   assert.ok(component.includes("loadPriceZoneSeatSummary"));
-  for(const label of ["Prijszone-strategie","Per zone","Vrij in actieve zone","Oude zones open","Max totaal","LONG bezet","SHORT bezet","Totaal bezet"]) assert.ok(component.includes(label),label);
+  for(const label of ["Prijszone-strategie","Per zone","Vrij in actieve zone","Oude zones open","Max totaal","Actieve zone","Alle zones samen","LONG totaal open","SHORT totaal open","Totaal bezet"]) assert.ok(component.includes(label),label);
   assert.equal(component.includes("SnapshotQuickActions"),false);
   assert.equal(component.includes("tradementor:open-zone-soldiers-command-center"),false);
   assert.equal(css.includes(".aps-quick-actions{display:grid"),false);
@@ -118,4 +118,27 @@ test("Build 455 replaces the four quick tiles with one live price-zone strategy 
   const summary=component.indexOf("<PriceZoneStrategySummary summary={priceZoneSeats} liveActiveZone={liveActiveZone} />");
   const grid=component.indexOf('<div className="aps-grid">');
   assert.ok(summary>0&&summary<grid);
+});
+
+
+test("Build 467 shows Zone Warriors active-zone occupancy separately from all-zone totals without fictive side caps",async()=>{
+  const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-snapshot.css",import.meta.url),"utf8");
+  const summary=component.match(/function PriceZoneStrategySummary[\s\S]*?function Snapshot/)?.[0]||"";
+
+  assert.match(summary,/occupiedLongActiveZone/);
+  assert.match(summary,/occupiedShortActiveZone/);
+  assert.match(summary,/summary\.occupiedLongActiveZone,summary\.perZoneLong/);
+  assert.match(summary,/summary\.occupiedShortActiveZone,summary\.perZoneShort/);
+  assert.match(summary,/LONG totaal open[\s\S]*summary\.strategyOpenLong/);
+  assert.match(summary,/SHORT totaal open[\s\S]*summary\.strategyOpenShort/);
+  assert.match(summary,/Totaal bezet[\s\S]*summary\.strategyOpenTotal[\s\S]*summary\.maxTotal/);
+  assert.doesNotMatch(summary,/const sideTotal\s*=/);
+  assert.doesNotMatch(summary,/const longCapacity\s*=/);
+  assert.doesNotMatch(summary,/const shortCapacity\s*=/);
+  assert.doesNotMatch(summary,/strategyOpenLong\}\s*\/\s*\{longCapacity/);
+  assert.doesNotMatch(summary,/strategyOpenShort\}\s*\/\s*\{shortCapacity/);
+  assert.match(summary,/seatZoneInSync \? <b><i>\{summary\.freeLongActiveZone\}L<\/i> \/ <em>\{summary\.freeShortActiveZone\}S<\/em><\/b> : <b>— \/ —<\/b>/);
+  assert.match(css,/\.aps-zone-seat-groups\{/);
+  assert.match(css,/\.aps-zone-open-counts\{/);
 });
