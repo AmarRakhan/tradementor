@@ -79,11 +79,17 @@ def test_manual_full_leg_release_is_symmetric_and_never_auto_reopens():
     assert '"AUTO_HEDGE_LEG_RELEASE"' in main
 
 
-def test_manual_auto_hedge_release_is_only_for_full_leg_closes():
+def test_manual_auto_hedge_release_supports_partial_and_full_leg_closes():
     main = main_source()
     start = main.index("def _begin_position_loss_auto_hedge_manual_release")
     end = main.index("def _complete_position_loss_auto_hedge_manual_release", start)
     helper = main[start:end]
-    assert 'if int(percentage) != 100:' in helper
-    assert 'return None' in helper
+    complete = main[end:main.index("def _fail_position_loss_auto_hedge_manual_release", end)]
+    assert 'if int(percentage) != 100:' not in helper
     assert '"requestedCloseQty": float(close_quantity)' in helper
+    assert '"requestedPercentage": int(percentage)' in helper
+    assert '"percentage": int(percentage)' in helper
+    assert 'percentage == 100 and closed_row is not None' in complete
+    assert '"USER_MANUAL_PARTIAL_LEG_RELEASE_RECOVERY"' in complete
+    assert '"EXCHANGE_CONFIRMED_PARTIAL"' in complete
+    assert '"rehedgeEnabled": False' in complete
