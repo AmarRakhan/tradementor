@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "468"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "469"/);
 });
 
 test("Tradecentrum shows Auto Hedge status on every matching coin row without the redundant AH prefix", async () => {
