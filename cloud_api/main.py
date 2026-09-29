@@ -7462,6 +7462,7 @@ def close_profitable_aster_positions(
     dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard = None
     auto_hedge_manual_guard = None
+    auto_hedge_release = None
     account_token = None
     try:
         before_manual_rows = _portfolio_growth_client(user, live=False).position_risk()
@@ -7692,7 +7693,9 @@ def close_one_aster_position(
         if abs(remaining_quantity - expected_remaining) > remaining_tolerance:
             close_kind = "volledige" if request.percentage == 100 else "gedeeltelijke"
             raise HTTPException(502, f"Aster heeft de {close_kind} sluiting nog niet betrouwbaar bevestigd; er wordt niet opnieuw besteld")
-        _complete_position_loss_auto_hedge_manual_release(uid, auto_hedge_manual_guard, after_manual_rows)
+        auto_hedge_release = _complete_position_loss_auto_hedge_manual_release(
+            uid, auto_hedge_manual_guard, after_manual_rows,
+        )
         complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
         intent_ref.set({
             "status": "confirmed_closed", "result": result, "percentage": request.percentage,
@@ -7707,6 +7710,11 @@ def close_one_aster_position(
             "percentage": request.percentage,
             "closedSize": close_quantity,
             "remainingSize": remaining_quantity,
+            "autoHedgeStatus": str((auto_hedge_release or {}).get("status", "")) or None,
+            "autoHedgeRehedgeEnabled": (
+                bool((auto_hedge_release or {}).get("rehedgeEnabled"))
+                if auto_hedge_release is not None else None
+            ),
         }
     except AutoHedgeCloseBlocked as exc:
         _fail_position_loss_auto_hedge_manual_release(uid, auto_hedge_manual_guard, str(exc))
