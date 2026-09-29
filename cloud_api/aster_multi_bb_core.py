@@ -182,9 +182,11 @@ class MultiBbConfig:
         if self.engine != ENGINE: raise ValueError("Alleen de nieuwe Multi BB-strategie is toegestaan")
         if not 1 <= self.universe_top_n <= 800: raise ValueError("Top-N moet tussen 1 en 800 liggen")
         maximum_capacity = 200 if self.manual_symbol_selection_enabled else self.universe_top_n * 2
-        if not 1 <= self.maximum_positions <= maximum_capacity: raise ValueError("Max posities overschrijdt de beschikbare marktcapaciteit")
+        if not 0 <= self.maximum_positions <= maximum_capacity: raise ValueError("Max posities overschrijdt de beschikbare marktcapaciteit")
         if self.long_slots < 0 or self.short_slots < 0:
             raise ValueError("LONG/SHORT slots mogen niet negatief zijn")
+        if self.maximum_positions == 0 and (self.long_slots != 0 or self.short_slots != 0):
+            raise ValueError("0 max posities vereist 0 LONG- en 0 SHORT-slots")
         if not self.zone_soldiers_enabled and self.long_slots + self.short_slots != self.maximum_positions:
             raise ValueError("LONG + SHORT slots moet exact gelijk zijn aan max posities")
         if not 1 <= self.minimum_leverage <= 300: raise ValueError("Minimum leverage moet tussen 1x en 300x liggen")
@@ -1156,10 +1158,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     legacy_position_count = max(0, len(strategy_active_keys) - active_pair_count * 2) if settings.asymmetric_hedge_enabled else 0
     if zone_mode:
         pair_need = 0
-        # In Zone Warriors mode the global maximumPositions cap applies only
-        # to exchange-confirmed zone-owned seats (active zone + old zones).
-        # Pre-zone/legacy Strategy-2 positions keep their normal TP/DCA
-        # management but must not consume the new Zone Warriors seat pool.
+        # Zone Warriors maximumPositions is the global cap for zone-owned seats
+        # only (active zone + old zones). Legacy/pre-zone Strategy-2 positions
+        # remain managed for TP/DCA but do not consume this new seat pool.
         zone_seat_model = (zone_report or {}).get("seatModel") if isinstance((zone_report or {}).get("seatModel"), dict) else {}
         zone_strategy_position_count = max(
             0,
