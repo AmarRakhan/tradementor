@@ -282,3 +282,15 @@ def test_price_zone_public_snapshot_exposes_read_only_entry_blocker_diagnostics(
     assert '"entryStatus":str(report.get("entryStatus") or "")' in source
     assert '"entrySkipReasons"' in source
     assert '"haltedUncertain"' in source
+
+
+def test_live_zone_seat_presync_explicitly_skips_legacy_migration():
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    helper_start = source.index("def _sync_price_zone_seat_runtime(")
+    helper_end = source.index("def _run_aster_strategy2_tick(", helper_start)
+    helper = source[helper_start:helper_end]
+    assert "migrate_legacy=False" in helper
+
+    zone_source = (ROOT / "aster_zone_soldiers.py").read_text(encoding="utf-8")
+    assert "migrate_legacy: bool = True" in zone_source
+    assert "if migrate_legacy:" in zone_source

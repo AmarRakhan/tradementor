@@ -598,3 +598,65 @@ def test_build432_strategy_owned_counts_exclude_legacy_and_reconcile_old_zone_su
     assert report["currentZoneOwned"] == {"total":0,"long":0,"short":0}
     assert report["legacyUnassignedOpenCount"] == 1
     assert report["totalActive"] == 2
+
+
+def test_read_only_live_zone_sync_does_not_consume_or_repeat_legacy_migration_hold():
+    legacy_key, legacy_row = owned("BTCUSDT", "LONG")
+    legacy = {legacy_key: legacy_row}
+    position = [pos("BTCUSDT", "LONG", 100)]
+
+    # Pre-sync: update zone metadata only. It must not tag the legacy row and
+    # must not create the one-tick migration hold.
+    z0, presync_managed, presync_report = prepare_zone_runtime(
+        raw_zone_state={},
+        managed_state=legacy,
+        positions=position,
+        confirmed_zone=1,
+        zone_safe=True,
+        base_long=3,
+        base_short=3,
+        balancer_enabled=False,
+        trigger_percent=20.0,
+        release_percent=8.0,
+        fallback_unit_notional=100.0,
+        timestamp_ms=10_000,
+        migrate_legacy=False,
+    )
+    assert presync_report["legacyMigratedThisTick"] == 0
+    assert "soldierRole" not in presync_managed[legacy_key]
+
+    # Authoritative planner: migrate exactly once and persist the returned row.
+    z1, migrated_managed, migrated_report = prepare_zone_runtime(
+        raw_zone_state=z0,
+        managed_state=presync_managed,
+        positions=position,
+        confirmed_zone=1,
+        zone_safe=True,
+        base_long=3,
+        base_short=3,
+        balancer_enabled=False,
+        trigger_percent=20.0,
+        release_percent=8.0,
+        fallback_unit_notional=100.0,
+        timestamp_ms=11_000,
+    )
+    assert migrated_report["legacyMigratedThisTick"] == 1
+    assert migrated_managed[legacy_key]["soldierRole"] == ROLE_LEGACY_UNASSIGNED
+
+    # Next planner tick: the durable marker prevents an endless migration hold.
+    _, next_managed, next_report = prepare_zone_runtime(
+        raw_zone_state=z1,
+        managed_state=migrated_managed,
+        positions=position,
+        confirmed_zone=1,
+        zone_safe=True,
+        base_long=3,
+        base_short=3,
+        balancer_enabled=False,
+        trigger_percent=20.0,
+        release_percent=8.0,
+        fallback_unit_notional=100.0,
+        timestamp_ms=12_000,
+    )
+    assert next_report["legacyMigratedThisTick"] == 0
+    assert next_managed[legacy_key]["soldierRole"] == ROLE_LEGACY_UNASSIGNED

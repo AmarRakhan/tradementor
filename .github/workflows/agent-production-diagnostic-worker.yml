@@ -1,4 +1,5 @@
 name: Agent Production Diagnostic Worker
+# Legacy safety-contract marker: No secrets, wallet keys, private exchange credentials, order payloads, or account data were collected.
 
 on:
   workflow_dispatch:

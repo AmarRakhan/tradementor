@@ -1814,6 +1814,7 @@ def _sync_price_zone_seat_runtime(
         release_percent=float(getattr(settings, "exposure_refill_release_percent", 8.0)),
         fallback_unit_notional=fallback_unit,
         timestamp_ms=int(now.timestamp() * 1000),
+        migrate_legacy=False,
     )
     zone_report["lifecycle"] = "ACTIVE"
     zone_report["drainingOpenCount"] = 0
