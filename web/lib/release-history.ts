@@ -91,7 +91,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
     "Regressiedekking: cloud_api/test_aster_zone_soldiers.py plus webtests voor live-zone sync, Snapshot en bestaande Build 468-functionaliteit.",
   ],
   confidence: "confirmed",
-};,
+  },
 
   {
     id: "v46-build-468-auto-hedge-manual-leg-release",
