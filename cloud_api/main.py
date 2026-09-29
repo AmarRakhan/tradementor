@@ -1626,9 +1626,23 @@ def _block_strategy2_order_during_conflict(uid:str):
     def guard(intent:AsterOrderIntent)->None:
         close_guard(intent)
         if intent.risk_increasing():
+            symbol = intent.symbol.upper()
+            side = intent.position_side.value
+            pair = _position_loss_auto_hedge_pair(uid, symbol)
+            pair_status = str(pair.get("status", "")).upper()
+            # A manually released/recovery pair reserves the removed side until
+            # the user explicitly re-arms Auto Hedge. Normal Strategy-2 refill
+            # must not make that LONG/SHORT appear again behind the user's back.
+            if pair_status in {
+                "RECOVERY", "REHEDGE_ARMED", "DISABLED",
+                "MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN",
+            } and side == str(pair.get("protectedSide", "")).upper():
+                raise AsterValidationError(
+                    f"{symbol}: AUTO_HEDGE_RECOVERY_SIDE_AWAITS_EXPLICIT_REHEDGE"
+                )
             sniper=aster_sniper_reference(uid).get().to_dict() or {}
-            if intent.symbol.upper() in sniper_active_symbols(sniper):
-                raise AsterValidationError(f"{intent.symbol}: BLOCKED_BY_SNIPER_OWNER")
+            if symbol in sniper_active_symbols(sniper):
+                raise AsterValidationError(f"{symbol}: BLOCKED_BY_SNIPER_OWNER")
     return guard
 
 
