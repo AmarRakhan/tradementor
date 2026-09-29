@@ -1,0 +1,251 @@
+name: Audit SHORT Bollinger Entries 2026-09-29
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/audit-short-bollinger-20260929.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "391"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Collect account-specific SHORT openings read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          FIREBASE_AUTH_PROJECT_ID="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("FIREBASE_AUTH_PROJECT_ID",""))' <<<"$SERVICE_JSON")"
+          ADMIN_EMAIL="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("TRADEMENTOR_ADMIN_EMAIL",""))' <<<"$SERVICE_JSON")"
+          JOB="tm-short-bb-audit-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib, json
+          from datetime import datetime, time, timezone
+          from zoneinfo import ZoneInfo
+          from google.cloud import firestore
+          import main
+
+          tz=ZoneInfo("Europe/Amsterdam")
+          local_day=datetime.now(tz).date()
+          start_local=datetime.combine(local_day,time.min,tzinfo=tz)
+          end_local=datetime.combine(local_day,time.max,tzinfo=tz)
+          start_ms=int(start_local.timestamp()*1000)
+          end_ms=int(end_local.timestamp()*1000)
+
+          def ms(value):
+              if isinstance(value,datetime):
+                  return int(value.timestamp()*1000)
+              try: return int(float(value))
+              except Exception: return 0
+
+          db=firestore.Client(project="tradementor-production")
+          candidates=[]
+          for snap in db.collection("asterStrategy2").where("monitor","==",True).stream():
+              raw=snap.to_dict() or {}
+              settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+              if str(raw.get("releaseChannel") or "").upper()=="BETA" and settings.get("zoneSoldiersEnabled") is True:
+                  candidates.append((snap.id,raw,settings))
+          result={"date":str(local_day),"status":"NO_ACCOUNT","entries":[]}
+          if candidates:
+              uid,raw,stored=candidates[0]
+              effective=main._strip_unreleased_beta_settings_for_uid(dict(stored),uid)
+              settings=main.MultiBbConfig.from_mapping(effective)
+              report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
+              attrs=[]
+              for row in raw.get("orderAttributions",[]) if isinstance(raw.get("orderAttributions"),list) else []:
+                  if not isinstance(row,dict): continue
+                  if str(row.get("side") or "").upper()!="SHORT": continue
+                  if str(row.get("action") or "").upper()!="OPEN_LEG": continue
+                  at=ms(row.get("recordedAt"))
+                  if start_ms <= at <= end_ms:
+                      attrs.append(row)
+              secret=main.load_aster_secret({"uid":uid})
+              client=main.AsterV3Client(
+                  signer_address=secret.signer_address,
+                  sign_message=main.local_eip712_signer(secret),
+                  live_authorized=False,
+                  before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
+              )
+              trade_cache={}
+              entries=[]
+              for row in attrs:
+                  symbol=str(row.get("symbol") or "").upper()
+                  if not symbol: continue
+                  if symbol not in trade_cache:
+                      try: trade_cache[symbol]=client.user_trades(symbol,limit=500)
+                      except Exception: trade_cache[symbol]=[]
+                  oid=str(row.get("orderId") or "")
+                  cid=str(row.get("clientOrderId") or "")
+                  matches=[]
+                  for fill in trade_cache[symbol]:
+                      if not isinstance(fill,dict): continue
+                      foid=str(fill.get("orderId",fill.get("orderID","")) or "")
+                      fcid=str(fill.get("clientOrderId",fill.get("clientOrderID","")) or "")
+                      if (oid and foid==oid) or (cid and fcid==cid):
+                          matches.append(fill)
+                  qty=sum(abs(float(x.get("qty",x.get("quantity",0)) or 0)) for x in matches)
+                  notional=sum(abs(float(x.get("qty",x.get("quantity",0)) or 0))*float(x.get("price",0) or 0) for x in matches)
+                  fill_price=(notional/qty) if qty>0 else 0.0
+                  fill_time=min([int(float(x.get("time",x.get("updateTime",0)) or 0)) for x in matches if float(x.get("time",x.get("updateTime",0)) or 0)>0] or [ms(row.get("recordedAt"))])
+                  entries.append({
+                      "symbol":symbol,
+                      "cycleId":str(row.get("cycleId") or ""),
+                      "recordedAtMs":ms(row.get("recordedAt")),
+                      "fillTimeMs":fill_time,
+                      "fillPrice":fill_price,
+                      "fillQty":qty,
+                      "matchedFills":len(matches),
+                  })
+              result={
+                  "status":"OK",
+                  "date":str(local_day),
+                  "accountRef":hashlib.sha256(uid.encode()).hexdigest()[:10],
+                  "settings":{
+                      "bollingerEntryFilterEnabled":settings.bollinger_entry_filter_15m_enabled,
+                      "directionalBollingerEnabled":settings.directional_bollinger_enabled,
+                      "bollingerShortTimeframe":settings.bollinger_short_timeframe,
+                      "exposureRefillEnabled":settings.exposure_refill_enabled,
+                      "exposureRefillShortTimeframe":settings.exposure_refill_short_timeframe,
+                      "currentExposureRefillSide":str(report.get("exposureRefillSide") or raw.get("exposureRefillSide") or ""),
+                  },
+                  "entries":sorted(entries,key=lambda x:x["fillTimeMs"]),
+              }
+          print("SHORT_AUDIT_ACCOUNT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
+          PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=short-bb-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"
+          if [ -n "$FIREBASE_AUTH_PROJECT_ID" ]; then ENV_VARS="$ENV_VARS,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID"; fi
+          if [ -n "$ADMIN_EMAIL" ]; then ENV_VARS="$ENV_VARS,TRADEMENTOR_ADMIN_EMAIL=$ADMIN_EMAIL"; fi
+
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$PROD_IMAGE" --service-account "$RUNTIME_SA"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "$ENV_VARS"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Correlate today's SHORT entries with actual Bollinger logs
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ACCOUNT_LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"SHORT_AUDIT_ACCOUNT \""             --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --order=desc --format='value(textPayload)'             | grep 'SHORT_AUDIT_ACCOUNT ' | head -n1 || true)"
+          if [ -z "$ACCOUNT_LINE" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "SHORT-audit kon de accountdata niet uitlezen. Er zijn geen instellingen of trades gewijzigd."
+            exit 1
+          fi
+          ACCOUNT_JSON="${ACCOUNT_LINE#*SHORT_AUDIT_ACCOUNT }"
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"BB_ENTRY_FILTER_SHORT_"'             --project "$GCP_PROJECT_ID" --freshness=30h --limit=5000 --order=asc --format='value(textPayload)' > /tmp/short-bb.log || true
+
+          python - "$ACCOUNT_JSON" /tmp/short-bb.log > /tmp/report.md <<'PY'
+          import json,re,sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          data=json.loads(sys.argv[1])
+          lines=open(sys.argv[2],encoding="utf-8").read().splitlines()
+          tz=ZoneInfo("Europe/Amsterdam")
+          target_date=data.get("date")
+          pattern=re.compile(
+              r"BB_ENTRY_FILTER_SHORT_(?P<event>PASS|REJECT) symbol=(?P<symbol>\S+) side=SHORT "
+              r"livePrice=(?P<price>\S+) lowerBand=(?P<lower>\S+) upperBand=(?P<upper>\S+) "
+              r"timeframe=(?P<tf>\S+) timestampMs=(?P<ts>\d+) enabled=true stage=(?P<stage>\S+) "
+              r"result=(?P<result>PASS|REJECT) reason=(?P<reason>\S+)"
+          )
+          logs=[]
+          for line in lines:
+              m=pattern.search(line)
+              if not m: continue
+              row=m.groupdict()
+              ts=int(row["ts"])
+              if datetime.fromtimestamp(ts/1000,tz).date().isoformat()!=target_date: continue
+              for k in ("price","lower","upper"):
+                  try: row[k]=float(row[k])
+                  except Exception: row[k]=None
+              row["ts"]=ts
+              logs.append(row)
+
+          settings=data.get("settings") or {}
+          entries=data.get("entries") or []
+          print("## SHORT Bollinger-audit —",target_date)
+          print()
+          print("- Modus: **READ ONLY**")
+          print(f"- Bollinger entryfilter actief: **{settings.get('bollingerEntryFilterEnabled')}**")
+          print(f"- Directionele Bollinger actief: **{settings.get('directionalBollingerEnabled')}**")
+          print(f"- Normale SHORT-timeframe: **{settings.get('bollingerShortTimeframe')}**")
+          print(f"- Snelle refill actief: **{settings.get('exposureRefillEnabled')}**")
+          print(f"- SHORT snelle-refill-timeframe: **{settings.get('exposureRefillShortTimeframe')}**")
+          print()
+          if not entries:
+              print("Er zijn vandaag geen bevestigde Strategy-2 SHORT-openingen in de orderattributies gevonden.")
+              sys.exit(0)
+
+          confirmed=0; wrong_tf=0; unproven=0
+          print("| Tijd | Symbool | Fill | Pre-order BB-log | Timeframe | Live > upper | Oordeel |")
+          print("|---|---|---:|---|---:|---|---|")
+          for e in entries:
+              t=int(e.get("fillTimeMs") or e.get("recordedAtMs") or 0)
+              same=[x for x in logs if x["symbol"]==e["symbol"] and x["stage"]=="pre_order" and x["result"]=="PASS" and abs(x["ts"]-t)<=120000]
+              if not same:
+                  same=[x for x in logs if x["symbol"]==e["symbol"] and x["result"]=="PASS" and abs(x["ts"]-t)<=120000]
+              hit=min(same,key=lambda x:abs(x["ts"]-t)) if same else None
+              clock=datetime.fromtimestamp(t/1000,tz).strftime("%H:%M:%S") if t else "?"
+              fill=float(e.get("fillPrice") or 0)
+              if hit:
+                  is15=hit["tf"]=="15m"
+                  outside=(hit["price"] is not None and hit["upper"] is not None and hit["price"]>hit["upper"])
+                  if is15 and outside:
+                      verdict="✅ 15m correct"; confirmed+=1
+                  elif not is15:
+                      verdict="❌ ander timeframe"; wrong_tf+=1
+                  else:
+                      verdict="❌ niet boven upper"; wrong_tf+=1
+                  bb=f"{hit['price']:.8g} > {hit['upper']:.8g}" if hit["price"] is not None and hit["upper"] is not None else "onbekend"
+                  logtxt=f"{hit['stage']} PASS"
+                  tf=hit["tf"]
+                  out="ja" if outside else "nee"
+              else:
+                  verdict="⚠️ niet bewijsbaar"; unproven+=1
+                  bb="geen passende log";logtxt="—";tf="—";out="—"
+              print(f"| {clock} | {e['symbol']} | {fill:.8g} | {logtxt} | {tf} | {out} | {verdict} |")
+          print()
+          print(f"**Totaal:** {len(entries)} SHORT-openingen · {confirmed} aantoonbaar correct op 15m · {wrong_tf} afwijkend · {unproven} niet volledig bewijsbaar uit logs.")
+          if settings.get("exposureRefillEnabled") and settings.get("exposureRefillShortTimeframe")!="15m":
+              print()
+              print("⚠️ De code kan voor SHORT de normale 15m-instelling overschrijven wanneer SHORT de actieve snelle-refillzijde is. De snelle-refill SHORT-timeframe staat momenteel niet op 15m.")
+          PY
+
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
