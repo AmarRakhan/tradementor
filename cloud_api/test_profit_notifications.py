@@ -284,6 +284,32 @@ def test_notification_reconcile_keeps_durable_symbol_backlog_until_history_read_
     assert "last_reconciled - 10 * 60_000, now_ms - 24 * 60 * 60_000" not in block
 
 
+def test_notification_reconcile_pages_income_and_fill_history_without_500_row_loss():
+    source = Path("main.py").read_text()
+    assert "def _notification_realized_income" in source
+    assert 'income_type="REALIZED_PNL"' in source
+    assert "page_size = 1000" in source
+    assert "next_cursor = max(timestamps) + 1" in source
+    start = source.index("def _reconcile_profit_notifications")
+    end = source.index("\ndef require_verified_email", start)
+    block = source[start:end]
+    assert "recent_income = _notification_realized_income(client, start_ms)" in block
+    assert "rows = paged_user_trades(" in block
+    assert "start_time=start_ms or None" in block
+    assert "page_size=500" in block
+    assert "maximum_pages=20" in block
+
+
+def test_delayed_paired_short_recovery_is_also_attributed_as_a_short_entry():
+    source = Path("aster_multi_bb_core.py").read_text()
+    recovery_start = source.index('actions.append({"kind": "ASYM_SHORT_RECOVERY"')
+    recovery_end = source.index("# A soldier released by TP", recovery_start)
+    block = source[recovery_start:recovery_end]
+    assert "_record_order_attribution(" in block
+    assert 'side="SHORT"' in block
+    assert 'action="OPEN_LEG"' in block
+
+
 def test_confirmed_tp_attribution_is_urgent_even_if_realized_income_is_delayed():
     source = Path("main.py").read_text()
     start = source.index("def _reconcile_profit_notifications")
