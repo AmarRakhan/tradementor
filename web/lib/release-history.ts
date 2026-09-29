@@ -52,7 +52,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Backend: cloud_api/aster_zone_soldiers.py.",
     "UI: web/components/aster-portfolio-snapshot-enhancer.tsx.",
-    "Regressiedekking: cloud_api/test_aster_zone_soldiers.py.",
+    "Regressiedekking: cloud_api/test_aster_zone_soldiers.py plus webtests voor live-zone sync, Snapshot en bestaande Build 468-functionaliteit.",
   ],
   confidence: "confirmed",
 };
