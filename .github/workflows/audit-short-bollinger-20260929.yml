@@ -1,6 +1,7 @@
 name: Audit SHORT Bollinger Entries 2026-09-29
 
 on:
+  workflow_dispatch:
   push:
     branches: [amar-crypto-bot-2026-cloud]
     paths: [.github/workflows/audit-short-bollinger-20260929.yml]
