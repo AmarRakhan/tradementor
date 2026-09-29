@@ -5,6 +5,7 @@ import time
 import pytest
 import aster_multi_bb
 from aster_execution import NewPositionLeverageBlocked
+from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked
 
 from aster_multi_bb import (
     ENGINE, MultiBbConfig, leverage_tier_preview, max_contract_leverage,
@@ -696,3 +697,86 @@ def test_short_dca_large_gap_executes_only_one_fill_and_never_replays_missed_lev
     assert dcas[0]["trigger"]==pytest.approx(125.0)
     assert dcas[0]["catchup"] is False
     assert not any(x.get("kind")=="DCA_CATCHUP_QUEUED" for x in r["actions"])
+
+
+def test_auto_hedge_blocked_tp_is_local_and_zone_entry_still_flows(monkeypatch):
+    protected = {
+        "symbol": "AAAUSDT", "positionSide": "LONG", "positionAmt": "1",
+        "entryPrice": "100", "markPrice": "102", "leverage": "100",
+    }
+    client = Client(
+        positions=[protected],
+        tickers=[{"symbol": "BBBUSDT", "quoteVolume": "1000"}],
+        prices={"AAAUSDT": 102, "BBBUSDT": 100},
+        leverage=100,
+    )
+    raw = {
+        "multiBbPositions": {
+            "AAAUSDT|LONG": {
+                "cycleId": "protected-cycle",
+                "dcaCount": 0,
+                "lastBotFillPrice": 100,
+                "lastKnownQty": 1,
+                "lastKnownEntry": 100,
+                "cycleStartedAtMs": 1,
+                "soldierRole": "LEGACY_UNASSIGNED",
+            }
+        }
+    }
+    settings = cfg(
+        universeTopN=2,
+        maximumPositions=3,
+        longSlots=2,
+        shortSlots=1,
+        zoneSoldiersEnabled=True,
+        zoneSoldiersOptInVersion=1,
+        zoneBaseLongSoldiers=1,
+        zoneBaseShortSoldiers=1,
+    )
+
+    monkeypatch.setattr(aster_multi_bb, "_close_evidence", lambda *_a, **_k: None)
+
+    def fake_execute(_client, plan, **kwargs):
+        side = kwargs["side"].value
+        action = str(kwargs["action"]).upper()
+        if action == "CLOSE":
+            raise AutoHedgeCloseBlocked({
+                "message": "AAAUSDT: protected Auto Hedge quantity",
+                "symbol": "AAAUSDT",
+                "side": "LONG",
+            })
+        qty = float(plan.quantity)
+        _client.positions.append({
+            "symbol": plan.symbol,
+            "positionSide": side,
+            "positionAmt": str(qty),
+            "entryPrice": "100",
+            "markPrice": "100",
+            "leverage": str(plan.leverage),
+        })
+        return {
+            "result": {"avgPrice": "100", "executedQty": str(plan.quantity)},
+            "leverage": plan.leverage,
+        }
+
+    monkeypatch.setattr(aster_multi_bb, "execute_leg_once", fake_execute)
+
+    result = run_multi_bb_step(
+        client=client,
+        ref=Ref(),
+        raw_state=raw,
+        settings=settings,
+        uid="u",
+        account={"availableBalance": "100", "totalMarginBalance": "200"},
+        positions=[protected],
+        open_orders=[],
+        timestamp_ms=int(time.time() * 1000),
+        dry_run=False,
+        order_budget=5,
+        zone_context={"activeZone": 1, "safeForEntries": True},
+    )
+
+    assert any(a.get("kind") == "TP_BLOCKED" and a.get("symbol") == "AAAUSDT" for a in result["actions"])
+    assert any(a.get("kind") == "ENTRY" and a.get("symbol") == "BBBUSDT" for a in result["actions"])
+    assert result["entryStatus"] in {"ENTRY_SUBMITTED", "PARTIAL_FILL_SUBMITTED"}
+    assert result["status"] == "running"
