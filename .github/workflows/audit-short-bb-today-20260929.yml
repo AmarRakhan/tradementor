@@ -1,0 +1,187 @@
+name: Audit SHORT Bollinger Entries 2026-09-29
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/audit-short-bb-today-20260929.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  RESULT_ISSUE: "395"
+  START_UTC: "2026-09-28T22:00:00Z"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install read-only Firestore client
+        run: pip install --quiet google-cloud-firestore
+
+      - name: Read confirmed SHORT opens from Firestore
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from google.cloud import firestore
+
+          start=datetime.fromisoformat("2026-09-28T22:00:00+00:00")
+          db=firestore.Client(project="tradementor-production")
+          candidates=[]
+          for snap in db.collection("asterStrategy2").where("monitor","==",True).stream():
+              raw=snap.to_dict() or {}
+              settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
+              if str(raw.get("releaseChannel") or "").upper()=="BETA" and settings.get("zoneSoldiersEnabled") is True:
+                  candidates.append((snap.id,raw,settings))
+          if not candidates:
+              raise SystemExit("No BETA Zone Warriors account found")
+          uid,raw,settings=candidates[0]
+          rows=[]
+          for row in raw.get("orderAttributions",[]) if isinstance(raw.get("orderAttributions"),list) else []:
+              if not isinstance(row,dict): continue
+              if str(row.get("side") or "").upper()!="SHORT": continue
+              if str(row.get("action") or "").upper()!="OPEN_LEG": continue
+              ts=row.get("recordedAt")
+              if not hasattr(ts,"astimezone"): continue
+              ts=ts.astimezone(timezone.utc)
+              if ts < start: continue
+              rows.append({
+                  "symbol":str(row.get("symbol") or "").upper(),
+                  "orderId":str(row.get("orderId") or ""),
+                  "clientOrderId":str(row.get("clientOrderId") or ""),
+                  "recordedAt":ts.isoformat(),
+                  "recordedAtMs":int(ts.timestamp()*1000),
+              })
+          rows.sort(key=lambda x:x["recordedAtMs"])
+          out={
+              "settings":{
+                  "bollingerEnabled":settings.get("bollingerEntryFilter15mEnabled"),
+                  "directional":settings.get("directionalBollingerEnabled"),
+                  "shortTimeframe":settings.get("bollingerShortTimeframe"),
+                  "exposureRefillEnabled":settings.get("exposureRefillEnabled"),
+                  "exposureRefillShortTimeframe":settings.get("exposureRefillShortTimeframe"),
+              },
+              "shortOpens":rows,
+          }
+          with open("/tmp/short-opens.json","w",encoding="utf-8") as f: json.dump(out,f)
+          print(f"confirmed SHORT OPEN_LEG today: {len(rows)}")
+          PY
+
+      - name: Read today's SHORT pre-order Bollinger pass logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          END_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          FILTER='resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND timestamp>="'$START_UTC'" AND timestamp<="'$END_UTC'" AND textPayload:"BB_ENTRY_FILTER_SHORT_PASS"'
+          gcloud logging read "$FILTER"             --project "$GCP_PROJECT_ID"             --limit=2000             --order=asc             --format=json > /tmp/bb-short-pass.json
+
+      - name: Correlate confirmed opens to exact pre-order 15m PASS
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY' > /tmp/report.md
+          import json,re
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+
+          data=json.load(open("/tmp/short-opens.json",encoding="utf-8"))
+          logs=json.load(open("/tmp/bb-short-pass.json",encoding="utf-8"))
+          rx=re.compile(
+              r"BB_ENTRY_FILTER_SHORT_PASS symbol=(\S+) side=SHORT livePrice=([^ ]+) "
+              r"lowerBand=([^ ]+) upperBand=([^ ]+) timeframe=([^ ]+) timestampMs=(\d+) "
+              r"enabled=true stage=([^ ]+) result=PASS reason=([^ ]+)"
+          )
+          passes=[]
+          for item in logs if isinstance(logs,list) else []:
+              text=str(item.get("textPayload") or "")
+              m=rx.search(text)
+              if not m: continue
+              symbol,live,lower,upper,tf,ts,stage,reason=m.groups()
+              if stage!="pre_order": continue
+              try:
+                  live=float(live); upper=float(upper); ts=int(ts)
+              except Exception:
+                  continue
+              passes.append({
+                  "symbol":symbol.upper(),"live":live,"upper":upper,"timeframe":tf,
+                  "checkedAtMs":ts,"stage":stage,"reason":reason,
+              })
+          used=set()
+          results=[]
+          for row in data["shortOpens"]:
+              best=None
+              for idx,p in enumerate(passes):
+                  if idx in used or p["symbol"]!=row["symbol"]: continue
+                  delta=row["recordedAtMs"]-p["checkedAtMs"]
+                  # pre-order check should precede confirmed attribution; allow small clock/transport slack.
+                  if delta < -10000 or delta > 180000: continue
+                  score=abs(delta)
+                  if best is None or score<best[0]: best=(score,idx,p,delta)
+              if best is None:
+                  results.append({**row,"matched":False})
+              else:
+                  _,idx,p,delta=best; used.add(idx)
+                  results.append({
+                      **row,"matched":True,"timeframe":p["timeframe"],"live":p["live"],"upper":p["upper"],
+                      "priceAboveUpper":p["live"]>p["upper"],"deltaSec":round(delta/1000,1),
+                      "reason":p["reason"],
+                  })
+
+          ok=[r for r in results if r.get("matched") and r.get("timeframe")=="15m" and r.get("priceAboveUpper")]
+          bad=[r for r in results if r not in ok]
+          s=data["settings"]
+          print("## SHORT 15m Bollinger audit — 29 sep 2026")
+          print()
+          print("- Mode: **READ ONLY**")
+          print(f"- Confirmed SHORT initial opens today: **{len(results)}**")
+          print(f"- Exact pre-order 15m PASS matched: **{len(ok)} / {len(results)}**")
+          print(f"- Bollinger enabled (current setting): **{s.get('bollingerEnabled')}**")
+          print(f"- Current SHORT timeframe: **{s.get('shortTimeframe')}**")
+          print(f"- Exposure refill enabled: **{s.get('exposureRefillEnabled')}**")
+          print(f"- Exposure-refill SHORT timeframe: **{s.get('exposureRefillShortTimeframe')}**")
+          print()
+          if results:
+              print("| Tijd NL | Symbool | Pre-order log | TF | Live > upper | Delta |")
+              print("|---|---|---|---|---|---:|")
+              tz=ZoneInfo("Europe/Amsterdam")
+              for r in results:
+                  dt=datetime.fromisoformat(r["recordedAt"]).astimezone(tz)
+                  t=dt.strftime("%H:%M:%S")
+                  if r.get("matched"):
+                      print(f"| {t} | {r['symbol']} | PASS | {r['timeframe']} | {'JA' if r['priceAboveUpper'] else 'NEE'} | {r['deltaSec']}s |")
+                  else:
+                      print(f"| {t} | {r['symbol']} | GEEN MATCH | — | — | — |")
+          else:
+              print("_Geen confirmed SHORT OPEN_LEG-attributies gevonden binnen vandaag._")
+          print()
+          if not bad:
+              print("### Conclusie")
+              print("Alle confirmed SHORT initial entries van vandaag hebben vlak vóór order-submit een SHORT Bollinger PASS op **15m** en de gelogde live prijs lag **boven de upper band**.")
+          else:
+              print("### Conclusie")
+              print(f"Er zijn **{len(bad)}** entry(s) zonder volledig bewijs van een 15m pre-order PASS. Dit is een audit-afwijking en géén bewijs dat ze fout zijn; aanvullende reconstructie is dan nodig.")
+          PY
+          gh issue comment "$RESULT_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
