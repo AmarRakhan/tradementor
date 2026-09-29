@@ -7461,9 +7461,6 @@ def close_profitable_aster_positions(
 
     dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard = None
-    auto_hedge_manual_guard = None
-    auto_hedge_release = None
-    account_token = None
     try:
         before_manual_rows = _portfolio_growth_client(user, live=False).position_risk()
         manual_guard = begin_manual_action(dynamic_hedge_ref, scope, before_manual_rows)
@@ -7600,6 +7597,9 @@ def close_one_aster_position(
     )
     dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard = None
+    auto_hedge_manual_guard = None
+    auto_hedge_release = None
+    account_token = None
     try:
         live_rows = client.position_risk()
         position = next((row for row in live_rows
