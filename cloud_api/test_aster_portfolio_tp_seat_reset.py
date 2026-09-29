@@ -363,7 +363,7 @@ def test_configurable_reset_target_round_trips_and_allows_zero_zero():
     assert zero.portfolio_tp_reset_long_slots == 0
     assert zero.portfolio_tp_reset_short_slots == 0
 
-    with pytest.raises(ValueError, match="beide"):
+    with pytest.raises(ValueError, match="LONG- als SHORT-resetwaarde"):
         MultiBbConfig.from_mapping({**_settings(reset=True), "portfolioTpResetLongSlots": 3})
 
 
