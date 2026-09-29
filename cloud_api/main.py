@@ -4059,9 +4059,20 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
     enabled_at = int(safe_float(settings.get("enabledAtMs")))
     state = profit_notification_service.reconcile_state(uid)
     last_reconciled = int(safe_float(state.get("lastReconciledAtMs")))
-    # Deliberate overlap makes restart/retry safe. Persistent event IDs dedupe
-    # repeated reads, while enabledAt prevents historical pre-opt-in alerts.
-    start_ms = max(enabled_at, last_reconciled - 10 * 60_000, now_ms - 24 * 60 * 60_000)
+    # Deliberate overlap makes restart/retry safe. Never cap a previously
+    # established cursor to "last 24h": after an outage that would silently
+    # skip confirmed events. A first-ever observer run is bounded to 24h.
+    start_ms = (
+        max(enabled_at, last_reconciled - 10 * 60_000)
+        if last_reconciled > 0
+        else max(enabled_at, now_ms - 24 * 60 * 60_000)
+    )
+    pending_history_symbols = [
+        str(value).upper()
+        for value in state.get("pendingHistorySymbols", [])
+        if str(value).strip()
+    ] if isinstance(state.get("pendingHistorySymbols"), list) else []
+    pending_history_symbols = list(dict.fromkeys(pending_history_symbols))[:100]
     secret = load_aster_secret({"uid": uid})
     client = AsterV3Client(
         signer_address=secret.signer_address,
@@ -4100,16 +4111,25 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
             return int(value.timestamp() * 1000)
         return int(safe_float(value))
 
+    close_notification_actions = {"FULL_TP", "PARTIAL_TP", "TAKE_PROFIT_CLOSE", "RISK_REDUCE"}
     for row in strategy_state.get("orderAttributions", []) if isinstance(strategy_state.get("orderAttributions"), list) else []:
-        if not isinstance(row, dict) or not notifiable_entry_action(row.get("action")):
+        if not isinstance(row, dict):
             continue
+        action = str(row.get("action", "")).upper()
         symbol = str(row.get("symbol", "")).upper()
         side = str(row.get("side", "")).upper()
         if not symbol or side not in {"LONG", "SHORT"}:
             continue
+        recorded_at_ms = evidence_ms(row.get("recordedAt"))
+        # A confirmed TP/close attribution makes its symbol urgent even when
+        # Aster's realized-income ledger is delayed.
+        if action in close_notification_actions and recorded_at_ms >= start_ms and symbol not in priority_symbols:
+            priority_symbols.append(symbol)
+        if not notifiable_entry_action(action):
+            continue
         metadata = {
             "strategy": str(row.get("strategyName") or row.get("strategyId") or "Strategy 2"),
-            "action": str(row.get("action", "")).upper(),
+            "action": action,
         }
         order_id = str(row.get("orderId", "")).strip()
         client_order_id = str(row.get("clientOrderId", "")).strip()
@@ -4117,7 +4137,7 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
             entry_by_order_id[order_id] = metadata
         if client_order_id:
             entry_by_client_order_id[client_order_id] = metadata
-        if evidence_ms(row.get("recordedAt")) >= start_ms and symbol not in entry_priority_symbols:
+        if recorded_at_ms >= start_ms and symbol not in entry_priority_symbols:
             entry_priority_symbols.append(symbol)
 
     for row in sniper_state.get("activeTrades", []) if isinstance(sniper_state.get("activeTrades"), list) else []:
@@ -4149,27 +4169,48 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
             background_symbols.append(symbol)
 
     rotation_slot = int(safe_float(state.get("rotationSlot")))
-    history_symbols = bounded_history_symbols(
-        priority_symbols,
-        background_symbols,
-        maximum_symbols=8,
-        rotation_slot=rotation_slot,
+    # Event-bearing symbols are durable work, not a best-effort rotation. Keep
+    # every unprocessed symbol in Firestore until its fill history was read
+    # successfully. This prevents a busy account, a backend outage or one
+    # transient Aster error from permanently losing notifications.
+    event_symbols = list(dict.fromkeys([
+        *pending_history_symbols,
+        *entry_priority_symbols,
+        *priority_symbols,
+    ]))
+    event_batch = event_symbols[:8]
+    background_capacity = max(0, 8 - len(event_batch))
+    background_batch = (
+        bounded_history_symbols(
+            [],
+            background_symbols,
+            maximum_symbols=background_capacity,
+            rotation_slot=rotation_slot,
+        )
+        if background_capacity > 0
+        else []
     )
-    # Recent normal-entry symbols bypass the background rotation so a busy
-    # account cannot delay a new-entry alert. This only adds read-only fill
-    # lookups and never changes trading state.
-    symbols = list(dict.fromkeys([*entry_priority_symbols, *history_symbols]))
+    symbols = list(dict.fromkeys([*event_batch, *background_batch]))
     fills: list[dict[str, Any]] = []
+    successful_history_symbols: set[str] = set()
+    failed_history_symbols: set[str] = set()
     for symbol in symbols:
         try:
             rows = client.user_trades(symbol, limit=500)
         except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
+            if symbol in event_symbols:
+                failed_history_symbols.add(symbol)
             continue
+        successful_history_symbols.add(symbol)
         fills.extend(
             item for item in rows
             if isinstance(item, dict)
             and int(safe_float(item.get("time", item.get("updateTime")))) >= start_ms
         )
+    remaining_history_symbols = [
+        symbol for symbol in event_symbols
+        if symbol not in successful_history_symbols
+    ]
 
     activity = recent_trade_activity_from_fills(fills)
     entries = activity.get("entries") if isinstance(activity.get("entries"), list) else []
@@ -4279,13 +4320,32 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
         account_loader=load_fresh_account,
         now_ms=now_ms,
     )
+    # Advance the durable cursor only after every event-bearing symbol from
+    # this interval has been read successfully. Otherwise retain the cursor and
+    # retry the backlog on the next scheduler pass; event IDs keep retries
+    # idempotent and prevent duplicate push/in-app delivery.
+    next_reconciled = (
+        max(now_ms, newest_close)
+        if not remaining_history_symbols
+        else (last_reconciled if last_reconciled > 0 else start_ms)
+    )
     profit_notification_service.update_reconcile_state(
         uid,
-        lastReconciledAtMs=max(now_ms, newest_close),
+        lastReconciledAtMs=next_reconciled,
         rotationSlot=rotation_slot + 1,
         lastSymbols=symbols,
+        pendingHistorySymbols=remaining_history_symbols[:100],
+        historyScanIncomplete=bool(remaining_history_symbols),
+        lastHistoryScanFailures=sorted(failed_history_symbols),
     )
-    return {"uid": uid, "status": "ok", "events": recorded, "dispatch": dispatch, "ordersSent": 0}
+    return {
+        "uid": uid,
+        "status": "ok" if not remaining_history_symbols else "retry-pending",
+        "events": recorded,
+        "dispatch": dispatch,
+        "pendingHistorySymbols": remaining_history_symbols[:100],
+        "ordersSent": 0,
+    }
 
 def require_verified_email(user: dict[str, Any]) -> None:
     if user.get("email_verified") is True:
