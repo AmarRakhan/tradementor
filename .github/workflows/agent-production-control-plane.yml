@@ -458,3 +458,28 @@ jobs:
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Notification delivery backend dispatch failed before production mutation. No Cloud Run revision was promoted."
 
+  diagnose-notification-complete-delivery:
+    if: github.event.issue.title == '[AGENT-CONTROL] diagnose notification delivery 7b13d81' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Read latest production backend workflow runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?branch=$TARGET_BRANCH&event=workflow_dispatch&per_page=10")"
+          python - "$RUNS_JSON" > "$RUNNER_TEMP/status.md" <<'PY'
+          import json,sys
+          payload=json.loads(sys.argv[1])
+          rows=payload.get("workflow_runs",[])[:5]
+          print("## Notification delivery deployment status")
+          if not rows:
+              print("- No recent workflow_dispatch runs found.")
+          for row in rows:
+              print(f"- run {row.get('id')} · {row.get('status')} · conclusion={row.get('conclusion')} · created={row.get('created_at')} · head={row.get('head_sha')}")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/status.md"
+
