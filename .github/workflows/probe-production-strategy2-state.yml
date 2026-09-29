@@ -207,7 +207,14 @@ jobs:
                       zone_context=zone_context,
                   )
               except Exception as exc:
-                  dry_error=type(exc).__name__+":"+reason_class(str(exc))
+                  import os as _os, traceback as _traceback
+                  _frame=_traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
+                  _where=(
+                      f"{_os.path.basename(_frame.filename)}:{_frame.lineno}:{_frame.name}"
+                      if _frame is not None else "unknown"
+                  )
+                  _message=str(exc)[:180] if isinstance(exc,NameError) else reason_class(str(exc))
+                  dry_error=f"{type(exc).__name__}:{_where}:{_message}"
 
               zone_report=dry.get("zoneSoldiers") if isinstance(dry.get("zoneSoldiers"),dict) else {}
               seat=zone_report.get("seatModel") if isinstance(zone_report.get("seatModel"),dict) else {}
