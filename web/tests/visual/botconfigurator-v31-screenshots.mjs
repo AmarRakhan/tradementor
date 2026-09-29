@@ -40,7 +40,7 @@ for (const width of widths) {
     assert.match(await advanced.innerText(), /Leverage/);
     assert.match(await advanced.innerText(), /Smart Rescue/);
     assert.match(await advanced.innerText(), /Cycle start/);
-    assert.match(await advanced.innerText(), /Stoelen resetten naar startinstelling/);
+    assert.match(await advanced.innerText(), /Stoelen automatisch resetten/);
     overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(overflow <= 0, "390px expanded quick-edit horizontal overflow: " + overflow);
     await page.screenshot({ path: "artifacts/botconfigurator-v31/quick-edit-expanded-390.png", fullPage: true });
@@ -52,7 +52,10 @@ for (const width of widths) {
   await seatReset.waitFor({ state: "visible" });
   const seatText = await seatReset.innerText();
   assert.match(seatText, /Na behalen doel \(Portfolio TP\)/);
-  assert.match(seatText, /Stoelen resetten naar startinstelling/);
+  assert.match(seatText, /Stoelen automatisch resetten/);
+  assert.match(seatText, /LONG na reset/);
+  assert.match(seatText, /SHORT na reset/);
+  assert.match(seatText, /Resetwaarden opslaan/);
   assert.match(seatText, /3L \/ 3S/);
   overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, width + "px Portfolio TP seat reset horizontal overflow: " + overflow);
