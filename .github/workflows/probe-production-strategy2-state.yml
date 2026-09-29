@@ -1,6 +1,4 @@
 name: Probe Production Strategy 2 State
-# post-auto-hedge-close-isolation verification 2026-09-29
-# trace rerun 2026-09-29T08:15+02:00
 
 on:
   push:
@@ -17,346 +15,101 @@ env:
   GCP_REGION: europe-west4
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
 
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Run account-specific read-only Strategy2 scanner trace
-        shell: bash
+      - name: Read Strategy 2 state through isolated runtime identity
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           set -euo pipefail
-          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["status"]["latestReadyRevisionName"])' <<<"$SERVICE_JSON")"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE_PROBE STARTED commit=$GITHUB_SHA"
+          PROD_REVISION="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
           PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
-          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
-          FIREBASE_AUTH_PROJECT_ID="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("FIREBASE_AUTH_PROJECT_ID",""))' <<<"$SERVICE_JSON")"
-          ADMIN_EMAIL="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("TRADEMENTOR_ADMIN_EMAIL",""))' <<<"$SERVICE_JSON")"
-          test -n "$PROD_IMAGE"
-          test -n "$RUNTIME_SA"
-          JOB="tm-s2-route-${GITHUB_RUN_ID: -7}"
-          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_RUNTIME revision=$PROD_REVISION image=$PROD_IMAGE"
 
+          RUNTIME_SA="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          IMAGE="$(gcloud run services describe tradementor-strategy2-recovery-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.containers[0].image)')"
+          JOB="tm-s2-state-${GITHUB_RUN_ID: -6}"
           SCRIPT_B64="$(base64 -w0 <<'PY'
-          import hashlib, json, re, time
-          from collections import Counter
-          from datetime import datetime, timezone
           from google.cloud import firestore
-          import main
-
-          class ReadOnlyRef:
-              def set(self, *args, **kwargs):
-                  raise RuntimeError("READ_ONLY_WRITE_ATTEMPT")
-              def collection(self, *args, **kwargs):
-                  raise RuntimeError("READ_ONLY_COLLECTION_WRITE_ATTEMPT")
-
-          class ReadOnlyDoc:
-              def __init__(self, wrapped):
-                  self.wrapped=wrapped
-              def get(self):
-                  return self.wrapped.get()
-              def set(self, *args, **kwargs):
-                  raise RuntimeError("READ_ONLY_DYNAMIC_WRITE_ATTEMPT")
-
-          def n(v, default=0):
-              try: return int(round(float(v)))
-              except Exception: return default
-
-          def reason_class(value):
-              s=str(value or "").strip()
-              u=s.upper()
-              known=[
-                  "PRICE_", "BB_", "MAX_LEVERAGE_BELOW_MINIMUM", "MAX_NOTIONAL_LIMIT",
-                  "INSUFFICIENT_AVAILABLE_MARGIN", "SYMBOL_LEVERAGE_DATA_UNAVAILABLE",
-                  "NO_ACTIVE_ZONE_SOLDIER", "SHORT_REQUIRES_LONG", "SIDE_SLOT_CAP_REACHED",
-                  "NO_MARGIN_SAFE_HEDGE_ORDER_AVAILABLE", "HEDGE_STABLE",
-                  "OPEN_ORDER_RECONCILIATION", "PENDING_ORDER_REQUIRES_RECONCILIATION",
-                  "LIVE_EXECUTION_GATE_CLOSED", "READ_ONLY_VERIFICATION_FAILED",
-              ]
-              for item in known:
-                  if item in u:
-                      return item.rstrip("_")
-              if re.fullmatch(r"[A-Za-z0-9_:\-\. ]{1,80}", s):
-                  return s[:80]
-              return "OTHER"
-
-          def summarized_actions(actions):
-              counter=Counter()
-              for row in actions if isinstance(actions,list) else []:
-                  if not isinstance(row,dict): continue
-                  key=(str(row.get("kind") or "UNKNOWN"), str(row.get("side") or ""), reason_class(row.get("reason")))
-                  counter[key]+=1
-              return [
-                  {"kind":k[0],"side":k[1] or None,"reasonClass":k[2],"count":v}
-                  for k,v in counter.most_common(20)
-              ]
-
-          db=firestore.Client(project="tradementor-production")
-          docs=[]
-          for snap in db.collection("asterStrategy2").where("monitor","==",True).stream():
-              raw=snap.to_dict() or {}
-              settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
-              docs.append((snap.id,raw,settings))
-
-          beta_candidates=[
-              row for row in docs
-              if str(row[1].get("releaseChannel") or "").upper()=="BETA"
-              and row[2].get("zoneSoldiersEnabled") is True
-              and n(row[2].get("zoneSoldiersOptInVersion"))>=1
+          import os
+          db=firestore.Client(project='tradementor-production')
+          def states(name):
+              return [(d.to_dict() or {}) for d in db.collection(name).stream()]
+          s2=states('asterStrategy2'); s1=states('asterAutomation'); s3=states('asterStrategy3')
+          def values_for_key(obj, names):
+              found=[]
+              if isinstance(obj,dict):
+                  for k,v in obj.items():
+                      if k in names: found.append(v)
+                      found.extend(values_for_key(v,names))
+              elif isinstance(obj,list):
+                  for v in obj: found.extend(values_for_key(v,names))
+              return found
+          def any_true(obj,names):
+              return any(bool(v) for v in values_for_key(obj,set(names)))
+          def active(x):
+              return any_true(x,['enabled','monitor'])
+          def focus_enabled(x):
+              return any_true(x,['focusV2Enabled','focus_v2_enabled'])
+          def simple_enabled(x):
+              return any_true(x,['focusV2SimpleModeEnabled','focus_v2_simple_mode_enabled'])
+          def has_cycle(x):
+              vals=values_for_key(x,{'cycleId'})
+              return any(bool(v) for v in vals)
+          metrics=[
+              min(len(s2),249),
+              sum(1 for x in s2 if active(x)),
+              min(sum(len(x.get('ownedLegs') or []) for x in s2),249),
+              sum(1 for x in s2 if any_true(x,['liveReady'])),
+              sum(1 for x in s2 if any_true(x,['canaryValidated'])),
+              sum(1 for x in s1 if active(x)),
+              sum(1 for x in s3 if active(x)),
+              sum(1 for x in s2 if any_true(x,['monitor'])),
+              sum(1 for x in s2 if focus_enabled(x)),
+              sum(1 for x in s2 if simple_enabled(x)),
+              sum(1 for x in s2 if active(x) and focus_enabled(x) and simple_enabled(x)),
+              sum(1 for x in s2 if active(x) and focus_enabled(x) and simple_enabled(x) and has_cycle(x)),
           ]
-          result={
-              "status":"NO_BETA_ZONE_ACCOUNT" if not beta_candidates else "OK",
-              "productionSourceCommit": main.os.getenv("TRADEMENTOR_SOURCE_COMMIT",""),
-              "monitoredAccountCount":len(docs),
-              "comparators":[],
-          }
-
-          for uid,raw,settings_raw in docs:
-              if beta_candidates and uid==beta_candidates[0][0]:
-                  continue
-              report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
-              result["comparators"].append({
-                  "accountRef":hashlib.sha256(uid.encode()).hexdigest()[:10],
-                  "releaseChannel":str(raw.get("releaseChannel") or ""),
-                  "storedZoneEnabled":settings_raw.get("zoneSoldiersEnabled") is True,
-                  "entryStatus":str(report.get("entryStatus") or ""),
-                  "entryReason":str(report.get("entryReason") or ""),
-                  "remainingLong":report.get("remainingLong"),
-                  "remainingShort":report.get("remainingShort"),
-                  "activeLong":report.get("activeLong"),
-                  "activeShort":report.get("activeShort"),
-                  "accountRemainingCapacity":report.get("accountRemainingCapacity"),
-              })
-
-          if beta_candidates:
-              uid,raw,stored=beta_candidates[0]
-              profile=db.collection("users").document(uid).get().to_dict() or {}
-              effective_map=main._strip_unreleased_beta_settings_for_uid(dict(stored),uid)
-              settings=main.MultiBbConfig.from_mapping(effective_map)
-              stored_report=raw.get("multiBbReport") if isinstance(raw.get("multiBbReport"),dict) else {}
-              queue=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
-              secret=main.load_aster_secret({"uid":uid})
-              client=main.AsterV3Client(
-                  signer_address=secret.signer_address,
-                  sign_message=main.local_eip712_signer(secret),
-                  live_authorized=False,
-                  before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
-              )
-              hedge_mode=client.position_mode()
-              account=client.account_information()
-              positions=client.position_risk()
-              orders=client.open_orders()
-              zone_context=main._strategy2_zone_runtime_context(uid,raw,account,datetime.now(timezone.utc)) if settings.zone_soldiers_enabled else None
-
-              dyn_doc=main.user_reference({"uid":uid}).collection("asterDynamicHedge").document("control")
-              dyn_control=dyn_doc.get().to_dict() or {}
-              dynamic_result={"status":"off","reason":"","safetyStatus":"","ordersSent":0}
-              dynamic_error=""
-              if bool(dyn_control.get("enabled",False)):
-                  try:
-                      dynamic_result=main.run_dynamic_hedge_sequence(
-                          client=client,
-                          control_ref=ReadOnlyDoc(dyn_doc),
-                          settings=settings,
-                          uid=uid,
-                          account=account,
-                          positions=positions,
-                          open_orders=orders,
-                          timestamp_ms=int(time.time()*1000),
-                          dry_run=True,
-                          order_budget=None,
-                      )
-                  except Exception as exc:
-                      dynamic_error=type(exc).__name__+":"+reason_class(str(exc))
-              dyn_owner=str(dyn_control.get("ownershipState") or ("ADOPTING" if dyn_control.get("enabled") else "NORMAL")).upper()
-              dyn_block=main.dynamic_strategy_scan_blocked(
-                  enabled=bool(dyn_control.get("enabled",False)),
-                  orders_sent=n(dynamic_result.get("ordersSent")),
-                  reason=str(dynamic_result.get("reason") or ""),
-                  safety_status=str(dynamic_result.get("safetyStatus") or ""),
-                  ownership_state=dyn_owner,
-                  status=str(dynamic_result.get("status") or ""),
-              ) if not dynamic_error else True
-
-              dry={}
-              dry_error=""
-              try:
-                  dry=main.run_multi_bb_step(
-                      client=client,
-                      ref=ReadOnlyRef(),
-                      raw_state=raw,
-                      settings=settings,
-                      uid=uid,
-                      account=account,
-                      positions=positions,
-                      open_orders=orders,
-                      timestamp_ms=int(time.time()*1000),
-                      dry_run=True,
-                      order_budget=20,
-                      before_order=None,
-                      dynamic_hedge_blocked_side="",
-                      zone_context=zone_context,
-                  )
-              except Exception as exc:
-                  import os as _os, traceback as _traceback
-                  _frame=_traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
-                  _where=(
-                      f"{_os.path.basename(_frame.filename)}:{_frame.lineno}:{_frame.name}"
-                      if _frame is not None else "unknown"
-                  )
-                  _message=str(exc)[:180] if isinstance(exc,NameError) else reason_class(str(exc))
-                  dry_error=f"{type(exc).__name__}:{_where}:{_message}"
-
-              zone_report=dry.get("zoneSoldiers") if isinstance(dry.get("zoneSoldiers"),dict) else {}
-              seat=zone_report.get("seatModel") if isinstance(zone_report.get("seatModel"),dict) else {}
-              result["betaAccount"]={
-                  "accountRef":hashlib.sha256(uid.encode()).hexdigest()[:10],
-                  "rawReleaseChannel":str(raw.get("releaseChannel") or ""),
-                  "profileReleaseChannel":str(profile.get("releaseChannel") or ""),
-                  "profileBetaOwner":profile.get("betaOwner") is True,
-                  "storedZoneEnabled":stored.get("zoneSoldiersEnabled") is True,
-                  "storedZoneOptInVersion":n(stored.get("zoneSoldiersOptInVersion")),
-                  "effectiveZoneEnabled":settings.zone_soldiers_enabled,
-                  "effectiveLongSlots":settings.long_slots,
-                  "effectiveShortSlots":settings.short_slots,
-                  "maximumPositions":settings.maximum_positions,
-                  "zoneBaseLong":settings.zone_base_long_soldiers,
-                  "zoneBaseShort":settings.zone_base_short_soldiers,
-                  "minimumLeverage":settings.minimum_leverage,
-                  "bollingerEnabled":settings.bollinger_entry_filter_15m_enabled,
-                  "bollingerLongTimeframe":settings.bollinger_long_timeframe,
-                  "bollingerShortTimeframe":settings.bollinger_short_timeframe,
-                  "exposureRefillEnabled":settings.exposure_refill_enabled,
-                  "exposureRefillLongTimeframe":settings.exposure_refill_long_timeframe,
-                  "exposureRefillShortTimeframe":settings.exposure_refill_short_timeframe,
-                  "hedgeMode":bool(hedge_mode),
-                  "openOrderCount":len(orders) if isinstance(orders,list) else None,
-                  "liveRuntime":{
-                      "enabled":raw.get("enabled") is True,
-                      "monitor":raw.get("monitor") is True,
-                      "phase":str(raw.get("phase") or ""),
-                      "lastReason":str(raw.get("lastReason") or "")[:300],
-                      "lastTickAt":str(raw.get("lastTickAt") or ""),
-                      "liveReady":raw.get("liveReady") is True,
-                      "canaryValidated":raw.get("canaryValidated") is True,
-                      "reportUpdatedAtMs":stored_report.get("updatedAtMs"),
-                  },
-                  "stored":{
-                      "entryStatus":str(stored_report.get("entryStatus") or ""),
-                      "entryReason":str(stored_report.get("entryReason") or ""),
-                      "zoneMigrationHold":stored_report.get("zoneMigrationHold") is True,
-                      "remainingLong":stored_report.get("remainingLong"),
-                      "remainingShort":stored_report.get("remainingShort"),
-                      "activeLong":stored_report.get("activeLong"),
-                      "activeShort":stored_report.get("activeShort"),
-                      "accountRemainingCapacity":stored_report.get("accountRemainingCapacity"),
-                      "scannedCandidateCount":stored_report.get("scannedCandidateCount"),
-                      "executableCandidateCount":stored_report.get("executableCandidateCount"),
-                  },
-                  "dynamic":{
-                      "enabled":bool(dyn_control.get("enabled",False)),
-                      "ownershipState":dyn_owner,
-                      "status":str(dynamic_result.get("status") or ""),
-                      "reasonClass":reason_class(dynamic_result.get("reason")),
-                      "safetyStatus":str(dynamic_result.get("safetyStatus") or ""),
-                      "ordersSent":n(dynamic_result.get("ordersSent")),
-                      "blocksScanner":bool(dyn_block),
-                      "diagnosticError":dynamic_error or None,
-                  },
-                  "queue":{
-                      "haltedUncertain":queue.get("haltedUncertain") is True,
-                      "hasCurrentIntent":bool(queue.get("currentIntent")),
-                      "uncertainReasonClass":reason_class(queue.get("uncertainReason")) if queue.get("uncertainReason") else None,
-                  },
-                  "zoneContext":{
-                      "activeZone":(zone_context or {}).get("activeZone"),
-                      "safeForEntries":(zone_context or {}).get("safeForEntries"),
-                      "reason":(zone_context or {}).get("reason"),
-                  },
-                  "dryRun":{
-                      "error":dry_error or None,
-                      "entryStatus":str(dry.get("entryStatus") or ""),
-                      "entryReason":str(dry.get("entryReason") or ""),
-                      "zoneMigrationHold":dry.get("zoneMigrationHold") is True,
-                      "remainingLong":dry.get("remainingLong"),
-                      "remainingShort":dry.get("remainingShort"),
-                      "activeLong":dry.get("activeLong"),
-                      "activeShort":dry.get("activeShort"),
-                      "strategyPositionCount":dry.get("strategyPositionCount"),
-                      "accountPositionCount":dry.get("accountPositionCount"),
-                      "seatCapacityPositionCount":dry.get("seatCapacityPositionCount"),
-                      "accountRemainingCapacity":dry.get("accountRemainingCapacity"),
-                      "candidateCount":dry.get("candidateCount"),
-                      "scannedCandidateCount":dry.get("scannedCandidateCount"),
-                      "executableCandidateCount":dry.get("executableCandidateCount"),
-                      "nextRequiredEntryMarginUsd":dry.get("nextRequiredEntryMarginUsd"),
-                      "nextEntrySide":dry.get("nextEntrySide"),
-                      "entrySkipReasons":{
-                          reason_class(k):v for k,v in (dry.get("entrySkipReasons") or {}).items()
-                      } if isinstance(dry.get("entrySkipReasons"),dict) else {},
-                      "actions":summarized_actions(dry.get("actions")),
-                      "seatModel":{
-                          "activeZone":seat.get("activeZone"),
-                          "freeLongActiveZone":seat.get("freeLongActiveZone"),
-                          "freeShortActiveZone":seat.get("freeShortActiveZone"),
-                          "occupiedLongActiveZone":seat.get("occupiedLongActiveZone"),
-                          "occupiedShortActiveZone":seat.get("occupiedShortActiveZone"),
-                          "openFromOldZones":seat.get("openFromOldZones"),
-                          "strategyOpenTotal":seat.get("strategyOpenTotal"),
-                      },
-                  },
-              }
-
-          print("S2_SCANNER_TRACE "+json.dumps(result,sort_keys=True,separators=(",",":")),flush=True)
+          i=int(os.environ['CLOUD_RUN_TASK_INDEX'])
+          raise SystemExit(min(max(int(metrics[i]),0),249)+1)
           PY
           )"
-
-          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=account-route-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"
-          if [ -n "$FIREBASE_AUTH_PROJECT_ID" ]; then ENV_VARS="$ENV_VARS,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID"; fi
-          if [ -n "$ADMIN_EMAIL" ]; then ENV_VARS="$ENV_VARS,TRADEMENTOR_ADMIN_EMAIL=$ADMIN_EMAIL"; fi
-
-          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID" --region "$GCP_REGION"             --image "$PROD_IMAGE" --service-account "$RUNTIME_SA"             --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))"             --set-env-vars "$ENV_VARS"             --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
           set +e
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/tmp/s2route-execute.out 2>/tmp/s2route-execute.err
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 12 --parallelism 12 --max-retries 0 --task-timeout 120s --quiet > /tmp/deploy.out 2> /tmp/deploy.err
+          DEPLOY_RC=$?
+          set -e
+          if [ "$DEPLOY_RC" -ne 0 ]; then
+            ERR="$(tr '\n' ' ' < /tmp/deploy.err | head -c 600)"
+            gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE_PROBE DEPLOY_FAILED rc=$DEPLOY_RC err=$ERR"
+            exit 0
+          fi
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/tmp/execute.out 2>/tmp/execute.err
           EXECUTE_RC=$?
           set -e
-          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
-          echo "EXECUTE_RC=$EXECUTE_RC" >> "$GITHUB_ENV"
-
-      - name: Re-authenticate as read-only production observer
-        if: always()
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
-
-      - name: Read sanitized scanner trace
-        if: always()
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"S2_SCANNER_TRACE \""             --project "$GCP_PROJECT_ID" --freshness=20m --limit=10 --order=desc --format='value(textPayload)'             | grep 'S2_SCANNER_TRACE ' | head -n1 || true)"
-          if [ -z "$RESULT" ]; then
-            RESULT="S2_SCANNER_TRACE {\"status\":\"NO_TRACE\",\"executeRc\":$EXECUTE_RC}"
-          fi
-          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="$RESULT"
-          echo "$RESULT"
-
-      - name: Cleanup temporary scanner trace job
-        if: always()
-        shell: bash
-        run: |
-          gcloud run jobs delete "$JOB_NAME" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          STATUS_FIELDS="$(jq -c '[.. | objects | select((.index? | type) == "number") | {index: .index, exitCode: ([.. | objects | .exitCode? | select(type == "number")][0] // -1)}] | unique_by(.index) | sort_by(.index)' <<<"$TASKS_JSON")"
+          METRICS="$(python - "$STATUS_FIELDS" <<'PY'
+          import json,sys
+          rows=json.loads(sys.argv[1]); values={int(r['index']):max(0,int(r['exitCode'])-1) for r in rows if int(r.get('exitCode',-1))>=1}
+          names=['documentsCapped','active','ownedLegsCapped','liveReady','canaryValidated','legacyStrategy1Active','legacyStrategy3Active','monitoring','focusV2Enabled','simpleModeEnabled','activeFocusSimple','activeFocusSimpleWithCycle']
+          print(','.join(f'{names[i]}={values.get(i,-1)}' for i in range(len(names))))
+          PY
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="PRODUCTION_S2_STATE execute_rc=$EXECUTE_RC $METRICS"
+          cleanup
+          trap - EXIT
