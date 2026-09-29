@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { PortfolioTpSeatResetTarget } from "@/components/portfolio-tp-seat-reset-target";
 
 const VISUAL_REFERENCE = "file_000000007b288243acf4cc791b0258dd";
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
@@ -252,6 +253,10 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
 
   const cycleStartLongSlots = Math.max(0, Math.round(n(cycle.cycleStartLongSlots, n(persisted.longSlots, totals.longSlots))));
   const cycleStartShortSlots = Math.max(0, Math.round(n(cycle.cycleStartShortSlots, n(persisted.shortSlots, totals.shortSlots))));
+  const hasPersistedResetTarget = persisted.portfolioTpResetLongSlots !== undefined && persisted.portfolioTpResetLongSlots !== null
+    && persisted.portfolioTpResetShortSlots !== undefined && persisted.portfolioTpResetShortSlots !== null;
+  const savedResetLongSlots = hasPersistedResetTarget ? Math.max(0, Math.round(n(persisted.portfolioTpResetLongSlots))) : cycleStartLongSlots;
+  const savedResetShortSlots = hasPersistedResetTarget ? Math.max(0, Math.round(n(persisted.portfolioTpResetShortSlots))) : cycleStartShortSlots;
   const available = n(snapshot?.availableBalance ?? snapshot?.availableToTrade ?? snapshot?.available, 0);
   const equity = n(snapshot?.equity ?? snapshot?.portfolioValue, 0);
   const netExposure = n(report.netExposureNotional ?? report.netExposure, 0);
@@ -579,16 +584,20 @@ export function AsterBotConfiguratorV2({ snapshot, serverConfirmed, onConfirmed,
           <header><small>Na behalen doel (Portfolio TP)</small></header>
           <Toggle
             label="Stoelen resetten na Portfolio TP"
-            description="Na bevestigde sluiting van alle Portfolio TP-posities worden LONG/SHORT automatisch teruggezet naar de startwaarden van deze cyclus."
+            description="Na bevestigde sluiting worden LONG/SHORT automatisch naar de opgeslagen resetwaarden gezet."
             checked={draft.resetSeatsAfterPortfolioTp}
             onChange={(v) => update("resetSeatsAfterPortfolioTp", v)}
           />
           <div className="v2-seat-reset-help"><b>Veilige volgorde</b><p>Eerst alles sluiten en flat bevestigen. Daarna pas de stoelreset. Tijdens sluiten blijven nieuwe entries geblokkeerd.</p></div>
-          <div className="v2-seat-reset-flow" aria-label="Portfolio TP stoelreset">
-            <span><small>Huidige instelling</small><b>{totals.longSlots}L / {totals.shortSlots}S</b></span><i>→</i>
-            <span className="target"><small>Portfolio TP</small><b>Alles dicht</b></span><i>→</i>
-            <span><small>Reset naar</small><b>{cycleStartLongSlots}L / {cycleStartShortSlots}S</b></span>
-          </div>
+          <PortfolioTpSeatResetTarget
+            savedLong={savedResetLongSlots}
+            savedShort={savedResetShortSlots}
+            currentLong={totals.longSlots}
+            currentShort={totals.shortSlots}
+            legacyFallback={!hasPersistedResetTarget}
+            onConfirmed={onConfirmed}
+            onChanged={onChanged}
+          />
         </section>
       </>}
     </section>

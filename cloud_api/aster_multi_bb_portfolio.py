@@ -110,9 +110,13 @@ def _new_cycle(uid: str, *, equity: float, portfolio_tp_percent: float, timestam
         "baseConfigVersion": int(config_version or 0),
         "cycleStartLongSlots": None if current_long_slots is None else max(0, _i(current_long_slots)),
         "cycleStartShortSlots": None if current_short_slots is None else max(0, _i(current_short_slots)),
-        "cycleStartMaximumPositions": None if current_maximum_positions is None else max(1, _i(current_maximum_positions)),
+        "cycleStartMaximumPositions": None if current_maximum_positions is None else max(0, _i(current_maximum_positions)),
         "seatSnapshotSource": "CYCLE_START" if current_long_slots is not None and current_short_slots is not None else None,
         "seatResetArmed": False,
+        "seatResetTargetLongSlots": None,
+        "seatResetTargetShortSlots": None,
+        "seatResetTargetMaximumPositions": None,
+        "seatResetTargetSource": None,
         "slotResetCompletedAt": None,
         "slotResetCompletedAtMs": None,
         "slotResetCycleId": None,
@@ -179,12 +183,16 @@ def ensure_cycle(raw_state: dict[str, Any], *, uid: str, current_equity: float,
             cycle["cycleStartShortSlots"] = max(0, _i(current_short_slots))
             changed = True
         if cycle.get("cycleStartMaximumPositions") is None and current_maximum_positions is not None:
-            cycle["cycleStartMaximumPositions"] = max(1, _i(current_maximum_positions))
+            cycle["cycleStartMaximumPositions"] = max(0, _i(current_maximum_positions))
             changed = True
         if cycle.get("seatSnapshotSource") is None and cycle.get("cycleStartLongSlots") is not None and cycle.get("cycleStartShortSlots") is not None:
             cycle["seatSnapshotSource"] = "MIGRATION_CURRENT_SETTINGS"
             changed = True
         cycle.setdefault("seatResetArmed", False)
+        cycle.setdefault("seatResetTargetLongSlots", None)
+        cycle.setdefault("seatResetTargetShortSlots", None)
+        cycle.setdefault("seatResetTargetMaximumPositions", None)
+        cycle.setdefault("seatResetTargetSource", None)
         cycle.setdefault("slotResetCompletedAt", None)
         cycle.setdefault("slotResetCompletedAtMs", None)
         cycle.setdefault("slotResetCycleId", None)
@@ -255,6 +263,10 @@ def portfolio_cycle_snapshot(cycle: dict[str, Any], *, mode: str, current_equity
         "cycleStartMaximumPositions": cycle.get("cycleStartMaximumPositions"),
         "seatSnapshotSource": cycle.get("seatSnapshotSource"),
         "seatResetArmed": bool(cycle.get("seatResetArmed", False)),
+        "seatResetTargetLongSlots": cycle.get("seatResetTargetLongSlots"),
+        "seatResetTargetShortSlots": cycle.get("seatResetTargetShortSlots"),
+        "seatResetTargetMaximumPositions": cycle.get("seatResetTargetMaximumPositions"),
+        "seatResetTargetSource": cycle.get("seatResetTargetSource"),
         "slotResetCompletedAt": cycle.get("slotResetCompletedAt"),
         "slotResetCompletedAtMs": cycle.get("slotResetCompletedAtMs"),
         "slotResetCycleId": cycle.get("slotResetCycleId"),
@@ -310,31 +322,69 @@ def _write_cycle(ref: Any, cycle: dict[str, Any], *, phase: str | None = None,
     ref.set(payload, merge=True)
 
 
-def portfolio_tp_seat_reset_plan(cycle: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """Build an order-free, validated-by-existing-capacity seat restore mutation.
+def _portfolio_tp_seat_reset_target(cycle: dict[str, Any], settings: dict[str, Any]) -> tuple[int | None, int | None, int | None, str | None]:
+    """Resolve one immutable reset target; explicit account config wins over legacy cycle-start fallback."""
+    frozen_long = cycle.get("seatResetTargetLongSlots")
+    frozen_short = cycle.get("seatResetTargetShortSlots")
+    if frozen_long is not None and frozen_short is not None:
+        target_long = max(0, _i(frozen_long))
+        target_short = max(0, _i(frozen_short))
+        frozen_max = cycle.get("seatResetTargetMaximumPositions")
+        target_max = target_long + target_short if frozen_max is None else max(0, _i(frozen_max))
+        return target_long, target_short, target_max, str(cycle.get("seatResetTargetSource") or "FROZEN")
 
-    LONG/SHORT and maximumPositions are the only trading-capacity fields touched.
-    Zone ownership/per-zone soldier settings and every other strategy setting stay intact.
-    """
-    current = dict(settings or {})
-    cycle_id = str(cycle.get("cycleId") or "")
+    configured_long = settings.get("portfolioTpResetLongSlots")
+    configured_short = settings.get("portfolioTpResetShortSlots")
+    if configured_long is not None and configured_short is not None:
+        target_long = max(0, _i(configured_long))
+        target_short = max(0, _i(configured_short))
+        return target_long, target_short, target_long + target_short, "CONFIGURED"
+
     if cycle.get("cycleStartLongSlots") is None or cycle.get("cycleStartShortSlots") is None:
-        return {"applied": False, "reason": "cycle-seat-snapshot-missing", "settings": current, "cycleId": cycle_id}
-
+        return None, None, None, None
     target_long = max(0, _i(cycle.get("cycleStartLongSlots")))
     target_short = max(0, _i(cycle.get("cycleStartShortSlots")))
     target_max = max(1, _i(cycle.get("cycleStartMaximumPositions"), target_long + target_short or 1))
+    return target_long, target_short, target_max, "LEGACY_CYCLE_START"
+
+
+def portfolio_tp_seat_reset_plan(cycle: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+    """Build an order-free seat mutation from the target frozen when Portfolio TP triggered.
+
+    Explicit Build 470 reset targets are exact: they are never silently clamped.
+    Accounts without the new fields retain the pre-Build-470 cycle-start fallback,
+    including its historic capacity-clamp behavior.
+    """
+    current = dict(settings or {})
+    cycle_id = str(cycle.get("cycleId") or "")
+    target_long, target_short, target_max, target_source = _portfolio_tp_seat_reset_target(cycle, current)
+    if target_long is None or target_short is None or target_max is None:
+        return {"applied": False, "reason": "cycle-seat-snapshot-missing", "settings": current, "cycleId": cycle_id}
+
     before_long = max(0, _i(current.get("longSlots")))
     before_short = max(0, _i(current.get("shortSlots")))
-    before_max = max(1, _i(current.get("maximumPositions"), before_long + before_short or 1))
-
+    before_max = max(0, _i(current.get("maximumPositions"), before_long + before_short))
     universe = min(800, max(1, _i(current.get("universeTopN"), 30)))
     capacity = 200 if bool(current.get("manualSymbolSelectionEnabled", False)) else universe * 2
     zone_enabled = bool(current.get("zoneSoldiersEnabled", False))
     asymmetric = bool(current.get("asymmetricHedgeModeEnabled", False))
+    explicit_target = target_source not in {None, "LEGACY_CYCLE_START"}
     clamped = False
 
-    if zone_enabled:
+    if explicit_target:
+        # Saving validates this already. Re-check against current account capacity
+        # because Top-N/manual-selection may have changed after the target was saved.
+        if target_long + target_short != target_max:
+            return {"applied": False, "reason": "configured-reset-target-total-mismatch", "settings": current, "cycleId": cycle_id,
+                    "targetLongSlots": target_long, "targetShortSlots": target_short, "targetMaximumPositions": target_max}
+        if target_max > capacity:
+            return {"applied": False, "reason": "configured-reset-target-exceeds-current-capacity", "settings": current, "cycleId": cycle_id,
+                    "targetLongSlots": target_long, "targetShortSlots": target_short, "targetMaximumPositions": target_max,
+                    "currentCapacity": capacity}
+        if asymmetric and target_long != target_short:
+            return {"applied": False, "reason": "configured-reset-target-invalid-for-asymmetric-mode", "settings": current, "cycleId": cycle_id,
+                    "targetLongSlots": target_long, "targetShortSlots": target_short, "targetMaximumPositions": target_max}
+    elif zone_enabled:
         if target_max > capacity:
             target_max = capacity
             clamped = True
@@ -364,9 +414,10 @@ def portfolio_tp_seat_reset_plan(cycle: dict[str, Any], settings: dict[str, Any]
     }
     return {
         "applied": True,
-        "reason": "clamped-to-current-capacity" if clamped else "cycle-start-restored",
+        "reason": "clamped-to-current-capacity" if clamped else ("configured-target-restored" if explicit_target else "cycle-start-restored"),
         "settings": updated,
         "cycleId": cycle_id,
+        "targetSource": target_source,
         "clamped": clamped,
         "beforeLongSlots": before_long,
         "beforeShortSlots": before_short,
@@ -375,7 +426,6 @@ def portfolio_tp_seat_reset_plan(cycle: dict[str, Any], settings: dict[str, Any]
         "targetShortSlots": target_short,
         "targetMaximumPositions": target_max,
     }
-
 
 def assert_order_allowed(ref: Any, intent: Any, *, client: Any | None = None) -> None:
     """Last-millisecond race guard for stale workers.
@@ -470,10 +520,15 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
         trigger_state = ref.get().to_dict() or {}
         trigger_settings = trigger_state.get("settings") if isinstance(trigger_state.get("settings"), dict) else {}
         seat_reset_armed = bool(trigger_settings.get("resetSeatsAfterPortfolioTp", reset_seats_after_portfolio_tp))
+        reset_target_long, reset_target_short, reset_target_max, reset_target_source = _portfolio_tp_seat_reset_target(cycle, trigger_settings)
         cycle.update({"cycleStatus": PORTFOLIO_TP_EXECUTING,
                       "portfolioTpTriggeredAt": datetime.now(timezone.utc),
                       "portfolioTpTriggeredAtMs": timestamp_ms,
                       "seatResetArmed": seat_reset_armed,
+                      "seatResetTargetLongSlots": reset_target_long if seat_reset_armed else None,
+                      "seatResetTargetShortSlots": reset_target_short if seat_reset_armed else None,
+                      "seatResetTargetMaximumPositions": reset_target_max if seat_reset_armed else None,
+                      "seatResetTargetSource": reset_target_source if seat_reset_armed else None,
                       "updatedAtMs": timestamp_ms})
         status = PORTFOLIO_TP_EXECUTING
         snapshot = portfolio_cycle_snapshot(cycle, mode=mode, current_equity=equity,
@@ -495,8 +550,8 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                     "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
                     "previousLongSlots": _i(trigger_settings.get("longSlots"), _i(current_long_slots)),
                     "previousShortSlots": _i(trigger_settings.get("shortSlots"), _i(current_short_slots)),
-                    "targetLongSlots": cycle.get("cycleStartLongSlots"),
-                    "targetShortSlots": cycle.get("cycleStartShortSlots"),
+                    "targetLongSlots": cycle.get("seatResetTargetLongSlots", cycle.get("cycleStartLongSlots")),
+                    "targetShortSlots": cycle.get("seatResetTargetShortSlots", cycle.get("cycleStartShortSlots")),
                     "timestamp": audit_now,
                 })
 
@@ -511,7 +566,10 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                         "targetEquity": target, "currentEquity": equity,
                         "seatResetArmed": bool(cycle.get("seatResetArmed", reset_seats_after_portfolio_tp)),
                         "cycleStartLongSlots": cycle.get("cycleStartLongSlots"),
-                        "cycleStartShortSlots": cycle.get("cycleStartShortSlots")})
+                        "cycleStartShortSlots": cycle.get("cycleStartShortSlots"),
+                        "seatResetTargetLongSlots": cycle.get("seatResetTargetLongSlots"),
+                        "seatResetTargetShortSlots": cycle.get("seatResetTargetShortSlots"),
+                        "seatResetTargetSource": cycle.get("seatResetTargetSource")})
         return PortfolioGateResult(True, False, {**snapshot, "actions": actions, "ordersSent": 0},
                                    raw_state, account, positions, open_orders, 0)
 
@@ -640,8 +698,8 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                 "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
                 "previousLongSlots": _i(latest_settings_after_close.get("longSlots")),
                 "previousShortSlots": _i(latest_settings_after_close.get("shortSlots")),
-                "targetLongSlots": cycle.get("cycleStartLongSlots"),
-                "targetShortSlots": cycle.get("cycleStartShortSlots"),
+                "targetLongSlots": cycle.get("seatResetTargetLongSlots", cycle.get("cycleStartLongSlots")),
+                "targetShortSlots": cycle.get("seatResetTargetShortSlots", cycle.get("cycleStartShortSlots")),
                 "timestamp": now,
             })
             seat_reset_report = portfolio_tp_seat_reset_plan(cycle, latest_settings_after_close)
@@ -661,8 +719,8 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
                     "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
                     "previousLongSlots": _i(latest_settings_after_close.get("longSlots")),
                     "previousShortSlots": _i(latest_settings_after_close.get("shortSlots")),
-                    "targetLongSlots": cycle.get("cycleStartLongSlots"),
-                    "targetShortSlots": cycle.get("cycleStartShortSlots"),
+                    "targetLongSlots": cycle.get("seatResetTargetLongSlots", cycle.get("cycleStartLongSlots")),
+                    "targetShortSlots": cycle.get("seatResetTargetShortSlots", cycle.get("cycleStartShortSlots")),
                     "reason": seat_reset_report.get("reason"), "timestamp": now,
                 })
                 report = {
@@ -699,8 +757,8 @@ def portfolio_cycle_gate(*, client: Any, ref: Any, raw_state: dict[str, Any], ui
             "botId": "aster-strategy-2", "cycleId": cycle.get("cycleId"),
             "previousLongSlots": _i(latest_settings_after_close.get("longSlots")),
             "previousShortSlots": _i(latest_settings_after_close.get("shortSlots")),
-            "targetLongSlots": cycle.get("cycleStartLongSlots"),
-            "targetShortSlots": cycle.get("cycleStartShortSlots"),
+            "targetLongSlots": cycle.get("seatResetTargetLongSlots", cycle.get("cycleStartLongSlots")),
+            "targetShortSlots": cycle.get("seatResetTargetShortSlots", cycle.get("cycleStartShortSlots")),
             "reason": "toggle-off", "timestamp": now,
         })
 

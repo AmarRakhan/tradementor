@@ -3,29 +3,32 @@ import fs from "node:fs";
 import test from "node:test";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
+const target = fs.readFileSync(new URL("../components/portfolio-tp-seat-reset-target.tsx", import.meta.url), "utf8");
 const route = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts", import.meta.url), "utf8");
 const version = fs.readFileSync(new URL("../lib/app-version.ts", import.meta.url), "utf8");
 
-test("Build 469 preserves Portfolio TP seat reset in the legacy STABLE maker", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "469"/);
+test("Build 470 preserves Portfolio TP seat reset in the legacy STABLE maker", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "470"/);
   assert.match(maker, /data-feature="portfolio-tp-seat-reset"/);
   assert.match(maker, /Stoelen automatisch resetten/);
   assert.match(maker, /resetSeatsAfterPortfolioTp: x\.resetSeatsAfterPortfolioTp === true/);
   assert.match(maker, /resetSeatsAfterPortfolioTp: v\.resetSeatsAfterPortfolioTp/);
 });
 
-test("legacy maker displays immutable cycle-start reset target", () => {
-  assert.match(maker, /cycleStartLongSlots/);
-  assert.match(maker, /cycleStartShortSlots/);
-  assert.match(maker, /Reset naar/);
-  assert.match(maker, /Portfolio TP[\s\S]*Alles dicht/);
+test("legacy maker uses explicit reset targets with cycle-start as migration fallback", () => {
+  assert.match(maker, /hasPersistedResetTarget/);
+  assert.match(maker, /portfolioTpResetLongSlots/);
+  assert.match(maker, /portfolioTpResetShortSlots/);
+  assert.match(maker, /legacyFallback=\{!hasPersistedResetTarget\}/);
+  assert.match(maker, /PortfolioTpSeatResetTarget/);
+  assert.match(target, /Reset naar/);
+  assert.match(target, /Resetwaarden opslaan/);
 });
 
-test("legacy maker reset control does not submit orders or close positions directly", () => {
-  const start = maker.indexOf('<section className="portfolio-seat-reset"');
-  const end = maker.indexOf("</section>", start);
-  assert.ok(start >= 0 && end > start);
-  const block = maker.slice(start, end);
-  assert.doesNotMatch(block, /authenticatedRequest|strategy2\/start|strategy2\/stop|closeAll|POST/);
+test("legacy reset target save is order-free and uses only the settings PUT", () => {
+  assert.match(target, /method: "PUT"/);
+  assert.doesNotMatch(target, /strategy2\/start|strategy2\/stop|closeAll|method: "POST"|localStorage/);
   assert.match(route, /"resetSeatsAfterPortfolioTp"/);
+  assert.match(route, /"portfolioTpResetLongSlots"/);
+  assert.match(route, /"portfolioTpResetShortSlots"/);
 });

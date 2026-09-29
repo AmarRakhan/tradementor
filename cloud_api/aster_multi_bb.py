@@ -117,6 +117,16 @@ def _integer(value: Any, default: int = 0) -> int:
     except (TypeError, ValueError, OverflowError): return default
 
 
+def _optional_nonnegative_integer(source: dict[str, Any], key: str) -> int | None:
+    if key not in source or source.get(key) is None or str(source.get(key)).strip() == "":
+        return None
+    raw = source.get(key)
+    value = _finite(raw, float("nan"))
+    if not math.isfinite(value) or value < 0 or abs(value - round(value)) > 1e-9:
+        raise ValueError(f"{key} moet een geheel getal van 0 of hoger zijn")
+    return int(round(value))
+
+
 def _normalize_mode(value: Any, *, legacy_enabled: bool = True) -> str:
     text = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
     text = {"PERTRADE":"PER_TRADE", "TRADE":"PER_TRADE", "INDIVIDUAL":"PER_TRADE",
@@ -237,6 +247,8 @@ class MultiBbConfig(_core.MultiBbConfig):
     portfolio_tp_base_mode: str = "CYCLE_START"
     portfolio_tp_custom_base_equity: float = 0.0
     reset_seats_after_portfolio_tp: bool = False
+    portfolio_tp_reset_long_slots: int | None = None
+    portfolio_tp_reset_short_slots: int | None = None
     stop_loss_enabled: bool = False
     stop_loss_mode: str = "PERCENT"
     stop_loss_long: float = 0.0
@@ -285,6 +297,8 @@ class MultiBbConfig(_core.MultiBbConfig):
             "portfolio_tp_base_mode": portfolio_tp_base_mode,
             "portfolio_tp_custom_base_equity": _finite(source.get("portfolioTpCustomBaseEquity"), 0.0),
             "reset_seats_after_portfolio_tp": bool(source.get("resetSeatsAfterPortfolioTp", False)),
+            "portfolio_tp_reset_long_slots": _optional_nonnegative_integer(source, "portfolioTpResetLongSlots"),
+            "portfolio_tp_reset_short_slots": _optional_nonnegative_integer(source, "portfolioTpResetShortSlots"),
             "stop_loss_enabled": bool(source.get("stopLossEnabled", False)),
             "stop_loss_mode": str(source.get("stopLossMode", "PERCENT")).strip().upper().replace("%", "PERCENT").replace("$", "USD"),
             "stop_loss_long": _finite(source.get("stopLossLong"), 0.0),
@@ -316,6 +330,17 @@ class MultiBbConfig(_core.MultiBbConfig):
         if self.portfolio_tp_input_mode == "PERCENT" and self.portfolio_tp_value > 10000: raise ValueError("Portfolio TP percentage mag maximaal 10.000% zijn")
         if self.portfolio_tp_input_mode == "USD" and self.portfolio_tp_value > 1_000_000_000: raise ValueError("Portfolio TP bedrag is te groot")
         if self.portfolio_tp_base_mode == "CUSTOM" and (not math.isfinite(self.portfolio_tp_custom_base_equity) or self.portfolio_tp_custom_base_equity <= 0): raise ValueError("Aangepaste Portfolio TP basis moet groter dan 0 zijn")
+        reset_long = self.portfolio_tp_reset_long_slots
+        reset_short = self.portfolio_tp_reset_short_slots
+        if (reset_long is None) != (reset_short is None):
+            raise ValueError("Portfolio TP reset vereist zowel een LONG- als SHORT-resetwaarde")
+        if reset_long is not None and reset_short is not None:
+            reset_total = reset_long + reset_short
+            reset_capacity = 200 if self.manual_symbol_selection_enabled else self.universe_top_n * 2
+            if reset_total > reset_capacity:
+                raise ValueError(f"Portfolio TP resetdoel {reset_total} overschrijdt de beschikbare marktcapaciteit {reset_capacity}")
+            if self.asymmetric_hedge_enabled and reset_long != reset_short:
+                raise ValueError("Asymmetrische modus vereist gelijke LONG- en SHORT-resetwaarden")
         if self.stop_loss_mode not in {"USD","PERCENT"}: raise ValueError("Stoploss type moet USD of PERCENT zijn")
         if self.stop_loss_enabled and (not math.isfinite(self.stop_loss_long) or self.stop_loss_long <= 0 or not math.isfinite(self.stop_loss_short) or self.stop_loss_short <= 0): raise ValueError("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat")
         if self.smart_rescue_enabled:
@@ -357,6 +382,8 @@ class MultiBbConfig(_core.MultiBbConfig):
             "portfolioTpBaseMode":self.portfolio_tp_base_mode,
             "portfolioTpCustomBaseEquity":self.portfolio_tp_custom_base_equity,
             "resetSeatsAfterPortfolioTp":self.reset_seats_after_portfolio_tp,
+            "portfolioTpResetLongSlots":self.portfolio_tp_reset_long_slots,
+            "portfolioTpResetShortSlots":self.portfolio_tp_reset_short_slots,
             "stopLossEnabled":self.stop_loss_enabled,
             "stopLossMode":self.stop_loss_mode,
             "stopLossLong":self.stop_loss_long,
@@ -613,6 +640,12 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     if gate.restart:
         raw_state=gate.raw_state; account=gate.account; positions=gate.positions; open_orders=gate.open_orders
         order_budget=max(0,(15 if order_budget is None else int(order_budget))-gate.orders_sent)
+        # Portfolio TP may have atomically changed LONG/SHORT/maximumPositions.
+        # The same worker tick must immediately honor that confirmed reset instead
+        # of refilling from the stale pre-close config object.
+        restarted_settings = raw_state.get("settings") if isinstance(raw_state, dict) else None
+        if isinstance(restarted_settings, dict):
+            settings = MultiBbConfig.from_mapping(restarted_settings)
 
     profit_lock = run_profit_lock_ladder_gate(client=client,ref=runtime_ref,raw_state=raw_state,settings=settings,uid=uid,
         account=account,positions=positions,open_orders=open_orders,timestamp_ms=timestamp_ms,dry_run=dry_run,

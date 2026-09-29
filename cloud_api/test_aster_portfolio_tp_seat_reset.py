@@ -349,3 +349,122 @@ def test_reset_planner_does_not_touch_zone_autohedge_or_sniper_configuration():
         "autoHedgeEnabled", "sniperMaximumPositions",
     ):
         assert plan["settings"][key] == settings[key]
+
+
+def test_configurable_reset_target_round_trips_and_allows_zero_zero():
+    configured = {**_settings(reset=True), "portfolioTpResetLongSlots": 23, "portfolioTpResetShortSlots": 8}
+    cfg = MultiBbConfig.from_mapping(configured)
+    assert cfg.portfolio_tp_reset_long_slots == 23
+    assert cfg.portfolio_tp_reset_short_slots == 8
+    assert cfg.public_dict()["portfolioTpResetLongSlots"] == 23
+    assert cfg.public_dict()["portfolioTpResetShortSlots"] == 8
+
+    zero = MultiBbConfig.from_mapping({**_settings(reset=True), "portfolioTpResetLongSlots": 0, "portfolioTpResetShortSlots": 0})
+    assert zero.portfolio_tp_reset_long_slots == 0
+    assert zero.portfolio_tp_reset_short_slots == 0
+
+    with pytest.raises(ValueError, match="LONG- als SHORT-resetwaarde"):
+        MultiBbConfig.from_mapping({**_settings(reset=True), "portfolioTpResetLongSlots": 3})
+
+
+def test_configured_reset_target_is_exact_and_not_cycle_start():
+    settings = {
+        **_settings(8, 7, reset=True, top_n=50),
+        "portfolioTpResetLongSlots": 23,
+        "portfolioTpResetShortSlots": 8,
+    }
+    raw = {
+        "enabled": True,
+        "settings": settings,
+        "multiBbCycle": _cycle(start_long=3, start_short=3),
+        "multiBbPositions": {"BTCUSDT|LONG": {"dcaCount": 1}},
+    }
+    ref = Ref(raw)
+    client = FakeClient(equity=105.0, positions=[pos("BTCUSDT", "LONG")])
+
+    result = portfolio_cycle_gate(
+        client=client, ref=ref, raw_state=raw, uid="u",
+        account=client.account_information(), positions=client.position_risk(), open_orders=[],
+        timestamp_ms=60, take_profit_mode="PORTFOLIO", portfolio_tp_percent=5.0,
+        current_long_slots=8, current_short_slots=7, current_maximum_positions=15,
+        reset_seats_after_portfolio_tp=True,
+    )
+
+    assert result.restart is True
+    assert (ref.data["settings"]["longSlots"], ref.data["settings"]["shortSlots"], ref.data["settings"]["maximumPositions"]) == (23, 8, 31)
+    completed = ref.data["multiBbLastCompletedCycle"]
+    assert completed["seatResetTargetSource"] == "CONFIGURED"
+    assert (completed["seatResetTargetLongSlots"], completed["seatResetTargetShortSlots"]) == (23, 8)
+    assert ref.data["multiBbCycle"]["cycleStartMaximumPositions"] == 31
+
+
+def test_configured_zero_zero_reset_is_a_valid_no_capacity_restart():
+    settings = {
+        **_settings(8, 7, reset=True, top_n=50),
+        "portfolioTpResetLongSlots": 0,
+        "portfolioTpResetShortSlots": 0,
+    }
+    raw = {
+        "enabled": True,
+        "settings": settings,
+        "multiBbCycle": _cycle(start_long=3, start_short=3),
+    }
+    ref = Ref(raw)
+    client = FakeClient(equity=105.0, positions=[])
+
+    result = portfolio_cycle_gate(
+        client=client, ref=ref, raw_state=raw, uid="u",
+        account=client.account_information(), positions=[], open_orders=[],
+        timestamp_ms=70, take_profit_mode="PORTFOLIO", portfolio_tp_percent=5.0,
+        current_long_slots=8, current_short_slots=7, current_maximum_positions=15,
+        reset_seats_after_portfolio_tp=True,
+    )
+
+    assert result.restart is True
+    assert (ref.data["settings"]["longSlots"], ref.data["settings"]["shortSlots"], ref.data["settings"]["maximumPositions"]) == (0, 0, 0)
+    parsed = MultiBbConfig.from_mapping(ref.data["settings"])
+    assert (parsed.long_slots, parsed.short_slots, parsed.maximum_positions) == (0, 0, 0)
+    assert (ref.data["multiBbCycle"]["cycleStartLongSlots"], ref.data["multiBbCycle"]["cycleStartShortSlots"], ref.data["multiBbCycle"]["cycleStartMaximumPositions"]) == (0, 0, 0)
+
+
+def test_configured_target_is_frozen_at_trigger_and_later_edits_do_not_move_it():
+    settings = {
+        **_settings(8, 7, reset=True, top_n=50),
+        "portfolioTpResetLongSlots": 23,
+        "portfolioTpResetShortSlots": 8,
+    }
+    cycle = {
+        **_cycle(start_long=3, start_short=3, status=PORTFOLIO_TP_EXECUTING, armed=True),
+        "seatResetTargetLongSlots": 23,
+        "seatResetTargetShortSlots": 8,
+        "seatResetTargetMaximumPositions": 31,
+        "seatResetTargetSource": "CONFIGURED",
+    }
+    changed_after_trigger = {
+        **settings,
+        "portfolioTpResetLongSlots": 30,
+        "portfolioTpResetShortSlots": 12,
+    }
+    plan = portfolio_tp_seat_reset_plan(cycle, changed_after_trigger)
+    assert plan["applied"] is True
+    assert (plan["targetLongSlots"], plan["targetShortSlots"], plan["targetMaximumPositions"]) == (23, 8, 31)
+
+
+def test_configured_target_over_current_capacity_fails_instead_of_clamping():
+    settings = {
+        **_settings(2, 2, reset=True, top_n=2),
+        "portfolioTpResetLongSlots": 3,
+        "portfolioTpResetShortSlots": 2,
+    }
+    cycle = {
+        **_cycle(start_long=2, start_short=2, status=PORTFOLIO_TP_EXECUTING, armed=True),
+        "seatResetTargetLongSlots": 3,
+        "seatResetTargetShortSlots": 2,
+        "seatResetTargetMaximumPositions": 5,
+        "seatResetTargetSource": "CONFIGURED",
+    }
+    plan = portfolio_tp_seat_reset_plan(cycle, settings)
+    assert plan["applied"] is False
+    assert plan["reason"] == "configured-reset-target-exceeds-current-capacity"
+    assert plan["targetLongSlots"] == 3
+    assert plan["targetShortSlots"] == 2

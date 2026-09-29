@@ -11,6 +11,8 @@ const preserveKeys = [
   "portfolioTpBaseMode",
   "portfolioTpCustomBaseEquity",
   "resetSeatsAfterPortfolioTp",
+  "portfolioTpResetLongSlots",
+  "portfolioTpResetShortSlots",
   "longDcaDistance",
   "shortDcaDistance",
   "longDcaMarginUsd",
