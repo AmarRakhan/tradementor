@@ -734,7 +734,7 @@ def test_auto_hedge_blocked_tp_is_local_and_zone_entry_still_flows(monkeypatch):
         zoneBaseShortSoldiers=1,
     )
 
-    monkeypatch.setattr(aster_multi_bb, "_close_evidence", lambda *_a, **_k: None)
+    monkeypatch.setattr(aster_multi_bb._core, "_close_evidence", lambda *_a, **_k: None)
 
     def fake_execute(_client, plan, **kwargs):
         side = kwargs["side"].value
