@@ -1156,6 +1156,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     legacy_position_count = max(0, len(strategy_active_keys) - active_pair_count * 2) if settings.asymmetric_hedge_enabled else 0
     if zone_mode:
         pair_need = 0
+        # In Zone Warriors mode the global maximumPositions cap applies only
+        # to exchange-confirmed zone-owned seats (active zone + old zones).
+        # Pre-zone/legacy Strategy-2 positions keep their normal TP/DCA
+        # management but must not consume the new Zone Warriors seat pool.
+        zone_seat_model = (zone_report or {}).get("seatModel") if isinstance((zone_report or {}).get("seatModel"), dict) else {}
+        zone_strategy_position_count = max(
+            0,
+            _i(zone_seat_model.get("strategyOpenTotal"), zone_owned_open_count),
+        )
+        seat_capacity_position_count = zone_strategy_position_count
         eligible_zone_long = [
             row for row in available_soldiers(zone_state or {}, "LONG")
             if str(row.get("soldierId") or "") not in zone_soldiers_released_this_tick
@@ -1167,9 +1177,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         long_need = 0 if zone_migration_hold else len(eligible_zone_long)
         short_need = 0 if zone_migration_hold else len(eligible_zone_short)
         # Price-zone seats determine which side may enter, while
-        # maximumPositions remains the hard global Strategy-2 ceiling across
-        # every active and old-zone seat. Manual/untracked Aster positions do
-        # not consume this strategy-owned cap.
+        # maximumPositions remains the hard global Zone Warriors ceiling across
+        # active-zone and old-zone seats only. Legacy/pre-zone Strategy-2 and
+        # manual/untracked Aster positions do not consume this seat cap.
         account_remaining_capacity = _remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)
     elif settings.asymmetric_hedge_enabled:
         # Existing asymmetric LONG cycles keep occupying their pair slot even
@@ -1749,7 +1759,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         entry_status = "WAITING_CAPACITY"; entry_reason = "Gekoppelde-parencapaciteit is gevuld" if settings.asymmetric_hedge_enabled else "Strategy 2 slots zijn gevuld"
     elif account_remaining_capacity < (2 if settings.asymmetric_hedge_enabled else 1):
         entry_status = "WAITING_ACCOUNT_CAP"
-        entry_reason = (f"account heeft {account_position_count} actieve Aster-posities; er zijn twee vrije posities nodig voor één volledig LONG+SHORT-paar" if settings.asymmetric_hedge_enabled else f"account heeft {account_position_count} actieve Aster-posities; ingestelde limiet is {settings.maximum_positions}")
+        if zone_mode:
+            entry_reason = f"Zone Warriors heeft {seat_capacity_position_count} actieve stoelen; ingestelde limiet is {settings.maximum_positions}"
+        else:
+            entry_reason = (f"account heeft {account_position_count} actieve Aster-posities; er zijn twee vrije posities nodig voor één volledig LONG+SHORT-paar" if settings.asymmetric_hedge_enabled else f"Strategy 2 heeft {seat_capacity_position_count} actieve posities; ingestelde limiet is {settings.maximum_positions}")
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
     elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
     elif entry_wait and all(str(a.get("reason", "")).startswith(("PRICE_", "BB_")) for a in entry_wait):
