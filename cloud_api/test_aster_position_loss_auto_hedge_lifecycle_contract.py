@@ -5,6 +5,10 @@ def source() -> str:
     return Path(__file__).with_name("aster_position_loss_auto_hedge_extension.py").read_text(encoding="utf-8")
 
 
+def main_source() -> str:
+    return Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+
+
 def test_pair_lifecycle_is_persistent_and_recovery_is_explicit():
     value = source()
     assert '.collection("pairs")' in value
@@ -54,3 +58,32 @@ def test_global_disable_requires_explicit_confirmation_and_is_audited():
     assert '"clientSource": str(request.clientSource or "")[:64]' in value
     assert '"sourceRoute": source_route' in value
     assert '"result": result' in value
+
+
+def test_manual_full_leg_release_is_symmetric_and_never_auto_reopens():
+    extension = source()
+    main = main_source()
+    assert '"MANUAL_RELEASE_PENDING"' in extension
+    assert '"MANUAL_RELEASE_UNCERTAIN"' in extension
+    assert 'REHEDGEABLE_STATUSES = {"RECOVERY", "REHEDGE_ARMED", "DISABLED"}' in extension
+    assert 'status not in REHEDGEABLE_STATUSES' in extension
+    assert 'def _begin_position_loss_auto_hedge_manual_release' in main
+    assert 'normalized_side not in {protected_side, hedge_side}' in main
+    assert '"protectedSide": normalized_side' in main
+    assert '"hedgeSide": survivor_side' in main
+    assert '"rehedgeEnabled": False' in main
+    assert '"status": "MANUAL_RELEASE_PENDING"' in main
+    assert '"status": "MANUAL_RELEASE_UNCERTAIN"' in main
+    assert '"USER_MANUAL_LEG_RELEASE_RECOVERY"' in main
+    assert '"status": status' in main
+    assert '"AUTO_HEDGE_LEG_RELEASE"' in main
+
+
+def test_manual_auto_hedge_release_is_only_for_full_leg_closes():
+    main = main_source()
+    start = main.index("def _begin_position_loss_auto_hedge_manual_release")
+    end = main.index("def _complete_position_loss_auto_hedge_manual_release", start)
+    helper = main[start:end]
+    assert 'if int(percentage) != 100:' in helper
+    assert 'return None' in helper
+    assert '"requestedCloseQty": float(close_quantity)' in helper
