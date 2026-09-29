@@ -33,3 +33,11 @@ def test_legacy_portfolio_noodhedge_stays_unregistered_in_production_entrypoint(
     assert "Portfolio Noodhedge is globally disabled" in source
     assert "aster_portfolio_emergency_hedge_extension" not in source
     assert "aster_portfolio_emergency_margin_extension" not in source
+
+
+def test_multi_bb_auto_hedge_close_blocks_are_local_not_account_fatal():
+    source = Path(__file__).with_name("aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert "from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked" in source
+    assert source.count("except (AsterCloseBlocked, AutoHedgeCloseBlocked) as exc:") >= 2
+    assert '"kind": "TP_BLOCKED"' in source
+    assert '"kind": "ASYM_SHORT_CLOSE_BLOCKED"' in source

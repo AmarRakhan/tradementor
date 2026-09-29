@@ -7,6 +7,7 @@ from typing import Any
 import hashlib, math, time
 
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
+from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import ContractRules, PositionSide
@@ -860,7 +861,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 try:
                     execute_leg_once(client, plan, side=PositionSide.SHORT, action="CLOSE", id_prefix=f"mbb-asym-close-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
                                      close_evidence=evidence, before_submit=before_order)
-                except AsterCloseBlocked as exc:
+                except (AsterCloseBlocked, AutoHedgeCloseBlocked) as exc:
                     actions.append({"kind": "ASYM_SHORT_CLOSE_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
                     continue
                 fresh = _position_map(client.position_risk(symbol))
@@ -879,8 +880,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if not dry_run:
                 plan = PairExecutionPlan(symbol, Decimal(str(qty)), Decimal(str(qty * mark)), max(1, _i(row.get("leverage"))))
                 evidence = _close_evidence(client, uid, st0, row, side, mark)
-                execute_leg_once(client, plan, side=PositionSide(side), action="CLOSE", id_prefix=f"mbb-tp-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                 close_evidence=evidence, before_submit=before_order)
+                try:
+                    execute_leg_once(client, plan, side=PositionSide(side), action="CLOSE", id_prefix=f"mbb-tp-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                                     close_evidence=evidence, before_submit=before_order)
+                except (AsterCloseBlocked, AutoHedgeCloseBlocked) as exc:
+                    actions.append({"kind": "TP_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
+                    continue
                 fresh = _position_map(client.position_risk(symbol))
                 if key in fresh: raise RuntimeError(f"{key}: TP-close niet flat bevestigd")
                 settlement: dict[str, Any] = {}
