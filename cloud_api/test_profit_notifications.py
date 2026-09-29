@@ -256,6 +256,44 @@ def test_portfolio_tp_payload_is_separate_and_immediate_shape():
     assert "+$5,25" in payload["body"]
 
 
+def test_multi_bb_persists_confirmed_entry_and_tp_order_attribution_for_notifications():
+    source = Path("aster_multi_bb_core.py").read_text()
+    assert "def _record_order_attribution" in source
+    assert 'action="OPEN_LEG"' in source
+    assert 'action="TAKE_PROFIT_CLOSE"' in source
+    assert '"orderAttributions": rows[-2000:]' in source
+    assert "closed.get(\"result\") or {}" in source
+    assert "ref, fill, settings=settings" in source
+
+
+def test_notification_reconcile_keeps_durable_symbol_backlog_until_history_read_succeeds():
+    source = Path("main.py").read_text()
+    start = source.index("def _reconcile_profit_notifications")
+    end = source.index("\ndef require_verified_email", start)
+    block = source[start:end]
+    assert 'state.get("pendingHistorySymbols")' in block
+    assert "event_symbols = list(dict.fromkeys([" in block
+    assert "event_batch = event_symbols[:8]" in block
+    assert "failed_history_symbols.add(symbol)" in block
+    assert "remaining_history_symbols" in block
+    assert "if not remaining_history_symbols" in block
+    assert "pendingHistorySymbols=remaining_history_symbols[:100]" in block
+    assert "historyScanIncomplete=bool(remaining_history_symbols)" in block
+    assert 'status": "ok" if not remaining_history_symbols else "retry-pending"' in block
+    assert "last_reconciled - 10 * 60_000" in block
+    assert "last_reconciled - 10 * 60_000, now_ms - 24 * 60 * 60_000" not in block
+
+
+def test_confirmed_tp_attribution_is_urgent_even_if_realized_income_is_delayed():
+    source = Path("main.py").read_text()
+    start = source.index("def _reconcile_profit_notifications")
+    end = source.index("\ndef require_verified_email", start)
+    block = source[start:end]
+    assert '"TAKE_PROFIT_CLOSE"' in block
+    assert "close_notification_actions" in block
+    assert "symbol not in priority_symbols" in block
+
+
 def test_backend_observer_is_read_only_and_scheduler_failure_isolated():
     source = Path("main.py").read_text()
     start = source.index("def _reconcile_profit_notifications")
