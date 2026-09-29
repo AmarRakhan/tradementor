@@ -117,6 +117,8 @@ type PriceZoneSeatSummary = {
   perZoneShort: number;
   freeLongActiveZone: number;
   freeShortActiveZone: number;
+  occupiedLongActiveZone: number;
+  occupiedShortActiveZone: number;
   openFromOldZones: number;
   maxTotal: number;
   strategyOpenLong: number;
@@ -244,6 +246,8 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     perZoneShort,
     freeLongActiveZone: Math.max(0, Math.round(firstNumber([seatModel], ["freeLongActiveZone"]) ?? (perZoneLong - activeOpenLong))),
     freeShortActiveZone: Math.max(0, Math.round(firstNumber([seatModel], ["freeShortActiveZone"]) ?? (perZoneShort - activeOpenShort))),
+    occupiedLongActiveZone: activeOpenLong,
+    occupiedShortActiveZone: activeOpenShort,
     openFromOldZones: Math.max(0, Math.round(firstNumber([seatModel, oldZones], ["openFromOldZones", "total"]) ?? 0)),
     maxTotal,
     strategyOpenLong,
@@ -627,13 +631,12 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
 function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZoneSeatSummary | null; liveActiveZone: number | null }) {
   const liveZoneLabel = liveActiveZone === null ? "—" : `Zone ${liveActiveZone} actief`;
   if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
-  const sideTotal = Math.max(1, summary.perZoneLong + summary.perZoneShort);
-  const longCapacity = Math.max(1, Math.round(summary.maxTotal * summary.perZoneLong / sideTotal));
-  const shortCapacity = Math.max(0, summary.maxTotal - longCapacity);
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
   const displayActiveZone = liveActiveZone ?? summary.activeZone;
   const seatZoneInSync = liveActiveZone === null || summary.activeZone === liveActiveZone;
   const zoneLabel = displayActiveZone === null ? "Zone —" : `Zone ${displayActiveZone} actief`;
+  const activeLongLabel = seatZoneInSync ? `${summary.occupiedLongActiveZone} / ${summary.perZoneLong}` : "— / —";
+  const activeShortLabel = seatZoneInSync ? `${summary.occupiedShortActiveZone} / ${summary.perZoneShort}` : "— / —";
   const statusText = !summary.enabled
     ? "Prijszone-stoelen staan momenteel uit."
     : seatZoneInSync
@@ -660,10 +663,24 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
       <span><small>Oude zones open</small><b>{summary.openFromOldZones}</b></span>
       <span><small>Max totaal</small><b>{summary.maxTotal}</b></span>
     </div>
-    <div className="aps-zone-meters">
-      <div className="long"><span>LONG bezet</span><i><u style={{width:`${pct(summary.strategyOpenLong,longCapacity)}%`}} /></i><b>{summary.strategyOpenLong} / {longCapacity}</b></div>
-      <div className="short"><span>SHORT bezet</span><i><u style={{width:`${pct(summary.strategyOpenShort,shortCapacity)}%`}} /></i><b>{summary.strategyOpenShort} / {shortCapacity}</b></div>
-      <div className="total"><span>Totaal bezet</span><i><u style={{width:`${pct(summary.strategyOpenTotal,summary.maxTotal)}%`}} /></i><b>{summary.strategyOpenTotal} / {summary.maxTotal}</b></div>
+    <div className="aps-zone-seat-groups">
+      <div className="aps-zone-seat-group">
+        <strong className="aps-zone-group-title">Actieve zone</strong>
+        <div className="aps-zone-meters">
+          <div className="long"><span>LONG</span><i><u style={{width:`${seatZoneInSync ? pct(summary.occupiedLongActiveZone,summary.perZoneLong) : 0}%`}} /></i><b>{activeLongLabel}</b></div>
+          <div className="short"><span>SHORT</span><i><u style={{width:`${seatZoneInSync ? pct(summary.occupiedShortActiveZone,summary.perZoneShort) : 0}%`}} /></i><b>{activeShortLabel}</b></div>
+        </div>
+      </div>
+      <div className="aps-zone-seat-group">
+        <strong className="aps-zone-group-title">Alle zones samen</strong>
+        <div className="aps-zone-open-counts">
+          <div className="long"><span>LONG totaal open</span><b>{summary.strategyOpenLong}</b></div>
+          <div className="short"><span>SHORT totaal open</span><b>{summary.strategyOpenShort}</b></div>
+        </div>
+        <div className="aps-zone-meters aps-zone-total-meter">
+          <div className="total"><span>Totaal bezet</span><i><u style={{width:`${pct(summary.strategyOpenTotal,summary.maxTotal)}%`}} /></i><b>{summary.strategyOpenTotal} / {summary.maxTotal}</b></div>
+        </div>
+      </div>
     </div>
     <p><span aria-hidden="true">ⓘ</span>{blockerText}</p>
     <p><span aria-hidden="true">ⓘ</span>Bestaande posities houden hun zone-stoel bezet. Bij terugkeer worden alleen lege stoelen gevuld.</p>

@@ -8,8 +8,8 @@ const route = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/sett
 const entry = fs.readFileSync(new URL("../components/aster-strategy2-entry.tsx", import.meta.url), "utf8");
 const version = fs.readFileSync(new URL("../lib/app-version.ts", import.meta.url), "utf8");
 
-test("Build 466 keeps the Portfolio TP seat reset control in existing STABLE V2", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "466"/);
+test("Build 467 keeps the Portfolio TP seat reset control in existing STABLE V2", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "467"/);
   assert.match(v2, /data-feature="portfolio-tp-seat-reset"/);
   assert.match(v2, /Stoelen resetten na Portfolio TP/);
   assert.match(v2, /resetSeatsAfterPortfolioTp: settings\.resetSeatsAfterPortfolioTp === true/);
