@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "467"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "468"/);
 });
 
 test("Tradecentrum shows Auto Hedge status on every matching coin row without the redundant AH prefix", async () => {
@@ -168,4 +168,13 @@ test("Build 443 refreshes stale Legacy Recovery previews and rotates ids only af
   assert.match(component, /window\.addEventListener\("focus"/);
   assert.match(component, /RECOVERY_REPLAN_REQUIRED/);
   assert.match(component, /setScaleRefreshKey/);
+});
+
+
+test("Build 468 Tradecentrum consumes backend Auto Hedge lifecycle metadata per position", async () => {
+  const tradeCenter = await readFile(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
+  assert.match(tradeCenter, /positionLossAutoHedge/);
+  assert.match(tradeCenter, /data-auto-hedge-status/);
+  assert.match(tradeCenter, /AUTO HEDGE ·/);
+  assert.match(tradeCenter, /Recovery, re-hedge blijft UIT/);
 });

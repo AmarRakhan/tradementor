@@ -1272,6 +1272,255 @@ def _exclude_auto_hedge_managed_profit_candidates(
     return safe, excluded
 
 
+_MANUAL_AUTO_HEDGE_RELEASE_STATUSES = {
+    "HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED",
+    "MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN",
+}
+
+
+def _position_loss_auto_hedge_pair_ref(uid: str, symbol: str):
+    return (
+        db.collection("asterPositionLossAutoHedge").document(str(uid))
+        .collection("pairs").document(str(symbol).upper())
+    )
+
+
+def _position_loss_auto_hedge_pair(uid: str, symbol: str) -> dict[str, Any]:
+    return _position_loss_auto_hedge_pair_ref(uid, symbol).get().to_dict() or {}
+
+
+def _manual_auto_hedge_leg_view(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(row, dict):
+        return None
+    qty = abs(safe_float(row.get("positionAmt", row.get("quantity"))))
+    if qty <= 0:
+        return None
+    entry = safe_float(row.get("entryPrice"))
+    mark = safe_float(row.get("markPrice")) or entry
+    side = str(row.get("positionSide", row.get("side", ""))).upper()
+    pnl = safe_float(row.get("unRealizedProfit", row.get("unrealizedPnl")))
+    return {
+        "quantity": qty,
+        "entryPrice": entry,
+        "markPrice": mark,
+        "openPnl": pnl,
+        "leverage": safe_float(row.get("leverage")),
+        "side": side,
+    }
+
+
+def _begin_position_loss_auto_hedge_manual_release(
+    *,
+    uid: str,
+    symbol: str,
+    side: str,
+    percentage: int,
+    close_quantity: float,
+    live_rows: list[dict[str, Any]],
+    intent_hash: str,
+) -> dict[str, Any] | None:
+    """Freeze an Auto Hedge pair before an explicit full-leg user close.
+
+    Either leg may be removed. The opposite surviving leg becomes RECOVERY and
+    can only be hedged again after the user explicitly enables re-hedge.
+    """
+    if int(percentage) != 100:
+        return None
+    normalized_symbol = str(symbol).upper()
+    normalized_side = str(side).upper()
+    ref = _position_loss_auto_hedge_pair_ref(uid, normalized_symbol)
+    current = ref.get().to_dict() or {}
+    status = str(current.get("status", "")).upper()
+    protected_side = str(current.get("protectedSide", "")).upper()
+    hedge_side = str(current.get("hedgeSide", "")).upper()
+    if status not in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES:
+        return None
+    if normalized_side not in {protected_side, hedge_side}:
+        return None
+
+    survivor_side = "SHORT" if normalized_side == "LONG" else "LONG"
+    closing_row = next((row for row in live_rows
+        if str(row.get("symbol", "")).upper() == normalized_symbol
+        and str(row.get("positionSide", "")).upper() == normalized_side
+        and abs(safe_float(row.get("positionAmt"))) > 0), None)
+    survivor_row = next((row for row in live_rows
+        if str(row.get("symbol", "")).upper() == normalized_symbol
+        and str(row.get("positionSide", "")).upper() == survivor_side
+        and abs(safe_float(row.get("positionAmt"))) > 0), None)
+    survivor_qty = abs(safe_float((survivor_row or {}).get("positionAmt")))
+    now = datetime.now(timezone.utc)
+    release = {
+        "intentHash": str(intent_hash),
+        "closedSide": normalized_side,
+        "survivorSide": survivor_side,
+        "requestedCloseQty": float(close_quantity),
+        "status": "LOCKED",
+        "startedAt": now,
+    }
+    ref.set({
+        "status": "MANUAL_RELEASE_PENDING",
+        "protectedSide": normalized_side,
+        "hedgeSide": survivor_side,
+        "rehedgeEnabled": False,
+        "reservedHedgeQty": 0.0,
+        "normalFreeQty": survivor_qty,
+        "currentProtectedQty": abs(safe_float((closing_row or {}).get("positionAmt"))),
+        "currentHedgeQty": survivor_qty,
+        "protectedLeg": _manual_auto_hedge_leg_view(closing_row),
+        "hedgeLeg": _manual_auto_hedge_leg_view(survivor_row),
+        "manualRelease": release,
+        "lastReason": "USER_MANUAL_LEG_RELEASE_PENDING",
+        "updatedAt": now,
+    }, merge=True)
+    user_reference({"uid": uid}).collection("autoHedgeAudit").add({
+        "event": "POSITION_LOSS_AUTO_HEDGE_V2",
+        "eventType": "MANUAL_LEG_RELEASE_PENDING",
+        "symbol": normalized_symbol,
+        "pairCycleId": str(current.get("generationId", "")),
+        "closedSide": normalized_side,
+        "survivorSide": survivor_side,
+        "requestedCloseQty": float(close_quantity),
+        "rehedgeEnabled": False,
+        "timestamp": now,
+    })
+    return {
+        "ref": ref,
+        "previous": current,
+        "closedSide": normalized_side,
+        "survivorSide": survivor_side,
+        "intentHash": str(intent_hash),
+    }
+
+
+def _complete_position_loss_auto_hedge_manual_release(
+    uid: str,
+    guard: dict[str, Any] | None,
+    after_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not isinstance(guard, dict):
+        return None
+    ref = guard["ref"]
+    symbol = str((guard.get("previous") or {}).get("symbol") or ref.id).upper()
+    closed_side = str(guard.get("closedSide", "")).upper()
+    survivor_side = str(guard.get("survivorSide", "")).upper()
+    survivor_row = next((row for row in after_rows
+        if str(row.get("symbol", "")).upper() == symbol
+        and str(row.get("positionSide", "")).upper() == survivor_side
+        and abs(safe_float(row.get("positionAmt"))) > 0), None)
+    closed_row = next((row for row in after_rows
+        if str(row.get("symbol", "")).upper() == symbol
+        and str(row.get("positionSide", "")).upper() == closed_side
+        and abs(safe_float(row.get("positionAmt"))) > 1e-12), None)
+    if closed_row is not None:
+        raise RuntimeError("Handmatige Auto Hedge-leg is na sluiten nog open")
+
+    now = datetime.now(timezone.utc)
+    survivor_qty = abs(safe_float((survivor_row or {}).get("positionAmt")))
+    if survivor_qty > 0:
+        status = "RECOVERY"
+        reason = "USER_MANUAL_LEG_RELEASE_RECOVERY"
+        update = {
+            "status": status,
+            "protectedSide": closed_side,
+            "hedgeSide": survivor_side,
+            "rehedgeEnabled": False,
+            "reservedHedgeQty": 0.0,
+            "normalFreeQty": survivor_qty,
+            "currentProtectedQty": 0.0,
+            "currentHedgeQty": survivor_qty,
+            "protectedLeg": None,
+            "hedgeLeg": _manual_auto_hedge_leg_view(survivor_row),
+            "recoveryAt": now,
+            "lastReason": reason,
+            "manualRelease": {
+                "intentHash": str(guard.get("intentHash", "")),
+                "closedSide": closed_side,
+                "survivorSide": survivor_side,
+                "status": "EXCHANGE_CONFIRMED",
+                "completedAt": now,
+            },
+            "updatedAt": now,
+        }
+    else:
+        status = "CLOSED"
+        reason = "USER_MANUAL_LEG_RELEASE_PAIR_FLAT"
+        update = {
+            "status": status,
+            "protectedSide": closed_side,
+            "hedgeSide": survivor_side,
+            "rehedgeEnabled": False,
+            "reservedHedgeQty": 0.0,
+            "normalFreeQty": 0.0,
+            "currentProtectedQty": 0.0,
+            "currentHedgeQty": 0.0,
+            "protectedLeg": None,
+            "hedgeLeg": None,
+            "closedAt": now,
+            "lastReason": reason,
+            "manualRelease": {
+                "intentHash": str(guard.get("intentHash", "")),
+                "closedSide": closed_side,
+                "survivorSide": survivor_side,
+                "status": "EXCHANGE_CONFIRMED",
+                "completedAt": now,
+            },
+            "updatedAt": now,
+        }
+    ref.set(update, merge=True)
+    user_reference({"uid": uid}).collection("autoHedgeAudit").add({
+        "event": "POSITION_LOSS_AUTO_HEDGE_V2",
+        "eventType": "MANUAL_LEG_RELEASE_CONFIRMED",
+        "symbol": symbol,
+        "pairCycleId": str((guard.get("previous") or {}).get("generationId", "")),
+        "closedSide": closed_side,
+        "survivorSide": survivor_side,
+        "resultingStatus": status,
+        "rehedgeEnabled": False,
+        "survivorQty": survivor_qty,
+        "reason": reason,
+        "timestamp": now,
+    })
+    return update
+
+
+def _fail_position_loss_auto_hedge_manual_release(
+    uid: str,
+    guard: dict[str, Any] | None,
+    reason: str,
+) -> None:
+    if not isinstance(guard, dict):
+        return
+    now = datetime.now(timezone.utc)
+    ref = guard["ref"]
+    symbol = str((guard.get("previous") or {}).get("symbol") or ref.id).upper()
+    ref.set({
+        "status": "MANUAL_RELEASE_UNCERTAIN",
+        "rehedgeEnabled": False,
+        "reservedHedgeQty": 0.0,
+        "manualRelease": {
+            "intentHash": str(guard.get("intentHash", "")),
+            "closedSide": str(guard.get("closedSide", "")).upper(),
+            "survivorSide": str(guard.get("survivorSide", "")).upper(),
+            "status": "UNCERTAIN",
+            "reason": str(reason)[:500],
+            "failedAt": now,
+        },
+        "lastReason": str(reason)[:500],
+        "updatedAt": now,
+    }, merge=True)
+    user_reference({"uid": uid}).collection("autoHedgeAudit").add({
+        "event": "POSITION_LOSS_AUTO_HEDGE_V2",
+        "eventType": "MANUAL_LEG_RELEASE_UNCERTAIN",
+        "symbol": symbol,
+        "pairCycleId": str((guard.get("previous") or {}).get("generationId", "")),
+        "closedSide": str(guard.get("closedSide", "")).upper(),
+        "survivorSide": str(guard.get("survivorSide", "")).upper(),
+        "rehedgeEnabled": False,
+        "reason": str(reason)[:500],
+        "timestamp": now,
+    })
+
+
 def _sniper_live_gate_enabled()->bool:
     fallback=os.getenv("ASTER_LIVE_EXECUTION_ENABLED","false")
     return os.getenv("ASTER_SNIPER_LIVE_EXECUTION_ENABLED",fallback).lower()=="true"
@@ -1377,9 +1626,23 @@ def _block_strategy2_order_during_conflict(uid:str):
     def guard(intent:AsterOrderIntent)->None:
         close_guard(intent)
         if intent.risk_increasing():
+            symbol = intent.symbol.upper()
+            side = intent.position_side.value
+            pair = _position_loss_auto_hedge_pair(uid, symbol)
+            pair_status = str(pair.get("status", "")).upper()
+            # A manually released/recovery pair reserves the removed side until
+            # the user explicitly re-arms Auto Hedge. Normal Strategy-2 refill
+            # must not make that LONG/SHORT appear again behind the user's back.
+            if pair_status in {
+                "RECOVERY", "REHEDGE_ARMED", "DISABLED",
+                "MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN",
+            } and side == str(pair.get("protectedSide", "")).upper():
+                raise AsterValidationError(
+                    f"{symbol}: AUTO_HEDGE_RECOVERY_SIDE_AWAITS_EXPLICIT_REHEDGE"
+                )
             sniper=aster_sniper_reference(uid).get().to_dict() or {}
-            if intent.symbol.upper() in sniper_active_symbols(sniper):
-                raise AsterValidationError(f"{intent.symbol}: BLOCKED_BY_SNIPER_OWNER")
+            if symbol in sniper_active_symbols(sniper):
+                raise AsterValidationError(f"{symbol}: BLOCKED_BY_SNIPER_OWNER")
     return guard
 
 
@@ -5257,6 +5520,20 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     strategy_settings = AsterStrategySettings.from_mapping({})
     sniper_state = ensure_aster_sniper_control(uid)
     sniper_owned_symbols = sniper_active_symbols(sniper_state)
+    position_loss_auto_hedge_pairs: dict[str, dict[str, Any]] = {}
+    try:
+        for pair_snapshot in (
+            db.collection("asterPositionLossAutoHedge").document(uid).collection("pairs").stream()
+        ):
+            pair_value = pair_snapshot.to_dict() or {}
+            pair_symbol = str(pair_value.get("symbol") or pair_snapshot.id).upper().strip()
+            pair_status = str(pair_value.get("status", "")).upper().strip()
+            if pair_symbol and pair_status and pair_status != "CLOSED":
+                position_loss_auto_hedge_pairs[pair_symbol] = {**pair_value, "symbol": pair_symbol}
+    except Exception:
+        # Auto Hedge presentation metadata is optional; exchange position truth
+        # remains authoritative even when this read-only lifecycle lookup fails.
+        position_loss_auto_hedge_pairs = {}
     for state, reference in ((strategy2_state, aster_strategy2_reference(uid)),):
         try:
             latest = next(iter(reference.collection("audit").order_by(
@@ -5366,6 +5643,19 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         row["strategyId"] = strategy_id
         row["strategyName"] = "Strategy 2 · Dual Profit Harvest DCA" if strategy_id == "aster-strategy-2" else ""
         row["strategy2Role"] = str(owned_leg.get("role", "")) if owned_leg else ""
+        auto_hedge_pair = position_loss_auto_hedge_pairs.get(symbol) or {}
+        auto_hedge_status = str(auto_hedge_pair.get("status", "")).upper()
+        auto_hedge_protected_side = str(auto_hedge_pair.get("protectedSide", "")).upper()
+        auto_hedge_hedge_side = str(auto_hedge_pair.get("hedgeSide", "")).upper()
+        if auto_hedge_status and side in {auto_hedge_protected_side, auto_hedge_hedge_side}:
+            row["positionLossAutoHedge"] = {
+                "status": auto_hedge_status,
+                "role": "PROTECTED" if side == auto_hedge_protected_side else "HEDGE",
+                "protectedSide": auto_hedge_protected_side,
+                "hedgeSide": auto_hedge_hedge_side,
+                "rehedgeEnabled": auto_hedge_pair.get("rehedgeEnabled") is True,
+                "reservedHedgeQty": safe_float(auto_hedge_pair.get("reservedHedgeQty")),
+            }
         if strategy_id=="aster-strategy-2":
             if (symbol,side) in strategy2_airbag_by_key:
                 row["focusAirbag"]={**strategy2_airbag_by_key[(symbol,side)],"enabled":bool(strategy2_settings.focus_airbag_enabled)}
@@ -7321,6 +7611,9 @@ def close_one_aster_position(
     )
     dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard = None
+    auto_hedge_manual_guard = None
+    auto_hedge_release = None
+    account_token = None
     try:
         live_rows = client.position_risk()
         position = next((row for row in live_rows
@@ -7357,6 +7650,35 @@ def close_one_aster_position(
             if close_quantity >= live_quantity - tolerance:
                 raise HTTPException(409, "De gekozen gedeeltelijke sluiting rondt af naar de volledige positie; kies 100%")
 
+        pair_before_close = _position_loss_auto_hedge_pair(uid, normalized_symbol)
+        pair_status = str(pair_before_close.get("status", "")).upper()
+        pair_protected_side = str(pair_before_close.get("protectedSide", "")).upper()
+        pair_hedge_side = str(pair_before_close.get("hedgeSide", "")).upper()
+        needs_manual_auto_hedge_release = (
+            request.percentage == 100
+            and pair_status in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
+            and request.side in {pair_protected_side, pair_hedge_side}
+        )
+        if needs_manual_auto_hedge_release:
+            for _ in range(20):
+                account_token = _acquire_aster_account_coordination(
+                    uid, "MANUAL_POSITION_CLOSE", "AUTO_HEDGE_LEG_RELEASE",
+                )
+                if account_token:
+                    break
+                time.sleep(.05)
+            if not account_token:
+                raise HTTPException(409, "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw")
+            auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
+                uid=uid,
+                symbol=normalized_symbol,
+                side=request.side,
+                percentage=request.percentage,
+                close_quantity=close_quantity,
+                live_rows=live_rows,
+                intent_hash=intent_hash,
+            )
+
         require_auto_hedge_close_allowed(
             account_uid=uid,
             symbol=normalized_symbol,
@@ -7385,6 +7707,9 @@ def close_one_aster_position(
         if abs(remaining_quantity - expected_remaining) > remaining_tolerance:
             close_kind = "volledige" if request.percentage == 100 else "gedeeltelijke"
             raise HTTPException(502, f"Aster heeft de {close_kind} sluiting nog niet betrouwbaar bevestigd; er wordt niet opnieuw besteld")
+        auto_hedge_release = _complete_position_loss_auto_hedge_manual_release(
+            uid, auto_hedge_manual_guard, after_manual_rows,
+        )
         complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
         intent_ref.set({
             "status": "confirmed_closed", "result": result, "percentage": request.percentage,
@@ -7399,18 +7724,29 @@ def close_one_aster_position(
             "percentage": request.percentage,
             "closedSize": close_quantity,
             "remainingSize": remaining_quantity,
+            "autoHedgeStatus": str((auto_hedge_release or {}).get("status", "")) or None,
+            "autoHedgeRehedgeEnabled": (
+                bool((auto_hedge_release or {}).get("rehedgeEnabled"))
+                if auto_hedge_release is not None else None
+            ),
         }
     except AutoHedgeCloseBlocked as exc:
+        _fail_position_loss_auto_hedge_manual_release(uid, auto_hedge_manual_guard, str(exc))
         intent_ref.set({"status": "blocked_hedge_lock", "detail": str(exc), "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise HTTPException(409, str(exc)) from exc
     except HTTPException as exc:
+        _fail_position_loss_auto_hedge_manual_release(uid, auto_hedge_manual_guard, str(exc.detail))
         fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc.detail))
         intent_ref.set({"status": "failed_closed", "detail": str(exc.detail), "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise
     except Exception as exc:
+        _fail_position_loss_auto_hedge_manual_release(uid, auto_hedge_manual_guard, str(exc))
         fail_manual_action(dynamic_hedge_ref, manual_guard, str(exc))
         intent_ref.set({"status": "unknown_fail_closed", "updatedAt": datetime.now(timezone.utc)}, merge=True)
         raise HTTPException(502, "Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld") from exc
+    finally:
+        if account_token:
+            _release_aster_account_coordination(uid, str(account_token))
 
 
 @app.post("/v1/me/aster/simulate")

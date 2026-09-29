@@ -26,6 +26,43 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-29",
+  title: "Tradecentrum · Auto Hedge handmatige leg-release 1.0",
+  newItems: [
+    "Bij een Position Loss Auto Hedge-pair kan de gebruiker nu bewust de volledige LONG- of volledige SHORT-leg sluiten.",
+    "De overblijvende leg wordt daarna RECOVERY en wordt niet automatisch opnieuw gehedged.",
+    "Opnieuw hedgen blijft UIT totdat de gebruiker dit per recovery-pair zelf weer inschakelt.",
+  ],
+  problems: [
+    "Een handmatig gesloten Auto Hedge-leg kon opnieuw worden geopend omdat de pair-state HEDGED bleef terwijl de 1:1 worker een ontbrekende hedge zag.",
+    "De Position Close-knop kon tegelijk zichtbaar zijn terwijl de backend de gereserveerde hedge-quantity blokkeerde.",
+  ],
+  causes: [
+    "De bestaande lifecycle behandelde alleen het verdwijnen van de oorspronkelijk beschermde leg als RECOVERY; het handmatig verwijderen van de oorspronkelijke hedge-leg had geen symmetrische overgang.",
+    "De normale close-route gebruikte terecht de Auto Hedge-reserveringslock, maar had geen expliciete user-driven full-leg release-flow.",
+  ],
+  fixes: [
+    "Een expliciete 100%-close van beide Auto Hedge-zijden zet het pair eerst in MANUAL_RELEASE_PENDING zodat de worker tijdens de close niets kan terugplaatsen.",
+    "Na exchange-bevestiging wordt de gesloten zijde vastgelegd en wordt de overblijvende zijde de Recovery-leg met rehedgeEnabled=false.",
+    "Bij een onzekere close blijft de lifecycle fail-closed in MANUAL_RELEASE_UNCERTAIN; er wordt niet automatisch opnieuw gehedged.",
+    "Gedeeltelijke closes blijven onder de bestaande gereserveerde-quantityregels vallen.",
+    "Tradecentrum toont Auto Hedge lifecycle-metadata en legt bij 100% sluiten expliciet uit dat de andere leg blijft staan als Recovery.",
+  ],
+  now: [
+    "Of je nu de LONG of de SHORT volledig verwijdert: die gesloten leg blijft weg. Alleen een expliciete latere actie 'Opnieuw hedgen' mag de overblijvende Recovery-leg opnieuw laten hedgen.",
+  ],
+  technicalDetails: [
+    "Backend: cloud_api/main.py + aster_position_loss_auto_hedge_extension.py.",
+    "UI: aster-recent-trades.tsx ontvangt de actuele Auto Hedge pair-role/status per positie.",
+    "De bestaande Airbag/Focus hedge-lock, partial-close contractregels, Dynamic Hedge-coördinatie en emergency Close All blijven intact.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-467-zone-warriors-seat-display",
+    version: "46",
+    build: "467",
+  releasedAt: "2026-09-29",
   title: "Portfolio Snapshot · Zone Warriors stoelweergave 1.1",
   newItems: [
     "De actieve prijszone toont nu zijn eigen LONG- en SHORT-bezetting tegenover uitsluitend de formatie van die zone.",
@@ -53,8 +90,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Regressietest verbiedt opnieuw afgeleide longCapacity/shortCapacity in PriceZoneStrategySummary.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  },
+
   {
     id: "v46-build-466-position-close-feedback",
     version: "46",

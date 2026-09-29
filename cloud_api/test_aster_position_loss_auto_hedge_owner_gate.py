@@ -41,3 +41,14 @@ def test_multi_bb_auto_hedge_close_blocks_are_local_not_account_fatal():
     assert source.count("except (AsterCloseBlocked, AutoHedgeCloseBlocked) as exc:") >= 2
     assert '"kind": "TP_BLOCKED"' in source
     assert '"kind": "ASYM_SHORT_CLOSE_BLOCKED"' in source
+
+
+def test_strategy2_cannot_reopen_a_manually_released_auto_hedge_side_before_rehedge():
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    start = source.index("def _block_strategy2_order_during_conflict")
+    end = source.index("def _block_sniper_order_during_conflict", start)
+    guard = source[start:end]
+    assert '"RECOVERY", "REHEDGE_ARMED", "DISABLED"' in guard
+    assert '"MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN"' in guard
+    assert 'side == str(pair.get("protectedSide", "")).upper()' in guard
+    assert "AUTO_HEDGE_RECOVERY_SIDE_AWAITS_EXPLICIT_REHEDGE" in guard
