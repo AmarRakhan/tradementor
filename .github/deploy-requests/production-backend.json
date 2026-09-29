@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "650e0e2ba3a8e5bd9197ed64ddd978bea79c6612",
+  "sourceCommit": "bddbdf047c1b89861a8582a2278c6a92327f7a17",
   "requestedBy": "AmarRakhan",
-  "requestId": "zone-scanner-dryrun-trace-fix-20260929"
+  "requestId": "auto-hedge-close-block-isolation-20260929"
 }
