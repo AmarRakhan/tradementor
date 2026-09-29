@@ -546,3 +546,27 @@ jobs:
         shell: bash
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Zone Warriors cap hotfix dispatch failed before production mutation. No Cloud Run revision was promoted."
+
+
+  dispatch-short-bollinger-audit-20260929:
+    if: github.event.issue.title == '[AGENT-CONTROL] run short bollinger audit 20260929' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch read-only SHORT Bollinger audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run audit-short-bollinger-20260929.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH"
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Read-only SHORT Bollinger audit dispatched on the trusted production branch. No settings or orders are changed."
+
+      - name: Report dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "SHORT Bollinger audit dispatch failed before any production read job started."
