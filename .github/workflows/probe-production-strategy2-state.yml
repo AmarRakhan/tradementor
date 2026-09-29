@@ -1,4 +1,5 @@
 name: Probe Production Strategy 2 State
+# current read-only trace trigger 2026-09-29T09:13+02:00
 
 on:
   push:
