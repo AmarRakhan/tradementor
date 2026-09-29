@@ -4044,6 +4044,49 @@ def _profit_notification_account_values(client: AsterV3Client) -> dict[str, floa
     return {"portfolioValue": equity, "available": available}
 
 
+def _notification_realized_income(client: AsterV3Client, start_ms: int) -> list[dict[str, Any]]:
+    """Read every REALIZED_PNL row from the durable notification cursor onward."""
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    cursor = int(start_ms) if int(start_ms) > 0 else None
+    page_size = 1000
+    for _ in range(25):
+        page = client.income_history(
+            income_type="REALIZED_PNL",
+            start_time=cursor,
+            limit=page_size,
+        )
+        if not isinstance(page, list) or any(not isinstance(item, dict) for item in page):
+            raise ValueError("Aster REALIZED_PNL-historie gaf geen geldige lijst terug")
+        for item in page:
+            identity = str(item.get("tranId", item.get("id", ""))).strip()
+            fallback = "|".join((
+                str(item.get("symbol", "")),
+                str(item.get("time", item.get("timestamp", ""))),
+                str(item.get("income", "")),
+                str(item.get("asset", "")),
+            ))
+            key = identity or fallback
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(item)
+        if len(page) < page_size:
+            return rows
+        timestamps = [
+            int(safe_float(item.get("time", item.get("timestamp"))))
+            for item in page
+            if int(safe_float(item.get("time", item.get("timestamp")))) > 0
+        ]
+        if not timestamps:
+            raise ValueError("Aster REALIZED_PNL-pagina heeft geen veilige vervolgcursor")
+        next_cursor = max(timestamps) + 1
+        if cursor is not None and next_cursor <= cursor:
+            raise ValueError("Aster REALIZED_PNL-paginatie maakte geen voortgang")
+        cursor = next_cursor
+    raise ValueError("Aster REALIZED_PNL-historie overschrijdt de veilige paginatiegrens")
+
+
 def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
     """Observe confirmed Aster entry/close evidence and deliver notifications.
 
@@ -4082,7 +4125,7 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
     account = client.account_information()
     equity, _wallet, available, _unrealized, _maintenance = aster_account_information_values(account)
 
-    recent_income = client.income_history(income_type="REALIZED_PNL", start_time=start_ms or None, limit=1000)
+    recent_income = _notification_realized_income(client, start_ms)
     priority_symbols: list[str] = []
     for row in sorted(
         (item for item in recent_income if isinstance(item, dict)),
@@ -4200,7 +4243,13 @@ def _reconcile_profit_notifications(uid: str) -> dict[str, Any]:
     failed_history_symbols: set[str] = set()
     for symbol in symbols:
         try:
-            rows = client.user_trades(symbol, limit=500)
+            rows = paged_user_trades(
+                client,
+                symbol,
+                start_time=start_ms or None,
+                page_size=500,
+                maximum_pages=20,
+            )
         except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
             if symbol in event_symbols:
                 failed_history_symbols.add(symbol)
