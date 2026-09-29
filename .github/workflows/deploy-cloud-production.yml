@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
         type: string
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/deploy-requests/production-backend.json"
 
 permissions:
   contents: read
@@ -39,34 +44,102 @@ env:
 
 jobs:
   test-and-deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.actor == 'AmarRakhan')
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 35
     steps:
+      - name: Check out deployment control plane
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve exact deployment request
+        id: deploy-request
+        shell: bash
+        env:
+          MANUAL_CONFIRMATION: ${{ inputs.confirmation }}
+          MANUAL_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              test "$MANUAL_CONFIRMATION" = "DEPLOY_PRODUCTION_BACKEND"
+              SOURCE_COMMIT="$MANUAL_SOURCE_COMMIT"
+              REQUEST_ID="manual-$GITHUB_RUN_ID"
+              ;;
+            push)
+              test "$GITHUB_ACTOR" = "AmarRakhan"
+              test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+              test -f ".github/deploy-requests/production-backend.json"
+              python - ".github/deploy-requests/production-backend.json" > "$RUNNER_TEMP/deploy-request.env" <<'PY'
+          import json
+          import re
+          import sys
+
+          request = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected = {"action", "confirmation", "sourceCommit", "requestedBy", "requestId"}
+          if set(request) != expected:
+              raise SystemExit(f"unexpected deploy-request keys: {sorted(request)}")
+          if request["action"] != "deploy-production-backend":
+              raise SystemExit("invalid deploy action")
+          if request["confirmation"] != "DEPLOY_PRODUCTION_BACKEND":
+              raise SystemExit("invalid deploy confirmation")
+          if request["requestedBy"] != "AmarRakhan":
+              raise SystemExit("deploy request is not owner-authorized")
+          source = str(request["sourceCommit"])
+          request_id = str(request["requestId"])
+          if not re.fullmatch(r"[0-9a-f]{40}", source):
+              raise SystemExit("invalid sourceCommit")
+          if not re.fullmatch(r"[A-Za-z0-9._-]{3,80}", request_id):
+              raise SystemExit("invalid requestId")
+          print(f"SOURCE_COMMIT={source}")
+          print(f"REQUEST_ID={request_id}")
+          PY
+              . "$RUNNER_TEMP/deploy-request.env"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          echo "SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_ENV"
+          echo "DEPLOY_REQUEST_ID=$REQUEST_ID" >> "$GITHUB_ENV"
+          echo "source_commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+
       - name: Check out exact requested source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_commit }}
+          ref: ${{ steps.deploy-request.outputs.source_commit }}
           fetch-depth: 0
 
       - name: Authorize exact-source production deployment
         shell: bash
-        env:
-          REQUESTED_SOURCE_COMMIT: ${{ inputs.source_commit }}
         run: |
           set -euo pipefail
-          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
-          test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
-          [[ "$REQUESTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$REQUESTED_SOURCE_COMMIT"
-          echo "SOURCE_COMMIT=$REQUESTED_SOURCE_COMMIT" >> "$GITHUB_ENV"
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
 
       - name: Verify immutable repository scope
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
-          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+              ;;
+            push)
+              test "$GITHUB_ACTOR" = "AmarRakhan"
+              test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
           test "$GCP_PROJECT_ID" = "tradementor-production"
           test "$GCP_REGION" = "europe-west4"
           test "$CLOUD_RUN_SERVICE" = "tradementor-api"
