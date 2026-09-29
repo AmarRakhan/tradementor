@@ -557,7 +557,7 @@ function PositionClosePanel({
         ) : autoHedge && percentage === 100 ? (
           <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Auto Hedge · één volledige leg sluiten.</strong><br />De andere leg blijft staan als Recovery. Deze gesloten LONG of SHORT wordt niet automatisch teruggezet; re-hedge blijft UIT totdat je die zelf weer inschakelt.</p></div>
         ) : autoHedge ? (
-          <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Auto Hedge · gedeeltelijke sluiting.</strong><br />Een gedeeltelijke close blijft onder de bestaande hedge-reserveringsregels vallen. Kies 100% als je bewust één hele leg wilt verwijderen en de andere als Recovery wilt laten staan.</p></div>
+          <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Auto Hedge · gedeeltelijke sluiting.</strong><br />Deze handmatige close wordt uitgevoerd en zet dit paar daarna in Recovery. De handmatig verkleinde LONG of SHORT wordt niet automatisch teruggevuld; re-hedge blijft UIT totdat je die zelf weer inschakelt.</p></div>
         ) : (
           <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Dit is een marktorder en wordt direct uitgevoerd.</strong><br />De uiteindelijke prijs kan licht afwijken door marktslippage.</p></div>
         )}
