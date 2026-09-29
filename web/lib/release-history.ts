@@ -26,6 +26,42 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-29",
+  title: "Portfolio TP · instelbare stoelreset 2.0",
+  newItems: [
+    "Portfolio TP kan nu een zelfstandig opgeslagen LONG- en SHORT-resetdoel gebruiken, inclusief 0 per richting en 0/0.",
+    "Legacy Botinstellingen, STABLE Botconfigurator V2 en BETA Botconfigurator V3 gebruiken dezelfde server-side resetvelden.",
+    "Een gedeelde Resetwaarden opslaan-actie bewaart uitsluitend het toekomstige resetdoel en voert geen trade uit.",
+  ],
+  problems: [
+    "De bestaande stoelreset gebruikte uitsluitend de stoelverdeling waarmee de cyclus begon, zodat gebruikers het doel van de volgende cyclus niet onafhankelijk konden instellen.",
+    "Een latere migratie tussen legacy, V2 en V3 kon functioneel uiteenlopen wanneer een resetoptie alleen in één configurator werd toegevoegd.",
+  ],
+  causes: [
+    "De resetdoelwaarden bestonden nog niet als zelfstandige accountconfiguratie; de backend leidde ze af uit cycleStartLongSlots en cycleStartShortSlots.",
+  ],
+  fixes: [
+    "Nieuwe persistente velden portfolioTpResetLongSlots en portfolioTpResetShortSlots zijn één gedeelde bron van waarheid voor alle configurators.",
+    "Bij Portfolio TP wordt het actuele resetdoel bij de trigger immutable in de cyclus vastgezet, zodat wijzigingen tijdens de close geen race veroorzaken.",
+    "Expliciet opgeslagen resetdoelen worden exact toegepast en nooit stilzwijgend geclamped; een later ontstane capaciteitsconflict houdt de entry-lock fail-closed.",
+    "Bestaande accounts zonder nieuwe velden behouden de eerdere cycle-start fallback en daarmee hun bestaande gedrag.",
+    "0/0 is een geldige na-TP configuratie met maximumPositions=0 en opent geen nieuwe posities.",
+  ],
+  now: [
+    "Een gebruiker kan bijvoorbeeld 23 LONG / 8 SHORT opslaan; na bevestigde Portfolio TP flat-state wordt atomair 23L / 8S / 31 totaal toegepast en dezelfde waarden zijn in legacy, V2 en V3 zichtbaar.",
+  ],
+  technicalDetails: [
+    "Backend: cloud_api/aster_multi_bb.py, aster_multi_bb_core.py en aster_multi_bb_portfolio.py.",
+    "UI: gedeelde web/components/portfolio-tp-seat-reset-target.tsx in legacy maker, STABLE V2 en BETA V3.",
+    "Opslaan gebruikt alleen de bestaande state-preserving settings PUT; start/stop/close/order endpoints worden niet aangeroepen.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-469-zone-seat-sync",
+  version: "46",
+  build: "469",
+  releasedAt: "2026-09-29",
   title: "Portfolio Snapshot · actieve-zone stoelsync 1.2",
   newItems: [
     "Vrije LONG- en SHORT-stoelen blijven numeriek zichtbaar wanneer Portfolio Koers al naar een nieuwe zone is gegaan en de opgeslagen seat-activeZone nog één refresh achterloopt.",
@@ -55,8 +91,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Regressiedekking: cloud_api/test_aster_zone_soldiers.py plus webtests voor live-zone sync, Snapshot en bestaande Build 468-functionaliteit.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+};,
+
   {
     id: "v46-build-468-auto-hedge-manual-leg-release",
     version: "46",
