@@ -1204,7 +1204,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     scanned_candidates = 0
     executable_candidates = 0
     minimum_margin_rejections: list[float] = []
-    for ranked_row in candidates:
+    for candidate_index, ranked_row in enumerate(candidates):
         if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
         symbol = ranked_row["symbol"]
@@ -1479,7 +1479,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if dry_run:
             actions.append(entry_action)
             if zone_mode:
-                simulated_key = f"SIM:{symbol}|{side}|{index}"
+                simulated_key = f"SIM:{symbol}|{side}|{candidate_index}"
                 claimed = claim_soldier(zone_state or {}, side, trade_key=simulated_key, symbol=symbol,
                     entry_price=prices[symbol], entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),
                     timestamp_ms=timestamp_ms)
