@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { strategy2ServerStatus } from "@/lib/aster-strategy2-server-status.mjs";
+import { PortfolioTpSeatResetTarget } from "@/components/portfolio-tp-seat-reset-target";
 import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, splitTotalPositions } from "@/lib/position-slot-input";
 
 type ManualSide = "LONG" | "SHORT";
@@ -125,6 +126,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const cycle = Object.keys(durableCycle).length ? durableCycle : reportCycle;
   const cycleStartLongSlots = clampInt(finiteOr(cycle.cycleStartLongSlots, persisted.longSlots ?? v.longSlots), 0, MAX_SIDE_SLOTS);
   const cycleStartShortSlots = clampInt(finiteOr(cycle.cycleStartShortSlots, persisted.shortSlots ?? v.shortSlots), 0, MAX_SIDE_SLOTS);
+  const hasPersistedResetTarget = persisted.portfolioTpResetLongSlots !== undefined && persisted.portfolioTpResetLongSlots !== null
+    && persisted.portfolioTpResetShortSlots !== undefined && persisted.portfolioTpResetShortSlots !== null;
+  const savedResetLongSlots = hasPersistedResetTarget ? Math.max(0, Math.round(finiteOr(persisted.portfolioTpResetLongSlots, 0))) : cycleStartLongSlots;
+  const savedResetShortSlots = hasPersistedResetTarget ? Math.max(0, Math.round(finiteOr(persisted.portfolioTpResetShortSlots, 0))) : cycleStartShortSlots;
 
   useEffect(() => {
     if (dirty) return;
@@ -524,14 +529,15 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
               <span><small>NA PORTFOLIO TP</small><b>Stoelen automatisch resetten</b><em>Pas na volledige sluiting en bevestigde flat-state.</em></span>
               <button type="button" role="switch" aria-checked={v.resetSeatsAfterPortfolioTp} className={v.resetSeatsAfterPortfolioTp ? "on" : ""} onClick={() => change({ ...v, resetSeatsAfterPortfolioTp: !v.resetSeatsAfterPortfolioTp })}><i />{v.resetSeatsAfterPortfolioTp ? "Aan" : "Uit"}</button>
             </div>
-            <div className="portfolio-seat-reset-flow" aria-label="Portfolio TP stoelreset">
-              <span><small>Nu ingesteld</small><b>{clampInt(n(v.longSlots), 0, MAX_SIDE_SLOTS)}L / {clampInt(n(v.shortSlots), 0, MAX_SIDE_SLOTS)}S</b></span>
-              <strong>→</strong>
-              <span className="close"><small>Portfolio TP</small><b>Alles dicht</b></span>
-              <strong>→</strong>
-              <span><small>Reset naar</small><b>{cycleStartLongSlots}L / {cycleStartShortSlots}S</b></span>
-            </div>
-            <small className="portfolio-seat-reset-note">De startstoelen van deze cycle zijn leidend. De knop verandert geen posities direct en opent of sluit zelf geen trades.</small>
+            <PortfolioTpSeatResetTarget
+              savedLong={savedResetLongSlots}
+              savedShort={savedResetShortSlots}
+              currentLong={clampInt(n(v.longSlots), 0, MAX_SIDE_SLOTS)}
+              currentShort={clampInt(n(v.shortSlots), 0, MAX_SIDE_SLOTS)}
+              legacyFallback={!hasPersistedResetTarget}
+              onConfirmed={onConfirmed}
+              onChanged={onChanged}
+            />
           </section>
           <div className="portfolio-status-strip">
             <span><i>⌁</i><small>Cycle start</small><b>${money2(cycleStart)}</b></span>
