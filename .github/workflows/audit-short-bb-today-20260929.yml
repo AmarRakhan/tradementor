@@ -1,4 +1,4 @@
-name: Audit SHORT Bollinger Entries 2026-09-29 v3
+name: Audit SHORT Bollinger Entries 2026-09-29 v4
 
 on:
   push:
@@ -97,11 +97,21 @@ jobs:
 
           gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/tmp/audit-execute.out 2>/tmp/audit-execute.err
 
+      - name: Re-authenticate as read-only log observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Read temporary snapshot output
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="$JOB_NAME"
           RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"SHORT_ATTR_AUDIT \""             --project "$GCP_PROJECT_ID" --freshness=20m --limit=10 --order=desc --format='value(textPayload)'             | grep 'SHORT_ATTR_AUDIT ' | head -n1)"
           test -n "$RESULT"
           printf '%s\n' "${RESULT#SHORT_ATTR_AUDIT }" > /tmp/short-opens.json
-          cleanup
-          trap - EXIT
+          gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
 
       - name: Read today's SHORT pre-order Bollinger PASS logs
         shell: bash
