@@ -197,10 +197,13 @@ def test_build470_zone_warriors_global_cap_counts_only_zone_owned_seats_not_lega
         zone_context={"activeZone": 8, "safeForEntries": True},
     )
 
-    assert result["accountPositionCount"] == 6
-    assert result["strategyPositionCount"] == 6
-    assert result["seatCapacityPositionCount"] == 2
-    assert result["accountRemainingCapacity"] == 1  # dry-run plans the entry but does not consume the confirmed seat yet
+    # Dry-run accounting includes the planned NEW seat in its final report:
+    # raw account 6 -> planned 7, legacy-managed Strategy 2 6 -> planned 7,
+    # but the Zone Warriors cap itself moves only from 2 -> 3.
+    assert result["accountPositionCount"] == 7
+    assert result["strategyPositionCount"] == 7
+    assert result["seatCapacityPositionCount"] == 3
+    assert result["accountRemainingCapacity"] == 0
     assert result["scannedCandidateCount"] >= 1
     assert any(row.get("kind") == "ENTRY" and row.get("symbol") == "NEWUSDT" and row.get("side") == "LONG" for row in result["actions"])
     assert result["entryStatus"] in {"ENTRY_PLANNED", "PARTIAL_FILL_PLANNED"}
