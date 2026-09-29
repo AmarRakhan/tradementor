@@ -1,4 +1,4 @@
-name: Audit SHORT Bollinger Entries 2026-09-29 v4
+name: Audit SHORT Bollinger Entries 2026-09-29 v5
 
 on:
   push:
@@ -61,18 +61,19 @@ jobs:
           if candidates:
               _uid,raw,settings=candidates[0]
               rows=[]
-              for row in raw.get("orderAttributions",[]) if isinstance(raw.get("orderAttributions"),list) else []:
-                  if not isinstance(row,dict): continue
+              audit_ref=db.collection("asterStrategy2").document(_uid).collection("audit")
+              for snap in audit_ref.where("timestamp",">=",start).stream():
+                  row=snap.to_dict() or {}
+                  if str(row.get("event") or "").upper()!="MULTI_BB_ENTRY": continue
                   if str(row.get("side") or "").upper()!="SHORT": continue
-                  if str(row.get("action") or "").upper()!="OPEN_LEG": continue
-                  ts=row.get("recordedAt")
+                  ts=row.get("timestamp")
                   if not hasattr(ts,"astimezone"): continue
                   ts=ts.astimezone(timezone.utc)
-                  if ts < start: continue
                   rows.append({
                       "symbol":str(row.get("symbol") or "").upper(),
                       "recordedAt":ts.isoformat(),
                       "recordedAtMs":int(ts.timestamp()*1000),
+                      "cycleId":str(row.get("cycleId") or ""),
                   })
               rows.sort(key=lambda x:x["recordedAtMs"])
               result={
@@ -171,7 +172,7 @@ jobs:
           print("## SHORT 15m Bollinger audit — 29 sep 2026")
           print()
           print("- Mode: **READ ONLY**")
-          print(f"- Confirmed SHORT initial opens today: **{len(results)}**")
+          print(f"- Audited SHORT initial entries today: **{len(results)}**")
           print(f"- Exact pre-order 15m PASS matched: **{len(ok)} / {len(results)}**")
           print(f"- Current SHORT timeframe: **{s.get('shortTimeframe')}**")
           print(f"- Exposure refill enabled: **{s.get('exposureRefillEnabled')}**")
