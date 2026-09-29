@@ -4,7 +4,7 @@ from pathlib import Path
 
 from aster_multi_bb import MultiBbConfig, run_multi_bb_step
 from aster_multi_bb_core import _remaining_strategy_capacity, _zone_entry_multiplier
-from aster_zone_soldiers import ROLE_ZONE_BASE, claim_soldier, prepare_zone_runtime
+from aster_zone_soldiers import ROLE_LEGACY_UNASSIGNED, ROLE_ZONE_BASE, claim_soldier, prepare_zone_runtime
 from test_aster_multi_bb import Client, Ref
 
 
@@ -142,6 +142,8 @@ def test_build470_zone_warriors_global_cap_counts_only_zone_owned_seats_not_lega
             "cycleId": f"legacy-{index}",
             "cycleStartedAtMs": 1_000 + index,
             "botManaged": True,
+            "soldierRole": ROLE_LEGACY_UNASSIGNED,
+            "originZone": None,
         }
 
     positions = [
