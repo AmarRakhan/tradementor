@@ -87,6 +87,14 @@ type OpenPosition = {
     events?: AirbagChartEvent[];
   } | null;
   focusAirbagHedge?: boolean;
+  positionLossAutoHedge?: {
+    status?: string;
+    role?: "PROTECTED" | "HEDGE";
+    protectedSide?: string;
+    hedgeSide?: string;
+    rehedgeEnabled?: boolean;
+    reservedHedgeQty?: number | null;
+  } | null;
   strategy2Role?: string;
   asymmetricPairStatus?: "covered" | "covering" | null;
 };
@@ -405,13 +413,18 @@ function PositionClosePanel({
   const side = String(position?.side || "").toUpperCase();
   const tone = toneFor(pnl);
   const protectedHedge = position?.focusAirbagHedge === true;
+  const autoHedge = position?.positionLossAutoHedge || null;
+  const autoHedgeRole = String(autoHedge?.role || "").toUpperCase();
+  const autoHedgeStatus = String(autoHedge?.status || "").toUpperCase();
   const protectionLabel = protectedHedge
     ? "HEDGE"
-    : position?.asymmetricPairStatus === "covered"
-      ? "COVERED"
-      : position?.asymmetricPairStatus === "covering"
-        ? "COVERING"
-        : "";
+    : autoHedge
+      ? `AUTO HEDGE · ${autoHedgeRole === "HEDGE" ? "HEDGE" : "BESCHERMD"}`
+      : position?.asymmetricPairStatus === "covered"
+        ? "COVERED"
+        : position?.asymmetricPairStatus === "covering"
+          ? "COVERING"
+          : "";
 
   useEffect(() => {
     setPercentage(50);
@@ -452,10 +465,12 @@ function PositionClosePanel({
       );
       const closedSize = finite(result?.closedSize);
       const remainingSize = finite(result?.remainingSize);
+      const nextAutoHedgeStatus = String(result?.autoHedgeStatus || "").toUpperCase();
       setMessage(
         percentage + "% sluiting bevestigd" +
         (closedSize === null ? "" : " · " + amount(closedSize) + " gesloten") +
-        (remainingSize === null ? "" : " · " + amount(remainingSize) + " resterend"),
+        (remainingSize === null ? "" : " · " + amount(remainingSize) + " resterend") +
+        (nextAutoHedgeStatus === "RECOVERY" ? " · Auto Hedge: Recovery, re-hedge blijft UIT" : ""),
       );
       await onClosed();
     } catch (reason) {
@@ -479,7 +494,7 @@ function PositionClosePanel({
   }
 
   return (
-    <section className={styles.closePanel} data-reference-id={TRADE_CENTER_REFERENCE_IDS.close} aria-label="Positie sluiten">
+    <section className={styles.closePanel} data-reference-id={TRADE_CENTER_REFERENCE_IDS.close} data-auto-hedge-status={autoHedgeStatus || undefined} aria-label="Positie sluiten">
       <header className={styles.closePanelHeader}>
         <button type="button" className={styles.closeBack} onClick={onCancel} disabled={busy} aria-label="Terug naar Tradecentrum">‹</button>
         <div className={styles.closePanelTitle}>
@@ -539,6 +554,10 @@ function PositionClosePanel({
 
         {protectedHedge ? (
           <div className={styles.closeBlocked}><strong>Beschermde hedge</strong><span>Deze hedge-leg kan niet via de normale positie-close worden verkleind. Gebruik de bestaande hedge/recovery-flow.</span></div>
+        ) : autoHedge && percentage === 100 ? (
+          <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Auto Hedge · één volledige leg sluiten.</strong><br />De andere leg blijft staan als Recovery. Deze gesloten LONG of SHORT wordt niet automatisch teruggezet; re-hedge blijft UIT totdat je die zelf weer inschakelt.</p></div>
+        ) : autoHedge ? (
+          <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Auto Hedge · gedeeltelijke sluiting.</strong><br />Een gedeeltelijke close blijft onder de bestaande hedge-reserveringsregels vallen. Kies 100% als je bewust één hele leg wilt verwijderen en de andere als Recovery wilt laten staan.</p></div>
         ) : (
           <div className={styles.closeNotice}><span aria-hidden="true">i</span><p><strong>Dit is een marktorder en wordt direct uitgevoerd.</strong><br />De uiteindelijke prijs kan licht afwijken door marktslippage.</p></div>
         )}
