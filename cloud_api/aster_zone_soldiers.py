@@ -738,6 +738,11 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
     old_open_long = old_open_short = 0
     current_owned_long = current_owned_short = 0
     strategy_owned_long = strategy_owned_short = 0
+    # Complete exchange-confirmed per-origin-zone breakdown.  The UI can use
+    # this when Portfolio Koers has already moved to a new live zone while the
+    # persisted activeZone field is one refresh behind.  Missing keys therefore
+    # mean zero open strategy-owned positions in that zone, not "unknown".
+    zone_open_counts: dict[str, dict[str, int]] = {}
     for key, row in managed_state.items():
         role = str(row.get("soldierRole", "")).upper()
         if role not in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}:
@@ -752,12 +757,24 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
         else:
             continue
         origin = row.get("originZone")
-        same_active_zone = False
-        if active_zone is not None and origin is not None:
+        origin_zone: int | None = None
+        if origin is not None:
             try:
-                same_active_zone = int(origin) == int(active_zone)
+                origin_zone = int(origin)
             except (TypeError, ValueError):
-                same_active_zone = False
+                origin_zone = None
+        if origin_zone is not None:
+            bucket = zone_open_counts.setdefault(_zone_key(origin_zone), {"long": 0, "short": 0, "total": 0})
+            if side == "LONG":
+                bucket["long"] += 1
+            else:
+                bucket["short"] += 1
+            bucket["total"] += 1
+        same_active_zone = bool(
+            active_zone is not None
+            and origin_zone is not None
+            and origin_zone == int(active_zone)
+        )
         if same_active_zone:
             if side == "LONG":
                 current_owned_long += 1
@@ -827,6 +844,11 @@ def zone_runtime_report(zone_state: dict[str, Any], managed_state: dict[str, Any
             "long": strategy_owned_long,
             "short": strategy_owned_short,
         },
+        "zoneOpenCounts": {
+            key: zone_open_counts[key]
+            for key in sorted(zone_open_counts, key=lambda value: int(value))
+        },
+        "zoneOpenCountsReliable": True,
         "currentZoneOwned": {
             "total": current_owned_long + current_owned_short,
             "long": current_owned_long,
