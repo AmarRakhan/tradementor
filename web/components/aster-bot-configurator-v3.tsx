@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { PortfolioTpSeatResetTarget } from "@/components/portfolio-tp-seat-reset-target";
 
 const VISUAL_REFERENCES = {
   strategy: "file_00000000e820820abd4c0803c0faf72c",
@@ -350,6 +351,10 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
   const cycleStartShortRaw = Number(portfolioCycle.cycleStartShortSlots);
   const cycleStartLongSlots = Number.isFinite(cycleStartLongRaw) ? Math.max(0, Math.round(cycleStartLongRaw)) : totals.longSlots;
   const cycleStartShortSlots = Number.isFinite(cycleStartShortRaw) ? Math.max(0, Math.round(cycleStartShortRaw)) : totals.shortSlots;
+  const hasPersistedResetTarget = persisted.portfolioTpResetLongSlots !== undefined && persisted.portfolioTpResetLongSlots !== null
+    && persisted.portfolioTpResetShortSlots !== undefined && persisted.portfolioTpResetShortSlots !== null;
+  const savedResetLongSlots = hasPersistedResetTarget ? Math.max(0, Math.round(n(persisted.portfolioTpResetLongSlots))) : cycleStartLongSlots;
+  const savedResetShortSlots = hasPersistedResetTarget ? Math.max(0, Math.round(n(persisted.portfolioTpResetShortSlots))) : cycleStartShortSlots;
 
   const available = n(snapshot?.availableBalance ?? snapshot?.availableToTrade ?? snapshot?.available, 0);
   const equity = n(snapshot?.equity ?? snapshot?.portfolioValue, 0);
@@ -793,7 +798,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
 
           <section><h4>Smart Rescue</h4><Toggle label="Smart Rescue DCA" checked={quickDraft.smartRescueEnabled} onChange={(v)=>updateQuick("smartRescueEnabled",v)}/>{quickDraft.smartRescueEnabled&&<div className="v3-grid two"><Field label="Rescue bereik" value={quickDraft.smartRescueRange} onChange={(v)=>updateQuick("smartRescueRange",v)} suffix="%"/><Field label="Aantal DCA's" value={quickDraft.smartRescueCount} onChange={(v)=>updateQuick("smartRescueCount",v)}/><Field label="Ordergroei" value={quickDraft.smartRescueGrowth} onChange={(v)=>updateQuick("smartRescueGrowth",v)} suffix="x"/><Field label="Herstel" value={quickDraft.smartRescueRecovery} onChange={(v)=>updateQuick("smartRescueRecovery",v)} suffix="%"/></div>}</section>
 
-          <section><h4>Take profit & basis</h4><label className="v2-field"><span>Take profit-modus</span><select value={quickDraft.tpMode} onChange={(e)=>updateQuick("tpMode",e.target.value as TpMode)}><option value="PER_TRADE">Per positie</option><option value="PORTFOLIO">Portfolio</option><option value="OFF">Uit</option></select></label>{quickDraft.tpMode==="PORTFOLIO"&&<><div className="v3-grid two"><label className="v2-field"><span>Doel in</span><select value={quickDraft.portfolioTpInputMode} onChange={(e)=>updateQuick("portfolioTpInputMode",e.target.value as "PERCENT"|"USD")}><option value="PERCENT">Percentage</option><option value="USD">USDT</option></select></label><label className="v2-field"><span>Basis</span><select value={quickDraft.portfolioTpBaseMode} onChange={(e)=>updateQuick("portfolioTpBaseMode",e.target.value as Draft["portfolioTpBaseMode"])}><option value="CYCLE_START">Cycle start</option><option value="CURRENT_VALUE">Huidige waarde</option><option value="CUSTOM">Aangepast</option></select></label></div>{quickDraft.portfolioTpBaseMode==="CUSTOM"&&<Field label="Aangepaste basis" value={quickDraft.portfolioTpCustomBase} onChange={(v)=>updateQuick("portfolioTpCustomBase",v)} suffix="USDT"/>}<Toggle label="Stoelen resetten naar startinstelling" description="Pas na bevestigde Portfolio TP-sluiting." checked={quickDraft.resetSeatsAfterPortfolioTp} onChange={(v)=>updateQuick("resetSeatsAfterPortfolioTp",v)}/></>}</section>
+          <section><h4>Take profit & basis</h4><label className="v2-field"><span>Take profit-modus</span><select value={quickDraft.tpMode} onChange={(e)=>updateQuick("tpMode",e.target.value as TpMode)}><option value="PER_TRADE">Per positie</option><option value="PORTFOLIO">Portfolio</option><option value="OFF">Uit</option></select></label>{quickDraft.tpMode==="PORTFOLIO"&&<><div className="v3-grid two"><label className="v2-field"><span>Doel in</span><select value={quickDraft.portfolioTpInputMode} onChange={(e)=>updateQuick("portfolioTpInputMode",e.target.value as "PERCENT"|"USD")}><option value="PERCENT">Percentage</option><option value="USD">USDT</option></select></label><label className="v2-field"><span>Basis</span><select value={quickDraft.portfolioTpBaseMode} onChange={(e)=>updateQuick("portfolioTpBaseMode",e.target.value as Draft["portfolioTpBaseMode"])}><option value="CYCLE_START">Cycle start</option><option value="CURRENT_VALUE">Huidige waarde</option><option value="CUSTOM">Aangepast</option></select></label></div>{quickDraft.portfolioTpBaseMode==="CUSTOM"&&<Field label="Aangepaste basis" value={quickDraft.portfolioTpCustomBase} onChange={(v)=>updateQuick("portfolioTpCustomBase",v)} suffix="USDT"/>}<Toggle label="Stoelen automatisch resetten" description="Pas na bevestigde Portfolio TP-sluiting." checked={quickDraft.resetSeatsAfterPortfolioTp} onChange={(v)=>updateQuick("resetSeatsAfterPortfolioTp",v)}/><PortfolioTpSeatResetTarget savedLong={savedResetLongSlots} savedShort={savedResetShortSlots} currentLong={Math.max(0,Math.round(n(quickDraft.longSlots)))} currentShort={Math.max(0,Math.round(n(quickDraft.shortSlots)))} legacyFallback={!hasPersistedResetTarget} onConfirmed={onConfirmed} onChanged={onChanged}/></>}</section>
 
           <section className="v31-runtime-rules"><h4>Vaste runtime-regels</h4><p>Alleen lege capaciteit vullen en Auto-restart na TP zijn informatief; hiervoor worden bewust geen fake schakelaars getoond.</p></section>
         </div>}
@@ -938,8 +943,8 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
           <section className="v3-tp-seat-reset" data-reference={VISUAL_REFERENCES.portfolioSeatReset}>
             <header><small>Na behalen doel (Portfolio TP)</small></header>
             <Toggle
-              label="Stoelen resetten naar startinstelling"
-              description="Na bevestigde sluiting van alle Portfolio TP-posities worden LONG/SHORT automatisch teruggezet naar de startwaarden van deze cyclus."
+              label="Stoelen automatisch resetten"
+              description="Na bevestigde sluiting worden LONG/SHORT automatisch naar de opgeslagen resetwaarden gezet."
               checked={draft.resetSeatsAfterPortfolioTp}
               onChange={(v)=>update("resetSeatsAfterPortfolioTp",v)}
             />
@@ -947,13 +952,15 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
               <b>Wat gebeurt er?</b>
               <p>Eerst alles sluiten en bevestigen. Daarna pas de stoelreset. Tijdens sluiten blijven nieuwe entries geblokkeerd.</p>
             </div>
-            <div className="v3-seat-reset-flow" aria-label="Voorbeeld stoelreset">
-              <span><small>Tijdens het spel</small><b>{totals.longSlots}L / {totals.shortSlots}S</b></span>
-              <i>→</i>
-              <span className="target"><small>Portfolio TP</small><b>Alles dicht</b></span>
-              <i>→</i>
-              <span><small>Na TP</small><b>{cycleStartLongSlots}L / {cycleStartShortSlots}S</b></span>
-            </div>
+            <PortfolioTpSeatResetTarget
+              savedLong={savedResetLongSlots}
+              savedShort={savedResetShortSlots}
+              currentLong={totals.longSlots}
+              currentShort={totals.shortSlots}
+              legacyFallback={!hasPersistedResetTarget}
+              onConfirmed={onConfirmed}
+              onChanged={onChanged}
+            />
           </section>
         </>}
       </div>
