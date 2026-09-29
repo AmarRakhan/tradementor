@@ -121,15 +121,20 @@ test("Build 455 replaces the four quick tiles with one live price-zone strategy 
 });
 
 
-test("Build 467 shows Zone Warriors active-zone occupancy separately from all-zone totals without fictive side caps",async()=>{
+test("Build 469 keeps active-zone occupancy numeric across chart/backend zone transitions without fictive side caps",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-snapshot.css",import.meta.url),"utf8");
   const summary=component.match(/function PriceZoneStrategySummary[\s\S]*?function Snapshot/)?.[0]||"";
 
   assert.match(summary,/occupiedLongActiveZone/);
   assert.match(summary,/occupiedShortActiveZone/);
-  assert.match(summary,/summary\.occupiedLongActiveZone,summary\.perZoneLong/);
-  assert.match(summary,/summary\.occupiedShortActiveZone,summary\.perZoneShort/);
+  assert.match(summary,/const occupiedLongActiveZone = resolvedCounts\?\.long \?\? 0/);
+  assert.match(summary,/const occupiedShortActiveZone = resolvedCounts\?\.short \?\? 0/);
+  assert.match(summary,/pct\(occupiedLongActiveZone,summary\.perZoneLong\)/);
+  assert.match(summary,/pct\(occupiedShortActiveZone,summary\.perZoneShort\)/);
+  assert.match(summary,/summary\.zoneOpenCountsReliable/);
+  assert.match(summary,/breakdown\?\.long \?\? 0/);
+  assert.match(summary,/breakdown\?\.short \?\? 0/);
   assert.match(summary,/LONG totaal open[\s\S]*summary\.strategyOpenLong/);
   assert.match(summary,/SHORT totaal open[\s\S]*summary\.strategyOpenShort/);
   assert.match(summary,/Totaal bezet[\s\S]*summary\.strategyOpenTotal[\s\S]*summary\.maxTotal/);
@@ -138,7 +143,7 @@ test("Build 467 shows Zone Warriors active-zone occupancy separately from all-zo
   assert.doesNotMatch(summary,/const shortCapacity\s*=/);
   assert.doesNotMatch(summary,/strategyOpenLong\}\s*\/\s*\{longCapacity/);
   assert.doesNotMatch(summary,/strategyOpenShort\}\s*\/\s*\{shortCapacity/);
-  assert.match(summary,/seatZoneInSync \? <b><i>\{summary\.freeLongActiveZone\}L<\/i> \/ <em>\{summary\.freeShortActiveZone\}S<\/em><\/b> : <b>— \/ —<\/b>/);
+  assert.match(summary,/seatZoneInSync \? <b><i>\{freeLongActiveZone\}L<\/i> \/ <em>\{freeShortActiveZone\}S<\/em><\/b> : <b>— \/ —<\/b>/);
   assert.match(css,/\.aps-zone-seat-groups\{/);
   assert.match(css,/\.aps-zone-open-counts\{/);
 });
