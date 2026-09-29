@@ -33,7 +33,8 @@ _worker_stop = threading.Event()
 _worker_thread: threading.Thread | None = None
 
 ACTIVE_STATUSES = {"HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED"}
-RECOVERY_STATUSES = {"RECOVERY", "REHEDGE_ARMED", "DISABLED"}
+RECOVERY_STATUSES = {"RECOVERY", "REHEDGE_ARMED", "DISABLED", "MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN"}
+REHEDGEABLE_STATUSES = {"RECOVERY", "REHEDGE_ARMED", "DISABLED"}
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,36}USDT$")
 
 
@@ -107,6 +108,7 @@ def _pair_sort_key(row: dict[str, Any]) -> tuple[int, str]:
     priority = {
         "BLOCKED": 0, "ERROR": 0, "PRECISION_BLOCKED": 0,
         "ADJUSTING": 1, "HEDGING": 1, "HEDGED": 2,
+        "MANUAL_RELEASE_UNCERTAIN": 0, "MANUAL_RELEASE_PENDING": 1,
         "REHEDGE_ARMED": 3, "RECOVERY": 4, "DISABLED": 5, "CLOSED": 6,
     }
     return priority.get(str(row.get("status", "")).upper(), 9), str(row.get("symbol", ""))
@@ -758,8 +760,8 @@ def put_position_loss_auto_hedge_rehedge(
     ref = _pair_doc(uid, normalized)
     current = ref.get().to_dict() or {}
     status = str(current.get("status", "")).upper()
-    if status not in RECOVERY_STATUSES:
-        raise HTTPException(409, "Opnieuw hedgen is alleen beschikbaar voor een recoverypositie")
+    if status not in REHEDGEABLE_STATUSES:
+        raise HTTPException(409, "Opnieuw hedgen is alleen beschikbaar nadat de handmatige sluiting volledig is bevestigd")
     if request.enabled and _current(uid).get("enabled") is not True:
         raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je deze recovery opnieuw bewapent")
     if request.enabled and _dynamic_hedge_enabled(uid):
