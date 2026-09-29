@@ -1,4 +1,4 @@
-name: Audit SHORT Bollinger Entries 2026-09-29
+name: Audit SHORT Bollinger Entries 2026-09-29 v2
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
-  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   RESULT_ISSUE: "395"
   START_UTC: "2026-09-28T22:00:00Z"
