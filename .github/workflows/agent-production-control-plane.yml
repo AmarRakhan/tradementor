@@ -514,3 +514,35 @@ jobs:
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Notification delivery backend dispatch failed before production mutation. No Cloud Run revision was promoted."
 
+
+
+  dispatch-zone-warriors-cap-hotfix-81f1d80:
+    if: github.event.issue.title == '[AGENT-CONTROL] deploy zone warriors cap hotfix 81f1d80' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch exact Zone Warriors cap hotfix backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_COMMIT='81f1d8006e3df0dce8bef5688493f16b61b8a13c'
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$SOURCE_COMMIT" \
+            -f request_issue="$ISSUE_NUMBER"
+
+      - name: Confirm backend deployment dispatch
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Exact-source Zone Warriors cap hotfix dispatched for 81f1d8006e3df0dce8bef5688493f16b61b8a13c. Canonical production workflow runs the full backend test suite before candidate promotion and performs health verification plus rollback protection."
+
+      - name: Report dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Zone Warriors cap hotfix dispatch failed before production mutation. No Cloud Run revision was promoted."
