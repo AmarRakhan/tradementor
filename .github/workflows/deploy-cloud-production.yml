@@ -38,6 +38,9 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  # Production safety floor: never allow a later feature deploy to roll the backend
+  # behind the Zone Warriors capacity invariant restored in Build 470.
+  PROTECTED_BACKEND_BASELINE: 81f1d8006e3df0dce8bef5688493f16b61b8a13c
 
 jobs:
   test-and-deploy:
@@ -141,7 +144,12 @@ jobs:
           test "$GCP_REGION" = "europe-west4"
           test "$CLOUD_RUN_SERVICE" = "tradementor-api"
           git fetch origin amar-crypto-bot-2026-cloud --quiet
+          # Requested source must belong to the trusted production history.
           git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"
+          # Regression lock: exact-source deploys may move production forward, never
+          # back behind the Zone Warriors zone-owned-seat capacity fix. This catches
+          # stale feature dispatchers before tests/build/deploy can mutate Cloud Run.
+          git merge-base --is-ancestor "$PROTECTED_BACKEND_BASELINE" "$SOURCE_COMMIT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
