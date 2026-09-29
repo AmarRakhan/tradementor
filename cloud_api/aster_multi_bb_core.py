@@ -1479,7 +1479,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if dry_run:
             actions.append(entry_action)
             if zone_mode:
-                simulated_key = f"SIM:{symbol}|{side}|{index}"
+                simulated_key = f"SIM:{symbol}|{side}|{scanned_candidates}"
                 claimed = claim_soldier(zone_state or {}, side, trade_key=simulated_key, symbol=symbol,
                     entry_price=prices[symbol], entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),
                     timestamp_ms=timestamp_ms)
