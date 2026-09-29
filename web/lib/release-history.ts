@@ -59,9 +59,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
-  version: "46",
-  build: "467",
+    id: "v46-build-467-zone-warriors-seat-display",
+    version: "46",
+    build: "467",
   releasedAt: "2026-09-29",
   title: "Portfolio Snapshot · Zone Warriors stoelweergave 1.1",
   newItems: [
