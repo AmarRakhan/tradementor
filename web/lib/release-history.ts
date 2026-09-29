@@ -26,37 +26,71 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-29",
-  title: "Portfolio TP · instelbare stoelreset 2.0",
+  title: "Tradecentrum · handmatige Auto Hedge partial close",
   newItems: [
-    "Portfolio TP kan nu een zelfstandig opgeslagen LONG- en SHORT-resetdoel gebruiken, inclusief 0 per richting en 0/0.",
-    "Legacy Botinstellingen, STABLE Botconfigurator V2 en BETA Botconfigurator V3 gebruiken dezelfde server-side resetvelden.",
-    "Een gedeelde Resetwaarden opslaan-actie bewaart uitsluitend het toekomstige resetdoel en voert geen trade uit.",
+    "Een expliciete Sluit 25%, 50%, 75% of 100%-actie kan nu ook op een positie die onderdeel is van Position Loss Auto Hedge worden uitgevoerd.",
+    "Na een bewuste gedeeltelijke close gaat het pair naar Recovery en blijft opnieuw hedgen UIT totdat de gebruiker dat zelf inschakelt.",
   ],
   problems: [
-    "De bestaande stoelreset gebruikte uitsluitend de stoelverdeling waarmee de cyclus begon, zodat gebruikers het doel van de volgende cyclus niet onafhankelijk konden instellen.",
-    "Een latere migratie tussen legacy, V2 en V3 kon functioneel uiteenlopen wanneer een resetoptie alleen in één configurator werd toegevoegd.",
+    "Build 468 loste de volledige 100%-leg-release op, maar 25%, 50% en 75% liepen nog door de bestaande gereserveerde hedge-quantitylock.",
+    "Daardoor kon Tradecentrum een geldige partial-close preview tonen terwijl de backend de expliciete gebruikersactie blokkeerde met 'zou Auto Hedge-dekking onder de gereserveerde hoeveelheid brengen'.",
   ],
   causes: [
-    "De resetdoelwaarden bestonden nog niet als zelfstandige accountconfiguratie; de backend leidde ze af uit cycleStartLongSlots en cycleStartShortSlots.",
+    "De MANUAL_RELEASE_PENDING-flow werd uitsluitend geactiveerd wanneer percentage === 100; partial closes bereikten daarna onveranderd require_auto_hedge_close_allowed.",
   ],
   fixes: [
-    "Nieuwe persistente velden portfolioTpResetLongSlots en portfolioTpResetShortSlots zijn één gedeelde bron van waarheid voor alle configurators.",
-    "Bij Portfolio TP wordt het actuele resetdoel bij de trigger immutable in de cyclus vastgezet, zodat wijzigingen tijdens de close geen race veroorzaken.",
-    "Expliciet opgeslagen resetdoelen worden exact toegepast en nooit stilzwijgend geclamped; een later ontstane capaciteitsconflict houdt de entry-lock fail-closed.",
-    "Bestaande accounts zonder nieuwe velden behouden de eerdere cycle-start fallback en daarmee hun bestaande gedrag.",
-    "0/0 is een geldige na-TP configuratie met maximumPositions=0 en opent geen nieuwe posities.",
+    "De expliciete manual-release-flow wordt nu voor alle vier ondersteunde percentages geactiveerd voordat de Auto Hedge-lock en exchange-submit worden bereikt.",
+    "Na exchange-bevestiging bewaart Recovery zowel de resterende handmatig verkleinde zijde als de tegenoverliggende zijde, met reservedHedgeQty=0 en rehedgeEnabled=false.",
+    "De handmatig verkleinde zijde wordt tijdens Recovery niet automatisch door Strategy 2 teruggevuld.",
+    "Bij een mislukte of onzekere close blijft de pair-state fail-closed zodat geen automatische refill achter de gebruikersactie aan kan lopen.",
   ],
   now: [
-    "Een gebruiker kan bijvoorbeeld 23 LONG / 8 SHORT opslaan; na bevestigde Portfolio TP flat-state wordt atomair 23L / 8S / 31 totaal toegepast en dezelfde waarden zijn in legacy, V2 en V3 zichtbaar.",
+    "Wanneer je bijvoorbeeld 25% van PUMP LONG sluit, wordt die 25% daadwerkelijk als reduce-only marktclose uitgevoerd; het resterende pair wordt Recovery en blijft zo totdat je zelf opnieuw hedgen activeert.",
   ],
   technicalDetails: [
-    "Backend: cloud_api/aster_multi_bb.py, aster_multi_bb_core.py en aster_multi_bb_portfolio.py.",
-    "UI: gedeelde web/components/portfolio-tp-seat-reset-target.tsx in legacy maker, STABLE V2 en BETA V3.",
-    "Opslaan gebruikt alleen de bestaande state-preserving settings PUT; start/stop/close/order endpoints worden niet aangeroepen.",
+    "Backend: cloud_api/main.py manual Auto Hedge release/recovery lifecycle.",
+    "UI: web/components/aster-recent-trades.tsx toont het nieuwe partial-close gedrag expliciet.",
+    "Regressiedekking: manual-close contract en Auto Hedge lifecycle-contract voor partial plus full close.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-470-portfolio-tp-configurable-seat-reset",
+    version: "46",
+    build: "470",
+    releasedAt: "2026-09-29",
+    title: "Portfolio TP · instelbare stoelreset 2.0",
+    newItems: [
+      "Portfolio TP kan nu een zelfstandig opgeslagen LONG- en SHORT-resetdoel gebruiken, inclusief 0 per richting en 0/0.",
+      "Legacy Botinstellingen, STABLE Botconfigurator V2 en BETA Botconfigurator V3 gebruiken dezelfde server-side resetvelden.",
+      "Een gedeelde Resetwaarden opslaan-actie bewaart uitsluitend het toekomstige resetdoel en voert geen trade uit.",
+    ],
+    problems: [
+      "De bestaande stoelreset gebruikte uitsluitend de stoelverdeling waarmee de cyclus begon, zodat gebruikers het doel van de volgende cyclus niet onafhankelijk konden instellen.",
+      "Een latere migratie tussen legacy, V2 en V3 kon functioneel uiteenlopen wanneer een resetoptie alleen in één configurator werd toegevoegd.",
+    ],
+    causes: [
+      "De resetdoelwaarden bestonden nog niet als zelfstandige accountconfiguratie; de backend leidde ze af uit cycleStartLongSlots en cycleStartShortSlots.",
+    ],
+    fixes: [
+      "Nieuwe persistente velden portfolioTpResetLongSlots en portfolioTpResetShortSlots zijn één gedeelde bron van waarheid voor alle configurators.",
+      "Bij Portfolio TP wordt het actuele resetdoel bij de trigger immutable in de cyclus vastgezet, zodat wijzigingen tijdens de close geen race veroorzaken.",
+      "Expliciet opgeslagen resetdoelen worden exact toegepast en nooit stilzwijgend geclamped; een later ontstane capaciteitsconflict houdt de entry-lock fail-closed.",
+      "Bestaande accounts zonder nieuwe velden behouden de eerdere cycle-start fallback en daarmee hun bestaande gedrag.",
+      "0/0 is een geldige na-TP configuratie met maximumPositions=0 en opent geen nieuwe posities.",
+    ],
+    now: [
+      "Een gebruiker kan bijvoorbeeld 23 LONG / 8 SHORT opslaan; na bevestigde Portfolio TP flat-state wordt atomair 23L / 8S / 31 totaal toegepast en dezelfde waarden zijn in legacy, V2 en V3 zichtbaar.",
+    ],
+    technicalDetails: [
+      "Backend: cloud_api/aster_multi_bb.py, aster_multi_bb_core.py en aster_multi_bb_portfolio.py.",
+      "UI: gedeelde web/components/portfolio-tp-seat-reset-target.tsx in legacy maker, STABLE V2 en BETA V3.",
+      "Opslaan gebruikt alleen de bestaande state-preserving settings PUT; start/stop/close/order endpoints worden niet aangeroepen.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
   id: "v46-build-469-zone-seat-sync",
   version: "46",

@@ -15,8 +15,8 @@ const slice = (source, start, end) => {
   return source.slice(a, b);
 };
 
-test("Build 470 keeps Build 469/468/465/464/463/462/461/460 history plus Botconfigurator 3.1 references", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "470"/);
+test("Build 471 keeps Build 470/469/468/465/464/463/462/461/460 history plus Botconfigurator 3.1 references", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "471"/);
   assert.match(v3, /file_0000000064fc8210b631ce0a8caebb42/);
   assert.match(v3, /file_000000003b5081f4bee8a56187006a03/);
   assert.match(v3, /file_00000000113c82108f6f3daf44f3627e/);

@@ -183,6 +183,17 @@ test("Meeste DCA remains the second dataset and sorts by confirmed DCA count", (
 });
 
 
+
+test("Build 471 partial Auto Hedge close explicitly enters Recovery without auto-refill", () => {
+  const start = component.indexOf("function PositionClosePanel");
+  const end = component.indexOf("function rowFromPosition", start);
+  const panel = component.slice(start, end);
+  assert.match(panel, /Auto Hedge · gedeeltelijke sluiting/);
+  assert.match(panel, /Deze handmatige close wordt uitgevoerd en zet dit paar daarna in Recovery/);
+  assert.match(panel, /wordt niet automatisch teruggevuld/);
+  assert.match(panel, /re-hedge blijft UIT/);
+});
+
 test("Build 468 full Auto Hedge leg close leaves the survivor in Recovery until explicit re-hedge", () => {
   const start = component.indexOf("function PositionClosePanel");
   const end = component.indexOf("function rowFromPosition", start);

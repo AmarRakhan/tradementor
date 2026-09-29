@@ -1324,8 +1324,6 @@ def _begin_position_loss_auto_hedge_manual_release(
     Either leg may be removed. The opposite surviving leg becomes RECOVERY and
     can only be hedged again after the user explicitly enables re-hedge.
     """
-    if int(percentage) != 100:
-        return None
     normalized_symbol = str(symbol).upper()
     normalized_side = str(side).upper()
     ref = _position_loss_auto_hedge_pair_ref(uid, normalized_symbol)
@@ -1354,6 +1352,7 @@ def _begin_position_loss_auto_hedge_manual_release(
         "closedSide": normalized_side,
         "survivorSide": survivor_side,
         "requestedCloseQty": float(close_quantity),
+        "requestedPercentage": int(percentage),
         "status": "LOCKED",
         "startedAt": now,
     }
@@ -1389,6 +1388,7 @@ def _begin_position_loss_auto_hedge_manual_release(
         "closedSide": normalized_side,
         "survivorSide": survivor_side,
         "intentHash": str(intent_hash),
+        "percentage": int(percentage),
     }
 
 
@@ -1403,6 +1403,7 @@ def _complete_position_loss_auto_hedge_manual_release(
     symbol = str((guard.get("previous") or {}).get("symbol") or ref.id).upper()
     closed_side = str(guard.get("closedSide", "")).upper()
     survivor_side = str(guard.get("survivorSide", "")).upper()
+    percentage = int(guard.get("percentage") or 100)
     survivor_row = next((row for row in after_rows
         if str(row.get("symbol", "")).upper() == symbol
         and str(row.get("positionSide", "")).upper() == survivor_side
@@ -1411,14 +1412,19 @@ def _complete_position_loss_auto_hedge_manual_release(
         if str(row.get("symbol", "")).upper() == symbol
         and str(row.get("positionSide", "")).upper() == closed_side
         and abs(safe_float(row.get("positionAmt"))) > 1e-12), None)
-    if closed_row is not None:
-        raise RuntimeError("Handmatige Auto Hedge-leg is na sluiten nog open")
+    if percentage == 100 and closed_row is not None:
+        raise RuntimeError("Handmatige Auto Hedge-leg is na volledige sluiting nog open")
 
     now = datetime.now(timezone.utc)
     survivor_qty = abs(safe_float((survivor_row or {}).get("positionAmt")))
-    if survivor_qty > 0:
+    closed_side_remaining_qty = abs(safe_float((closed_row or {}).get("positionAmt")))
+    pair_has_position = survivor_qty > 0 or closed_side_remaining_qty > 0
+    if pair_has_position:
         status = "RECOVERY"
-        reason = "USER_MANUAL_LEG_RELEASE_RECOVERY"
+        reason = (
+            "USER_MANUAL_PARTIAL_LEG_RELEASE_RECOVERY"
+            if percentage < 100 else "USER_MANUAL_LEG_RELEASE_RECOVERY"
+        )
         update = {
             "status": status,
             "protectedSide": closed_side,
@@ -1426,9 +1432,9 @@ def _complete_position_loss_auto_hedge_manual_release(
             "rehedgeEnabled": False,
             "reservedHedgeQty": 0.0,
             "normalFreeQty": survivor_qty,
-            "currentProtectedQty": 0.0,
+            "currentProtectedQty": closed_side_remaining_qty,
             "currentHedgeQty": survivor_qty,
-            "protectedLeg": None,
+            "protectedLeg": _manual_auto_hedge_leg_view(closed_row),
             "hedgeLeg": _manual_auto_hedge_leg_view(survivor_row),
             "recoveryAt": now,
             "lastReason": reason,
@@ -1436,7 +1442,8 @@ def _complete_position_loss_auto_hedge_manual_release(
                 "intentHash": str(guard.get("intentHash", "")),
                 "closedSide": closed_side,
                 "survivorSide": survivor_side,
-                "status": "EXCHANGE_CONFIRMED",
+                "requestedPercentage": percentage,
+                "status": "EXCHANGE_CONFIRMED_PARTIAL" if percentage < 100 else "EXCHANGE_CONFIRMED",
                 "completedAt": now,
             },
             "updatedAt": now,
@@ -1461,6 +1468,7 @@ def _complete_position_loss_auto_hedge_manual_release(
                 "intentHash": str(guard.get("intentHash", "")),
                 "closedSide": closed_side,
                 "survivorSide": survivor_side,
+                "requestedPercentage": percentage,
                 "status": "EXCHANGE_CONFIRMED",
                 "completedAt": now,
             },
@@ -1474,14 +1482,15 @@ def _complete_position_loss_auto_hedge_manual_release(
         "pairCycleId": str((guard.get("previous") or {}).get("generationId", "")),
         "closedSide": closed_side,
         "survivorSide": survivor_side,
+        "requestedPercentage": percentage,
         "resultingStatus": status,
         "rehedgeEnabled": False,
+        "closedSideRemainingQty": closed_side_remaining_qty,
         "survivorQty": survivor_qty,
         "reason": reason,
         "timestamp": now,
     })
     return update
-
 
 def _fail_position_loss_auto_hedge_manual_release(
     uid: str,
@@ -7768,8 +7777,7 @@ def close_one_aster_position(
         pair_protected_side = str(pair_before_close.get("protectedSide", "")).upper()
         pair_hedge_side = str(pair_before_close.get("hedgeSide", "")).upper()
         needs_manual_auto_hedge_release = (
-            request.percentage == 100
-            and pair_status in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
+            pair_status in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
             and request.side in {pair_protected_side, pair_hedge_side}
         )
         if needs_manual_auto_hedge_release:
