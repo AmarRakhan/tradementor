@@ -210,8 +210,23 @@ jobs:
           print(f"- Snelle refill actief: **{settings.get('exposureRefillEnabled')}**")
           print(f"- SHORT snelle-refill-timeframe: **{settings.get('exposureRefillShortTimeframe')}**")
           print()
+          tf_counts={}
+          pre_order_passes=0
+          pre_order_rejects=0
+          for row in logs:
+              tf_counts[row["tf"]]=tf_counts.get(row["tf"],0)+1
+              if row["stage"]=="pre_order" and row["result"]=="PASS": pre_order_passes+=1
+              if row["stage"]=="pre_order" and row["result"]=="REJECT": pre_order_rejects+=1
+          print(f"- Werkelijk gelogde SHORT BB-checks vandaag: **{len(logs)}**")
+          print(f"- Timeframes in die logs: **{tf_counts or {}}**")
+          print(f"- Pre-order SHORT PASS: **{pre_order_passes}** · REJECT: **{pre_order_rejects}**")
+          print()
           if not entries:
               print("Er zijn vandaag geen bevestigde Strategy-2 SHORT-openingen in de orderattributies gevonden.")
+              if logs and set(tf_counts)=={"15m"}:
+                  print("Alle werkelijk gelogde SHORT Bollinger-checks van vandaag gebruikten 15m.")
+              elif logs:
+                  print("LET OP: er zijn vandaag SHORT Bollinger-checks met een ander timeframe dan 15m gelogd.")
               sys.exit(0)
 
           confirmed=0; wrong_tf=0; unproven=0
