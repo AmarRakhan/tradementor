@@ -44,13 +44,15 @@ def test_manual_close_route_supports_only_the_four_safe_partial_percentages():
     assert '"remainingSize": remaining_quantity' in route
 
 
-def test_manual_partial_close_respects_auto_hedge_reservations_before_submit():
+def test_manual_partial_close_explicitly_releases_auto_hedge_before_submit():
     source = Path(__file__).with_name("main.py").read_text()
     route = source[source.index('@app.post("/v1/me/aster/positions/{symbol}/close")'):source.index('@app.post("/v1/me/aster/simulate")')]
 
+    release = route.index("_begin_position_loss_auto_hedge_manual_release(")
     hedge_guard = route.index("require_auto_hedge_close_allowed(")
     manual_lock = route.index("begin_manual_action(")
     submit = route.index("execute_aster_leg(")
-    assert hedge_guard < manual_lock < submit
+    assert release < hedge_guard < manual_lock < submit
+    assert "request.percentage == 100" not in route[route.index("needs_manual_auto_hedge_release = ("):release]
     assert 'caller="manual-position-close"' in route
     assert "except AutoHedgeCloseBlocked as exc" in route
