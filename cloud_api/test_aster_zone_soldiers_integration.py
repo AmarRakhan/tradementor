@@ -96,21 +96,12 @@ def test_build457_global_130_cap_allows_exactly_one_more_strategy_position_at_12
     assert _remaining_strategy_capacity(130, 131) == 0
 
 
-def test_build470_zone_warriors_global_cap_counts_only_zone_owned_seats_not_legacy_strategy2_positions():
+def test_zone_warriors_global_cap_excludes_legacy_strategy2_positions():
     now = 10_000
     zone_state, _, _ = prepare_zone_runtime(
-        raw_zone_state={},
-        managed_state={},
-        positions=[],
-        confirmed_zone=8,
-        zone_safe=True,
-        base_long=2,
-        base_short=1,
-        balancer_enabled=False,
-        trigger_percent=20.0,
-        release_percent=8.0,
-        fallback_unit_notional=100.0,
-        timestamp_ms=now,
+        raw_zone_state={}, managed_state={}, positions=[], confirmed_zone=8, zone_safe=True,
+        base_long=2, base_short=1, balancer_enabled=False, trigger_percent=20.0,
+        release_percent=8.0, fallback_unit_notional=100.0, timestamp_ms=now,
     )
     long_soldier = claim_soldier(
         zone_state, "LONG", trade_key="ZONELOUSDT|LONG", symbol="ZONELOUSDT",
@@ -134,16 +125,10 @@ def test_build470_zone_warriors_global_cap_counts_only_zone_owned_seats_not_lega
             "soldierId": short_soldier["soldierId"], "soldierRole": ROLE_ZONE_BASE,
         },
     }
-    # These are older Strategy-2 positions from before Zone Warriors ownership.
-    # They must still be managed, but they must not consume the 3-seat Zone
-    # Warriors global cap.
     for index in range(4):
         managed[f"LEG{index}USDT|LONG"] = {
-            "cycleId": f"legacy-{index}",
-            "cycleStartedAtMs": 1_000 + index,
-            "botManaged": True,
-            "soldierRole": ROLE_LEGACY_UNASSIGNED,
-            "originZone": None,
+            "cycleId": f"legacy-{index}", "cycleStartedAtMs": 1_000 + index,
+            "botManaged": True, "soldierRole": ROLE_LEGACY_UNASSIGNED, "originZone": None,
         }
 
     positions = [
@@ -161,45 +146,24 @@ def test_build470_zone_warriors_global_cap_counts_only_zone_owned_seats_not_lega
         leverage=100,
     )
     settings = MultiBbConfig.from_mapping({
-        "engine": "multi_bb_v1",
-        "universeTopN": 10,
-        "maximumPositions": 3,
-        "longSlots": 3,
-        "shortSlots": 0,
-        "minimumLeverage": 50,
-        "entryMarginUsd": 5,
-        "entryNotionalUsd": 250,
-        "entrySizingMode": "notional",
-        "dcaDistance": .003,
-        "dcaMarginUsd": 2,
-        "maxDca": 3,
-        "takeProfit": .015,
-        "zoneSoldiersEnabled": True,
-        "zoneSoldiersOptInVersion": 1,
-        "zoneBaseLongSoldiers": 2,
-        "zoneBaseShortSoldiers": 1,
-        "bollingerEntryFilter15mEnabled": False,
-        "directionalBollingerEnabled": False,
+        "engine": "multi_bb_v1", "universeTopN": 10, "maximumPositions": 3,
+        "longSlots": 3, "shortSlots": 0, "minimumLeverage": 50,
+        "entryMarginUsd": 5, "entryNotionalUsd": 250, "entrySizingMode": "notional",
+        "dcaDistance": .003, "dcaMarginUsd": 2, "maxDca": 3, "takeProfit": .015,
+        "zoneSoldiersEnabled": True, "zoneSoldiersOptInVersion": 1,
+        "zoneBaseLongSoldiers": 2, "zoneBaseShortSoldiers": 1,
+        "bollingerEntryFilter15mEnabled": False, "directionalBollingerEnabled": False,
     })
-
     result = run_multi_bb_step(
-        client=client,
-        ref=Ref(),
+        client=client, ref=Ref(),
         raw_state={"multiBbPositions": managed, "zoneSoldierState": zone_state},
-        settings=settings,
-        uid="u",
-        account={"availableBalance": "1000"},
-        positions=positions,
-        open_orders=[],
-        timestamp_ms=now + 5_000,
-        dry_run=True,
-        order_budget=5,
-        zone_context={"activeZone": 8, "safeForEntries": True},
+        settings=settings, uid="u", account={"availableBalance": "1000"},
+        positions=positions, open_orders=[], timestamp_ms=now + 5_000,
+        dry_run=True, order_budget=5, zone_context={"activeZone": 8, "safeForEntries": True},
     )
 
-    # Dry-run accounting includes the planned NEW seat in its final report:
-    # raw account 6 -> planned 7, legacy-managed Strategy 2 6 -> planned 7,
-    # but the Zone Warriors cap itself moves only from 2 -> 3.
+    # The planned entry can use the final free Zone Warriors seat even though
+    # the raw Strategy-2/account counts are already above maximumPositions.
     assert result["accountPositionCount"] == 7
     assert result["strategyPositionCount"] == 7
     assert result["seatCapacityPositionCount"] == 3
