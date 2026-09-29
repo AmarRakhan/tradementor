@@ -294,3 +294,9 @@ def test_live_zone_seat_presync_explicitly_skips_legacy_migration():
     zone_source = (ROOT / "aster_zone_soldiers.py").read_text(encoding="utf-8")
     assert "migrate_legacy: bool = True" in zone_source
     assert "if migrate_legacy:" in zone_source
+
+
+def test_zone_dry_run_uses_defined_candidate_counter_for_simulated_seat_claim():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert 'simulated_key = f"SIM:{symbol}|{side}|{scanned_candidates}"' in source
+    assert 'simulated_key = f"SIM:{symbol}|{side}|{index}"' not in source
