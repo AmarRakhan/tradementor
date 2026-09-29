@@ -25,35 +25,68 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-09-28",
-  title: "Tradecentrum · Position Close zichtbare feedback",
+  releasedAt: "2026-09-29",
+  title: "Portfolio Snapshot · Zone Warriors stoelweergave 1.1",
   newItems: [
-    "Na indrukken van Sluit 25%, 50%, 75% of 100% verschijnt direct zichtbare voortgang in het close-scherm.",
-    "Een backend-reject of browserfout wordt boven de uitvoerknop getoond en valt op mobiel niet meer buiten beeld.",
+    "De actieve prijszone toont nu zijn eigen LONG- en SHORT-bezetting tegenover uitsluitend de formatie van die zone.",
+    "Alle-zone totalen tonen LONG en SHORT als absolute open aantallen zonder fictieve globale side-cap.",
+    "Alleen Totaal bezet gebruikt maximumPositions als globale capaciteitsteller.",
   ],
   problems: [
-    "Op mobiel kon een gebruiker op Sluit 50% drukken zonder zichtbare reactie, terwijl de request kon worden geweigerd of al vóór verzending kon falen.",
+    "Portfolio Snapshot verdeelde maximumPositions proportioneel over LONG en SHORT en kon daardoor bijvoorbeeld 36 / 30 SHORT tonen, terwijl 30 geen echte globale Zone Warriors-cap is.",
   ],
   causes: [
-    "De statusmelding stond onder Annuleren en kon daardoor onder de onderste navigatie of buiten de zichtbare viewport vallen.",
-    "De idempotency-key werd vóór de bestaande try/catch aangemaakt, waardoor een browser/WebView-fout daar geen zichtbare foutmelding kreeg.",
+    "De frontend leidde longCapacity en shortCapacity af uit maximumPositions en de per-zone 10L/3S-verhouding, terwijl de backend alleen per-zone base-soldiers plus één globale maximumPositions-cap kent.",
   ],
   fixes: [
-    "De close-flow zet direct 'Sluitopdracht wordt gecontroleerd…' en schakelt de knop zichtbaar naar de busy-state.",
-    "Status en backendfouten staan nu vóór de primaire close-knop met aria-live feedback.",
-    "De idempotency-key wordt binnen de foutafhandeling aangemaakt met randomUUID waar beschikbaar en een browserveilige fallback.",
-    "De bestaande 25/50/75/100%-backend, Auto Hedge-locks, Dynamic Hedge-lock en fail-closed contractchecks zijn ongewijzigd.",
+    "De fictieve frontend-berekening van globale LONG- en SHORT-capaciteit is uit de prijszonekaart verwijderd.",
+    "occupiedLongActiveZone en occupiedShortActiveZone worden afzonderlijk getoond tegenover perZoneLong en perZoneShort.",
+    "strategyOpenLong en strategyOpenShort worden als absolute totalen over alle zones getoond; strategyOpenTotal / maximumPositions blijft de enige globale capaciteitsmeter.",
+    "De bestaande zone-sync blijft fail-safe: bij een tijdelijke mismatch worden actieve-zonecijfers als — / — getoond tot chart en seat-report dezelfde zone bevestigen.",
   ],
   now: [
-    "Eén druk op de primaire Sluit-knop geeft altijd direct zichtbare feedback; bij een blokkade is de concrete foutmelding in hetzelfde scherm zichtbaar.",
+    "De gebruiker ziet apart wat in de actieve zone bezet is, hoeveel LONG/SHORT-posities over alle zones open staan en hoeveel van de globale Strategy-2-cap is gebruikt.",
   ],
   technicalDetails: [
-    "UI-hotfix in web/components/aster-recent-trades.tsx; geen wijziging aan order-sizing of backend tradinglogica.",
-    "De Position Close partial-close backend stond al in de succesvol gepromote Build 464-productiebron.",
+    "UI-only wijziging in aster-portfolio-snapshot-enhancer.tsx en portfolio-snapshot.css.",
+    "Geen wijziging aan trading-, entry-, Bollinger-, DCA-, TP-, hedge-, zoneownership- of scannerlogica.",
+    "Regressietest verbiedt opnieuw afgeleide longCapacity/shortCapacity in PriceZoneStrategySummary.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-466-position-close-feedback",
+    version: "46",
+    build: "466",
+    releasedAt: "2026-09-28",
+    title: "Tradecentrum · Position Close zichtbare feedback",
+    newItems: [
+      "Na indrukken van Sluit 25%, 50%, 75% of 100% verschijnt direct zichtbare voortgang in het close-scherm.",
+      "Een backend-reject of browserfout wordt boven de uitvoerknop getoond en valt op mobiel niet meer buiten beeld.",
+    ],
+    problems: [
+      "Op mobiel kon een gebruiker op Sluit 50% drukken zonder zichtbare reactie, terwijl de request kon worden geweigerd of al vóór verzending kon falen.",
+    ],
+    causes: [
+      "De statusmelding stond onder Annuleren en kon daardoor onder de onderste navigatie of buiten de zichtbare viewport vallen.",
+      "De idempotency-key werd vóór de bestaande try/catch aangemaakt, waardoor een browser/WebView-fout daar geen zichtbare foutmelding kreeg.",
+    ],
+    fixes: [
+      "De close-flow zet direct 'Sluitopdracht wordt gecontroleerd…' en schakelt de knop zichtbaar naar de busy-state.",
+      "Status en backendfouten staan nu vóór de primaire close-knop met aria-live feedback.",
+      "De idempotency-key wordt binnen de foutafhandeling aangemaakt met randomUUID waar beschikbaar en een browserveilige fallback.",
+      "De bestaande 25/50/75/100%-backend, Auto Hedge-locks, Dynamic Hedge-lock en fail-closed contractchecks zijn ongewijzigd.",
+    ],
+    now: [
+      "Eén druk op de primaire Sluit-knop geeft altijd direct zichtbare feedback; bij een blokkade is de concrete foutmelding in hetzelfde scherm zichtbaar.",
+    ],
+    technicalDetails: [
+      "UI-hotfix in web/components/aster-recent-trades.tsx; geen wijziging aan order-sizing of backend tradinglogica.",
+      "De Position Close partial-close backend stond al in de succesvol gepromote Build 464-productiebron.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-465-entry-diagnostics",
     version: "46",
