@@ -663,7 +663,8 @@ def test_read_only_live_zone_sync_does_not_consume_or_repeat_legacy_migration_ho
 
 
 def test_zone_dry_run_uses_defined_candidate_index_for_simulated_claims():
-    core = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    from pathlib import Path
+    core = (Path(__file__).resolve().parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
     assert "for candidate_index, ranked_row in enumerate(candidates):" in core
     assert 'simulated_key = f"SIM:{symbol}|{side}|{candidate_index}"' in core
     assert 'simulated_key = f"SIM:{symbol}|{side}|{index}"' not in core
