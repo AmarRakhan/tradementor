@@ -40,7 +40,14 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
     client_order_id = str(result.get("clientOrderId", result.get("clientOrderID", ""))).strip()
     if not order_id and not client_order_id:
         return
-    current = ref.get().to_dict() or {}
+    getter = getattr(ref, "get", None)
+    if callable(getter):
+        snapshot = getter()
+        current = snapshot.to_dict() or {} if hasattr(snapshot, "to_dict") else {}
+    else:
+        # Lightweight test/adaptor refs can be write-only. Production Firestore
+        # refs expose get(); write-only refs still receive the new attribution.
+        current = {}
     rows = [row for row in current.get("orderAttributions", []) if isinstance(row, dict)]
     identity = (order_id, client_order_id)
     rows = [
