@@ -640,6 +640,12 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     if gate.restart:
         raw_state=gate.raw_state; account=gate.account; positions=gate.positions; open_orders=gate.open_orders
         order_budget=max(0,(15 if order_budget is None else int(order_budget))-gate.orders_sent)
+        # Portfolio TP may have atomically changed LONG/SHORT/maximumPositions.
+        # The same worker tick must immediately honor that confirmed reset instead
+        # of refilling from the stale pre-close config object.
+        restarted_settings = raw_state.get("settings") if isinstance(raw_state, dict) else None
+        if isinstance(restarted_settings, dict):
+            settings = MultiBbConfig.from_mapping(restarted_settings)
 
     profit_lock = run_profit_lock_ladder_gate(client=client,ref=runtime_ref,raw_state=raw_state,settings=settings,uid=uid,
         account=account,positions=positions,open_orders=open_orders,timestamp_ms=timestamp_ms,dry_run=dry_run,
