@@ -124,6 +124,8 @@ type PriceZoneSeatSummary = {
   strategyOpenLong: number;
   strategyOpenShort: number;
   strategyOpenTotal: number;
+  zoneOpenCounts: Record<string, { long: number; short: number; total: number }>;
+  zoneOpenCountsReliable: boolean;
   entryStatus: string;
   entryReason: string;
   entrySkipReasons: Record<string, number>;
@@ -165,6 +167,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function optionalNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -239,6 +242,64 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   const strategyOpenLong = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenLong", "long"]) ?? 0));
   const strategyOpenShort = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenShort", "short"]) ?? 0));
   const maxTotal = Math.max(1, Math.round(firstNumber([settings], ["maximumPositions"]) ?? (perZoneLong + perZoneShort)));
+
+  let zoneOpenCounts: Record<string, { long: number; short: number; total: number }> = {};
+  for (const [rawZone, rawCounts] of Object.entries(record(seatReport.zoneOpenCounts))) {
+    const zone = Number(rawZone);
+    if (!Number.isInteger(zone)) continue;
+    const counts = record(rawCounts);
+    const long = Math.max(0, Math.round(optionalNumber(counts.long) ?? 0));
+    const short = Math.max(0, Math.round(optionalNumber(counts.short) ?? 0));
+    const total = Math.max(0, Math.round(optionalNumber(counts.total) ?? (long + short)));
+    zoneOpenCounts[String(zone)] = { long, short, total };
+  }
+  const zoneTotals = () => Object.values(zoneOpenCounts).reduce(
+    (sum, row) => ({ long: sum.long + row.long, short: sum.short + row.short, total: sum.total + row.total }),
+    { long: 0, short: 0, total: 0 },
+  );
+  let zoneOpenCountsReliable = seatReport.zoneOpenCountsReliable === true;
+  let totals = zoneTotals();
+  zoneOpenCountsReliable = zoneOpenCountsReliable
+    && totals.long === strategyOpenLong
+    && totals.short === strategyOpenShort
+    && totals.total === strategyOpenLong + strategyOpenShort;
+
+  // Backward-compatible bridge while backend/web releases overlap: derive the
+  // same per-zone breakdown from managed Strategy-2 ownership only when its
+  // totals exactly match the exchange-confirmed seat report. This never guesses.
+  if (!zoneOpenCountsReliable) {
+    const derived: Record<string, { long: number; short: number; total: number }> = {};
+    for (const [tradeKey, rawManaged] of Object.entries(record(strategy2.multiBbPositions))) {
+      const managed = record(rawManaged);
+      const role = String(managed.soldierRole || "").toUpperCase();
+      if (role !== "ZONE_BASE" && role !== "EXPOSURE_BALANCER") continue;
+      const originZone = optionalNumber(managed.originZone);
+      if (originZone === null || !Number.isInteger(originZone)) continue;
+      const keySide = tradeKey.toUpperCase();
+      const side = String(managed.side || managed.positionSide || (keySide.endsWith("|LONG") ? "LONG" : keySide.endsWith("|SHORT") ? "SHORT" : "")).toUpperCase();
+      if (side !== "LONG" && side !== "SHORT") continue;
+      const zoneKey = String(Math.round(originZone));
+      const bucket = derived[zoneKey] || { long: 0, short: 0, total: 0 };
+      if (side === "LONG") bucket.long += 1;
+      else bucket.short += 1;
+      bucket.total += 1;
+      derived[zoneKey] = bucket;
+    }
+    const derivedTotals = Object.values(derived).reduce(
+      (sum, row) => ({ long: sum.long + row.long, short: sum.short + row.short, total: sum.total + row.total }),
+      { long: 0, short: 0, total: 0 },
+    );
+    if (
+      derivedTotals.long === strategyOpenLong
+      && derivedTotals.short === strategyOpenShort
+      && derivedTotals.total === strategyOpenLong + strategyOpenShort
+    ) {
+      zoneOpenCounts = derived;
+      totals = derivedTotals;
+      zoneOpenCountsReliable = true;
+    }
+  }
+
   return {
     enabled: seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
     activeZone: activeZoneNumber === null ? null : Math.round(activeZoneNumber),
@@ -253,6 +314,8 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     strategyOpenLong,
     strategyOpenShort,
     strategyOpenTotal: Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenTotal", "total"]) ?? (strategyOpenLong + strategyOpenShort))),
+    zoneOpenCounts,
+    zoneOpenCountsReliable,
     entryStatus: firstString([entryDiagnostics], ["entryStatus"]),
     entryReason: firstString([entryDiagnostics], ["entryReason", "lastReason"]),
     entrySkipReasons: record(entryDiagnostics.entrySkipReasons) as Record<string, number>,
@@ -633,10 +696,21 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
   if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
   const displayActiveZone = liveActiveZone ?? summary.activeZone;
-  const seatZoneInSync = liveActiveZone === null || summary.activeZone === liveActiveZone;
+  const backendZoneMatches = displayActiveZone !== null && summary.activeZone === displayActiveZone;
+  const breakdown = displayActiveZone === null ? null : summary.zoneOpenCounts[String(displayActiveZone)] || null;
+  const resolvedCounts = backendZoneMatches
+    ? { long: summary.occupiedLongActiveZone, short: summary.occupiedShortActiveZone }
+    : displayActiveZone !== null && summary.zoneOpenCountsReliable
+      ? { long: breakdown?.long ?? 0, short: breakdown?.short ?? 0 }
+      : null;
+  const seatZoneInSync = resolvedCounts !== null;
   const zoneLabel = displayActiveZone === null ? "Zone —" : `Zone ${displayActiveZone} actief`;
-  const activeLongLabel = seatZoneInSync ? `${summary.occupiedLongActiveZone} / ${summary.perZoneLong}` : "— / —";
-  const activeShortLabel = seatZoneInSync ? `${summary.occupiedShortActiveZone} / ${summary.perZoneShort}` : "— / —";
+  const occupiedLongActiveZone = resolvedCounts?.long ?? 0;
+  const occupiedShortActiveZone = resolvedCounts?.short ?? 0;
+  const freeLongActiveZone = Math.max(0, summary.perZoneLong - occupiedLongActiveZone);
+  const freeShortActiveZone = Math.max(0, summary.perZoneShort - occupiedShortActiveZone);
+  const activeLongLabel = seatZoneInSync ? `${occupiedLongActiveZone} / ${summary.perZoneLong}` : "— / —";
+  const activeShortLabel = seatZoneInSync ? `${occupiedShortActiveZone} / ${summary.perZoneShort}` : "— / —";
   const statusText = !summary.enabled
     ? "Prijszone-stoelen staan momenteel uit."
     : seatZoneInSync
@@ -659,7 +733,7 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
     </div>
     <div className="aps-zone-facts">
       <span><small>Per zone</small><b>{summary.perZoneLong}L / {summary.perZoneShort}S</b></span>
-      <span><small>Vrij in actieve zone</small>{seatZoneInSync ? <b><i>{summary.freeLongActiveZone}L</i> / <em>{summary.freeShortActiveZone}S</em></b> : <b>— / —</b>}</span>
+      <span><small>Vrij in actieve zone</small>{seatZoneInSync ? <b><i>{freeLongActiveZone}L</i> / <em>{freeShortActiveZone}S</em></b> : <b>— / —</b>}</span>
       <span><small>Oude zones open</small><b>{summary.openFromOldZones}</b></span>
       <span><small>Max totaal</small><b>{summary.maxTotal}</b></span>
     </div>
@@ -667,8 +741,8 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
       <div className="aps-zone-seat-group">
         <strong className="aps-zone-group-title">Actieve zone</strong>
         <div className="aps-zone-meters">
-          <div className="long"><span>LONG</span><i><u style={{width:`${seatZoneInSync ? pct(summary.occupiedLongActiveZone,summary.perZoneLong) : 0}%`}} /></i><b>{activeLongLabel}</b></div>
-          <div className="short"><span>SHORT</span><i><u style={{width:`${seatZoneInSync ? pct(summary.occupiedShortActiveZone,summary.perZoneShort) : 0}%`}} /></i><b>{activeShortLabel}</b></div>
+          <div className="long"><span>LONG</span><i><u style={{width:`${seatZoneInSync ? pct(occupiedLongActiveZone,summary.perZoneLong) : 0}%`}} /></i><b>{activeLongLabel}</b></div>
+          <div className="short"><span>SHORT</span><i><u style={{width:`${seatZoneInSync ? pct(occupiedShortActiveZone,summary.perZoneShort) : 0}%`}} /></i><b>{activeShortLabel}</b></div>
         </div>
       </div>
       <div className="aps-zone-seat-group">
