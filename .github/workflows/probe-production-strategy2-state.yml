@@ -241,6 +241,16 @@ jobs:
                   "exposureRefillShortTimeframe":settings.exposure_refill_short_timeframe,
                   "hedgeMode":bool(hedge_mode),
                   "openOrderCount":len(orders) if isinstance(orders,list) else None,
+                  "liveRuntime":{
+                      "enabled":raw.get("enabled") is True,
+                      "monitor":raw.get("monitor") is True,
+                      "phase":str(raw.get("phase") or ""),
+                      "lastReason":str(raw.get("lastReason") or "")[:300],
+                      "lastTickAt":str(raw.get("lastTickAt") or ""),
+                      "liveReady":raw.get("liveReady") is True,
+                      "canaryValidated":raw.get("canaryValidated") is True,
+                      "reportUpdatedAtMs":stored_report.get("updatedAtMs"),
+                  },
                   "stored":{
                       "entryStatus":str(stored_report.get("entryStatus") or ""),
                       "entryReason":str(stored_report.get("entryReason") or ""),
