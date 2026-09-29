@@ -376,3 +376,15 @@ def test_test_push_title_has_no_bot_brand_text():
     source = Path("profit_notifications.py").read_text()
     assert '"title": "🧪 Testmelding"' in source
     assert '"title": "🧪 Testmelding · Amar Crypto Bot 2026"' not in source
+
+
+def test_notification_reconcile_includes_all_realized_symbols_even_when_ledger_fragment_is_nonpositive():
+    source = Path("main.py").read_text()
+    start = source.index("def _reconcile_profit_notifications")
+    end = source.index("\ndef require_verified_email", start)
+    block = source[start:end]
+    assert 'str(row.get("incomeType", "REALIZED_PNL")).upper() != "REALIZED_PNL"' in block
+    assert 'if safe_float(row.get("income")) <= 0:' not in block
+    assert "pendingHistorySymbols" in block
+    assert "remaining_history_symbols" in block
+    assert "historyScanIncomplete" in block
