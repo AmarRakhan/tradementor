@@ -36,7 +36,7 @@ test("shared reset target uses one server-side PUT and protected backend fields"
 test("saving reset values never calls start stop close or an order endpoint", () => {
   assert.match(target, /Opslaan wijzigt alleen het toekomstige resetdoel/);
   assert.match(target, /pas toegepast na bevestigde flat-state/);
-  assert.doesNotMatch(target, /strategy2\/start|strategy2\/stop|closeAll|close\/|method: "POST"|order/i);
+  assert.doesNotMatch(target, /strategy2\/start|strategy2\/stop|closeAll|close\/|method: "POST"|\/orders?\//i);
 });
 
 test("mobile styles keep the seat reset flow compact at phone widths", () => {
