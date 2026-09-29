@@ -872,6 +872,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 if not dry_run:
                     recovered = execute_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{st0.get('cycleId')}", confirm=True, new_position_leverage=current_lev, before_submit=before_order)
                     sf = recovered.get("result") or {}; sp = _f(sf.get("avgPrice"), prices[symbol]); sq = _f(sf.get("executedQty"), float(short_plan.quantity))
+                    _record_order_attribution(
+                        ref, sf, settings=settings, symbol=symbol, side="SHORT",
+                        action="OPEN_LEG", cycle_id=str(st0.get("cycleId") or ""),
+                    )
                     state[short_key] = {"cycleId": st0.get("cycleId"), "dcaCount": 0, "lastBotFillPrice": sp, "lastKnownQty": sq, "lastKnownEntry": sp, "leverage": current_lev, "cycleStartedAtMs": st0.get("cycleStartedAtMs", timestamp_ms), "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
                     linked = dict(state[key]); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "pairedShortOrderConfirmedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms}); state[key] = linked
                     ref.set({"multiBbPositions": state, "lastReason": f"Asymmetrische hedge recovery bevestigd op {symbol}"}, merge=True)
