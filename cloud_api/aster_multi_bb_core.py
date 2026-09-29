@@ -33,6 +33,35 @@ def _i(value: Any, default: int = 0) -> int:
     return int(_f(value, default))
 
 
+def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any,
+                              symbol: str, side: str, action: str, cycle_id: str) -> None:
+    """Persist confirmed Multi-BB order identity for notification/history consumers."""
+    order_id = str(result.get("orderId", result.get("orderID", ""))).strip()
+    client_order_id = str(result.get("clientOrderId", result.get("clientOrderID", ""))).strip()
+    if not order_id and not client_order_id:
+        return
+    current = ref.get().to_dict() or {}
+    rows = [row for row in current.get("orderAttributions", []) if isinstance(row, dict)]
+    identity = (order_id, client_order_id)
+    rows = [
+        row for row in rows
+        if (str(row.get("orderId", "")), str(row.get("clientOrderId", ""))) != identity
+    ]
+    rows.append({
+        "orderId": order_id,
+        "clientOrderId": client_order_id,
+        "strategyId": "aster-strategy-2",
+        "strategyName": str(getattr(settings, "name", "") or "Aster Multi DCA"),
+        "cycleId": str(cycle_id or ""),
+        "configVersion": int(getattr(settings, "version", 1) or 1),
+        "symbol": str(symbol).upper(),
+        "side": str(side).upper(),
+        "action": str(action).upper(),
+        "recordedAt": datetime.now(timezone.utc),
+    })
+    ref.set({"orderAttributions": rows[-2000:]}, merge=True)
+
+
 @dataclass(frozen=True)
 class MultiBbConfig:
     engine: str = ENGINE
@@ -881,11 +910,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 plan = PairExecutionPlan(symbol, Decimal(str(qty)), Decimal(str(qty * mark)), max(1, _i(row.get("leverage"))))
                 evidence = _close_evidence(client, uid, st0, row, side, mark)
                 try:
-                    execute_leg_once(client, plan, side=PositionSide(side), action="CLOSE", id_prefix=f"mbb-tp-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                     close_evidence=evidence, before_submit=before_order)
+                    closed = execute_leg_once(client, plan, side=PositionSide(side), action="CLOSE", id_prefix=f"mbb-tp-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                                              close_evidence=evidence, before_submit=before_order)
                 except (AsterCloseBlocked, AutoHedgeCloseBlocked) as exc:
                     actions.append({"kind": "TP_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
                     continue
+                _record_order_attribution(
+                    ref, closed.get("result") or {}, settings=settings, symbol=symbol, side=side,
+                    action="TAKE_PROFIT_CLOSE", cycle_id=str(st0.get("cycleId") or ""),
+                )
                 fresh = _position_map(client.position_risk(symbol))
                 if key in fresh: raise RuntimeError(f"{key}: TP-close niet flat bevestigd")
                 settlement: dict[str, Any] = {}
@@ -1552,6 +1585,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=entry_filled side={side} leverage={plan.leverage} fillPrice={fill_price} fillQty={fill_qty}", flush=True)
             key = f"{symbol}|{side}"; cycle_id = hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16]
+            _record_order_attribution(
+                ref, fill, settings=settings, symbol=symbol, side=side,
+                action="OPEN_LEG", cycle_id=cycle_id,
+            )
             zone_claim = claim_soldier(zone_state or {}, side, trade_key=key, symbol=symbol,
                 entry_price=fill_price, entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),
                 timestamp_ms=timestamp_ms) if zone_mode else None
@@ -1590,6 +1627,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     if not is_definite_contract_rejection(exc): raise
                 else:
                     sf = short_result.get("result") or {}; short_price = _f(sf.get("avgPrice"), prices[symbol]); short_qty = _f(sf.get("executedQty"), float(short_plan.quantity)); short_key = f"{symbol}|SHORT"
+                    _record_order_attribution(
+                        ref, sf, settings=settings, symbol=symbol, side="SHORT",
+                        action="OPEN_LEG", cycle_id=cycle_id,
+                    )
                     state[short_key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": short_price, "lastKnownQty": short_qty, "lastKnownEntry": short_price, "leverage": short_plan.leverage,
                         "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
                     linked = dict(state[key]); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "pairedShortOrderConfirmedAtMs": timestamp_ms}); state[key] = linked
