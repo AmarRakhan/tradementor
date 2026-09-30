@@ -276,7 +276,7 @@ test("Build 413 initial focus drops old distant history while preserving recent 
   assert.equal(portfolioKoersFocusBars(rows,28,144.85,143.21,145.27),20);
 });
 
-test("Build 473 keeps the reference-style longer timeline instead of dynamically cropping account candles",async()=>{
+test("Build 479 keeps the reference-style longer timeline while visible data drives account autoscale",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const pair of [
     '"1m":{visibleBars:40',
@@ -288,8 +288,8 @@ test("Build 473 keeps the reference-style longer timeline instead of dynamically
   ]) assert.ok(component.includes(pair),pair);
   assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
   assert.equal(component.includes('viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars'),false);
-  assert.ok(component.includes("guideLow"));
-  assert.ok(component.includes("guideHigh"));
+  assert.equal(component.includes("guideLow"),false);
+  assert.equal(component.includes("guideHigh"),false);
   assert.equal(component.includes("fitContent()"),false);
 });
 
@@ -300,10 +300,10 @@ test("Build 414 can stop before a deep old candle after a small recent decision 
   assert.equal(portfolioKoersFocusBars([...old,...recent],16,145.53,145.18,146.48),7);
 });
 
-test("Build 473 mobile geometry follows the approved UI 4.1 reference instead of the compressed Build 472 card",async()=>{
+test("Build 479 mobile geometry keeps UI 4.1 styling with the requested compact chart height",async()=>{
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(css.includes(".portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:500px}"));
+  assert.ok(css.includes(".portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:340px}"));
   assert.ok(css.includes(".portfolio-koers-ui41{padding:14px 12px 12px"));
   assert.ok(css.includes("width:min(220px,calc(100% - 56px))"));
   assert.ok(css.includes(".portfolio-koers-ui41-hint"));
@@ -326,7 +326,7 @@ test("Build 446 keeps calm price-axis typography without a colored last-value ba
   assert.ok(component.includes('textColor:"#9fb0ba",fontSize:10'));
   assert.ok(component.includes("lastValueVisible:false"));
   assert.ok(component.includes("priceLineVisible:false"));
-  assert.ok(component.includes("scaleMargins:{top:.12,bottom:.12}"));
+  assert.ok(component.includes("scaleMargins:{top:.06,bottom:.06}"));
 });
 
 
