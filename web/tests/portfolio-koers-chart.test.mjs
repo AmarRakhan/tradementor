@@ -142,7 +142,7 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   const source=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
   const portalStart=source.indexOf("return host ? createPortal");
   const chartMount=source.indexOf("<PortfolioKoersChart",portalStart);
-  const snapshotMount=source.indexOf("\n      <Snapshot\n",portalStart);
+  const snapshotMount=source.indexOf("<Snapshot",chartMount);
   assert.ok(portalStart>0);
   assert.ok(chartMount>portalStart);
   assert.ok(snapshotMount>chartMount);
