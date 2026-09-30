@@ -621,3 +621,431 @@
   .portfolio-koers-structure-level>span{min-width:25px;padding:3px 4px;font-size:7.7px}
   .portfolio-koers-structure-note{font-size:6.5px}
 }
+
+
+/* Build 472 · Portfolio Koers UI 4.1
+   Pixel reference: file_00000000e2fc820a9057c8f60c1ec845
+   TP detail reference: file_00000000267082109428370054535e59 */
+.portfolio-koers-ui41{
+  --pk41-green:#18e6a0;
+  --pk41-green-soft:#35e9ad;
+  --pk41-gold:#e9bd45;
+  --pk41-gold-bright:#ffd85a;
+  --pk41-red:#ff596d;
+  --pk41-ink:#020b0d;
+  --pk41-panel:#031314;
+  padding:10px 10px 9px;
+  border:1px solid rgba(18,214,133,.48);
+  border-radius:18px;
+  background:
+    radial-gradient(circle at 50% -18%,rgba(8,106,68,.17),transparent 34%),
+    linear-gradient(180deg,#03100f 0%,#020a0b 100%);
+  box-shadow:0 13px 34px rgba(0,0,0,.46),0 0 22px rgba(18,224,146,.08),inset 0 1px 0 rgba(114,255,200,.045);
+}
+.portfolio-koers-ui41:before{box-shadow:inset 0 0 26px rgba(15,193,126,.035)}
+.portfolio-koers-ui41 .portfolio-koers-ui41-header{
+  display:block;
+  margin:0 0 7px;
+}
+.portfolio-koers-ui41-top{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:9px;
+}
+.portfolio-koers-ui41 .portfolio-koers-heading{display:grid;gap:3px}
+.portfolio-koers-ui41 .portfolio-koers-title-line{gap:7px}
+.portfolio-koers-ui41 .portfolio-koers-title-line h2{
+  color:#f8fbfa;
+  font-size:20px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:-.045em;
+}
+.portfolio-koers-ui41 .portfolio-koers-heading>small{
+  color:#a9b8b7;
+  font-size:9px;
+  line-height:1;
+  font-weight:760;
+}
+.portfolio-koers-ui41 .portfolio-koers-live{
+  padding:5px 8px;
+  border-color:rgba(25,232,160,.30);
+  background:rgba(3,55,38,.50);
+  color:#48edaf;
+  font-size:8px;
+}
+.portfolio-koers-ui41 .portfolio-koers-live i{width:7px;height:7px;background:#1ceda2;box-shadow:0 0 10px rgba(28,237,162,.9)}
+.portfolio-koers-ui41-actions{display:flex;align-items:center;gap:6px}
+.portfolio-koers-settings,
+.portfolio-koers-zones-button{
+  border:1px solid rgba(31,224,151,.46);
+  color:#e8f8f1;
+  background:linear-gradient(180deg,rgba(4,32,26,.94),rgba(2,17,15,.98));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.055),0 0 12px rgba(23,231,155,.055);
+  cursor:pointer;
+}
+.portfolio-koers-settings{
+  display:grid;place-items:center;
+  width:34px;height:34px;padding:0;
+  border-radius:10px;
+  font:800 17px/1 system-ui;
+}
+.portfolio-koers-zones-button{
+  display:flex;align-items:center;justify-content:center;gap:5px;
+  height:34px;padding:0 10px;
+  border-radius:10px;
+  color:#55ebb2;
+  font:900 9px/1 system-ui;
+}
+.portfolio-koers-zones-button>span{font-size:16px;line-height:1}
+.portfolio-koers-ui41-value{
+  display:flex;align-items:baseline;gap:12px;
+  min-height:31px;
+  margin-top:4px;
+}
+.portfolio-koers-ui41-value>strong{
+  color:#2de8aa;
+  font:950 22px/1 system-ui;
+  letter-spacing:-.035em;
+}
+.portfolio-koers-ui41-value>span{
+  color:#2de8aa;
+  font:900 12px/1 system-ui;
+}
+.portfolio-koers-ui41-value>span.negative{color:#ff6476}
+.portfolio-koers-ui41-controls{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 34px;
+  gap:7px;
+  align-items:center;
+  margin-top:7px;
+}
+.portfolio-koers-ui41 .portfolio-koers-toolbar{
+  display:grid;
+  grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:0;
+  padding:0;
+  border:1px solid rgba(99,153,163,.34);
+  border-radius:11px;
+  background:rgba(1,9,12,.76);
+  overflow:hidden;
+}
+.portfolio-koers-ui41 .portfolio-koers-toolbar button{
+  height:33px;
+  border-radius:9px;
+  color:#bac5c9;
+  font:850 9px/1 system-ui;
+}
+.portfolio-koers-ui41 .portfolio-koers-toolbar button.active{
+  color:#ffe47a;
+  background:linear-gradient(180deg,rgba(93,67,7,.68),rgba(29,24,7,.9));
+  box-shadow:inset 0 0 0 1px rgba(255,207,49,.92),0 0 13px rgba(255,203,42,.10);
+}
+.portfolio-koers-ui41 .portfolio-koers-fullscreen{
+  width:34px;height:34px;
+  border-radius:10px;
+  border-color:rgba(96,150,168,.38);
+  background:linear-gradient(180deg,rgba(11,28,32,.95),rgba(3,15,19,.98));
+  font-size:18px;
+}
+.portfolio-koers-ui41 .portfolio-koers-view-toggle{
+  display:flex;
+  gap:5px;
+  margin-top:7px;
+}
+.portfolio-koers-ui41 .portfolio-koers-view-toggle button{
+  height:27px;
+  padding:0 12px;
+  border:1px solid rgba(101,144,152,.34);
+  border-radius:999px;
+  background:rgba(8,25,27,.82);
+  color:#9eaaae;
+  font:780 7.5px/1 system-ui;
+  letter-spacing:.02em;
+}
+.portfolio-koers-ui41 .portfolio-koers-view-toggle button.active{
+  border-color:rgba(36,234,161,.72);
+  background:linear-gradient(180deg,rgba(6,62,44,.68),rgba(4,31,25,.82));
+  color:#4feeb0;
+  box-shadow:inset 0 0 12px rgba(35,232,159,.06),0 0 10px rgba(31,233,159,.05);
+}
+
+/* Only the real active zone is highlighted in UI 4.1. Legacy multi-zone fills
+   stay in state for strategy logic but are deliberately not painted. */
+.portfolio-koers-ui41 .portfolio-koers-zones,
+.portfolio-koers-ui41 .portfolio-koers-zone-boundaries{display:none}
+.portfolio-koers-ui41 .portfolio-koers-stage{
+  height:318px;
+  border:1px solid rgba(74,126,139,.28);
+  border-radius:3px;
+  background:linear-gradient(180deg,#031315 0%,#031012 100%);
+}
+.portfolio-koers-ui41 .portfolio-koers-structure-zone{
+  left:0;
+  right:48px;
+  min-height:18px;
+  border-top:1px dashed rgba(239,193,54,.88);
+  border-bottom:1px dashed rgba(239,193,54,.88);
+  background:linear-gradient(90deg,rgba(197,151,24,.15),rgba(221,175,31,.10) 55%,rgba(178,126,10,.13));
+  box-shadow:inset 0 0 22px rgba(230,184,48,.055);
+}
+.portfolio-koers-ui41 .portfolio-koers-structure-zone>span{
+  left:45%;
+  padding:5px 10px;
+  border-color:rgba(246,199,51,.82);
+  border-radius:9px;
+  color:#f7d55f;
+  background:linear-gradient(180deg,rgba(53,40,5,.94),rgba(18,16,6,.94));
+  font-size:8.5px;
+}
+.portfolio-koers-ui41 .portfolio-koers-structure-level{right:48px;border-top-width:1px}
+.portfolio-koers-ui41 .portfolio-koers-structure-level>span{
+  left:2px;
+  min-width:28px;
+  padding:4px 5px;
+  border-radius:7px;
+  font-size:8px;
+}
+.portfolio-koers-ui41 .portfolio-koers-structure-note.role-flip{font-size:6.8px}
+.portfolio-koers-ui41 .portfolio-koers-structure-note.new-high{font-size:7.5px}
+
+/* Event layer: straight vector arrows + clickable TP money-bag clusters. */
+.portfolio-koers-ui41 .portfolio-koers-event-layer{
+  right:48px;
+  z-index:7;
+  pointer-events:none;
+}
+.portfolio-koers-ui41 .portfolio-koers-event.portfolio-koers-event-chip{
+  width:auto;
+  min-width:48px;
+  height:24px;
+  padding:0 7px;
+  flex-direction:row;
+  gap:4px;
+  border:1px solid currentColor;
+  border-radius:9px;
+  appearance:none;
+  cursor:default;
+  font:inherit;
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip.long{
+  color:#45ecad;
+  background:linear-gradient(180deg,rgba(2,72,48,.96),rgba(2,31,23,.98));
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip.short{
+  color:#ff6578;
+  background:linear-gradient(180deg,rgba(88,13,29,.96),rgba(37,4,13,.98));
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip.tp{
+  min-width:74px;
+  height:29px;
+  padding:0 9px 0 6px;
+  color:#f5cc55;
+  background:linear-gradient(180deg,rgba(79,58,6,.98),rgba(34,24,2,.99));
+  box-shadow:0 4px 12px rgba(0,0,0,.42),0 0 12px rgba(235,188,50,.10),inset 0 1px 0 rgba(255,239,170,.09);
+  pointer-events:auto;
+  cursor:pointer;
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip b{
+  font-size:8px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:0;
+}
+.portfolio-koers-direction-arrow{
+  display:block;
+  width:13px;
+  height:16px;
+  flex:0 0 13px;
+  overflow:visible;
+}
+.portfolio-koers-moneybag{
+  display:inline-grid;
+  place-items:center;
+  width:17px;height:17px;
+  flex:0 0 17px;
+  font-size:13px;
+  line-height:1;
+  filter:saturate(.88) drop-shadow(0 0 4px rgba(255,206,70,.22));
+}
+.portfolio-koers-event-count{
+  position:absolute;
+  right:-7px;
+  top:-8px;
+  display:grid;
+  place-items:center;
+  min-width:16px;
+  height:16px;
+  padding:0 3px;
+  border:1px solid #e8b92e;
+  border-radius:999px;
+  background:#171307;
+  color:#ffe06a;
+  box-shadow:0 2px 7px rgba(0,0,0,.46);
+  font:950 7px/1 system-ui;
+}
+.portfolio-koers-ui41 .portfolio-koers-connector{
+  z-index:-1;
+  border-top:1px solid currentColor;
+  opacity:.86;
+}
+.portfolio-koers-ui41 .portfolio-koers-anchor{
+  z-index:1;
+  width:8px;height:8px;
+  margin:-4px 0 0 -4px;
+  border:1px solid rgba(11,15,11,.92);
+  box-shadow:0 0 9px currentColor;
+}
+
+/* TP flip detail. The chart stays visible behind it. */
+.portfolio-koers-tp-detail-shell{
+  position:absolute;
+  z-index:12;
+  inset:0 48px 0 0;
+  perspective:900px;
+  pointer-events:none;
+}
+.portfolio-koers-tp-detail{
+  position:absolute;
+  left:34px;
+  top:35px;
+  width:min(270px,calc(100% - 52px));
+  box-sizing:border-box;
+  padding:10px 11px 9px;
+  border:1px solid rgba(245,196,48,.88);
+  border-radius:12px;
+  color:#eff6f3;
+  background:linear-gradient(150deg,rgba(3,19,18,.985),rgba(3,13,15,.985));
+  box-shadow:0 13px 30px rgba(0,0,0,.58),0 0 20px rgba(238,188,43,.12),inset 0 1px 0 rgba(255,241,178,.08);
+  transform-origin:50% 50%;
+  animation:pk41-flip-in .28s cubic-bezier(.22,.75,.24,1);
+  backface-visibility:hidden;
+  pointer-events:auto;
+}
+@keyframes pk41-flip-in{
+  0%{opacity:.15;transform:rotateY(-84deg) scale(.96)}
+  65%{opacity:1;transform:rotateY(6deg) scale(1)}
+  100%{opacity:1;transform:rotateY(0deg) scale(1)}
+}
+.portfolio-koers-tp-detail>header{
+  display:grid;
+  grid-template-columns:20px minmax(0,1fr) 24px;
+  align-items:center;
+  gap:6px;
+  padding-bottom:8px;
+  border-bottom:1px solid rgba(233,189,69,.30);
+}
+.portfolio-koers-tp-detail>header>strong{
+  min-width:0;
+  color:#e8efec;
+  font:850 9px/1.15 system-ui;
+  white-space:nowrap;
+}
+.portfolio-koers-tp-detail>header>strong>b{color:#31e9aa;font-weight:950}
+.portfolio-koers-tp-detail>header>button{
+  display:grid;place-items:center;
+  width:24px;height:24px;padding:0;
+  border:0;background:transparent;color:#b8c1c0;
+  font:400 19px/1 system-ui;
+  cursor:pointer;
+}
+.portfolio-koers-tp-trades{display:grid}
+.portfolio-koers-tp-trade{
+  display:grid;
+  grid-template-columns:minmax(54px,1fr) minmax(64px,.8fr) 42px;
+  align-items:center;
+  gap:7px;
+  min-height:38px;
+  border-bottom:1px solid rgba(117,153,149,.16);
+}
+.portfolio-koers-tp-trade>strong{color:#edf3f1;font:900 9px/1 system-ui}
+.portfolio-koers-tp-trade>b{color:#31e9aa;font:900 9px/1 system-ui;text-align:left}
+.portfolio-koers-tp-trade>span{color:#c1cbca;font:800 8px/1 system-ui;text-align:right}
+.portfolio-koers-tp-empty{padding:14px 2px;color:#9caeaa;font:750 7px/1.35 system-ui;text-align:center}
+.portfolio-koers-tp-detail>footer{
+  padding-top:8px;
+  color:#839390;
+  font:750 7px/1 system-ui;
+  text-align:center;
+}
+
+.portfolio-koers-ui41-footer{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto 18px;
+  align-items:center;
+  gap:7px;
+  min-height:34px;
+  margin-top:7px;
+  padding:0 8px;
+  border:1px solid rgba(29,207,135,.34);
+  border-radius:11px;
+  background:linear-gradient(180deg,rgba(3,28,21,.74),rgba(2,15,14,.88));
+  box-shadow:inset 0 1px 0 rgba(130,255,205,.035);
+  white-space:nowrap;
+}
+.portfolio-koers-ui41-footer>strong{
+  display:flex;align-items:center;gap:5px;
+  color:#efc84f;
+  font:900 7.6px/1 system-ui;
+}
+.portfolio-koers-ui41-footer>strong>span{font-size:15px}
+.portfolio-koers-ui41-next{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  min-width:0;
+  color:#a8b6b3;
+  font:760 6.8px/1 system-ui;
+}
+.portfolio-koers-ui41-next b{font-size:7.5px;font-weight:950}
+.portfolio-koers-ui41-next .up{color:#2de8aa}
+.portfolio-koers-ui41-next .down{color:#ff6074}
+.portfolio-koers-ui41-bb{color:#d4dcda;font:820 7px/1 system-ui}
+.portfolio-koers-ui41-info{
+  display:grid;place-items:center;
+  width:16px;height:16px;
+  border:1px solid rgba(150,178,179,.45);
+  border-radius:50%;
+  color:#aebdba;
+  font:900 7px/1 system-ui;
+}
+
+@media(max-width:560px){
+  .portfolio-koers-ui41{padding:8px 7px 8px;border-radius:17px}
+  .portfolio-koers-ui41 .portfolio-koers-ui41-header{margin-bottom:6px}
+  .portfolio-koers-ui41 .portfolio-koers-title-line h2{font-size:18px}
+  .portfolio-koers-ui41 .portfolio-koers-heading>small{font-size:8px}
+  .portfolio-koers-ui41 .portfolio-koers-live{padding:4px 6px;font-size:7px}
+  .portfolio-koers-settings{width:31px;height:31px;font-size:15px}
+  .portfolio-koers-zones-button{height:31px;padding:0 8px;font-size:8px}
+  .portfolio-koers-zones-button>span{font-size:14px}
+  .portfolio-koers-ui41-value{min-height:26px;margin-top:2px}
+  .portfolio-koers-ui41-value>strong{font-size:19px}
+  .portfolio-koers-ui41-value>span{font-size:10px}
+  .portfolio-koers-ui41-controls{grid-template-columns:minmax(0,1fr) 31px;gap:6px;margin-top:5px}
+  .portfolio-koers-ui41 .portfolio-koers-toolbar button{height:30px;font-size:8px}
+  .portfolio-koers-ui41 .portfolio-koers-fullscreen{width:31px;height:31px}
+  .portfolio-koers-ui41 .portfolio-koers-view-toggle{margin-top:5px}
+  .portfolio-koers-ui41 .portfolio-koers-view-toggle button{height:24px;padding:0 9px;font-size:6.5px}
+  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:318px}
+  .portfolio-koers-ui41 .portfolio-koers-event.portfolio-koers-event-chip{height:22px;padding:0 5px}
+  .portfolio-koers-ui41 .portfolio-koers-event-chip.tp{height:27px;min-width:69px;padding:0 7px 0 5px}
+  .portfolio-koers-ui41 .portfolio-koers-event-chip b{font-size:7px}
+  .portfolio-koers-direction-arrow{width:12px;height:15px;flex-basis:12px}
+  .portfolio-koers-moneybag{width:15px;height:15px;flex-basis:15px;font-size:12px}
+  .portfolio-koers-tp-detail{left:24px;top:30px;width:min(260px,calc(100% - 35px));padding:9px 10px 8px}
+  .portfolio-koers-ui41-footer{gap:5px;padding:0 6px}
+  .portfolio-koers-ui41-next{gap:4px;font-size:6px}
+}
+@media(max-width:385px){
+  .portfolio-koers-ui41 .portfolio-koers-header{display:block}
+  .portfolio-koers-ui41 .portfolio-koers-title-line h2{font-size:17px}
+  .portfolio-koers-zones-button{padding:0 6px}
+  .portfolio-koers-ui41-value>strong{font-size:18px}
+  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:310px}
+  .portfolio-koers-ui41-footer{grid-template-columns:auto minmax(0,1fr) auto 16px}
+  .portfolio-koers-ui41-footer>strong{font-size:6.7px}
+  .portfolio-koers-ui41-next{font-size:5.6px;gap:3px}
+  .portfolio-koers-ui41-next b{font-size:6.6px}
+  .portfolio-koers-ui41-bb{font-size:6.4px}
+  .portfolio-koers-tp-detail{left:18px;top:26px;width:calc(100% - 26px)}
+}
