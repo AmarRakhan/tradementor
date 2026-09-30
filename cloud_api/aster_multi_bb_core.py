@@ -331,12 +331,88 @@ def _zone_entry_multiplier(zone: Any, growth_percent: float, max_multiplier: flo
     return min(cap, 1.0 + distance * growth)
 
 
-def _plan_new(client: Any, row: dict[str, Any], price: float, *, entry_margin_usd: float, entry_notional_usd: float, entry_sizing_mode: str, minimum_leverage: int, maximum_leverage: int | None = None) -> tuple[PairExecutionPlan, dict[str, Any]]:
-    symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
-    resolved = resolve_entry(payload, symbol, configured_minimum=minimum_leverage, configured_maximum=maximum_leverage,
-        entry_margin_usd=entry_margin_usd, entry_notional_usd=entry_notional_usd, entry_sizing_mode=entry_sizing_mode)
+def _entry_sizing_for_side(settings: Any, symbol: str, side: str) -> tuple[float, float]:
+    """Resolve NEW-entry sizing from an explicit final side, never stack context."""
+    normalized_side = str(side).upper().strip()
+    if normalized_side not in {"LONG", "SHORT"}:
+        raise ValueError("ENTRY_SIDE_SIZING_MISMATCH: side must be LONG or SHORT")
+    normalized_symbol = str(symbol or "").upper().strip()
+    overrides = getattr(settings, "pair_overrides", {})
+    override = overrides.get(normalized_symbol, {}) if isinstance(overrides, dict) and normalized_symbol else {}
+    if not isinstance(override, dict):
+        override = {}
+
+    margin_attr = "entry_margin_short_usd" if normalized_side == "SHORT" else "entry_margin_long_usd"
+    notional_attr = "entry_notional_short_usd" if normalized_side == "SHORT" else "entry_notional_long_usd"
+
+    if "entryMarginUsd" in override:
+        margin = _f(override.get("entryMarginUsd"))
+    else:
+        try:
+            margin = _f(getattr(settings, margin_attr))
+        except AttributeError:
+            margin = _f(getattr(settings, "entry_margin_usd"))
+
+    if "entryNotionalUsd" in override:
+        notional = _f(override.get("entryNotionalUsd"))
+    else:
+        try:
+            notional = _f(getattr(settings, notional_attr))
+        except AttributeError:
+            notional = _f(getattr(settings, "entry_notional_usd"))
+
+    if margin <= 0 or notional <= 0:
+        raise ValueError(f"ENTRY_SIDE_SIZING_MISMATCH: invalid {normalized_side} entry sizing")
+    return margin, notional
+
+
+def _require_entry_sizing_match(settings: Any, symbol: str, side: str, sizing: dict[str, Any]) -> None:
+    """Fail closed if a future change disconnects final side from planned sizing input."""
+    expected_margin, expected_notional = _entry_sizing_for_side(settings, symbol, side)
+    multiplier = _f(sizing.get("multiplier"), 1.0)
+    configured_margin = _f(sizing.get("configuredMarginUsd"))
+    configured_notional = _f(sizing.get("configuredNotionalUsd"))
+    planned_margin = _f(sizing.get("plannedInputMarginUsd"))
+    planned_notional = _f(sizing.get("plannedInputNotionalUsd"))
+    if (
+        multiplier <= 0
+        or not math.isclose(configured_margin, expected_margin, rel_tol=0.0, abs_tol=1e-12)
+        or not math.isclose(configured_notional, expected_notional, rel_tol=0.0, abs_tol=1e-12)
+        or not math.isclose(planned_margin, expected_margin * multiplier, rel_tol=0.0, abs_tol=1e-12)
+        or not math.isclose(planned_notional, expected_notional * multiplier, rel_tol=0.0, abs_tol=1e-12)
+    ):
+        raise ValueError("ENTRY_SIDE_SIZING_MISMATCH")
+
+
+def _plan_new(client: Any, row: dict[str, Any], price: float, *, settings: Any, side: str,
+              entry_multiplier: float = 1.0) -> tuple[PairExecutionPlan, dict[str, Any], dict[str, Any]]:
+    symbol = str(row.get("symbol", "")).upper()
+    configured_margin, configured_notional = _entry_sizing_for_side(settings, symbol, side)
+    multiplier = _f(entry_multiplier, 1.0)
+    if multiplier <= 0:
+        raise ValueError("ENTRY_SIDE_SIZING_MISMATCH: entry multiplier must be positive")
+    planned_margin = configured_margin * multiplier
+    planned_notional = configured_notional * multiplier
+    sizing = {
+        "side": str(side).upper(),
+        "configuredMarginUsd": configured_margin,
+        "configuredNotionalUsd": configured_notional,
+        "plannedInputMarginUsd": planned_margin,
+        "plannedInputNotionalUsd": planned_notional,
+        "multiplier": multiplier,
+    }
+    _require_entry_sizing_match(settings, symbol, side, sizing)
+    payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
+    resolved = resolve_entry(
+        payload, symbol,
+        configured_minimum=settings.minimum_leverage,
+        configured_maximum=settings.maximum_leverage,
+        entry_margin_usd=planned_margin,
+        entry_notional_usd=planned_notional,
+        entry_sizing_mode=settings.entry_sizing_mode,
+    )
     plan = plan_pair(row, rows, price, resolved["orderNotional"], accepted_leverage=int(resolved["leverage"]))
-    return plan, resolved
+    return plan, resolved, sizing
 
 
 def _plan_asymmetric_entries(client: Any, row: dict[str, Any], price: float, settings: MultiBbConfig) -> tuple[PairExecutionPlan, PairExecutionPlan, dict[str, Any], dict[str, Any]]:
@@ -348,17 +424,18 @@ def _plan_asymmetric_entries(client: Any, row: dict[str, Any], price: float, set
     symbol = str(row.get("symbol", "")).upper(); payload = client.leverage_brackets(symbol); rows = tier_bracket_rows(payload, symbol)
     exchange_maximum=max((_i(x.get("initialLeverage")) for x in rows),default=0)
     configured_maximum=getattr(settings, "maximum_leverage", None)
+    long_entry_margin, long_entry_notional = _entry_sizing_for_side(settings, symbol, "LONG")
     maximum=exchange_maximum if configured_maximum is None else min(exchange_maximum, int(configured_maximum))
     if maximum < settings.minimum_leverage:
         raise ValueError(f"{symbol}: max {exchange_maximum}x < minimum {settings.minimum_leverage}x")
     last_error: Exception | None = None
     for leverage in range(maximum, settings.minimum_leverage - 1, -1):
         if settings.entry_sizing_mode == "margin":
-            long_notional=settings.entry_margin_usd * leverage
-            short_notional=settings.entry_margin_usd * settings.short_start_multiplier * leverage
+            long_notional=long_entry_margin * leverage
+            short_notional=long_entry_margin * settings.short_start_multiplier * leverage
         else:
-            long_notional=settings.entry_notional_usd
-            short_notional=settings.entry_notional_usd * settings.short_start_multiplier
+            long_notional=long_entry_notional
+            short_notional=long_entry_notional * settings.short_start_multiplier
         try:
             long_plan = plan_pair(row, rows, price, long_notional, accepted_leverage=leverage)
             short_plan = plan_pair(row, rows, price, short_notional, accepted_leverage=leverage, existing_contract_notional=long_plan.notional_per_leg)
@@ -1069,20 +1146,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     )
     zone_lifecycle = "ACTIVE" if zone_mode else ("DRAINING" if zone_owned_open_count > 0 else "OFF")
     zone_entry_multiplier = 1.0
-    zone_entry_margin_usd = float(settings.entry_margin_usd)
-    zone_entry_notional_usd = float(settings.entry_notional_usd)
     if zone_mode:
         context = zone_context if isinstance(zone_context, dict) else {}
         zone_entry_multiplier = _zone_entry_multiplier(
             context.get("activeZone"), settings.zone_entry_growth_percent, settings.zone_entry_max_multiplier
         )
-        zone_entry_margin_usd *= zone_entry_multiplier
-        zone_entry_notional_usd *= zone_entry_multiplier
-        fallback_long = _f(getattr(settings, "entry_notional_long_usd", 0.0), _f(settings.entry_notional_usd)) * zone_entry_multiplier
-        fallback_short = _f(getattr(settings, "entry_notional_short_usd", 0.0), _f(settings.entry_notional_usd)) * zone_entry_multiplier
+        zone_long_margin, zone_long_notional = _entry_sizing_for_side(settings, "", "LONG")
+        zone_short_margin, zone_short_notional = _entry_sizing_for_side(settings, "", "SHORT")
+        fallback_long = zone_long_notional * zone_entry_multiplier
+        fallback_short = zone_short_notional * zone_entry_multiplier
         if settings.entry_sizing_mode == "margin":
-            fallback_long = _f(getattr(settings, "entry_margin_long_usd", 0.0), _f(settings.entry_margin_usd)) * zone_entry_multiplier * max(1, settings.minimum_leverage)
-            fallback_short = _f(getattr(settings, "entry_margin_short_usd", 0.0), _f(settings.entry_margin_usd)) * zone_entry_multiplier * max(1, settings.minimum_leverage)
+            fallback_long = zone_long_margin * zone_entry_multiplier * max(1, settings.minimum_leverage)
+            fallback_short = zone_short_margin * zone_entry_multiplier * max(1, settings.minimum_leverage)
         fallback_unit = (fallback_long + fallback_short) / 2.0 if fallback_long > 0 and fallback_short > 0 else max(fallback_long, fallback_short, 1.0)
         zone_state, state, zone_report = prepare_zone_runtime(
             raw_zone_state=raw_state.get("zoneSoldierState"),
@@ -1102,14 +1177,20 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if zone_report is not None:
             zone_report["lifecycle"] = "ACTIVE"
             zone_report["drainingOpenCount"] = 0
-            base_entry = float(settings.entry_margin_usd if settings.entry_sizing_mode == "margin" else settings.entry_notional_usd)
+            base_long_entry = zone_long_margin if settings.entry_sizing_mode == "margin" else zone_long_notional
+            base_short_entry = zone_short_margin if settings.entry_sizing_mode == "margin" else zone_short_notional
             zone_report["entrySizing"] = {
                 "mode": settings.entry_sizing_mode,
                 "growthPercentPerZone": float(settings.zone_entry_growth_percent),
                 "maxMultiplier": float(settings.zone_entry_max_multiplier),
                 "activeZoneMultiplier": float(zone_entry_multiplier),
-                "baseEntryUsd": base_entry,
-                "activeZoneEntryUsd": base_entry * zone_entry_multiplier,
+                # Legacy shared field remains LONG-backed, matching public_dict aliases.
+                "baseEntryUsd": base_long_entry,
+                "activeZoneEntryUsd": base_long_entry * zone_entry_multiplier,
+                "baseEntryLongUsd": base_long_entry,
+                "baseEntryShortUsd": base_short_entry,
+                "activeZoneEntryLongUsd": base_long_entry * zone_entry_multiplier,
+                "activeZoneEntryShortUsd": base_short_entry * zone_entry_multiplier,
             }
         if not dry_run:
             ref.set({
@@ -1270,7 +1351,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         symbol = ranked_row["symbol"]
         orphan_priority = bool(ranked_row.get("orphanShortPriority"))
         if symbol == "HYPEUSDT":
-            print(f"HYPE_ENTRY_DIAG stage=candidate sent={sent} budget={budget} slots={settings.long_slots}/{settings.short_slots} longNeed={long_need} shortNeed={short_need} accountRemaining={account_remaining_capacity} available={available} price={prices.get(symbol, 0)} minLeverage={settings.minimum_leverage} entryMargin={settings.entry_margin_usd} manual={settings.manual_symbol_selection_enabled} asym={settings.asymmetric_hedge_enabled} dryRun={dry_run}", flush=True)
+            diag_long_margin, _diag_long_notional = _entry_sizing_for_side(settings, symbol, "LONG")
+            diag_short_margin, _diag_short_notional = _entry_sizing_for_side(settings, symbol, "SHORT")
+            print(f"HYPE_ENTRY_DIAG stage=candidate sent={sent} budget={budget} slots={settings.long_slots}/{settings.short_slots} longNeed={long_need} shortNeed={short_need} accountRemaining={account_remaining_capacity} available={available} price={prices.get(symbol, 0)} minLeverage={settings.minimum_leverage} entryMarginLong={diag_long_margin} entryMarginShort={diag_short_margin} manual={settings.manual_symbol_selection_enabled} asym={settings.asymmetric_hedge_enabled} dryRun={dry_run}", flush=True)
         if (settings.asymmetric_hedge_enabled and symbol in active_symbols) or symbol not in info_map or prices.get(symbol, 0) <= 0:
             if symbol == "HYPEUSDT":
                 print(f"HYPE_ENTRY_DIAG stage=precheck_skip asymActive={settings.asymmetric_hedge_enabled and symbol in active_symbols} hasInfo={symbol in info_map} price={prices.get(symbol, 0)}", flush=True)
@@ -1456,6 +1539,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         try:
             if paired:
                 plan, short_plan, tier, short_tier = _plan_asymmetric_entries(client, info_map[symbol], prices[symbol], settings)
+                configured_margin, configured_notional = _entry_sizing_for_side(settings, symbol, "LONG")
+                entry_sizing = {
+                    "side": "LONG",
+                    "configuredMarginUsd": configured_margin,
+                    "configuredNotionalUsd": configured_notional,
+                    "plannedInputMarginUsd": configured_margin,
+                    "plannedInputNotionalUsd": configured_notional,
+                    "multiplier": 1.0,
+                }
+                _require_entry_sizing_match(settings, symbol, "LONG", entry_sizing)
             elif ranked_row.get("orphanShortPriority"):
                 # Same-symbol LONG rescue must inherit the already-open SHORT's
                 # contract leverage. Aster leverage is contract-wide; planning a
@@ -1466,11 +1559,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 if orphan_short is None:
                     raise ValueError(f"{symbol}: orphan SHORT verdween vóór LONG rescue")
                 existing_leverage = max(1, _i(orphan_short.get("leverage")))
+                configured_margin, configured_notional = _entry_sizing_for_side(settings, symbol, "LONG")
+                entry_sizing = {
+                    "side": "LONG",
+                    "configuredMarginUsd": configured_margin,
+                    "configuredNotionalUsd": configured_notional,
+                    "plannedInputMarginUsd": configured_margin,
+                    "plannedInputNotionalUsd": configured_notional,
+                    "multiplier": 1.0,
+                }
+                _require_entry_sizing_match(settings, symbol, "LONG", entry_sizing)
                 # Counterpart recovery inherits the already-live contract leverage.
                 rows = tier_bracket_rows(bracket_payload, symbol)
-                rescue_notional = (float(settings.entry_margin_usd) * existing_leverage
+                rescue_notional = (configured_margin * existing_leverage
                                    if settings.entry_sizing_mode == "margin"
-                                   else float(settings.entry_notional_usd))
+                                   else configured_notional)
                 existing_notional = abs(_f(orphan_short.get("positionAmt"))) * prices[symbol]
                 plan = plan_pair(info_map[symbol], rows, prices[symbol], rescue_notional,
                                  accepted_leverage=existing_leverage,
@@ -1481,7 +1584,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         "orphanContractLeverage": existing_leverage}
                 short_plan = None; short_tier = None
             else:
-                plan, tier = _plan_new(client, info_map[symbol], prices[symbol], entry_margin_usd=zone_entry_margin_usd, entry_notional_usd=zone_entry_notional_usd, entry_sizing_mode=settings.entry_sizing_mode, minimum_leverage=settings.minimum_leverage, maximum_leverage=settings.maximum_leverage)
+                plan, tier, entry_sizing = _plan_new(
+                    client, info_map[symbol], prices[symbol],
+                    settings=settings, side=side,
+                    entry_multiplier=zone_entry_multiplier if zone_mode else 1.0,
+                )
                 short_plan = None; short_tier = None
         except Exception as exc:
             reason = str(exc)
@@ -1522,8 +1629,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 else: short_need = 0
                 continue
             planned_soldier = candidates_for_side[0]
-        entry_action = {"kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
-            "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"]}
+        entry_action = {
+            "kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage,
+            "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
+            "exchangeMaxLeverage": tier["exchangeMaxLeverage"], "forcedBelowConfiguredMinimum": tier["forcedBelowConfiguredMinimum"],
+            "configuredMarginUsd": _f(entry_sizing.get("configuredMarginUsd")),
+            "configuredNotionalUsd": _f(entry_sizing.get("configuredNotionalUsd")),
+            "plannedInputMarginUsd": _f(entry_sizing.get("plannedInputMarginUsd")),
+            "plannedInputNotionalUsd": _f(entry_sizing.get("plannedInputNotionalUsd")),
+            "entrySizingMultiplier": _f(entry_sizing.get("multiplier"), 1.0),
+        }
         if planned_soldier is not None:
             entry_action.update({"originZone": planned_soldier.get("originZone"), "originZoneCycleId": planned_soldier.get("originZoneCycleId"),
                 "soldierId": planned_soldier.get("soldierId"), "soldierRole": planned_soldier.get("role"),
@@ -1551,6 +1666,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             elif short_action is not None and defer_paired_short:
                 actions.append({"kind": "ASYM_SHORT_ENTRY_PENDING", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_PREEXISTING_LONG"})
         else:
+            _require_entry_sizing_match(settings, symbol, side, entry_sizing)
+            print(
+                "ENTRY_SIDE_SIZING "
+                f"symbol={symbol} side={side} mode={settings.entry_sizing_mode} "
+                f"configuredMargin={_f(entry_sizing.get('configuredMarginUsd'))} "
+                f"plannedMargin={_f(entry_sizing.get('plannedInputMarginUsd'))} "
+                f"configuredNotional={_f(entry_sizing.get('configuredNotionalUsd'))} "
+                f"plannedNotional={_f(entry_sizing.get('plannedInputNotionalUsd'))}",
+                flush=True,
+            )
             def entry_before_submit(intent: Any) -> None:
                 require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
                                         timeframe=_effective_entry_timeframe(settings, side, exposure_refill), live_price=None, force_refresh=True, stage="pre_order")
@@ -1631,6 +1756,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 write_payload["zoneSoldierState"] = zone_state
             ref.set(write_payload, merge=True)
             ref.collection("audit").add({"event": "MULTI_BB_ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage, "cycleId": cycle_id,
+                "configuredMarginUsd": _f(entry_sizing.get("configuredMarginUsd")),
+                "configuredNotionalUsd": _f(entry_sizing.get("configuredNotionalUsd")),
+                "plannedInputMarginUsd": _f(entry_sizing.get("plannedInputMarginUsd")),
+                "plannedInputNotionalUsd": _f(entry_sizing.get("plannedInputNotionalUsd")),
+                "entrySizingMultiplier": _f(entry_sizing.get("multiplier"), 1.0),
                 "originZone": state[key].get("originZone"), "originZoneCycleId": state[key].get("originZoneCycleId"),
                 "soldierId": state[key].get("soldierId"), "soldierRole": state[key].get("soldierRole"),
                 "timestamp": datetime.now(timezone.utc)})
