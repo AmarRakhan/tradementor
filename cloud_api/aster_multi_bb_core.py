@@ -385,7 +385,7 @@ def _require_entry_sizing_match(settings: Any, symbol: str, side: str, sizing: d
 
 
 def _plan_new(client: Any, row: dict[str, Any], price: float, *, settings: Any, side: str,
-              entry_multiplier: float = 1.0) -> tuple[PairExecutionPlan, dict[str, Any], dict[str, Any]]:
+              entry_multiplier: float = 1.0) -> tuple[PairExecutionPlan, dict[str, Any]]:
     symbol = str(row.get("symbol", "")).upper()
     configured_margin, configured_notional = _entry_sizing_for_side(settings, symbol, side)
     multiplier = _f(entry_multiplier, 1.0)
@@ -412,7 +412,7 @@ def _plan_new(client: Any, row: dict[str, Any], price: float, *, settings: Any, 
         entry_sizing_mode=settings.entry_sizing_mode,
     )
     plan = plan_pair(row, rows, price, resolved["orderNotional"], accepted_leverage=int(resolved["leverage"]))
-    return plan, resolved, sizing
+    return plan, resolved
 
 
 def _plan_asymmetric_entries(client: Any, row: dict[str, Any], price: float, settings: MultiBbConfig) -> tuple[PairExecutionPlan, PairExecutionPlan, dict[str, Any], dict[str, Any]]:
@@ -1584,10 +1584,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         "orphanContractLeverage": existing_leverage}
                 short_plan = None; short_tier = None
             else:
-                plan, tier, entry_sizing = _plan_new(
+                configured_margin, configured_notional = _entry_sizing_for_side(settings, symbol, side)
+                sizing_multiplier = zone_entry_multiplier if zone_mode else 1.0
+                entry_sizing = {
+                    "side": side,
+                    "configuredMarginUsd": configured_margin,
+                    "configuredNotionalUsd": configured_notional,
+                    "plannedInputMarginUsd": configured_margin * sizing_multiplier,
+                    "plannedInputNotionalUsd": configured_notional * sizing_multiplier,
+                    "multiplier": sizing_multiplier,
+                }
+                _require_entry_sizing_match(settings, symbol, side, entry_sizing)
+                plan, tier = _plan_new(
                     client, info_map[symbol], prices[symbol],
                     settings=settings, side=side,
-                    entry_multiplier=zone_entry_multiplier if zone_mode else 1.0,
+                    entry_multiplier=sizing_multiplier,
                 )
                 short_plan = None; short_tier = None
         except Exception as exc:
