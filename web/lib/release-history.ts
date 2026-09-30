@@ -26,36 +26,66 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-30",
-  title: "Botconfigurator 3.0 · strategie-iconen hersteld naar referentie",
+  title: "Botconfigurator strategie-iconen · CI release-regressies uitgelijnd",
   newItems: [
-    "Zone Warriors gebruikt opnieuw de eerder gekozen visuele richting van referentie-optie 1: een premium groen/gouden warriorhelm met duidelijke prijszonelijnen.",
-    "Classic DCA gebruikt opnieuw de eerder gekozen visuele richting van referentie-optie 10: dalende koopstappen met gouden DCA-momenten en een groene herstelbeweging richting winst.",
+    "De Build 475 icon-correctie blijft inhoudelijk ongewijzigd: Zone Warriors gebruikt referentie-optie 1 en Classic DCA referentie-optie 10.",
   ],
   problems: [
-    "De strategiekaarten in Build 474 gebruikten vereenvoudigde vervangende SVG-iconen die zichtbaar afweken van de goedgekeurde referentiebeelden.",
-    "Daardoor oogden Zone Warriors en Classic DCA vlakker en minder premium dan het ontwerp waarop eerder akkoord was gegeven.",
+    "Na Build 475 bleken twee bestaande safety-tests nog expliciet Build 474 als actuele webappversie te verwachten.",
+    "De applicatie buildde wel, maar Web Cloud CI stopte daardoor in de safety-testfase.",
   ],
   causes: [
-    "De implementatie verwees naar generieke, handmatig vereenvoudigde bestanden zone-warriors-icon.svg en classic-dca-icon.svg in plaats van de gekozen referentievarianten.",
+    "De release-nummerasserties in botconfigurator-v31-quick-edit.test.mjs en portfolio-koers-structure-build446.test.mjs waren nog niet meegevoerd naar het nieuwe buildnummer.",
   ],
   fixes: [
-    "Nieuwe referentiegebonden assets zijn toegevoegd als zone-warriors-icon-ref1.svg en classic-dca-icon-ref10.svg.",
-    "Botconfigurator 3.0 verwijst uitsluitend voor deze twee strategiekaarten naar de nieuwe assets; strategie-, opslag- en runtimegedrag zijn niet gewijzigd.",
-    "De nieuwe bestandsnamen voorkomen dat een bestaande PWA- of browsercache de oude SVG-versies blijft tonen.",
+    "Alle regressietests die het actuele WEBAPP_BUILD_NUMBER controleren zijn uitgelijnd op Build 476.",
+    "Er is geen functionele botcode aangepast; dit is uitsluitend releaseadministratie en test-contractonderhoud voor de icon-uitrol.",
   ],
   now: [
-    "De twee strategiekaarten sluiten visueel weer aan op de eerder gekozen referenties, met dezelfde groen/gouden premium richting.",
-    "Deze build bevat uitsluitend de icon-correctie en releaseadministratie; scanner-, entry-, DCA-, TP-, Auto Hedge- en Zone Warriors-runtime blijven ongewijzigd.",
+    "De goedgekeurde strategie-iconen blijven actief en de volledige web safety-suite kan opnieuw doorlopen met één consistente actuele build.",
   ],
   technicalDetails: [
-    "Zone Warriors referentiebord: file_00000000f008821087773211c6f3f52e; gekozen optie 1.",
-    "Classic DCA referentiebord: file_000000004db881f4b37fc9ac26a7a0d0; gekozen optie 10.",
-    "UI: web/components/aster-bot-configurator-v3.tsx.",
-    "Assets: web/public/zone-warriors-icon-ref1.svg en web/public/classic-dca-icon-ref10.svg.",
+    "Visuele assets blijven web/public/zone-warriors-icon-ref1.svg en web/public/classic-dca-icon-ref10.svg.",
+    "Geen scanner-, entry-, DCA-, TP-, Auto Hedge- of Zone Warriors-runtime gewijzigd.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-475-botconfigurator-reference-icons",
+    version: "46",
+    build: "475",
+    releasedAt: "2026-09-30",
+    title: "Botconfigurator 3.0 · strategie-iconen hersteld naar referentie",
+    newItems: [
+      "Zone Warriors gebruikt opnieuw de eerder gekozen visuele richting van referentie-optie 1: een premium groen/gouden warriorhelm met duidelijke prijszonelijnen.",
+      "Classic DCA gebruikt opnieuw de eerder gekozen visuele richting van referentie-optie 10: dalende koopstappen met gouden DCA-momenten en een groene herstelbeweging richting winst.",
+    ],
+    problems: [
+      "De strategiekaarten in Build 474 gebruikten vereenvoudigde vervangende SVG-iconen die zichtbaar afweken van de goedgekeurde referentiebeelden.",
+      "Daardoor oogden Zone Warriors en Classic DCA vlakker en minder premium dan het ontwerp waarop eerder akkoord was gegeven.",
+    ],
+    causes: [
+      "De implementatie verwees naar generieke, handmatig vereenvoudigde bestanden zone-warriors-icon.svg en classic-dca-icon.svg in plaats van de gekozen referentievarianten.",
+    ],
+    fixes: [
+      "Nieuwe referentiegebonden assets zijn toegevoegd als zone-warriors-icon-ref1.svg en classic-dca-icon-ref10.svg.",
+      "Botconfigurator 3.0 verwijst uitsluitend voor deze twee strategiekaarten naar de nieuwe assets; strategie-, opslag- en runtimegedrag zijn niet gewijzigd.",
+      "De nieuwe bestandsnamen voorkomen dat een bestaande PWA- of browsercache de oude SVG-versies blijft tonen.",
+    ],
+    now: [
+      "De twee strategiekaarten sluiten visueel weer aan op de eerder gekozen referenties, met dezelfde groen/gouden premium richting.",
+      "Deze build bevat uitsluitend de icon-correctie en releaseadministratie; scanner-, entry-, DCA-, TP-, Auto Hedge- en Zone Warriors-runtime blijven ongewijzigd.",
+    ],
+    technicalDetails: [
+      "Zone Warriors referentiebord: file_00000000f008821087773211c6f3f52e; gekozen optie 1.",
+      "Classic DCA referentiebord: file_000000004db881f4b37fc9ac26a7a0d0; gekozen optie 10.",
+      "UI: web/components/aster-bot-configurator-v3.tsx.",
+      "Assets: web/public/zone-warriors-icon-ref1.svg en web/public/classic-dca-icon-ref10.svg.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-474-portfolio-koers-ui41-marker-density",
     version: "46",
