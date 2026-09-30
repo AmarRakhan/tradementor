@@ -245,8 +245,9 @@ def test_zone_entry_growth_is_configurable_and_used_by_the_real_entry_planner():
     assert cfg.zone_entry_growth_percent == 2.5
     assert cfg.zone_entry_max_multiplier == 1.15
     source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
-    assert "entry_margin_usd=zone_entry_margin_usd" in source
-    assert "entry_notional_usd=zone_entry_notional_usd" in source
+    assert "_entry_sizing_for_side(settings, symbol, side)" in source
+    assert "entry_multiplier=zone_entry_multiplier if zone_mode else 1.0" in source
+    assert '"baseEntryLongUsd"' in source and '"baseEntryShortUsd"' in source
     assert '"entrySizing"' in source
 
 
