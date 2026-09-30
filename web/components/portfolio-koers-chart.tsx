@@ -67,10 +67,10 @@ const compactUsd=(value:number|null|undefined)=>{
 const signedUsd=(value:number|null|undefined)=>{
   if(!Number.isFinite(Number(value)))return "—";
   const number=Number(value),sign=number<0?"−":"+";
-  return `${sign}${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}`;
+  return sign+"$"+new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number));
 };
 const accountUsd=(value:number|null|undefined)=>Number.isFinite(Number(value))
-  ? `${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value))}`
+  ? "$"+new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value))
   : "—";
 const durationLabel=(minutes:number|null|undefined)=>Number.isFinite(Number(minutes))
   ? (Number(minutes)>=60?`${Math.floor(Number(minutes)/60)}u ${Math.round(Number(minutes)%60)}m`:`${Math.round(Number(minutes))}m`)
