@@ -49,13 +49,13 @@ def test_timeframe_buckets_match_requested_contract():
 def test_trade_markers_are_bucketed_and_tp_is_aggregated():
     activity = {
         "entries": [
-            {"timestampMs": 61_000, "side": "LONG", "executedNotionalUsd": 12.0},
-            {"timestampMs": 65_000, "side": "LONG", "executedNotionalUsd": 8.0},
-            {"timestampMs": 66_000, "side": "SHORT", "executedNotionalUsd": 10.0},
+            {"timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG", "executedNotionalUsd": 12.0},
+            {"timestampMs": 65_000, "symbol": "BTCUSDT", "side": "LONG", "executedNotionalUsd": 8.0},
+            {"timestampMs": 66_000, "symbol": "ETHUSDT", "side": "SHORT", "executedNotionalUsd": 10.0},
         ],
         "exits": [
-            {"timestampMs": 70_000, "side": "LONG", "realizedPnlUsd": 1.25},
-            {"timestampMs": 72_000, "side": "SHORT", "realizedPnlUsd": 0.75},
+            {"timestampMs": 70_000, "symbol": "BTCUSDT", "side": "LONG", "realizedPnlUsd": 1.25},
+            {"timestampMs": 72_000, "symbol": "ETHUSDT", "side": "SHORT", "realizedPnlUsd": 0.75},
         ],
     }
     rows = aggregate_trade_activity(activity, "1m")
@@ -66,7 +66,27 @@ def test_trade_markers_are_bucketed_and_tp_is_aggregated():
     tp = next(row for row in rows if row["kind"] == "tp")
     assert tp["count"] == 2
     assert tp["realizedPnlUsd"] == 2.0
+    assert tp["trades"] == [
+        {"symbol": "BTC", "realizedPnlUsd": 1.25, "durationMinutes": 0},
+        {"symbol": "ETH", "realizedPnlUsd": 0.75, "durationMinutes": 0},
+    ]
     assert "TP" in tp["label"]
+
+
+def test_tp_duration_uses_first_entry_of_confirmed_cycle_not_latest_dca():
+    activity = {
+        "entries": [
+            {"timestampMs": 60_000, "symbol": "BTCUSDT", "side": "LONG", "quantity": 1.0},
+            {"timestampMs": 360_000, "symbol": "BTCUSDT", "side": "LONG", "quantity": 1.0},
+        ],
+        "exits": [
+            {"timestampMs": 1_260_000, "symbol": "BTCUSDT", "side": "LONG", "quantity": 2.0, "realizedPnlUsd": 5.0},
+        ],
+    }
+    rows = aggregate_trade_activity(activity, "1m")
+    tp = next(row for row in rows if row["kind"] == "tp")
+    assert tp["trades"][0]["symbol"] == "BTC"
+    assert tp["trades"][0]["durationMinutes"] == 20
 
 
 def test_external_cashflows_remain_separate_from_trading_markers():

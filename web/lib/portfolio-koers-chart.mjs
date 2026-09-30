@@ -9,6 +9,18 @@ function finite(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function normalizeTpTrades(rows) {
+  return (Array.isArray(rows) ? rows : []).flatMap((raw)=>{
+    if(!raw || typeof raw!=="object") return [];
+    const symbol=String(raw.symbol||"").toUpperCase().replace(/(?:USDT|USDC|BUSD|USD)$/,"").trim();
+    if(!symbol) return [];
+    const realizedPnlUsd=finite(raw.realizedPnlUsd);
+    const durationRaw=raw.durationMinutes;
+    const durationMinutes=durationRaw===null||durationRaw===undefined||durationRaw===""?null:Math.max(0,Math.round(finite(durationRaw)));
+    return [{symbol,realizedPnlUsd,durationMinutes}];
+  });
+}
+
 export function normalizePortfolioKoersPayload(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   const byTime = new Map();
@@ -23,6 +35,7 @@ export function normalizePortfolioKoersPayload(raw) {
   const markers = (Array.isArray(source.markers) ? source.markers : []).filter((row)=>row && typeof row==="object" && finite(row.time)>0).map((row)=>({
     ...row, time:Math.floor(finite(row.time)), atMs:Math.floor(finite(row.atMs)) || Math.floor(finite(row.time))*1000,
     count:Math.max(1,Math.floor(finite(row.count))), notionalUsd:finite(row.notionalUsd), realizedPnlUsd:finite(row.realizedPnlUsd), amountUsd:finite(row.amountUsd),
+    trades:normalizeTpTrades(row.trades),
   })).sort((a,b)=>a.time-b.time);
   const zones = (Array.isArray(source.zones) ? source.zones : []).filter((row)=>row && typeof row==="object").map((row)=>({
     index:Math.trunc(finite(row.index)), label:String(row.label||""), center:finite(row.center), lower:finite(row.lower), upper:finite(row.upper),
@@ -68,6 +81,9 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
       ...((existing&&Array.isArray(existing.activityTypes))?existing.activityTypes:[]),
       ...(Array.isArray(raw.activityTypes)?raw.activityTypes:[]),
     ].map((value)=>String(value).toUpperCase()).filter(Boolean))).sort();
+    const existingTrades=normalizeTpTrades(existing?.trades);
+    const rawTrades=normalizeTpTrades(raw.trades);
+    const trades=rawTrades.length?rawTrades:existingTrades;
     if(!existing){
       byKey.set(key,{
         ...raw,time,
@@ -76,7 +92,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
         notionalUsd:finite(raw.notionalUsd),
         realizedPnlUsd:finite(raw.realizedPnlUsd),
         amountUsd:finite(raw.amountUsd),
-        originZones,soldierRoles,activityTypes,
+        originZones,soldierRoles,activityTypes,trades,
       });
       continue;
     }
@@ -90,7 +106,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
       notionalUsd:Math.max(Math.abs(finite(existing.notionalUsd)),Math.abs(finite(raw.notionalUsd))),
       realizedPnlUsd:Math.abs(finite(raw.realizedPnlUsd))>Math.abs(finite(existing.realizedPnlUsd))?finite(raw.realizedPnlUsd):finite(existing.realizedPnlUsd),
       amountUsd:Math.abs(finite(raw.amountUsd))>Math.abs(finite(existing.amountUsd))?finite(raw.amountUsd):finite(existing.amountUsd),
-      originZones,soldierRoles,activityTypes,
+      originZones,soldierRoles,activityTypes,trades,
       source:preferRaw?String(raw.source||existing.source||""):String(existing.source||raw.source||""),
       label:preferRaw?String(raw.label||existing.label||""):String(existing.label||raw.label||""),
     });

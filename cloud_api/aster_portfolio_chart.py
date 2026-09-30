@@ -144,6 +144,78 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
         return []
     groups: dict[tuple[int, str, str], dict[str, Any]] = {}
     payload = activity if isinstance(activity, dict) else {}
+
+    # UI 4.1 metadata is display-only.  Keep enough confirmed fill evidence on
+    # each TP bucket for the flip-card without changing any trading decisions.
+    entry_times: dict[tuple[str, str], list[int]] = {}
+    for raw in payload.get("entries", []) if isinstance(payload.get("entries"), list) else []:
+        if not isinstance(raw, dict):
+            continue
+        stamp = _event_timestamp_ms(raw)
+        symbol = str(raw.get("symbol", "")).upper().strip()
+        side = str(raw.get("side", "")).upper().strip()
+        if stamp > 0 and symbol and side in {"LONG", "SHORT"}:
+            entry_times.setdefault((symbol, side), []).append(stamp)
+    for stamps in entry_times.values():
+        stamps.sort()
+
+    # Reconstruct the confirmed position cycle so "tijd in trade" starts at the
+    # first entry, not at the latest DCA. This remains read-only display metadata.
+    exit_cycle_opened_at: dict[int, int] = {}
+    cycle_state: dict[tuple[str, str], dict[str, float | int]] = {}
+    activity_rows: list[tuple[int, str, dict[str, Any]]] = []
+    for list_name, action in (("entries", "entry"), ("exits", "exit")):
+        for raw in payload.get(list_name, []) if isinstance(payload.get(list_name), list) else []:
+            if isinstance(raw, dict):
+                stamp = _event_timestamp_ms(raw)
+                if stamp > 0:
+                    activity_rows.append((stamp, action, raw))
+    activity_rows.sort(key=lambda item: (item[0], 0 if item[1] == "entry" else 1))
+    for stamp, action, raw in activity_rows:
+        symbol = str(raw.get("symbol", "")).upper().strip()
+        side = str(raw.get("side", "")).upper().strip()
+        quantity = abs(_number(raw.get("quantity", raw.get("qty"))))
+        if not symbol or side not in {"LONG", "SHORT"} or quantity <= 0:
+            continue
+        key = (symbol, side)
+        state = cycle_state.setdefault(key, {"quantity": 0.0, "openedAtMs": 0})
+        open_quantity = float(state.get("quantity", 0.0) or 0.0)
+        if action == "entry":
+            if open_quantity <= 1e-12:
+                state["openedAtMs"] = stamp
+            state["quantity"] = open_quantity + quantity
+            continue
+        opened = int(state.get("openedAtMs", 0) or 0)
+        if opened > 0 and open_quantity > 1e-12:
+            exit_cycle_opened_at[id(raw)] = opened
+        remaining = max(0.0, open_quantity - quantity)
+        state["quantity"] = remaining
+        if remaining <= 1e-12:
+            state["openedAtMs"] = 0
+
+    def _base_symbol(symbol: Any) -> str:
+        value = str(symbol or "").upper().strip()
+        for quote in ("USDT", "USDC", "BUSD", "USD"):
+            if value.endswith(quote) and len(value) > len(quote):
+                return value[:-len(quote)]
+        return value
+
+    def _duration_minutes(raw: dict[str, Any], stamp: int) -> int | None:
+        for key in ("openedAtMs", "openAtMs", "entryAtMs", "positionOpenedAtMs"):
+            opened = int(_number(raw.get(key)))
+            if opened > 0 and opened <= stamp:
+                return max(0, round((stamp - opened) / 60_000))
+        opened = int(exit_cycle_opened_at.get(id(raw), 0))
+        if opened > 0 and opened <= stamp:
+            return max(0, round((stamp - opened) / 60_000))
+        pair = (str(raw.get("symbol", "")).upper().strip(), str(raw.get("side", "")).upper().strip())
+        candidates = [value for value in entry_times.get(pair, []) if value <= stamp]
+        if not candidates:
+            return None
+        # If the cache does not contain the complete cycle, use the earliest
+        # confirmed entry we do have rather than misreporting the latest DCA.
+        return max(0, round((stamp - candidates[0]) / 60_000))
+
     for list_name, kind in (("entries", "entry"), ("exits", "tp")):
         for raw in payload.get(list_name, []) if isinstance(payload.get(list_name), list) else []:
             if not isinstance(raw, dict):
@@ -167,7 +239,15 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
             })
             group["count"] += 1
             group["notionalUsd"] += abs(_number(raw.get("executedNotionalUsd", raw.get("notionalUsd"))))
-            group["realizedPnlUsd"] += _number(raw.get("realizedPnlUsd"))
+            realized = _number(raw.get("realizedPnlUsd"))
+            group["realizedPnlUsd"] += realized
+            if kind == "tp":
+                group.setdefault("trades", [])
+                group["trades"].append({
+                    "symbol": _base_symbol(raw.get("symbol")),
+                    "realizedPnlUsd": realized,
+                    "durationMinutes": _duration_minutes(raw, stamp),
+                })
             if kind == "entry":
                 origin = raw.get("originZone")
                 if isinstance(origin, int) or (isinstance(origin, str) and origin.lstrip("-+").isdigit()):

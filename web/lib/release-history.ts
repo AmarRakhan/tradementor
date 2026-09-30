@@ -25,36 +25,69 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-09-29",
-  title: "Tradecentrum · handmatige Auto Hedge partial close",
+  releasedAt: "2026-09-30",
+  title: "Portfolio Koers UI 4.1 · TP-clusters en correcte live-zone",
   newItems: [
-    "Een expliciete Sluit 25%, 50%, 75% of 100%-actie kan nu ook op een positie die onderdeel is van Position Loss Auto Hedge worden uitgevoerd.",
-    "Na een bewuste gedeeltelijke close gaat het pair naar Recovery en blijft opnieuw hedgen UIT totdat de gebruiker dat zelf inschakelt.",
+    "Portfolio Koers volgt de twee goedgekeurde mobiele referenties voor kleur, spacing, kaartvormen, controls en eventweergave.",
+    "Take Profits worden per candle als één goud geldzak-cluster getoond met totaal gerealiseerd bedrag en een badge met het aantal onderliggende trades.",
+    "Een tik op een TP-cluster opent in dezelfde grafiek een 3D detailkaart met coin, gerealiseerde winst en tijd in trade.",
+    "LONG- en SHORT-instappen gebruiken symmetrische rechte vectorpijlen; volumebars blijven volledig afwezig.",
   ],
   problems: [
-    "Build 468 loste de volledige 100%-leg-release op, maar 25%, 50% en 75% liepen nog door de bestaande gereserveerde hedge-quantitylock.",
-    "Daardoor kon Tradecentrum een geldige partial-close preview tonen terwijl de backend de expliciete gebruikersactie blokkeerde met 'zou Auto Hedge-dekking onder de gereserveerde hoeveelheid brengen'.",
+    "De oude chart kon veel losse TP ×1/×2 labels tonen waardoor candles, zones en prijsactie moeilijk leesbaar werden.",
+    "De chart kon een zone-status tonen die niet aansloot op de actuele live-equity en daardoor visueel boven of onder de actieve zoneband uitkomen.",
+    "De header herhaalde Accountwaarde/Aster-equity informatie die op mobiel onnodig ruimte innam.",
   ],
   causes: [
-    "De MANUAL_RELEASE_PENDING-flow werd uitsluitend geactiveerd wanneer percentage === 100; partial closes bereikten daarna onveranderd require_auto_hedge_close_allowed.",
+    "Trade-exits waren wel per candle geaggregeerd, maar de presentatielaag gebruikte nog generieke TP-labels zonder bedrag, detaildata of interactieve clustering.",
+    "Verschillende zone-statusbronnen konden op verschillende pollingmomenten in de UI terechtkomen.",
   ],
   fixes: [
-    "De expliciete manual-release-flow wordt nu voor alle vier ondersteunde percentages geactiveerd voordat de Auto Hedge-lock en exchange-submit worden bereikt.",
-    "Na exchange-bevestiging bewaart Recovery zowel de resterende handmatig verkleinde zijde als de tegenoverliggende zijde, met reservedHedgeQty=0 en rehedgeEnabled=false.",
-    "De handmatig verkleinde zijde wordt tijdens Recovery niet automatisch door Strategy 2 teruggevuld.",
-    "Bij een mislukte of onzekere close blijft de pair-state fail-closed zodat geen automatische refill achter de gebruikersactie aan kan lopen.",
+    "De live-price zone is nu de enige zichtbare bron voor chartband, zonelabel, onderste infobalk en de actieve-zone callback naar Portfolio Snapshot.",
+    "De actieve band wordt uit de echte zonegrenzen getekend; Zone 9 of een andere zone wordt nergens visueel hardcoded.",
+    "Bevestigde fill-aggregatie levert per TP-cluster display-only tradedetails met kort coinsymbool, winst en duur, zonder tradinglogica te wijzigen.",
+    "TP-markers zijn aan hun candle gekoppeld met een goud ankerpunt en leader line en gebruiken collision-aware plaatsing.",
+    "De header toont alleen Portfolio Koers, Live, Accountwaarde, live waarde/performance en de afgesproken mobiele controls.",
   ],
   now: [
-    "Wanneer je bijvoorbeeld 25% van PUMP LONG sluit, wordt die 25% daadwerkelijk als reduce-only marktclose uitgevoerd; het resterende pair wordt Recovery en blijft zo totdat je zelf opnieuw hedgen activeert.",
+    "De grafiek blijft rustig: één TP-zakje kan meerdere gesloten trades vertegenwoordigen; tik erop voor de onderliggende coins en resultaten.",
+    "De live candle valt altijd in dezelfde actieve zone die Portfolio Koers en Portfolio Snapshot tonen.",
   ],
   technicalDetails: [
-    "Backend: cloud_api/main.py manual Auto Hedge release/recovery lifecycle.",
-    "UI: web/components/aster-recent-trades.tsx toont het nieuwe partial-close gedrag expliciet.",
-    "Regressiedekking: manual-close contract en Auto Hedge lifecycle-contract voor partial plus full close.",
+    "Referentie standaard: file_00000000e2fc820a9057c8f60c1ec845.",
+    "Referentie TP-detail: file_00000000267082109428370054535e59.",
+    "UI: web/components/portfolio-koers-chart.tsx en web/app/portfolio-koers-chart.css.",
+    "Read-only markerdata: cloud_api/aster_portfolio_chart.py; geen scanner-, order-, DCA-, TP-, hedge- of Zone Warriors-executielogica aangepast.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-471-auto-hedge-partial-close",
+    version: "46",
+    build: "471",
+    releasedAt: "2026-09-29",
+    title: "Tradecentrum · handmatige Auto Hedge partial close",
+    newItems: [
+      "Een expliciete Sluit 25%, 50%, 75% of 100%-actie kan nu ook op een positie die onderdeel is van Position Loss Auto Hedge worden uitgevoerd.",
+      "Na een bewuste gedeeltelijke close gaat het pair naar Recovery en blijft opnieuw hedgen UIT totdat de gebruiker dat zelf inschakelt.",
+    ],
+    problems: [
+      "Build 468 loste de volledige 100%-leg-release op, maar 25%, 50% en 75% liepen nog door de bestaande gereserveerde hedge-quantitylock.",
+    ],
+    causes: [
+      "De MANUAL_RELEASE_PENDING-flow werd uitsluitend geactiveerd wanneer percentage === 100.",
+    ],
+    fixes: [
+      "De expliciete manual-release-flow wordt nu voor alle vier ondersteunde percentages geactiveerd voordat de Auto Hedge-lock en exchange-submit worden bereikt.",
+      "Na exchange-bevestiging bewaart Recovery de resterende pair-state met reservedHedgeQty=0 en rehedgeEnabled=false.",
+    ],
+    now: [
+      "Een bewuste gedeeltelijke Auto Hedge close blijft weg en wordt niet automatisch teruggevuld totdat opnieuw hedgen expliciet wordt ingeschakeld.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-470-portfolio-tp-configurable-seat-reset",
     version: "46",
