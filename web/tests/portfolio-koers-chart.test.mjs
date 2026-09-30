@@ -157,11 +157,10 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(component.includes("priceToCoordinate(zone.lower)"));
   assert.ok(component.includes("layoutPortfolioKoersZoneRegions"));
   assert.ok(component.includes("layoutPortfolioKoersMarkers"));
-  assert.equal(component.includes("maxFull:3"),false);
-  assert.equal(component.includes("maxCompact:2"),false);
   assert.ok(component.includes("getVisibleLogicalRange()"));
   assert.ok(component.includes("visibleMarkerRows"));
-  assert.ok(component.includes("safetyCap:56"));
+  assert.ok(component.includes("selectPortfolioKoersReferenceCandidates(candidates,{tp:3,long:2,short:2,cashflow:1,other:1})"));
+  assert.ok(component.includes("safetyCap:9"));
   assert.ok(component.includes("PRICE_AXIS_WIDTH=48"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
@@ -314,6 +313,14 @@ test("Build 473 mobile geometry follows the approved UI 4.1 reference instead of
   assert.ok(component.includes("portfolio-koers-tp-detail-leader"));
 });
 
+test("Build 474 keeps the reference marker layer calm without deleting underlying events",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("selectPortfolioKoersReferenceCandidates"));
+  assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
+  assert.ok(component.includes("markerRowsRef.current.filter((row)=>row.time===time)"));
+  assert.ok(component.includes("openTpCluster(label)"));
+});
+
 test("Build 446 keeps calm price-axis typography without a colored last-value badge",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('textColor:"#9fb0ba",fontSize:10'));
@@ -323,13 +330,15 @@ test("Build 446 keeps calm price-axis typography without a colored last-value ba
 });
 
 
-test("Build 422 filters chart markers by the actual visible logical range instead of a global top-three",async()=>{
+test("Build 474 applies reference density only after filtering to the actual visible logical range",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("const visibleRange=chart.timeScale().getVisibleLogicalRange()"));
+  const rangeIndex=component.indexOf("const visibleRange=chart.timeScale().getVisibleLogicalRange()");
+  const densityIndex=component.indexOf("selectPortfolioKoersReferenceCandidates(candidates");
+  assert.ok(rangeIndex>0);
   assert.ok(component.includes("candleIndex>=Math.floor(visibleRange.from)-1"));
   assert.ok(component.includes("candleIndex<=Math.ceil(visibleRange.to)+1"));
-  assert.equal(component.includes("maxFull:3"),false);
-  assert.equal(component.includes("maxCompact:2"),false);
+  assert.ok(densityIndex>rangeIndex);
+  assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
 });
 
 test("Build 422 preserves event-to-candle identity while scrolling and adds no fetch on viewport change",async()=>{
