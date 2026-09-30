@@ -1050,10 +1050,13 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
   const [priceZoneSeats, setPriceZoneSeats] = useState<PriceZoneSeatSummary | null>(null);
+  const [scannerStatus, setScannerStatus] = useState<ScannerStatusSnapshot | null>(null);
   const [liveActiveZone, setLiveActiveZone] = useState<number | null>(null);
+  const [detailView, setDetailView] = useState<SnapshotDetailView>("portfolio");
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
+  const detailScrollY = useRef(0);
   const syncing = useRef(false);
 
   useEffect(() => {
@@ -1174,6 +1177,28 @@ export function AsterPortfolioSnapshotEnhancer() {
   }, [host, liveActiveZone]);
 
   useEffect(() => {
+    if (!host) return;
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const status = await loadScannerStatus();
+        if (alive) setScannerStatus(status);
+      } catch {
+        if (alive) setScannerStatus(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [host]);
+
+  useEffect(() => {
     const modalOpen = hedgeOpen || Boolean(confirmScope);
     if (!modalOpen) return;
     const previous = document.body.style.overflow;
@@ -1246,39 +1271,59 @@ export function AsterPortfolioSnapshotEnhancer() {
     }
   };
 
+  const openDetail = (next: Exclude<SnapshotDetailView, "portfolio">) => {
+    detailScrollY.current = window.scrollY;
+    setDetailView(next);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+  };
+
+  const closeDetail = () => {
+    const restoreY = detailScrollY.current;
+    setDetailView("portfolio");
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => window.scrollTo({ top: restoreY, behavior: "auto" }));
+    });
+  };
+
   const confirmBucket = confirmScope && profitPreview
     ? confirmScope === "LONG" ? profitPreview.long : confirmScope === "SHORT" ? profitPreview.short : profitPreview.all
     : null;
 
   return host ? createPortal(
     <>
-      <PortfolioKoersChart
-        liveEquityText={values.equity}
-        liveAvailableText={values.available}
-        liveLongText={values.longs}
-        liveShortText={values.shorts}
-        onActiveZoneChange={setLiveActiveZone}
-      />
-      <Snapshot
-        values={values}
-        profitPreview={profitPreview}
-        liquidationDiagnostics={liquidationDiagnostics}
-        priceZoneSeats={priceZoneSeats}
+      {detailView === "portfolio" ? <>
+        <PortfolioKoersChart
+          liveEquityText={values.equity}
+          liveAvailableText={values.available}
+          liveLongText={values.longs}
+          liveShortText={values.shorts}
+          onActiveZoneChange={setLiveActiveZone}
+        />
+        <Snapshot
+          values={values}
+          profitPreview={profitPreview}
+          liquidationDiagnostics={liquidationDiagnostics}
+          profitBusy={profitBusy}
+          onCloseAll={closeAll}
+          onCloseProfit={openProfitPreview}
+          onOpenHedge={() => setHedgeOpen(true)}
+          onOpenPriceZone={() => openDetail("price-zone")}
+          onOpenScanner={() => openDetail("scanner")}
+        />
+        {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
+        {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
+          scope={confirmScope}
+          bucket={confirmBucket}
+          config={profitPreview.hedgeConfig}
+          busy={profitBusy === confirmScope}
+          onCancel={() => { if (!profitBusy) setConfirmScope(null); }}
+          onConfirm={confirmProfitClose}
+        /> : null}
+      </> : detailView === "price-zone" ? <PriceZoneDetailsPage
+        summary={priceZoneSeats}
         liveActiveZone={liveActiveZone}
-        profitBusy={profitBusy}
-        onCloseAll={closeAll}
-        onCloseProfit={openProfitPreview}
-        onOpenHedge={() => setHedgeOpen(true)}
-      />
-      {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
-      {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
-        scope={confirmScope}
-        bucket={confirmBucket}
-        config={profitPreview.hedgeConfig}
-        busy={profitBusy === confirmScope}
-        onCancel={() => { if (!profitBusy) setConfirmScope(null); }}
-        onConfirm={confirmProfitClose}
-      /> : null}
+        onBack={closeDetail}
+      /> : <ScannerStatusPage snapshot={scannerStatus} onBack={closeDetail} />}
     </>,
     host,
   ) : null;
