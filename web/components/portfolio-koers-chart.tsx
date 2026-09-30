@@ -632,37 +632,13 @@ export function PortfolioKoersChart({
     const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
     const performanceByTime=new Map(performancePoints.map((row:any)=>[Number(row.time),Number(row.value)]));
     const view=TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"];
-    const initialFocusPrice=observedEquity??payload.currentEquity??candles.at(-1)?.close??null;
-    const initialFocusContext=portfolioZoneContextFromLadder(advisorZoneLadderRef.current,initialFocusPrice);
-    const fallbackFocusIndex=portfolioZoneForPrice(payload.zones,initialFocusPrice);
-    const fallbackFocusZone=fallbackFocusIndex===null?null:payload.zones.find((zone)=>zone.index===fallbackFocusIndex)??null;
-    const focusActiveIndex=initialFocusContext?.activeIndex;
-    const focusRows=Array.isArray(advisorZoneLadderRef.current?.zones)?advisorZoneLadderRef.current.zones as any[]:[];
-    const focusActiveRow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex))??null;
-    const focusStep=Number(advisorZoneLadderRef.current?.step);
-    const focusS1=Number.isFinite(Number(initialFocusContext?.lowerBoundary))&&Number(initialFocusContext?.lowerBoundary)>0
-      ? Number(initialFocusContext?.lowerBoundary)
-      : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)-focusStep/2:null;
-    const focusR1=Number.isFinite(Number(initialFocusContext?.upperBoundary))&&Number(initialFocusContext?.upperBoundary)>0
-      ? Number(initialFocusContext?.upperBoundary)
-      : Number.isFinite(Number(focusActiveRow?.center))&&Number.isFinite(focusStep)?Number(focusActiveRow.center)+focusStep/2:null;
-    const focusBelow=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)-1);
-    const focusAbove=focusRows.find((row:any)=>Number(row.index)===Number(focusActiveIndex)+1);
-    const focusS2=Number.isFinite(Number(focusBelow?.lower))
-      ? Number(focusBelow.lower)
-      : Number.isFinite(Number(focusS1))&&Number.isFinite(focusStep)?Number(focusS1)-focusStep:null;
-    const focusR2=Number.isFinite(Number(focusAbove?.upper))
-      ? Number(focusAbove.upper)
-      : Number.isFinite(Number(focusR1))&&Number.isFinite(focusStep)?Number(focusR1)+focusStep:null;
-    const focusLower=viewMode==="account"?(Number.isFinite(Number(focusS2))?focusS2:(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null)):(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null);
-    const focusUpper=viewMode==="account"?(Number.isFinite(Number(focusR2))?focusR2:(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null)):(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null);
     const focusVisibleBars=Math.min(candles.length,view.visibleBars);
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
       grid:{vertLines:{color:"rgba(75,133,160,.035)"},horzLines:{color:"rgba(75,133,160,.045)"}},
       crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"},horzLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"}},
-      rightPriceScale:{borderColor:"rgba(85,160,190,.22)",minimumWidth:PRICE_AXIS_WIDTH,scaleMargins:{top:.12,bottom:.12}},
+      rightPriceScale:{borderColor:"rgba(85,160,190,.22)",minimumWidth:PRICE_AXIS_WIDTH,scaleMargins:{top:.06,bottom:.06}},
       timeScale:{borderColor:"rgba(85,160,190,.28)",timeVisible:true,secondsVisible:false,rightOffset:view.rightOffset,barSpacing:view.barSpacing,minBarSpacing:3,tickMarkFormatter:(time:unknown)=>{
         const sec=typeof time==="number"?time:0;
         if(!sec)return"";
@@ -699,21 +675,9 @@ export function PortfolioKoersChart({
       bbRefs.current={upper:null,middle:null,lower:null};
     }
 
-    if(viewMode==="account"&&Number.isFinite(Number(initialFocusPrice))&&Number.isFinite(Number(focusLower))&&Number.isFinite(Number(focusUpper))&&Number(focusUpper)>Number(focusLower)){
-      const focusSpan=Math.max(Number(focusUpper)-Number(focusLower),Number(initialFocusPrice)*0.006);
-      const focusPadding=Math.max(focusSpan*0.32,Number(initialFocusPrice)*0.0025);
-      const guideLow=Math.max(Number.EPSILON,Number(focusLower)-focusPadding);
-      const guideHigh=Number(focusUpper)+focusPadding;
-      const guideFrom=candles[Math.max(0,candles.length-focusVisibleBars)]?.time??candles[0]?.time;
-      const guideTo=candles.at(-1)?.time;
-      if(guideFrom&&guideTo){
-        const lowGuide=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-        const highGuide=chart.addSeries(LineSeries,{color:"rgba(0,0,0,0)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-        lowGuide.setData([{time:guideFrom as UTCTimestamp,value:guideLow},{time:guideTo as UTCTimestamp,value:guideLow}]);
-        highGuide.setData([{time:guideFrom as UTCTimestamp,value:guideHigh},{time:guideTo as UTCTimestamp,value:guideHigh}]);
-      }
-    }
-
+    // Build 479: keep the visible price scale driven by the actual candles/Bollinger data.
+    // Do not add invisible S2/R2 guide series: they widened the y-axis far beyond the
+    // visible high/low and created large empty bands above and below the course.
     if(viewMode==="account"&&payload.cycleStartEquity&&payload.cycleStartEquity>0){
       series.createPriceLine({price:payload.cycleStartEquity,color:"rgba(229,190,75,.28)",lineWidth:1,lineStyle:2,axisLabelVisible:false,title:""});
     }

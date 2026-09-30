@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("Build 478 uses the exact approved strategy artwork crops without touching card behavior", async () => {
+test("Build 478 artwork remains intact in Build 479 without touching card behavior", async () => {
   const [component, version, zone, classic] = await Promise.all([
     readFile(new URL("../components/aster-bot-configurator-v3.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/app-version.ts", import.meta.url), "utf8"),
@@ -10,7 +10,7 @@ test("Build 478 uses the exact approved strategy artwork crops without touching 
     readFile(new URL("../public/classic-dca-card-ref8-20260930.webp", import.meta.url)),
   ]);
 
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "478"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "479"/);
   const start = component.indexOf("{currentStep===1");
   const end = component.indexOf("{currentStep===2", start);
   assert.ok(start > 0 && end > start);
