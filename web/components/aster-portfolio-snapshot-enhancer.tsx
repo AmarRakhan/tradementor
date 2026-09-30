@@ -759,7 +759,7 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
 
 function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZoneSeatSummary | null; liveActiveZone: number | null }) {
   const liveZoneLabel = liveActiveZone === null ? "—" : `Zone ${liveActiveZone} actief`;
-  if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
+  if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_DETAILS_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
   const displayActiveZone = liveActiveZone ?? summary.activeZone;
   const backendZoneMatches = displayActiveZone !== null && summary.activeZone === displayActiveZone;
@@ -791,7 +791,7 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
         : summary.entryStatus
           ? `Instapstatus · ${summary.entryStatus}${summary.entryReason ? ` · ${summary.entryReason}` : ""}`
           : "Instapstatus · wacht op nieuwe scanner-evaluatie";
-  return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync={seatZoneInSync ? "synced" : "waiting"}>
+  return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_DETAILS_REFERENCE} data-seat-zone-sync={seatZoneInSync ? "synced" : "waiting"}>
     <div className="aps-zone-title">
       <span className="aps-zone-target" aria-hidden="true">◎</span>
       <div><b>Prijszone-strategie</b><small>{statusText}</small></div>
@@ -827,16 +827,145 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
   </section>;
 }
 
-function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeats, liveActiveZone, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
+function SnapshotDetailButtons({ onOpenPriceZone, onOpenScanner }: {
+  onOpenPriceZone: () => void;
+  onOpenScanner: () => void;
+}) {
+  return <div className="aps-detail-actions" data-reference={SNAPSHOT_DETAIL_BUTTONS_REFERENCE} aria-label="Portfolio detailweergaven">
+    <button type="button" className="aps-detail-action aps-detail-action-zone" onClick={onOpenPriceZone} aria-label="Prijszone Details openen">
+      <span className="aps-detail-action-icon" aria-hidden="true">◎</span>
+      <span><b>Prijszone Details</b><small>Dubbelklik · 3D flip</small></span>
+      <em aria-hidden="true">›</em>
+    </button>
+    <button type="button" className="aps-detail-action aps-detail-action-scanner" onClick={onOpenScanner} aria-label="Scanner Status openen">
+      <span className="aps-detail-action-icon" aria-hidden="true">⌁</span>
+      <span><b>Scanner Status</b><small>Dubbelklik · 3D flip</small></span>
+      <em aria-hidden="true">›</em>
+    </button>
+  </div>;
+}
+
+function formatScannerClock(timestampMs: number | null) {
+  if (!timestampMs || !Number.isFinite(timestampMs)) return "—";
+  return new Intl.DateTimeFormat("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(timestampMs));
+}
+
+function formatScannerAge(timestampMs: number | null) {
+  if (!timestampMs || !Number.isFinite(timestampMs)) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000));
+  if (seconds < 60) return seconds + " sec geleden";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + " min geleden";
+  const hours = Math.floor(minutes / 60);
+  return hours + "u " + (minutes % 60) + "m geleden";
+}
+
+function scannerVerdict(snapshot: ScannerStatusSnapshot | null): ScannerVerdict {
+  if (!snapshot?.updatedAtMs || Date.now() - snapshot.updatedAtMs > 120000) return "SCANNER STIL";
+  if (!snapshot.enabled) return "GEBLOKKEERD";
+  if (snapshot.entryStatus === "ORDER_REJECTED") return "ORDERFOUT";
+  const sides = [snapshot.long, snapshot.short];
+  const hasRuntimeCounters = sides.some((side) => side.bbCandidates !== null || side.marketsScanned !== null);
+  if (!hasRuntimeCounters) return "GEBLOKKEERD";
+  const freeCapacity = sides.reduce((sum, side) => sum + (side.availableCapacity ?? 0), 0);
+  const bbCandidates = sides.reduce((sum, side) => sum + (side.bbCandidates ?? 0), 0);
+  const blockers = sides.reduce((sum, side) => sum + (side.blockedFilters ?? 0), snapshot.unscopedBlocked ?? 0);
+  const orders = sides.reduce((sum, side) => sum + (side.ordersPlaced ?? 0), 0);
+  if (freeCapacity > 0 && bbCandidates === 0) return "GEEN KANDIDATEN";
+  if (freeCapacity > 0 && bbCandidates > 0 && orders === 0 && blockers > 0) return "GEBLOKKEERD";
+  return "NORMAAL";
+}
+
+function scannerConclusion(snapshot: ScannerStatusSnapshot | null, verdict: ScannerVerdict) {
+  if (!snapshot) return "Live scannerdiagnostiek wordt geladen.";
+  if (verdict === "SCANNER STIL") return "De laatste scanner-heartbeat is ouder dan twee minuten. Controleer de runtime voordat nieuwe entries worden verwacht.";
+  if (verdict === "ORDERFOUT") return snapshot.entryReason || "De scanner vond een entry, maar de ordercontrole heeft deze afgewezen.";
+  if (verdict === "GEBLOKKEERD" && snapshot.long.marketsScanned === null && snapshot.short.marketsScanned === null) {
+    return "De scanner draait, maar de nieuwe read-only diagnosevelden zijn nog niet beschikbaar in deze runtime.";
+  }
+  const describe = (label: string, side: ScannerSideStatus) => {
+    if ((side.availableCapacity ?? 0) <= 0) return label + ": geen vrije stoel.";
+    if (side.bbCandidates === 0) return label + ": geen geldige Bollinger-kandidaat in de laatste scan; " + (side.availableCapacity ?? 0) + " stoel(en) vrij.";
+    if ((side.ordersPlaced ?? 0) > 0) return label + ": " + (side.bbCandidates ?? 0) + " kandidaat/kandidaten; " + (side.ordersPlaced ?? 0) + " order(s) geplaatst.";
+    if ((side.blockedFilters ?? 0) > 0) return label + ": " + (side.bbCandidates ?? 0) + " kandidaat/kandidaten; " + (side.blockedFilters ?? 0) + " geblokkeerd na de entryfilter.";
+    return label + ": " + (side.bbCandidates ?? 0) + " kandidaat/kandidaten; geen order geplaatst in de laatste scan.";
+  };
+  return describe("LONG", snapshot.long) + " " + describe("SHORT", snapshot.short);
+}
+
+function PriceZoneDetailsPage({ summary, liveActiveZone, onBack }: {
+  summary: PriceZoneSeatSummary | null;
+  liveActiveZone: number | null;
+  onBack: () => void;
+}) {
+  return <section className="aps-detail-page aps-price-zone-page" data-reference={PRICE_ZONE_DETAILS_REFERENCE} aria-label="Prijszone Details">
+    <button type="button" className="aps-detail-back" onClick={onBack}><span aria-hidden="true">←</span><b>Dubbelklik om terug te gaan</b></button>
+    <div className="aps-detail-page-title">
+      <span className="aps-detail-page-icon" aria-hidden="true">◎</span>
+      <div><h2>Prijszone details</h2><p>Gedetailleerde live weergave van de prijszone-strategie</p></div>
+    </div>
+    <PriceZoneStrategySummary summary={summary} liveActiveZone={liveActiveZone} />
+  </section>;
+}
+
+function ScannerSidePanel({ side, data, updatedAtMs }: {
+  side: "LONG" | "SHORT";
+  data: ScannerSideStatus;
+  updatedAtMs: number | null;
+}) {
+  const value = (number: number | null) => number === null ? "—" : String(number);
+  return <article className={"aps-scanner-side aps-scanner-" + side.toLowerCase()}>
+    <header><div><span aria-hidden="true">{side === "LONG" ? "↗" : "↘"}</span><h3>{side} <small>({data.timeframe})</small></h3></div><em>ACTIEF</em></header>
+    <dl>
+      <div><dt>Laatste scan</dt><dd>{formatScannerClock(updatedAtMs)} <small>{formatScannerAge(updatedAtMs)}</small></dd></div>
+      <div><dt>Markten gescand</dt><dd>{value(data.marketsScanned)}</dd></div>
+      <div><dt>BB-kandidaten</dt><dd>{value(data.bbCandidates)}</dd></div>
+      <div><dt>Zone toegestaan</dt><dd>{value(data.zoneAllowed)}</dd></div>
+      <div><dt>Geblokkeerd (filters)</dt><dd>{value(data.blockedFilters)}</dd></div>
+      <div><dt>Orders geplaatst</dt><dd>{value(data.ordersPlaced)}</dd></div>
+      <div><dt>Laatste entry</dt><dd>{formatScannerClock(data.lastEntryAtMs)} <small>{formatScannerAge(data.lastEntryAtMs)}</small></dd></div>
+      <div><dt>Heartbeat</dt><dd className="is-live">{formatScannerClock(updatedAtMs)}</dd></div>
+      <div><dt>Vrije stoelen</dt><dd>{value(data.availableCapacity)}</dd></div>
+    </dl>
+  </article>;
+}
+
+function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapshot | null; onBack: () => void }) {
+  const verdict = scannerVerdict(snapshot);
+  const fresh = Boolean(snapshot?.updatedAtMs && Date.now() - snapshot.updatedAtMs <= 120000);
+  return <section className="aps-detail-page aps-scanner-page" data-reference={SCANNER_STATUS_REFERENCE} aria-label="Scanner Status">
+    <button type="button" className="aps-detail-back" onClick={onBack}><span aria-hidden="true">←</span><b>Dubbelklik om terug te gaan</b></button>
+    <div className="aps-detail-page-title aps-scanner-title">
+      <span className="aps-detail-page-icon" aria-hidden="true">⌁</span>
+      <div><h2>Scanner Status</h2><p>Live read-only analyse van entrycondities en marktfilters</p></div>
+      <em className={fresh ? "is-live" : "is-stale"}><i />{fresh ? "Live" : "Stil"}</em>
+    </div>
+    <div className={"aps-entry-health aps-entry-health-" + verdict.toLowerCase().replaceAll(" ", "-")}>
+      <div><small>ENTRY HEALTH</small><strong>{verdict}</strong><p>{snapshot?.entryReason || "Wacht op de volgende scanner-evaluatie."}</p></div>
+      <ul>
+        <li><i className={fresh ? "ok" : "bad"} />Scanner {fresh ? "actief" : "geen recente heartbeat"}</li>
+        <li><i className={snapshot?.enabled ? "ok" : "bad"} />Strategie {snapshot?.enabled ? "actief" : "uit"}</li>
+        <li><i className={snapshot?.long.timeframe !== "—" && snapshot?.short.timeframe !== "—" ? "ok" : "bad"} />Timeframes uit runtime</li>
+      </ul>
+    </div>
+    <div className="aps-scanner-grid">
+      <ScannerSidePanel side="LONG" data={snapshot?.long ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} />
+      <ScannerSidePanel side="SHORT" data={snapshot?.short ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} />
+    </div>
+    <div className="aps-scanner-conclusion"><span aria-hidden="true">ⓘ</span><div><b>CONCLUSIE</b><p>{scannerConclusion(snapshot, verdict)}</p></div></div>
+  </section>;
+}
+
+function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
-  priceZoneSeats: PriceZoneSeatSummary | null;
-  liveActiveZone: number | null;
   profitBusy: ProfitScope | null;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
   onOpenHedge: () => void;
+  onOpenPriceZone: () => void;
+  onOpenScanner: () => void;
 }) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={SNAPSHOT_V2_REFERENCE}>
     <header>
@@ -847,7 +976,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeat
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
-    <PriceZoneStrategySummary summary={priceZoneSeats} liveActiveZone={liveActiveZone} />
+    <SnapshotDetailButtons onOpenPriceZone={onOpenPriceZone} onOpenScanner={onOpenScanner} />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
