@@ -73,6 +73,22 @@ def test_trade_markers_are_bucketed_and_tp_is_aggregated():
     assert "TP" in tp["label"]
 
 
+def test_tp_duration_uses_first_entry_of_confirmed_cycle_not_latest_dca():
+    activity = {
+        "entries": [
+            {"timestampMs": 60_000, "symbol": "BTCUSDT", "side": "LONG", "quantity": 1.0},
+            {"timestampMs": 360_000, "symbol": "BTCUSDT", "side": "LONG", "quantity": 1.0},
+        ],
+        "exits": [
+            {"timestampMs": 1_260_000, "symbol": "BTCUSDT", "side": "LONG", "quantity": 2.0, "realizedPnlUsd": 5.0},
+        ],
+    }
+    rows = aggregate_trade_activity(activity, "1m")
+    tp = next(row for row in rows if row["kind"] == "tp")
+    assert tp["trades"][0]["symbol"] == "BTC"
+    assert tp["trades"][0]["durationMinutes"] == 20
+
+
 def test_external_cashflows_remain_separate_from_trading_markers():
     rows = external_cashflow_markers([
         {"incomeType": "TRANSFER", "income": "50", "time": 61_000},
