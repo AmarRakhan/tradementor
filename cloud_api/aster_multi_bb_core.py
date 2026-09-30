@@ -1357,6 +1357,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         }
         for side_name in ("LONG", "SHORT")
     }
+    # First rollout can have no prior scannerDiagnostics yet. Seed "last entry"
+    # only from proven managed live state; never infer a timestamp from market data.
+    for managed_key, managed_row in state.items():
+        managed_side = "LONG" if str(managed_key).endswith("|LONG") else "SHORT" if str(managed_key).endswith("|SHORT") else ""
+        if managed_side not in scanner_side_diagnostics or not isinstance(managed_row, dict):
+            continue
+        managed_started_at = _i(managed_row.get("cycleStartedAtMs", managed_row.get("openedAtMs")))
+        scanner_side_diagnostics[managed_side]["lastEntryAtMs"] = max(
+            scanner_side_diagnostics[managed_side]["lastEntryAtMs"], managed_started_at,
+        )
     for candidate_index, ranked_row in enumerate(candidates):
         if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
