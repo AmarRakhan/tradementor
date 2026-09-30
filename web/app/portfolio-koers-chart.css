@@ -775,8 +775,9 @@
    stay in state for strategy logic but are deliberately not painted. */
 .portfolio-koers-ui41 .portfolio-koers-zones,
 .portfolio-koers-ui41 .portfolio-koers-zone-boundaries{display:none}
+/* Build 479 · compacte hoofdweergave: dezelfde koersinformatie, minder verticale lege ruimte. */
 .portfolio-koers-ui41 .portfolio-koers-stage{
-  height:520px;
+  height:390px;
   border:1px solid rgba(74,126,139,.28);
   border-radius:3px;
   background:linear-gradient(180deg,#031315 0%,#031012 100%);
@@ -1036,7 +1037,7 @@
   .portfolio-koers-ui41 .portfolio-koers-fullscreen{width:36px;height:36px}
   .portfolio-koers-ui41 .portfolio-koers-view-toggle{margin-top:5px}
   .portfolio-koers-ui41 .portfolio-koers-view-toggle button{height:24px;padding:0 9px;font-size:6.5px}
-  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:500px}
+  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:340px}
   .portfolio-koers-ui41 .portfolio-koers-event.portfolio-koers-event-chip{height:22px;padding:0 5px}
   .portfolio-koers-ui41 .portfolio-koers-event-chip.tp{height:27px;min-width:69px;padding:0 7px 0 5px}
   .portfolio-koers-ui41 .portfolio-koers-event-chip b{font-size:7px}
@@ -1051,7 +1052,7 @@
   .portfolio-koers-ui41 .portfolio-koers-title-line h2{font-size:17px}
   .portfolio-koers-zones-button{padding:0 6px}
   .portfolio-koers-ui41-value>strong{font-size:18px}
-  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:480px}
+  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:330px}
   .portfolio-koers-ui41-footer{grid-template-columns:auto minmax(0,1fr) auto 16px}
   .portfolio-koers-ui41-footer>strong{font-size:6.7px}
   .portfolio-koers-ui41-next{font-size:5.6px;gap:3px}
