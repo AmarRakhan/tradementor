@@ -339,7 +339,7 @@ test("Build 432 visually separates signed deposits and withdrawals from trading 
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('cashflowType==="DEPOSIT"?"Storting"'));
   assert.ok(component.includes('cashflowType==="WITHDRAWAL"?"Opname"'));
-  assert.ok(component.includes('copy.tone==="cashflow"?92:52'));
+  assert.ok(component.includes('copy.tone==="cashflow"?92:copy.tone==="tp"?86:58'));
 });
 
 
