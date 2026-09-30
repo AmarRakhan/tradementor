@@ -16,11 +16,11 @@ function intersects(a,b,padding=4) {
 
 function markerRect(candidate,left,top,compressed=false) {
   const width=compressed
-    ? Math.max(28,Math.min(42,finite(candidate.width,36)-8))
-    : Math.max(34,Math.min(58,finite(candidate.width,46)));
+    ? Math.max(32,Math.min(82,finite(candidate.width,44)-6))
+    : Math.max(38,Math.min(96,finite(candidate.width,52)));
   const height=compressed
-    ? Math.max(26,Math.min(34,finite(candidate.height,44)-12))
-    : Math.max(38,Math.min(50,finite(candidate.height,44)));
+    ? Math.max(24,Math.min(34,finite(candidate.height,36)-6))
+    : Math.max(28,Math.min(44,finite(candidate.height,34)));
   return {left:left-width/2,right:left+width/2,top:top-height/2,bottom:top+height/2,width,height};
 }
 
