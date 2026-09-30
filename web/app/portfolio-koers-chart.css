@@ -907,6 +907,7 @@
 }
 .portfolio-koers-tp-detail{
   position:absolute;
+  z-index:2;
   left:44px;
   top:32px;
   width:min(220px,calc(100% - 56px));
