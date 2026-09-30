@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "../lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "../lib/portfolio-koers-chart.mjs";
 
 test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",()=>{
   assert.deepEqual([...PORTFOLIO_KOERS_TIMEFRAMES],["1m","5m","15m","1u","4u","24u"]);
@@ -33,6 +33,25 @@ test("TP detail rows survive payload normalization and confirmed-fill marker mer
   const merged=mergePortfolioKoersMarkers([{time:900,kind:"tp",side:"ALL",count:1,source:"strategy2-confirmed-audit"}],base);
   assert.equal(merged[0].realizedPnlUsd,5);
   assert.equal(merged[0].trades.length,3);
+});
+
+test("TP detail lazy enrichment reconstructs confirmed symbols, PnL and first-entry duration",()=>{
+  const activity={
+    entries:[
+      {timestampMs:60_000,symbol:"BTCUSDT",side:"LONG",quantity:1},
+      {timestampMs:360_000,symbol:"BTCUSDT",side:"LONG",quantity:1},
+      {timestampMs:120_000,symbol:"ETHUSDT",side:"SHORT",quantity:2},
+    ],
+    exits:[
+      {timestampMs:1_260_000,symbol:"BTCUSDT",side:"LONG",quantity:2,realizedPnlUsd:1.9},
+      {timestampMs:1_320_000,symbol:"ETHUSDT",side:"SHORT",quantity:2,realizedPnlUsd:2.1},
+    ],
+  };
+  const rows=tpTradesForBucketFromActivity(activity,"15m",900);
+  assert.deepEqual(rows,[
+    {symbol:"BTC",realizedPnlUsd:1.9,durationMinutes:20},
+    {symbol:"ETH",realizedPnlUsd:2.1,durationMinutes:20},
+  ]);
 });
 
 test("Bollinger Bands are exactly period 20 multiplier 2",()=>{
@@ -170,9 +189,13 @@ test("Portfolio Koers UI 4.1 uses straight entry arrows and money-bag TP cluster
   assert.ok(component.includes('<DirectionArrow direction="down"/>'));
   assert.ok(component.includes("portfolio-koers-event-count"));
   assert.ok(component.includes("connectorStyle(label)"));
-  assert.ok(component.includes("setSelectedTpCluster(label)"));
+  assert.ok(component.includes("openTpCluster(label)"));
+  assert.ok(component.includes("/api/exchanges/aster/closed-trades"));
+  assert.ok(component.includes("tpTradesForBucketFromActivity"));
+  assert.ok(component.includes("<CoinBadge symbol={trade.symbol}/>"));
   assert.ok(component.includes("Totaal gerealiseerd:"));
   assert.ok(component.includes("durationLabel(trade.durationMinutes)"));
+  assert.ok(component.includes("Tik op een TP-marker om de posities te bekijken"));
 });
 
 test("Portfolio Koers explicitly feeds Bollinger boundaries into marker layout",async()=>{
@@ -254,18 +277,18 @@ test("Build 413 initial focus drops old distant history while preserving recent 
   assert.equal(portfolioKoersFocusBars(rows,28,144.85,143.21,145.27),20);
 });
 
-test("Build 413 configures every approved timeframe for a closer initial viewport and keeps timeframe switching focused",async()=>{
+test("Build 473 keeps the reference-style longer timeline instead of dynamically cropping account candles",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const pair of [
-    '"1m":{visibleBars:24',
-    '"5m":{visibleBars:20',
-    '"15m":{visibleBars:16',
-    '"1u":{visibleBars:16',
-    '"4u":{visibleBars:14',
-    '"24u":{visibleBars:12',
+    '"1m":{visibleBars:40',
+    '"5m":{visibleBars:38',
+    '"15m":{visibleBars:36',
+    '"1u":{visibleBars:34',
+    '"4u":{visibleBars:30',
+    '"24u":{visibleBars:26',
   ]) assert.ok(component.includes(pair),pair);
-  assert.ok(component.includes('viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars'));
-  assert.ok(component.includes("focusVisibleBars"));
+  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.equal(component.includes('viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars'),false);
   assert.ok(component.includes("guideLow"));
   assert.ok(component.includes("guideHigh"));
   assert.equal(component.includes("fitContent()"),false);
@@ -276,6 +299,19 @@ test("Build 414 can stop before a deep old candle after a small recent decision 
   const old=Array.from({length:20},(_,index)=>({time:index+1,open:100,high:102,low:98,close:100}));
   const recent=Array.from({length:7},(_,index)=>({time:21+index,open:144.6,high:146.1,low:144.5,close:145.5}));
   assert.equal(portfolioKoersFocusBars([...old,...recent],16,145.53,145.18,146.48),7);
+});
+
+test("Build 473 mobile geometry follows the approved UI 4.1 reference instead of the compressed Build 472 card",async()=>{
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(css.includes(".portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:500px}"));
+  assert.ok(css.includes(".portfolio-koers-ui41{padding:14px 12px 12px"));
+  assert.ok(css.includes("width:min(220px,calc(100% - 56px))"));
+  assert.ok(css.includes(".portfolio-koers-ui41-hint"));
+  assert.equal(component.includes("voormalige R1 → nieuwe support"),false);
+  assert.equal(component.includes(">nieuwe high</div>"),false);
+  assert.equal(component.includes(">volgende breakout</div>"),false);
+  assert.ok(component.includes("portfolio-koers-tp-detail-leader"));
 });
 
 test("Build 446 keeps calm price-axis typography without a colored last-value badge",async()=>{
