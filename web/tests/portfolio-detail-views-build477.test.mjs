@@ -43,7 +43,7 @@ test("Build 477 scanner status is read-only and exposes exact per-side runtime d
   }
 
   assert.match(backend, /"scannerDiagnostics": scanner_diagnostics/);
-  assert.match(backend, /scanner_side_diagnostics\[candidate_side\]\["marketsScanned"\] \+= 1/);
+  assert.match(backend, /side_diag\["marketsScanned"\] \+= 1/);
   assert.match(backend, /side_diag\["bbCandidates"\] \+= 1/);
   assert.match(backend, /scanner_side_diagnostics\[side\]\["zoneAllowed"\] \+= 1/);
   assert.match(backend, /"mode": "live" if not dry_run else "simulation"/);
