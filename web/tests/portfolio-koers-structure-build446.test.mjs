@@ -13,13 +13,13 @@ test("Build 446 binds Portfolio Koers Graph 3.0 to the approved structure refere
   for(const label of ['label:"R2"','label:"R1"','label:"S1"','label:"S2"'])assert.ok(component.includes(label),label);
 });
 
-test("Build 446 renders one active gold zone and the three requested market-structure annotations",async()=>{
+test("Build 473 keeps the active gold zone while UI 4.1 hides the obsolete structure-note text",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("portfolio-koers-structure-zone"));
   assert.ok(component.includes("Zone ${Number(activeIndex)} actief"));
-  assert.ok(component.includes("voormalige R1 → nieuwe support"));
-  assert.ok(component.includes("nieuwe high"));
-  assert.ok(component.includes("volgende breakout"));
+  assert.equal(component.includes("voormalige R1 → nieuwe support"),false);
+  assert.equal(component.includes(">nieuwe high</div>"),false);
+  assert.equal(component.includes(">volgende breakout</div>"),false);
 });
 
 test("Build 446 defines the active zone by S1/R1 so a broken resistance can become the next support",async()=>{
@@ -78,12 +78,12 @@ test("Build 447 puts the next breakout at R1, the first resistance above the act
   assert.equal(component.includes("breakout:(r2Level??r1Level)"),false);
 });
 
-test("Build 447 structure notes are collision-aware against trade markers",async()=>{
+test("Build 473 keeps marker collision layout but does not render legacy structure notes over the reference chart",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("placeStructureNote(structureDraft.newHigh"));
-  assert.ok(component.includes("markerLayout.all,reserved"));
-  assert.ok(component.includes("structureRectsOverlap"));
-  assert.ok(component.includes('kind==="newHigh"'));
+  assert.ok(component.includes("layoutPortfolioKoersMarkers(candidates"));
+  assert.ok(component.includes("markerLayout.all"));
+  assert.ok(component.includes("setStructureOverlay({...structureDraft,roleFlip:null,newHigh:null,breakout:null})"));
+  assert.equal(component.includes("placeStructureNote(structureDraft.newHigh"),false);
 });
 
 
