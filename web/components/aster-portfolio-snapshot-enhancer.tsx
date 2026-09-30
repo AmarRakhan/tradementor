@@ -97,7 +97,9 @@ const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
 const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
 const LIQUIDATION_GAUGE_REFERENCE = "file_000000004e80820a80318a3de3ae5abd";
 const SNAPSHOT_V2_REFERENCE = "file_0000000061fc81f49a44564879d533de";
-const PRICE_ZONE_SNAPSHOT_REFERENCE = "file_00000000a5708210be60f92f52e4b5cc";
+const SNAPSHOT_DETAIL_BUTTONS_REFERENCE = "file_00000000afb481f480fb60893b473c16";
+const PRICE_ZONE_DETAILS_REFERENCE = "file_00000000a63481f493d2f56071aaeb3b";
+const SCANNER_STATUS_REFERENCE = "file_000000002d908210a581e71c2352d09b";
 
 type LiquidationDiagnostics = {
   liquidationRiskPercent: number | null;
@@ -137,6 +139,31 @@ type PriceZoneSeatSummary = {
   dynamicHedgeSafetyStatus: string;
   queueHaltedUncertain: boolean;
   queueUncertainReason: string;
+};
+
+type SnapshotDetailView = "portfolio" | "price-zone" | "scanner";
+type ScannerVerdict = "NORMAAL" | "GEEN KANDIDATEN" | "GEBLOKKEERD" | "SCANNER STIL" | "ORDERFOUT";
+
+type ScannerSideStatus = {
+  timeframe: string;
+  marketsScanned: number | null;
+  bbCandidates: number | null;
+  zoneAllowed: number | null;
+  blockedFilters: number | null;
+  ordersPlaced: number | null;
+  lastEntryAtMs: number | null;
+  availableCapacity: number | null;
+};
+
+type ScannerStatusSnapshot = {
+  enabled: boolean;
+  monitor: boolean;
+  updatedAtMs: number | null;
+  entryStatus: string;
+  entryReason: string;
+  unscopedBlocked: number | null;
+  long: ScannerSideStatus;
+  short: ScannerSideStatus;
 };
 
 function directText(element: Element | null, selector: string) {
@@ -327,6 +354,45 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     dynamicHedgeSafetyStatus: firstString([dynamicHedge], ["safetyStatus"]),
     queueHaltedUncertain: queue.haltedUncertain === true,
     queueUncertainReason: firstString([queue], ["uncertainReason"]),
+  };
+}
+
+function scannerSideStatus(rawSide: Record<string, unknown>): ScannerSideStatus {
+  const nonNegativeInteger = (key: string) => {
+    const value = optionalNumber(rawSide[key]);
+    return value === null ? null : Math.max(0, Math.round(value));
+  };
+  return {
+    timeframe: firstString([rawSide], ["timeframe"]) || "—",
+    marketsScanned: nonNegativeInteger("marketsScanned"),
+    bbCandidates: nonNegativeInteger("bbCandidates"),
+    zoneAllowed: nonNegativeInteger("zoneAllowed"),
+    blockedFilters: nonNegativeInteger("blockedFilters"),
+    ordersPlaced: nonNegativeInteger("ordersPlaced"),
+    lastEntryAtMs: optionalNumber(rawSide.lastEntryAtMs),
+    availableCapacity: nonNegativeInteger("availableCapacity"),
+  };
+}
+
+async function loadScannerStatus(): Promise<ScannerStatusSnapshot> {
+  const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" });
+  const root = record(payload);
+  const strategy2 = Object.keys(record(root.strategy2)).length
+    ? record(root.strategy2)
+    : Object.keys(record(record(root.data).strategy2)).length
+      ? record(record(root.data).strategy2)
+      : record(record(root.snapshot).strategy2);
+  const multiBb = record(strategy2.multiBb);
+  const scanner = record(multiBb.scannerDiagnostics);
+  return {
+    enabled: strategy2.enabled === true,
+    monitor: strategy2.monitor === true,
+    updatedAtMs: firstNumber([scanner, multiBb], ["updatedAtMs"]),
+    entryStatus: firstString([multiBb, record(strategy2.entryDiagnostics)], ["entryStatus"]),
+    entryReason: firstString([multiBb, record(strategy2.entryDiagnostics)], ["entryReason"]),
+    unscopedBlocked: optionalNumber(scanner.unscopedBlocked),
+    long: scannerSideStatus(record(scanner.LONG)),
+    short: scannerSideStatus(record(scanner.SHORT)),
   };
 }
 
