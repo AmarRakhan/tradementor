@@ -58,6 +58,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Referentie TP-detail: file_00000000267082109428370054535e59.",
     "UI: web/components/portfolio-koers-chart.tsx en web/app/portfolio-koers-chart.css.",
     "Read-only markerdata: cloud_api/aster_portfolio_chart.py; geen scanner-, order-, DCA-, TP-, hedge- of Zone Warriors-executielogica aangepast.",
+    "Releasecontract expliciet gesynchroniseerd op Webapp V46 Build 472 voor de productiepromotie.",
   ],
   confidence: "confirmed",
 };
