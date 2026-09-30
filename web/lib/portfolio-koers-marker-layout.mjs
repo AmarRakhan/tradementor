@@ -103,6 +103,56 @@ export function eventPriority(row) {
   return base+Math.min(25,Math.log10(1+notional)*5);
 }
 
+
+function referenceMarkerScore(row) {
+  const count=Math.max(1,Math.floor(finite(row?.eventCount,1)));
+  const pnl=Math.abs(finite(row?.realizedPnlUsd));
+  const priority=finite(row?.priority,eventPriority(row));
+  return count*1000+Math.min(500,pnl*25)+priority;
+}
+
+function pickReferenceSpread(rows,cap) {
+  const limit=Math.max(0,Math.floor(finite(cap)));
+  const clean=(Array.isArray(rows)?rows:[])
+    .filter((row)=>row&&Number.isFinite(Number(row.time)))
+    .slice()
+    .sort((a,b)=>finite(a.time)-finite(b.time)||finite(a.x)-finite(b.x));
+  if(limit<=0)return [];
+  if(clean.length<=limit)return clean;
+  const picked=[];
+  for(let bucket=0;bucket<limit;bucket+=1){
+    const start=Math.floor(bucket*clean.length/limit);
+    const end=Math.max(start+1,Math.floor((bucket+1)*clean.length/limit));
+    const segment=clean.slice(start,Math.min(clean.length,end));
+    const best=segment.reduce((winner,row)=>{
+      if(!winner)return row;
+      const delta=referenceMarkerScore(row)-referenceMarkerScore(winner);
+      if(delta!==0)return delta>0?row:winner;
+      return finite(row.time)>=finite(winner.time)?row:winner;
+    },null);
+    if(best)picked.push(best);
+  }
+  return picked.sort((a,b)=>finite(a.time)-finite(b.time)||finite(a.x)-finite(b.x));
+}
+
+export function selectPortfolioKoersReferenceCandidates(candidates,{tp=3,long=2,short=2,cashflow=1,other=1}={}) {
+  const rows=(Array.isArray(candidates)?candidates:[]).filter((row)=>row&&Number.isFinite(Number(row.x))&&Number.isFinite(Number(row.y)));
+  const groups={
+    tp:rows.filter((row)=>String(row.tone)==="tp"),
+    long:rows.filter((row)=>String(row.tone)==="long"),
+    short:rows.filter((row)=>String(row.tone)==="short"),
+    cashflow:rows.filter((row)=>String(row.tone)==="cashflow"),
+    other:rows.filter((row)=>!["tp","long","short","cashflow"].includes(String(row.tone))),
+  };
+  return [
+    ...pickReferenceSpread(groups.tp,tp),
+    ...pickReferenceSpread(groups.long,long),
+    ...pickReferenceSpread(groups.short,short),
+    ...pickReferenceSpread(groups.cashflow,cashflow),
+    ...pickReferenceSpread(groups.other,other),
+  ].sort((a,b)=>finite(a.time)-finite(b.time)||finite(b.priority)-finite(a.priority));
+}
+
 export function layoutPortfolioKoersMarkers(candidates,viewport,{priceAxisWidth=48,safetyCap=EVENT_MARKER_SAFETY_CAP}={}) {
   const width=Math.max(1,finite(viewport?.width,1));
   const height=Math.max(1,finite(viewport?.height,1));

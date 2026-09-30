@@ -7,6 +7,7 @@ import {
   layoutPortfolioKoersZoneRegions,
   markerRectInsideBollinger,
   markerRectsOverlap,
+  selectPortfolioKoersReferenceCandidates,
   zoneToneForRank,
 } from "../lib/portfolio-koers-marker-layout.mjs";
 
@@ -19,6 +20,22 @@ function candidate(index,{x=80+index*42,y=120,kind="entry",time=1_700_000_000+in
     anchorLeft:x,anchorTop:y,
   };
 }
+
+test("reference density keeps at most 3 TP, 2 LONG and 2 SHORT markers while preserving time spread",()=>{
+  const rows=[
+    ...Array.from({length:12},(_,index)=>({...candidate(index,{x:40+index*40,time:1000+index,kind:"tp",eventCount:index===4?8:1}),tone:"tp",realizedPnlUsd:index===8?12.89:.2})),
+    ...Array.from({length:7},(_,index)=>({...candidate(20+index,{x:55+index*55,time:2000+index,eventCount:index===3?3:1}),tone:"long"})),
+    ...Array.from({length:6},(_,index)=>({...candidate(40+index,{x:60+index*60,time:3000+index,eventCount:index===2?2:1}),tone:"short"})),
+  ];
+  const selected=selectPortfolioKoersReferenceCandidates(rows,{tp:3,long:2,short:2,cashflow:1,other:1});
+  assert.equal(selected.filter((row)=>row.tone==="tp").length,3);
+  assert.equal(selected.filter((row)=>row.tone==="long").length,2);
+  assert.equal(selected.filter((row)=>row.tone==="short").length,2);
+  assert.equal(selected.length,7);
+  const tp=selected.filter((row)=>row.tone==="tp");
+  assert.ok(tp[0].time<tp[1].time&&tp[1].time<tp[2].time);
+  assert.ok(tp.some((row)=>row.eventCount===8));
+});
 
 test("six visible event candles produce six candle-bound labels instead of a global top-three",()=>{
   const rows=Array.from({length:6},(_,index)=>candidate(index,{x:55+index*80,y:112,position:index%2?"below":"above"}));

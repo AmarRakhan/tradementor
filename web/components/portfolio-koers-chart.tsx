@@ -8,7 +8,7 @@ import { useAuthSession } from "@/components/auth-provider";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
-import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
+import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
@@ -891,7 +891,8 @@ export function PortfolioKoersChart({
           width:copy.tone==="cashflow"?92:copy.tone==="tp"?86:58,height:copy.tone==="tp"?34:30,
         });
       }
-      const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:56});
+      const displayCandidates=selectPortfolioKoersReferenceCandidates(candidates,{tp:3,long:2,short:2,cashflow:1,other:1});
+      const markerLayout=layoutPortfolioKoersMarkers(displayCandidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:9});
       const reserved:StructureRect[]=[];
       if(structureDraft.activeZone){
         const zoneCenter=structureDraft.activeZone.top+structureDraft.activeZone.height/2;
