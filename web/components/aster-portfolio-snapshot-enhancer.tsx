@@ -908,14 +908,15 @@ function PriceZoneDetailsPage({ summary, liveActiveZone, onBack }: {
   </section>;
 }
 
-function ScannerSidePanel({ side, data, updatedAtMs }: {
+function ScannerSidePanel({ side, data, updatedAtMs, active }: {
   side: "LONG" | "SHORT";
   data: ScannerSideStatus;
   updatedAtMs: number | null;
+  active: boolean;
 }) {
   const value = (number: number | null) => number === null ? "—" : String(number);
   return <article className={"aps-scanner-side aps-scanner-" + side.toLowerCase()}>
-    <header><div><span aria-hidden="true">{side === "LONG" ? "↗" : "↘"}</span><h3>{side} <small>({data.timeframe})</small></h3></div><em>ACTIEF</em></header>
+    <header><div><span aria-hidden="true">{side === "LONG" ? "↗" : "↘"}</span><h3>{side} <small>({data.timeframe})</small></h3></div><em className={active ? "is-active" : "is-inactive"}>{active ? "ACTIEF" : "INACTIEF"}</em></header>
     <dl>
       <div><dt>Laatste scan</dt><dd>{formatScannerClock(updatedAtMs)} <small>{formatScannerAge(updatedAtMs)}</small></dd></div>
       <div><dt>Markten gescand</dt><dd>{value(data.marketsScanned)}</dd></div>
@@ -949,8 +950,8 @@ function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapsh
       </ul>
     </div>
     <div className="aps-scanner-grid">
-      <ScannerSidePanel side="LONG" data={snapshot?.long ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} />
-      <ScannerSidePanel side="SHORT" data={snapshot?.short ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} />
+      <ScannerSidePanel side="LONG" data={snapshot?.long ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} active={fresh && snapshot?.enabled === true} />
+      <ScannerSidePanel side="SHORT" data={snapshot?.short ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} active={fresh && snapshot?.enabled === true} />
     </div>
     <div className="aps-scanner-conclusion"><span aria-hidden="true">ⓘ</span><div><b>CONCLUSIE</b><p>{scannerConclusion(snapshot, verdict)}</p></div></div>
   </section>;
