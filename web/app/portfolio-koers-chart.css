@@ -776,7 +776,7 @@
 .portfolio-koers-ui41 .portfolio-koers-zones,
 .portfolio-koers-ui41 .portfolio-koers-zone-boundaries{display:none}
 .portfolio-koers-ui41 .portfolio-koers-stage{
-  height:318px;
+  height:520px;
   border:1px solid rgba(74,126,139,.28);
   border-radius:3px;
   background:linear-gradient(180deg,#031315 0%,#031012 100%);
@@ -907,9 +907,9 @@
 }
 .portfolio-koers-tp-detail{
   position:absolute;
-  left:34px;
-  top:35px;
-  width:min(270px,calc(100% - 52px));
+  left:44px;
+  top:32px;
+  width:min(220px,calc(100% - 56px));
   box-sizing:border-box;
   padding:10px 11px 9px;
   border:1px solid rgba(245,196,48,.88);
@@ -929,7 +929,7 @@
 }
 .portfolio-koers-tp-detail>header{
   display:grid;
-  grid-template-columns:20px minmax(0,1fr) 24px;
+  grid-template-columns:28px minmax(0,1fr) 24px;
   align-items:center;
   gap:6px;
   padding-bottom:8px;
@@ -938,10 +938,11 @@
 .portfolio-koers-tp-detail>header>strong{
   min-width:0;
   color:#e8efec;
-  font:850 9px/1.15 system-ui;
+  font:850 10px/1.15 system-ui;
   white-space:nowrap;
 }
 .portfolio-koers-tp-detail>header>strong>b{color:#31e9aa;font-weight:950}
+.portfolio-koers-tp-detail>header .portfolio-koers-moneybag{width:24px;height:24px;flex-basis:24px}
 .portfolio-koers-tp-detail>header>button{
   display:grid;place-items:center;
   width:24px;height:24px;padding:0;
@@ -952,16 +953,23 @@
 .portfolio-koers-tp-trades{display:grid}
 .portfolio-koers-tp-trade{
   display:grid;
-  grid-template-columns:minmax(54px,1fr) minmax(64px,.8fr) 42px;
+  grid-template-columns:minmax(80px,1fr) minmax(60px,.8fr) 36px;
   align-items:center;
-  gap:7px;
-  min-height:38px;
+  gap:6px;
+  min-height:35px;
   border-bottom:1px solid rgba(117,153,149,.16);
 }
-.portfolio-koers-tp-trade>strong{color:#edf3f1;font:900 9px/1 system-ui}
+.portfolio-koers-tp-trade>strong{display:flex;align-items:center;gap:7px;color:#edf3f1;font:900 9px/1 system-ui}
 .portfolio-koers-tp-trade>b{color:#31e9aa;font:900 9px/1 system-ui;text-align:left}
 .portfolio-koers-tp-trade>span{color:#c1cbca;font:800 8px/1 system-ui;text-align:right}
+.portfolio-koers-coin{display:grid;place-items:center;width:25px;height:25px;flex:0 0 25px;border:1px solid rgba(255,255,255,.2);border-radius:50%;background:#172027;color:#f2f5f5;box-shadow:inset 0 1px 0 rgba(255,255,255,.12);font:900 12px/1 system-ui}
+.portfolio-koers-coin.coin-btc{background:#f7931a;color:#fff}
+.portfolio-koers-coin.coin-eth{background:linear-gradient(145deg,#7f899d,#313949);color:#fff}
+.portfolio-koers-coin.coin-xrp{background:#111820;color:#e8edef}
+.portfolio-koers-tp-detail-leader{position:absolute;z-index:1;height:1px;border-top:1px solid #e9bd45;transform-origin:0 50%;filter:drop-shadow(0 0 4px rgba(233,189,69,.35));pointer-events:none}
 .portfolio-koers-tp-empty{padding:14px 2px;color:#9caeaa;font:750 7px/1.35 system-ui;text-align:center}
+.portfolio-koers-tp-empty.loading{color:#d7c477}
+.portfolio-koers-tp-empty.error{color:#ff8a96}
 .portfolio-koers-tp-detail>footer{
   padding-top:8px;
   color:#839390;
@@ -1007,31 +1015,33 @@
   color:#aebdba;
   font:900 7px/1 system-ui;
 }
+.portfolio-koers-ui41-hint{display:flex;align-items:center;justify-content:center;gap:7px;min-height:34px;color:#9eaaa8;font:760 7px/1.2 system-ui;text-align:center}
+.portfolio-koers-ui41-hint .portfolio-koers-moneybag{width:14px;height:14px;flex-basis:14px;color:#e9bd45}
 
 @media(max-width:560px){
-  .portfolio-koers-ui41{padding:8px 7px 8px;border-radius:17px}
+  .portfolio-koers-ui41{padding:14px 12px 12px;border-radius:17px}
   .portfolio-koers-ui41 .portfolio-koers-ui41-header{margin-bottom:6px}
-  .portfolio-koers-ui41 .portfolio-koers-title-line h2{font-size:18px}
+  .portfolio-koers-ui41 .portfolio-koers-title-line h2{font-size:20px}
   .portfolio-koers-ui41 .portfolio-koers-heading>small{font-size:8px}
   .portfolio-koers-ui41 .portfolio-koers-live{padding:4px 6px;font-size:7px}
-  .portfolio-koers-settings{width:31px;height:31px;font-size:15px}
-  .portfolio-koers-zones-button{height:31px;padding:0 8px;font-size:8px}
+  .portfolio-koers-settings{width:36px;height:36px;font-size:17px}
+  .portfolio-koers-zones-button{height:36px;padding:0 10px;font-size:8.5px}
   .portfolio-koers-zones-button>span{font-size:14px}
   .portfolio-koers-ui41-value{min-height:26px;margin-top:2px}
-  .portfolio-koers-ui41-value>strong{font-size:19px}
+  .portfolio-koers-ui41-value>strong{font-size:22px}
   .portfolio-koers-ui41-value>span{font-size:10px}
-  .portfolio-koers-ui41-controls{grid-template-columns:minmax(0,1fr) 31px;gap:6px;margin-top:5px}
-  .portfolio-koers-ui41 .portfolio-koers-toolbar button{height:30px;font-size:8px}
-  .portfolio-koers-ui41 .portfolio-koers-fullscreen{width:31px;height:31px}
+  .portfolio-koers-ui41-controls{grid-template-columns:minmax(0,1fr) 36px;gap:7px;margin-top:7px}
+  .portfolio-koers-ui41 .portfolio-koers-toolbar button{height:36px;font-size:8.5px}
+  .portfolio-koers-ui41 .portfolio-koers-fullscreen{width:36px;height:36px}
   .portfolio-koers-ui41 .portfolio-koers-view-toggle{margin-top:5px}
   .portfolio-koers-ui41 .portfolio-koers-view-toggle button{height:24px;padding:0 9px;font-size:6.5px}
-  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:318px}
+  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:500px}
   .portfolio-koers-ui41 .portfolio-koers-event.portfolio-koers-event-chip{height:22px;padding:0 5px}
   .portfolio-koers-ui41 .portfolio-koers-event-chip.tp{height:27px;min-width:69px;padding:0 7px 0 5px}
   .portfolio-koers-ui41 .portfolio-koers-event-chip b{font-size:7px}
   .portfolio-koers-direction-arrow{width:12px;height:15px;flex-basis:12px}
   .portfolio-koers-moneybag{width:15px;height:15px;flex-basis:15px;font-size:12px}
-  .portfolio-koers-tp-detail{left:24px;top:30px;width:min(260px,calc(100% - 35px));padding:9px 10px 8px}
+  .portfolio-koers-tp-detail{left:44px;top:32px;width:min(220px,calc(100% - 56px));padding:10px 11px 9px}
   .portfolio-koers-ui41-footer{gap:5px;padding:0 6px}
   .portfolio-koers-ui41-next{gap:4px;font-size:6px}
 }
@@ -1040,11 +1050,11 @@
   .portfolio-koers-ui41 .portfolio-koers-title-line h2{font-size:17px}
   .portfolio-koers-zones-button{padding:0 6px}
   .portfolio-koers-ui41-value>strong{font-size:18px}
-  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:310px}
+  .portfolio-zone-map.portfolio-koers-ui41 .portfolio-koers-stage{height:480px}
   .portfolio-koers-ui41-footer{grid-template-columns:auto minmax(0,1fr) auto 16px}
   .portfolio-koers-ui41-footer>strong{font-size:6.7px}
   .portfolio-koers-ui41-next{font-size:5.6px;gap:3px}
   .portfolio-koers-ui41-next b{font-size:6.6px}
   .portfolio-koers-ui41-bb{font-size:6.4px}
-  .portfolio-koers-tp-detail{left:18px;top:26px;width:calc(100% - 26px)}
+  .portfolio-koers-tp-detail{left:30px;top:30px;width:min(220px,calc(100% - 42px))}
 }
