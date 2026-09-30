@@ -838,12 +838,12 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
       <ScreenTitle title="Kies je strategie" subtitle="Twee handelsstijlen. De exchange staat los van de strategienaam." />
       <div className="v3-strategy-list">
         <button type="button" className={"v3-strategy-card "+(draft.zoneSoldiersEnabled?"selected":"")} onClick={()=>chooseStrategy(true)} disabled={!zoneSoldiersAvailable}>
-          <img src="/zone-warriors-icon.svg" alt="" />
+          <img src="/zone-warriors-icon-ref1.svg" alt="" />
           <span><strong>Zone Warriors</strong><small>Handelt per prijszone met een vaste LONG/SHORT-verdeling.</small><em>{zoneSoldiersAvailable?"3 LONG + 3 SHORT per zone":"Nog niet vrijgegeven"}</em></span>
           <i>{draft.zoneSoldiersEnabled?"✓":""}</i>
         </button>
         <button type="button" className={"v3-strategy-card "+(!draft.zoneSoldiersEnabled?"selected":"")} onClick={()=>chooseStrategy(false)}>
-          <img src="/classic-dca-icon.svg" alt="" />
+          <img src="/classic-dca-icon-ref10.svg" alt="" />
           <span><strong>Classic DCA</strong><small>Traditionele strategie met vaste LONG/SHORT-capaciteit en optionele instapfilters en DCA.</small><em>Buy the dip · DCA · flexibel</em></span>
           <i>{!draft.zoneSoldiersEnabled?"✓":""}</i>
         </button>
