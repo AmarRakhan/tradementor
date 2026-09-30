@@ -22,7 +22,6 @@ import { isCompletePortfolioSnapshot, sanitizePortfolioEquityRows, type Portfoli
 import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
-import { BotHealthCard } from "@/components/bot-health-card";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import { JourneyView } from "@/components/journey-view";
 import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster-account-display";
@@ -385,14 +384,6 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
   const asterActionsEnabled = destination !== "aster" || asterActionsAreFresh(snapshot, cloudReady);
   const strategy2Snapshot = destination === "aster" && snapshot.data?.strategy2 && typeof snapshot.data.strategy2 === "object"
     ? snapshot.data.strategy2 as Record<string, unknown> : null;
-  const asterStrategyMode = String(strategy2Snapshot?.strategyMode || "TRADITIONAL").toUpperCase();
-  const asterPriceZoneSeatsActive = asterStrategyMode === "PRICE_ZONE_SEATS" || asterStrategyMode === "ZONE_SOLDIERS";
-  const asterZoneLifecycle = String(strategy2Snapshot?.zoneSoldierLifecycle || "OFF").toUpperCase();
-  const asterStrategyLabel = asterPriceZoneSeatsActive
-    ? "STRATEGIE · PRIJSZONE-STOELEN"
-    : asterZoneLifecycle === "DRAINING"
-      ? "STRATEGIE · ZONEPOSITIES AFBOUWEN"
-      : "STRATEGIE · TRADITIONEEL";
   const asterExecutionConfirmed = destination !== "aster" || Boolean(
     asterActionsEnabled && (
       asterEvidenceIsFresh(snapshot.data?.snapshotAt) ||
@@ -437,8 +428,6 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         </div>}
         {destination === "aster" ? <div className="risk-orbits liquidation-only"><LiquidationRiskOrbit display={view.asterAccountDisplay} /></div> : <div><div className={`risk-orbit risk-${view.riskTone}`} aria-label={view.riskLabel}><div className="orbit-lines" /><div className="risk-core"><span>{view.riskLabel}</span><strong>{view.riskValue}</strong><small>{view.riskDetail}</small></div></div></div>}
       </section>}
-
-      {!positionsOnly && destination === "aster" && <><div className={`aster-strategy-mode ${asterPriceZoneSeatsActive ? "zone" : asterZoneLifecycle === "DRAINING" ? "draining" : "traditional"}`}><span>{asterStrategyLabel}</span><small>{asterPriceZoneSeatsActive ? "Alleen vrije LONG- en SHORT-stoelen in de actieve prijszone mogen na een geldige instap worden gevuld." : asterZoneLifecycle === "DRAINING" ? "Geen nieuwe prijszone-stoelen; bestaande zoneposities blijven normaal beheerd." : "Portfolio Koers is informatief en verandert geen orders, slots of position sizing."}</small></div><BotHealthCard /></>}
 
       {!positionsOnly && destination !== "aster" && <section className="direction-balance" aria-label="Long en short balans">
         <DirectionBalanceCell label="LONG" count={view.accountDataAvailable ? longPositions.length : null} value={view.accountDataAvailable ? longPnl : null} />
