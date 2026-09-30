@@ -114,6 +114,68 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
   return [...byKey.values()].sort((a,b)=>a.time-b.time||String(a.kind).localeCompare(String(b.kind))||String(a.side).localeCompare(String(b.side)));
 }
 
+
+export function tpTradesForBucketFromActivity(activity, timeframe, bucketTime) {
+  const step=PORTFOLIO_KOERS_TIMEFRAME_SECONDS[String(timeframe)];
+  const target=Math.floor(finite(bucketTime));
+  if(!step||target<=0) return [];
+  const payload=activity&&typeof activity==="object"?activity:{};
+  const entries=Array.isArray(payload.entries)?payload.entries.filter((row)=>row&&typeof row==="object"):[];
+  const exits=Array.isArray(payload.exits)?payload.exits.filter((row)=>row&&typeof row==="object"):[];
+  const stampMs=(row)=>Math.floor(finite(row.timestampMs||row.time));
+  const quantity=(row)=>Math.abs(finite(row.quantity||row.qty));
+  const pair=(row)=>`${String(row.symbol||"").toUpperCase().trim()}|${String(row.side||"").toUpperCase().trim()}`;
+  const entryTimes=new Map();
+  for(const row of entries){
+    const stamp=stampMs(row), key=pair(row);
+    if(stamp<=0||!key.includes("|")) continue;
+    const rows=entryTimes.get(key)||[]; rows.push(stamp); entryTimes.set(key,rows);
+  }
+  for(const rows of entryTimes.values()) rows.sort((a,b)=>a-b);
+
+  const openedByExit=new Map();
+  const state=new Map();
+  const ordered=[
+    ...entries.map((row)=>({row,kind:"entry",stamp:stampMs(row)})),
+    ...exits.map((row)=>({row,kind:"exit",stamp:stampMs(row)})),
+  ].filter((item)=>item.stamp>0).sort((a,b)=>a.stamp-b.stamp||(a.kind==="entry"?-1:1));
+  for(const item of ordered){
+    const key=pair(item.row), qty=quantity(item.row);
+    const [symbol,side]=key.split("|");
+    if(!symbol||!["LONG","SHORT"].includes(side)||qty<=0) continue;
+    const current=state.get(key)||{quantity:0,openedAtMs:0};
+    if(item.kind==="entry"){
+      if(current.quantity<=1e-12) current.openedAtMs=item.stamp;
+      current.quantity+=qty;
+      state.set(key,current);
+      continue;
+    }
+    if(current.openedAtMs>0&&current.quantity>1e-12) openedByExit.set(item.row,current.openedAtMs);
+    current.quantity=Math.max(0,current.quantity-qty);
+    if(current.quantity<=1e-12) current.openedAtMs=0;
+    state.set(key,current);
+  }
+
+  return exits.flatMap((row)=>{
+    const stamp=stampMs(row);
+    if(stamp<=0||Math.floor(stamp/1000/step)*step!==target) return [];
+    const symbol=String(row.symbol||"").toUpperCase().replace(/(?:USDT|USDC|BUSD|USD)$/,"").trim();
+    const side=String(row.side||"").toUpperCase().trim();
+    if(!symbol||!["LONG","SHORT"].includes(side)) return [];
+    const key=pair(row);
+    let opened=Number(openedByExit.get(row)||0);
+    if(opened<=0){
+      const candidates=(entryTimes.get(key)||[]).filter((value)=>value<=stamp);
+      opened=candidates.length?candidates[0]:0;
+    }
+    return [{
+      symbol,
+      realizedPnlUsd:finite(row.realizedPnlUsd),
+      durationMinutes:opened>0?Math.max(0,Math.round((stamp-opened)/60_000)):null,
+    }];
+  });
+}
+
 export function bollinger20x2(candles) {
   const clean = Array.isArray(candles) ? candles : [];
   const period=20, multiplier=2, upper=[], middle=[], lower=[];
