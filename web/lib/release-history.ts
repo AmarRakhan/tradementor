@@ -26,31 +26,70 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-30",
-  title: "Botconfigurator strategie-iconen · CI release-regressies uitgelijnd",
+  title: "Portfolio Snapshot · Prijszone Details + Scanner Status",
   newItems: [
-    "De Build 475 icon-correctie blijft inhoudelijk ongewijzigd: Zone Warriors gebruikt referentie-optie 1 en Classic DCA referentie-optie 10.",
+    "De normale Portfolio Snapshot toont direct onder de header twee compacte detailknoppen: Prijszone Details en Scanner Status.",
+    "Het grote Prijszone-strategieblok is uit de standaardweergave gehaald en opent voortaan als zelfstandige detailweergave.",
+    "Scanner Status toont per LONG en SHORT de live timeframe, laatste scan, gescande markten, Bollinger-kandidaten, zonepassage, blockers, orders, laatste entry en vrije capaciteit.",
+    "De scannerdiagnostiek geeft uitsluitend op basis van runtime-feiten één status: NORMAAL, GEEN KANDIDATEN, GEBLOKKEERD, SCANNER STIL of ORDERFOUT.",
   ],
   problems: [
-    "Na Build 475 bleken twee bestaande safety-tests nog expliciet Build 474 als actuele webappversie te verwachten.",
-    "De applicatie buildde wel, maar Web Cloud CI stopte daardoor in de safety-testfase.",
+    "De prijszonesamenvatting nam veel verticale ruimte in op het hoofdscherm terwijl dezelfde informatie vooral nodig is voor diagnose.",
+    "Bij langere perioden zonder nieuwe entries was niet direct zichtbaar of er werkelijk geen kandidaten waren of dat een latere filter, capaciteit of scannerstatus de entry tegenhield.",
   ],
   causes: [
-    "De release-nummerasserties in botconfigurator-v31-quick-edit.test.mjs en portfolio-koers-structure-build446.test.mjs waren nog niet meegevoerd naar het nieuwe buildnummer.",
+    "De Portfolio Snapshot combineerde kerncijfers en uitgebreide strategie-uitleg in één permanente kaart.",
+    "De Multi-BB runtime publiceerde nog geen compacte per-richting observability-counters voor de entrypipeline.",
   ],
   fixes: [
-    "Alle regressietests die het actuele WEBAPP_BUILD_NUMBER controleren zijn uitgelijnd op Build 476.",
-    "Er is geen functionele botcode aangepast; dit is uitsluitend releaseadministratie en test-contractonderhoud voor de icon-uitrol.",
+    "Prijszone Details en Scanner Status zijn aparte contentstates: bij openen verdwijnen de grafiek en normale snapshot volledig en bij terugkeer wordt de eerdere scrollpositie hersteld.",
+    "De bestaande prijszone-seatdata wordt ongewijzigd hergebruikt op de detailpagina; er zijn geen hardcoded referentiewaarden toegevoegd.",
+    "De Multi-BB runtime publiceert read-only scannerDiagnostics zonder entryvoorwaarden, orderplaatsing, Bollingerlogica, zonegedrag, DCA, TP of Auto Hedge te wijzigen.",
+    "De detailpagina's volgen de drie goedgekeurde referentiebeelden voor hiërarchie, spacing en kleurgebruik.",
   ],
   now: [
-    "De goedgekeurde strategie-iconen blijven actief en de volledige web safety-suite kan opnieuw doorlopen met één consistente actuele build.",
+    "Het hoofdscherm blijft compact, terwijl prijszone- en scannerdiagnostiek met één gerichte detailactie beschikbaar zijn.",
+    "Bij geen instappers kan direct worden vastgesteld of de scanner stil is, geen Bollinger-kandidaten ziet, downstream wordt geblokkeerd of wel orders heeft geplaatst.",
   ],
   technicalDetails: [
-    "Visuele assets blijven web/public/zone-warriors-icon-ref1.svg en web/public/classic-dca-icon-ref10.svg.",
-    "Geen scanner-, entry-, DCA-, TP-, Auto Hedge- of Zone Warriors-runtime gewijzigd.",
+    "Hoofdreferentie: file_00000000afb481f480fb60893b473c16.",
+    "Prijszone Details: file_00000000a63481f493d2f56071aaeb3b.",
+    "Scanner Status: file_000000002d908210a581e71c2352d09b.",
+    "UI: web/components/aster-portfolio-snapshot-enhancer.tsx en web/app/portfolio-snapshot.css.",
+    "Read-only observability: cloud_api/aster_multi_bb_core.py → multiBbReport.scannerDiagnostics.",
+    "Geen strategieparameters, entry-sizing, exchange-submit, TP, DCA, Auto Hedge of zone-overgangslogica gewijzigd.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-476-botconfigurator-icon-ci",
+    version: "46",
+    build: "476",
+    releasedAt: "2026-09-30",
+    title: "Botconfigurator strategie-iconen · CI release-regressies uitgelijnd",
+    newItems: [
+      "De Build 475 icon-correctie bleef inhoudelijk ongewijzigd: Zone Warriors gebruikt referentie-optie 1 en Classic DCA referentie-optie 10.",
+    ],
+    problems: [
+      "Na Build 475 verwachtten twee bestaande safety-tests nog expliciet Build 474 als actuele webappversie.",
+    ],
+    causes: [
+      "De release-nummerasserties waren nog niet meegevoerd naar het nieuwe buildnummer.",
+    ],
+    fixes: [
+      "De regressietests die het actuele WEBAPP_BUILD_NUMBER controleren zijn uitgelijnd op Build 476.",
+    ],
+    now: [
+      "De goedgekeurde strategie-iconen bleven actief met één consistente actuele build.",
+    ],
+    technicalDetails: [
+      "Visuele assets: web/public/zone-warriors-icon-ref1.svg en web/public/classic-dca-icon-ref10.svg.",
+      "Geen scanner-, entry-, DCA-, TP-, Auto Hedge- of Zone Warriors-runtime gewijzigd.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-475-botconfigurator-reference-icons",
     version: "46",

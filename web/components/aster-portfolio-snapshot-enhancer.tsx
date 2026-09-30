@@ -97,7 +97,9 @@ const CLOSE_RISK_REFERENCE = "file_000000006ef082468c8b3f46e9a0057b";
 const CLOSE_POSITIVE_REFERENCE = "file_000000009fec821084026a5551398488";
 const LIQUIDATION_GAUGE_REFERENCE = "file_000000004e80820a80318a3de3ae5abd";
 const SNAPSHOT_V2_REFERENCE = "file_0000000061fc81f49a44564879d533de";
-const PRICE_ZONE_SNAPSHOT_REFERENCE = "file_00000000a5708210be60f92f52e4b5cc";
+const SNAPSHOT_DETAIL_BUTTONS_REFERENCE = "file_00000000afb481f480fb60893b473c16";
+const PRICE_ZONE_DETAILS_REFERENCE = "file_00000000a63481f493d2f56071aaeb3b";
+const SCANNER_STATUS_REFERENCE = "file_000000002d908210a581e71c2352d09b";
 
 type LiquidationDiagnostics = {
   liquidationRiskPercent: number | null;
@@ -137,6 +139,31 @@ type PriceZoneSeatSummary = {
   dynamicHedgeSafetyStatus: string;
   queueHaltedUncertain: boolean;
   queueUncertainReason: string;
+};
+
+type SnapshotDetailView = "portfolio" | "price-zone" | "scanner";
+type ScannerVerdict = "NORMAAL" | "GEEN KANDIDATEN" | "GEBLOKKEERD" | "SCANNER STIL" | "ORDERFOUT";
+
+type ScannerSideStatus = {
+  timeframe: string;
+  marketsScanned: number | null;
+  bbCandidates: number | null;
+  zoneAllowed: number | null;
+  blockedFilters: number | null;
+  ordersPlaced: number | null;
+  lastEntryAtMs: number | null;
+  availableCapacity: number | null;
+};
+
+type ScannerStatusSnapshot = {
+  enabled: boolean;
+  monitor: boolean;
+  updatedAtMs: number | null;
+  entryStatus: string;
+  entryReason: string;
+  unscopedBlocked: number | null;
+  long: ScannerSideStatus;
+  short: ScannerSideStatus;
 };
 
 function directText(element: Element | null, selector: string) {
@@ -327,6 +354,45 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     dynamicHedgeSafetyStatus: firstString([dynamicHedge], ["safetyStatus"]),
     queueHaltedUncertain: queue.haltedUncertain === true,
     queueUncertainReason: firstString([queue], ["uncertainReason"]),
+  };
+}
+
+function scannerSideStatus(rawSide: Record<string, unknown>): ScannerSideStatus {
+  const nonNegativeInteger = (key: string) => {
+    const value = optionalNumber(rawSide[key]);
+    return value === null ? null : Math.max(0, Math.round(value));
+  };
+  return {
+    timeframe: firstString([rawSide], ["timeframe"]) || "—",
+    marketsScanned: nonNegativeInteger("marketsScanned"),
+    bbCandidates: nonNegativeInteger("bbCandidates"),
+    zoneAllowed: nonNegativeInteger("zoneAllowed"),
+    blockedFilters: nonNegativeInteger("blockedFilters"),
+    ordersPlaced: nonNegativeInteger("ordersPlaced"),
+    lastEntryAtMs: optionalNumber(rawSide.lastEntryAtMs),
+    availableCapacity: nonNegativeInteger("availableCapacity"),
+  };
+}
+
+async function loadScannerStatus(): Promise<ScannerStatusSnapshot> {
+  const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" });
+  const root = record(payload);
+  const strategy2 = Object.keys(record(root.strategy2)).length
+    ? record(root.strategy2)
+    : Object.keys(record(record(root.data).strategy2)).length
+      ? record(record(root.data).strategy2)
+      : record(record(root.snapshot).strategy2);
+  const multiBb = record(strategy2.multiBb);
+  const scanner = record(multiBb.scannerDiagnostics);
+  return {
+    enabled: strategy2.enabled === true,
+    monitor: strategy2.monitor === true,
+    updatedAtMs: firstNumber([scanner, multiBb], ["updatedAtMs"]),
+    entryStatus: firstString([multiBb, record(strategy2.entryDiagnostics)], ["entryStatus"]),
+    entryReason: firstString([multiBb, record(strategy2.entryDiagnostics)], ["entryReason"]),
+    unscopedBlocked: optionalNumber(scanner.unscopedBlocked),
+    long: scannerSideStatus(record(scanner.LONG)),
+    short: scannerSideStatus(record(scanner.SHORT)),
   };
 }
 
@@ -693,7 +759,7 @@ function CloseImpactSheet({ scope, bucket, config, busy, onCancel, onConfirm }: 
 
 function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZoneSeatSummary | null; liveActiveZone: number | null }) {
   const liveZoneLabel = liveActiveZone === null ? "—" : `Zone ${liveActiveZone} actief`;
-  if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
+  if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_DETAILS_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
   const displayActiveZone = liveActiveZone ?? summary.activeZone;
   const backendZoneMatches = displayActiveZone !== null && summary.activeZone === displayActiveZone;
@@ -725,7 +791,7 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
         : summary.entryStatus
           ? `Instapstatus · ${summary.entryStatus}${summary.entryReason ? ` · ${summary.entryReason}` : ""}`
           : "Instapstatus · wacht op nieuwe scanner-evaluatie";
-  return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_SNAPSHOT_REFERENCE} data-seat-zone-sync={seatZoneInSync ? "synced" : "waiting"}>
+  return <section className={"aps-zone-strategy " + (summary.enabled ? "is-active" : "is-off")} data-reference={PRICE_ZONE_DETAILS_REFERENCE} data-seat-zone-sync={seatZoneInSync ? "synced" : "waiting"}>
     <div className="aps-zone-title">
       <span className="aps-zone-target" aria-hidden="true">◎</span>
       <div><b>Prijszone-strategie</b><small>{statusText}</small></div>
@@ -761,16 +827,146 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
   </section>;
 }
 
-function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeats, liveActiveZone, profitBusy, onCloseAll, onCloseProfit, onOpenHedge }: {
+function SnapshotDetailButtons({ onOpenPriceZone, onOpenScanner }: {
+  onOpenPriceZone: () => void;
+  onOpenScanner: () => void;
+}) {
+  return <div className="aps-detail-actions" data-reference={SNAPSHOT_DETAIL_BUTTONS_REFERENCE} aria-label="Portfolio detailweergaven">
+    <button type="button" className="aps-detail-action aps-detail-action-zone" onClick={onOpenPriceZone} aria-label="Prijszone Details openen">
+      <span className="aps-detail-action-icon" aria-hidden="true">◎</span>
+      <span><b>Prijszone Details</b><small>Dubbelklik · 3D flip</small></span>
+      <em aria-hidden="true">›</em>
+    </button>
+    <button type="button" className="aps-detail-action aps-detail-action-scanner" onClick={onOpenScanner} aria-label="Scanner Status openen">
+      <span className="aps-detail-action-icon" aria-hidden="true">⌁</span>
+      <span><b>Scanner Status</b><small>Dubbelklik · 3D flip</small></span>
+      <em aria-hidden="true">›</em>
+    </button>
+  </div>;
+}
+
+function formatScannerClock(timestampMs: number | null) {
+  if (!timestampMs || !Number.isFinite(timestampMs)) return "—";
+  return new Intl.DateTimeFormat("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(timestampMs));
+}
+
+function formatScannerAge(timestampMs: number | null) {
+  if (!timestampMs || !Number.isFinite(timestampMs)) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestampMs) / 1000));
+  if (seconds < 60) return seconds + " sec geleden";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + " min geleden";
+  const hours = Math.floor(minutes / 60);
+  return hours + "u " + (minutes % 60) + "m geleden";
+}
+
+function scannerVerdict(snapshot: ScannerStatusSnapshot | null): ScannerVerdict {
+  if (!snapshot?.updatedAtMs || Date.now() - snapshot.updatedAtMs > 120000) return "SCANNER STIL";
+  if (!snapshot.enabled) return "GEBLOKKEERD";
+  if (snapshot.entryStatus === "ORDER_REJECTED") return "ORDERFOUT";
+  const sides = [snapshot.long, snapshot.short];
+  const hasRuntimeCounters = sides.some((side) => side.bbCandidates !== null || side.marketsScanned !== null);
+  if (!hasRuntimeCounters) return "GEBLOKKEERD";
+  const freeCapacity = sides.reduce((sum, side) => sum + (side.availableCapacity ?? 0), 0);
+  const bbCandidates = sides.reduce((sum, side) => sum + (side.bbCandidates ?? 0), 0);
+  const blockers = sides.reduce((sum, side) => sum + (side.blockedFilters ?? 0), snapshot.unscopedBlocked ?? 0);
+  const orders = sides.reduce((sum, side) => sum + (side.ordersPlaced ?? 0), 0);
+  if (freeCapacity > 0 && bbCandidates === 0) return "GEEN KANDIDATEN";
+  if (freeCapacity > 0 && bbCandidates > 0 && orders === 0 && blockers > 0) return "GEBLOKKEERD";
+  return "NORMAAL";
+}
+
+function scannerConclusion(snapshot: ScannerStatusSnapshot | null, verdict: ScannerVerdict) {
+  if (!snapshot) return "Live scannerdiagnostiek wordt geladen.";
+  if (verdict === "SCANNER STIL") return "De laatste scanner-heartbeat is ouder dan twee minuten. Controleer de runtime voordat nieuwe entries worden verwacht.";
+  if (verdict === "ORDERFOUT") return snapshot.entryReason || "De scanner vond een entry, maar de ordercontrole heeft deze afgewezen.";
+  if (verdict === "GEBLOKKEERD" && snapshot.long.marketsScanned === null && snapshot.short.marketsScanned === null) {
+    return "De scanner draait, maar de nieuwe read-only diagnosevelden zijn nog niet beschikbaar in deze runtime.";
+  }
+  const describe = (label: string, side: ScannerSideStatus) => {
+    if ((side.availableCapacity ?? 0) <= 0) return label + ": geen vrije stoel.";
+    if (side.bbCandidates === 0) return label + ": geen geldige Bollinger-kandidaat in de laatste scan; " + (side.availableCapacity ?? 0) + " stoel(en) vrij.";
+    if ((side.ordersPlaced ?? 0) > 0) return label + ": " + (side.bbCandidates ?? 0) + " kandidaat/kandidaten; " + (side.ordersPlaced ?? 0) + " order(s) geplaatst.";
+    if ((side.blockedFilters ?? 0) > 0) return label + ": " + (side.bbCandidates ?? 0) + " kandidaat/kandidaten; " + (side.blockedFilters ?? 0) + " geblokkeerd na de entryfilter.";
+    return label + ": " + (side.bbCandidates ?? 0) + " kandidaat/kandidaten; geen order geplaatst in de laatste scan.";
+  };
+  return describe("LONG", snapshot.long) + " " + describe("SHORT", snapshot.short);
+}
+
+function PriceZoneDetailsPage({ summary, liveActiveZone, onBack }: {
+  summary: PriceZoneSeatSummary | null;
+  liveActiveZone: number | null;
+  onBack: () => void;
+}) {
+  return <section className="aps-detail-page aps-price-zone-page" data-reference={PRICE_ZONE_DETAILS_REFERENCE} aria-label="Prijszone Details">
+    <button type="button" className="aps-detail-back" onClick={onBack}><span aria-hidden="true">←</span><b>Dubbelklik om terug te gaan</b></button>
+    <div className="aps-detail-page-title">
+      <span className="aps-detail-page-icon" aria-hidden="true">◎</span>
+      <div><h2>Prijszone details</h2><p>Gedetailleerde live weergave van de prijszone-strategie</p></div>
+    </div>
+    <PriceZoneStrategySummary summary={summary} liveActiveZone={liveActiveZone} />
+  </section>;
+}
+
+function ScannerSidePanel({ side, data, updatedAtMs, active }: {
+  side: "LONG" | "SHORT";
+  data: ScannerSideStatus;
+  updatedAtMs: number | null;
+  active: boolean;
+}) {
+  const value = (number: number | null) => number === null ? "—" : String(number);
+  return <article className={"aps-scanner-side aps-scanner-" + side.toLowerCase()}>
+    <header><div><span aria-hidden="true">{side === "LONG" ? "↗" : "↘"}</span><h3>{side} <small>({data.timeframe})</small></h3></div><em className={active ? "is-active" : "is-inactive"}>{active ? "ACTIEF" : "INACTIEF"}</em></header>
+    <dl>
+      <div><dt>Laatste scan</dt><dd>{formatScannerClock(updatedAtMs)} <small>{formatScannerAge(updatedAtMs)}</small></dd></div>
+      <div><dt>Markten gescand</dt><dd>{value(data.marketsScanned)}</dd></div>
+      <div><dt>BB-kandidaten</dt><dd>{value(data.bbCandidates)}</dd></div>
+      <div><dt>Zone toegestaan</dt><dd>{value(data.zoneAllowed)}</dd></div>
+      <div><dt>Geblokkeerd (filters)</dt><dd>{value(data.blockedFilters)}</dd></div>
+      <div><dt>Orders geplaatst</dt><dd>{value(data.ordersPlaced)}</dd></div>
+      <div><dt>Laatste entry</dt><dd>{formatScannerClock(data.lastEntryAtMs)} <small>{formatScannerAge(data.lastEntryAtMs)}</small></dd></div>
+      <div><dt>Heartbeat</dt><dd className="is-live">{formatScannerClock(updatedAtMs)}</dd></div>
+      <div><dt>Vrije stoelen</dt><dd>{value(data.availableCapacity)}</dd></div>
+    </dl>
+  </article>;
+}
+
+function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapshot | null; onBack: () => void }) {
+  const verdict = scannerVerdict(snapshot);
+  const fresh = Boolean(snapshot?.updatedAtMs && Date.now() - snapshot.updatedAtMs <= 120000);
+  return <section className="aps-detail-page aps-scanner-page" data-reference={SCANNER_STATUS_REFERENCE} aria-label="Scanner Status">
+    <button type="button" className="aps-detail-back" onClick={onBack}><span aria-hidden="true">←</span><b>Dubbelklik om terug te gaan</b></button>
+    <div className="aps-detail-page-title aps-scanner-title">
+      <span className="aps-detail-page-icon" aria-hidden="true">⌁</span>
+      <div><h2>Scanner Status</h2><p>Live read-only analyse van entrycondities en marktfilters</p></div>
+      <em className={fresh ? "is-live" : "is-stale"}><i />{fresh ? "Live" : "Stil"}</em>
+    </div>
+    <div className={"aps-entry-health aps-entry-health-" + verdict.toLowerCase().replaceAll(" ", "-")}>
+      <div><small>ENTRY HEALTH</small><strong>{verdict}</strong><p>{snapshot?.entryReason || "Wacht op de volgende scanner-evaluatie."}</p></div>
+      <ul>
+        <li><i className={fresh ? "ok" : "bad"} />Scanner {fresh ? "actief" : "geen recente heartbeat"}</li>
+        <li><i className={snapshot?.enabled ? "ok" : "bad"} />Strategie {snapshot?.enabled ? "actief" : "uit"}</li>
+        <li><i className={snapshot?.long.timeframe !== "—" && snapshot?.short.timeframe !== "—" ? "ok" : "bad"} />Timeframes uit runtime</li>
+      </ul>
+    </div>
+    <div className="aps-scanner-grid">
+      <ScannerSidePanel side="LONG" data={snapshot?.long ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} active={fresh && snapshot?.enabled === true} />
+      <ScannerSidePanel side="SHORT" data={snapshot?.short ?? scannerSideStatus({})} updatedAtMs={snapshot?.updatedAtMs ?? null} active={fresh && snapshot?.enabled === true} />
+    </div>
+    <div className="aps-scanner-conclusion"><span aria-hidden="true">ⓘ</span><div><b>CONCLUSIE</b><p>{scannerConclusion(snapshot, verdict)}</p></div></div>
+  </section>;
+}
+
+function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
-  priceZoneSeats: PriceZoneSeatSummary | null;
-  liveActiveZone: number | null;
   profitBusy: ProfitScope | null;
   onCloseAll: () => void;
   onCloseProfit: (scope: ProfitScope) => void;
   onOpenHedge: () => void;
+  onOpenPriceZone: () => void;
+  onOpenScanner: () => void;
 }) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={SNAPSHOT_V2_REFERENCE}>
     <header>
@@ -781,7 +977,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, priceZoneSeat
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
-    <PriceZoneStrategySummary summary={priceZoneSeats} liveActiveZone={liveActiveZone} />
+    <SnapshotDetailButtons onOpenPriceZone={onOpenPriceZone} onOpenScanner={onOpenScanner} />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
@@ -855,10 +1051,13 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
   const [priceZoneSeats, setPriceZoneSeats] = useState<PriceZoneSeatSummary | null>(null);
+  const [scannerStatus, setScannerStatus] = useState<ScannerStatusSnapshot | null>(null);
   const [liveActiveZone, setLiveActiveZone] = useState<number | null>(null);
+  const [detailView, setDetailView] = useState<SnapshotDetailView>("portfolio");
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
+  const detailScrollY = useRef(0);
   const syncing = useRef(false);
 
   useEffect(() => {
@@ -979,6 +1178,28 @@ export function AsterPortfolioSnapshotEnhancer() {
   }, [host, liveActiveZone]);
 
   useEffect(() => {
+    if (!host) return;
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const status = await loadScannerStatus();
+        if (alive) setScannerStatus(status);
+      } catch {
+        if (alive) setScannerStatus(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [host]);
+
+  useEffect(() => {
     const modalOpen = hedgeOpen || Boolean(confirmScope);
     if (!modalOpen) return;
     const previous = document.body.style.overflow;
@@ -1051,39 +1272,59 @@ export function AsterPortfolioSnapshotEnhancer() {
     }
   };
 
+  const openDetail = (next: Exclude<SnapshotDetailView, "portfolio">) => {
+    detailScrollY.current = window.scrollY;
+    setDetailView(next);
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+  };
+
+  const closeDetail = () => {
+    const restoreY = detailScrollY.current;
+    setDetailView("portfolio");
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => window.scrollTo({ top: restoreY, behavior: "auto" }));
+    });
+  };
+
   const confirmBucket = confirmScope && profitPreview
     ? confirmScope === "LONG" ? profitPreview.long : confirmScope === "SHORT" ? profitPreview.short : profitPreview.all
     : null;
 
   return host ? createPortal(
     <>
-      <PortfolioKoersChart
-        liveEquityText={values.equity}
-        liveAvailableText={values.available}
-        liveLongText={values.longs}
-        liveShortText={values.shorts}
-        onActiveZoneChange={setLiveActiveZone}
-      />
-      <Snapshot
-        values={values}
-        profitPreview={profitPreview}
-        liquidationDiagnostics={liquidationDiagnostics}
-        priceZoneSeats={priceZoneSeats}
+      {detailView === "portfolio" ? <>
+        <PortfolioKoersChart
+          liveEquityText={values.equity}
+          liveAvailableText={values.available}
+          liveLongText={values.longs}
+          liveShortText={values.shorts}
+          onActiveZoneChange={setLiveActiveZone}
+        />
+        <Snapshot
+          values={values}
+          profitPreview={profitPreview}
+          liquidationDiagnostics={liquidationDiagnostics}
+          profitBusy={profitBusy}
+          onCloseAll={closeAll}
+          onCloseProfit={openProfitPreview}
+          onOpenHedge={() => setHedgeOpen(true)}
+          onOpenPriceZone={() => openDetail("price-zone")}
+          onOpenScanner={() => openDetail("scanner")}
+        />
+        {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
+        {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
+          scope={confirmScope}
+          bucket={confirmBucket}
+          config={profitPreview.hedgeConfig}
+          busy={profitBusy === confirmScope}
+          onCancel={() => { if (!profitBusy) setConfirmScope(null); }}
+          onConfirm={confirmProfitClose}
+        /> : null}
+      </> : detailView === "price-zone" ? <PriceZoneDetailsPage
+        summary={priceZoneSeats}
         liveActiveZone={liveActiveZone}
-        profitBusy={profitBusy}
-        onCloseAll={closeAll}
-        onCloseProfit={openProfitPreview}
-        onOpenHedge={() => setHedgeOpen(true)}
-      />
-      {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
-      {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
-        scope={confirmScope}
-        bucket={confirmBucket}
-        config={profitPreview.hedgeConfig}
-        busy={profitBusy === confirmScope}
-        onCancel={() => { if (!profitBusy) setConfirmScope(null); }}
-        onConfirm={confirmProfitClose}
-      /> : null}
+        onBack={closeDetail}
+      /> : <ScannerStatusPage snapshot={scannerStatus} onBack={closeDetail} />}
     </>,
     host,
   ) : null;
