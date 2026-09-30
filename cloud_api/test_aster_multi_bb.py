@@ -780,3 +780,368 @@ def test_auto_hedge_blocked_tp_is_local_and_zone_entry_still_flows(monkeypatch):
     assert any(a.get("kind") == "ENTRY" and a.get("symbol") == "BBBUSDT" for a in result["actions"])
     assert result["entryStatus"] in {"ENTRY_SUBMITTED", "PARTIAL_FILL_SUBMITTED"}
     assert result["status"] == "running"
+
+
+# --- 2026-09-30 side-explicit NEW-entry sizing regression coverage ---
+
+def _side_sizing_cfg(**overrides):
+    base = {
+        "engine": ENGINE,
+        "universeTopN": 8,
+        "maximumPositions": 2,
+        "longSlots": 1,
+        "shortSlots": 1,
+        "minimumLeverage": 100,
+        "entrySizingMode": "margin",
+        "entryMarginUsd": .50,
+        "entryMarginLongUsd": .50,
+        "entryMarginShortUsd": .30,
+        "entryNotionalUsd": 10,
+        "entryNotionalLongUsd": 10,
+        "entryNotionalShortUsd": 6,
+        "dcaDistance": .01,
+        "longDcaDistance": .01,
+        "shortDcaDistance": .01,
+        "dcaMarginUsd": .50,
+        "longDcaMarginUsd": .50,
+        "shortDcaMarginUsd": .30,
+        "maxDca": 3,
+        "maxDcaLong": 3,
+        "maxDcaShort": 3,
+        "takeProfitMode": "PER_TRADE",
+        "takeProfit": .015,
+        "longTakeProfitValue": .01,
+        "shortTakeProfitValue": .03,
+    }
+    base.update(overrides)
+    return MultiBbConfig.from_mapping(base)
+
+
+def _managed_position(symbol, side, *, entry=100.0, mark=100.0, qty=1.0, leverage=100):
+    return {
+        "symbol": symbol,
+        "positionSide": side,
+        "positionAmt": str(qty),
+        "entryPrice": str(entry),
+        "markPrice": str(mark),
+        "leverage": str(leverage),
+    }
+
+
+def _managed_state(*rows):
+    state = {}
+    for index, row in enumerate(rows, 1):
+        symbol = str(row["symbol"]).upper()
+        side = str(row["positionSide"]).upper()
+        entry = float(row["entryPrice"])
+        qty = abs(float(row["positionAmt"]))
+        state[f"{symbol}|{side}"] = {
+            "cycleId": f"side-sizing-{index}",
+            "dcaCount": 0,
+            "lastBotFillPrice": entry,
+            "lastKnownQty": qty,
+            "lastKnownEntry": entry,
+            "cycleStartedAtMs": index,
+            "botManaged": True,
+        }
+    return {"multiBbPositions": state}
+
+
+def test_entry_sizing_stale_short_context_cannot_change_new_long_margin():
+    previous = _managed_position("AAAUSDT", "SHORT")
+    result = run_multi_bb_step(
+        client=Client(
+            positions=[previous],
+            tickers=[{"symbol": "BBBUSDT", "quoteVolume": "1000"}],
+            prices={"AAAUSDT": 100, "BBBUSDT": 100},
+            leverage=100,
+        ),
+        ref=Ref(),
+        raw_state=_managed_state(previous),
+        settings=_side_sizing_cfg(),
+        uid="u",
+        account={"availableBalance": "100"},
+        positions=[previous],
+        open_orders=[],
+        timestamp_ms=int(time.time() * 1000),
+        dry_run=True,
+        order_budget=5,
+    )
+    entry = next(a for a in result["actions"] if a.get("kind") == "ENTRY")
+    assert entry["side"] == "LONG"
+    assert entry["configuredMarginUsd"] == pytest.approx(.50)
+    assert entry["plannedInputMarginUsd"] == pytest.approx(.50)
+    assert entry["marginUsd"] == pytest.approx(.50)
+
+
+def test_entry_sizing_stale_long_context_cannot_change_new_short_margin():
+    previous = _managed_position("AAAUSDT", "LONG")
+    result = run_multi_bb_step(
+        client=Client(
+            positions=[previous],
+            tickers=[{"symbol": "BBBUSDT", "quoteVolume": "1000"}],
+            prices={"AAAUSDT": 100, "BBBUSDT": 100},
+            leverage=100,
+        ),
+        ref=Ref(),
+        raw_state=_managed_state(previous),
+        settings=_side_sizing_cfg(),
+        uid="u",
+        account={"availableBalance": "100"},
+        positions=[previous],
+        open_orders=[],
+        timestamp_ms=int(time.time() * 1000),
+        dry_run=True,
+        order_budget=5,
+    )
+    entry = next(a for a in result["actions"] if a.get("kind") == "ENTRY")
+    assert entry["side"] == "SHORT"
+    assert entry["configuredMarginUsd"] == pytest.approx(.30)
+    assert entry["plannedInputMarginUsd"] == pytest.approx(.30)
+    assert entry["marginUsd"] == pytest.approx(.30)
+
+
+def test_entry_sizing_alternating_long_short_always_uses_its_own_margin():
+    symbols = ["AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT"]
+    result = run_multi_bb_step(
+        client=Client(
+            tickers=[{"symbol": symbol, "quoteVolume": str(1000-index)} for index, symbol in enumerate(symbols)],
+            prices={symbol: 100 for symbol in symbols},
+            leverage=100,
+        ),
+        ref=Ref(),
+        raw_state={},
+        settings=_side_sizing_cfg(maximumPositions=4, longSlots=2, shortSlots=2),
+        uid="u",
+        account={"availableBalance": "100"},
+        positions=[],
+        open_orders=[],
+        timestamp_ms=int(time.time() * 1000),
+        dry_run=True,
+        order_budget=4,
+    )
+    entries = [a for a in result["actions"] if a.get("kind") == "ENTRY"]
+    assert len(entries) == 4
+    assert {a["side"] for a in entries} == {"LONG", "SHORT"}
+    assert all(a["configuredMarginUsd"] == pytest.approx(.50) for a in entries if a["side"] == "LONG")
+    assert all(a["configuredMarginUsd"] == pytest.approx(.30) for a in entries if a["side"] == "SHORT")
+
+
+def test_entry_sizing_fixed_notional_is_side_explicit_after_stale_context():
+    stale_short = _managed_position("AAAUSDT", "SHORT")
+    long_result = run_multi_bb_step(
+        client=Client(
+            positions=[stale_short],
+            tickers=[{"symbol": "BBBUSDT", "quoteVolume": "1000"}],
+            prices={"AAAUSDT": 100, "BBBUSDT": 100},
+            leverage=100,
+        ),
+        ref=Ref(), raw_state=_managed_state(stale_short),
+        settings=_side_sizing_cfg(entrySizingMode="notional"),
+        uid="u", account={"availableBalance": "100"}, positions=[stale_short], open_orders=[],
+        timestamp_ms=int(time.time() * 1000), dry_run=True, order_budget=5,
+    )
+    long_entry = next(a for a in long_result["actions"] if a.get("kind") == "ENTRY")
+    assert long_entry["side"] == "LONG"
+    assert long_entry["configuredNotionalUsd"] == pytest.approx(10)
+    assert long_entry["plannedInputNotionalUsd"] == pytest.approx(10)
+    assert long_entry["notionalUsd"] == pytest.approx(10)
+
+    stale_long = _managed_position("CCCUSDT", "LONG")
+    short_result = run_multi_bb_step(
+        client=Client(
+            positions=[stale_long],
+            tickers=[{"symbol": "DDDUSDT", "quoteVolume": "1000"}],
+            prices={"CCCUSDT": 100, "DDDUSDT": 100},
+            leverage=100,
+        ),
+        ref=Ref(), raw_state=_managed_state(stale_long),
+        settings=_side_sizing_cfg(entrySizingMode="notional"),
+        uid="u", account={"availableBalance": "100"}, positions=[stale_long], open_orders=[],
+        timestamp_ms=int(time.time() * 1000) + 1, dry_run=True, order_budget=5,
+    )
+    short_entry = next(a for a in short_result["actions"] if a.get("kind") == "ENTRY")
+    assert short_entry["side"] == "SHORT"
+    assert short_entry["configuredNotionalUsd"] == pytest.approx(6)
+    assert short_entry["plannedInputNotionalUsd"] == pytest.approx(6)
+    assert short_entry["notionalUsd"] == pytest.approx(6)
+
+
+def test_entry_sizing_bollinger_side_switch_recomputes_for_final_short(monkeypatch):
+    def fake_bollinger(_client, *, symbol, side, **_kwargs):
+        if side == "LONG":
+            raise aster_multi_bb._core.BollingerEntryRejected("TEST_LONG_REJECT", symbol, side)
+        return None
+
+    monkeypatch.setattr(aster_multi_bb._core, "require_bollinger_entry", fake_bollinger)
+    result = run_multi_bb_step(
+        client=Client(
+            tickers=[{"symbol": "AAAUSDT", "quoteVolume": "1000"}],
+            prices={"AAAUSDT": 100},
+            leverage=100,
+        ),
+        ref=Ref(), raw_state={},
+        settings=_side_sizing_cfg(bollingerEntryFilter15mEnabled=True),
+        uid="u", account={"availableBalance": "100"}, positions=[], open_orders=[],
+        timestamp_ms=int(time.time() * 1000), dry_run=True, order_budget=1,
+    )
+    entry = next(a for a in result["actions"] if a.get("kind") == "ENTRY")
+    assert entry["side"] == "SHORT"
+    assert entry["configuredMarginUsd"] == pytest.approx(.30)
+    assert entry["plannedInputMarginUsd"] == pytest.approx(.30)
+
+
+def test_entry_sizing_opposite_side_fallback_uses_final_short_not_stale_long():
+    # State insertion order intentionally ends on LONG, reproducing the old stale-local context.
+    existing_short = _managed_position("BBBUSDT", "SHORT")
+    existing_long = _managed_position("AAAUSDT", "LONG")
+    result = run_multi_bb_step(
+        client=Client(
+            positions=[existing_short, existing_long],
+            tickers=[{"symbol": "AAAUSDT", "quoteVolume": "1000"}],
+            prices={"AAAUSDT": 100, "BBBUSDT": 100},
+            leverage=100,
+        ),
+        ref=Ref(),
+        raw_state=_managed_state(existing_short, existing_long),
+        settings=_side_sizing_cfg(maximumPositions=4, longSlots=2, shortSlots=2),
+        uid="u", account={"availableBalance": "100"},
+        positions=[existing_short, existing_long], open_orders=[],
+        timestamp_ms=int(time.time() * 1000), dry_run=True, order_budget=1,
+    )
+    entry = next(a for a in result["actions"] if a.get("kind") == "ENTRY")
+    assert entry["symbol"] == "AAAUSDT"
+    assert entry["side"] == "SHORT"
+    assert entry["configuredMarginUsd"] == pytest.approx(.30)
+
+
+@pytest.mark.parametrize(
+    ("forced_side", "expected_configured", "expected_planned"),
+    [("LONG", .50, .55), ("SHORT", .30, .33)],
+)
+def test_zone_soldier_entry_multiplier_uses_side_specific_base(forced_side, expected_configured, expected_planned):
+    result = run_multi_bb_step(
+        client=Client(
+            tickers=[{"symbol": "AAAUSDT", "quoteVolume": "1000"}],
+            prices={"AAAUSDT": 100},
+            leverage=100,
+        ),
+        ref=Ref(), raw_state={},
+        settings=_side_sizing_cfg(
+            maximumPositions=2, longSlots=1, shortSlots=1,
+            zoneSoldiersEnabled=True, zoneSoldiersOptInVersion=1,
+            zoneBaseLongSoldiers=1, zoneBaseShortSoldiers=1,
+            zoneEntryGrowthPercent=10, zoneEntryMaxMultiplier=2,
+            manualSymbolSelectionEnabled=True,
+            manualSymbols=[{"symbol": "AAAUSDT", "side": forced_side}],
+        ),
+        uid="u", account={"availableBalance": "100", "totalMarginBalance": "200"},
+        positions=[], open_orders=[],
+        timestamp_ms=int(time.time() * 1000), dry_run=True, order_budget=1,
+        zone_context={"activeZone": 1, "safeForEntries": True},
+    )
+    entry = next(a for a in result["actions"] if a.get("kind") == "ENTRY")
+    assert entry["side"] == forced_side
+    assert entry["configuredMarginUsd"] == pytest.approx(expected_configured)
+    assert entry["entrySizingMultiplier"] == pytest.approx(1.10)
+    assert entry["plannedInputMarginUsd"] == pytest.approx(expected_planned)
+
+
+def test_dca_side_settings_remain_independent_after_entry_fix(monkeypatch):
+    captured = []
+    original = aster_multi_bb._core._plan_add
+
+    def capture_plan_add(client, row, price, margin, leverage, existing_notional, minimum_leverage):
+        captured.append((str(row.get("symbol")), margin))
+        return original(client, row, price, margin, leverage, existing_notional, minimum_leverage)
+
+    monkeypatch.setattr(aster_multi_bb._core, "_plan_add", capture_plan_add)
+
+    long_pos = _managed_position("AAAUSDT", "LONG", mark=98)
+    run_multi_bb_step(
+        client=Client(positions=[long_pos], prices={"AAAUSDT": 98}, leverage=100),
+        ref=Ref(), raw_state=_managed_state(long_pos),
+        settings=_side_sizing_cfg(maximumPositions=1, longSlots=1, shortSlots=0, takeProfitMode="OFF"),
+        uid="u", account={"availableBalance": "100"}, positions=[long_pos], open_orders=[],
+        timestamp_ms=int(time.time() * 1000), dry_run=True, order_budget=1,
+    )
+
+    short_pos = _managed_position("BBBUSDT", "SHORT", mark=102)
+    run_multi_bb_step(
+        client=Client(positions=[short_pos], prices={"BBBUSDT": 102}, leverage=100),
+        ref=Ref(), raw_state=_managed_state(short_pos),
+        settings=_side_sizing_cfg(maximumPositions=1, longSlots=0, shortSlots=1, takeProfitMode="OFF"),
+        uid="u", account={"availableBalance": "100"}, positions=[short_pos], open_orders=[],
+        timestamp_ms=int(time.time() * 1000) + 1, dry_run=True, order_budget=1,
+    )
+
+    assert captured[0] == ("AAAUSDT", pytest.approx(.50))
+    assert captured[1] == ("BBBUSDT", pytest.approx(.30))
+
+
+def test_take_profit_side_thresholds_remain_independent_after_entry_fix():
+    long_pos = _managed_position("AAAUSDT", "LONG", mark=101.5)
+    short_pos = _managed_position("BBBUSDT", "SHORT", mark=98.5)
+    result = run_multi_bb_step(
+        client=Client(
+            positions=[long_pos, short_pos],
+            prices={"AAAUSDT": 101.5, "BBBUSDT": 98.5},
+            leverage=100,
+        ),
+        ref=Ref(), raw_state=_managed_state(long_pos, short_pos),
+        settings=_side_sizing_cfg(maximumPositions=2, longSlots=1, shortSlots=1),
+        uid="u", account={"availableBalance": "100"},
+        positions=[long_pos, short_pos], open_orders=[],
+        timestamp_ms=int(time.time() * 1000), dry_run=True, order_budget=5,
+    )
+    tps = {(a["symbol"], a["side"]) for a in result["actions"] if a.get("kind") == "TP"}
+    assert ("AAAUSDT", "LONG") in tps
+    assert ("BBBUSDT", "SHORT") not in tps
+
+
+def test_stop_loss_side_thresholds_remain_independent_after_entry_fix():
+    long_pos = _managed_position("AAAUSDT", "LONG", mark=98)
+    short_pos = _managed_position("BBBUSDT", "SHORT", mark=102)
+    result = run_multi_bb_step(
+        client=Client(
+            positions=[long_pos, short_pos],
+            prices={"AAAUSDT": 98, "BBBUSDT": 102},
+            leverage=100,
+        ),
+        ref=Ref(), raw_state=_managed_state(long_pos, short_pos),
+        settings=_side_sizing_cfg(
+            maximumPositions=2, longSlots=1, shortSlots=1,
+            stopLossEnabled=True, stopLossMode="PERCENT",
+            stopLossLong=1, stopLossShort=3,
+        ),
+        uid="u", account={"availableBalance": "100"},
+        positions=[long_pos, short_pos], open_orders=[],
+        timestamp_ms=int(time.time() * 1000), dry_run=True, order_budget=5,
+    )
+    triggers = {(a["symbol"], a["side"]) for a in result["actions"] if a.get("kind") == "STOP_LOSS_TRIGGERED"}
+    assert ("AAAUSDT", "LONG") in triggers
+    assert ("BBBUSDT", "SHORT") not in triggers
+
+
+def test_shared_pair_override_still_wins_without_crossing_long_short_defaults():
+    settings = _side_sizing_cfg(pairOverrides={"AAAUSDT": {"enabled": True, "entryMarginUsd": .40}})
+    long_margin, _ = aster_multi_bb._core._entry_sizing_for_side(aster_multi_bb._PairAwareSettings(settings), "AAAUSDT", "LONG")
+    short_margin, _ = aster_multi_bb._core._entry_sizing_for_side(aster_multi_bb._PairAwareSettings(settings), "AAAUSDT", "SHORT")
+    assert long_margin == pytest.approx(.40)
+    assert short_margin == pytest.approx(.40)
+
+
+def test_entry_sizing_invariant_fails_closed_on_mismatched_planned_side_input():
+    settings = _side_sizing_cfg()
+    wrapped = aster_multi_bb._PairAwareSettings(settings)
+    with pytest.raises(ValueError, match="ENTRY_SIDE_SIZING_MISMATCH"):
+        aster_multi_bb._core._require_entry_sizing_match(
+            wrapped, "AAAUSDT", "LONG",
+            {
+                "configuredMarginUsd": .30,
+                "configuredNotionalUsd": 10,
+                "plannedInputMarginUsd": .30,
+                "plannedInputNotionalUsd": 10,
+                "multiplier": 1.0,
+            },
+        )
