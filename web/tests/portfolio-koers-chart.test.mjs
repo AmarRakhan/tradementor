@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "../lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "../lib/portfolio-koers-chart.mjs";
 
 test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",()=>{
   assert.deepEqual([...PORTFOLIO_KOERS_TIMEFRAMES],["1m","5m","15m","1u","4u","24u"]);
@@ -17,6 +17,22 @@ test("Portfolio Koers never fabricates invalid or missing candles",()=>{
   ]});
   assert.equal(payload.candles.length,1);
   assert.equal(payload.candles[0].close,101);
+});
+
+test("TP detail rows survive payload normalization and confirmed-fill marker merging",()=>{
+  const base=normalizePortfolioKoersPayload({markers:[{
+    time:900,atMs:900000,kind:"tp",side:"ALL",count:3,realizedPnlUsd:5,
+    trades:[
+      {symbol:"BTCUSDT",realizedPnlUsd:1.9,durationMinutes:18},
+      {symbol:"ETHUSDT",realizedPnlUsd:2.1,durationMinutes:41},
+      {symbol:"XRPUSDT",realizedPnlUsd:1,durationMinutes:12},
+    ],
+    source:"aster-confirmed-fills",
+  }]}).markers;
+  assert.deepEqual(base[0].trades.map((row)=>row.symbol),["BTC","ETH","XRP"]);
+  const merged=mergePortfolioKoersMarkers([{time:900,kind:"tp",side:"ALL",count:1,source:"strategy2-confirmed-audit"}],base);
+  assert.equal(merged[0].realizedPnlUsd,5);
+  assert.equal(merged[0].trades.length,3);
 });
 
 test("Bollinger Bands are exactly period 20 multiplier 2",()=>{
@@ -113,8 +129,10 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(snapshotMount>chartMount);
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("Portfolio Koers"));
-  assert.ok(component.includes("Performance · cashflow gecorrigeerd"));
-  assert.ok(component.includes("Accountwaarde · werkelijke Aster equity"));
+  assert.ok(component.includes(">Accountwaarde</small>"));
+  assert.equal(component.includes("Accountwaarde · werkelijke Aster equity"),false);
+  assert.ok(component.includes("file_00000000e2fc820a9057c8f60c1ec845"));
+  assert.ok(component.includes("file_00000000267082109428370054535e59"));
   assert.ok(component.includes("priceToCoordinate(zone.center)"));
   assert.ok(component.includes("priceToCoordinate(zone.upper)"));
   assert.ok(component.includes("priceToCoordinate(zone.lower)"));
@@ -131,10 +149,11 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
 });
 
 
-test("Portfolio Koers timeframe context never invents a different zone timeframe",async()=>{
+test("Portfolio Koers UI 4.1 keeps Bollinger context compact and never invents a different zone timeframe",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("strategyzones · BB 20,2"));
+  assert.ok(component.includes("BB 20,2"));
   assert.equal(component.includes("4u zones"),false);
+  assert.equal(component.includes("Aster PERP"),false);
 });
 
 test("Portfolio Koers zone overlay renders above the opaque chart canvas",async()=>{
@@ -143,14 +162,17 @@ test("Portfolio Koers zone overlay renders above the opaque chart canvas",async(
   assert.ok(css.includes(".portfolio-koers-zones{position:absolute;inset:0 48px 0 0;z-index:4"));
 });
 
-test("Portfolio Koers uses compact aggregated event labels and keeps detail values in the tooltip",async()=>{
+test("Portfolio Koers UI 4.1 uses straight entry arrows and money-bag TP clusters",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('multiplier:`${label} ×${count}`'));
-  assert.ok(component.includes('multiplier:`TP ×${count}`'));
-  assert.equal(component.includes('glyph:"⚔"'),false);
-  assert.equal(component.includes('glyph:"💰"'),false);
-  assert.ok(component.includes("markerDetail(row)"));
-  assert.ok(component.includes("markerRowsRef.current.filter((row)=>row.time===time)"));
+  assert.ok(component.includes('glyph:"money"'));
+  assert.ok(component.includes('<DirectionArrow direction="up"/>'));
+  assert.ok(component.includes('<DirectionArrow direction="down"/>'));
+  assert.ok(component.includes("portfolio-koers-event-count"));
+  assert.ok(component.includes("connectorStyle(label)"));
+  assert.ok(component.includes("setSelectedTpCluster(label)"));
+  assert.ok(component.includes("Totaal gerealiseerd:"));
+  assert.ok(component.includes("durationLabel(trade.durationMinutes)"));
 });
 
 test("Portfolio Koers explicitly feeds Bollinger boundaries into marker layout",async()=>{
