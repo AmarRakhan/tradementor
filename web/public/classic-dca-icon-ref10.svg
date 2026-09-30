@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 170" role="img" aria-label="Classic DCA reference icon 10">
+  <defs>
+    <linearGradient id="bgc" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#03110b"/>
+      <stop offset=".6" stop-color="#020906"/>
+      <stop offset="1" stop-color="#08140d"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#54ffc2"/>
+      <stop offset=".62" stop-color="#14d985"/>
+      <stop offset=".82" stop-color="#74f6b9"/>
+      <stop offset="1" stop-color="#f3d46a"/>
+    </linearGradient>
+    <linearGradient id="coin" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fff2a6"/>
+      <stop offset=".35" stop-color="#e7bd47"/>
+      <stop offset=".75" stop-color="#9b6410"/>
+      <stop offset="1" stop-color="#523006"/>
+    </linearGradient>
+    <filter id="cglow" x="-50%" y="-70%" width="220%" height="250%">
+      <feGaussianBlur stdDeviation="3.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="coinGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="2" y="2" width="236" height="166" rx="24" fill="url(#bgc)" stroke="#0fc878" stroke-opacity=".62" stroke-width="2"/>
+  <ellipse cx="125" cy="91" rx="92" ry="61" fill="#0ce884" opacity=".045"/>
+
+  <path d="M20 34 48 56 70 43 94 72 119 57 145 91 166 71 186 86"
+        fill="none" stroke="url(#line)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" filter="url(#cglow)"/>
+  <path d="M186 86 C198 72 205 53 218 31" fill="none" stroke="#54ffc2" stroke-width="8" stroke-linecap="round" filter="url(#cglow)"/>
+  <path d="M215 29 230 25 224 40" fill="#f1d067" stroke="#fff0a0" stroke-width="1.5" filter="url(#cglow)"/>
+
+  <g filter="url(#coinGlow)">
+    <g transform="translate(37 67)">
+      <ellipse cx="0" cy="0" rx="13" ry="5" fill="#f7d76d" stroke="#fff2a4" stroke-width="1.5"/>
+      <path d="M-13 0v8c0 3 6 5 13 5s13-2 13-5V0" fill="url(#coin)" stroke="#e8c455" stroke-width="1.5"/>
+      <ellipse cx="0" cy="8" rx="13" ry="5" fill="#c78a18" opacity=".65"/>
+    </g>
+    <g transform="translate(83 84)">
+      <ellipse cx="0" cy="0" rx="13" ry="5" fill="#f7d76d" stroke="#fff2a4" stroke-width="1.5"/>
+      <path d="M-13 0v8c0 3 6 5 13 5s13-2 13-5V0" fill="url(#coin)" stroke="#e8c455" stroke-width="1.5"/>
+      <ellipse cx="0" cy="8" rx="13" ry="5" fill="#c78a18" opacity=".65"/>
+    </g>
+    <g transform="translate(132 102)">
+      <ellipse cx="0" cy="0" rx="13" ry="5" fill="#f7d76d" stroke="#fff2a4" stroke-width="1.5"/>
+      <path d="M-13 0v8c0 3 6 5 13 5s13-2 13-5V0" fill="url(#coin)" stroke="#e8c455" stroke-width="1.5"/>
+      <ellipse cx="0" cy="8" rx="13" ry="5" fill="#c78a18" opacity=".65"/>
+    </g>
+    <g transform="translate(177 98)">
+      <ellipse cx="0" cy="0" rx="13" ry="5" fill="#f7d76d" stroke="#fff2a4" stroke-width="1.5"/>
+      <path d="M-13 0v8c0 3 6 5 13 5s13-2 13-5V0" fill="url(#coin)" stroke="#e8c455" stroke-width="1.5"/>
+      <ellipse cx="0" cy="8" rx="13" ry="5" fill="#c78a18" opacity=".65"/>
+    </g>
+  </g>
+
+  <g font-family="Arial, sans-serif" font-size="9" font-weight="800" letter-spacing=".6" fill="#48f2b0">
+    <text x="28" y="101">BUY</text>
+    <text x="74" y="118">BUY</text>
+    <text x="123" y="136">BUY</text>
+    <text x="168" y="132">BUY</text>
+  </g>
+
+  <g transform="translate(204 17)" filter="url(#coinGlow)">
+    <circle cx="0" cy="0" r="12" fill="#74500d" stroke="#ffe783" stroke-width="2"/>
+    <circle cx="0" cy="0" r="8" fill="url(#coin)"/>
+    <text x="-4" y="5" font-family="Arial, sans-serif" font-size="13" font-weight="900" fill="#fff8d1">$</text>
+  </g>
+</svg>
