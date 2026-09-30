@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 170" role="img" aria-label="Zone Warriors reference icon 1">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#03110b"/>
+      <stop offset=".58" stop-color="#020906"/>
+      <stop offset="1" stop-color="#08140d"/>
+    </linearGradient>
+    <linearGradient id="emerald" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#91ffd0"/>
+      <stop offset=".22" stop-color="#13f08f"/>
+      <stop offset=".62" stop-color="#07a85f"/>
+      <stop offset="1" stop-color="#044d31"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fff2a2"/>
+      <stop offset=".25" stop-color="#f5cf62"/>
+      <stop offset=".68" stop-color="#b67a18"/>
+      <stop offset="1" stop-color="#5d3607"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fff4b5"/>
+      <stop offset=".26" stop-color="#d9b84a"/>
+      <stop offset=".52" stop-color="#18e58d"/>
+      <stop offset="1" stop-color="#0d7047"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect x="2" y="2" width="236" height="166" rx="24" fill="url(#bg)" stroke="#0fc878" stroke-opacity=".62" stroke-width="2"/>
+  <ellipse cx="120" cy="88" rx="82" ry="64" fill="#0ce884" opacity=".055"/>
+  <g filter="url(#soft)" stroke-linecap="round">
+    <path d="M22 43H83 M157 43H218" stroke="#f2cf62" stroke-width="3"/>
+    <path d="M22 67H89 M151 67H218" stroke="#14e98b" stroke-width="4"/>
+    <path d="M22 92H91 M149 92H218" stroke="#0fb66c" stroke-width="4"/>
+    <path d="M22 119H83 M157 119H218" stroke="#d1a63c" stroke-width="3"/>
+  </g>
+
+  <g filter="url(#glow)" stroke-linejoin="round">
+    <path d="M120 18 142 31 160 54 156 101 139 132 120 148 101 132 84 101 80 54 98 31Z" fill="#03100b" stroke="#18e98c" stroke-width="3"/>
+    <path d="M120 18 103 29 88 51 93 86 108 73 120 83Z" fill="url(#emerald)" stroke="#59ffb9" stroke-width="2"/>
+    <path d="M120 18 137 29 152 51 147 86 132 73 120 83Z" fill="url(#gold)" stroke="#f2d36e" stroke-width="2"/>
+    <path d="M120 18 130 31 125 55 120 82 115 55 110 31Z" fill="url(#blade)" stroke="#ffe58a" stroke-width="2"/>
+    <path d="M91 86 108 73 116 82 107 92 101 119 91 101Z" fill="#063b28" stroke="#19dd86" stroke-width="2"/>
+    <path d="M149 86 132 73 124 82 133 92 139 119 149 101Z" fill="#39290a" stroke="#e3be51" stroke-width="2"/>
+    <path d="M103 112 120 126 137 112 132 130 120 143 108 130Z" fill="#03150e" stroke="url(#blade)" stroke-width="2"/>
+    <path d="M120 82V143" stroke="#f6d469" stroke-width="3"/>
+  </g>
+</svg>
