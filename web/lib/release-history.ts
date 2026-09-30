@@ -61,7 +61,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   confidence: "confirmed",
 };
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
     id: "v46-build-477-portfolio-snapshot-details",
     version: "46",
@@ -102,7 +102,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[
     ],
     confidence: "confirmed",
   },
-] = [
+
   {
     id: "v46-build-476-botconfigurator-icon-ci",
     version: "46",
