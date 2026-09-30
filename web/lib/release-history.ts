@@ -26,45 +26,65 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-09-30",
-  title: "Portfolio Koers UI 4.1 · referentiepariteit 4.1.1",
+  title: "Portfolio Koers UI 4.1 · rustige marker-dichtheid",
   newItems: [
-    "De mobiele Portfolio Koers-chart gebruikt nu de verticale verhouding van de goedgekeurde referentie in plaats van de gecomprimeerde Build 472-weergave.",
-    "15m opent met een langere zichtbare tijdlijn zodat candles, LONG/SHORT-events en TP-clusters dezelfde rustige spreiding krijgen als in de referentie.",
-    "Een TP-detailkaart kan ontbrekende onderliggende regels bij openen read-only aanvullen uit de bestaande bevestigde Aster-fillhistorie.",
-    "TP-details tonen coinbadge, gerealiseerde winst en tijd in trade; de kaart krijgt opnieuw de goudkleurige verbindingslijn en onderste gebruikshint uit de referentie.",
+    "De standaardgrafiek toont per zichtbaar venster maximaal 3 TP-clusters, 2 LONG-markers en 2 SHORT-markers.",
+    "Markers worden over de zichtbare tijdlijn verdeeld; per tijdsegment wordt het meest informatieve event gekozen op basis van aantal fills, gerealiseerde winst en eventprioriteit.",
+    "Alle onderliggende bevestigde events blijven intact en blijven beschikbaar via candle-hover en TP-detaildata.",
   ],
   problems: [
-    "Build 472 gebruikte mobiel een chart van slechts 318px, waardoor levels, candles en eventchips verticaal op elkaar werden gedrukt.",
-    "De accountweergave kon de zichtbare tijdlijn dynamisch terugbrengen tot ongeveer 6–16 candles, terwijl de referentie een langere marktbeweging toont.",
-    "De extra nieuwe-high/role-flip/breakout annotaties maakten de 4.1-weergave drukker dan de goedgekeurde referentie.",
-    "Een TP-cluster kon wel het bevestigde totaal tonen maar een lege detailkaart openen wanneer de fill-cache nog niet door het gesloten-trades scherm was opgebouwd.",
+    "Build 473 herstelde de juiste grafiekhoogte en langere 15m-tijdlijn, maar renderde vervolgens vrijwel ieder zichtbaar historisch event tegelijk.",
+    "Bij een actieve strategie ontstond daardoor een onleesbare stapeling van tientallen TP-zakjes en LONG/SHORT-pijlen, in strijd met de goedgekeurde rustige referentie.",
   ],
   causes: [
-    "Een oude compacte mobiele CSS-override bleef actief na de 4.1-redesign.",
-    "De eerdere zone-focusfunctie bepaalde nog steeds het aantal zichtbare candles en won daarmee van de nieuwe referentie-layout.",
-    "TP-detailmetadata werd alleen direct uit de reeds gevulde chart-fillcache gelezen; die cache is niet gegarandeerd aanwezig bij een verse appstart.",
+    "De marker-layout had expliciet als fallback dat normale zichtbare events nooit verborgen mochten worden.",
+    "Portfolio Koers gaf maximaal 56 markers door aan die layout, waardoor de langere 36-candle viewport vrijwel alle events probeerde te tekenen.",
   ],
   fixes: [
-    "De mobiele chart is verhoogd naar 500px, met ruimere binnenpadding en referentieconforme header/control-afmetingen.",
-    "De 15m-weergave gebruikt 36 zichtbare candles en wordt niet meer automatisch ingekort door de oude zone-focusfunctie.",
-    "UI 4.1 rendert alleen R2/R1/S1/S2 en de echte actieve zone; role-flip, nieuwe-high en breakout-tekst worden niet meer over de chart gelegd.",
-    "Bij het openen van een incompleet TP-cluster wordt uitsluitend read-only /closed-trades opgehaald en worden coin, bevestigde realized PnL en duur uit de bevestigde fills gereconstrueerd.",
-    "De TP-kaart is smaller en referentieconform, bevat coinbadges, een goudkleurige leader en de hint Tik op een TP-marker om de posities te bekijken.",
+    "Een aparte reference-density selectielaag wordt pas na de zichtbare-range filtering toegepast.",
+    "TP wordt begrensd op 3, LONG op 2 en SHORT op 2 zichtbare markers; cashflow en overige types krijgen elk maximaal 1 marker.",
+    "De selectie verdeelt de tijdlijn in segmenten zodat de gekozen markers niet allemaal rechts of links samenklonteren.",
+    "De bestaande high safety cap blijft een technische corruptiebeveiliging van de generieke layout; de nieuwe visuele cap zit uitsluitend in Portfolio Koers UI 4.1.",
   ],
   now: [
-    "Portfolio Koers neemt op mobiel ongeveer dezelfde verticale ruimte en informatiedichtheid in als de twee goedgekeurde referentiebeelden.",
-    "Een TP-detailkaart toont echte bevestigde posities wanneer de fillhistorie beschikbaar is; er worden geen voorbeeldcoins of fictieve resultaten ingevuld.",
+    "De 15m-grafiek houdt de ruimere Build 473-verhouding maar benadert opnieuw de informatiedichtheid van de referentiefoto.",
+    "Geen historische trade-, TP- of entrydata wordt verwijderd; alleen de gelijktijdige visuele presentatie wordt beperkt.",
   ],
   technicalDetails: [
+    "UI-selectie: web/lib/portfolio-koers-marker-layout.mjs en web/components/portfolio-koers-chart.tsx.",
+    "Reference density: tp=3, long=2, short=2, cashflow=1, other=1; uiteindelijke layout safetyCap=9.",
+    "Geen backend-, scanner-, order-, entry-sizing-, DCA-, TP-executie-, Auto Hedge- of Zone Warriors-runtime gewijzigd.",
     "Referentie standaard: file_000000003c9482439c9133a939d80986.",
-    "Referentie TP-detail: file_000000003b80821087846cac0d618fe3.",
-    "Gebruikersscreenshots vóór correctie: file_00000000c5ac821095a5d86864b8125c en file_00000000f7ac81f4872bd2a7d0def819.",
-    "UI-only/read-only dataverwerking: web/components/portfolio-koers-chart.tsx, web/app/portfolio-koers-chart.css en web/lib/portfolio-koers-chart.mjs.",
-    "Geen scanner-, order-, DCA-, TP-executie-, hedge-, entry-sizing- of Zone Warriors-runtime aangepast.",
+    "Gebruikersscreen met marker-overload: file_00000000087c8210bbbc7857460356d7.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-473-portfolio-koers-ui41-reference-parity",
+    version: "46",
+    build: "473",
+    releasedAt: "2026-09-30",
+    title: "Portfolio Koers UI 4.1 · referentiepariteit 4.1.1",
+    newItems: [
+      "De mobiele chart werd verhoogd naar 500px en 15m kreeg een langere zichtbare tijdlijn.",
+      "TP-details kregen read-only fillverrijking, coinbadges, een goudkleurige leader en de gebruikshint uit de referentie.",
+    ],
+    problems: [
+      "De langere tijdlijn maakte zichtbaar dat de bestaande marker-layout te veel historische events tegelijk renderde.",
+    ],
+    causes: [
+      "De generieke marker-layout verborg bewust geen normale zichtbare events.",
+    ],
+    fixes: [
+      "De visuele marker-dichtheid is in Build 474 apart begrensd zonder onderliggende events te verwijderen.",
+    ],
+    now: [
+      "Build 473 blijft de basis voor afmetingen en TP-detailweergave; Build 474 corrigeert uitsluitend de eventdichtheid.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-472-portfolio-koers-ui41",
     version: "46",
