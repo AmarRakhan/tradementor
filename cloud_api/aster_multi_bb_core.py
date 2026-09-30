@@ -1345,6 +1345,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     scanned_candidates = 0
     executable_candidates = 0
     minimum_margin_rejections: list[float] = []
+    previous_report = raw_state.get("multiBbReport") if isinstance(raw_state.get("multiBbReport"), dict) else {}
+    previous_scanner = previous_report.get("scannerDiagnostics") if isinstance(previous_report.get("scannerDiagnostics"), dict) else {}
+    scanner_side_diagnostics: dict[str, dict[str, int]] = {
+        side_name: {
+            "marketsScanned": 0,
+            "bbCandidates": 0,
+            "zoneAllowed": 0,
+            "lastEntryAtMs": _i((previous_scanner.get(side_name) or {}).get("lastEntryAtMs"))
+                if isinstance(previous_scanner.get(side_name), dict) else 0,
+        }
+        for side_name in ("LONG", "SHORT")
+    }
     for candidate_index, ranked_row in enumerate(candidates):
         if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
@@ -1432,12 +1444,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # 25L/25S account with one free seat on each side would keep testing LONG
         # first and could starve a valid SHORT-above-upper-band entry forever.
         def candidate_bb_pass(candidate_side: str) -> bool:
+            side_diag = scanner_side_diagnostics[candidate_side]
+            side_diag["marketsScanned"] += 1
             try:
                 require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
                                         live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
                 return False
+            side_diag["bbCandidates"] += 1
             return True
 
         independent_bb_scan = (
@@ -1640,6 +1655,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 else: short_need = 0
                 continue
             planned_soldier = candidates_for_side[0]
+            scanner_side_diagnostics[side]["zoneAllowed"] += 1
         entry_action = {
             "kind": "ENTRY", "symbol": symbol, "side": side, "leverage": plan.leverage,
             "notionalUsd": float(plan.notional_per_leg), "marginUsd": required, "entryMode": "immediate_fill",
@@ -1888,6 +1904,43 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
     entry_rows = [a for a in actions if a.get("kind") == "ENTRY"]
     entry_wait = [a for a in actions if a.get("kind") in {"ENTRY_SKIP", "ENTRY_MARGIN_WAIT"}]
+    if not dry_run:
+        for action in actions:
+            action_side = str(action.get("side") or "").upper()
+            if action_side in scanner_side_diagnostics and action.get("kind") in {"ENTRY", "ASYM_SHORT_ENTRY"}:
+                scanner_side_diagnostics[action_side]["lastEntryAtMs"] = timestamp_ms
+    scanner_diagnostics: dict[str, Any] = {
+        "updatedAtMs": timestamp_ms,
+        "mode": "live" if not dry_run else "simulation",
+    }
+    for scanner_side in ("LONG", "SHORT"):
+        side_actions = [
+            action for action in entry_wait
+            if str(action.get("side") or "").upper() == scanner_side
+        ]
+        blocked_filters = sum(
+            1 for action in side_actions
+            if not str(action.get("reason") or "").startswith(("PRICE_", "BB_"))
+        )
+        placed_orders = 0 if dry_run else sum(
+            1 for action in actions
+            if str(action.get("side") or "").upper() == scanner_side
+            and action.get("kind") in {"ENTRY", "ASYM_SHORT_ENTRY"}
+        )
+        scanner_diagnostics[scanner_side] = {
+            "timeframe": _effective_entry_timeframe(settings, scanner_side, exposure_refill),
+            "marketsScanned": scanner_side_diagnostics[scanner_side]["marketsScanned"],
+            "bbCandidates": scanner_side_diagnostics[scanner_side]["bbCandidates"],
+            "zoneAllowed": scanner_side_diagnostics[scanner_side]["zoneAllowed"] if zone_mode else None,
+            "blockedFilters": blocked_filters,
+            "ordersPlaced": placed_orders,
+            "lastEntryAtMs": scanner_side_diagnostics[scanner_side]["lastEntryAtMs"] or None,
+            "availableCapacity": max(0, long_need if scanner_side == "LONG" else short_need),
+        }
+    scanner_diagnostics["unscopedBlocked"] = sum(
+        1 for action in entry_wait
+        if str(action.get("side") or "").upper() not in {"LONG", "SHORT"}
+    )
     selected_open = bool(settings.manual_symbol_selection_enabled and any(key in active for key in selected_keys))
     remaining_slots = pair_need if settings.asymmetric_hedge_enabled else long_need + short_need
     next_required_margin = min(minimum_margin_rejections, default=None)
@@ -1918,6 +1971,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     report = {"engine": ENGINE, "configVersion": settings.version,
               "ordersSent": 0 if dry_run else sent, "simulatedActions": len(actions) if dry_run else 0,
               "entryStatus": entry_status, "entryReason": entry_reason,
+              "scannerDiagnostics": scanner_diagnostics,
               "actions": actions[-30:], "rankedTopN": ranked, "candidateMode": "manual" if settings.manual_symbol_selection_enabled else "top_n",
               "manualSymbols": [{"symbol": symbol, "side": side} for symbol, side in settings.manual_symbols], "longSlots": settings.long_slots, "shortSlots": settings.short_slots,
               "orphanShortSymbols": orphan_short_symbols,
