@@ -104,22 +104,32 @@ test("Build 410 labels net exposure as exposure instead of a profit-loss amount"
   assert.equal(hedgeSummary.includes("exposureMoney(exposure.netExposureUsd, true)"),false);
 });
 
-test("Build 455 replaces the four quick tiles with one live price-zone strategy summary",async()=>{
+test("Build 477 moves price-zone status behind two standalone Portfolio Snapshot detail buttons",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-snapshot.css",import.meta.url),"utf8");
-  assert.ok(component.includes("file_00000000a5708210be60f92f52e4b5cc"));
-  assert.ok(component.includes("PriceZoneStrategySummary"));
+  for(const reference of [
+    "file_00000000afb481f480fb60893b473c16",
+    "file_00000000a63481f493d2f56071aaeb3b",
+    "file_000000002d908210a581e71c2352d09b",
+  ]) assert.ok(component.includes(reference),reference);
+  assert.ok(component.includes("SnapshotDetailButtons"));
+  assert.ok(component.includes("Prijszone Details"));
+  assert.ok(component.includes("Scanner Status"));
+  assert.ok(component.includes("Dubbelklik · 3D flip"));
+  assert.ok(component.includes("PriceZoneDetailsPage"));
+  assert.ok(component.includes("ScannerStatusPage"));
   assert.ok(component.includes("loadPriceZoneSeatSummary"));
+  assert.ok(component.includes("loadScannerStatus"));
   for(const label of ["Prijszone-strategie","Per zone","Vrij in actieve zone","Oude zones open","Max totaal","Actieve zone","Alle zones samen","LONG totaal open","SHORT totaal open","Totaal bezet"]) assert.ok(component.includes(label),label);
+  const snapshot=component.match(/function Snapshot\([\s\S]*?function finiteExposure/)?.[0]||"";
+  assert.match(snapshot,/SnapshotDetailButtons/);
+  assert.doesNotMatch(snapshot,/<PriceZoneStrategySummary/);
+  assert.ok(css.includes(".aps-detail-actions{display:grid"));
+  assert.ok(css.includes(".aps-detail-page{"));
+  assert.ok(css.includes(".aps-scanner-grid{"));
   assert.equal(component.includes("SnapshotQuickActions"),false);
   assert.equal(component.includes("tradementor:open-zone-soldiers-command-center"),false);
-  assert.equal(css.includes(".aps-quick-actions{display:grid"),false);
-  assert.ok(css.includes(".aps-zone-strategy{display:grid"));
-  const summary=component.indexOf("<PriceZoneStrategySummary summary={priceZoneSeats} liveActiveZone={liveActiveZone} />");
-  const grid=component.indexOf('<div className="aps-grid">');
-  assert.ok(summary>0&&summary<grid);
 });
-
 
 test("Build 469 keeps active-zone occupancy numeric across chart/backend zone transitions without fictive side caps",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
