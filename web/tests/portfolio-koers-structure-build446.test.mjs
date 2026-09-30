@@ -78,9 +78,10 @@ test("Build 447 puts the next breakout at R1, the first resistance above the act
   assert.equal(component.includes("breakout:(r2Level??r1Level)"),false);
 });
 
-test("Build 473 keeps marker collision layout but does not render legacy structure notes over the reference chart",async()=>{
+test("Build 474 keeps marker collision layout after reference-density selection and hides legacy structure notes",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("layoutPortfolioKoersMarkers(candidates"));
+  assert.ok(component.includes("selectPortfolioKoersReferenceCandidates(candidates"));
+  assert.ok(component.includes("layoutPortfolioKoersMarkers(displayCandidates"));
   assert.ok(component.includes("markerLayout.all"));
   assert.ok(component.includes("setStructureOverlay({...structureDraft,roleFlip:null,newHigh:null,breakout:null})"));
   assert.equal(component.includes("placeStructureNote(structureDraft.newHigh"),false);
