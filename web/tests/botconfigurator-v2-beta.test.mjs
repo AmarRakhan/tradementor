@@ -21,8 +21,8 @@ test("Build 457 V2 remains intact for STABLE users", () => {
   for (const id of ["markt", "posities", "instap", "grootte", "dca", "winst", "bescherming", "controle"]) {
     assert.match(v2, new RegExp("v2-step-" + id));
   }
-  assert.match(page, /STRATEGIE · PRIJSZONE-STOELEN/);
-  assert.match(page, /STRATEGIE · TRADITIONEEL/);
+  assert.doesNotMatch(page, /STRATEGIE · PRIJSZONE-STOELEN/);
+  assert.doesNotMatch(page, /STRATEGIE · TRADITIONEEL/);
   assert.doesNotMatch(page, /STRATEGIE · ZONE WARRIORS/);
 });
 
