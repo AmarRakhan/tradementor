@@ -14,7 +14,8 @@ import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierO
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
-type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];source?:string};
+type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null};
+type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];source?:string};
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
@@ -26,7 +27,7 @@ type StructureOverlayLayout={
   newHigh:{left:number;top:number}|null;
   breakout:{left:number;top:number}|null;
 };
-type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number};
+type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number;realizedPnlUsd?:number;trades?:TpTrade[];markerTime?:number};
 type SoldierActivityEvent={id:string;atMs:number;side:"LONG"|"SHORT";count:number;originZone:number|null;role?:string;source?:string};
 type PortfolioViewMode="performance"|"account";
 type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;settings:Record<string,unknown>;zoneSoldiers:Record<string,unknown>;soldierOpenEvents:SoldierActivityEvent[]};
@@ -38,6 +39,8 @@ const ZONE_SOLDIERS_SCREEN_REFERENCE="file_00000000c2d0821082a1b3c28f6462c1";
 const ZONE_SOLDIERS_OPEN_EVENT="tradementor:open-zone-soldiers-command-center";
 const PORTFOLIO_STRUCTURE_REFERENCE="file_00000000035481f4bb41632c35857982";
 const PORTFOLIO_STRUCTURE_BASELINE_REFERENCE="file_000000002c048243bcc70e9957bb001e";
+const PORTFOLIO_KOERS_UI41_REFERENCE="file_00000000e2fc820a9057c8f60c1ec845";
+const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e59";
 const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
@@ -61,6 +64,17 @@ const compactUsd=(value:number|null|undefined)=>{
   const number=Number(value),sign=number<0?"-":"";
   return `${sign}$ ${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}`;
 };
+const signedUsd=(value:number|null|undefined)=>{
+  if(!Number.isFinite(Number(value)))return "—";
+  const number=Number(value),sign=number<0?"−":"+";
+  return `${sign}${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}`;
+};
+const accountUsd=(value:number|null|undefined)=>Number.isFinite(Number(value))
+  ? `${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value))}`
+  : "—";
+const durationLabel=(minutes:number|null|undefined)=>Number.isFinite(Number(minutes))
+  ? (Number(minutes)>=60?`${Math.floor(Number(minutes)/60)}u ${Math.round(Number(minutes)%60)}m`:`${Math.round(Number(minutes))}m`)
+  : "—";
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"?value as Record<string,unknown>:{};
 const integerOrNull=(value:unknown)=>{
   if(value===null||value===undefined||value==="")return null;
@@ -123,9 +137,16 @@ function markerPresentation(row:Marker) {
   }
   if(kind==="entry"){
     const label=side==="SHORT"?"S":"L";
-    return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:"",multiplier:`${label} ×${count}`,title:side==="SHORT"?"SHORT":"LONG",value:""};
+    return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:side==="SHORT"?"down":"up",multiplier:`${label} ×${count}`,title:side==="SHORT"?"SHORT":"LONG",value:""};
   }
-  return {tone:"tp" as const,glyph:"",multiplier:`TP ×${count}`,title:"Take Profit",value:""};
+  return {tone:"tp" as const,glyph:"money",multiplier:signedUsd(row.realizedPnlUsd),title:"Take Profit",value:""};
+}
+
+function DirectionArrow({direction}:{direction:"up"|"down"}) {
+  const down=direction==="down";
+  return <svg className="portfolio-koers-direction-arrow" viewBox="0 0 18 22" aria-hidden="true">
+    <path d={down?"M9 2v16M3.5 12.5 9 18l5.5-5.5":"M9 20V4M3.5 9.5 9 4l5.5 5.5"} fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>;
 }
 
 function connectorStyle(label:EventLabel) {
@@ -346,6 +367,7 @@ export function PortfolioKoersChart({
   const [zoneBoundaries,setZoneBoundaries]=useState<ZoneBoundaryLayout[]>([]);
   const [structureOverlay,setStructureOverlay]=useState<StructureOverlayLayout>(EMPTY_STRUCTURE_OVERLAY);
   const [eventLabels,setEventLabels]=useState<EventLabel[]>([]);
+  const [selectedTpCluster,setSelectedTpCluster]=useState<EventLabel|null>(null);
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
   const [advisorEnabled,setAdvisorEnabled]=useState(false);
@@ -562,7 +584,9 @@ export function PortfolioKoersChart({
   const zoneSoldierLifecycle=String(zoneSoldierReport.lifecycle||"OFF").toUpperCase();
   const zoneSoldierActiveZone=signedIntegerOrNull(zoneSoldierReport.activeZone);
   const liveDisplayActiveZone=zoneContext?.activeIndex??confirmedActiveZone;
-  const activeZone=zoneSoldierEnabled&&zoneSoldierActiveZone!==null?zoneSoldierActiveZone:liveDisplayActiveZone;
+  // UI 4.1: one visible source of truth. The live-price zone drives the chart,
+  // footer and the sibling snapshot; a slower seat-status poll may not override it.
+  const activeZone=liveDisplayActiveZone;
   advisorZoneLadderRef.current=advisorZoneLadder;
   activeZoneRef.current=activeZone;
 
@@ -572,6 +596,7 @@ export function PortfolioKoersChart({
   useEffect(()=>{onActiveZoneChange?.(liveDisplayActiveZone)},[liveDisplayActiveZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
   useEffect(()=>{syncOverlaysRef.current()},[advisorZoneLadder,activeZone]);
+  useEffect(()=>{setSelectedTpCluster(null)},[timeframe,viewMode]);
 
   useEffect(()=>{
     const container=canvasRef.current;
@@ -628,7 +653,7 @@ export function PortfolioKoersChart({
     chartRef.current=chart;
     const series=viewMode==="performance"
       ? chart.addSeries(LineSeries,{color:"#39eaa0",lineWidth:3,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:true})
-      : chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineVisible:false,lastValueVisible:false});
+      : chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineVisible:false,lastValueVisible:true});
     candleSeriesRef.current=series;
     if(viewMode==="performance"){
       series.setData(performancePoints.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -834,9 +859,11 @@ export function PortfolioKoersChart({
           priority:eventPriority(row),eventCount:Math.max(1,Number(row.count)||1),
           position,
           tone:copy.tone,title:copy.title,value:"",glyph:copy.glyph,multiplier:copy.multiplier,
-          anchorLeft:Number(x),anchorTop:Number(y),
+          anchorLeft:Number(x),anchorTop:Number(y),markerTime:row.time,
+          realizedPnlUsd:Number(row.realizedPnlUsd)||0,
+          trades:Array.isArray(row.trades)?row.trades:[],
           bandTop:upperY===null?null:Number(upperY),bandBottom:lowerY===null?null:Number(lowerY),
-          width:copy.tone==="cashflow"?92:52,height:30,
+          width:copy.tone==="cashflow"?92:copy.tone==="tp"?86:58,height:copy.tone==="tp"?34:30,
         });
       }
       const markerLayout=layoutPortfolioKoersMarkers(candidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:56});
@@ -887,10 +914,26 @@ export function PortfolioKoersChart({
     if(!shellRef.current)return;
     try{if(document.fullscreenElement)await document.exitFullscreen();else await shellRef.current.requestFullscreen()}catch{/* unsupported */}
   };
+  const openPortfolioSettings=()=>{
+    const nodes=Array.from(document.querySelectorAll<HTMLElement>("button,a,[role=button]"));
+    const target=nodes.find((node)=>/botinstellingen|instellingen/i.test(node.textContent||"")&&!node.closest(".portfolio-koers-card"));
+    target?.scrollIntoView({behavior:"smooth",block:"center"});
+    target?.click();
+  };
+  const openPortfolioZones=()=>{
+    if(commandCenterAvailable){setZoneSoldiersScreenOpen(true);return}
+    window.dispatchEvent(new CustomEvent(ZONE_SOLDIERS_OPEN_EVENT));
+  };
 
 
 
   const latest=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
+  const headerPerformanceSeries=cashflowAdjustedPortfolioSeries(timelineCandles,combinedMarkers);
+  const headerPerformanceStart=Number(headerPerformanceSeries[0]?.value);
+  const headerPerformanceEnd=Number(headerPerformanceSeries.at(-1)?.value);
+  const headerPerformancePercent=Number.isFinite(headerPerformanceStart)&&headerPerformanceStart>0&&Number.isFinite(headerPerformanceEnd)
+    ? ((headerPerformanceEnd-headerPerformanceStart)/headerPerformanceStart)*100
+    : null;
   const zoneFormation=record(zoneSoldierReport.zoneFormation);
   const zoneCurrent=record(zoneSoldierReport.currentZone);
   const zoneOld=record(zoneSoldierReport.oldZonesOpen);
@@ -1041,21 +1084,32 @@ export function PortfolioKoersChart({
     soldierActivity,
   });
 
-  return <section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference="file_00000000dd24820eaa6e54ec1054904f" data-structure-reference={PORTFOLIO_STRUCTURE_REFERENCE} data-structure-baseline-reference={PORTFOLIO_STRUCTURE_BASELINE_REFERENCE} data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
-    <header className="portfolio-koers-header">
-      <div className="portfolio-koers-heading">
-        <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={payload.live?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{payload.live?"Live":"Sync"}</span></div>
-        <small>{viewMode==="performance"?"Performance · cashflow gecorrigeerd":"Accountwaarde · werkelijke Aster equity"}</small>
-        <span className="portfolio-koers-context">{viewMode==="performance"?`${timeframe} performance · stortingen/opnames apart`:`${timeframe} candles · strategyzones · BB 20,2`}</span>
-        <div className="portfolio-koers-view-toggle" role="group" aria-label="Portfolio Koers weergave">
-          <button type="button" className={viewMode==="performance"?"active":""} onClick={()=>setViewMode("performance")}>PERFORMANCE</button>
-          <button type="button" className={viewMode==="account"?"active":""} onClick={()=>setViewMode("account")}>ACCOUNTWAARDE</button>
+  return <section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map portfolio-koers-ui41 ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference={PORTFOLIO_KOERS_UI41_REFERENCE} data-structure-reference={PORTFOLIO_STRUCTURE_REFERENCE} data-structure-baseline-reference={PORTFOLIO_STRUCTURE_BASELINE_REFERENCE} data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
+    <header className="portfolio-koers-header portfolio-koers-ui41-header">
+      <div className="portfolio-koers-ui41-top">
+        <div className="portfolio-koers-heading">
+          <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={payload.live?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{payload.live?"Live":"Sync"}</span></div>
+          <small>Accountwaarde</small>
+        </div>
+        <div className="portfolio-koers-ui41-actions">
+          <button type="button" className="portfolio-koers-settings" onClick={openPortfolioSettings} aria-label="Portfolio Koers instellingen">⚙</button>
+          <button type="button" className="portfolio-koers-zones-button" onClick={openPortfolioZones}><span aria-hidden="true">◎</span>Zones</button>
         </div>
       </div>
-      <div className="portfolio-koers-toolbar" role="group" aria-label="Portfolio Koers timeframe">
-        {PORTFOLIO_KOERS_TIMEFRAMES.map((value)=><button type="button" key={value} className={timeframe===value?"active":""} onClick={()=>setTimeframe(value)}>{value}</button>)}
+      <div className="portfolio-koers-ui41-value">
+        <strong>{accountUsd(latest)}</strong>
+        <span className={headerPerformancePercent!==null&&headerPerformancePercent<0?"negative":""}>{headerPerformancePercent===null?"—":percent2(headerPerformancePercent)}</span>
       </div>
-      <button type="button" className="portfolio-koers-fullscreen" onClick={fullscreen} aria-label="Portfolio Koers fullscreen">↗</button>
+      <div className="portfolio-koers-ui41-controls">
+        <div className="portfolio-koers-toolbar" role="group" aria-label="Portfolio Koers timeframe">
+          {PORTFOLIO_KOERS_TIMEFRAMES.map((value)=><button type="button" key={value} className={timeframe===value?"active":""} onClick={()=>setTimeframe(value)}>{value}</button>)}
+        </div>
+        <button type="button" className="portfolio-koers-fullscreen" onClick={fullscreen} aria-label="Portfolio Koers fullscreen">↗</button>
+      </div>
+      <div className="portfolio-koers-view-toggle" role="group" aria-label="Portfolio Koers weergave">
+        <button type="button" className={viewMode==="performance"?"active":""} onClick={()=>setViewMode("performance")}>PERFORMANCE</button>
+        <button type="button" className={viewMode==="account"?"active":""} onClick={()=>setViewMode("account")}>ACCOUNTWAARDE</button>
+      </div>
     </header>
     <div className="portfolio-koers-stage">
       <div ref={canvasRef} className="portfolio-koers-canvas"/>
@@ -1071,11 +1125,50 @@ export function PortfolioKoersChart({
         {structureOverlay.newHigh?<div className="portfolio-koers-structure-note new-high" style={{left:`${structureOverlay.newHigh.left}px`,top:`${structureOverlay.newHigh.top}px`}}>nieuwe high</div>:null}
         {structureOverlay.breakout?<div className="portfolio-koers-structure-note breakout" style={{left:`${structureOverlay.breakout.left}px`,top:`${structureOverlay.breakout.top}px`}}>volgende breakout</div>:null}
       </div>:null}
-      <div className="portfolio-koers-event-layer" aria-hidden="true">{eventLabels.map((label)=><div key={label.id} className="portfolio-koers-event-group"><div className={`portfolio-koers-event portfolio-koers-event-chip ${label.tone} ${label.position} ${(label as any).compressed?"compressed":""}`} style={{left:`${label.left}px`,top:`${label.top}px`}}><b>{label.multiplier||`+${label.eventCount}`}</b></div></div>)}</div>
+      <div className="portfolio-koers-event-layer">{eventLabels.map((label)=>{
+        const connector=connectorStyle(label);
+        const isTp=label.tone==="tp";
+        return <div key={label.id} className="portfolio-koers-event-group">
+          {isTp&&connector?<span className="portfolio-koers-connector tp" style={connector}/>:null}
+          {isTp&&Number.isFinite(label.anchorLeft)&&Number.isFinite(label.anchorTop)?<span className="portfolio-koers-anchor tp" style={{left:`${label.anchorLeft}px`,top:`${label.anchorTop}px`}}/>:null}
+          <button
+            type="button"
+            className={`portfolio-koers-event portfolio-koers-event-chip ${label.tone} ${label.position} ${(label as any).compressed?"compressed":""}`}
+            style={{left:`${label.left}px`,top:`${label.top}px`}}
+            onClick={isTp?()=>setSelectedTpCluster(label):undefined}
+            tabIndex={isTp?0:-1}
+            aria-label={isTp?`Take Profit cluster ${signedUsd(label.realizedPnlUsd)}, ${label.eventCount||1} trades`:undefined}
+          >
+            {label.tone==="long"?<DirectionArrow direction="up"/>:label.tone==="short"?<DirectionArrow direction="down"/>:isTp?<span className="portfolio-koers-moneybag" aria-hidden="true">💰</span>:null}
+            <b>{label.multiplier||`+${label.eventCount}`}</b>
+            {isTp&&Number(label.eventCount)>1?<span className="portfolio-koers-event-count">{label.eventCount}</span>:null}
+          </button>
+        </div>
+      })}</div>
+      {selectedTpCluster?<div className="portfolio-koers-tp-detail-shell" data-reference={PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE}>
+        <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label="Take Profit details">
+          <header><span className="portfolio-koers-moneybag" aria-hidden="true">💰</span><strong>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
+          <div className="portfolio-koers-tp-trades">
+            {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
+              <strong>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}</strong>
+              <b>{signedUsd(trade.realizedPnlUsd)}</b>
+              <span>{durationLabel(trade.durationMinutes)}</span>
+            </div>)}
+            {!(selectedTpCluster.trades||[]).length?<div className="portfolio-koers-tp-empty">Tradedetails worden uit bevestigde fills opgebouwd.</div>:null}
+          </div>
+          <footer>Dubbeltik om te sluiten</footer>
+        </section>
+      </div>:null}
       {loading&&initialChartReady&&!baseCandles.length?<div className="portfolio-koers-state"><i/>Portfoliohistorie laden…</div>:null}
       {!loading&&!baseCandles.length&&!error?<div className="portfolio-koers-state"><strong>Historie wordt opgebouwd</strong><span>Nieuwe candles gebruiken bevestigde Aster-equity; bestaande bevestigde browserhistorie wordt veilig hergebruikt als die beschikbaar is.</span></div>:null}
       {error&&!baseCandles.length?<div className="portfolio-koers-state error"><strong>Portfolio Koers tijdelijk niet beschikbaar</strong><span>{error}</span><button type="button" onClick={()=>void load()}>Opnieuw proberen</button></div>:null}
       {hover?<div className="portfolio-koers-tooltip"><span>{localTime(hover.candle.time)}</span>{viewMode==="performance"?<b>Performance {compactUsd(hover.candle.close-portfolioCashflowShift(combinedMarkers,baseCandles[0]?.time??hover.candle.time,hover.candle.time))}</b>:<><b>O {compactUsd(hover.candle.open)}</b><b>H {compactUsd(hover.candle.high)}</b><b>L {compactUsd(hover.candle.low)}</b><b>C {compactUsd(hover.candle.close)}</b></>}{hover.markers.map((row,index)=><em key={`${row.kind}-${row.side}-${index}`}>{markerDetail(row)}</em>)}</div>:null}
+    </div>
+    <div className="portfolio-koers-ui41-footer" data-reference={PORTFOLIO_KOERS_UI41_REFERENCE}>
+      <strong><span aria-hidden="true">◎</span>{activeZone===null?"Zone —":`Zone ${activeZone} actief`}</strong>
+      <span className="portfolio-koers-ui41-next">Volgende: <b className="up">↑ {percent2(upperDistancePercent,false)}</b><b className="down">↓ {percent2(lowerDistancePercent,false)}</b></span>
+      <span className="portfolio-koers-ui41-bb">BB 20,2</span>
+      <span className="portfolio-koers-ui41-info" title="Bollinger Band 20,2 · actieve zone uit live portfolio-equity">i</span>
     </div>
     {zoneSoldiersScreenOpen&&commandCenterAvailable?<ZoneSoldiersCommandCenterScreen vm={commandCenterVm} advisorMessage={advisorMessage} onClose={()=>setZoneSoldiersScreenOpen(false)}/>:null}
     {false?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
