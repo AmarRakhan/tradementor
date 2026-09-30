@@ -861,13 +861,12 @@
   overflow:visible;
 }
 .portfolio-koers-moneybag{
-  display:inline-grid;
-  place-items:center;
+  display:block;
   width:17px;height:17px;
   flex:0 0 17px;
-  font-size:13px;
-  line-height:1;
-  filter:saturate(.88) drop-shadow(0 0 4px rgba(255,206,70,.22));
+  color:currentColor;
+  overflow:visible;
+  filter:drop-shadow(0 0 4px rgba(255,206,70,.22));
 }
 .portfolio-koers-event-count{
   position:absolute;
