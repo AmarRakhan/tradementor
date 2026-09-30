@@ -149,6 +149,14 @@ function DirectionArrow({direction}:{direction:"up"|"down"}) {
   </svg>;
 }
 
+function MoneyBagIcon() {
+  return <svg className="portfolio-koers-moneybag" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M8.2 3.5h7.6l-1.7 3H9.9l-1.7-3Z" fill="currentColor"/>
+    <path d="M9.8 6.5h4.4c3.6 2.4 5.5 5.3 5.5 8.4 0 4-2.8 6.1-7.7 6.1s-7.7-2.1-7.7-6.1c0-3.1 1.9-6 5.5-8.4Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
+    <path d="M14.8 11.2c-.6-.7-1.5-1-2.7-1-1.4 0-2.4.6-2.4 1.5 0 2.4 5.1.9 5.1 3.5 0 1.1-1 1.8-2.6 1.8-1.2 0-2.2-.4-2.9-1.1M12.1 9v9.1" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round"/>
+  </svg>;
+}
+
 function connectorStyle(label:EventLabel) {
   if(!Number.isFinite(label.anchorLeft)||!Number.isFinite(label.anchorTop))return undefined;
   const startX=Number(label.anchorLeft),startY=Number(label.anchorTop);
@@ -1139,7 +1147,7 @@ export function PortfolioKoersChart({
             tabIndex={isTp?0:-1}
             aria-label={isTp?`Take Profit cluster ${signedUsd(label.realizedPnlUsd)}, ${label.eventCount||1} trades`:undefined}
           >
-            {label.tone==="long"?<DirectionArrow direction="up"/>:label.tone==="short"?<DirectionArrow direction="down"/>:isTp?<span className="portfolio-koers-moneybag" aria-hidden="true">💰</span>:null}
+            {label.tone==="long"?<DirectionArrow direction="up"/>:label.tone==="short"?<DirectionArrow direction="down"/>:isTp?<MoneyBagIcon/>:null}
             <b>{label.multiplier||`+${label.eventCount}`}</b>
             {isTp&&Number(label.eventCount)>1?<span className="portfolio-koers-event-count">{label.eventCount}</span>:null}
           </button>
@@ -1147,7 +1155,7 @@ export function PortfolioKoersChart({
       })}</div>
       {selectedTpCluster?<div className="portfolio-koers-tp-detail-shell" data-reference={PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE}>
         <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label="Take Profit details">
-          <header><span className="portfolio-koers-moneybag" aria-hidden="true">💰</span><strong>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
+          <header><MoneyBagIcon/><strong>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
               <strong>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}</strong>
