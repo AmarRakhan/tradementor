@@ -7,7 +7,7 @@ import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress } from "@/lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
@@ -44,12 +44,12 @@ const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e
 const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
-  "1m":{visibleBars:24,barSpacing:7.0,rightOffset:1.2},
-  "5m":{visibleBars:20,barSpacing:7.8,rightOffset:1.2},
-  "15m":{visibleBars:16,barSpacing:9.0,rightOffset:1.4},
-  "1u":{visibleBars:16,barSpacing:9.6,rightOffset:1.5},
-  "4u":{visibleBars:14,barSpacing:10.8,rightOffset:1.7},
-  "24u":{visibleBars:12,barSpacing:12.0,rightOffset:1.9},
+  "1m":{visibleBars:40,barSpacing:6.0,rightOffset:1.4},
+  "5m":{visibleBars:38,barSpacing:6.2,rightOffset:1.4},
+  "15m":{visibleBars:36,barSpacing:6.6,rightOffset:1.6},
+  "1u":{visibleBars:34,barSpacing:6.8,rightOffset:1.6},
+  "4u":{visibleBars:30,barSpacing:7.2,rightOffset:1.8},
+  "24u":{visibleBars:26,barSpacing:7.8,rightOffset:2.0},
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
@@ -155,6 +155,21 @@ function MoneyBagIcon() {
     <path d="M9.8 6.5h4.4c3.6 2.4 5.5 5.3 5.5 8.4 0 4-2.8 6.1-7.7 6.1s-7.7-2.1-7.7-6.1c0-3.1 1.9-6 5.5-8.4Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
     <path d="M14.8 11.2c-.6-.7-1.5-1-2.7-1-1.4 0-2.4.6-2.4 1.5 0 2.4 5.1.9 5.1 3.5 0 1.1-1 1.8-2.6 1.8-1.2 0-2.2-.4-2.9-1.1M12.1 9v9.1" fill="none" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round"/>
   </svg>;
+}
+
+function CoinBadge({symbol}:{symbol:string}) {
+  const coin=String(symbol||"").toUpperCase().replace(/(?:USDT|USDC|BUSD|USD)$/,"");
+  const glyph=coin==="BTC"?"₿":coin==="ETH"?"◆":coin==="XRP"?"✕":coin.slice(0,1)||"•";
+  return <span className={`portfolio-koers-coin coin-${coin.toLowerCase()}`} aria-hidden="true">{glyph}</span>;
+}
+
+function tpDetailConnectorStyle(label:EventLabel) {
+  const startX=264,startY=74;
+  const endX=Number(label.left)+43,endY=Number(label.top)+17;
+  if(!Number.isFinite(endX)||!Number.isFinite(endY))return undefined;
+  const dx=endX-startX,dy=endY-startY,length=Math.hypot(dx,dy);
+  if(length<8)return undefined;
+  return {left:`${startX}px`,top:`${startY}px`,width:`${length}px`,transform:`rotate(${Math.atan2(dy,dx)}rad)`};
 }
 
 function connectorStyle(label:EventLabel) {
@@ -376,6 +391,8 @@ export function PortfolioKoersChart({
   const [structureOverlay,setStructureOverlay]=useState<StructureOverlayLayout>(EMPTY_STRUCTURE_OVERLAY);
   const [eventLabels,setEventLabels]=useState<EventLabel[]>([]);
   const [selectedTpCluster,setSelectedTpCluster]=useState<EventLabel|null>(null);
+  const [tpDetailLoading,setTpDetailLoading]=useState(false);
+  const [tpDetailError,setTpDetailError]=useState("");
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
   const [advisorEnabled,setAdvisorEnabled]=useState(false);
@@ -604,7 +621,7 @@ export function PortfolioKoersChart({
   useEffect(()=>{onActiveZoneChange?.(liveDisplayActiveZone)},[liveDisplayActiveZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
   useEffect(()=>{syncOverlaysRef.current()},[advisorZoneLadder,activeZone]);
-  useEffect(()=>{setSelectedTpCluster(null)},[timeframe,viewMode]);
+  useEffect(()=>{setSelectedTpCluster(null);setTpDetailLoading(false);setTpDetailError("")},[timeframe,viewMode]);
 
   useEffect(()=>{
     const container=canvasRef.current;
@@ -639,7 +656,7 @@ export function PortfolioKoersChart({
       : Number.isFinite(Number(focusR1))&&Number.isFinite(focusStep)?Number(focusR1)+focusStep:null;
     const focusLower=viewMode==="account"?(Number.isFinite(Number(focusS2))?focusS2:(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null)):(initialFocusContext?.lowerBoundary??fallbackFocusZone?.lower??null);
     const focusUpper=viewMode==="account"?(Number.isFinite(Number(focusR2))?focusR2:(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null)):(initialFocusContext?.upperBoundary??fallbackFocusZone?.upper??null);
-    const focusVisibleBars=viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars,initialFocusPrice,focusLower,focusUpper):Math.min(candles.length,view.visibleBars);
+    const focusVisibleBars=Math.min(candles.length,view.visibleBars);
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
@@ -880,10 +897,7 @@ export function PortfolioKoersChart({
         const zoneCenter=structureDraft.activeZone.top+structureDraft.activeZone.height/2;
         reserved.push({left:Math.max(0,width/2-58),right:Math.min(width-PRICE_AXIS_WIDTH,width/2+58),top:zoneCenter-16,bottom:zoneCenter+16});
       }
-      const roleFlip=placeStructureNote(structureDraft.roleFlip,"roleFlip",markerLayout.all,reserved,width-PRICE_AXIS_WIDTH,height);
-      const newHigh=placeStructureNote(structureDraft.newHigh,"newHigh",markerLayout.all,reserved,width-PRICE_AXIS_WIDTH,height);
-      const breakout=placeStructureNote(structureDraft.breakout,"breakout",markerLayout.all,reserved,width-PRICE_AXIS_WIDTH,height);
-      setStructureOverlay({...structureDraft,roleFlip,newHigh,breakout});
+      setStructureOverlay({...structureDraft,roleFlip:null,newHigh:null,breakout:null});
       setEventLabels(markerLayout.all as EventLabel[]);
     };
     syncOverlaysRef.current=()=>requestAnimationFrame(syncOverlays);
@@ -932,6 +946,25 @@ export function PortfolioKoersChart({
     if(commandCenterAvailable){setZoneSoldiersScreenOpen(true);return}
     window.dispatchEvent(new CustomEvent(ZONE_SOLDIERS_OPEN_EVENT));
   };
+
+  const openTpCluster=useCallback(async(label:EventLabel)=>{
+    setSelectedTpCluster(label);
+    setTpDetailError("");
+    const existing=Array.isArray(label.trades)?label.trades:[];
+    const expected=Math.max(1,Number(label.eventCount)||1);
+    if(existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null))return;
+    setTpDetailLoading(true);
+    try{
+      const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
+      const trades=tpTradesForBucketFromActivity(record(response.recentTradeActivity),timeframe,Number(label.markerTime)) as TpTrade[];
+      setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades}:current);
+      if(!trades.length)setTpDetailError("Geen bevestigde fillregels voor dit cluster gevonden.");
+    }catch(reason){
+      setTpDetailError(advisorErrorText(reason,"Bevestigde filldetails tijdelijk niet beschikbaar."));
+    }finally{
+      setTpDetailLoading(false);
+    }
+  },[timeframe]);
 
 
 
@@ -1129,9 +1162,6 @@ export function PortfolioKoersChart({
       {viewMode==="account"?<div className="portfolio-koers-structure-layer" data-reference={PORTFOLIO_STRUCTURE_REFERENCE} aria-hidden="true">
         {structureOverlay.activeZone?<div className="portfolio-koers-structure-zone" style={{top:`${structureOverlay.activeZone.top}px`,height:`${structureOverlay.activeZone.height}px`}}><span>{structureOverlay.activeZone.label}</span></div>:null}
         {structureOverlay.levels.map((level)=><div key={level.label} className={`portfolio-koers-structure-level ${level.side}`} style={{top:`${level.top}px`}}><span>{level.label}</span></div>)}
-        {structureOverlay.roleFlip?<div className="portfolio-koers-structure-note role-flip" style={{left:`${structureOverlay.roleFlip.left}px`,top:`${structureOverlay.roleFlip.top}px`}}>voormalige R1 → nieuwe support</div>:null}
-        {structureOverlay.newHigh?<div className="portfolio-koers-structure-note new-high" style={{left:`${structureOverlay.newHigh.left}px`,top:`${structureOverlay.newHigh.top}px`}}>nieuwe high</div>:null}
-        {structureOverlay.breakout?<div className="portfolio-koers-structure-note breakout" style={{left:`${structureOverlay.breakout.left}px`,top:`${structureOverlay.breakout.top}px`}}>volgende breakout</div>:null}
       </div>:null}
       <div className="portfolio-koers-event-layer">{eventLabels.map((label)=>{
         const connector=connectorStyle(label);
@@ -1143,7 +1173,7 @@ export function PortfolioKoersChart({
             type="button"
             className={`portfolio-koers-event portfolio-koers-event-chip ${label.tone} ${label.position} ${(label as any).compressed?"compressed":""}`}
             style={{left:`${label.left}px`,top:`${label.top}px`}}
-            onClick={isTp?()=>setSelectedTpCluster(label):undefined}
+            onClick={isTp?()=>void openTpCluster(label):undefined}
             tabIndex={isTp?0:-1}
             aria-label={isTp?`Take Profit cluster ${signedUsd(label.realizedPnlUsd)}, ${label.eventCount||1} trades`:undefined}
           >
@@ -1154,17 +1184,20 @@ export function PortfolioKoersChart({
         </div>
       })}</div>
       {selectedTpCluster?<div className="portfolio-koers-tp-detail-shell" data-reference={PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE}>
+        {tpDetailConnectorStyle(selectedTpCluster)?<span className="portfolio-koers-tp-detail-leader" style={tpDetailConnectorStyle(selectedTpCluster)}/>:null}
         <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label="Take Profit details">
           <header><MoneyBagIcon/><strong>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
-              <strong>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}</strong>
+              <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}</span></strong>
               <b>{signedUsd(trade.realizedPnlUsd)}</b>
               <span>{durationLabel(trade.durationMinutes)}</span>
             </div>)}
-            {!(selectedTpCluster.trades||[]).length?<div className="portfolio-koers-tp-empty">Tradedetails worden uit bevestigde fills opgebouwd.</div>:null}
+            {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">Bevestigde fills laden…</div>:null}
+            {!tpDetailLoading&&tpDetailError?<div className="portfolio-koers-tp-empty error">{tpDetailError}</div>:null}
+            {!tpDetailLoading&&!tpDetailError&&!(selectedTpCluster.trades||[]).length?<div className="portfolio-koers-tp-empty">Geen bevestigde filldetails beschikbaar.</div>:null}
           </div>
-          <footer>Dubbeltik om te sluiten</footer>
+          <footer>⌁&nbsp;&nbsp; Dubbeltik om te sluiten</footer>
         </section>
       </div>:null}
       {loading&&initialChartReady&&!baseCandles.length?<div className="portfolio-koers-state"><i/>Portfoliohistorie laden…</div>:null}
@@ -1178,6 +1211,7 @@ export function PortfolioKoersChart({
       <span className="portfolio-koers-ui41-bb">BB 20,2</span>
       <span className="portfolio-koers-ui41-info" title="Bollinger Band 20,2 · actieve zone uit live portfolio-equity">i</span>
     </div>
+    <div className="portfolio-koers-ui41-hint"><MoneyBagIcon/><span>Tik op een TP-marker om de posities te bekijken</span></div>
     {zoneSoldiersScreenOpen&&commandCenterAvailable?<ZoneSoldiersCommandCenterScreen vm={commandCenterVm} advisorMessage={advisorMessage} onClose={()=>setZoneSoldiersScreenOpen(false)}/>:null}
     {false?<section className={`portfolio-strategy-cockpit ${strategyTone}`} data-reference={ZONE_ADVISOR_REFERENCE} aria-live="polite">
       <header className="portfolio-strategy-head">
