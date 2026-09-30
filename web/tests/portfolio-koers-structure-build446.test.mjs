@@ -58,9 +58,9 @@ test("Build 446 remains read-only and does not introduce trading mutation paths"
   assert.equal(component.includes("applySoldierInstruction"),false);
 });
 
-test("Build 474 is the advertised webapp build while Build 447 Graph 3.1 regressions remain protected",async()=>{
+test("Build 476 is the advertised webapp build while Build 447 Graph 3.1 regressions remain protected",async()=>{
   const version=await readFile(new URL("../lib/app-version.ts",import.meta.url),"utf8");
-  assert.match(version,/WEBAPP_BUILD_NUMBER = "474"/);
+  assert.match(version,/WEBAPP_BUILD_NUMBER = "476"/);
 });
 
 
