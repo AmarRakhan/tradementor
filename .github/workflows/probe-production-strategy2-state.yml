@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-01T15:33+02:00 compare-last-known-good
+# current read-only trace trigger 2026-10-01T21:13+02:00 verify-zone30-live
 
 on:
   push:
