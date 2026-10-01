@@ -28,6 +28,16 @@ import { deriveAsterAccountDisplay, type AsterAccountDisplay } from "@/lib/aster
 import { PortfolioImpactBattle } from "@/components/portfolio-impact-battle";
 import { HomeNavigationBridge } from "@/components/home-navigation-bridge";
 import { effectiveAsterDcaCount } from "@/lib/aster-dca-count.mjs";
+import {
+  DEFAULT_NAVIGATION_PREFERENCES,
+  loadNavigationPreferences,
+  markNavigationPreferencesPending,
+  navigationPreferencesPending,
+  normalizeNavigationPreferences,
+  saveNavigationPreferences,
+  type NavigationPreferences,
+  type OptionalNavigationTab,
+} from "@/lib/navigation-preferences";
 
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
@@ -102,7 +112,9 @@ function TradeMentorHome() {
   const [interfaceMode, setInterfaceMode] = useState<InterfaceMode>("legacy");
   const [interfacePreferenceReady, setInterfacePreferenceReady] = useState(false);
   const [interfacePreferenceMessage, setInterfacePreferenceMessage] = useState("");
-  const [showHyperliquidTab, setShowHyperliquidTab] = useState(true);
+  const [navigationPreferences, setNavigationPreferences] = useState<NavigationPreferences>({ ...DEFAULT_NAVIGATION_PREFERENCES });
+  const [navigationPreferenceReady, setNavigationPreferenceReady] = useState(false);
+  const [navigationPreferenceMessage, setNavigationPreferenceMessage] = useState("");
   const [appSkin, setAppSkin] = useState<AppSkin>("original");
   const adminAccount = String(user?.email || "").toLowerCase() === "amar_rakhan@hotmail.com";
   const [adminDeviceAllowed, setAdminDeviceAllowed] = useState(false);
@@ -140,12 +152,10 @@ function TradeMentorHome() {
     const route = destinationFromLocation();
     const savedInterface = window.localStorage.getItem("tradementor.interfaceMode");
     if (savedInterface === "premium" || savedInterface === "legacy") setInterfaceMode(savedInterface);
-    const savedHyperliquidVisibility = window.localStorage.getItem("tradementor.navigation.hyperliquid.visible");
+    const cachedNavigation = loadNavigationPreferences(user?.uid);
+    setNavigationPreferences(cachedNavigation);
     let initial: Destination = route || "aster";
-    if (savedHyperliquidVisibility === "false") {
-      setShowHyperliquidTab(false);
-      if (initial === "hyperliquid") initial = "aster";
-    }
+    if ((initial === "hyperliquid" && !cachedNavigation.hyperliquid) || (initial === "journey" && !cachedNavigation.journey)) initial = "aster";
     setActive(initial);
     window.localStorage.setItem("tradementor.activeDestination", initial);
     if (route !== initial) window.history.replaceState({ destination: initial }, "", destinationHref(initial));
@@ -178,19 +188,105 @@ function TradeMentorHome() {
     window.dispatchEvent(new CustomEvent("tradementor:skin-change", { detail: skin }));
   };
 
-  const changeHyperliquidTabVisibility = (visible: boolean) => {
-    setShowHyperliquidTab(visible);
-    window.localStorage.setItem("tradementor.navigation.hyperliquid.visible", String(visible));
-    if (!visible && active === "hyperliquid") {
+  useEffect(() => {
+    if (!user?.uid) return;
+    const cached = loadNavigationPreferences(user.uid);
+    setNavigationPreferences(cached);
+    if (!cloudReady) {
+      setNavigationPreferenceReady(true);
+      return;
+    }
+    let cancelled = false;
+    setNavigationPreferenceReady(false);
+    const pendingLocalChange = navigationPreferencesPending(user.uid);
+    const cloudRequest = pendingLocalChange
+      ? authenticatedRequest("/api/preferences/navigation", {
+          method: "PUT",
+          body: JSON.stringify(cached),
+        })
+      : authenticatedRequest("/api/preferences/navigation");
+    cloudRequest
+      .then(async (value) => {
+        if (cancelled) return;
+        if (pendingLocalChange) {
+          const normalized = normalizeNavigationPreferences(value, cached);
+          setNavigationPreferences(normalized);
+          saveNavigationPreferences(user.uid, normalized);
+          markNavigationPreferencesPending(user.uid, false);
+          setNavigationPreferenceMessage("Lokale navigatiekeuzes zijn persoonlijk gesynchroniseerd.");
+          return;
+        }
+        if (value.configured === false) {
+          const seeded = normalizeNavigationPreferences(cached);
+          const saved = await authenticatedRequest("/api/preferences/navigation", {
+            method: "PUT",
+            body: JSON.stringify(seeded),
+          });
+          if (cancelled) return;
+          const normalized = normalizeNavigationPreferences(saved, seeded);
+          setNavigationPreferences(normalized);
+          saveNavigationPreferences(user.uid, normalized);
+          setNavigationPreferenceMessage("Navigatievoorkeuren zijn persoonlijk opgeslagen.");
+          return;
+        }
+        const normalized = normalizeNavigationPreferences(value, cached);
+        setNavigationPreferences(normalized);
+        saveNavigationPreferences(user.uid, normalized);
+        setNavigationPreferenceMessage("Navigatievoorkeuren zijn persoonlijk gesynchroniseerd.");
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setNavigationPreferenceMessage(reason instanceof Error ? `Lokale voorkeur actief; cloudsync volgt: ${reason.message}` : "Lokale voorkeur actief; cloudsync volgt.");
+      })
+      .finally(() => {
+        if (!cancelled) setNavigationPreferenceReady(true);
+      });
+    return () => { cancelled = true; };
+  }, [cloudReady, user?.uid]);
+
+  const changeNavigationTabVisibility = (tab: OptionalNavigationTab, visible: boolean) => {
+    const next = { ...navigationPreferences, [tab]: visible };
+    setNavigationPreferences(next);
+    saveNavigationPreferences(user?.uid, next);
+    setNavigationPreferenceMessage("Navigatievoorkeur wordt opgeslagen…");
+
+    if (!visible && ((tab === "hyperliquid" && active === "hyperliquid") || (tab === "journey" && active === "journey"))) {
       setActive("aster");
       window.localStorage.setItem("tradementor.activeDestination", "aster");
       window.history.replaceState({ destination: "aster" }, "", destinationHref("aster"));
     }
+
+    if (!cloudReady) {
+      markNavigationPreferencesPending(user?.uid, true);
+      setNavigationPreferenceMessage("Voorkeur staat lokaal klaar en synchroniseert zodra de cloudverbinding actief is.");
+      return;
+    }
+    authenticatedRequest("/api/preferences/navigation", {
+      method: "PUT",
+      body: JSON.stringify({ [tab]: visible }),
+    }).then(() => {
+      // Keep the immediately selected local state. A slower response from an earlier
+      // toggle must never be allowed to overwrite a newer independent tab choice.
+      setNavigationPreferenceMessage("Navigatievoorkeur is persoonlijk opgeslagen.");
+    }).catch((reason) => {
+      markNavigationPreferencesPending(user?.uid, true);
+      setNavigationPreferenceMessage(reason instanceof Error ? `Voorkeur blijft lokaal actief; cloudsync volgt: ${reason.message}` : "Voorkeur blijft lokaal actief; cloudsync volgt.");
+    });
   };
 
+  const railDestinations = useMemo(
+    () => destinations.filter((item) => item.id !== "admin" || adminDeviceAllowed),
+    [adminDeviceAllowed],
+  );
+
   const visibleDestinations = useMemo(
-    () => destinations.filter((item) => (item.id !== "hyperliquid" || showHyperliquidTab) && (item.id !== "admin" || adminDeviceAllowed)),
-    [showHyperliquidTab, adminDeviceAllowed],
+    () => destinations.filter((item) => {
+      if (item.id === "hyperliquid") return navigationPreferences.hyperliquid;
+      if (item.id === "aster" || item.id === "wallet") return true;
+      if (item.id === "journey") return navigationPreferences.journey;
+      return false;
+    }),
+    [navigationPreferences],
   );
 
   useEffect(() => {
@@ -267,7 +363,7 @@ function TradeMentorHome() {
       <aside className="rail" aria-label="Hoofdnavigatie">
         <Brand compact />
         <nav className="rail-nav">
-          {visibleDestinations.map((item) => (
+          {railDestinations.map((item) => (
             <NavButton key={item.id} item={item} active={active === item.id} onClick={() => selectDestination(item.id)} />
           ))}
         </nav>
@@ -294,7 +390,7 @@ function TradeMentorHome() {
         </div>
 
         <div className="content">
-          {active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "journey" ? <JourneyView snapshots={snapshots} /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} showHyperliquidTab={showHyperliquidTab} onShowHyperliquidTabChange={changeHyperliquidTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} onStrategy2Confirmed={confirmAsterStrategy2} />}
+          {active === "admin" && adminDeviceAllowed ? <AdminPortal /> : active === "journey" ? <JourneyView snapshots={snapshots} /> : active === "wallet" ? <WalletView refreshedAt={refreshedAt} snapshots={snapshots} interfaceMode={interfaceMode} preferenceReady={interfacePreferenceReady} preferenceMessage={interfacePreferenceMessage} onInterfaceModeChange={changeInterfaceMode} navigationPreferences={navigationPreferences} navigationPreferenceReady={navigationPreferenceReady} navigationPreferenceMessage={navigationPreferenceMessage} onNavigationPreferenceChange={changeNavigationTabVisibility} appSkin={appSkin} onAppSkinChange={changeAppSkin} /> : active === "risk" ? <RiskTimeline snapshots={snapshots} /> : active === "positions" ? <PositionsPage snapshots={snapshots} refreshedAt={refreshedAt} cloudReady={cloudReady} onRefresh={refresh} /> : <ExchangeView destination={active as TradingExchange} refreshedAt={refreshedAt} snapshot={snapshots[active as TradingExchange]} cloudReady={cloudReady} onRefresh={() => refresh(active as TradingExchange)} onStrategy2Confirmed={confirmAsterStrategy2} />}
         </div>
       </section>
 
@@ -520,7 +616,7 @@ function DirectionBalanceCell({ label, count, value, center = false }: { label: 
   return <div className={`direction-balance-cell ${center ? "center" : ""} ${tone}`}><span>{count === undefined ? label : `${count === null ? "—" : count} ${label}`}</span><strong>{value === null ? "—" : formatSignedUsd(value)}</strong></div>;
 }
 
-function WalletView({ refreshedAt, snapshots, interfaceMode, preferenceReady, preferenceMessage, onInterfaceModeChange, showHyperliquidTab = true, onShowHyperliquidTabChange = () => {}, appSkin = "original", onAppSkinChange = () => {} }: { refreshedAt: string; snapshots: ExchangeSnapshots; interfaceMode: InterfaceMode; preferenceReady: boolean; preferenceMessage: string; onInterfaceModeChange: (mode: InterfaceMode) => void; showHyperliquidTab?: boolean; onShowHyperliquidTabChange?: (visible: boolean) => void; appSkin?: AppSkin; onAppSkinChange?: (skin: AppSkin) => void }) {
+function WalletView({ refreshedAt, snapshots, interfaceMode, preferenceReady, preferenceMessage, onInterfaceModeChange, navigationPreferences = DEFAULT_NAVIGATION_PREFERENCES, navigationPreferenceReady = true, navigationPreferenceMessage = "", onNavigationPreferenceChange = () => {}, appSkin = "original", onAppSkinChange = () => {} }: { refreshedAt: string; snapshots: ExchangeSnapshots; interfaceMode: InterfaceMode; preferenceReady: boolean; preferenceMessage: string; onInterfaceModeChange: (mode: InterfaceMode) => void; navigationPreferences?: NavigationPreferences; navigationPreferenceReady?: boolean; navigationPreferenceMessage?: string; onNavigationPreferenceChange?: (tab: OptionalNavigationTab, visible: boolean) => void; appSkin?: AppSkin; onAppSkinChange?: (skin: AppSkin) => void }) {
   const exchanges = (["hyperliquid", "aster"] as const).map((id) => ({ id, name: id === "hyperliquid" ? "HYPERLIQUID" : "ASTER", view: exchangeView(id, snapshots[id]), snapshot: snapshots[id], tone: id === "hyperliquid" ? "blue" : "purple" }));
   const connected = exchanges.filter((item) => item.view.connected && item.view.equityNumber !== null);
   const total = connected.reduce((sum, item) => sum + (item.view.equityNumber ?? 0), 0);
@@ -545,8 +641,14 @@ function WalletView({ refreshedAt, snapshots, interfaceMode, preferenceReady, pr
       </section>
       <SupportCenter />
       <section className="wallet-navigation-settings" aria-labelledby="wallet-navigation-title">
-        <div><span className="kicker">NAVIGATIE</span><h2 id="wallet-navigation-title">Zichtbare tabbladen</h2><p>Dit verandert alleen de navigatie. Je Hyperliquid-koppeling, gegevens, posities en strategieën blijven ongewijzigd.</p></div>
-        <SettingToggle label="Hyperliquid-tab tonen" description="Schakel dit uit om Hyperliquid uit de hoofdnav te verbergen. Je kunt het hier altijd weer aanzetten." checked={showHyperliquidTab} onChange={onShowHyperliquidTabChange} />
+        <div><span className="kicker">NAVIGATIE</span><h2 id="wallet-navigation-title">Zichtbare tabbladen</h2><p>Dit verandert alleen welke tabbladen je onderin ziet. Pagina&apos;s, gegevens, posities, bots en strategieën blijven ongewijzigd.</p></div>
+        <SettingToggle label="Hyperliquid-tab tonen" description="Toon of verberg Hyperliquid in de onderste navigatie." checked={navigationPreferences.hyperliquid} onChange={(visible) => onNavigationPreferenceChange("hyperliquid", visible)} />
+        <SettingToggle label="Markets-tab tonen" description="Toon of verberg Markets in de onderste navigatie." checked={navigationPreferences.markets} onChange={(visible) => onNavigationPreferenceChange("markets", visible)} />
+        <SettingToggle label="Sniper-tab tonen" description="Toon of verberg Sniper in de onderste navigatie." checked={navigationPreferences.sniper} onChange={(visible) => onNavigationPreferenceChange("sniper", visible)} />
+        <SettingToggle label="Nieuws-tab tonen" description="Toon of verberg Nieuws in de onderste navigatie." checked={navigationPreferences.news} onChange={(visible) => onNavigationPreferenceChange("news", visible)} />
+        <SettingToggle label="Friends-tab tonen" description="Toon of verberg Friends in de onderste navigatie." checked={navigationPreferences.friends} onChange={(visible) => onNavigationPreferenceChange("friends", visible)} />
+        <SettingToggle label="Journey-tab tonen" description="Toon of verberg Journey in de onderste navigatie." checked={navigationPreferences.journey} onChange={(visible) => onNavigationPreferenceChange("journey", visible)} />
+        <small className="interface-mode-message">{!navigationPreferenceReady ? "Persoonlijke navigatievoorkeuren worden geladen…" : navigationPreferenceMessage || "HOME, ASTER en WALLET blijven altijd zichtbaar."}</small>
       </section>
       <AppSkinSelector skin={appSkin} onChange={onAppSkinChange} />
       <InterfaceModeSelector mode={interfaceMode} ready={preferenceReady} message={preferenceMessage} onChange={onInterfaceModeChange} />

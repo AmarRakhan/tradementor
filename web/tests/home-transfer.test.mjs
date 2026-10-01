@@ -12,8 +12,10 @@ test("Home is first and Sniper is inserted without removing Markets, News or exi
   assert.ok(home.includes("nav.insertBefore(home, first || null)"));
   assert.ok(home.includes("nav.insertBefore(home, first || null)"));
   assert.match(home, /data-destination="aster"/);
-  assert.match(markets, /NAV_DESTINATIONS = \["home", \.\.\.MOBILE_DESTINATIONS\]/);
-  assert.match(news, /NAV_DESTINATIONS = \["home", \.\.\.MOBILE_DESTINATIONS\]/);
+  assert.match(markets, /MOBILE_NAVIGATION_ORDER/);
+  assert.match(markets, /mobileNavigationDestinationVisible/);
+  assert.match(news, /MOBILE_NAVIGATION_ORDER/);
+  assert.match(news, /mobileNavigationDestinationVisible/);
   assert.match(page, /<HomeNavigationBridge \/><TradeMentorHome \/>/);
 });
 

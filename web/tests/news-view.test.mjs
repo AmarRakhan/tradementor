@@ -5,15 +5,17 @@ import { readFile } from "node:fs/promises";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("News is mounted without changing the trading page destination model", async () => {
-  const [layout, page, bridge, marketsBridge] = await Promise.all([
+  const [layout, page, bridge, marketsBridge, navigationPreferences] = await Promise.all([
     read("../app/layout.tsx"),
     read("../app/page.tsx"),
     read("../components/news-navigation-bridge.tsx"),
     read("../components/markets-navigation-bridge.tsx"),
+    read("../lib/navigation-preferences.ts"),
   ]);
   assert.match(layout, /NewsNavigationBridge/);
-  assert.match(bridge, /\["markets", "aster", "sniper", "news", "friends", "journey", "wallet"\]/);
-  assert.match(marketsBridge, /\["markets", "aster", "sniper", "news", "friends", "journey", "wallet"\]/);
+  assert.match(bridge, /MOBILE_NAVIGATION_ORDER/);
+  assert.match(marketsBridge, /MOBILE_NAVIGATION_ORDER/);
+  assert.match(navigationPreferences, /"markets",[\s\S]*"aster",[\s\S]*"sniper",[\s\S]*"news",[\s\S]*"friends",[\s\S]*"journey",[\s\S]*"wallet"/);
   assert.match(bridge, /createPortal/);
   assert.doesNotMatch(page, /type Destination = [^;]*"news"/);
 });
