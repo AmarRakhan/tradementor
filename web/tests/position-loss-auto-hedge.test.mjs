@@ -94,24 +94,27 @@ test("Auto Hedge copy is coin-quantity based and exposes no fake live pair data"
 });
 
 
-test("Build 480 Snapshot Auto Hedge front is status-only and shows the persisted trigger",async()=>{
+test("Build 481 Snapshot Auto Hedge uses the polished three-line status hierarchy",async()=>{
   const [component,css]=await Promise.all([
     readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/position-loss-auto-hedge.css",import.meta.url),"utf8"),
   ]);
   const tile=component.slice(component.indexOf("const tile ="),component.indexOf("const screen ="));
-  assert.match(component,/file_00000000bd588210a3ac396a4df67d6b/);
-  assert.match(css,/file_00000000bd588210a3ac396a4df67d6b/);
+  assert.match(component,/file_00000000ba448210b16f35eaf915a01f/);
+  assert.match(css,/file_00000000ba448210b16f35eaf915a01f/);
   assert.match(component,/const tileThreshold = Number\(state\.thresholdUsd\)/);
   assert.match(tile,/AUTO HEDGE/);
   assert.match(tile,/tileStatus/);
-  assert.match(tile,/bij −US\$ \{tileThresholdLabel\}/);
+  assert.match(tile,/Trigger −US\$ \{tileThresholdLabel\}/);
   assert.doesNotMatch(tile,/<Toggle/);
   assert.doesNotMatch(tile,/SNAPSHOT_TILE/);
   assert.match(tile,/onDoubleClick=\{openFromCard\}/);
   assert.match(tile,/onTouchEnd=\{onTouchEnd\}/);
   assert.match(component,/AUTO_HEDGE_SCREEN/);
   assert.match(component,/Auto Hedge hoofdschakelaar/);
+  assert.match(css,/Build 481 — Portfolio Snapshot Auto Hedge visual polish/);
+  assert.match(css,/\.plah-tile-copy strong\{[\s\S]*font-size:12\.2px/);
+  assert.match(css,/\.plah-tile-copy em\{[\s\S]*font-size:6\.7px/);
 });
 
 
