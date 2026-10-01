@@ -670,3 +670,12 @@ def test_zone_dry_run_uses_defined_candidate_index_for_simulated_claims():
     assert "for candidate_index, ranked_row in enumerate(candidates):" in core
     assert 'simulated_key = f"SIM:{symbol}|{side}|{candidate_index}"' in core
     assert 'simulated_key = f"SIM:{symbol}|{side}|{index}"' not in core
+
+
+def test_confirmed_zone_from_display_zones_can_extend_to_zone_30_like_web():
+    zones = [
+        {"index": -1, "center": 99.0, "atr": 1.0},
+        {"index": 0, "center": 100.0, "atr": 1.0},
+        {"index": 1, "center": 101.0, "atr": 1.0},
+    ]
+    assert confirmed_zone_from_display_zones(zones, 130.0) == 30
