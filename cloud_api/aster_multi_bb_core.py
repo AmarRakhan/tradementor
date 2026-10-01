@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_UP
 from datetime import datetime, timezone
 from typing import Any
-import hashlib, math, time
+import copy, hashlib, math, time
 
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked
@@ -716,6 +716,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                       before_order: Any = None, zone_context: dict[str, Any] | None = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
+    # Zone-owned TP settlement is part of position management and therefore can
+    # run before the later entry-capacity reconciliation.  Initialize the zone
+    # execution context before any TP/DCA management touches it.  Work on a deep
+    # copy so a failed/dry-run tick never mutates the caller's persisted snapshot.
+    zone_mode = bool(getattr(settings, "zone_soldiers_enabled", False))
+    zone_state: dict[str, Any] | None = (
+        copy.deepcopy(raw_state.get("zoneSoldierState"))
+        if zone_mode and isinstance(raw_state.get("zoneSoldierState"), dict)
+        else ({} if zone_mode else None)
+    )
     exposure_refill = _exposure_refill_context(settings, positions, raw_state)
     # Pairing mode must make every seat/orphan decision from Aster exchange truth,
     # never from a caller/UI/cache snapshot that may be one reconciliation tick old.
@@ -1137,9 +1147,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     active_symbols = {k.split("|", 1)[0] for k in active}
     account_position_count = len(active)
 
-    zone_state: dict[str, Any] | None = None
     zone_report: dict[str, Any] | None = None
-    zone_mode = bool(getattr(settings, "zone_soldiers_enabled", False))
     zone_owned_open_count = sum(
         1 for key, row in state.items()
         if key in active and str(row.get("soldierRole") or "") in {ROLE_ZONE_BASE, ROLE_EXPOSURE_BALANCER}
@@ -1160,7 +1168,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             fallback_short = zone_short_margin * zone_entry_multiplier * max(1, settings.minimum_leverage)
         fallback_unit = (fallback_long + fallback_short) / 2.0 if fallback_long > 0 and fallback_short > 0 else max(fallback_long, fallback_short, 1.0)
         zone_state, state, zone_report = prepare_zone_runtime(
-            raw_zone_state=raw_state.get("zoneSoldierState"),
+            # Reuse the local zone state because TP settlement earlier in this
+            # same tick may already have released a soldier after exchange-flat
+            # confirmation. Re-reading raw_state here would silently undo it.
+            raw_zone_state=zone_state,
             managed_state=state,
             positions=list(active.values()),
             confirmed_zone=context.get("activeZone"),
