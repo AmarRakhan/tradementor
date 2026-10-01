@@ -42,19 +42,20 @@
 @media(max-width:380px){.aps-cycle-inactive-copy em{font-size:5.2px}}
 
 
-/* Build 480 — Portfolio Snapshot cycle status tile.
-   Visual source of truth: file_00000000bd588210a3ac396a4df67d6b */
+/* Build 481 — Portfolio Snapshot cycle visual polish.
+   Current user screenshot: file_00000000ba448210b16f35eaf915a01f */
 .aps-portfolio-cycle-card.is-inactive,
 .aps-portfolio-cycle-card.is-active{
   display:grid;
-  grid-template-columns:24px minmax(0,1fr);
-  grid-template-rows:none;
+  grid-template-columns:22px minmax(0,1fr);
   align-items:center;
   align-content:center;
   gap:7px;
   padding:8px 9px;
 }
+.aps-cycle-icon svg{width:20px;height:20px}
 .aps-portfolio-cycle-card.is-active .aps-cycle-icon{color:#46e9a5;opacity:1}
+.aps-portfolio-cycle-card.is-inactive .aps-cycle-icon{color:#7f9889;opacity:.95}
 .aps-cycle-inactive-copy,
 .aps-cycle-active-copy{
   min-width:0;
@@ -64,42 +65,55 @@
 }
 .aps-cycle-inactive-copy small,
 .aps-cycle-active-head small{
+  overflow:visible;
+  text-overflow:clip;
   color:#e7b943;
-  font-size:6.2px;
-  line-height:1.05;
-  font-weight:900;
-  letter-spacing:.035em;
+  font-size:6.4px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:.025em;
   white-space:nowrap;
 }
 .aps-cycle-inactive-copy strong{
-  color:#9da9a2;
-  font-size:10.5px;
+  color:#aab6af;
+  font-size:12.2px;
   line-height:1;
   font-weight:950;
-  letter-spacing:.03em;
+  letter-spacing:.015em;
+  white-space:nowrap;
+}
+.aps-cycle-inactive-copy em{
+  overflow:visible;
+  text-overflow:clip;
+  color:#8da79a;
+  font-size:6.5px;
+  line-height:1.05;
+  font-style:normal;
+  font-weight:800;
+  letter-spacing:-.005em;
   white-space:nowrap;
 }
 .aps-cycle-active-head{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:5px;
   min-width:0;
+  display:grid;
+  align-content:start;
+  gap:2px;
 }
 .aps-cycle-active-head strong{
-  flex:0 0 auto;
   color:#56efb0;
-  font-size:12.5px;
+  font-size:12.2px;
   line-height:1;
   font-weight:950;
+  letter-spacing:.01em;
+  white-space:nowrap;
 }
 .aps-cycle-progress{
   display:block;
   width:100%;
-  height:6px;
-  border:1px solid rgba(76,205,150,.18);
+  height:5px;
+  border:1px solid rgba(76,205,150,.20);
   border-radius:999px;
-  background:rgba(92,108,101,.34);
+  background:rgba(92,108,101,.32);
   overflow:hidden;
 }
 .aps-cycle-progress i{
@@ -111,10 +125,13 @@
   box-shadow:0 0 10px rgba(48,232,158,.25);
 }
 .aps-cycle-remaining{
+  overflow:visible;
+  text-overflow:clip;
   color:#eef8f3;
-  font-size:6.8px;
+  font-size:6.6px;
   line-height:1.05;
   font-weight:900;
+  letter-spacing:-.005em;
   white-space:nowrap;
 }
 @media(max-width:640px){
@@ -122,26 +139,31 @@
   .aps-portfolio-cycle-card.is-active{
     grid-template-columns:20px minmax(0,1fr);
     gap:5px;
-    padding:6px 7px;
+    padding:7px 7px;
   }
-  .aps-cycle-icon svg{width:19px;height:19px}
-  .aps-cycle-inactive-copy,.aps-cycle-active-copy{gap:2px}
-  .aps-cycle-inactive-copy small,.aps-cycle-active-head small{font-size:5.6px}
-  .aps-cycle-inactive-copy strong{font-size:9.6px}
-  .aps-cycle-active-head strong{font-size:11px}
-  .aps-cycle-progress{height:5px}
-  .aps-cycle-remaining{font-size:6px}
+  .aps-cycle-icon svg{width:18px;height:18px}
+  .aps-cycle-inactive-copy,
+  .aps-cycle-active-copy{gap:2.5px}
+  .aps-cycle-inactive-copy small,
+  .aps-cycle-active-head small{font-size:5.9px}
+  .aps-cycle-inactive-copy strong,
+  .aps-cycle-active-head strong{font-size:11.2px}
+  .aps-cycle-inactive-copy em{font-size:6px}
+  .aps-cycle-progress{height:4.5px}
+  .aps-cycle-remaining{font-size:6.1px}
 }
 @media(max-width:380px){
   .aps-portfolio-cycle-card.is-inactive,
   .aps-portfolio-cycle-card.is-active{
     grid-template-columns:18px minmax(0,1fr);
     gap:4px;
-    padding:5px 6px;
+    padding:6px 6px;
   }
   .aps-cycle-icon svg{width:17px;height:17px}
-  .aps-cycle-inactive-copy small,.aps-cycle-active-head small{font-size:5px}
-  .aps-cycle-inactive-copy strong{font-size:8.8px}
-  .aps-cycle-active-head strong{font-size:10px}
-  .aps-cycle-remaining{font-size:5.4px}
+  .aps-cycle-inactive-copy small,
+  .aps-cycle-active-head small{font-size:5.5px}
+  .aps-cycle-inactive-copy strong,
+  .aps-cycle-active-head strong{font-size:10.4px}
+  .aps-cycle-inactive-copy em{font-size:5.7px}
+  .aps-cycle-remaining{font-size:5.7px}
 }
