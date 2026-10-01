@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-01T10:45+02:00
+# current read-only trace trigger 2026-10-01T10:49+02:00
 
 on:
   push:
@@ -100,6 +100,26 @@ jobs:
                   {"kind":k[0],"side":k[1] or None,"reasonClass":k[2],"count":v}
                   for k,v in counter.most_common(20)
               ]
+
+          def leaf_count(value):
+              if isinstance(value,dict):
+                  return sum(leaf_count(v) for v in value.values())
+              if isinstance(value,list):
+                  return sum(leaf_count(v) for v in value)
+              return 1
+
+          def json_size(value):
+              try:
+                  return len(json.dumps(value,default=str,separators=(",",":")).encode())
+              except Exception:
+                  return -1
+
+          def largest_fields(raw):
+              rows=[]
+              for key,value in raw.items():
+                  rows.append({"field":str(key),"leaves":leaf_count(value),"bytes":json_size(value)})
+              rows.sort(key=lambda row:(row["leaves"],row["bytes"]),reverse=True)
+              return rows[:15]
 
           db=firestore.Client(project="tradementor-production")
           docs=[]
@@ -248,6 +268,7 @@ jobs:
                       "orderQueueEnabled":raw.get("orderQueueEnabled") is True,
                       "queueFeatureEnv":str(main.os.getenv(main.QUEUE_FEATURE_FLAG,"")),
                   },
+                  "largestFields":largest_fields(raw),
                   "stored":{
                       "entryStatus":str(stored_report.get("entryStatus") or ""),
                       "entryReason":str(stored_report.get("entryReason") or ""),
