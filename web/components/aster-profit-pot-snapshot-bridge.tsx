@@ -56,12 +56,13 @@ function PortfolioCycleCard({ state }: { state: PortfolioCycleCardState }) {
       className="aps-portfolio-cycle-card is-inactive"
       data-reference={CYCLE_REFERENCE_INACTIVE}
       onClick={openPortfolioTakeProfitSettings}
-      aria-label="Portfolio cyclus uit. Tik voor instellingen."
+      aria-label="Portfolio cyclus uit. Geen actieve cyclus. Tik voor instellingen."
     >
       <span className="aps-cycle-icon">{cycleIcon()}</span>
       <span className="aps-cycle-inactive-copy">
         <small>PORTFOLIO CYCLUS</small>
         <strong>UIT</strong>
+        <em>Geen actieve cyclus</em>
       </span>
     </button>;
   }
