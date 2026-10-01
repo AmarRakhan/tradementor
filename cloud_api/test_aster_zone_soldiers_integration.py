@@ -338,6 +338,20 @@ def test_build425_true_homecoming_requires_different_known_close_zone():
 
 
 
+def test_zone_mode_is_initialized_before_tp_management_and_reused_after_settlement():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    run_start = source.index("def run_multi_bb_step(")
+    run = source[run_start:]
+    init = run.index('zone_mode = bool(getattr(settings, "zone_soldiers_enabled", False))')
+    management = run.index("# Management priority:")
+    settlement = run.index("settle_soldier_after_profitable_tp(", management)
+    reconcile = run.index("prepare_zone_runtime(", settlement)
+    assert init < management < settlement < reconcile
+    assert run.count('zone_mode = bool(getattr(settings, "zone_soldiers_enabled", False))') == 1
+    assert "copy.deepcopy(raw_state.get(\"zoneSoldierState\"))" in run[:management]
+    assert "raw_zone_state=zone_state" in run[reconcile:reconcile + 1200]
+
+
 def test_live_zone_seat_sync_precedes_dynamic_hedge_branch():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     tick_start = source.index("def _run_aster_strategy2_tick(")
