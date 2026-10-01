@@ -246,10 +246,9 @@ function TradeMentorHome() {
     authenticatedRequest("/api/preferences/navigation", {
       method: "PUT",
       body: JSON.stringify({ [tab]: visible }),
-    }).then((value) => {
-      const normalized = normalizeNavigationPreferences(value, next);
-      setNavigationPreferences(normalized);
-      saveNavigationPreferences(user?.uid, normalized);
+    }).then(() => {
+      // Keep the immediately selected local state. A slower response from an earlier
+      // toggle must never be allowed to overwrite a newer independent tab choice.
       setNavigationPreferenceMessage("Navigatievoorkeur is persoonlijk opgeslagen.");
     }).catch((reason) => {
       setNavigationPreferenceMessage(reason instanceof Error ? `Voorkeur blijft lokaal actief; cloudsync volgt: ${reason.message}` : "Voorkeur blijft lokaal actief; cloudsync volgt.");
