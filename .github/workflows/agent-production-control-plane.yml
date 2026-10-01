@@ -570,3 +570,35 @@ jobs:
         shell: bash
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "SHORT Bollinger audit dispatch failed before any production read job started."
+
+
+  dispatch-zone-runtime-gap-fix-0ad3783:
+    if: github.event.issue.title == '[AGENT-CONTROL] deploy zone runtime gap fix 0ad3783' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch exact-source Zone Warriors runtime fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_COMMIT='0ad3783d65396339c029a69d637e66091f8c24bc'
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET_BRANCH" \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit="$SOURCE_COMMIT" \
+            -f request_issue="$ISSUE_NUMBER"
+
+      - name: Confirm backend deployment dispatch
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Exact-source Zone Warriors runtime-gap fix dispatched for 0ad3783d65396339c029a69d637e66091f8c24bc. Canonical production workflow reruns backend tests, deploys a no-traffic candidate, verifies health, promotes only on success, and keeps rollback protection."
+
+      - name: Report dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Zone Warriors runtime-gap fix dispatch failed before production mutation. No Cloud Run revision was promoted."
