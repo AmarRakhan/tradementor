@@ -36,6 +36,7 @@ export const NAVIGATION_PREFERENCES_EVENT = "tradementor:navigation-visibility-c
 const LEGACY_HYPERLIQUID_KEY = "tradementor.navigation.hyperliquid.visible";
 const LEGACY_HYPERLIQUID_OWNER_KEY = "tradementor.navigation.hyperliquid.visible.owner.v2";
 const STORAGE_PREFIX = "tradementor.navigation.visible.v2.";
+const PENDING_PREFIX = "tradementor.navigation.pending.v2.";
 
 function isBoolean(value: unknown): value is boolean {
   return value === true || value === false;
@@ -99,6 +100,26 @@ export function saveNavigationPreferences(uid: string | null | undefined, value:
     // Cloud remains the durable source of truth when localStorage is unavailable.
   }
   window.dispatchEvent(new CustomEvent(NAVIGATION_PREFERENCES_EVENT, { detail: normalized }));
+}
+
+export function navigationPreferencesPending(uid?: string | null) {
+  if (typeof window === "undefined" || !uid) return false;
+  try {
+    return window.localStorage.getItem(`${PENDING_PREFIX}${encodeURIComponent(uid)}`) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function markNavigationPreferencesPending(uid: string | null | undefined, pending: boolean) {
+  if (typeof window === "undefined" || !uid) return;
+  try {
+    const key = `${PENDING_PREFIX}${encodeURIComponent(uid)}`;
+    if (pending) window.localStorage.setItem(key, "true");
+    else window.localStorage.removeItem(key);
+  } catch {
+    // A blocked local pending flag must never affect the running trading app.
+  }
 }
 
 export function optionalNavigationTabVisible(tab: OptionalNavigationTab, uid?: string | null) {
