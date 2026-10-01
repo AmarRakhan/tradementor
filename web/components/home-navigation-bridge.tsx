@@ -6,6 +6,11 @@ import { HomeTransferPage } from "@/components/home-transfer-page";
 import { SniperDashboard } from "@/components/sniper-dashboard";
 import { useAuthSession } from "@/components/auth-provider";
 import { ContinuityStartupGuard } from "@/components/continuity-monitor";
+import {
+  MOBILE_NAVIGATION_ORDER,
+  NAVIGATION_PREFERENCES_EVENT,
+  mobileNavigationDestinationVisible,
+} from "@/lib/navigation-preferences";
 
 const VIEW_PARAM = "tmView";
 const SESSION_EXIT = "tradementor.home.explicitExit.v1";
@@ -68,10 +73,34 @@ function ensureSniper(nav: HTMLElement) {
   return sniper;
 }
 
-function syncNav(view: BridgeView) {
+function normaliseBottomNavigation(nav: HTMLElement, uid?: string) {
+  const order = MOBILE_NAVIGATION_ORDER as readonly string[];
+  for (const item of Array.from(nav.querySelectorAll<HTMLElement>(":scope > .nav-button[data-destination]"))) {
+    const destination = item.dataset.destination || "";
+    const hidden = !order.includes(destination) || !mobileNavigationDestinationVisible(destination, uid);
+    if (item.hidden !== hidden) item.hidden = hidden;
+    if (item.getAttribute("aria-hidden") !== String(hidden)) item.setAttribute("aria-hidden", String(hidden));
+    if (item.tabIndex !== (hidden ? -1 : 0)) item.tabIndex = hidden ? -1 : 0;
+  }
+  const visible = MOBILE_NAVIGATION_ORDER.flatMap((destination) => {
+    if (!mobileNavigationDestinationVisible(destination, uid)) return [];
+    const item = nav.querySelector<HTMLElement>(`:scope > .nav-button[data-destination="${destination}"]`);
+    return item ? [item] : [];
+  });
+  const current = Array.from(nav.children).filter(
+    (item): item is HTMLElement => item instanceof HTMLElement && !item.hidden && item.classList.contains("nav-button"),
+  );
+  if (visible.some((item, index) => current[index] !== item)) for (const item of visible) nav.appendChild(item);
+  if (nav.style.getPropertyValue("--mobile-nav-count") !== String(visible.length)) {
+    nav.style.setProperty("--mobile-nav-count", String(visible.length));
+  }
+}
+
+function syncNav(view: BridgeView, uid?: string) {
   document.querySelectorAll<HTMLElement>(".bottom-nav,.rail-nav").forEach((nav) => {
     const home = ensureHome(nav);
     const sniper = ensureSniper(nav);
+    if (nav.classList.contains("bottom-nav")) normaliseBottomNavigation(nav, uid);
     if (view) {
       nav.querySelectorAll<HTMLElement>(":scope > .nav-button[data-destination]").forEach((item) => {
         const selected = item.dataset.destination === view;
@@ -109,7 +138,7 @@ export function HomeNavigationBridge() {
       const next = currentView();
       setView(next);
       setTarget(document.querySelector<HTMLElement>(".content"));
-      syncNav(next);
+      syncNav(next, user?.uid);
     };
 
     const leave = (event: MouseEvent) => {
@@ -126,6 +155,7 @@ export function HomeNavigationBridge() {
     document.addEventListener("click", leave, true);
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
+    window.addEventListener(NAVIGATION_PREFERENCES_EVENT, sync);
     let frame = 0;
     const observer = new MutationObserver(() => {
       if (frame) return;
@@ -138,8 +168,9 @@ export function HomeNavigationBridge() {
       document.removeEventListener("click", leave, true);
       window.removeEventListener("hashchange", sync);
       window.removeEventListener("popstate", sync);
+      window.removeEventListener(NAVIGATION_PREFERENCES_EVENT, sync);
     };
-  }, []);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!view || !target) return;
