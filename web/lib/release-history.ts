@@ -22,7 +22,7 @@ export type ReleaseHistoryEntry = {
 };
 
 export const CURRENT_RELEASE: ReleaseHistoryEntry = {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-navigation-visibility-v2`,
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-01",
