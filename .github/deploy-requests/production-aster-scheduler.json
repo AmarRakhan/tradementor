@@ -1,7 +1,7 @@
 {
   "action": "ensure-production-aster-scheduler",
   "confirmation": "ENSURE_PRODUCTION_ASTER_SCHEDULER",
-  "expectedBackendSourceCommit": "882285fc44f54a2e2a944b635f35c7533bd125ea",
+  "expectedBackendSourceCommit": "ab6f4e303fd47297781bf6361adf1ce35d2a80d2",
   "requestedBy": "AmarRakhan",
-  "requestId": "restore-aster-scanner-tick-20261001-v2"
+  "requestId": "restore-aster-scheduler-after-p0-tp-self-heal-20261001"
 }
