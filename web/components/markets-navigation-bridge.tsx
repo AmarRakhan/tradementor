@@ -3,10 +3,14 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { MarketsPage } from "@/components/markets-page";
+import { useAuthSession } from "@/components/auth-provider";
+import {
+  MOBILE_NAVIGATION_ORDER,
+  NAVIGATION_PREFERENCES_EVENT,
+  mobileNavigationDestinationVisible,
+} from "@/lib/navigation-preferences";
 
 const VIEW_PARAM = "tmView";
-const MOBILE_DESTINATIONS = ["markets", "aster", "sniper", "news", "friends", "journey", "wallet"] as const;
-const NAV_DESTINATIONS = ["home", ...MOBILE_DESTINATIONS] as const;
 
 function isMarketsRoute() {
   return new URL(window.location.href).searchParams.get(VIEW_PARAM) === "markets";
@@ -36,6 +40,16 @@ function marketsButton() {
   return button;
 }
 
+function ensureMarketsButton(nav: HTMLElement) {
+  let market = nav.querySelector<HTMLButtonElement>(':scope > .nav-button[data-destination="markets"]');
+  if (market) return market;
+  market = marketsButton();
+  const aster = nav.querySelector<HTMLElement>(':scope > .nav-button[data-destination="aster"]');
+  if (aster) nav.insertBefore(market, aster);
+  else nav.appendChild(market);
+  return market;
+}
+
 function syncContext(active: boolean) {
   const label = document.querySelector<HTMLElement>(".mobile-context > span:first-child");
   if (!label) return;
@@ -48,36 +62,30 @@ function syncContext(active: boolean) {
   }
 }
 
-function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
-  let market = nav.querySelector<HTMLButtonElement>('[data-destination="markets"]');
-  const aster = nav.querySelector<HTMLElement>('[data-destination="aster"]');
-  if (!market && aster) {
-    market = marketsButton();
-    nav.insertBefore(market, aster);
-  }
+function normaliseBottomNavigation(nav: HTMLElement, active: boolean, uid?: string) {
+  const market = ensureMarketsButton(nav);
+  const order = MOBILE_NAVIGATION_ORDER as readonly string[];
 
   for (const item of Array.from(nav.querySelectorAll<HTMLElement>(":scope > .nav-button[data-destination]"))) {
     const destination = item.dataset.destination || "";
-    const hidden = !NAV_DESTINATIONS.includes(destination as (typeof NAV_DESTINATIONS)[number]);
+    const hidden = !order.includes(destination) || !mobileNavigationDestinationVisible(destination, uid);
     if (item.hidden !== hidden) item.hidden = hidden;
     if (item.getAttribute("aria-hidden") !== String(hidden)) item.setAttribute("aria-hidden", String(hidden));
-    if (hidden && item.tabIndex !== -1) item.tabIndex = -1;
+    if (item.tabIndex !== (hidden ? -1 : 0)) item.tabIndex = hidden ? -1 : 0;
   }
 
-  const visible = NAV_DESTINATIONS.flatMap((destination) => {
+  const visible = MOBILE_NAVIGATION_ORDER.flatMap((destination) => {
+    if (!mobileNavigationDestinationVisible(destination, uid)) return [];
     const item = nav.querySelector<HTMLElement>(`:scope > .nav-button[data-destination="${destination}"]`);
     return item ? [item] : [];
   });
-  // This function runs from a childList MutationObserver. Moving nodes that are
-  // already in the right order would trigger the observer again forever and
-  // block the browser main thread (most visibly in Android WebView/PWA).
-  const visibleChildren = Array.from(nav.children).filter((child): child is HTMLElement =>
-    child instanceof HTMLElement && !child.hidden && child.classList.contains("nav-button"),
+  const current = Array.from(nav.children).filter(
+    (child): child is HTMLElement => child instanceof HTMLElement && !child.hidden && child.classList.contains("nav-button"),
   );
-  if (visible.some((item, index) => visibleChildren[index] !== item)) {
-    for (const item of visible) nav.appendChild(item);
+  if (visible.some((item, index) => current[index] !== item)) for (const item of visible) nav.appendChild(item);
+  if (nav.style.getPropertyValue("--mobile-nav-count") !== String(visible.length)) {
+    nav.style.setProperty("--mobile-nav-count", String(visible.length));
   }
-  if (nav.style.getPropertyValue("--mobile-nav-count") !== String(visible.length)) nav.style.setProperty("--mobile-nav-count", String(visible.length));
 
   if (active) {
     for (const item of visible) {
@@ -85,38 +93,34 @@ function normaliseBottomNavigation(nav: HTMLElement, active: boolean) {
       item.classList.toggle("active", selected);
       if (item.getAttribute("aria-pressed") !== String(selected)) item.setAttribute("aria-pressed", String(selected));
     }
-  } else if (market) {
+  } else {
     market.classList.remove("active");
     market.setAttribute("aria-pressed", "false");
   }
 }
 
-function syncNavigation(active: boolean) {
+function syncNavigation(active: boolean, uid?: string) {
   syncContext(active);
 
   for (const rail of document.querySelectorAll<HTMLElement>(".rail-nav")) {
-    let button = rail.querySelector<HTMLButtonElement>('[data-destination="markets"]');
-    const aster = rail.querySelector<HTMLElement>('[data-destination="aster"]');
-    if (!button && aster) {
-      button = marketsButton();
-      rail.insertBefore(button, aster);
-    }
+    const button = ensureMarketsButton(rail);
     if (active) {
       for (const item of rail.querySelectorAll<HTMLElement>(".nav-button")) {
         const selected = item.dataset.destination === "markets";
         item.classList.toggle("active", selected);
         item.setAttribute("aria-pressed", String(selected));
       }
-    } else if (button) {
+    } else {
       button.classList.remove("active");
       button.setAttribute("aria-pressed", "false");
     }
   }
 
-  document.querySelectorAll<HTMLElement>(".bottom-nav").forEach((nav) => normaliseBottomNavigation(nav, active));
+  document.querySelectorAll<HTMLElement>(".bottom-nav").forEach((nav) => normaliseBottomNavigation(nav, active, uid));
 }
 
 export function MarketsNavigationBridge() {
+  const { user } = useAuthSession();
   const [active, setActive] = useState(false);
   const [target, setTarget] = useState<HTMLElement | null>(null);
 
@@ -125,7 +129,7 @@ export function MarketsNavigationBridge() {
       const next = isMarketsRoute();
       setActive(next);
       setTarget(document.querySelector<HTMLElement>(".content"));
-      syncNavigation(next);
+      syncNavigation(next, user?.uid);
     };
     const leaveMarketsBeforeExistingNav = (event: MouseEvent) => {
       const item = (event.target as HTMLElement | null)?.closest<HTMLElement>(".nav-button[data-destination]");
@@ -138,6 +142,7 @@ export function MarketsNavigationBridge() {
     document.addEventListener("click", leaveMarketsBeforeExistingNav, true);
     window.addEventListener("hashchange", sync);
     window.addEventListener("popstate", sync);
+    window.addEventListener(NAVIGATION_PREFERENCES_EVENT, sync);
     let frame = 0;
     const observer = new MutationObserver(() => {
       if (frame) return;
@@ -150,8 +155,9 @@ export function MarketsNavigationBridge() {
       document.removeEventListener("click", leaveMarketsBeforeExistingNav, true);
       window.removeEventListener("hashchange", sync);
       window.removeEventListener("popstate", sync);
+      window.removeEventListener(NAVIGATION_PREFERENCES_EVENT, sync);
     };
-  }, []);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!active || !target) return;
