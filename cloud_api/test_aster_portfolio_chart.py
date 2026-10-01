@@ -8,6 +8,7 @@ from aster_portfolio_chart import (
     external_cashflow_markers,
     latest_contiguous_candles,
     latest_established_contiguous_candles,
+    latest_zone_ladder_candles,
     merge_equity_sample,
     public_candle,
     strategy_audit_trade_markers,
@@ -213,3 +214,24 @@ def test_build432_cashflow_markers_aggregate_same_direction_but_never_net_opposi
     assert deposit["count"]==2
     assert withdrawal["amountUsd"]==-25
     assert withdrawal["count"]==1
+
+
+def test_latest_zone_ladder_candles_skips_newer_segment_without_valid_zones():
+    old = [
+        candle(900_000, 100, 102, 99, 101),
+        candle(1_800_000, 101, 103, 100, 102),
+        candle(2_700_000, 102, 104, 100, 101),
+        candle(3_600_000, 101, 103, 99, 102),
+        candle(4_500_000, 102, 105, 101, 104),
+        candle(5_400_000, 104, 106, 102, 103),
+        candle(6_300_000, 103, 107, 102, 106),
+        candle(7_200_000, 106, 108, 104, 105),
+        candle(8_100_000, 105, 109, 104, 108),
+    ]
+    fresh = [
+        candle(12_600_000 + index * 900_000, 120 + index, 121 + index, 119 + index, 120.5 + index)
+        for index in range(7)
+    ]
+    selected = latest_zone_ladder_candles(old + fresh, "15m", cycle_start_equity=101, min_bars=7)
+    assert [row["atMs"] for row in selected] == [row["atMs"] for row in old]
+    assert derive_equity_zones(selected, 101)
