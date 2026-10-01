@@ -1,0 +1,59 @@
+name: Diagnose Cloud Run background CPU 20261001
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-cloudrun-background-cpu-20261001.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "209"
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect service runtime policy read-only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          python - "$RUNNER_TEMP/service.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding="utf-8"))
+          meta=s.get("metadata",{})
+          tmeta=(s.get("spec",{}).get("template",{}).get("metadata",{}))
+          anns={**(meta.get("annotations") or {}),**(tmeta.get("annotations") or {})}
+          spec=s.get("spec",{}).get("template",{}).get("spec",{})
+          min_scale=anns.get("autoscaling.knative.dev/minScale") or anns.get("run.googleapis.com/minScale") or "unset"
+          cpu_throttle=anns.get("run.googleapis.com/cpu-throttling","unset")
+          container=(spec.get("containers") or [{}])[0]
+          resources=container.get("resources") or {}
+          limits=resources.get("limits") or {}
+          print("## Cloud Run background CPU · read-only")
+          print(f"- Service: `tradementor-api`")
+          print(f"- Min instances annotation: **{min_scale}**")
+          print(f"- CPU throttling annotation: **{cpu_throttle}**")
+          print(f"- CPU limit: **{limits.get('cpu','unset')}**")
+          print(f"- Container concurrency: **{spec.get('containerConcurrency','unset')}**")
+          print("\n_Read-only; geen Cloud Run-instellingen gewijzigd._")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
