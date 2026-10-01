@@ -1058,7 +1058,8 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [priceZoneSeats, setPriceZoneSeats] = useState<PriceZoneSeatSummary | null>(null);
   const [scannerStatus, setScannerStatus] = useState<ScannerStatusSnapshot | null>(null);
   const [liveActiveZone, setLiveActiveZone] = useState<number | null>(null);
-  const [detailView, setDetailView] = useState<SnapshotDetailView>("portfolio");\n  const [performanceInitialTab, setPerformanceInitialTab] = useState<PerformanceInitialTab>("per-day");
+  const [detailView, setDetailView] = useState<SnapshotDetailView>("portfolio");
+  const [performanceInitialTab, setPerformanceInitialTab] = useState<PerformanceInitialTab>("per-day");
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
