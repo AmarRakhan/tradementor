@@ -197,6 +197,13 @@ function thresholdMoney(value: number) {
   return `${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: 2 }).format(value)}`;
 }
 
+function snapshotThresholdMoney(value: number) {
+  return new Intl.NumberFormat("nl-NL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function pct1(value: number | null | undefined) {
   if (!Number.isFinite(Number(value))) return "–";
   const normalized = Math.abs(Number(value)) < 0.0000001 ? 0 : Number(value);
@@ -732,7 +739,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   const tileStatus = state.enabled ? "ACTIEF" : "UIT";
   const tileThreshold = Number(state.thresholdUsd);
   const tileThresholdLabel = Number.isFinite(tileThreshold) && tileThreshold > 0
-    ? thresholdMoney(tileThreshold)
+    ? snapshotThresholdMoney(tileThreshold)
     : "—";
   const coinOptions = useMemo(() => [...new Set(pairs.map((pair) => pair.symbol))].sort(), [pairs]);
   const visiblePairs = coinFilter === "ALL" ? pairs : pairs.filter((pair) => pair.symbol === coinFilter);
