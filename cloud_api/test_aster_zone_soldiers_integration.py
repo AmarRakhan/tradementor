@@ -57,12 +57,13 @@ def test_multi_bb_runtime_claims_zone_ownership_only_after_confirmed_entry_fill(
     assert '"zoneSoldierState": zone_state' in source
 
 
-def test_zone_mode_uses_per_zone_free_seats_and_hard_global_maximum_positions():
+def test_zone_mode_uses_per_zone_free_seats_and_account_wide_hard_global_maximum_positions():
     source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
     assert "if zone_mode:" in source
     assert "long_need = len(available_soldiers" in source
     assert "short_need = len(available_soldiers" in source
-    assert "_remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)" in source
+    assert "account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)" in source
+    assert '"reason": "GLOBAL_POSITION_CAP_REACHED"' in source
     assert "zone_platform_ceiling" not in source
     assert "if not paired and not zone_mode:" in source
 
@@ -96,7 +97,7 @@ def test_build457_global_130_cap_allows_exactly_one_more_strategy_position_at_12
     assert _remaining_strategy_capacity(130, 131) == 0
 
 
-def test_zone_warriors_global_cap_excludes_legacy_strategy2_positions():
+def test_zone_warriors_global_cap_counts_legacy_and_untracked_account_positions():
     now = 10_000
     zone_state, _, _ = prepare_zone_runtime(
         raw_zone_state={}, managed_state={}, positions=[], confirmed_zone=8, zone_safe=True,
@@ -162,15 +163,19 @@ def test_zone_warriors_global_cap_excludes_legacy_strategy2_positions():
         dry_run=True, order_budget=5, zone_context={"activeZone": 8, "safeForEntries": True},
     )
 
-    # The planned entry can use the final free Zone Warriors seat even though
-    # the raw Strategy-2/account counts are already above maximumPositions.
-    assert result["accountPositionCount"] == 7
-    assert result["strategyPositionCount"] == 7
-    assert result["seatCapacityPositionCount"] == 3
+    # Max stoelen is an account-wide admission ceiling for NEW Zone Warriors
+    # positions. Existing legacy/pre-zone legs stay managed, but a free local
+    # zone seat cannot create position 7 while the configured global max is 3.
+    assert result["accountPositionCount"] == 6
+    assert result["strategyPositionCount"] == 6
+    assert result["seatCapacityPositionCount"] == 2
+    assert result["globalCapacityPositionCount"] == 6
     assert result["accountRemainingCapacity"] == 0
-    assert result["scannedCandidateCount"] >= 1
-    assert any(row.get("kind") == "ENTRY" and row.get("symbol") == "NEWUSDT" and row.get("side") == "LONG" for row in result["actions"])
-    assert result["entryStatus"] in {"ENTRY_PLANNED", "PARTIAL_FILL_PLANNED"}
+    assert result["scannedCandidateCount"] == 0
+    assert not any(row.get("kind") == "ENTRY" for row in result["actions"])
+    assert result["scannerDiagnostics"]["LONG"]["availableCapacity"] == 0
+    assert result["scannerDiagnostics"]["SHORT"]["availableCapacity"] == 0
+    assert result["entryStatus"] == "WAITING_ACCOUNT_CAP"
 
 
 def test_build457_zone_activation_does_not_bypass_existing_bollinger_entry_checks():
