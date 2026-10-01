@@ -17,11 +17,10 @@ concurrency:
 
 env:
   GCP_PROJECT_ID: tradementor-production
-  DATABASE_ID: "(default)"
-  COLLECTION_GROUP: asterStrategy2
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  INDEX_SERVICE_ACCOUNT: 604335232956-compute@developer.gserviceaccount.com
 
 jobs:
   exempt-large-runtime-fields:
@@ -59,66 +58,112 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Verify existing runtime identity can manage only the required field metadata
+      - name: Capture exact live image and runtime identity
         shell: bash
         run: |
           set -euo pipefail
-          gcloud auth print-access-token --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" >/dev/null
-          for FIELD in orderAttributions entryCandidateCooldowns; do
-            gcloud firestore indexes fields describe "$FIELD" \
-              --project "$GCP_PROJECT_ID" \
-              --database "$DATABASE_ID" \
-              --collection-group "$COLLECTION_GROUP" \
-              --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" \
-              --format=json > "$RUNNER_TEMP/$FIELD-before.json" || echo '{}' > "$RUNNER_TEMP/$FIELD-before.json"
-          done
-
-      - name: Disable automatic indexes for large non-query runtime fields
-        shell: bash
-        run: |
-          set -euo pipefail
-          for FIELD in orderAttributions entryCandidateCooldowns; do
-            gcloud firestore indexes fields update "$FIELD" \
-              --project "$GCP_PROJECT_ID" \
-              --database "$DATABASE_ID" \
-              --collection-group "$COLLECTION_GROUP" \
-              --disable-indexes \
-              --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" \
-              --quiet
-          done
-
-      - name: Verify exemptions are active
-        shell: bash
-        run: |
-          set -euo pipefail
-          for FIELD in orderAttributions entryCandidateCooldowns; do
-            OUT="$RUNNER_TEMP/$FIELD-after.json"
-            gcloud firestore indexes fields describe "$FIELD" \
-              --project "$GCP_PROJECT_ID" \
-              --database "$DATABASE_ID" \
-              --collection-group "$COLLECTION_GROUP" \
-              --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" \
-              --format=json > "$OUT"
-            python - "$OUT" "$FIELD" <<'PY'
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json \
+            > "$RUNNER_TEMP/service.json"
+          python - "$RUNNER_TEMP/service.json" >> "$GITHUB_ENV" <<'PY'
           import json,sys
-          row=json.load(open(sys.argv[1],encoding="utf-8"))
-          cfg=row.get("indexConfig") or {}
-          indexes=cfg.get("indexes") or []
-          assert indexes == [], (sys.argv[2], indexes)
-          assert cfg.get("usesAncestorConfig") is False, (sys.argv[2], cfg)
-          print(f"{sys.argv[2]}: INDEX_EXEMPTION_ACTIVE")
+          s=json.load(open(sys.argv[1],encoding="utf-8"))
+          spec=s["spec"]["template"]["spec"]
+          image=spec["containers"][0]["image"]
+          runtime=spec["serviceAccountName"]
+          live=[row for row in s["status"].get("traffic",[]) if int(row.get("percent",0))==100]
+          assert len(live)==1, live
+          assert image and runtime
+          print("PROD_IMAGE="+image)
+          print("RUNTIME_SERVICE_ACCOUNT="+runtime)
+          print("LIVE_REVISION="+live[0]["revisionName"])
           PY
-          done
 
-      - name: Upload before and after evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: strategy2-firestore-index-pressure-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/orderAttributions-before.json
-            ${{ runner.temp }}/entryCandidateCooldowns-before.json
-            ${{ runner.temp }}/orderAttributions-after.json
-            ${{ runner.temp }}/entryCandidateCooldowns-after.json
-          if-no-files-found: ignore
-          retention-days: 14
+      - name: Run exact two-field Firestore exemption under existing runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="tm-s2-indexfix-${GITHUB_RUN_ID: -7}"
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          from google.cloud import firestore_admin_v1
+          from google.protobuf.field_mask_pb2 import FieldMask
+          import json
+
+          project="tradementor-production"
+          database="(default)"
+          collection="asterStrategy2"
+          fields=("orderAttributions","entryCandidateCooldowns")
+          client=firestore_admin_v1.FirestoreAdminClient()
+
+          # Read permission is intentionally proven before any mutation.
+          names=[
+              f"projects/{project}/databases/{database}/collectionGroups/{collection}/fields/{field}"
+              for field in fields
+          ]
+          for name in names:
+              try:
+                  before=client.get_field(name=name)
+                  print("INDEX_FIELD_BEFORE "+json.dumps({
+                      "field":name.rsplit("/",1)[-1],
+                      "usesAncestorConfig":bool(before.index_config.uses_ancestor_config),
+                      "indexCount":len(before.index_config.indexes),
+                  },sort_keys=True),flush=True)
+              except Exception as exc:
+                  # A field without an explicit override may not yet have a materialized
+                  # Field resource. Only permission errors must fail this read gate.
+                  code=getattr(exc,"code",lambda:None)()
+                  code_name=getattr(code,"name",str(code))
+                  if str(code_name).upper() not in {"NOT_FOUND","404"}:
+                      raise
+                  print("INDEX_FIELD_BEFORE "+json.dumps({
+                      "field":name.rsplit("/",1)[-1],
+                      "usesAncestorConfig":True,
+                      "indexCount":None,
+                  },sort_keys=True),flush=True)
+
+          for name in names:
+              request=firestore_admin_v1.UpdateFieldRequest(
+                  field={
+                      "name":name,
+                      "index_config":{"indexes":[]},
+                  },
+                  update_mask=FieldMask(paths=["index_config"]),
+              )
+              operation=client.update_field(request=request)
+              operation.result(timeout=600)
+              after=client.get_field(name=name)
+              assert after.index_config.uses_ancestor_config is False, after
+              assert len(after.index_config.indexes)==0, after
+              print("INDEX_EXEMPTION_ACTIVE "+json.dumps({
+                  "field":name.rsplit("/",1)[-1],
+                  "usesAncestorConfig":False,
+                  "indexCount":0,
+              },sort_keys=True),flush=True)
+          PY
+          )"
+
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$PROD_IMAGE" --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 900s --quiet
+
+          gcloud run jobs execute "$JOB" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+
+          cleanup
+          trap - EXIT
+
+      - name: Prove production service was not redeployed
+        shell: bash
+        run: |
+          set -euo pipefail
+          AFTER="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='value(status.traffic[0].revisionName)')"
+          test "$AFTER" = "$LIVE_REVISION"
