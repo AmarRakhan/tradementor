@@ -6,6 +6,7 @@ const dashboard = fs.readFileSync(new URL("../components/sniper-dashboard.tsx", 
 const bridge = fs.readFileSync(new URL("../components/home-navigation-bridge.tsx", import.meta.url), "utf8");
 const newsBridge = fs.readFileSync(new URL("../components/news-navigation-bridge.tsx", import.meta.url), "utf8");
 const marketsBridge = fs.readFileSync(new URL("../components/markets-navigation-bridge.tsx", import.meta.url), "utf8");
+const navigationPreferences = fs.readFileSync(new URL("../lib/navigation-preferences.ts", import.meta.url), "utf8");
 const css = fs.readFileSync(new URL("../app/sniper-bridge.css", import.meta.url), "utf8");
 const layout = fs.readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
 const version = fs.readFileSync(new URL("../lib/app-version.ts", import.meta.url), "utf8");
@@ -16,8 +17,9 @@ test("Sniper is a live main navigation view between Aster and News", () => {
   assert.match(bridge, /data-destination="aster"/);
   assert.match(bridge, /data-destination="news"/);
   assert.match(bridge, /<SniperDashboard cloudReady=\{cloudReady\}/);
-  assert.match(newsBridge, /"markets", "aster", "sniper", "news", "friends", "journey", "wallet"/);
-  assert.match(marketsBridge, /"markets", "aster", "sniper", "news", "friends", "journey", "wallet"/);
+  assert.match(newsBridge, /MOBILE_NAVIGATION_ORDER/);
+  assert.match(marketsBridge, /MOBILE_NAVIGATION_ORDER/);
+  assert.match(navigationPreferences, /"aster",[\s\S]*"sniper",[\s\S]*"news"/);
 });
 
 test("Sniper dashboard exposes exactly the agreed strategy sections and live activation", () => {
