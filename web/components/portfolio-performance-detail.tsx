@@ -43,6 +43,8 @@ type LedgerBreakdown = {
 
 type DailyGrowth = {
   reliable?: boolean;
+  date?: string;
+  externalCashflowUsd?: number;
   todayPercentage?: number;
   todayUsd?: number;
   averageDailyPercentage?: number;
@@ -392,7 +394,7 @@ function AverageTab({ daily }: { daily: DailyGrowth }) {
       <p>Vanaf {dateLabel(daily.measurementStartDate)} tot en met vandaag</p>
       <div className="aps-performance-analysis-grid">
         <Stat label="Gemiddeld US$ / dag" value={signedMoney(avgUsd)} valueTone={tone(avgUsd)} />
-        <Stat label="Gemeten dagen" value={String(daily.measuredDays ?? rows.length || "—")} />
+        <Stat label="Gemeten dagen" value={String(daily.measuredDays ?? (rows.length || "—"))} />
         <Stat label="Totaal tradingresultaat" value={signedMoney(totalUsd)} valueTone={tone(totalUsd)} />
         <Stat label="Startdatum" value={dateLabel(daily.measurementStartDate)} />
         <Stat label="Positieve dagen" value={String(positive)} valueTone="positive" />
