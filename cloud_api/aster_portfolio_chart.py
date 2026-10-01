@@ -548,6 +548,44 @@ def derive_equity_zones(candles: list[dict[str, Any]], cycle_start_equity: float
     return output
 
 
+def latest_zone_ladder_candles(
+    candles: list[dict[str, Any]] | None,
+    timeframe: str,
+    *,
+    cycle_start_equity: float = 0.0,
+    min_bars: int = 7,
+) -> list[dict[str, Any]]:
+    """Return the newest contiguous segment that can actually build a zone ladder.
+
+    Enough bars alone is not sufficient: the segment must also have enough
+    confirmed swing/SR evidence for derive_equity_zones to return zones.
+    This preserves the newest actually usable ladder across a chart gap.
+    """
+    interval = TIMEFRAME_MS.get(str(timeframe))
+    if not interval:
+        raise ValueError("Onbekend Portfolio Koers-timeframe")
+    rows = [dict(row) for row in candles or [] if isinstance(row, dict)]
+    rows.sort(key=lambda row: int(_number(row.get("atMs"))) or int(_number(row.get("time"))) * 1000)
+    if not rows:
+        return []
+
+    segments: list[list[dict[str, Any]]] = [[]]
+    previous_ms = 0
+    for row in rows:
+        current_ms = int(_number(row.get("atMs"))) or int(_number(row.get("time"))) * 1000
+        if segments[-1] and previous_ms > 0 and current_ms - previous_ms > interval:
+            segments.append([])
+        segments[-1].append(row)
+        previous_ms = current_ms
+
+    required = max(1, int(min_bars))
+    for segment in reversed(segments):
+        if len(segment) < required:
+            continue
+        if derive_equity_zones(segment, cycle_start_equity):
+            return segment
+    return []
+
 def active_zone(zones: list[dict[str, Any]], price: float) -> int | None:
     value = _number(price)
     if value <= 0 or not zones:
