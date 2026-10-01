@@ -22,9 +22,48 @@ export type ReleaseHistoryEntry = {
 };
 
 export const CURRENT_RELEASE: ReleaseHistoryEntry = {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-navigation-visibility-v2`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
+  releasedAt: "2026-10-01",
+  title: "Zichtbare tabbladen 2.0 · persoonlijke mobiele navigatie",
+  newItems: [
+    "Markets, Sniper, Nieuws, Friends en Journey kunnen nu net als Hyperliquid afzonderlijk uit de onderste mobiele navigatie worden verborgen.",
+    "HOME, ASTER en WALLET blijven altijd zichtbaar; verborgen pagina's en routes blijven volledig bestaan.",
+    "De zichtbaarheid wordt per gebruiker in TradeMentor Cloud opgeslagen en lokaal gecachet voor een directe UI-update.",
+  ],
+  problems: [
+    "Alleen Hyperliquid had een zichtbaarheidsschakelaar, waardoor de onderste navigatie niet persoonlijk kon worden opgeruimd.",
+    "Markets, Sniper, Nieuws en Friends worden via navigatie-bridges toegevoegd; zonder één gedeeld visibility-contract konden die bridges verborgen tabs opnieuw invoegen.",
+  ],
+  causes: [
+    "De bestaande Hyperliquid-voorkeur was lokaal en tab-specifiek in plaats van een centrale per-user navigatievoorkeur.",
+    "De losse navigatie-bridges beheerden ieder hun eigen zichtbare volgorde.",
+  ],
+  fixes: [
+    "Eén centrale navigation-preferences module definieert defaults, per-user cache, canonical mobiele volgorde en directe change-events.",
+    "Een nieuwe read/write cloudvoorkeur onder users/{uid}/preferences/navigation bewaart de zes optionele tabkeuzes met veilige default AAN.",
+    "Alle nav-bridges respecteren dezelfde voorkeuren en verbergen uitsluitend knoppen in de onderste mobiele navigatie.",
+    "De bestaande Hyperliquid-instelling wordt gemigreerd naar het nieuwe model zonder trading-, scanner- of strategiegedrag te wijzigen.",
+  ],
+  now: [
+    "De gebruiker kan onder Wallet → Navigatie iedere optionele tab direct aan- of uitzetten.",
+    "Een opnieuw ingeschakelde tab verschijnt automatisch terug op zijn canonical positie.",
+    "Navigatiekeuzes blijven behouden na refresh, opnieuw inloggen en deployment.",
+  ],
+  technicalDetails: [
+    "Frontend state/UI: web/app/page.tsx en web/lib/navigation-preferences.ts.",
+    "Bridges: home-navigation-bridge.tsx, markets-navigation-bridge.tsx, news-navigation-bridge.tsx en friends-navigation-bridge.tsx.",
+    "Cloud API: GET/PUT /v1/me/preferences/navigation via Firestore users/{uid}/preferences/navigation.",
+    "Geen trading-, entry-, DCA-, hedge-, TP-, scanner- of order-executionlogica gewijzigd.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-482-performance-detail",
+  version: "46",
+  build: "482",
   releasedAt: "2026-10-01",
   title: "Rendement Overzicht 1.0 · auditbare dagperformance",
   newItems: [
@@ -60,7 +99,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   confidence: "confirmed",
 };
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+
   {
     id: "v46-build-481-snapshot-visual-polish",
     version: "46",
