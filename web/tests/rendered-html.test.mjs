@@ -346,14 +346,18 @@ test("admin portal is server-authorized and recovery never contains trading acti
 });
 
 test("mobile navigation keeps Wallet visible after Positions and Risk were added", async () => {
-  const [page, styles] = await Promise.all([
+  const [page, styles, navigationPreferences] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../lib/navigation-preferences.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /\{ id: "wallet", label: "WALLET", glyph: "W" \}/);
   assert.match(page, /--mobile-nav-count/);
-  assert.match(page, /tradementor\.navigation\.hyperliquid\.visible/);
+  assert.match(navigationPreferences, /tradementor\.navigation\.hyperliquid\.visible/);
   assert.match(page, /Hyperliquid-tab tonen/);
+  assert.match(page, /Markets-tab tonen/);
+  assert.match(page, /Sniper-tab tonen/);
+  assert.match(navigationPreferences, /destination === "home" \|\| destination === "aster" \|\| destination === "wallet"/);
   assert.match(styles, /grid-template-columns:\s*repeat\(var\(--mobile-nav-count, 5\), minmax\(0, 1fr\)\)/);
 });
 
