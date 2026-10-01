@@ -72,7 +72,7 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -2009,25 +2009,29 @@ def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:
 def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict[str, Any], now: datetime) -> dict[str, Any]:
     """Resolve the active price zone directly from live portfolio equity.
 
-    The existing 15m Portfolio Koers history defines the already-established
-    zone ladder. It does *not* confirm a zone transition. As soon as current
-    exchange equity crosses an existing boundary, that zone is active in this
-    same runtime evaluation. No candle close, debounce, dwell time or breakout
-    confirmation is part of zone activation.
+    The active-zone ladder is allowed to outlive a temporary chart-ingestion
+    gap. We never bridge missing candles. Instead, the newest complete
+    contiguous segment with enough evidence remains the established ladder
+    while a new segment warms up. This prevents a single missing 15m bucket
+    from wiping activeZone and silently turning all Zone Warriors seats into
+    zero-capacity WAITING_CAPACITY.
     """
     try:
         candles = _read_portfolio_chart_candles({"uid": uid}, "15m", 320)
         contiguous = portfolio_chart_latest_contiguous_candles(candles, "15m")
+        established = portfolio_chart_latest_established_candles(candles, "15m", min_bars=7)
         current_bucket = int(now.timestamp() * 1000) // PORTFOLIO_CHART_TIMEFRAME_MS["15m"] * PORTFOLIO_CHART_TIMEFRAME_MS["15m"]
         latest_bucket = int(safe_float(contiguous[-1].get("atMs"))) if contiguous else 0
-        history_ready = len(contiguous) >= 14
-        history_fresh = bool(history_ready and latest_bucket >= current_bucket)
+        ladder_bucket = int(safe_float(established[-1].get("atMs"))) if established else 0
+        history_ready = len(established) >= 7
+        history_fresh = bool(len(contiguous) >= 7 and latest_bucket >= current_bucket)
+        ladder_fallback_used = bool(history_ready and len(contiguous) < 7 and ladder_bucket != latest_bucket)
         cycle = raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"), dict) else {}
         cycle_start = safe_float(cycle.get("cycleStartEquity"))
 
-        # Preserve the existing zone-boundary calculation exactly. Only the
-        # activation signal changes: current live equity selects the zone now.
-        zones = derive_equity_zones(contiguous, cycle_start) if history_ready else []
+        # The ladder itself comes from one uninterrupted historical segment.
+        # Current exchange equity then selects the active zone immediately.
+        zones = derive_equity_zones(established, cycle_start) if history_ready else []
         equity = multi_bb_exchange_equity(account)
         active = confirmed_zone_from_display_zones(zones, equity) if equity > 0 and zones else None
         zone_ready = bool(active is not None)
@@ -2036,12 +2040,16 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
             "activeZone": active,
             "currentEquity": equity if equity > 0 else None,
             "contiguousBars": len(contiguous),
-            "requiredContiguousBars": 14,
+            "ladderBars": len(established),
+            "requiredContiguousBars": 7,
             "latestBucketMs": latest_bucket or None,
+            "ladderLastBucketMs": ladder_bucket or None,
             "currentBucketMs": current_bucket,
             "historyFresh": history_fresh,
+            "ladderFallbackUsed": ladder_fallback_used,
             "zoneActivationRequiresCandleClose": False,
             "zoneActivationSource": "LIVE_PORTFOLIO_EQUITY",
+            "zoneLadderSource": "ESTABLISHED_CONTIGUOUS_SEGMENT" if ladder_fallback_used else "LATEST_CONTIGUOUS_SEGMENT",
             "reason": "LIVE_EQUITY_ZONE_ACTIVE" if zone_ready else "ZONE_LADDER_UNAVAILABLE",
         }
     except (google_exceptions.GoogleAPICallError, TypeError, ValueError) as exc:
@@ -2050,13 +2058,15 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
             "activeZone": None,
             "currentEquity": None,
             "contiguousBars": 0,
-            "requiredContiguousBars": 14,
+            "ladderBars": 0,
+            "requiredContiguousBars": 7,
             "historyFresh": False,
+            "ladderFallbackUsed": False,
             "zoneActivationRequiresCandleClose": False,
             "zoneActivationSource": "LIVE_PORTFOLIO_EQUITY",
+            "zoneLadderSource": "UNAVAILABLE",
             "reason": f"ZONE_CONTEXT_UNAVAILABLE: {exc}",
         }
-
 
 def _sync_price_zone_seat_runtime(
     ref: Any,
