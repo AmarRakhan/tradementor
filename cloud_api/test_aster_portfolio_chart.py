@@ -7,6 +7,7 @@ from aster_portfolio_chart import (
     derive_equity_zones,
     external_cashflow_markers,
     latest_contiguous_candles,
+    latest_established_contiguous_candles,
     merge_equity_sample,
     public_candle,
     strategy_audit_trade_markers,
@@ -144,6 +145,27 @@ def test_latest_contiguous_candles_never_bridges_an_unobserved_gap():
     ]
     recent = latest_contiguous_candles(rows, "15m")
     assert [row["atMs"] for row in recent] == [4_500_000, 5_400_000]
+
+
+def test_established_zone_ladder_survives_a_fresh_runtime_gap_without_bridging_it():
+    rows = [
+        *[candle((index + 1) * 900_000, 100 + index, 102 + index, 99 + index, 101 + index) for index in range(8)],
+        candle(12_600_000, 110, 112, 109, 111),
+        candle(13_500_000, 111, 113, 110, 112),
+    ]
+    latest = latest_contiguous_candles(rows, "15m")
+    established = latest_established_contiguous_candles(rows, "15m", min_bars=7)
+    assert [row["atMs"] for row in latest] == [12_600_000, 13_500_000]
+    assert len(established) == 8
+    assert established[-1]["atMs"] == 7_200_000
+    assert 12_600_000 not in [row["atMs"] for row in established]
+
+
+def test_established_zone_ladder_moves_to_newest_segment_after_warmup():
+    old = [candle((index + 1) * 900_000, 100, 102, 99, 101) for index in range(8)]
+    fresh = [candle(12_600_000 + index * 900_000, 110, 112, 109, 111) for index in range(7)]
+    established = latest_established_contiguous_candles(old + fresh, "15m", min_bars=7)
+    assert [row["atMs"] for row in established] == [row["atMs"] for row in fresh]
 
 
 def test_recent_strategy_audit_events_become_immediate_chart_markers():

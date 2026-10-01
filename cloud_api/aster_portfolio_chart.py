@@ -71,6 +71,44 @@ def latest_contiguous_candles(candles: list[dict[str, Any]] | None, timeframe: s
     return rows[start:]
 
 
+
+def latest_established_contiguous_candles(
+    candles: list[dict[str, Any]] | None,
+    timeframe: str,
+    *,
+    min_bars: int = 7,
+) -> list[dict[str, Any]]:
+    """Return the newest contiguous segment that is large enough to define a zone ladder.
+
+    A fresh runtime gap must not erase an already-established zone ladder. This
+    helper never bridges the gap: it selects one complete contiguous segment.
+    If the newest segment is still warming up, the most recent earlier segment
+    with enough bars remains the authoritative ladder until the newest segment
+    has enough evidence of its own.
+    """
+    interval = TIMEFRAME_MS.get(str(timeframe))
+    if not interval:
+        raise ValueError("Onbekend Portfolio Koers-timeframe")
+    rows = [dict(row) for row in candles or [] if isinstance(row, dict)]
+    rows.sort(key=lambda row: int(_number(row.get("atMs"))) or int(_number(row.get("time"))) * 1000)
+    if not rows:
+        return []
+
+    segments: list[list[dict[str, Any]]] = [[]]
+    previous_ms = 0
+    for row in rows:
+        current_ms = int(_number(row.get("atMs"))) or int(_number(row.get("time"))) * 1000
+        if segments[-1] and previous_ms > 0 and current_ms - previous_ms > interval:
+            segments.append([])
+        segments[-1].append(row)
+        previous_ms = current_ms
+
+    required = max(1, int(min_bars))
+    for segment in reversed(segments):
+        if len(segment) >= required:
+            return segment
+    return segments[-1] if segments else []
+
 def collection_for_timeframe(timeframe: str) -> str:
     try:
         return COLLECTION_BY_TIMEFRAME[str(timeframe)]
