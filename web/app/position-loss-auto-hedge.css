@@ -278,3 +278,50 @@ article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto
   .plah-scale-break-card{padding:7px 7px}.plah-scale-direction{width:24px;height:24px;font-size:15px}
   .plah-scale-break-card>strong{font-size:11px}.plah-scale-distance-change{font-size:9.5px}
 }
+
+
+/* Build 480 — Portfolio Snapshot Auto Hedge front tile.
+   Visual source of truth: file_00000000bd588210a3ac396a4df67d6b
+   The switch remains only in the existing Auto Hedge detail screen. */
+.plah-tile{
+  grid-template-columns:24px minmax(0,1fr);
+  gap:7px;
+  padding:7px 8px;
+}
+.plah-tile-copy{gap:3px}
+.plah-tile-copy small{font-size:6.2px}
+.plah-tile-copy strong{
+  overflow:visible;
+  text-overflow:clip;
+  color:#9da9a2;
+  font-size:11.5px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:.025em;
+}
+.plah-tile-copy strong.on{color:#31ef99;text-shadow:0 0 8px rgba(49,239,153,.2)}
+.plah-tile-copy em{
+  overflow:visible;
+  text-overflow:clip;
+  color:#59dca7;
+  font-size:6.2px;
+  line-height:1.05;
+  font-style:normal;
+  font-weight:850;
+  letter-spacing:0;
+  white-space:nowrap;
+}
+@media(max-width:640px){
+  .plah-tile{grid-template-columns:20px minmax(0,1fr);gap:5px;padding:6px 7px}
+  .plah-tile-icon svg{width:19px;height:19px}
+  .plah-tile-copy{gap:2px}
+  .plah-tile-copy small{font-size:5.6px}
+  .plah-tile-copy strong{font-size:10.4px}
+  .plah-tile-copy em{font-size:5.7px}
+}
+@media(max-width:390px){
+  .plah-tile{grid-template-columns:18px minmax(0,1fr);gap:4px;padding:5px 6px}
+  .plah-tile-icon svg{width:17px;height:17px}
+  .plah-tile-copy strong{font-size:9.6px}
+  .plah-tile-copy em{font-size:5.2px}
+}
