@@ -1262,11 +1262,13 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         ]
         long_need = 0 if zone_migration_hold else len(eligible_zone_long)
         short_need = 0 if zone_migration_hold else len(eligible_zone_short)
-        # Price-zone seats determine which side may enter, while
-        # maximumPositions remains the hard global Zone Warriors ceiling across
-        # active-zone and old-zone seats only. Legacy/pre-zone Strategy-2 and
-        # manual/untracked Aster positions do not consume this seat cap.
-        account_remaining_capacity = _remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)
+        # Price-zone seats determine which side may enter, but maximumPositions
+        # is the HARD account-wide admission ceiling for every NEW Zone Warriors
+        # initial position. Legacy/pre-zone/manual/untracked Aster legs remain
+        # managed in place, yet they still consume this global entry capacity.
+        # This keeps the configured "Max stoelen" aligned with the Portfolio
+        # Snapshot active-position count and prevents 150 -> 151+ refills.
+        account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
     elif settings.asymmetric_hedge_enabled:
         # Existing asymmetric LONG cycles keep occupying their pair slot even
         # after their paired SHORT has been released.  However, configured
@@ -1531,6 +1533,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             fresh_short_count = sum(1 for active_key in fresh_account_positions if active_key.endswith("|SHORT"))
             exchange_long_count = fresh_long_count
             exchange_short_count = fresh_short_count
+            fresh_account_position_count = len(fresh_account_positions)
+            if zone_mode and fresh_account_position_count >= settings.maximum_positions:
+                account_remaining_capacity = 0
+                long_need = 0
+                short_need = 0
+                actions.append({
+                    "kind": "ENTRY_SKIP", "symbol": symbol, "side": side,
+                    "reason": "GLOBAL_POSITION_CAP_REACHED", "stage": "pre_order",
+                    "activePositions": fresh_account_position_count,
+                    "maximumPositions": settings.maximum_positions,
+                })
+                continue
             if paired and (fresh_long_count >= settings.long_slots or fresh_short_count >= settings.short_slots):
                 pair_need = 0; long_need = 0; short_need = 0
                 actions.append({
@@ -1854,7 +1868,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 short_count += 1
                 exchange_short_count += 1
             if zone_mode:
-                account_remaining_capacity = _remaining_strategy_capacity(settings.maximum_positions, seat_capacity_position_count)
+                account_remaining_capacity = max(0, settings.maximum_positions - account_position_count)
                 long_need = len(available_soldiers(zone_state or {}, "LONG"))
                 short_need = len(available_soldiers(zone_state or {}, "SHORT"))
             else:
@@ -1937,6 +1951,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if str(action.get("side") or "").upper() == scanner_side
             and action.get("kind") in {"ENTRY", "ASYM_SHORT_ENTRY"}
         )
+        side_available_capacity = max(0, long_need if scanner_side == "LONG" else short_need)
+        if zone_mode:
+            # Never advertise free seats when the account-wide hard cap is full
+            # or exceeded. Zone-local vacancies can exist, but they are not
+            # executable capacity until the total active count drops below max.
+            side_available_capacity = min(side_available_capacity, max(0, account_remaining_capacity))
         scanner_diagnostics[scanner_side] = {
             "timeframe": _effective_entry_timeframe(settings, scanner_side, exposure_refill),
             "marketsScanned": scanner_side_diagnostics[scanner_side]["marketsScanned"],
@@ -1945,7 +1965,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             "blockedFilters": blocked_filters,
             "ordersPlaced": placed_orders,
             "lastEntryAtMs": scanner_side_diagnostics[scanner_side]["lastEntryAtMs"] or None,
-            "availableCapacity": max(0, long_need if scanner_side == "LONG" else short_need),
+            "availableCapacity": side_available_capacity,
         }
     scanner_diagnostics["unscopedBlocked"] = sum(
         1 for action in entry_wait
@@ -1969,7 +1989,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     elif account_remaining_capacity < (2 if settings.asymmetric_hedge_enabled else 1):
         entry_status = "WAITING_ACCOUNT_CAP"
         if zone_mode:
-            entry_reason = f"Zone Warriors heeft {seat_capacity_position_count} actieve stoelen; ingestelde limiet is {settings.maximum_positions}"
+            entry_reason = f"account heeft {account_position_count} actieve Aster-posities; globale Zone Warriors-limiet is {settings.maximum_positions}"
         else:
             entry_reason = (f"account heeft {account_position_count} actieve Aster-posities; er zijn twee vrije posities nodig voor één volledig LONG+SHORT-paar" if settings.asymmetric_hedge_enabled else f"Strategy 2 heeft {seat_capacity_position_count} actieve posities; ingestelde limiet is {settings.maximum_positions}")
     elif any(a.get("kind") == "ENTRY_MARGIN_WAIT" for a in entry_wait): entry_status = "WAITING_BUDGET"; entry_reason = "onvoldoende beschikbare margin"
@@ -2015,6 +2035,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "activeLong": long_count, "activeShort": short_count,
               "remainingLong": long_need, "remainingShort": short_need,
               "accountPositionCount": account_position_count, "accountRemainingCapacity": account_remaining_capacity,
+              "globalCapacityPositionCount": account_position_count if zone_mode else seat_capacity_position_count,
               "strategyPositionCount": strategy_position_count,
               "seatCapacityPositionCount": seat_capacity_position_count,
               "capacityOwnershipFallback": capacity_ownership_fallback,
