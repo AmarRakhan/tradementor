@@ -4,10 +4,27 @@
       "collectionGroup": "trades",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "closedAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "closedAt",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "asterStrategy2",
+      "fieldPath": "orderAttributions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "asterStrategy2",
+      "fieldPath": "entryCandidateCooldowns",
+      "indexes": []
+    }
+  ]
 }

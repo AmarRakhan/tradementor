@@ -1,0 +1,119 @@
+name: Fix Strategy2 Firestore Index Pressure 20261001
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/fix-strategy2-firestore-index-pressure-20261001.yml"
+      - "cloud/firestore.indexes.json"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: strategy2-firestore-index-pressure
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  DATABASE_ID: "(default)"
+  COLLECTION_GROUP: asterStrategy2
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  exempt-large-runtime-fields:
+    if: github.actor == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify exact repository configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          python - <<'PY'
+          import json
+          cfg=json.load(open("cloud/firestore.indexes.json",encoding="utf-8"))
+          wanted={
+              ("asterStrategy2","orderAttributions"),
+              ("asterStrategy2","entryCandidateCooldowns"),
+          }
+          actual={
+              (row.get("collectionGroup"),row.get("fieldPath"))
+              for row in cfg.get("fieldOverrides",[])
+              if row.get("indexes")==[]
+          }
+          assert wanted <= actual, (wanted,actual)
+          PY
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture existing field index configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for FIELD in orderAttributions entryCandidateCooldowns; do
+            gcloud firestore indexes fields describe "$FIELD" \
+              --project "$GCP_PROJECT_ID" \
+              --database "$DATABASE_ID" \
+              --collection-group "$COLLECTION_GROUP" \
+              --format=json > "$RUNNER_TEMP/$FIELD-before.json" || echo '{}' > "$RUNNER_TEMP/$FIELD-before.json"
+          done
+
+      - name: Disable automatic indexes for large non-query runtime fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          for FIELD in orderAttributions entryCandidateCooldowns; do
+            gcloud firestore indexes fields update "$FIELD" \
+              --project "$GCP_PROJECT_ID" \
+              --database "$DATABASE_ID" \
+              --collection-group "$COLLECTION_GROUP" \
+              --disable-indexes \
+              --quiet
+          done
+
+      - name: Verify exemptions are active
+        shell: bash
+        run: |
+          set -euo pipefail
+          for FIELD in orderAttributions entryCandidateCooldowns; do
+            OUT="$RUNNER_TEMP/$FIELD-after.json"
+            gcloud firestore indexes fields describe "$FIELD" \
+              --project "$GCP_PROJECT_ID" \
+              --database "$DATABASE_ID" \
+              --collection-group "$COLLECTION_GROUP" \
+              --format=json > "$OUT"
+            python - "$OUT" "$FIELD" <<'PY'
+          import json,sys
+          row=json.load(open(sys.argv[1],encoding="utf-8"))
+          cfg=row.get("indexConfig") or {}
+          indexes=cfg.get("indexes") or []
+          assert indexes == [], (sys.argv[2], indexes)
+          assert cfg.get("usesAncestorConfig") is False, (sys.argv[2], cfg)
+          print(f"{sys.argv[2]}: INDEX_EXEMPTION_ACTIVE")
+          PY
+          done
+
+      - name: Upload before and after evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy2-firestore-index-pressure-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/orderAttributions-before.json
+            ${{ runner.temp }}/entryCandidateCooldowns-before.json
+            ${{ runner.temp }}/orderAttributions-after.json
+            ${{ runner.temp }}/entryCandidateCooldowns-after.json
+          if-no-files-found: ignore
+          retention-days: 14
