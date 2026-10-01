@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "2f22ce0254ed7e470e886b1078b2316a3634dbb8",
+  "sourceCommit": "882285fc44f54a2e2a944b635f35c7533bd125ea",
   "requestedBy": "AmarRakhan",
-  "requestId": "build471-partial-auto-hedge-close-20260929"
+  "requestId": "hard-global-zone-cap-scanner-20261001"
 }
