@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-01T12:36+02:00
+# current read-only trace trigger 2026-10-01T13:00+02:00
 
 on:
   push:
@@ -206,6 +206,30 @@ jobs:
                   })
               reported_positions.sort(key=lambda x:(x["symbol"],x["side"]))
 
+              # Read-only verification of the production Tradecentrum Close Profits selector.
+              safe_profit, protected_profit = main._profitable_aster_close_candidates(uid, positions)
+              profit_close_preview = {
+                  "eligibleCount": len(safe_profit),
+                  "protectedCount": len(protected_profit),
+                  "eligible": [
+                      {
+                          "symbol": str(item.get("symbol") or "").upper(),
+                          "side": str(item.get("side") or "").upper(),
+                          "unrealizedPnl": round(float(item.get("unrealizedPnl") or 0), 4),
+                      }
+                      for item in safe_profit
+                  ],
+                  "protected": [
+                      {
+                          "symbol": str(item.get("symbol") or "").upper(),
+                          "side": str(item.get("side") or "").upper(),
+                          "unrealizedPnl": round(float(item.get("unrealizedPnl") or 0), 4),
+                      }
+                      for item in protected_profit
+                  ],
+                  "minimumProfitUsd": float(main.MINIMUM_PROFIT_USD),
+              }
+
               zone_context=main._strategy2_zone_runtime_context(uid,raw,account,datetime.now(timezone.utc)) if settings.zone_soldiers_enabled else None
 
               dyn_doc=main.user_reference({"uid":uid}).collection("asterDynamicHedge").document("control")
@@ -322,6 +346,7 @@ jobs:
                       "diagnosticError":dynamic_error or None,
                   },
                   "reportedPositions":reported_positions,
+                  "profitClosePreview":profit_close_preview,
                   "queue":{
                       "haltedUncertain":queue.get("haltedUncertain") is True,
                       "hasCurrentIntent":bool(queue.get("currentIntent")),
