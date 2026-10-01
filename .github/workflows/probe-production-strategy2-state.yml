@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-01T13:28+02:00 verify-always-on-worker
+# current read-only trace trigger 2026-10-01T13:30+02:00 verify-continuous-worker
 
 on:
   push:
