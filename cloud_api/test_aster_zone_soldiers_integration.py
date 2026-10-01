@@ -71,7 +71,7 @@ def test_zone_mode_uses_per_zone_free_seats_and_account_wide_hard_global_maximum
 def test_build457_live_equity_selects_active_zone_without_current_candle_close_gate():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
     assert 'portfolio_chart_latest_contiguous_candles(candles, "15m")' in source
-    assert 'portfolio_chart_latest_established_candles(candles, "15m", min_bars=7)' in source
+    assert 'portfolio_chart_latest_zone_ladder_candles(candles, "15m", cycle_start_equity=cycle_start, min_bars=7)' in source
     assert "history_ready = len(established) >= 7" in source
     assert "history_fresh = bool(len(contiguous) >= 7 and latest_bucket >= current_bucket)" in source
     assert "zones = derive_equity_zones(established, cycle_start) if history_ready else []" in source
