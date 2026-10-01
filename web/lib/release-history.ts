@@ -62,9 +62,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
-  version: WEBAPP_VERSION,
-  build: WEBAPP_BUILD_NUMBER,
+    id: "v46-build-481-snapshot-visual-polish",
+    version: "46",
+    build: "481",
   releasedAt: "2026-10-01",
   title: "Portfolio Snapshot · Auto Hedge + Portfolio Cyclus visueel afgewerkt",
   newItems: [
