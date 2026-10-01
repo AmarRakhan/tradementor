@@ -73,7 +73,7 @@ jobs:
           test "$CLOUD_RUN_SERVICE" = "tradementor-api"
           test "$SCHEDULER_JOB" = "tradementor-aster-automation-tick"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
-          python - "$RUNNER_TEMP/service.json" >> "$GITHUB_ENV" <<'PY'
+          python - "$RUNNER_TEMP/service.json" > "$RUNNER_TEMP/service.env" <<'PY'
           import json,sys
           service=json.load(open(sys.argv[1],encoding="utf-8"))
           spec=service["spec"]["template"]["spec"]
@@ -88,6 +88,8 @@ jobs:
           print("RUNTIME_SERVICE_ACCOUNT="+runtime_sa)
           print("INTERNAL_AUDIENCE="+audience)
           PY
+          cat "$RUNNER_TEMP/service.env" >> "$GITHUB_ENV"
+          . "$RUNNER_TEMP/service.env"
           curl --fail --silent --show-error --retry 6 --retry-delay 3 "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
           python - "$RUNNER_TEMP/health.json" "$EXPECTED_SOURCE" <<'PY'
           import json,sys
