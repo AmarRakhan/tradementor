@@ -766,7 +766,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       data-reference={TILE_REFERENCE}
       role="button"
       tabIndex={0}
-      aria-label={`Auto Hedge ${tileStatus}, bij min ${tileThresholdLabel} US dollar. Dubbel tik voor instellingen.`}
+      aria-label={`Auto Hedge ${tileStatus}. Trigger min ${tileThresholdLabel} US dollar. Dubbel tik voor instellingen.`}
       onDoubleClick={openFromCard}
       onTouchEnd={onTouchEnd}
       onKeyDown={(event) => {
@@ -780,7 +780,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       <span className="plah-tile-copy">
         <small>AUTO HEDGE</small>
         <strong className={state.enabled ? "on" : ""}>{tileStatus}</strong>
-        <em>bij −US$ {tileThresholdLabel}</em>
+        <em>Trigger −US$ {tileThresholdLabel}</em>
       </span>
     </div>,
     tileHost,
