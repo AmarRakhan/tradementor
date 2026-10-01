@@ -1,7 +1,7 @@
 {
   "action": "ensure-cloudrun-background-cpu",
   "confirmation": "ENSURE_CLOUDRUN_BACKGROUND_CPU",
-  "expectedBackendSourceCommit": "9443323dcc11afcf8264a91dee9127f4d5e2138e",
+  "expectedBackendSourceCommit": "ab6f4e303fd47297781bf6361adf1ce35d2a80d2",
   "requestedBy": "AmarRakhan",
-  "requestId": "aster-periodic-worker-background-cpu-20261001"
+  "requestId": "aster-periodic-worker-background-cpu-after-p0-tp-20261001"
 }
