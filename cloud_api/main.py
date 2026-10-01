@@ -1281,6 +1281,21 @@ def _exclude_auto_hedge_managed_profit_candidates(
     return safe, excluded
 
 
+def _profitable_aster_close_candidates(
+    uid: str, rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Select manual Tradecentrum profit-close candidates from exchange truth.
+
+    Strategy-2 ownership metadata is deliberately NOT an eligibility condition:
+    the manual convenience action is account-scoped and must also see profitable
+    legacy/unowned Aster legs. Safety remains fail-closed: every profitable leg
+    whose symbol is still owned by an Auto Hedge lifecycle (including HEDGED,
+    RECOVERY and re-hedge states) is excluded as a protected candidate.
+    """
+    raw_candidates = profitable_positions(rows)
+    return _exclude_auto_hedge_managed_profit_candidates(uid, raw_candidates)
+
+
 _MANUAL_AUTO_HEDGE_RELEASE_STATUSES = {
     "HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED",
     "MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN",
@@ -7670,11 +7685,8 @@ def preview_profitable_aster_positions(
     client = _portfolio_growth_client(user, live=False)
     try:
         uid = str(user["uid"])
-        owned_keys=_aster_strategy2_owned_keys(str(user["uid"]))
-        rows=[row for row in client.position_risk()
-            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys]
-        raw_candidates = profitable_positions(rows)
-        safe_candidates, protected_candidates = _exclude_auto_hedge_managed_profit_candidates(uid, raw_candidates)
+        rows = list(client.position_risk())
+        safe_candidates, protected_candidates = _profitable_aster_close_candidates(uid, rows)
         safe_keys = {(item["symbol"], item["side"]) for item in safe_candidates}
         candidate_rows = [row for row in rows
             if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in safe_keys]
@@ -7740,10 +7752,8 @@ def close_profitable_aster_positions(
     failed: list[dict[str, Any]] = []
     try:
         client = _portfolio_growth_client(user, live=True)
-        owned_keys=_aster_strategy2_owned_keys(uid)
-        initial_all = profitable_positions([row for row in client.position_risk()
-            if (str(row.get("symbol","")).upper(),str(row.get("positionSide","")).upper()) in owned_keys])
-        initial, protected_excluded = _exclude_auto_hedge_managed_profit_candidates(uid, initial_all)
+        initial_rows = list(client.position_risk())
+        initial, protected_excluded = _profitable_aster_close_candidates(uid, initial_rows)
         if scope != "ALL":
             initial = [candidate for candidate in initial if candidate["side"] == scope]
             protected_excluded = [candidate for candidate in protected_excluded if candidate["side"] == scope]

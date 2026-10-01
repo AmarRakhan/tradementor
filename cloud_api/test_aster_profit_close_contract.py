@@ -46,16 +46,57 @@ def test_bulk_close_is_sequential_and_holds_strategy_queue_lease():
     assert "BULK_PROFIT_CLOSE_COMPLETED" in route
 
 
-def test_multi_bb_runtime_ownership_is_included_in_safe_profit_close_scope():
+def test_manual_profit_close_is_account_wide_not_strategy2_ownership_scoped():
     source = Path(__file__).with_name("main.py").read_text()
-    helper_start = source.index("def _aster_strategy2_owned_keys")
-    helper_end = source.index("def _sniper_live_gate_enabled", helper_start)
+    preview_start = source.index('@app.get("/v1/me/aster/positions/profitable-close-preview")')
+    preview_end = source.index('@app.post("/v1/me/aster/positions/close-profitable")', preview_start)
+    preview = source[preview_start:preview_end]
+    route = route_source()
+
+    assert "rows = list(client.position_risk())" in preview
+    assert "_profitable_aster_close_candidates(uid, rows)" in preview
+    assert "_aster_strategy2_owned_keys" not in preview
+    assert "_aster_strategy2_owned_keys" not in route
+    assert "initial_rows = list(client.position_risk())" in route
+    assert "_profitable_aster_close_candidates(uid, initial_rows)" in route
+
+
+def test_preview_and_submit_share_exact_same_profit_candidate_selector():
+    source = Path(__file__).with_name("main.py").read_text()
+    helper_start = source.index("def _profitable_aster_close_candidates")
+    helper_end = source.index("_MANUAL_AUTO_HEDGE_RELEASE_STATUSES", helper_start)
+    helper = source[helper_start:helper_end]
+    preview_start = source.index('@app.get("/v1/me/aster/positions/profitable-close-preview")')
+    preview_end = source.index('@app.post("/v1/me/aster/positions/close-profitable")', preview_start)
+    preview = source[preview_start:preview_end]
+    route = route_source()
+
+    assert "raw_candidates = profitable_positions(rows)" in helper
+    assert "_exclude_auto_hedge_managed_profit_candidates(uid, raw_candidates)" in helper
+    assert "_profitable_aster_close_candidates(uid, rows)" in preview
+    assert "_profitable_aster_close_candidates(uid, initial_rows)" in route
+
+
+def test_bulk_profit_keeps_auto_hedge_recovery_pair_fail_closed():
+    source = Path(__file__).with_name("main.py").read_text()
+    helper_start = source.index("def _exclude_auto_hedge_managed_profit_candidates")
+    helper_end = source.index("_MANUAL_AUTO_HEDGE_RELEASE_STATUSES", helper_start)
     helper = source[helper_start:helper_end]
     route = route_source()
 
-    assert 'raw.get("multiBbPositions")' in helper
-    assert 'str(raw_key).upper().split("|",1)' in helper
-    assert 'side in {"LONG","SHORT"}' in helper
-    assert "keys.add((symbol,side))" in helper
-    assert "_aster_strategy2_owned_keys(uid)" in route
-    assert "in owned_keys" in route
+    assert "auto_hedge_symbol_managed(account_uid=uid, symbol=symbol)" in helper
+    assert "protected_candidates" in source
+    assert "protected_excluded" in route
+    assert "Auto Hedge-pair beschermd" in route
+    assert "auto_hedge_symbol_managed(account_uid=uid, symbol=symbol)" in route
+
+
+def test_manual_profit_close_does_not_touch_automatic_strategy_tp_planner():
+    source = Path(__file__).with_name("main.py").read_text()
+    helper_start = source.index("def _profitable_aster_close_candidates")
+    route = route_source()
+
+    assert "next_management_decision" not in route
+    assert "FULL_TP" not in route
+    assert "PARTIAL_TP" not in route
+    assert helper_start > source.index("def _aster_strategy2_owned_keys")
