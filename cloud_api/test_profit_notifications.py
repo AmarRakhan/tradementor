@@ -334,8 +334,8 @@ def test_backend_observer_is_read_only_and_scheduler_failure_isolated():
     assert "cancel_order" not in block
     assert '"ordersSent": 0' in block
 
-    scheduler_start = source.index('@app.post("/internal/aster-automation/tick")')
-    scheduler_end = source.index('\n\n@app.post("/internal/aster-strategy2/', scheduler_start)
+    scheduler_start = source.index("def _run_aster_automation_scheduler_body")
+    scheduler_end = source.index("\ndef _run_aster_periodic_tick", scheduler_start)
     scheduler = source[scheduler_start:scheduler_end]
     assert "profitNotificationControls" in scheduler
     assert "notification-error" in scheduler

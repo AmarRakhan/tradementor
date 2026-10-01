@@ -9463,9 +9463,78 @@ def close_aster_sniper_trade(request:AsterSniperCloseRequest,user:dict[str,Any]=
         _release_sniper_execution_lease(ref,str(token))
 
 
-@app.post("/internal/aster-automation/tick")
-def run_aster_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    verify_internal_cloud_request(authorization)
+def _aster_periodic_scheduler_reference():
+    return db.collection("systemStatus").document("asterPeriodicScheduler")
+
+
+def _acquire_aster_periodic_minute(trigger_source: str) -> tuple[str, int] | None:
+    """Claim the current UTC minute once across every Cloud Run instance/trigger."""
+    ref = _aster_periodic_scheduler_reference()
+    transaction = db.transaction()
+    token = python_secrets.token_hex(16)
+    now = datetime.now(timezone.utc)
+    minute_bucket = int(now.timestamp() // 60)
+
+    @firestore.transactional
+    def acquire(txn):
+        value = ref.get(transaction=txn).to_dict() or {}
+        lease = value.get("lease") if isinstance(value.get("lease"), dict) else {}
+        until = lease.get("until")
+        if isinstance(until, datetime):
+            until = until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        try:
+            completed_bucket = int(value.get("minuteBucket", -1))
+        except (TypeError, ValueError):
+            completed_bucket = -1
+        if completed_bucket == minute_bucket:
+            return None
+        if isinstance(until, datetime) and until > now:
+            return None
+        txn.set(ref, {
+            "minuteBucket": minute_bucket,
+            "lease": {
+                "token": token,
+                "until": now + timedelta(seconds=55),
+                "acquiredAt": now,
+                "triggerSource": trigger_source,
+            },
+            "lastStartedAt": now,
+            "lastTriggerSource": trigger_source,
+        }, merge=True)
+        return (token, minute_bucket)
+
+    return acquire(transaction)
+
+
+def _finish_aster_periodic_minute(token: str, minute_bucket: int, *,
+                                  trigger_source: str, result: dict[str, Any] | None = None,
+                                  error_type: str = "") -> None:
+    ref = _aster_periodic_scheduler_reference()
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def finish(txn):
+        value = ref.get(transaction=txn).to_dict() or {}
+        lease = value.get("lease") if isinstance(value.get("lease"), dict) else {}
+        if str(lease.get("token") or "") != token:
+            return False
+        now = datetime.now(timezone.utc)
+        payload: dict[str, Any] = {
+            "minuteBucket": minute_bucket,
+            "lease": {"token": "", "until": now, "releasedAt": now},
+            "lastCompletedAt": now,
+            "lastTriggerSource": trigger_source,
+            "lastStatus": "ERROR" if error_type else "OK",
+            "lastProcessed": int((result or {}).get("processed", 0) or 0),
+            "lastErrorType": error_type,
+        }
+        txn.set(ref, payload, merge=True)
+        return True
+
+    finish(transaction)
+
+
+def _run_aster_automation_scheduler_body(trigger_source: str) -> dict[str, Any]:
     # Strategy 1 is retired app-wide. Historical asterAutomation documents are
     # read-only legacy state and are never scheduled or allowed to place orders.
     results=[]
@@ -9538,6 +9607,86 @@ def run_aster_automation_scheduler(authorization: str | None = Header(default=No
     # already-confirmed exchange/Portfolio-TP evidence.
     return {"processed":len(strategy2_results)+len(sniper_results),"strategy2":strategy2_results,"sniper":sniper_results,
         "profitNotifications":notification_results,"strategy2Only":False,"sniperEnabled":True}
+
+
+def _run_aster_periodic_tick(trigger_source: str) -> dict[str, Any]:
+    claim = _acquire_aster_periodic_minute(trigger_source)
+    if claim is None:
+        return {"status": "already-processed-this-minute", "processed": 0, "triggerSource": trigger_source}
+    token, minute_bucket = claim
+    try:
+        result = _run_aster_automation_scheduler_body(trigger_source)
+    except Exception as exc:
+        _finish_aster_periodic_minute(
+            token, minute_bucket, trigger_source=trigger_source,
+            error_type=type(exc).__name__,
+        )
+        print(
+            f"ASTER_PERIODIC_TICK_ERROR source={trigger_source} type={type(exc).__name__}",
+            flush=True,
+        )
+        raise
+    _finish_aster_periodic_minute(
+        token, minute_bucket, trigger_source=trigger_source, result=result,
+    )
+    print(
+        f"ASTER_PERIODIC_TICK_COMPLETE source={trigger_source} processed={int(result.get('processed', 0) or 0)}",
+        flush=True,
+    )
+    return {**result, "triggerSource": trigger_source, "minuteBucket": minute_bucket}
+
+
+_aster_periodic_scheduler_thread: threading.Thread | None = None
+_aster_periodic_scheduler_stop = threading.Event()
+
+
+def _aster_periodic_scheduler_worker_enabled() -> bool:
+    raw = os.getenv(
+        "ASTER_PERIODIC_SCHEDULER_WORKER",
+        os.getenv("ASTER_REALTIME_WORKER", "false"),
+    )
+    return str(raw).lower() == "true"
+
+
+def _aster_periodic_scheduler_worker_loop() -> None:
+    while not _aster_periodic_scheduler_stop.is_set():
+        try:
+            _run_aster_periodic_tick("cloud-run-periodic-worker")
+        except Exception as exc:
+            # No account/symbol/order detail is logged here. The durable per-account
+            # scheduler path records its own safe DATA_HOLD state when appropriate.
+            print(
+                f"ASTER_PERIODIC_WORKER_ERROR type={type(exc).__name__}",
+                flush=True,
+            )
+        _aster_periodic_scheduler_stop.wait(5.0)
+
+
+@app.on_event("startup")
+def start_aster_periodic_scheduler_worker() -> None:
+    global _aster_periodic_scheduler_thread
+    if not _aster_periodic_scheduler_worker_enabled():
+        return
+    if _aster_periodic_scheduler_thread and _aster_periodic_scheduler_thread.is_alive():
+        return
+    _aster_periodic_scheduler_stop.clear()
+    _aster_periodic_scheduler_thread = threading.Thread(
+        target=_aster_periodic_scheduler_worker_loop,
+        name="aster-periodic-scheduler",
+        daemon=True,
+    )
+    _aster_periodic_scheduler_thread.start()
+
+
+@app.on_event("shutdown")
+def stop_aster_periodic_scheduler_worker() -> None:
+    _aster_periodic_scheduler_stop.set()
+
+
+@app.post("/internal/aster-automation/tick")
+def run_aster_automation_scheduler(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    verify_internal_cloud_request(authorization)
+    return _run_aster_periodic_tick("cloud-scheduler")
 
 
 @app.post("/internal/aster-strategy2/{uid}/simulate")

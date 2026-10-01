@@ -29,7 +29,9 @@ def test_strategy2_tick_uses_retired_ownership_only_for_one_way_normalization():
 
 def test_production_aster_scheduler_never_runs_retired_strategy1():
     source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
-    scheduler = source[source.index("def run_aster_automation_scheduler("):source.index('@app.post("/internal/aster-strategy2/{uid}/simulate")')]
+    start = source.index("def _run_aster_automation_scheduler_body")
+    end = source.index("\ndef _run_aster_periodic_tick", start)
+    scheduler = source[start:end]
     assert 'db.collection("asterAutomation")' not in scheduler
     assert "_run_aster_automation_tick" not in scheduler
     assert 'db.collection("asterStrategy2")' in scheduler
