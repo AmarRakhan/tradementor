@@ -1,0 +1,115 @@
+name: Ensure Cloud Run Background CPU
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/deploy-requests/production-background-cpu.json"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-background-cpu
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  ensure:
+    if: github.actor == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Authorize exact runtime request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - ".github/deploy-requests/production-background-cpu.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json,re,sys
+          value=json.load(open(sys.argv[1],encoding="utf-8"))
+          expected={"action","confirmation","expectedBackendSourceCommit","requestedBy","requestId"}
+          assert set(value)==expected
+          assert value["action"]=="ensure-cloudrun-background-cpu"
+          assert value["confirmation"]=="ENSURE_CLOUDRUN_BACKGROUND_CPU"
+          assert value["requestedBy"]=="AmarRakhan"
+          source=str(value["expectedBackendSourceCommit"])
+          request_id=str(value["requestId"])
+          assert re.fullmatch(r"[0-9a-f]{40}",source)
+          assert re.fullmatch(r"[A-Za-z0-9._-]{3,80}",request_id)
+          print("source_commit="+source)
+          print("request_id="+request_id)
+          PY
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify exact live source before runtime change
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ steps.request.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          test -n "$URL"
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$URL/health" > "$RUNNER_TEMP/health-before.json"
+          python - "$RUNNER_TEMP/health-before.json" "$EXPECTED_SOURCE" <<'PY'
+          import json,sys
+          health=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert health["status"]=="ready"
+          observed=health.get("sourceCommit") or health.get("imageSourceCommit") or ""
+          assert observed==sys.argv[2], (observed,sys.argv[2])
+          PY
+      - name: Enable CPU outside requests and retain one warm instance
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services update "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --min 1 \
+            --no-cpu-throttling \
+            --quiet
+      - name: Verify runtime policy and source identity
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ steps.request.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          python - "$RUNNER_TEMP/service-after.json" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding="utf-8"))
+          anns={}
+          anns.update(s.get("metadata",{}).get("annotations") or {})
+          anns.update(s.get("spec",{}).get("template",{}).get("metadata",{}).get("annotations") or {})
+          assert str(anns.get("run.googleapis.com/cpu-throttling","")).lower()=="false", anns.get("run.googleapis.com/cpu-throttling")
+          minimum=anns.get("autoscaling.knative.dev/minScale") or anns.get("run.googleapis.com/minScale")
+          assert str(minimum)=="1", minimum
+          PY
+          URL="$(python - "$RUNNER_TEMP/service-after.json" <<'PY'
+          import json,sys
+          print(json.load(open(sys.argv[1],encoding="utf-8"))["status"]["url"])
+          PY
+          )"
+          curl --fail --silent --show-error --retry 8 --retry-delay 3 "$URL/health" > "$RUNNER_TEMP/health-after.json"
+          python - "$RUNNER_TEMP/health-after.json" "$EXPECTED_SOURCE" <<'PY'
+          import json,sys
+          health=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert health["status"]=="ready"
+          observed=health.get("sourceCommit") or health.get("imageSourceCommit") or ""
+          assert observed==sys.argv[2], (observed,sys.argv[2])
+          PY
