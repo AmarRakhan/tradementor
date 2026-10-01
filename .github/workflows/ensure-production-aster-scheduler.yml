@@ -1,0 +1,171 @@
+name: Ensure Production Aster Scheduler
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/deploy-requests/production-aster-scheduler.json"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-production-aster-scheduler
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  SCHEDULER_JOB: tradementor-aster-automation-tick
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "209"
+
+jobs:
+  ensure:
+    if: github.actor == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Authorize exact repair request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - ".github/deploy-requests/production-aster-scheduler.json" >> "$GITHUB_OUTPUT" <<'PY'
+          import json,re,sys
+          value=json.load(open(sys.argv[1],encoding="utf-8"))
+          expected={"action","confirmation","expectedBackendSourceCommit","requestedBy","requestId"}
+          assert set(value)==expected
+          assert value["action"]=="ensure-production-aster-scheduler"
+          assert value["confirmation"]=="ENSURE_PRODUCTION_ASTER_SCHEDULER"
+          assert value["requestedBy"]=="AmarRakhan"
+          source=str(value["expectedBackendSourceCommit"])
+          request_id=str(value["requestId"])
+          assert re.fullmatch(r"[0-9a-f]{40}",source)
+          assert re.fullmatch(r"[A-Za-z0-9._-]{3,80}",request_id)
+          print("source_commit="+source)
+          print("request_id="+request_id)
+          PY
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Prove fixed production target and live backend source
+        shell: bash
+        env:
+          EXPECTED_SOURCE: ${{ steps.request.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$GCP_REGION" = "europe-west4"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-api"
+          test "$SCHEDULER_JOB" = "tradementor-aster-automation-tick"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          python - "$RUNNER_TEMP/service.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          spec=service["spec"]["template"]["spec"]
+          variables={item["name"]:item.get("value","") for item in spec["containers"][0].get("env",[])}
+          url=service["status"]["url"].rstrip("/")
+          runtime_sa=spec.get("serviceAccountName") or ""
+          audience=(variables.get("MEXC_AUTOMATION_BASE_URL") or variables.get("MEXC_INTERNAL_AUDIENCE") or url).rstrip("/")
+          assert url.startswith("https://")
+          assert runtime_sa.endswith(".gserviceaccount.com")
+          assert audience.startswith("https://")
+          print("SERVICE_URL="+url)
+          print("RUNTIME_SERVICE_ACCOUNT="+runtime_sa)
+          print("INTERNAL_AUDIENCE="+audience)
+          PY
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/health.json" "$EXPECTED_SOURCE" <<'PY'
+          import json,sys
+          health=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert health["status"]=="ready"
+          observed=health.get("sourceCommit") or health.get("imageSourceCommit") or ""
+          assert observed==sys.argv[2], (observed,sys.argv[2])
+          PY
+      - name: Create missing scheduler or normalize existing job
+        shell: bash
+        run: |
+          set -euo pipefail
+          URI="$SERVICE_URL/internal/aster-automation/tick"
+          if gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/job-before.json" 2>/dev/null; then
+            echo "CREATED_JOB=false" >> "$GITHUB_ENV"
+            gcloud scheduler jobs update http "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --schedule="* * * * *" --time-zone="Etc/UTC" --uri="$URI" --http-method=POST --attempt-deadline=30s --oidc-service-account-email="$RUNTIME_SERVICE_ACCOUNT" --oidc-token-audience="$INTERNAL_AUDIENCE"
+          else
+            echo "CREATED_JOB=true" >> "$GITHUB_ENV"
+            gcloud scheduler jobs create http "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --schedule="* * * * *" --time-zone="Etc/UTC" --uri="$URI" --http-method=POST --attempt-deadline=30s --oidc-service-account-email="$RUNTIME_SERVICE_ACCOUNT" --oidc-token-audience="$INTERNAL_AUDIENCE"
+          fi
+          STATE="$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')"
+          if [ "$STATE" = "PAUSED" ]; then
+            gcloud scheduler jobs resume "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION"
+          fi
+          echo "SCHEDULER_MUTATED=true" >> "$GITHUB_ENV"
+      - name: Verify scheduler contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/job-after.json"
+          python - "$RUNNER_TEMP/job-after.json" "$SERVICE_URL" "$RUNTIME_SERVICE_ACCOUNT" "$INTERNAL_AUDIENCE" <<'PY'
+          import json,sys
+          job=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert job["state"]=="ENABLED"
+          assert job["schedule"]=="* * * * *"
+          assert job["httpTarget"]["uri"]==sys.argv[2]+"/internal/aster-automation/tick"
+          assert job["httpTarget"]["httpMethod"]=="POST"
+          token=job["httpTarget"]["oidcToken"]
+          assert token["serviceAccountEmail"]==sys.argv[3]
+          assert token["audience"].rstrip("/")==sys.argv[4].rstrip("/")
+          PY
+      - name: Verify natural scheduler tick reaches backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6 7; do
+            sleep 15
+            gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.requestUrl:"/internal/aster-automation/tick" AND httpRequest.status=200' --project "$GCP_PROJECT_ID" --freshness=5m --limit=5 --order=desc --format=json > "$RUNNER_TEMP/ticks.json" || echo '[]' > "$RUNNER_TEMP/ticks.json"
+            if python - "$RUNNER_TEMP/ticks.json" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding="utf-8"))
+          raise SystemExit(0 if isinstance(rows,list) and rows else 1)
+          PY
+            then
+              exit 0
+            fi
+          done
+          echo "No successful scheduler tick observed after repair" >&2
+          exit 1
+      - name: Publish repair proof
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE: ${{ steps.request.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Aster scheduler hersteld"
+            echo "- Scheduler: **ENABLED**"
+            echo "- Cadans: **elke minuut**"
+            echo "- Backend tick: **HTTP 200 bevestigd**"
+            echo "- Backend source: $EXPECTED_SOURCE"
+            echo "- Positiecap-hotfix was vóór herstel live geverifieerd."
+          } > "$RUNNER_TEMP/result.md"
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
+      - name: Remove newly created job if verification fails
+        if: failure() && env.CREATED_JOB == 'true' && env.SCHEDULER_MUTATED == 'true'
+        shell: bash
+        run: |
+          gcloud scheduler jobs delete "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --quiet || true
