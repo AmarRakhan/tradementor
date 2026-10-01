@@ -379,3 +379,57 @@ def test_live_zone_seat_presync_explicitly_skips_legacy_migration():
     zone_source = (ROOT / "aster_zone_soldiers.py").read_text(encoding="utf-8")
     assert "migrate_legacy: bool = True" in zone_source
     assert "if migrate_legacy:" in zone_source
+
+
+def test_zone_warriors_pre_order_refresh_blocks_race_past_global_account_cap():
+    initial = {
+        "symbol": "LEGUSDT", "positionSide": "LONG", "positionAmt": "1",
+        "entryPrice": "100", "markPrice": "100", "leverage": "100",
+    }
+    external = {
+        "symbol": "EXTERNALUSDT", "positionSide": "SHORT", "positionAmt": "1",
+        "entryPrice": "100", "markPrice": "100", "leverage": "100",
+    }
+
+    class RefreshingClient(Client):
+        def position_risk(self, symbol=None):
+            rows = [*self.positions, external]
+            return [row for row in rows if symbol is None or row.get("symbol") == symbol]
+
+    client = RefreshingClient(
+        positions=[initial],
+        tickers=[{"symbol": "NEWUSDT", "quoteVolume": "9999"}],
+        prices={"LEGUSDT": 100, "EXTERNALUSDT": 100, "NEWUSDT": 100},
+        leverage=100,
+    )
+    settings = MultiBbConfig.from_mapping({
+        "engine": "multi_bb_v1", "universeTopN": 3, "maximumPositions": 2,
+        "longSlots": 1, "shortSlots": 1, "minimumLeverage": 50,
+        "entryMarginUsd": 5, "entryNotionalUsd": 250, "entrySizingMode": "notional",
+        "dcaDistance": .003, "dcaMarginUsd": 2, "maxDca": 3, "takeProfit": .015,
+        "zoneSoldiersEnabled": True, "zoneSoldiersOptInVersion": 1,
+        "zoneBaseLongSoldiers": 1, "zoneBaseShortSoldiers": 1,
+        "bollingerEntryFilter15mEnabled": False, "directionalBollingerEnabled": False,
+    })
+    result = run_multi_bb_step(
+        client=client, ref=Ref(),
+        raw_state={"multiBbPositions": {"LEGUSDT|LONG": {
+            "cycleId": "legacy", "cycleStartedAtMs": 1, "botManaged": True,
+            "soldierRole": ROLE_LEGACY_UNASSIGNED, "originZone": None,
+        }}},
+        settings=settings, uid="u", account={"availableBalance": "1000"},
+        positions=[initial], open_orders=[], timestamp_ms=20_000,
+        dry_run=False, order_budget=2, zone_context={"activeZone": 8, "safeForEntries": True},
+    )
+
+    assert any(
+        row.get("kind") == "ENTRY_SKIP"
+        and row.get("reason") == "GLOBAL_POSITION_CAP_REACHED"
+        and row.get("stage") == "pre_order"
+        and row.get("activePositions") == 2
+        for row in result["actions"]
+    )
+    assert not any(row.get("kind") == "ENTRY" for row in result["actions"])
+    assert result["accountRemainingCapacity"] == 0
+    assert result["scannerDiagnostics"]["LONG"]["availableCapacity"] == 0
+    assert result["scannerDiagnostics"]["SHORT"]["availableCapacity"] == 0
