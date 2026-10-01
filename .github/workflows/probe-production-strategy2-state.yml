@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-01T12:31+02:00
+# current read-only trace trigger 2026-10-01T12:36+02:00
 
 on:
   push:
@@ -176,6 +176,36 @@ jobs:
               account=client.account_information()
               positions=client.position_risk()
               orders=client.open_orders()
+
+              reported_symbols={"NEARUSDT","CLUSDT","WLDUSDT","REUSDT","UITUSDT","VIRTUALUSDT"}
+              managed_state=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
+              reported_positions=[]
+              for pos in positions if isinstance(positions,list) else []:
+                  symbol=str(pos.get("symbol") or "").upper()
+                  side=str(pos.get("positionSide") or "").upper()
+                  if symbol not in reported_symbols or side not in {"LONG","SHORT"}:
+                      continue
+                  key=f"{symbol}|{side}"
+                  st=managed_state.get(key) if isinstance(managed_state.get(key),dict) else {}
+                  try:
+                      entry=float(pos.get("entryPrice") or 0)
+                      mark=float(pos.get("markPrice") or 0)
+                  except Exception:
+                      entry=mark=0.0
+                  move_pct=((mark-entry)/entry*100 if side=="LONG" else (entry-mark)/entry*100) if entry>0 and mark>0 else None
+                  reported_positions.append({
+                      "symbol":symbol,
+                      "side":side,
+                      "priceMovePct":round(move_pct,4) if move_pct is not None else None,
+                      "strategy2Managed":bool(st),
+                      "botManaged":bool(st.get("botManaged")) if st else False,
+                      "asymmetricHedge":bool(st.get("asymmetricHedge")) if st else False,
+                      "pairedShortPending":bool(st.get("pairedShortPending")) if st else False,
+                      "originZone":st.get("originZone") if st else None,
+                      "soldierIdPresent":bool(st.get("soldierId")) if st else False,
+                  })
+              reported_positions.sort(key=lambda x:(x["symbol"],x["side"]))
+
               zone_context=main._strategy2_zone_runtime_context(uid,raw,account,datetime.now(timezone.utc)) if settings.zone_soldiers_enabled else None
 
               dyn_doc=main.user_reference({"uid":uid}).collection("asterDynamicHedge").document("control")
@@ -291,6 +321,7 @@ jobs:
                       "blocksScanner":bool(dyn_block),
                       "diagnosticError":dynamic_error or None,
                   },
+                  "reportedPositions":reported_positions,
                   "queue":{
                       "haltedUncertain":queue.get("haltedUncertain") is True,
                       "hasCurrentIntent":bool(queue.get("currentIntent")),
