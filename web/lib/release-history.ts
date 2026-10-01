@@ -98,7 +98,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
     "Geen trading-, entry-, DCA-, hedge-, TP-, scanner- of order-submitlogica gewijzigd.",
   ],
   confidence: "confirmed",
-};
+},
 
   {
     id: "v46-build-481-snapshot-visual-polish",
