@@ -147,7 +147,7 @@ from hyperliquid_scanner import (
 from portfolio_risk import (
     ExchangeRiskSnapshot, PortfolioRiskLimits, evaluate_risk_increase,
 )
-from portfolio_growth import PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, historical_day_windows, is_exposure_order, select_day_start_snapshot, utc_ms
+from portfolio_growth import PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, historical_day_windows, is_exposure_order, performance_ledger_breakdown, select_day_start_snapshot, utc_ms
 from admin_platform import classify_bot_health, safe_recovery_plan, incident_key
 from reliability_monitor import event_key as reliability_event_key, event_payload as reliability_event_payload, counts as reliability_counts, overall as reliability_overall
 from hyperliquid_account_state import direction_available, normalize_hyperliquid_account_state
@@ -7210,9 +7210,12 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
         if len(income)>=1000:
             raise ValueError("Cashflow-ledger voor vandaag is niet volledig; rendement wordt fail-closed verborgen")
         cashflow_breakdown=external_cashflow_breakdown(income,reference_at_ms)
+        performance_breakdown=performance_ledger_breakdown(income,reference_at_ms)
         day_net_cashflow=safe_float(cashflow_breakdown.get("netExternalCashflowUsd"))
         today_pct=daily_return_percentage(reference_equity,equity,day_net_cashflow)
         today_usd=(equity-day_net_cashflow)-reference_equity
+        known_performance_usd=safe_float(performance_breakdown.get("knownPerformanceLedgerUsd"))
+        equity_residual_usd=today_usd-known_performance_usd
         today=local_now.date().isoformat()
 
         # Build 439: rebuild every reliable completed day available in the
@@ -7251,6 +7254,8 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
                         "usdChange":round(historical_usd,8),
                         "percentage":round(historical_pct,8),
                         "externalCashflowUsd":round(historical_net,8),
+                        "startAtMs":int(window["startAtMs"]),
+                        "endAtMs":int(window["endAtMs"]),
                         "source":"RECONSTRUCTED_HOURLY_EQUITY",
                     })
                 except (AsterApiError,AsterSubmissionUncertain,AsterValidationError,HTTPException,ValueError,KeyError):
@@ -7278,7 +7283,10 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
                         "startEquity":round(safe_float(state.get("lastObservedStartEquity")),8),
                         "endEquity":round(safe_float(state.get("lastObservedEquity")),8),
                         "usdChange":round(safe_float(state.get("lastObservedUsd")),8),
-                        "percentage":round(previous_return,8)}
+                        "percentage":round(previous_return,8),
+                        "externalCashflowUsd":round(safe_float(state.get("lastObservedCashflow")),8),
+                        "startAtMs":int(safe_float(state.get("referenceAtMs"))),
+                        "endAtMs":int(safe_float(state.get("lastObservedAtMs")))}
                     history=[row for row in history if row.get("date")!=completed_day["date"]]
                     history.append(completed_day);state["history"]=history
                     state["completedReturnSum"]=safe_float(state.get("completedReturnSum"))+previous_return
@@ -7305,6 +7313,10 @@ def _portfolio_daily_growth(user:dict[str,Any])->dict[str,Any]:
                 "dayExternalCashflowUsd":round(day_net_cashflow,8),
                 "cashflowAdjustedEndingEquity":round(equity-day_net_cashflow,8),
                 "cashflowBreakdown":cashflow_breakdown,"cumulativeCashflowBreakdown":cashflow_breakdown,
+                "performanceLedgerBreakdown":{**performance_breakdown,
+                    "equityResidualUsd":round(equity_residual_usd,8),
+                    "equityResidualReliableAsUnrealizedPnl":False,
+                    "equityResidualLabel":"Open PnL / mark-to-market / overige equity-verandering"},
                 "performanceMethod":"SAME_DAY_SNAPSHOT_NET_CASHFLOW_ADJUSTED","cashflowLedgerComplete":True,
                 "twrReliable":not has_intraday_cashflow,
                 "twrPercentage":round(today_pct,8) if not has_intraday_cashflow else None,
@@ -7353,9 +7365,88 @@ def _portfolio_growth_estimate(user:dict[str,Any],*,persist_quote:bool=True)->di
 
 
 
+def _portfolio_daily_detail(user:dict[str,Any],requested_date:str)->dict[str,Any]:
+    """Read-only audit detail for one already-measured Amsterdam calendar day."""
+    amsterdam=ZoneInfo("Europe/Amsterdam")
+    local_today=datetime.now(timezone.utc).astimezone(amsterdam).date()
+    try:
+        selected=datetime.strptime(str(requested_date),"%Y-%m-%d").date()
+        tracking_start=datetime.strptime(PORTFOLIO_GROWTH_START_DATE,"%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(422,"Datum moet YYYY-MM-DD zijn")
+    if selected<tracking_start or selected>local_today:
+        raise HTTPException(422,"Datum valt buiten de beschikbare rendementmeting")
+
+    if selected==local_today:
+        daily=_portfolio_daily_growth(user)
+        if not bool(daily.get("reliable")):
+            return {"reliable":False,"date":selected.isoformat(),
+                "blockReason":str(daily.get("blockReason") or "Dagdetail niet betrouwbaar beschikbaar")}
+        performance=dict(daily.get("performanceLedgerBreakdown") or {})
+        return {"reliable":True,"date":selected.isoformat(),
+            "startEquity":safe_float(daily.get("dayStartEquity")),
+            "endEquity":safe_float(daily.get("currentEquity")),
+            "usdChange":safe_float(daily.get("todayUsd")),
+            "percentage":safe_float(daily.get("todayPercentage")),
+            "externalCashflowUsd":safe_float(daily.get("dayExternalCashflowUsd")),
+            "cashflowBreakdown":dict(daily.get("cashflowBreakdown") or {}),
+            "performanceLedgerBreakdown":performance,
+            "performanceMethod":str(daily.get("performanceMethod") or ""),
+            "source":"LIVE_DAILY_GROWTH"}
+
+    uid=str(user["uid"]);stored=portfolio_growth_reference(uid).get().to_dict() or {}
+    state=dict(stored.get("dailyGrowth") or {})
+    history=[row for row in list(state.get("history") or []) if isinstance(row,dict)]
+    row=next((item for item in history if str(item.get("date") or "")==selected.isoformat()),None)
+    if row is None:
+        raise HTTPException(404,"Voor deze dag is geen betrouwbare rendementmeting opgeslagen")
+
+    day_start=datetime.combine(selected,datetime.min.time(),tzinfo=amsterdam)
+    next_start=datetime.combine(selected+timedelta(days=1),datetime.min.time(),tzinfo=amsterdam)
+    fallback_start_ms=utc_ms(day_start);fallback_end_ms=utc_ms(next_start)-1
+    start_ms=int(safe_float(row.get("startAtMs"))) or fallback_start_ms
+    end_ms=int(safe_float(row.get("endAtMs"))) or fallback_end_ms
+    client=_portfolio_growth_client(user,live=False)
+    try:
+        income=client.income_history(start_time=start_ms,end_time=end_ms,limit=1000)
+        income=[item for item in income if isinstance(item,dict)]
+        if len(income)>=1000:
+            raise ValueError("Income-ledger voor deze dag is niet volledig")
+        cashflow=external_cashflow_breakdown(income,start_ms)
+        performance=performance_ledger_breakdown(income,start_ms)
+        day_usd=safe_float(row.get("usdChange"))
+        known=safe_float(performance.get("knownPerformanceLedgerUsd"))
+        performance={**performance,"equityResidualUsd":round(day_usd-known,8),
+            "equityResidualReliableAsUnrealizedPnl":False,
+            "equityResidualLabel":"Open PnL / mark-to-market / overige equity-verandering"}
+        return {"reliable":True,"date":selected.isoformat(),
+            "startEquity":safe_float(row.get("startEquity")),
+            "endEquity":safe_float(row.get("endEquity")),
+            "usdChange":day_usd,"percentage":safe_float(row.get("percentage")),
+            "externalCashflowUsd":safe_float(row.get("externalCashflowUsd",cashflow.get("netExternalCashflowUsd"))),
+            "cashflowBreakdown":cashflow,"performanceLedgerBreakdown":performance,
+            "performanceMethod":"STORED_DAILY_EQUITY_NET_CASHFLOW_ADJUSTED",
+            "source":str(row.get("source") or "DAILY_OBSERVATION")}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"reliable":False,"date":selected.isoformat(),
+            "startEquity":safe_float(row.get("startEquity")),
+            "endEquity":safe_float(row.get("endEquity")),
+            "usdChange":safe_float(row.get("usdChange")),
+            "percentage":safe_float(row.get("percentage")),
+            "blockReason":f"Ledgerdetail niet volledig beschikbaar: {str(exc)[:180]}",
+            "performanceMethod":"STORED_DAILY_EQUITY_NET_CASHFLOW_ADJUSTED"}
+
+
 @app.get("/v1/me/aster/portfolio-growth/daily")
 def get_aster_portfolio_daily_growth(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
     return _portfolio_daily_growth(user)
+
+@app.get("/v1/me/aster/portfolio-growth/daily-detail")
+def get_aster_portfolio_daily_detail(date: str = Query(..., min_length=10, max_length=10),
+    user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
+    return _portfolio_daily_detail(user,date)
 
 @app.get("/v1/me/aster/portfolio-growth")
 def get_aster_portfolio_growth(user:dict[str,Any]=Depends(authenticated_user))->dict[str,Any]:
