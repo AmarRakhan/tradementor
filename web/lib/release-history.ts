@@ -26,39 +26,69 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-01",
-  title: "Portfolio Snapshot · Auto Hedge + Portfolio Cyclus status",
+  title: "Portfolio Snapshot · Auto Hedge + Portfolio Cyclus visueel afgewerkt",
   newItems: [
-    "Auto Hedge toont op de Snapshot-voorkant alleen de actuele status ACTIEF/UIT en de werkelijk opgeslagen verliestrigger.",
-    "Portfolio Cyclus toont het behaalde percentage, een compacte voortgangsbalk en uitsluitend het nog resterende dollarbedrag tot het huidige Portfolio TP-doel.",
+    "Auto Hedge gebruikt een rustigere drie-regelige hiërarchie: label, duidelijke ACTIEF/UIT-status en een beter leesbare triggerregel.",
+    "Portfolio Cyclus gebruikt dezelfde compacte visuele ritmiek en toont bij UIT voortaan expliciet 'Geen actieve cyclus'.",
+    "Een actieve Portfolio Cyclus toont het percentage boven de voortgangsbalk en het resterende dollarbedrag er direct onder.",
   ],
   problems: [
-    "De Auto Hedge-tegel bevatte een extra schuifknop waardoor tekst en bediening op mobiel te dicht op elkaar stonden.",
-    "De Portfolio Cyclus-tegel combineerde percentage, resterend percentage, status en configuratietekst, waardoor de voortgang niet in één oogopslag duidelijk was.",
+    "Build 480 was functioneel correct, maar de Auto Hedge-trigger stond nog te klein en te dicht op de overige tekst.",
+    "De Portfolio Cyclus-tegel oogde bij UIT te leeg en de twee tegels waren qua padding en verticale ritmiek nog niet in balans.",
   ],
   causes: [
-    "Configuratiebediening stond dubbel op de Snapshot-voorkant én in de bestaande detailweergave.",
-    "De cycluskaart probeerde zowel status, configuratie als doelinformatie tegelijk in dezelfde compacte tegel te tonen.",
+    "De Build 480 typografie was nog te sterk gecomprimeerd voor het smalle mobiele snapshot-grid.",
+    "De inactieve Portfolio Cyclus had slechts twee zichtbare tekstregels, waardoor de kaart visueel onaf voelde.",
   ],
   fixes: [
-    "De Auto Hedge-schakelaar is alleen van de Snapshot-voorkant verwijderd; de bestaande schakelaar, bevestiging, persistence en 3D/detailweergave blijven intact.",
-    "De Auto Hedge-tegel leest de trigger rechtstreeks uit de bestaande opgeslagen thresholdUsd-status en toont die als 'bij −US$ X,XX'.",
-    "De Portfolio Cyclus-tegel gebruikt ongewijzigd de bestaande cycle-data voor progressPercent en remainingUsd en beperkt de balk visueel tot maximaal 100%.",
-    "Bestaande klik-, dubbelklik-, touch-, route- en configuratie-interacties zijn behouden.",
+    "Auto Hedge toont nu 'Trigger −US$ X,XX' uit de bestaande opgeslagen thresholdUsd-waarde, zonder extra bediening op de voorkant.",
+    "De lettergroottes, regelafstand, icon-size en inner padding van beide tegels zijn opnieuw uitgebalanceerd voor mobiel.",
+    "Portfolio Cyclus toont bij UIT een derde regel 'Geen actieve cyclus'; actief blijft progressPercent + voortgangsbalk + remainingUsd gebruiken.",
+    "Alle bestaande klik-, dubbelklik-, dubbeltap-, detail-, configuratie- en persistenceflows zijn ongemoeid gelaten.",
   ],
   now: [
-    "Auto Hedge is op mobiel direct leesbaar als ACTIEF of UIT met het ingestelde triggerbedrag eronder.",
-    "Portfolio Cyclus laat direct zien welk percentage is behaald en hoeveel US$ nog resteert.",
-    "De voorzijde van beide tegels is status-only; instellingen blijven bereikbaar via de bestaande achterliggende schermen.",
+    "Auto Hedge is in één oogopslag leesbaar zonder dat de triggerregel wegvalt.",
+    "Portfolio Cyclus voelt ook in de UIT-status als een volwaardige statuskaart.",
+    "Beide tegels hebben een consistente visuele hiërarchie zonder wijzigingen aan trading- of Portfolio TP-logica.",
   ],
   technicalDetails: [
-    "Goedgekeurde visuele referentie: file_00000000bd588210a3ac396a4df67d6b.",
+    "Actuele gebruiker-screenshot: file_00000000ba448210b16f35eaf915a01f.",
     "Auto Hedge UI: web/components/aster-position-loss-auto-hedge-bridge.tsx en web/app/position-loss-auto-hedge.css.",
     "Portfolio Cyclus UI: web/components/aster-profit-pot-snapshot-bridge.tsx en web/app/profit-pot-snapshot.css.",
-    "Geen trading-, hedge-, Portfolio TP-, opslag-, API-, state-management- of navigatielogica gewijzigd.",
+    "Geen trading-, hedge-, Portfolio TP-, opslag-, API-, state-management-, navigatie- of fliplogica gewijzigd.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-480-portfolio-snapshot-controls",
+    version: "46",
+    build: "480",
+    releasedAt: "2026-10-01",
+    title: "Portfolio Snapshot · Auto Hedge + Portfolio Cyclus status",
+    newItems: [
+      "Auto Hedge toont op de Snapshot-voorkant alleen de actuele status ACTIEF/UIT en de opgeslagen verliestrigger.",
+      "Portfolio Cyclus toont het behaalde percentage, een compacte voortgangsbalk en het resterende dollarbedrag tot het huidige Portfolio TP-doel.",
+    ],
+    problems: [
+      "De Auto Hedge-tegel bevatte een dubbele schuifbediening en de Portfolio Cyclus-tegel combineerde te veel configuratie- en statusinformatie.",
+    ],
+    causes: [
+      "Configuratiebediening stond dubbel op de Snapshot-voorkant en in de bestaande detailweergave.",
+    ],
+    fixes: [
+      "De Auto Hedge-schakelaar is van de Snapshot-voorkant verwijderd; de bestaande detailtoggle en persistence bleven intact.",
+      "Portfolio Cyclus is teruggebracht tot dynamische voortgang en remainingUsd.",
+    ],
+    now: [
+      "Beide Snapshot-tegels zijn status-only op de voorkant en blijven doorlinken naar hun bestaande instellingen/detailweergaven.",
+    ],
+    technicalDetails: [
+      "Visuele referentie: file_00000000bd588210a3ac396a4df67d6b.",
+      "Geen trading-, hedge-, Portfolio TP-, opslag-, API-, state-management- of navigatielogica gewijzigd.",
+    ],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-479-compact-aster-portfolio-koers",
     version: "46",

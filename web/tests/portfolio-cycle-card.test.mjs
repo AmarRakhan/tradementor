@@ -58,7 +58,7 @@ test("Portfolio Cycle tile supports legacy multiBbCycle payloads and caps at tar
 });
 
 
-test("Build 480 Portfolio Cycle Snapshot shows only progress and remaining dollars on the front",async()=>{
+test("Build 481 Portfolio Cycle Snapshot is balanced when active and when UIT",async()=>{
   const { readFile }=await import("node:fs/promises");
   const [component,css]=await Promise.all([
     readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx",import.meta.url),"utf8"),
@@ -69,10 +69,11 @@ test("Build 480 Portfolio Cycle Snapshot shows only progress and remaining dolla
   const block=component.slice(start,end);
   const inactive=block.slice(0,block.indexOf("const progress"));
   const active=block.slice(block.indexOf("const progress"));
-  assert.match(block,/file_00000000bd588210a3ac396a4df67d6b|CYCLE_REFERENCE_ACTIVE/);
-  assert.match(css,/file_00000000bd588210a3ac396a4df67d6b/);
+  assert.match(component,/file_00000000ba448210b16f35eaf915a01f/);
+  assert.match(css,/file_00000000ba448210b16f35eaf915a01f/);
   assert.match(inactive,/PORTFOLIO CYCLUS/);
   assert.match(inactive,/<strong>UIT<\/strong>/);
+  assert.match(inactive,/Geen actieve cyclus/);
   assert.doesNotMatch(inactive,/Instellen/);
   assert.match(inactive,/onClick=\{openPortfolioTakeProfitSettings\}/);
   assert.match(active,/Math\.round\(progress\).*%/s);
@@ -82,4 +83,8 @@ test("Build 480 Portfolio Cycle Snapshot shows only progress and remaining dolla
   assert.doesNotMatch(active,/formatCyclePercent/);
   assert.doesNotMatch(active,/state\.statusLabel/);
   assert.doesNotMatch(active,/aps-cycle-active-foot/);
+  assert.match(css,/Build 481 — Portfolio Snapshot cycle visual polish/);
+  assert.match(css,/\.aps-cycle-inactive-copy strong\{[\s\S]*font-size:12\.2px/);
+  assert.match(css,/\.aps-cycle-inactive-copy em\{[\s\S]*font-size:6\.5px/);
+  assert.match(css,/\.aps-cycle-active-head\{[\s\S]*display:grid/);
 });

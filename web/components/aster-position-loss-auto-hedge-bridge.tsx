@@ -7,7 +7,7 @@ import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 
 const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
 const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
-const TILE_REFERENCE = "file_00000000bd588210a3ac396a4df67d6b";
+const TILE_REFERENCE = "file_00000000ba448210b16f35eaf915a01f";
 const SCREEN_REFERENCE = "file_00000000ecd08246bd1b15532fb478d6";
 const OVERVIEW_REFERENCE = "file_000000005090821091d88f1b301841d7";
 const SCALE_REFERENCE = "file_00000000d23482438b5f8f4588d6cf86";
@@ -766,7 +766,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       data-reference={TILE_REFERENCE}
       role="button"
       tabIndex={0}
-      aria-label={`Auto Hedge ${tileStatus}, bij min ${tileThresholdLabel} US dollar. Dubbel tik voor instellingen.`}
+      aria-label={`Auto Hedge ${tileStatus}. Trigger min ${tileThresholdLabel} US dollar. Dubbel tik voor instellingen.`}
       onDoubleClick={openFromCard}
       onTouchEnd={onTouchEnd}
       onKeyDown={(event) => {
@@ -780,7 +780,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       <span className="plah-tile-copy">
         <small>AUTO HEDGE</small>
         <strong className={state.enabled ? "on" : ""}>{tileStatus}</strong>
-        <em>bij −US$ {tileThresholdLabel}</em>
+        <em>Trigger −US$ {tileThresholdLabel}</em>
       </span>
     </div>,
     tileHost,
