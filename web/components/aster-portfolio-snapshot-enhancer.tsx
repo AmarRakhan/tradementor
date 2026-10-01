@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterHedgeManager } from "./aster-hedge-manager";
-import { PortfolioKoersChart } from "./portfolio-koers-chart";
+import { PortfolioKoersChart } from "./portfolio-koers-chart";\nimport { PortfolioPerformanceDetail, type PerformanceInitialTab } from "./portfolio-performance-detail";
 import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
 
 type Tone = "positive" | "negative" | "neutral";
@@ -141,7 +141,7 @@ type PriceZoneSeatSummary = {
   queueUncertainReason: string;
 };
 
-type SnapshotDetailView = "portfolio" | "price-zone" | "scanner";
+type SnapshotDetailView = "portfolio" | "price-zone" | "scanner" | "performance";
 type ScannerVerdict = "NORMAAL" | "GEEN KANDIDATEN" | "GEBLOKKEERD" | "SCANNER STIL" | "ORDERFOUT";
 
 type ScannerSideStatus = {
@@ -460,8 +460,11 @@ function MetricCard({ icon, label, value, tone = "normal", detail, detailTone = 
   return <article className={`aps-metric aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong>{detail ? <em className={`aps-metric-detail aps-detail-${detailTone}`}>{detail}</em> : null}</div></article>;
 }
 
-function GrowthCard({ icon, label, value, tone, detail }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone; detail?: string }) {
-  return <article className={`aps-growth-card aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong>{detail ? <em className="aps-growth-detail">{detail}</em> : null}</div></article>;
+function GrowthCard({ icon, label, value, tone, detail, onClick }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone; detail?: string; onClick?: () => void }) {
+  return <button type="button" className={`aps-growth-card aps-${tone}`} onClick={onClick} aria-label={`${label}: ${value}. Open Rendement Overzicht.`}>
+    <span className="aps-icon"><Icon name={icon} /></span>
+    <span className="aps-growth-copy"><small>{label}</small><strong>{value}</strong>{detail ? <em className="aps-growth-detail">{detail}</em> : null}</span>
+  </button>;
 }
 
 
@@ -957,7 +960,7 @@ function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapsh
   </section>;
 }
 
-function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner }: {
+function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance }: {
   values: SnapshotValues;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
@@ -967,6 +970,7 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
   onOpenHedge: () => void;
   onOpenPriceZone: () => void;
   onOpenScanner: () => void;
+  onOpenPerformance: (tab: PerformanceInitialTab) => void;
 }) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={SNAPSHOT_V2_REFERENCE}>
     <header>
@@ -994,8 +998,8 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
           <div className="aps-status"><Icon name="dca" /><strong>{values.dca} DCA</strong></div>
         </div>
         <div className="aps-growth-row">
-          <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} detail="excl. stortingen & opnames" />
-          <GrowthCard icon="calendar" label="GEMIDDELD PER DAG" value={values.averageDailyGrowth} tone={values.averageDailyGrowthTone} />
+          <GrowthCard icon="growth" label="RENDEMENT VANDAAG" value={values.todayGrowth} tone={values.todayGrowthTone} detail="excl. stortingen & opnames" onClick={() => onOpenPerformance("per-day")} />
+          <GrowthCard icon="calendar" label="GEMIDDELD PER DAG" value={values.averageDailyGrowth} tone={values.averageDailyGrowthTone} onClick={() => onOpenPerformance("average")} />
         </div>
       </div>
       <LiquidationGauge
@@ -1053,7 +1057,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [priceZoneSeats, setPriceZoneSeats] = useState<PriceZoneSeatSummary | null>(null);
   const [scannerStatus, setScannerStatus] = useState<ScannerStatusSnapshot | null>(null);
   const [liveActiveZone, setLiveActiveZone] = useState<number | null>(null);
-  const [detailView, setDetailView] = useState<SnapshotDetailView>("portfolio");
+  const [detailView, setDetailView] = useState<SnapshotDetailView>("portfolio");\n  const [performanceInitialTab, setPerformanceInitialTab] = useState<PerformanceInitialTab>("per-day");
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const valuesRef = useRef<SnapshotValues>(EMPTY);
@@ -1278,6 +1282,11 @@ export function AsterPortfolioSnapshotEnhancer() {
     window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
   };
 
+  const openPerformance = (tab: PerformanceInitialTab) => {
+    setPerformanceInitialTab(tab);
+    openDetail("performance");
+  };
+
   const closeDetail = () => {
     const restoreY = detailScrollY.current;
     setDetailView("portfolio");
@@ -1310,6 +1319,7 @@ export function AsterPortfolioSnapshotEnhancer() {
           onOpenHedge={() => setHedgeOpen(true)}
           onOpenPriceZone={() => openDetail("price-zone")}
           onOpenScanner={() => openDetail("scanner")}
+          onOpenPerformance={openPerformance}
         />
         {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
         {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
@@ -1324,7 +1334,10 @@ export function AsterPortfolioSnapshotEnhancer() {
         summary={priceZoneSeats}
         liveActiveZone={liveActiveZone}
         onBack={closeDetail}
-      /> : <ScannerStatusPage snapshot={scannerStatus} onBack={closeDetail} />}
+      /> : detailView === "scanner" ? <ScannerStatusPage snapshot={scannerStatus} onBack={closeDetail} /> : <PortfolioPerformanceDetail
+        initialTab={performanceInitialTab}
+        onBack={closeDetail}
+      />}
     </>,
     host,
   ) : null;
