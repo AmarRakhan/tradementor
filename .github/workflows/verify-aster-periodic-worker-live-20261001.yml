@@ -1,0 +1,103 @@
+name: Verify Aster periodic worker live 20261001
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/verify-aster-periodic-worker-live-20261001.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "209"
+  EXPECTED_SOURCE: "9443323dcc11afcf8264a91dee9127f4d5e2138e"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify source, background CPU and periodic tick logs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          URL="$(python - "$RUNNER_TEMP/service.json" "$EXPECTED_SOURCE" <<'PY'
+          import json,sys
+          s=json.load(open(sys.argv[1],encoding="utf-8"))
+          anns={}
+          anns.update(s.get("metadata",{}).get("annotations") or {})
+          anns.update(s.get("spec",{}).get("template",{}).get("metadata",{}).get("annotations") or {})
+          assert str(anns.get("run.googleapis.com/cpu-throttling","")).lower()=="false"
+          minimum=anns.get("autoscaling.knative.dev/minScale") or anns.get("run.googleapis.com/minScale")
+          assert str(minimum)=="1"
+          print(s["status"]["url"])
+          PY
+          )"
+          curl --fail --silent --show-error "$URL/health" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/health.json" "$EXPECTED_SOURCE" <<'PY'
+          import json,sys
+          h=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert h["status"]=="ready"
+          observed=h.get("sourceCommit") or h.get("imageSourceCommit") or ""
+          assert observed==sys.argv[2], (observed,sys.argv[2])
+          PY
+
+          FOUND=0
+          for attempt in 1 2 3 4 5 6; do
+            gcloud logging read \
+              'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"' \
+              --project "$GCP_PROJECT_ID" --freshness=6m --limit=20 --order=desc --format=json > "$RUNNER_TEMP/ticks.json" || echo '[]' > "$RUNNER_TEMP/ticks.json"
+            if python - "$RUNNER_TEMP/ticks.json" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding="utf-8"))
+          raise SystemExit(0 if isinstance(rows,list) and rows else 1)
+          PY
+            then
+              FOUND=1
+              break
+            fi
+            sleep 12
+          done
+          test "$FOUND" = "1"
+
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=20 --order=desc --format=json > "$RUNNER_TEMP/errors.json" || echo '[]' > "$RUNNER_TEMP/errors.json"
+
+          python - "$RUNNER_TEMP/ticks.json" "$RUNNER_TEMP/errors.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,re,sys
+          ticks=json.load(open(sys.argv[1],encoding="utf-8"))
+          errors=json.load(open(sys.argv[2],encoding="utf-8"))
+          parsed=[]
+          for row in ticks if isinstance(ticks,list) else []:
+              text=str(row.get("textPayload") or "")
+              m=re.search(r"ASTER_PERIODIC_TICK_COMPLETE source=([^ ]+) processed=(\d+)",text)
+              if m:
+                  parsed.append((row.get("timestamp",""),m.group(1),int(m.group(2))))
+          print("## Aster periodieke scanner · live verificatie")
+          print(f"- Periodieke ticks gevonden laatste 6 min: **{len(parsed)}**")
+          if parsed:
+              print(f"- Laatste tick: **{parsed[0][0]}** · source=`{parsed[0][1]}` · processed=**{parsed[0][2]}**")
+          print(f"- Periodieke tick-errors laatste 6 min: **{len(errors) if isinstance(errors,list) else 0}**")
+          print("- Cloud Run min instances: **1**")
+          print("- CPU buiten requests: **AAN**")
+          print("- Backend source: **9443323dcc11afcf8264a91dee9127f4d5e2138e**")
+          print("\n_Read-only verificatie; geen tradingstate gewijzigd._")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
