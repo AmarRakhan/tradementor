@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-01T21:13+02:00 verify-zone30-live
+# current read-only trace trigger 2026-10-01T21:25+02:00 verify-long-1m-bb
 
 on:
   push:
@@ -410,6 +410,7 @@ jobs:
                       "entrySkipReasons":{
                           reason_class(k):v for k,v in (dry.get("entrySkipReasons") or {}).items()
                       } if isinstance(dry.get("entrySkipReasons"),dict) else {},
+                      "scannerDiagnostics":dry.get("scannerDiagnostics") if isinstance(dry.get("scannerDiagnostics"),dict) else {},
                       "actions":summarized_actions(dry.get("actions")),
                       "seatModel":{
                           "activeZone":seat.get("activeZone"),
