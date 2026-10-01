@@ -17,7 +17,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DIAG_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
-  ISSUE_NUMBER: '209'
+  ISSUE_NUMBER: '437'
 
 jobs:
   diagnose:
@@ -73,4 +73,4 @@ jobs:
           print('\n_Read-only; niets aan scheduler, settings of orders gewijzigd._')
           PY
           GH_TOKEN="${{ github.token }}" gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
-# manual-readonly-trigger-20261001-0804
+# manual-readonly-trigger-20261001-2129
