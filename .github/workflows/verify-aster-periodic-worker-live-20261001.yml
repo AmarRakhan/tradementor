@@ -16,7 +16,7 @@ env:
   GCP_REGION: europe-west4
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
-  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
   ISSUE_NUMBER: "209"
   EXPECTED_SOURCE: "9443323dcc11afcf8264a91dee9127f4d5e2138e"
 
@@ -28,7 +28,7 @@ jobs:
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
-          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+          service_account: ${{ env.DIAGNOSTIC_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
       - name: Verify source, background CPU and periodic tick logs
         shell: bash
