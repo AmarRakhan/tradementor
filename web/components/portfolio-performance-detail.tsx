@@ -130,6 +130,14 @@ const average = (rows: HistoryRow[]) => rows.length
   ? rows.reduce((sum, row) => sum + Number(row.percentage || 0), 0) / rows.length
   : null;
 
+const offsetIsoDate = (value: string | undefined, days: number) => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "";
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+
 function todayRow(data: DailyGrowth | null): HistoryRow | null {
   if (!data?.reliable || !data.referenceDate) return null;
   const start = finite(data.dayStartEquity);
@@ -343,15 +351,21 @@ function AnalysisTab({ daily }: { daily: DailyGrowth }) {
   const best = rows.length ? rows.reduce((a, b) => a.percentage >= b.percentage ? a : b) : null;
   const worst = rows.length ? rows.reduce((a, b) => a.percentage <= b.percentage ? a : b) : null;
   const winRate = positive.length + negative.length ? positive.length / (positive.length + negative.length) * 100 : null;
+  const yesterdayDate = offsetIsoDate(daily.referenceDate, -1);
+  const yesterday = rows.find((row) => row.date === yesterdayDate) || null;
+  const sevenStart = offsetIsoDate(daily.referenceDate, -6);
+  const thirtyStart = offsetIsoDate(daily.referenceDate, -29);
+  const lastSeven = rows.filter((row) => !sevenStart || row.date >= sevenStart);
+  const lastThirty = rows.filter((row) => !thirtyStart || row.date >= thirtyStart);
 
   return <>
     <section className="aps-performance-card">
       <header><div><small>ANALYSE</small><h3>Prestatie per periode</h3></div><span>{rows.length} dagen</span></header>
       <div className="aps-performance-analysis-grid">
         <Stat label="Vandaag" value={percent(rows[0]?.percentage)} valueTone={tone(rows[0]?.percentage)} />
-        <Stat label="Gisteren" value={percent(rows[1]?.percentage)} valueTone={tone(rows[1]?.percentage)} />
-        <Stat label="Laatste 7 dagen · gem." value={percent(average(rows.slice(0, 7)))} valueTone={tone(average(rows.slice(0, 7)))} />
-        <Stat label="Laatste 30 dagen · gem." value={percent(average(rows.slice(0, 30)))} valueTone={tone(average(rows.slice(0, 30)))} />
+        <Stat label="Gisteren" value={percent(yesterday?.percentage)} valueTone={tone(yesterday?.percentage)} />
+        <Stat label="Laatste 7 kalenderdagen · gem." value={percent(average(lastSeven))} valueTone={tone(average(lastSeven))} detail={`${lastSeven.length} gemeten`} />
+        <Stat label="Laatste 30 kalenderdagen · gem." value={percent(average(lastThirty))} valueTone={tone(average(lastThirty))} detail={`${lastThirty.length} gemeten`} />
         <Stat label="Sinds start · gem." value={percent(daily.averageDailyPercentage)} valueTone={tone(daily.averageDailyPercentage)} />
         <Stat label="Positieve dagen" value={String(positive.length)} valueTone="positive" />
         <Stat label="Negatieve dagen" value={String(negative.length)} valueTone="negative" />
