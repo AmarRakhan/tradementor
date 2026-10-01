@@ -7,8 +7,8 @@ import { derivePortfolioCycleCard, type PortfolioCycleCardState } from "@/lib/po
 
 const PROFIT_POT_REFERENCE = "file_00000000f5ec8210bf3f2c300b972c25";
 const HOST_ID = "aster-profit-pot-snapshot-host";
-const CYCLE_REFERENCE_INACTIVE = "file_00000000192481f495e9311d4ed77933";
-const CYCLE_REFERENCE_ACTIVE = "file_00000000b78081f4a8a332da9a783f3b";
+const CYCLE_REFERENCE_INACTIVE = "file_00000000bd588210a3ac396a4df67d6b";
+const CYCLE_REFERENCE_ACTIVE = "file_00000000bd588210a3ac396a4df67d6b";
 
 function existingProfitPotValue(): string {
   const rows = Array.from(document.querySelectorAll<HTMLElement>(".metric-strip .metric"));
@@ -29,11 +29,6 @@ function profitPotIcon() {
 function formatCycleMoney(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "US$ —";
   return `US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
-}
-
-function formatCyclePercent(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return `${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}%`;
 }
 
 function cycleIcon() {
@@ -61,14 +56,13 @@ function PortfolioCycleCard({ state }: { state: PortfolioCycleCardState }) {
       className="aps-portfolio-cycle-card is-inactive"
       data-reference={CYCLE_REFERENCE_INACTIVE}
       onClick={openPortfolioTakeProfitSettings}
-      aria-label="Portfolio cyclus niet ingesteld. Portfolio Take Profit instellen."
+      aria-label="Portfolio cyclus uit. Tik voor instellingen."
     >
       <span className="aps-cycle-icon">{cycleIcon()}</span>
       <span className="aps-cycle-inactive-copy">
         <small>PORTFOLIO CYCLUS</small>
-        <em>Portfolio TP niet actief</em>
+        <strong>UIT</strong>
       </span>
-      <span className="aps-cycle-setup">Instellen</span>
     </button>;
   }
 
@@ -78,16 +72,16 @@ function PortfolioCycleCard({ state }: { state: PortfolioCycleCardState }) {
     className="aps-portfolio-cycle-card is-active"
     data-reference={CYCLE_REFERENCE_ACTIVE}
     onClick={openPortfolioTakeProfitSettings}
-    aria-label={`Portfolio cyclus ${Math.round(progress)} procent. Nog ${formatCycleMoney(state.remainingUsd)} tot sluiten.`}
+    aria-label={`Portfolio cyclus ${Math.round(progress)} procent behaald. Nog ${formatCycleMoney(state.remainingUsd)} tot doel.`}
   >
-    <span className="aps-cycle-active-head">
-      <small>PORTFOLIO CYCLUS</small>
-      <strong>{Math.round(progress)}%</strong>
-    </span>
-    <span className="aps-cycle-progress" aria-hidden="true"><i style={{ width: `${progress}%` }} /></span>
-    <span className="aps-cycle-active-foot">
-      <span><b>Nog {formatCycleMoney(state.remainingUsd)}</b><em>+{formatCyclePercent(state.remainingPercent)} tot sluiten</em></span>
-      <u>{state.statusLabel}</u>
+    <span className="aps-cycle-icon">{cycleIcon()}</span>
+    <span className="aps-cycle-active-copy">
+      <span className="aps-cycle-active-head">
+        <small>PORTFOLIO CYCLUS</small>
+        <strong>{Math.round(progress)}%</strong>
+      </span>
+      <span className="aps-cycle-progress" aria-hidden="true"><i style={{ width: `${progress}%` }} /></span>
+      <b className="aps-cycle-remaining">Nog {formatCycleMoney(state.remainingUsd)}</b>
     </span>
   </button>;
 }

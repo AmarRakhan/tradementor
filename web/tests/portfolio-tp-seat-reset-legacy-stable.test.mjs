@@ -8,7 +8,7 @@ const route = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/sett
 const version = fs.readFileSync(new URL("../lib/app-version.ts", import.meta.url), "utf8");
 
 test("Build 472 preserves Portfolio TP seat reset in the legacy STABLE maker", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "479"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "480"/);
   assert.match(maker, /data-feature="portfolio-tp-seat-reset"/);
   assert.match(maker, /Stoelen automatisch resetten/);
   assert.match(maker, /resetSeatsAfterPortfolioTp: x\.resetSeatsAfterPortfolioTp === true/);

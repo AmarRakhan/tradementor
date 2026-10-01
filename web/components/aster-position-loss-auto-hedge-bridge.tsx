@@ -7,7 +7,7 @@ import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 
 const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
 const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
-const TILE_REFERENCE = "file_00000000340881f4b05212f7cfd82727";
+const TILE_REFERENCE = "file_00000000bd588210a3ac396a4df67d6b";
 const SCREEN_REFERENCE = "file_00000000ecd08246bd1b15532fb478d6";
 const OVERVIEW_REFERENCE = "file_000000005090821091d88f1b301841d7";
 const SCALE_REFERENCE = "file_00000000d23482438b5f8f4588d6cf86";
@@ -195,6 +195,13 @@ function money(value: number | undefined, signed = true) {
 function thresholdMoney(value: number) {
   const digits = Number.isInteger(value) ? 0 : 2;
   return `${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: 2 }).format(value)}`;
+}
+
+function snapshotThresholdMoney(value: number) {
+  return new Intl.NumberFormat("nl-NL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 function pct1(value: number | null | undefined) {
@@ -730,6 +737,10 @@ export function AsterPositionLossAutoHedgeBridge() {
   );
   const status = state.operational ? "ACTIEF" : state.enabled ? "TEST" : hasLockedPair ? "LOCK" : "UIT";
   const tileStatus = state.enabled ? "ACTIEF" : "UIT";
+  const tileThreshold = Number(state.thresholdUsd);
+  const tileThresholdLabel = Number.isFinite(tileThreshold) && tileThreshold > 0
+    ? snapshotThresholdMoney(tileThreshold)
+    : "—";
   const coinOptions = useMemo(() => [...new Set(pairs.map((pair) => pair.symbol))].sort(), [pairs]);
   const visiblePairs = coinFilter === "ALL" ? pairs : pairs.filter((pair) => pair.symbol === coinFilter);
 
@@ -755,7 +766,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       data-reference={TILE_REFERENCE}
       role="button"
       tabIndex={0}
-      aria-label={`Auto Hedge ${tileStatus}. Dubbel tik voor instellingen.`}
+      aria-label={`Auto Hedge ${tileStatus}, bij min ${tileThresholdLabel} US dollar. Dubbel tik voor instellingen.`}
       onDoubleClick={openFromCard}
       onTouchEnd={onTouchEnd}
       onKeyDown={(event) => {
@@ -769,8 +780,8 @@ export function AsterPositionLossAutoHedgeBridge() {
       <span className="plah-tile-copy">
         <small>AUTO HEDGE</small>
         <strong className={state.enabled ? "on" : ""}>{tileStatus}</strong>
+        <em>bij −US$ {tileThresholdLabel}</em>
       </span>
-      <Toggle checked={state.enabled} disabled={saving || loading} onChange={() => void requestEnabledChange(!state.enabled, "SNAPSHOT_TILE")} compact label="Auto Hedge" />
     </div>,
     tileHost,
   ) : null;

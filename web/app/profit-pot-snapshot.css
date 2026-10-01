@@ -40,3 +40,108 @@
 .aps-cycle-inactive-copy em{overflow:visible;text-overflow:clip;color:#57c99a;font-size:6.8px;line-height:1.15;white-space:normal}
 @media(max-width:640px){.aps-cycle-inactive-copy{gap:4px}.aps-cycle-inactive-copy em{font-size:5.8px}}
 @media(max-width:380px){.aps-cycle-inactive-copy em{font-size:5.2px}}
+
+
+/* Build 480 — Portfolio Snapshot cycle status tile.
+   Visual source of truth: file_00000000bd588210a3ac396a4df67d6b */
+.aps-portfolio-cycle-card.is-inactive,
+.aps-portfolio-cycle-card.is-active{
+  display:grid;
+  grid-template-columns:24px minmax(0,1fr);
+  grid-template-rows:none;
+  align-items:center;
+  align-content:center;
+  gap:7px;
+  padding:8px 9px;
+}
+.aps-portfolio-cycle-card.is-active .aps-cycle-icon{color:#46e9a5;opacity:1}
+.aps-cycle-inactive-copy,
+.aps-cycle-active-copy{
+  min-width:0;
+  display:grid;
+  align-content:center;
+  gap:3px;
+}
+.aps-cycle-inactive-copy small,
+.aps-cycle-active-head small{
+  color:#e7b943;
+  font-size:6.2px;
+  line-height:1.05;
+  font-weight:900;
+  letter-spacing:.035em;
+  white-space:nowrap;
+}
+.aps-cycle-inactive-copy strong{
+  color:#9da9a2;
+  font-size:10.5px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:.03em;
+  white-space:nowrap;
+}
+.aps-cycle-active-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:5px;
+  min-width:0;
+}
+.aps-cycle-active-head strong{
+  flex:0 0 auto;
+  color:#56efb0;
+  font-size:12.5px;
+  line-height:1;
+  font-weight:950;
+}
+.aps-cycle-progress{
+  display:block;
+  width:100%;
+  height:6px;
+  border:1px solid rgba(76,205,150,.18);
+  border-radius:999px;
+  background:rgba(92,108,101,.34);
+  overflow:hidden;
+}
+.aps-cycle-progress i{
+  display:block;
+  height:100%;
+  max-width:100%;
+  border-radius:inherit;
+  background:linear-gradient(90deg,#27e39a,#7ff0a7);
+  box-shadow:0 0 10px rgba(48,232,158,.25);
+}
+.aps-cycle-remaining{
+  color:#eef8f3;
+  font-size:6.8px;
+  line-height:1.05;
+  font-weight:900;
+  white-space:nowrap;
+}
+@media(max-width:640px){
+  .aps-portfolio-cycle-card.is-inactive,
+  .aps-portfolio-cycle-card.is-active{
+    grid-template-columns:20px minmax(0,1fr);
+    gap:5px;
+    padding:6px 7px;
+  }
+  .aps-cycle-icon svg{width:19px;height:19px}
+  .aps-cycle-inactive-copy,.aps-cycle-active-copy{gap:2px}
+  .aps-cycle-inactive-copy small,.aps-cycle-active-head small{font-size:5.6px}
+  .aps-cycle-inactive-copy strong{font-size:9.6px}
+  .aps-cycle-active-head strong{font-size:11px}
+  .aps-cycle-progress{height:5px}
+  .aps-cycle-remaining{font-size:6px}
+}
+@media(max-width:380px){
+  .aps-portfolio-cycle-card.is-inactive,
+  .aps-portfolio-cycle-card.is-active{
+    grid-template-columns:18px minmax(0,1fr);
+    gap:4px;
+    padding:5px 6px;
+  }
+  .aps-cycle-icon svg{width:17px;height:17px}
+  .aps-cycle-inactive-copy small,.aps-cycle-active-head small{font-size:5px}
+  .aps-cycle-inactive-copy strong{font-size:8.8px}
+  .aps-cycle-active-head strong{font-size:10px}
+  .aps-cycle-remaining{font-size:5.4px}
+}

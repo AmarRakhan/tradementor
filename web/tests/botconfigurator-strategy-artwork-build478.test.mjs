@@ -10,7 +10,7 @@ test("Build 478 artwork remains intact in Build 479 without touching card behavi
     readFile(new URL("../public/classic-dca-card-ref8-20260930.webp", import.meta.url)),
   ]);
 
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "479"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "480"/);
   const start = component.indexOf("{currentStep===1");
   const end = component.indexOf("{currentStep===2", start);
   assert.ok(start > 0 && end > start);
