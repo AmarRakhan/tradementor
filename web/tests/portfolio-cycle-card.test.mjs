@@ -58,12 +58,28 @@ test("Portfolio Cycle tile supports legacy multiBbCycle payloads and caps at tar
 });
 
 
-test("Build 432 inactive Portfolio Cycle Snapshot hides the duplicate Niet ingesteld headline",async()=>{
+test("Build 480 Portfolio Cycle Snapshot shows only progress and remaining dollars on the front",async()=>{
   const { readFile }=await import("node:fs/promises");
-  const component=await readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx",import.meta.url),"utf8");
+  const [component,css]=await Promise.all([
+    readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../app/profit-pot-snapshot.css",import.meta.url),"utf8"),
+  ]);
   const start=component.indexOf("function PortfolioCycleCard");
-  const inactive=component.slice(start,component.indexOf("const progress",start));
+  const end=component.indexOf("export function AsterProfitPotSnapshotBridge",start);
+  const block=component.slice(start,end);
+  const inactive=block.slice(0,block.indexOf("const progress"));
+  const active=block.slice(block.indexOf("const progress"));
+  assert.match(block,/file_00000000bd588210a3ac396a4df67d6b|CYCLE_REFERENCE_ACTIVE/);
+  assert.match(css,/file_00000000bd588210a3ac396a4df67d6b/);
   assert.match(inactive,/PORTFOLIO CYCLUS/);
-  assert.match(inactive,/Portfolio TP niet actief/);
-  assert.doesNotMatch(inactive,/<strong>Niet ingesteld<\/strong>/);
+  assert.match(inactive,/<strong>UIT<\/strong>/);
+  assert.doesNotMatch(inactive,/Instellen/);
+  assert.match(inactive,/onClick=\{openPortfolioTakeProfitSettings\}/);
+  assert.match(active,/Math\.round\(progress\).*%/s);
+  assert.match(active,/aps-cycle-progress/);
+  assert.match(active,/Nog \{formatCycleMoney\(state\.remainingUsd\)\}/);
+  assert.match(active,/onClick=\{openPortfolioTakeProfitSettings\}/);
+  assert.doesNotMatch(active,/formatCyclePercent/);
+  assert.doesNotMatch(active,/state\.statusLabel/);
+  assert.doesNotMatch(active,/aps-cycle-active-foot/);
 });
