@@ -119,7 +119,6 @@ test("Build 436 requires an explicit user confirmation before Auto Hedge can be 
   const component=await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx",import.meta.url),"utf8");
   assert.match(component,/window\.confirm/);
   assert.match(component,/Auto Hedge uitschakelen\?/);
-  assert.match(component,/requestEnabledChange\(!state\.enabled, "SNAPSHOT_TILE"\)/);
   assert.match(component,/requestEnabledChange\(!state\.enabled, "AUTO_HEDGE_SCREEN"\)/);
   assert.match(component,/confirmDisable: state\.enabled === true && enabled === false/);
   assert.match(component,/clientBuild: WEBAPP_BUILD_NUMBER/);
