@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "9443323dcc11afcf8264a91dee9127f4d5e2138e",
+  "sourceCommit": "e4a2480c7556a80b12caa87fd9ac11240a57ebf7",
   "requestedBy": "AmarRakhan",
-  "requestId": "restore-fenced-periodic-aster-scanner-20261001"
+  "requestId": "fix-zone-mode-scanner-runtime-20261001"
 }
