@@ -31,6 +31,8 @@ import { effectiveAsterDcaCount } from "@/lib/aster-dca-count.mjs";
 import {
   DEFAULT_NAVIGATION_PREFERENCES,
   loadNavigationPreferences,
+  markNavigationPreferencesPending,
+  navigationPreferencesPending,
   normalizeNavigationPreferences,
   saveNavigationPreferences,
   type NavigationPreferences,
@@ -196,9 +198,24 @@ function TradeMentorHome() {
     }
     let cancelled = false;
     setNavigationPreferenceReady(false);
-    authenticatedRequest("/api/preferences/navigation")
+    const pendingLocalChange = navigationPreferencesPending(user.uid);
+    const cloudRequest = pendingLocalChange
+      ? authenticatedRequest("/api/preferences/navigation", {
+          method: "PUT",
+          body: JSON.stringify(cached),
+        })
+      : authenticatedRequest("/api/preferences/navigation");
+    cloudRequest
       .then(async (value) => {
         if (cancelled) return;
+        if (pendingLocalChange) {
+          const normalized = normalizeNavigationPreferences(value, cached);
+          setNavigationPreferences(normalized);
+          saveNavigationPreferences(user.uid, normalized);
+          markNavigationPreferencesPending(user.uid, false);
+          setNavigationPreferenceMessage("Lokale navigatiekeuzes zijn persoonlijk gesynchroniseerd.");
+          return;
+        }
         if (value.configured === false) {
           const seeded = normalizeNavigationPreferences(cached);
           const saved = await authenticatedRequest("/api/preferences/navigation", {
@@ -231,6 +248,7 @@ function TradeMentorHome() {
     const next = { ...navigationPreferences, [tab]: visible };
     setNavigationPreferences(next);
     saveNavigationPreferences(user?.uid, next);
+    markNavigationPreferencesPending(user?.uid, true);
     setNavigationPreferenceMessage("Navigatievoorkeur wordt opgeslagen…");
 
     if (!visible && ((tab === "hyperliquid" && active === "hyperliquid") || (tab === "journey" && active === "journey"))) {
@@ -249,6 +267,7 @@ function TradeMentorHome() {
     }).then(() => {
       // Keep the immediately selected local state. A slower response from an earlier
       // toggle must never be allowed to overwrite a newer independent tab choice.
+      markNavigationPreferencesPending(user?.uid, false);
       setNavigationPreferenceMessage("Navigatievoorkeur is persoonlijk opgeslagen.");
     }).catch((reason) => {
       setNavigationPreferenceMessage(reason instanceof Error ? `Voorkeur blijft lokaal actief; cloudsync volgt: ${reason.message}` : "Voorkeur blijft lokaal actief; cloudsync volgt.");
