@@ -79,10 +79,10 @@ function normaliseBottomNavigation(nav: HTMLElement, active: boolean, uid?: stri
     const item = nav.querySelector<HTMLElement>(`:scope > .nav-button[data-destination="${destination}"]`);
     return item ? [item] : [];
   });
-  const current = Array.from(nav.children).filter(
+  const visibleChildren = Array.from(nav.children).filter(
     (child): child is HTMLElement => child instanceof HTMLElement && !child.hidden && child.classList.contains("nav-button"),
   );
-  if (visible.some((item, index) => current[index] !== item)) for (const item of visible) nav.appendChild(item);
+  if (visible.some((item, index) => visibleChildren[index] !== item)) for (const item of visible) nav.appendChild(item);
   if (nav.style.getPropertyValue("--mobile-nav-count") !== String(visible.length)) {
     nav.style.setProperty("--mobile-nav-count", String(visible.length));
   }
