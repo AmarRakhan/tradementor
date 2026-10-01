@@ -7,7 +7,7 @@ from typing import Any
 import copy, hashlib, math, time
 
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
-from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked
+from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import ContractRules, PositionSide
@@ -778,6 +778,73 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         candidates = ranked
     available = _f(account.get("availableBalance", account.get("availableMargin")))
     actions: list[dict[str, Any]] = []
+
+    # P0 self-heal for automatically scanned Strategy-2 positions whose durable
+    # multiBbPositions row disappeared while the exchange leg stayed open.
+    # Only durable Strategy-2 order attribution may prove ownership. A latest
+    # CLOSE/TP attribution, missing attribution, or active Auto Hedge lifecycle
+    # is never adopted. Recovered legs are TP-only until richer DCA state exists,
+    # preventing a guessed DCA count/anchor from creating new exposure.
+    attribution_rows = [
+        row for row in (raw_state.get("orderAttributions") or [])
+        if isinstance(row, dict)
+        and str(row.get("strategyId") or "").strip() == "aster-strategy-2"
+    ]
+    latest_attribution: dict[str, dict[str, Any]] = {}
+    for attribution in attribution_rows:
+        symbol = str(attribution.get("symbol") or "").upper().strip()
+        side = str(attribution.get("side") or "").upper().strip()
+        if symbol and side in {"LONG", "SHORT"}:
+            latest_attribution[f"{symbol}|{side}"] = attribution
+    bot_open_actions = {"INITIAL_OPEN_LEG", "OPEN_LEG", "ADD_DCA"}
+    for key, row in sorted(pmap.items()):
+        if key in state:
+            continue
+        attribution = latest_attribution.get(key)
+        if not attribution or str(attribution.get("action") or "").upper() not in bot_open_actions:
+            continue
+        symbol, side = key.split("|", 1)
+        try:
+            if auto_hedge_symbol_managed(account_uid=uid, symbol=symbol):
+                actions.append({
+                    "kind": "ATTRIBUTED_ORPHAN_PROTECTED",
+                    "symbol": symbol, "side": side,
+                    "reason": "AUTO_HEDGE_LIFECYCLE_OWNS_SYMBOL",
+                })
+                continue
+        except AutoHedgeCloseBlocked as exc:
+            actions.append({
+                "kind": "ATTRIBUTED_ORPHAN_PROTECTED",
+                "symbol": symbol, "side": side,
+                "reason": str(exc),
+            })
+            continue
+        qty = abs(_f(row.get("positionAmt")))
+        entry = _f(row.get("entryPrice"))
+        mark = _f(row.get("markPrice"), entry)
+        if qty <= 0 or entry <= 0:
+            continue
+        state[key] = {
+            "cycleId": str(attribution.get("cycleId") or hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:16]),
+            "dcaCount": 0,
+            "lastBotFillPrice": entry,
+            "lastKnownQty": qty,
+            "lastKnownEntry": entry,
+            "leverage": max(1, _i(row.get("leverage"))),
+            "cycleStartedAtMs": timestamp_ms,
+            "updatedAtMs": timestamp_ms,
+            "botManaged": True,
+            "recoveredFromOrderAttribution": True,
+            "tpRecoveryOnly": True,
+            "recoveredAtMs": timestamp_ms,
+        }
+        actions.append({
+            "kind": "ATTRIBUTED_POSITION_STATE_RECOVERED",
+            "symbol": symbol, "side": side,
+            "reason": "OPEN_ASTER_LEG_WITH_BOT_OPEN_ATTRIBUTION_AND_MISSING_STATE",
+            "tpRecoveryOnly": True,
+        })
+
     if position_truth_refresh_error:
         actions.append({
             "kind": "ENTRY_SCAN_BLOCKED", "reason": "PAIRING_POSITION_TRUTH_UNAVAILABLE",
@@ -1057,6 +1124,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     "timestamp": datetime.now(timezone.utc),
                 })
             sent += 1; continue
+        if bool(st0.get("tpRecoveryOnly")):
+            actions.append({
+                "kind": "RECOVERED_TP_ONLY_WAIT", "symbol": symbol, "side": side,
+                "reason": "DCA_SUSPENDED_UNTIL_FULL_STATE_RECONCILIATION",
+            })
+            continue
         if asym["active"] and side == "LONG" and st0.get("pairedShortPending"):
             actions.append({"kind": "ASYM_HEDGE_PENDING", "symbol": symbol, "side": side, "reason": "INITIAL_SHORT_NOT_CONFIRMED"}); continue
         if asym["active"] and side == "SHORT" and not asym["allowShortDca"]: continue
@@ -1121,6 +1194,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 })
                 continue
             fill=result.get("result") or {}; fill_price=_f(fill.get("avgPrice"),mark); fill_qty=abs(_f(fill.get("executedQty"),float(plan.quantity)))
+            _record_order_attribution(
+                ref, fill, settings=settings, symbol=symbol, side=side,
+                action="ADD_DCA", cycle_id=str(st0.get("cycleId") or ""),
+            )
             new_qty=qty+fill_qty; new_entry=((entry*qty)+(fill_price*fill_qty))/new_qty if new_qty>0 else entry; next_count=dca_count+1
             next_allowed=settings.max_dca>0 and (settings.unlimited_dca or next_count<settings.max_dca)
             next_trigger=fill_price*(1-settings.dca_distance if side=="LONG" else 1+settings.dca_distance) if next_allowed and fill_price>0 else None
