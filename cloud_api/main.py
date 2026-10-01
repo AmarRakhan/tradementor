@@ -592,6 +592,15 @@ class InterfacePreferenceRequest(BaseModel):
     mode: str = Field(pattern="^(legacy|premium)$")
 
 
+class NavigationPreferenceRequest(BaseModel):
+    hyperliquid: bool | None = None
+    markets: bool | None = None
+    sniper: bool | None = None
+    news: bool | None = None
+    friends: bool | None = None
+    journey: bool | None = None
+
+
 class ContinuityBybitCredentialsRequest(BaseModel):
     api_key: str = Field(min_length=8, max_length=256)
     api_secret: str = Field(min_length=8, max_length=256)
@@ -4676,6 +4685,37 @@ def save_interface_preference(request: InterfacePreferenceRequest,
         "updatedAt": now,
     }, merge=True)
     return {"mode": request.mode, "saved": True}
+
+
+_NAVIGATION_PREFERENCE_FIELDS = ("hyperliquid", "markets", "sniper", "news", "friends", "journey")
+
+
+def _navigation_preference_payload(value: dict[str, Any] | None = None) -> dict[str, bool]:
+    raw = value or {}
+    return {field: raw.get(field) if isinstance(raw.get(field), bool) else True for field in _NAVIGATION_PREFERENCE_FIELDS}
+
+
+@app.get("/v1/me/preferences/navigation")
+def get_navigation_preference(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    snapshot = user_reference(user).collection("preferences").document("navigation").get()
+    value = snapshot.to_dict() or {}
+    return {**_navigation_preference_payload(value), "configured": bool(snapshot.exists)}
+
+
+@app.put("/v1/me/preferences/navigation")
+def save_navigation_preference(request: NavigationPreferenceRequest,
+                               user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    updates = {
+        field: getattr(request, field)
+        for field in _NAVIGATION_PREFERENCE_FIELDS
+        if getattr(request, field) is not None
+    }
+    if not updates:
+        raise HTTPException(422, "Geef minimaal één navigatievoorkeur op")
+    reference = user_reference(user).collection("preferences").document("navigation")
+    reference.set({**updates, "updatedAt": datetime.now(timezone.utc)}, merge=True)
+    value = reference.get().to_dict() or {}
+    return {**_navigation_preference_payload(value), "configured": True, "saved": True}
 
 
 @app.post("/v1/me/feedback")
