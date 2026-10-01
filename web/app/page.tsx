@@ -248,7 +248,6 @@ function TradeMentorHome() {
     const next = { ...navigationPreferences, [tab]: visible };
     setNavigationPreferences(next);
     saveNavigationPreferences(user?.uid, next);
-    markNavigationPreferencesPending(user?.uid, true);
     setNavigationPreferenceMessage("Navigatievoorkeur wordt opgeslagen…");
 
     if (!visible && ((tab === "hyperliquid" && active === "hyperliquid") || (tab === "journey" && active === "journey"))) {
@@ -258,6 +257,7 @@ function TradeMentorHome() {
     }
 
     if (!cloudReady) {
+      markNavigationPreferencesPending(user?.uid, true);
       setNavigationPreferenceMessage("Voorkeur staat lokaal klaar en synchroniseert zodra de cloudverbinding actief is.");
       return;
     }
@@ -267,9 +267,9 @@ function TradeMentorHome() {
     }).then(() => {
       // Keep the immediately selected local state. A slower response from an earlier
       // toggle must never be allowed to overwrite a newer independent tab choice.
-      markNavigationPreferencesPending(user?.uid, false);
       setNavigationPreferenceMessage("Navigatievoorkeur is persoonlijk opgeslagen.");
     }).catch((reason) => {
+      markNavigationPreferencesPending(user?.uid, true);
       setNavigationPreferenceMessage(reason instanceof Error ? `Voorkeur blijft lokaal actief; cloudsync volgt: ${reason.message}` : "Voorkeur blijft lokaal actief; cloudsync volgt.");
     });
   };
