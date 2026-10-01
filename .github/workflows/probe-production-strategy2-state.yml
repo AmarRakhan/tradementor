@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-01T13:00+02:00
+# current read-only trace trigger 2026-10-01T13:08+02:00
 
 on:
   push:
@@ -177,7 +177,7 @@ jobs:
               positions=client.position_risk()
               orders=client.open_orders()
 
-              reported_symbols={"NEARUSDT","CLUSDT","WLDUSDT","REUSDT","UITUSDT","VIRTUALUSDT"}
+              reported_symbols={"NEARUSDT","CLUSDT","WLDUSDT","REUSDT","LITUSDT","POLUSDT","UITUSDT","VIRTUALUSDT"}
               managed_state=raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"),dict) else {}
               reported_positions=[]
               for pos in positions if isinstance(positions,list) else []:
@@ -193,16 +193,48 @@ jobs:
                   except Exception:
                       entry=mark=0.0
                   move_pct=((mark-entry)/entry*100 if side=="LONG" else (entry-mark)/entry*100) if entry>0 and mark>0 else None
+                  override=(settings.pair_overrides.get(symbol,{}) if isinstance(settings.pair_overrides,dict) else {})
+                  tp_ratio=float(
+                      override.get(
+                          "shortTakeProfitValue" if side=="SHORT" else "longTakeProfitValue",
+                          override.get(
+                              "takeProfit",
+                              settings.short_take_profit_value if side=="SHORT" else settings.long_take_profit_value,
+                          ),
+                      )
+                  )
+                  tp_enabled=(
+                      settings.take_profit_mode!="OFF"
+                      and not settings.profit_lock_ladder_enabled
+                      and bool(override.get("takeProfitEnabled",True))
+                  )
+                  tp_target=(entry*(1-tp_ratio) if side=="SHORT" else entry*(1+tp_ratio)) if entry>0 else None
+                  tp_due=bool(tp_enabled and entry>0 and mark>0 and (mark<=tp_target if side=="SHORT" else mark>=tp_target))
+                  attributions=[
+                      a for a in (raw.get("orderAttributions") or [])
+                      if isinstance(a,dict)
+                      and str(a.get("symbol") or "").upper()==symbol
+                      and str(a.get("side") or "").upper()==side
+                  ]
+                  opens=[a for a in attributions if str(a.get("action") or "").upper() in {"INITIAL_OPEN_LEG","OPEN_LEG","ADD_DCA"}]
+                  closes=[a for a in attributions if str(a.get("action") or "").upper() in {"TAKE_PROFIT_CLOSE","FULL_TP","PARTIAL_TP","CLOSE"}]
                   reported_positions.append({
                       "symbol":symbol,
                       "side":side,
                       "priceMovePct":round(move_pct,4) if move_pct is not None else None,
+                      "tpPercent":round(tp_ratio*100,4),
+                      "tpEnabled":bool(tp_enabled),
+                      "tpDueNow":tp_due,
+                      "tpTarget":round(tp_target,10) if tp_target is not None else None,
                       "strategy2Managed":bool(st),
                       "botManaged":bool(st.get("botManaged")) if st else False,
                       "asymmetricHedge":bool(st.get("asymmetricHedge")) if st else False,
                       "pairedShortPending":bool(st.get("pairedShortPending")) if st else False,
                       "originZone":st.get("originZone") if st else None,
                       "soldierIdPresent":bool(st.get("soldierId")) if st else False,
+                      "attributedOpenCount":len(opens),
+                      "attributedCloseCount":len(closes),
+                      "latestAttributedAction":str(attributions[-1].get("action") or "") if attributions else None,
                   })
               reported_positions.sort(key=lambda x:(x["symbol"],x["side"]))
 
