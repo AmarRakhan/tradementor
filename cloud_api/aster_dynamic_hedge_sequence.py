@@ -235,6 +235,35 @@ def run_dynamic_hedge_sequence(
     current_positions = positions
     current_orders = open_orders
 
+    # A restart, manual reconciliation completion, or previous confirmed hedge
+    # action may legitimately leave Dynamic Hedge in ADOPTING with no pending
+    # exchange intent.  Do not deadlock Strategy 2 in that durable state.
+    # Re-activate only after two identical exchange snapshots plus the existing
+    # independent margin/risk verification.  Manual/uncertain locks still win.
+    stored = _control_data(control_ref)
+    if (
+        bool(stored.get("enabled", False))
+        and str(stored.get("ownershipState", "ADOPTING")).upper() == "ADOPTING"
+        and not (stored.get("pendingIntent") if isinstance(stored.get("pendingIntent"), dict) else {})
+    ):
+        adopted = _reactivate_after_confirmed_action(control_ref, client)
+        if adopted is None:
+            return _finish(
+                {
+                    "handled": True,
+                    "status": "waiting",
+                    "action": "HOLD",
+                    "reason": "INITIAL_ADOPTION_NOT_STABLE",
+                },
+                total_orders=0,
+                trace=[],
+                started=started,
+                monotonic_fn=monotonic_fn,
+            )
+        current_account = adopted["account"]
+        current_positions = adopted["positions"]
+        current_orders = adopted["openOrders"]
+
     while True:
         # Finite worker runtime only: this does not cap action count.  The next
         # scheduler invocation continues immediately from exchange truth.

@@ -193,3 +193,77 @@ def test_dry_run_never_loops_without_real_exchange_mutation(monkeypatch):
     assert len(calls) == 1
     assert calls[0]["order_budget"] is None
     assert out["oneOrderPerTick"] is False
+
+
+def test_sequence_reactivates_clean_adopting_state_before_strategy_scan(monkeypatch):
+    ref = FakeRef({"enabled": True, "ownershipState": "ADOPTING", "pendingIntent": {}})
+    client = FakeClient()
+    calls = []
+
+    def stable_overlay(**kwargs):
+        calls.append(kwargs)
+        assert ref.data["ownershipState"] == "DYNAMIC_HEDGE_ACTIVE"
+        return {
+            "handled": True,
+            "ordersSent": 0,
+            "status": "waiting",
+            "action": "HOLD",
+            "reason": "HEDGE_STABLE",
+            "safetyStatus": "VEILIG",
+        }
+
+    monkeypatch.setattr(sequence, "run_dynamic_hedge_overlay", stable_overlay)
+    out = sequence.run_dynamic_hedge_sequence(
+        client=client,
+        control_ref=ref,
+        settings=object(),
+        uid="u",
+        account=client.account_information(),
+        positions=client.position_risk(),
+        open_orders=[],
+        timestamp_ms=1,
+    )
+
+    assert out["reason"] == "HEDGE_STABLE"
+    assert out["ordersSent"] == 0
+    assert len(calls) == 1
+    assert ref.data["ownershipState"] == "DYNAMIC_HEDGE_ACTIVE"
+    assert ref.data["stableReads"] == 2
+
+
+def test_sequence_keeps_adopting_fail_closed_when_exchange_truth_is_unstable(monkeypatch):
+    ref = FakeRef({"enabled": True, "ownershipState": "ADOPTING", "pendingIntent": {}})
+    client = FakeClient()
+    calls = []
+
+    def should_not_run(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("overlay must not run before stable adoption")
+
+    reads = {"count": 0}
+    original = client.position_risk
+
+    def unstable_rows():
+        rows = original()
+        reads["count"] += 1
+        if reads["count"] % 2 == 0:
+            rows[1]["positionAmt"] -= 0.5
+        return rows
+
+    client.position_risk = unstable_rows
+    monkeypatch.setattr(sequence, "run_dynamic_hedge_overlay", should_not_run)
+    out = sequence.run_dynamic_hedge_sequence(
+        client=client,
+        control_ref=ref,
+        settings=object(),
+        uid="u",
+        account=client.account_information(),
+        positions=deepcopy(client.rows),
+        open_orders=[],
+        timestamp_ms=1,
+    )
+
+    assert out["reason"] == "INITIAL_ADOPTION_NOT_STABLE"
+    assert out["ordersSent"] == 0
+    assert calls == []
+    assert ref.data["ownershipState"] == "ADOPTING"
