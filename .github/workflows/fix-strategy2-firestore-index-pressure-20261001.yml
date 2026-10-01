@@ -21,6 +21,7 @@ env:
   COLLECTION_GROUP: asterStrategy2
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  INDEX_SERVICE_ACCOUNT: 604335232956-compute@developer.gserviceaccount.com
 
 jobs:
   exempt-large-runtime-fields:
@@ -58,15 +59,17 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Capture existing field index configuration
+      - name: Verify existing runtime identity can manage only the required field metadata
         shell: bash
         run: |
           set -euo pipefail
+          gcloud auth print-access-token --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" >/dev/null
           for FIELD in orderAttributions entryCandidateCooldowns; do
             gcloud firestore indexes fields describe "$FIELD" \
               --project "$GCP_PROJECT_ID" \
               --database "$DATABASE_ID" \
               --collection-group "$COLLECTION_GROUP" \
+              --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" \
               --format=json > "$RUNNER_TEMP/$FIELD-before.json" || echo '{}' > "$RUNNER_TEMP/$FIELD-before.json"
           done
 
@@ -80,6 +83,7 @@ jobs:
               --database "$DATABASE_ID" \
               --collection-group "$COLLECTION_GROUP" \
               --disable-indexes \
+              --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" \
               --quiet
           done
 
@@ -93,6 +97,7 @@ jobs:
               --project "$GCP_PROJECT_ID" \
               --database "$DATABASE_ID" \
               --collection-group "$COLLECTION_GROUP" \
+              --impersonate-service-account="$INDEX_SERVICE_ACCOUNT" \
               --format=json > "$OUT"
             python - "$OUT" "$FIELD" <<'PY'
           import json,sys
