@@ -315,9 +315,6 @@ def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price:
     if dynamic_max - dynamic_min > 24:
         dynamic_min = estimated_index - 4
         dynamic_max = estimated_index + 4
-    dynamic_min = max(-12, dynamic_min)
-    dynamic_max = min(12, dynamic_max)
-
     by_index = {row["index"]: row["center"] for row in observed}
     centers = []
     for zone_index in range(dynamic_min, dynamic_max + 1):
