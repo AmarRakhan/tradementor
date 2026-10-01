@@ -34,6 +34,7 @@ export const MOBILE_NAVIGATION_ORDER = [
 export const NAVIGATION_PREFERENCES_EVENT = "tradementor:navigation-visibility-change";
 
 const LEGACY_HYPERLIQUID_KEY = "tradementor.navigation.hyperliquid.visible";
+const LEGACY_HYPERLIQUID_OWNER_KEY = "tradementor.navigation.hyperliquid.visible.owner.v2";
 const STORAGE_PREFIX = "tradementor.navigation.visible.v2.";
 
 function isBoolean(value: unknown): value is boolean {
@@ -72,10 +73,13 @@ export function loadNavigationPreferences(uid?: string | null): NavigationPrefer
   const fallback = { ...DEFAULT_NAVIGATION_PREFERENCES };
   try {
     const legacyHyperliquid = window.localStorage.getItem(LEGACY_HYPERLIQUID_KEY);
-    if (legacyHyperliquid === "false") fallback.hyperliquid = false;
-    else if (legacyHyperliquid === "true") fallback.hyperliquid = true;
+    if (uid && (legacyHyperliquid === "false" || legacyHyperliquid === "true")) {
+      const owner = window.localStorage.getItem(LEGACY_HYPERLIQUID_OWNER_KEY);
+      if (!owner) window.localStorage.setItem(LEGACY_HYPERLIQUID_OWNER_KEY, uid);
+      if (!owner || owner === uid) fallback.hyperliquid = legacyHyperliquid === "true";
+    }
   } catch {
-    // Legacy preference is best-effort only.
+    // Legacy preference is best-effort only and may only be claimed by one account.
   }
   return fallback;
 }
@@ -85,8 +89,12 @@ export function saveNavigationPreferences(uid: string | null | undefined, value:
   const normalized = normalizeNavigationPreferences(value);
   try {
     if (uid) window.localStorage.setItem(storageKey(uid), JSON.stringify(normalized));
-    // Keep the pre-v2 Hyperliquid preference compatible during the migration.
-    window.localStorage.setItem(LEGACY_HYPERLIQUID_KEY, String(normalized.hyperliquid));
+    // Keep the pre-v2 Hyperliquid preference compatible without leaking it between accounts.
+    const legacyOwner = window.localStorage.getItem(LEGACY_HYPERLIQUID_OWNER_KEY);
+    if (!legacyOwner && uid) window.localStorage.setItem(LEGACY_HYPERLIQUID_OWNER_KEY, uid);
+    if (!uid || !legacyOwner || legacyOwner === uid) {
+      window.localStorage.setItem(LEGACY_HYPERLIQUID_KEY, String(normalized.hyperliquid));
+    }
   } catch {
     // Cloud remains the durable source of truth when localStorage is unavailable.
   }
