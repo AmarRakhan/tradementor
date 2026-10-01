@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import pytest
 
-from portfolio_growth import (PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, chain_linked_return_percent, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, historical_day_windows, is_exposure_order, select_day_start_snapshot, utc_ms)
+from portfolio_growth import (PORTFOLIO_DAILY_GROWTH_SCHEMA_VERSION, PORTFOLIO_GROWTH_START_DATE, average_daily_return, chain_linked_return_percent, daily_return_percentage, estimate_close_value, external_cashflow_breakdown, external_cashflow_since, historical_day_windows, is_exposure_order, performance_ledger_breakdown, select_day_start_snapshot, utc_ms)
 
 
 def position(notional=100, side="LONG"):
@@ -176,3 +176,34 @@ def test_build439_historical_windows_default_to_all_reliable_days():
     assert len(windows) == 20
     assert windows[0]["date"] == "2026-09-01"
     assert windows[-1]["date"] == "2026-09-20"
+
+
+def test_build482_performance_ledger_breakdown_is_audit_only_and_excludes_cashflow():
+    rows=[
+        {"time":1000,"incomeType":"TRANSFER","income":"100"},
+        {"time":1010,"incomeType":"REALIZED_PNL","income":"14.25"},
+        {"time":1020,"incomeType":"REALIZED_PNL","income":"-2.00"},
+        {"time":1030,"incomeType":"FUNDING_FEE","income":"-0.55"},
+        {"time":1040,"incomeType":"COMMISSION","income":"-0.30"},
+        {"time":1050,"incomeType":"INSURANCE_CLEAR","income":"-7.50"},
+        {"time":1060,"incomeType":"REBATE","income":"0.10"},
+    ]
+    audit=performance_ledger_breakdown(rows,1000)
+    assert audit["realizedPnlUsd"] == pytest.approx(12.25)
+    assert audit["fundingUsd"] == pytest.approx(-0.55)
+    assert audit["feesUsd"] == pytest.approx(-0.30)
+    assert audit["liquidationUsd"] == pytest.approx(-7.50)
+    assert audit["otherTradingAdjustmentsUsd"] == pytest.approx(0.10)
+    assert audit["knownPerformanceLedgerUsd"] == pytest.approx(4.0)
+    assert audit["realizedEventCount"] == 2
+    assert audit["positiveRealizedEventCount"] == 1
+    assert audit["negativeRealizedEventCount"] == 1
+    assert "TRANSFER" not in audit["ledgerTypes"]
+
+
+def test_build482_performance_ledger_respects_measurement_start():
+    rows=[
+        {"time":999,"incomeType":"REALIZED_PNL","income":"100"},
+        {"time":1000,"incomeType":"REALIZED_PNL","income":"3"},
+    ]
+    assert performance_ledger_breakdown(rows,1000)["knownPerformanceLedgerUsd"] == pytest.approx(3)

@@ -226,6 +226,67 @@ def external_cashflow_breakdown(rows: Iterable[dict[str, Any]], since_ms: int) -
     }
 
 
+def performance_ledger_breakdown(rows: Iterable[dict[str, Any]], since_ms: int = 0) -> dict[str, Any]:
+    """Break down non-cashflow Aster income rows without changing return math.
+
+    This is audit metadata only. Daily return remains equity-based and cashflow
+    adjusted; these ledger buckets explain the known components underneath it.
+    """
+    realized = 0.0
+    funding = 0.0
+    fees = 0.0
+    liquidation = 0.0
+    other = 0.0
+    realized_events = 0
+    positive_realized_events = 0
+    negative_realized_events = 0
+    types: set[str] = set()
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            when = int(_finite(row.get("time", row.get("timestamp", 0))))
+            amount = _finite(row.get("income", row.get("amount", 0)))
+        except ValueError:
+            continue
+        if when < int(since_ms):
+            continue
+        ledger_type = str(row.get("incomeType", "")).upper().strip()
+        if not ledger_type or ledger_type in EXTERNAL_CASHFLOW_TYPES:
+            continue
+        types.add(ledger_type)
+        if ledger_type == "REALIZED_PNL":
+            realized += amount
+            realized_events += 1
+            if amount > 0:
+                positive_realized_events += 1
+            elif amount < 0:
+                negative_realized_events += 1
+        elif ledger_type in {"FUNDING_FEE", "FUNDING"}:
+            funding += amount
+        elif ledger_type in {"COMMISSION", "TRADING_FEE"}:
+            fees += amount
+        elif ledger_type in {"INSURANCE_CLEAR", "LIQUIDATION_CLEAR", "ADL"}:
+            liquidation += amount
+        else:
+            other += amount
+
+    known = realized + funding + fees + liquidation + other
+    return {
+        "realizedPnlUsd": realized,
+        "fundingUsd": funding,
+        "feesUsd": fees,
+        "liquidationUsd": liquidation,
+        "otherTradingAdjustmentsUsd": other,
+        "knownPerformanceLedgerUsd": known,
+        "realizedEventCount": realized_events,
+        "positiveRealizedEventCount": positive_realized_events,
+        "negativeRealizedEventCount": negative_realized_events,
+        "ledgerTypes": sorted(types),
+    }
+
+
 def chain_linked_return_percent(subperiod_returns_percent: Iterable[Any]) -> float:
     """Chain-link independently measured subperiod returns (TWR primitive)."""
     factor = 1.0

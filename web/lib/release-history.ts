@@ -26,6 +26,46 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-01",
+  title: "Rendement Overzicht 1.0 · auditbare dagperformance",
+  newItems: [
+    "Rendement vandaag en Gemiddeld per dag zijn volledig aanklikbaar en openen dezelfde nieuwe Rendement Overzicht-detailweergave.",
+    "De detailweergave heeft Per dag, Analyse, Gemiddeld en Uitleg met aflopende daghistorie, een intraday performancegrafiek en aanklikbare dagdetails.",
+    "De backend levert een read-only audit breakdown voor realized PnL, funding, fees, liquidatie/ADL, overige trading adjustments en externe cashflows.",
+  ],
+  problems: [
+    "De bestaande Snapshot-percentages waren zichtbaar, maar de gebruiker kon niet herleiden welke dagwaarden en componenten het getal vormden.",
+    "Gemiddeld per dag had geen zichtbare onderbouwing van meetperiode, gemeten dagen of de gebruikte rekenmethode.",
+  ],
+  causes: [
+    "De bestaande daggroei-endpoint berekende de juiste cashflow-gecorrigeerde cijfers, maar de Snapshot las alleen de twee eindpercentages uit.",
+    "Historische dagregels en ledgercomponenten waren nog niet als auditinterface aan de frontend ontsloten.",
+  ],
+  fixes: [
+    "De bestaande SAME_DAY_SNAPSHOT_NET_CASHFLOW_ADJUSTED-berekening blijft de source of truth; er is geen tweede rendement-engine toegevoegd.",
+    "Externe cashflows blijven geneutraliseerd terwijl REALIZED_PNL, funding, commission en insurance/liquidation-effecten in de performance zichtbaar blijven.",
+    "Dagdetails gebruiken opgeslagen betrouwbare dagresultaten en voegen alleen read-only ledgeruitleg toe; wanneer historisch unrealized PnL niet exact bewijsbaar is, wordt dit expliciet als equity-rest getoond.",
+    "De nieuwe detailpagina gebruikt een 3D flip-in/flip-out en behoudt de bestaande Portfolio Snapshot-state en scrollpositie.",
+  ],
+  now: [
+    "De gebruiker kan vanaf Rendement vandaag exact naar de daghistorie en opbouw doorklikken.",
+    "Gemiddeld per dag toont de meetperiode vanaf trackingstart, gemeten dagen en de exacte rekenkundige-gemiddelde methode van de backend.",
+    "Stortingen en opnames staan apart en worden niet als winst of verlies gepresenteerd.",
+  ],
+  technicalDetails: [
+    "Source of truth: cloud_api/main.py::_portfolio_daily_growth en cloud_api/portfolio_growth.py.",
+    "Nieuwe read-only detailroute: /v1/me/aster/portfolio-growth/daily-detail.",
+    "Frontend: web/components/portfolio-performance-detail.tsx, gekoppeld vanuit aster-portfolio-snapshot-enhancer.tsx.",
+    "Intraday grafiek hergebruikt cashflowAdjustedPortfolioSeries uit de bestaande Portfolio Koers-module.",
+    "Geen trading-, entry-, DCA-, hedge-, TP-, scanner- of order-submitlogica gewijzigd.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-481-snapshot-visual-polish",
+    version: "46",
+    build: "481",
+  releasedAt: "2026-10-01",
   title: "Portfolio Snapshot · Auto Hedge + Portfolio Cyclus visueel afgewerkt",
   newItems: [
     "Auto Hedge gebruikt een rustigere drie-regelige hiërarchie: label, duidelijke ACTIEF/UIT-status en een beter leesbare triggerregel.",
@@ -58,8 +98,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen trading-, hedge-, Portfolio TP-, opslag-, API-, state-management-, navigatie- of fliplogica gewijzigd.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
     id: "v46-build-480-portfolio-snapshot-controls",
     version: "46",
