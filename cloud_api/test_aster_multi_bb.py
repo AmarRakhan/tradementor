@@ -1145,3 +1145,67 @@ def test_entry_sizing_invariant_fails_closed_on_mismatched_planned_side_input():
                 "multiplier": 1.0,
             },
         )
+
+
+def test_attributed_orphan_bot_position_recovers_before_tp_evaluation(monkeypatch):
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"102","leverage":"50"}
+    raw={
+        "multiBbPositions":{},
+        "orderAttributions":[{
+            "strategyId":"aster-strategy-2","symbol":"AAAUSDT","side":"LONG",
+            "action":"OPEN_LEG","cycleId":"bot-cycle-1",
+        }],
+    }
+    monkeypatch.setattr(aster_multi_bb._core, "auto_hedge_symbol_managed", lambda **_k: False)
+    result=run_multi_bb_step(
+        client=Client(positions=[pos],prices={"AAAUSDT":102},leverage=50),
+        ref=Ref(),raw_state=raw,
+        settings=cfg(maximumPositions=1,longSlots=1,shortSlots=0,takeProfit=.015),
+        uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],
+        timestamp_ms=123456,dry_run=True,
+    )
+    assert any(a.get("kind")=="ATTRIBUTED_POSITION_STATE_RECOVERED" and a.get("symbol")=="AAAUSDT" for a in result["actions"])
+    assert any(a.get("kind")=="TP" and a.get("symbol")=="AAAUSDT" and a.get("side")=="LONG" for a in result["actions"])
+    assert not any(a.get("kind")=="DCA" and a.get("symbol")=="AAAUSDT" for a in result["actions"])
+
+
+def test_attributed_orphan_with_latest_close_is_not_re_adopted(monkeypatch):
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"102","leverage":"50"}
+    raw={
+        "multiBbPositions":{},
+        "orderAttributions":[
+            {"strategyId":"aster-strategy-2","symbol":"AAAUSDT","side":"LONG","action":"OPEN_LEG","cycleId":"old"},
+            {"strategyId":"aster-strategy-2","symbol":"AAAUSDT","side":"LONG","action":"TAKE_PROFIT_CLOSE","cycleId":"old"},
+        ],
+    }
+    monkeypatch.setattr(aster_multi_bb._core, "auto_hedge_symbol_managed", lambda **_k: False)
+    result=run_multi_bb_step(
+        client=Client(positions=[pos],prices={"AAAUSDT":102},leverage=50),
+        ref=Ref(),raw_state=raw,
+        settings=cfg(maximumPositions=1,longSlots=1,shortSlots=0,takeProfit=.015),
+        uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],
+        timestamp_ms=123456,dry_run=True,
+    )
+    assert not any(a.get("kind")=="ATTRIBUTED_POSITION_STATE_RECOVERED" for a in result["actions"])
+    assert not any(a.get("kind")=="TP" and a.get("symbol")=="AAAUSDT" for a in result["actions"])
+
+
+def test_attributed_orphan_auto_hedge_symbol_stays_protected(monkeypatch):
+    pos={"symbol":"AAAUSDT","positionSide":"LONG","positionAmt":"1","entryPrice":"100","markPrice":"102","leverage":"50"}
+    raw={
+        "multiBbPositions":{},
+        "orderAttributions":[{
+            "strategyId":"aster-strategy-2","symbol":"AAAUSDT","side":"LONG",
+            "action":"OPEN_LEG","cycleId":"bot-cycle-1",
+        }],
+    }
+    monkeypatch.setattr(aster_multi_bb._core, "auto_hedge_symbol_managed", lambda **_k: True)
+    result=run_multi_bb_step(
+        client=Client(positions=[pos],prices={"AAAUSDT":102},leverage=50),
+        ref=Ref(),raw_state=raw,
+        settings=cfg(maximumPositions=1,longSlots=1,shortSlots=0,takeProfit=.015),
+        uid="u",account={"availableBalance":"100"},positions=[pos],open_orders=[],
+        timestamp_ms=123456,dry_run=True,
+    )
+    assert any(a.get("kind")=="ATTRIBUTED_ORPHAN_PROTECTED" for a in result["actions"])
+    assert not any(a.get("kind")=="TP" and a.get("symbol")=="AAAUSDT" for a in result["actions"])
