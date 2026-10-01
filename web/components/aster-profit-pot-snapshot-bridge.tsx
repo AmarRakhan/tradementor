@@ -7,8 +7,8 @@ import { derivePortfolioCycleCard, type PortfolioCycleCardState } from "@/lib/po
 
 const PROFIT_POT_REFERENCE = "file_00000000f5ec8210bf3f2c300b972c25";
 const HOST_ID = "aster-profit-pot-snapshot-host";
-const CYCLE_REFERENCE_INACTIVE = "file_00000000bd588210a3ac396a4df67d6b";
-const CYCLE_REFERENCE_ACTIVE = "file_00000000bd588210a3ac396a4df67d6b";
+const CYCLE_REFERENCE_INACTIVE = "file_00000000ba448210b16f35eaf915a01f";
+const CYCLE_REFERENCE_ACTIVE = "file_00000000ba448210b16f35eaf915a01f";
 
 function existingProfitPotValue(): string {
   const rows = Array.from(document.querySelectorAll<HTMLElement>(".metric-strip .metric"));
