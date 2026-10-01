@@ -1,0 +1,59 @@
+name: Diagnose scheduler repair permissions 20261001
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/diagnose-scheduler-repair-permissions-20261001.yml"
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "209"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Test exact project IAM permissions read-only
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-access-token)"
+          cat > "$RUNNER_TEMP/request.json" <<'EOF'
+          {"permissions":["cloudscheduler.jobs.create","cloudscheduler.jobs.update","cloudscheduler.jobs.get","cloudscheduler.jobs.enable","cloudscheduler.jobs.pause","resourcemanager.projects.getIamPolicy","resourcemanager.projects.setIamPolicy","iam.serviceAccounts.actAs"]}
+          EOF
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/request.json" \
+            "https://cloudresourcemanager.googleapis.com/v1/projects/$GCP_PROJECT_ID:testIamPermissions" \
+            > "$RUNNER_TEMP/result.json"
+          python - "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/result.md" <<'PY'
+          import json,sys
+          granted=set(json.load(open(sys.argv[1],encoding="utf-8")).get("permissions",[]))
+          wanted=[
+            "cloudscheduler.jobs.create","cloudscheduler.jobs.update","cloudscheduler.jobs.get",
+            "cloudscheduler.jobs.enable","cloudscheduler.jobs.pause",
+            "resourcemanager.projects.getIamPolicy","resourcemanager.projects.setIamPolicy",
+            "iam.serviceAccounts.actAs",
+          ]
+          print("## Scheduler repair-permissies · read-only")
+          for item in wanted:
+              print(f"- {item}: **{'JA' if item in granted else 'NEE'}**")
+          print("\n_Read-only; geen IAM- of Scheduler-mutatie uitgevoerd._")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/result.md"
