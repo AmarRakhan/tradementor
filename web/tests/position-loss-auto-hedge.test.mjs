@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "479"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "480"/);
 });
 
 test("Tradecentrum shows Auto Hedge status on every matching coin row without the redundant AH prefix", async () => {
@@ -94,14 +94,24 @@ test("Auto Hedge copy is coin-quantity based and exposes no fake live pair data"
 });
 
 
-test("Build 432 Snapshot Auto Hedge tile shows status only, not the configured dollar trigger",async()=>{
-  const component=await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx",import.meta.url),"utf8");
+test("Build 480 Snapshot Auto Hedge front is status-only and shows the persisted trigger",async()=>{
+  const [component,css]=await Promise.all([
+    readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../app/position-loss-auto-hedge.css",import.meta.url),"utf8"),
+  ]);
   const tile=component.slice(component.indexOf("const tile ="),component.indexOf("const screen ="));
+  assert.match(component,/file_00000000bd588210a3ac396a4df67d6b/);
+  assert.match(css,/file_00000000bd588210a3ac396a4df67d6b/);
+  assert.match(component,/const tileThreshold = Number\(state\.thresholdUsd\)/);
   assert.match(tile,/AUTO HEDGE/);
   assert.match(tile,/tileStatus/);
-  assert.doesNotMatch(tile,/vanaf -/);
-  assert.doesNotMatch(tile,/thresholdMoney/);
-  assert.match(tile,/Auto Hedge \$\{tileStatus\}/);
+  assert.match(tile,/bij −US\$ \{tileThresholdLabel\}/);
+  assert.doesNotMatch(tile,/<Toggle/);
+  assert.doesNotMatch(tile,/SNAPSHOT_TILE/);
+  assert.match(tile,/onDoubleClick=\{openFromCard\}/);
+  assert.match(tile,/onTouchEnd=\{onTouchEnd\}/);
+  assert.match(component,/AUTO_HEDGE_SCREEN/);
+  assert.match(component,/Auto Hedge hoofdschakelaar/);
 });
 
 
