@@ -72,7 +72,7 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_equity_sample as merge_portfolio_equity_sample, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -6111,6 +6111,93 @@ def _read_portfolio_chart_candles(user: dict[str, Any], timeframe: str, limit: i
     return rows
 
 
+def _persist_active_trades_chart_sample(
+    user: dict[str, Any], *, basket: dict[str, Any], source_at_ms: int
+) -> float | None:
+    """Persist a read-only continuity-adjusted active-position basket sample.
+
+    The state document exists only for chart continuity. It never feeds an
+    order, strategy setting, position owner or exchange mutation.
+    """
+    if source_at_ms <= 0:
+        return None
+    root = user_reference(user)
+    state_ref = root.collection("asterActiveTradesChartState").document("current")
+    now = datetime.now(timezone.utc)
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def apply(txn):
+        state_snapshot = state_ref.get(transaction=txn)
+        previous = (state_snapshot.to_dict() or {}) if state_snapshot.exists else {}
+        previous_at = int(safe_float(previous.get("sourceAtMs")))
+        if previous_at > 0 and source_at_ms < previous_at:
+            return safe_float(previous.get("value"))
+        if previous_at == source_at_ms and previous:
+            adjusted = safe_float(previous.get("value"))
+        else:
+            adjusted = active_trades_continuity_value(previous, basket)
+        state_value = {
+            "value": adjusted,
+            "sourceAtMs": source_at_ms,
+            "positions": basket.get("positions", []),
+            "openPnl": safe_float(basket.get("openPnl")),
+            "updatedAt": now,
+            "source": "ASTER_API_READ_ONLY",
+        }
+        txn.set(state_ref, state_value, merge=True)
+        for timeframe in PORTFOLIO_CHART_TIMEFRAME_MS:
+            collection = active_trades_chart_collection(timeframe)
+            interval = PORTFOLIO_CHART_TIMEFRAME_MS[timeframe]
+            bucket_ms = source_at_ms // interval * interval
+            reference = root.collection(collection).document(str(bucket_ms))
+            candle_snapshot = reference.get(transaction=txn)
+            existing = (candle_snapshot.to_dict() or {}) if candle_snapshot.exists else {}
+            merged = merge_active_trades_sample(
+                existing, value=adjusted, source_at_ms=source_at_ms, timeframe=timeframe
+            )
+            txn.set(reference, {**merged, "updatedAt": now}, merge=True)
+        return adjusted
+
+    return apply(transaction)
+
+
+def _read_active_trades_chart_candles(
+    user: dict[str, Any], timeframe: str, limit: int | None
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    collection = user_reference(user).collection(active_trades_chart_collection(timeframe))
+    query = collection.order_by("bucketMs", direction=firestore.Query.DESCENDING)
+    if limit is not None:
+        query = query.limit(max(1, int(limit)))
+    for document in query.stream():
+        candle = public_active_trades_candle(document.to_dict() or {})
+        if candle:
+            rows.append(candle)
+    rows.sort(key=lambda row: int(row["atMs"]))
+    return rows
+
+
+def _active_trades_day_summary(user: dict[str, Any], current_value: float | None) -> dict[str, Any]:
+    now_local = datetime.now(ZoneInfo("Europe/Amsterdam"))
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_ms = int(start_local.astimezone(timezone.utc).timestamp() * 1000)
+    rows = _read_active_trades_chart_candles(user, "1m", 1500)
+    today = [row for row in rows if int(safe_float(row.get("atMs"))) >= start_ms]
+    if not today:
+        return {"dayHigh": current_value, "dayLow": current_value, "recoveryPercent": 0.0}
+    day_high = max(safe_float(row.get("high")) for row in today)
+    day_low = min(safe_float(row.get("low")) for row in today)
+    latest = current_value if current_value is not None else safe_float(today[-1].get("close"))
+    if day_low < 0:
+        recovery = max(0.0, (latest - day_low) / abs(day_low) * 100.0)
+    elif abs(day_low) > 1e-12:
+        recovery = max(0.0, (latest - day_low) / abs(day_low) * 100.0)
+    else:
+        recovery = 0.0
+    return {"dayHigh": day_high, "dayLow": day_low, "recoveryPercent": recovery}
+
+
 def _portfolio_chart_cashflows(user: dict[str, Any], client: AsterV3Client | None = None) -> list[dict[str, Any]]:
     uid = str(user["uid"])
     now = time.monotonic()
@@ -6184,6 +6271,78 @@ def aster_portfolio_chart_events(
         "readOnly": True,
         "ordersSent": 0,
         "source": "confirmed Strategy-2 audit events; no exchange polling",
+    }
+
+
+@app.get("/v1/me/aster/portfolio-chart/active-trades")
+def aster_portfolio_chart_active_trades(
+    timeframe: str = Query(default="15m", pattern=r"^(1m|5m|15m|1u|4u|24u)$"),
+    limit: int = Query(default=320, ge=30, le=600),
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Read-only OHLC index of the user's exchange-confirmed open Aster positions."""
+    uid = str(user["uid"])
+    automation_ref = aster_automation_reference(uid)
+    automation = automation_ref.get().to_dict() or {}
+    snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
+    now_utc = datetime.now(timezone.utc)
+    now_ms = int(now_utc.timestamp() * 1000)
+    captured_ms = _portfolio_chart_timestamp_ms(snapshot.get("capturedAt"))
+
+    # Reuse the canonical Aster account snapshot. Only refresh stale evidence,
+    # with live_authorized=False, so this analytics route can never place orders.
+    if captured_ms <= 0 or now_ms - captured_ms > 15_000:
+        try:
+            secret = load_aster_secret(user)
+            client = AsterV3Client(
+                signer_address=secret.signer_address,
+                sign_message=local_eip712_signer(secret),
+                live_authorized=False,
+            )
+            current = aster_dashboard_snapshot(client.account_information(), client.position_risk())
+            snapshot = {**snapshot, **current, "capturedAt": now_utc}
+            captured_ms = now_ms
+            automation_ref.set({"accountSnapshot": snapshot}, merge=True)
+        except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, HTTPException, ValueError):
+            pass
+
+    basket = active_trades_snapshot(snapshot)
+    snapshot_fresh = bool(captured_ms > 0 and 0 <= now_ms - captured_ms <= 120_000)
+    adjusted_value: float | None = None
+    if snapshot_fresh:
+        adjusted_value = _persist_active_trades_chart_sample(
+            user, basket=basket, source_at_ms=captured_ms
+        )
+    candles = _read_active_trades_chart_candles(user, timeframe, limit)
+
+    with _cache_lock:
+        history_cache = _aster_closed_trades_cache.get(uid)
+    recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
+    markers = portfolio_chart_trade_markers(recent_activity, timeframe)
+    day = _active_trades_day_summary(user, adjusted_value)
+    return {
+        "timeframe": timeframe,
+        "candles": candles,
+        "markers": markers,
+        "currentIndexValue": adjusted_value,
+        "currentOpenPnl": safe_float(basket.get("openPnl")),
+        "currentPnlPercent": safe_float(basket.get("pnlPercent")),
+        "longPnl": safe_float(basket.get("longPnl")),
+        "shortPnl": safe_float(basket.get("shortPnl")),
+        "longSharePercent": safe_float(basket.get("longSharePercent")),
+        "shortSharePercent": safe_float(basket.get("shortSharePercent")),
+        "activeTrades": int(safe_float(basket.get("activeTrades"))),
+        "longTrades": int(safe_float(basket.get("longTrades"))),
+        "shortTrades": int(safe_float(basket.get("shortTrades"))),
+        "totalNotional": safe_float(basket.get("totalNotional")),
+        **day,
+        "snapshotAtMs": captured_ms if captured_ms > 0 else None,
+        "live": snapshot_fresh,
+        "persistent": True,
+        "entryExitAdjusted": True,
+        "readOnly": True,
+        "ordersSent": 0,
+        "source": "Aster exchange-confirmed open positions + confirmed fills",
     }
 
 
