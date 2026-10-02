@@ -1164,7 +1164,7 @@ export function PortfolioKoersChart({
     <header className="portfolio-koers-header portfolio-koers-ui41-header">
       <div className="portfolio-koers-ui41-top">
         <div className="portfolio-koers-heading">
-          <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={payload.live?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{payload.live?"Live":"Sync"}</span></div>
+          <div className="portfolio-koers-title-line"><h2>Portfolio Koers</h2><span className={(viewMode==="active"?activePayload.live:payload.live)?"portfolio-koers-live is-live":"portfolio-koers-live"}><i/>{(viewMode==="active"?activePayload.live:payload.live)?"Live":"Sync"}</span></div>
           <small>{viewMode==="active"?"Actieve Trades":"Accountwaarde"}</small>
         </div>
         <div className="portfolio-koers-ui41-actions">
