@@ -95,6 +95,16 @@ def _account_row(uid: str, raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def collect_accounts(project: str) -> list[dict[str, Any]]:
+    client = firestore.Client(project=project)
+    accounts = [
+        _account_row(snapshot.id, snapshot.to_dict() or {})
+        for snapshot in client.collection("asterStrategy2").where("monitor", "==", True).stream()
+    ]
+    accounts.sort(key=lambda row: row["accountRef"])
+    return accounts
+
+
 def build_snapshot(
     *,
     project: str,
@@ -103,12 +113,9 @@ def build_snapshot(
     ticks: list[dict[str, Any]],
     errors: list[dict[str, Any]],
     now_ms: int,
+    accounts_override: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    client = firestore.Client(project=project)
-    accounts = [
-        _account_row(snapshot.id, snapshot.to_dict() or {})
-        for snapshot in client.collection("asterStrategy2").where("monitor", "==", True).stream()
-    ]
+    accounts = list(accounts_override) if accounts_override is not None else collect_accounts(project)
     accounts.sort(key=lambda row: row["accountRef"])
     background_cpu, min_instances = _service_runtime(service)
     return {
@@ -126,19 +133,42 @@ def build_snapshot(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect a sanitized read-only production runtime snapshot.")
     parser.add_argument("--project", required=True)
-    parser.add_argument("--service-json", required=True)
-    parser.add_argument("--health-json", required=True)
-    parser.add_argument("--ticks-json", required=True)
-    parser.add_argument("--errors-json", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--service-json")
+    parser.add_argument("--health-json")
+    parser.add_argument("--ticks-json")
+    parser.add_argument("--errors-json")
+    parser.add_argument("--output")
+    parser.add_argument("--accounts-json")
+    parser.add_argument("--accounts-only", action="store_true")
     parser.add_argument("--now-ms", type=int)
     args = parser.parse_args()
+
+    if args.accounts_only:
+        accounts = collect_accounts(args.project)
+        print("RUNTIME_CONTRACT_ACCOUNTS " + json.dumps(accounts, sort_keys=True, separators=(",", ":")))
+        return 0
+
+    required = {
+        "--service-json": args.service_json,
+        "--health-json": args.health_json,
+        "--ticks-json": args.ticks_json,
+        "--errors-json": args.errors_json,
+        "--output": args.output,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        parser.error("missing required arguments outside --accounts-only: " + ", ".join(missing))
 
     now_ms = args.now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
     service = json.loads(Path(args.service_json).read_text(encoding="utf-8"))
     health = json.loads(Path(args.health_json).read_text(encoding="utf-8"))
     ticks = json.loads(Path(args.ticks_json).read_text(encoding="utf-8"))
     errors = json.loads(Path(args.errors_json).read_text(encoding="utf-8"))
+    accounts_override = None
+    if args.accounts_json:
+        accounts_override = json.loads(Path(args.accounts_json).read_text(encoding="utf-8"))
+        if not isinstance(accounts_override, list):
+            raise SystemExit("--accounts-json must contain a JSON array")
     payload = build_snapshot(
         project=args.project,
         service=service,
@@ -146,6 +176,7 @@ def main() -> int:
         ticks=ticks,
         errors=errors,
         now_ms=now_ms,
+        accounts_override=accounts_override,
     )
     Path(args.output).write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({
