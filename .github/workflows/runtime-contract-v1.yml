@@ -1,0 +1,62 @@
+name: Runtime Contract V1
+
+on:
+  pull_request:
+    paths:
+      - "cloud_api/**"
+      - "web/components/aster-bot-configurator-v2.tsx"
+      - "web/components/aster-bot-configurator-v3.tsx"
+      - "web/lib/aster-strategy2-settings-guard.ts"
+      - "web/lib/portfolio-zone-advisor.mjs"
+      - ".github/workflows/runtime-contract-v1.yml"
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "cloud_api/**"
+      - "web/components/aster-bot-configurator-v2.tsx"
+      - "web/components/aster-bot-configurator-v3.tsx"
+      - "web/lib/aster-strategy2-settings-guard.ts"
+      - "web/lib/portfolio-zone-advisor.mjs"
+      - ".github/workflows/runtime-contract-v1.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  golden-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend test dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run Runtime Contract V1 golden baseline
+        working-directory: cloud_api
+        run: >-
+          pytest -q
+          test_runtime_contract_release_safety_v1.py
+          test_aster_zone_soldiers_integration.py
+          test_aster_bollinger_entry_filter_timeframes.py
+          test_aster_openable_capacity_guard.py
+          test_aster_portfolio_tp_v2.py
+          test_aster_dynamic_hedge_sequence.py
+          test_aster_strategy2_scheduler_deploy.py
+          test_production_deploy_safety.py
+
+      - name: Assert tests are isolated from production mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          test -z "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}"
+          test -z "${ASTER_PRIVATE_KEY:-}"
+          test -z "${ASTER_API_KEY:-}"
