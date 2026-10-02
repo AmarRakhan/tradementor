@@ -78,7 +78,7 @@ test("Build 486 keeps Active Trades visually aligned with the existing chart", a
   assert.ok(css.includes("Build 485 · Portfolio Koers · Actieve Trades 1.0"));
   assert.ok(css.includes(".portfolio-koers-active-summary"));
   assert.ok(css.includes(".portfolio-koers-active-summary-grid"));
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "486"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "487"/);
 });
 
 test("Build 486 does not auto-zoom sparse Active Trades candles", async () => {

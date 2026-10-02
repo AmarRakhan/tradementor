@@ -2206,7 +2206,18 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         if should_persist:
             try:
                 runtime_equity=multi_bb_exchange_equity(account)
-                if runtime_equity>0:_persist_portfolio_chart_sample({"uid":uid},equity=runtime_equity,source_at_ms=source_at_ms)
+                if runtime_equity>0:
+                    _persist_portfolio_chart_sample({"uid":uid},equity=runtime_equity,source_at_ms=source_at_ms)
+
+                # Build 487: Active Trades history is a server-side analytics stream,
+                # not a browser-side side effect. Persist the exchange-confirmed open-
+                # position basket from this same scheduler snapshot once per minute so
+                # 1m/5m/15m history keeps growing while the app is closed or another
+                # Portfolio Koers tab is selected.
+                active_basket=active_trades_snapshot({"positions":positions})
+                _persist_active_trades_chart_sample(
+                    {"uid":uid},basket=active_basket,source_at_ms=source_at_ms
+                )
             except (google_exceptions.GoogleAPICallError,TypeError,ValueError):
                 with _cache_lock:
                     if _aster_portfolio_chart_runtime_bucket_cache.get(uid)==minute_bucket:

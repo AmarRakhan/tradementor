@@ -25,6 +25,39 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
+  releasedAt: "2026-10-03",
+  title: "Actieve Trades 1.2 · server-side historie",
+  newItems: [
+    "De Active Trades-index wordt voortaan iedere scheduler-minuut server-side opgeslagen voor gemonitorde Strategy-2 accounts.",
+    "1m, 5m, 15m, 1u, 4u en 24u candles groeien door terwijl de app dicht is of een ander tabblad actief is.",
+  ],
+  problems: [
+    "De Active Trades-endpoint bouwde historie alleen op wanneer de gebruiker het tabblad Actieve Trades daadwerkelijk open had.",
+    "Daardoor konden 1m en 15m vrijwel dezelfde paar candles tonen, ondanks langdurig openstaande trades.",
+  ],
+  causes: [
+    "De persist-call zat alleen in de read-only Active Trades API-route en niet in de bestaande periodieke Aster runtime.",
+  ],
+  fixes: [
+    "De bestaande minute scheduler gebruikt nu dezelfde exchange-confirmed position snapshot om ook de Active Trades basket één keer per minuut te persisteren.",
+    "De bestaande continuity/rebase-logica blijft ongewijzigd, zodat entry, exit, DCA en partial close geen kunstmatige indexsprong veroorzaken.",
+  ],
+  now: [
+    "Vanaf Build 487 groeit 1m-historie automatisch server-side en is deze niet meer afhankelijk van browsergebruik.",
+    "Bestaande ontbrekende minuten van vóór Build 487 worden niet verzonnen of kunstmatig aangevuld.",
+  ],
+  technicalDetails: [
+    "Serverpad: _run_aster_strategy2_tick → active_trades_snapshot → _persist_active_trades_chart_sample.",
+    "De sampler draait alleen op de bestaande niet-realtime scheduler-tick en gebruikt dezelfde minute-bucket deduplicatie als Portfolio Koers.",
+    "Geen wijziging aan entry-, DCA-, TP-, hedge-, scanner-, settings- of order-submitlogica.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  version: WEBAPP_VERSION,
+  build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-02",
   title: "Portfolio Koers · Actieve Trades 1.1 · chartstijl gelijkgetrokken",
   newItems: [
@@ -51,8 +84,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen backend-, Firestore-, exchange- of gebruikersinstellingenmutatie.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,

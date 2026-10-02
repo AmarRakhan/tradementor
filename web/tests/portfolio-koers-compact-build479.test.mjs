@@ -17,7 +17,7 @@ test("Build 479 keeps Portfolio Koers compact and lets visible market data drive
     readFile(new URL("../lib/app-version.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "486"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "487"/);
   assert.match(component, /scaleMargins:\{top:\.06,bottom:\.06\}/);
   assert.equal(component.includes("lowGuide"), false);
   assert.equal(component.includes("highGuide"), false);
