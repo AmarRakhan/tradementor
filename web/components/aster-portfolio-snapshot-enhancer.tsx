@@ -220,6 +220,14 @@ function firstString(records: Record<string, unknown>[], keys: string[]) {
   return "";
 }
 
+function timestampMs(value: unknown) {
+  const numeric = optionalNumber(value);
+  if (numeric !== null) return numeric > 0 && numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function money(value: number | null, fallback = "—") {
   if (value === null || !Number.isFinite(value)) return fallback;
   return `US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
@@ -252,6 +260,8 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
       ? record(record(root.data).strategy2)
       : record(record(root.snapshot).strategy2);
   const settings = record(strategy2.settings);
+  const runtimeTruth = record(strategy2.runtimeTruth);
+  const runtimeTruthCanonical = runtimeTruth.source === "SERVER_RUNTIME";
   const entryDiagnostics = record(strategy2.entryDiagnostics);
   const dynamicHedge = record(entryDiagnostics.dynamicHedge);
   const queue = record(entryDiagnostics.queue);
@@ -264,12 +274,12 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   const strategyOwned = record(seatReport.strategyOwnedOpen);
   const perZoneLong = Math.max(1, Math.round(firstNumber([seatModel, settings], ["perZoneLong", "zoneBaseLongSoldiers"]) ?? 3));
   const perZoneShort = Math.max(1, Math.round(firstNumber([seatModel, settings], ["perZoneShort", "zoneBaseShortSoldiers"]) ?? 3));
-  const activeZoneNumber = firstNumber([seatModel, seatReport], ["activeZone"]);
+  const activeZoneNumber = firstNumber(runtimeTruthCanonical ? [runtimeTruth, seatModel, seatReport] : [seatModel, seatReport], ["activeZone"]);
   const activeOpenLong = Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedLongActiveZone", "openLong"]) ?? 0));
   const activeOpenShort = Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedShortActiveZone", "openShort"]) ?? 0));
   const strategyOpenLong = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenLong", "long"]) ?? 0));
   const strategyOpenShort = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenShort", "short"]) ?? 0));
-  const maxTotal = Math.max(1, Math.round(firstNumber([settings], ["maximumPositions"]) ?? (perZoneLong + perZoneShort)));
+  const maxTotal = Math.max(1, Math.round(firstNumber(runtimeTruthCanonical ? [runtimeTruth, settings] : [settings], ["maximumPositions"]) ?? (perZoneLong + perZoneShort)));
 
   let zoneOpenCounts: Record<string, { long: number; short: number; total: number }> = {};
   for (const [rawZone, rawCounts] of Object.entries(record(seatReport.zoneOpenCounts))) {
@@ -329,7 +339,9 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   }
 
   return {
-    enabled: seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
+    enabled: runtimeTruthCanonical
+      ? runtimeTruth.strategyMode === "ZONE_WARRIORS" && runtimeTruth.enabled === true
+      : seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
     activeZone: activeZoneNumber === null ? null : Math.round(activeZoneNumber),
     perZoneLong,
     perZoneShort,
@@ -344,16 +356,16 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     strategyOpenTotal: Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenTotal", "total"]) ?? (strategyOpenLong + strategyOpenShort))),
     zoneOpenCounts,
     zoneOpenCountsReliable,
-    entryStatus: firstString([entryDiagnostics], ["entryStatus"]),
-    entryReason: firstString([entryDiagnostics], ["entryReason", "lastReason"]),
+    entryStatus: firstString(runtimeTruthCanonical ? [runtimeTruth, entryDiagnostics] : [entryDiagnostics], ["entryStatus"]),
+    entryReason: firstString(runtimeTruthCanonical ? [runtimeTruth, entryDiagnostics] : [entryDiagnostics], ["entryReason", "lastReason"]),
     entrySkipReasons: record(entryDiagnostics.entrySkipReasons) as Record<string, number>,
     zoneMigrationHold: entryDiagnostics.zoneMigrationHold === true,
     dynamicHedgeEnabled: dynamicHedge.enabled === true,
-    dynamicHedgeBlocking: dynamicHedge.blocking === true,
+    dynamicHedgeBlocking: runtimeTruthCanonical ? runtimeTruth.dynamicHedgeBlocking === true : dynamicHedge.blocking === true,
     dynamicHedgeOwnershipState: firstString([dynamicHedge], ["ownershipState"]),
     dynamicHedgeReason: firstString([dynamicHedge], ["reason"]),
     dynamicHedgeSafetyStatus: firstString([dynamicHedge], ["safetyStatus"]),
-    queueHaltedUncertain: queue.haltedUncertain === true,
+    queueHaltedUncertain: runtimeTruthCanonical ? runtimeTruth.queueHalted === true : queue.haltedUncertain === true,
     queueUncertainReason: firstString([queue], ["uncertainReason"]),
   };
 }
@@ -383,14 +395,16 @@ async function loadScannerStatus(): Promise<ScannerStatusSnapshot> {
     : Object.keys(record(record(root.data).strategy2)).length
       ? record(record(root.data).strategy2)
       : record(record(root.snapshot).strategy2);
+  const runtimeTruth = record(strategy2.runtimeTruth);
+  const runtimeTruthCanonical = runtimeTruth.source === "SERVER_RUNTIME";
   const multiBb = record(strategy2.multiBb);
-  const scanner = record(multiBb.scannerDiagnostics);
+  const scanner = record(runtimeTruthCanonical ? runtimeTruth.scannerDiagnostics : multiBb.scannerDiagnostics);
   return {
-    enabled: strategy2.enabled === true,
-    monitor: strategy2.monitor === true,
-    updatedAtMs: firstNumber([scanner, multiBb], ["updatedAtMs"]),
-    entryStatus: firstString([multiBb, record(strategy2.entryDiagnostics)], ["entryStatus"]),
-    entryReason: firstString([multiBb, record(strategy2.entryDiagnostics)], ["entryReason"]),
+    enabled: runtimeTruthCanonical ? runtimeTruth.enabled === true : strategy2.enabled === true,
+    monitor: runtimeTruthCanonical ? runtimeTruth.monitor === true : strategy2.monitor === true,
+    updatedAtMs: firstNumber([scanner, multiBb], ["updatedAtMs"]) ?? (runtimeTruthCanonical ? timestampMs(runtimeTruth.lastTickAt) : null),
+    entryStatus: firstString(runtimeTruthCanonical ? [runtimeTruth, multiBb, record(strategy2.entryDiagnostics)] : [multiBb, record(strategy2.entryDiagnostics)], ["entryStatus"]),
+    entryReason: firstString(runtimeTruthCanonical ? [runtimeTruth, multiBb, record(strategy2.entryDiagnostics)] : [multiBb, record(strategy2.entryDiagnostics)], ["entryReason"]),
     unscopedBlocked: optionalNumber(scanner.unscopedBlocked),
     long: scannerSideStatus(record(scanner.LONG)),
     short: scannerSideStatus(record(scanner.SHORT)),
