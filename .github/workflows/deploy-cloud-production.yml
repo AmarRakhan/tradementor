@@ -38,6 +38,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
   # Production safety floor: never allow a later feature deploy to roll the backend
   # behind the Zone Warriors capacity invariant restored in Build 470.
   PROTECTED_BACKEND_BASELINE: 81f1d8006e3df0dce8bef5688493f16b61b8a13c
@@ -219,6 +220,37 @@ jobs:
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
+      - name: Collect pre-deploy account runtime snapshot with production runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=collect-runtime-accounts-before" >> "$GITHUB_ENV"
+          PREVIOUS_IMAGE="$(gcloud run revisions describe "$PREVIOUS_REVISION" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format='value(spec.containers[0].image)')"
+          test -n "$PREVIOUS_IMAGE"
+          JOB="tm-rc-before-${GITHUB_RUN_ID: -7}"
+          SCRIPT_B64="$(base64 -w0 tools/runtime_contract_snapshot.py)"
+          RUNNER_B64="$(printf '%s' "import base64,sys; src=base64.b64decode('$SCRIPT_B64'); sys.argv=['runtime_contract_snapshot.py','--project','$GCP_PROJECT_ID','--accounts-only']; exec(compile(src,'runtime_contract_snapshot.py','exec'))" | base64 -w0)"
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$PREVIOUS_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$RUNNER_B64'))" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=runtime-contract-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          echo "RUNTIME_BASELINE_JOB=$JOB" >> "$GITHUB_ENV"
+
+      - name: Authenticate read-only observer for runtime baseline
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
       - name: Capture pre-deploy runtime contract baseline
         shell: bash
         run: |
@@ -230,13 +262,41 @@ jobs:
           gcloud logging read \
             'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
             --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-errors-before.json" || echo '[]' > "$RUNNER_TEMP/runtime-errors-before.json"
+          RESULT="$(gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$RUNTIME_BASELINE_JOB AND textPayload:\"RUNTIME_CONTRACT_ACCOUNTS \"" \
+            --project "$GCP_PROJECT_ID" --freshness=20m --limit=20 --order=desc --format='value(textPayload)' \
+            | grep 'RUNTIME_CONTRACT_ACCOUNTS ' | head -n1 || true)"
+          test -n "$RESULT"
+          printf '%s\n' "${RESULT#RUNTIME_CONTRACT_ACCOUNTS }" > "$RUNNER_TEMP/runtime-accounts-before.json"
+          python - "$RUNNER_TEMP/runtime-accounts-before.json" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert isinstance(rows,list) and rows, "runtime account baseline is empty"
+          assert all(isinstance(row,dict) and row.get("accountRef") for row in rows)
+          PY
           python tools/runtime_contract_snapshot.py \
             --project "$GCP_PROJECT_ID" \
             --service-json "$RUNNER_TEMP/service-before.json" \
             --health-json "$RUNNER_TEMP/previous-health.json" \
             --ticks-json "$RUNNER_TEMP/runtime-ticks-before.json" \
             --errors-json "$RUNNER_TEMP/runtime-errors-before.json" \
+            --accounts-json "$RUNNER_TEMP/runtime-accounts-before.json" \
             --output "$RUNNER_TEMP/runtime-before.json"
+
+      - name: Restore deployment identity after runtime baseline
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup pre-deploy runtime snapshot job
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${RUNTIME_BASELINE_JOB:-}" ]; then
+            gcloud run jobs delete "$RUNTIME_BASELINE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
 
       - name: Select mandatory contracts for exact production delta
         id: release-impact
@@ -420,47 +480,113 @@ jobs:
           assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           PY
 
+      - name: Collect post-deploy account runtime snapshot with production runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=collect-runtime-accounts-after" >> "$GITHUB_ENV"
+          JOB="tm-rc-after-${GITHUB_RUN_ID: -7}"
+          SCRIPT_B64="$(base64 -w0 tools/runtime_contract_snapshot.py)"
+          BASELINE_B64="$(base64 -w0 "$RUNNER_TEMP/runtime-accounts-before.json")"
+          POLLER="$(cat <<'PY'
+          import base64,json,time
+          ns={}
+          exec(compile(base64.b64decode("__SCRIPT_B64__"),"runtime_contract_snapshot.py","exec"),ns,ns)
+          before=json.loads(base64.b64decode("__BASELINE_B64__"))
+          before_map={str(r.get("accountRef") or ""):r for r in before if isinstance(r,dict)}
+          latest=[]
+          for _ in range(12):
+              latest=ns["collect_accounts"]("__PROJECT__")
+              current={str(r.get("accountRef") or ""):r for r in latest if isinstance(r,dict)}
+              ready=True
+              for ref,previous in before_map.items():
+                  if previous.get("monitor") is not True:
+                      continue
+                  row=current.get(ref)
+                  if not row or int(row.get("lastTickAtMs") or 0) <= int(previous.get("lastTickAtMs") or 0):
+                      ready=False
+                      break
+              if ready:
+                  break
+              time.sleep(20)
+          print("RUNTIME_CONTRACT_ACCOUNTS "+json.dumps(latest,sort_keys=True,separators=(",",":")),flush=True)
+          PY
+          )"
+          POLLER="${POLLER/__SCRIPT_B64__/$SCRIPT_B64}"
+          POLLER="${POLLER/__BASELINE_B64__/$BASELINE_B64}"
+          POLLER="${POLLER/__PROJECT__/$GCP_PROJECT_ID}"
+          POLLER_B64="$(printf '%s' "$POLLER" | base64 -w0)"
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$POLLER_B64'))" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=runtime-contract-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          echo "RUNTIME_AFTER_JOB=$JOB" >> "$GITHUB_ENV"
+
+      - name: Authenticate read-only observer for post-deploy runtime verification
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
       - name: Verify post-deploy trading runtime contract
         shell: bash
         run: |
           set -euo pipefail
           echo "DEPLOY_PHASE=verify-trading-runtime-contract" >> "$GITHUB_ENV"
-          PASSED=0
-          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
-            gcloud run services describe "$CLOUD_RUN_SERVICE" \
-              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after-runtime.json"
-            curl --fail --silent --show-error --retry 3 --retry-delay 2 "$SERVICE_URL/health" > "$RUNNER_TEMP/health-after-runtime.json"
-            gcloud logging read \
-              'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"' \
-              --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-ticks-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-ticks-after.json"
-            gcloud logging read \
-              'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
-              --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-errors-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-errors-after.json"
-
-            python tools/runtime_contract_snapshot.py \
-              --project "$GCP_PROJECT_ID" \
-              --service-json "$RUNNER_TEMP/service-after-runtime.json" \
-              --health-json "$RUNNER_TEMP/health-after-runtime.json" \
-              --ticks-json "$RUNNER_TEMP/runtime-ticks-after.json" \
-              --errors-json "$RUNNER_TEMP/runtime-errors-after.json" \
-              --output "$RUNNER_TEMP/runtime-after.json"
-
-            NOW_MS="$(python - <<'PY'
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after-runtime.json"
+          curl --fail --silent --show-error --retry 3 --retry-delay 2 "$SERVICE_URL/health" > "$RUNNER_TEMP/health-after-runtime.json"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-ticks-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-ticks-after.json"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-errors-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-errors-after.json"
+          RESULT="$(gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$RUNTIME_AFTER_JOB AND textPayload:\"RUNTIME_CONTRACT_ACCOUNTS \"" \
+            --project "$GCP_PROJECT_ID" --freshness=20m --limit=20 --order=desc --format='value(textPayload)' \
+            | grep 'RUNTIME_CONTRACT_ACCOUNTS ' | head -n1 || true)"
+          test -n "$RESULT"
+          printf '%s\n' "${RESULT#RUNTIME_CONTRACT_ACCOUNTS }" > "$RUNNER_TEMP/runtime-accounts-after.json"
+          python tools/runtime_contract_snapshot.py \
+            --project "$GCP_PROJECT_ID" \
+            --service-json "$RUNNER_TEMP/service-after-runtime.json" \
+            --health-json "$RUNNER_TEMP/health-after-runtime.json" \
+            --ticks-json "$RUNNER_TEMP/runtime-ticks-after.json" \
+            --errors-json "$RUNNER_TEMP/runtime-errors-after.json" \
+            --accounts-json "$RUNNER_TEMP/runtime-accounts-after.json" \
+            --output "$RUNNER_TEMP/runtime-after.json"
+          NOW_MS="$(python - <<'PY'
           import time
           print(int(time.time()*1000))
           PY
-            )"
-            if python tools/runtime_contract_post_deploy.py \
-              --before "$RUNNER_TEMP/runtime-before.json" \
-              --after "$RUNNER_TEMP/runtime-after.json" \
-              --now-ms "$NOW_MS" \
-              --output "$RUNNER_TEMP/runtime-contract-result.json"; then
-              PASSED=1
-              break
-            fi
-            sleep 20
-          done
-          test "$PASSED" = "1"
+          )"
+          python tools/runtime_contract_post_deploy.py \
+            --before "$RUNNER_TEMP/runtime-before.json" \
+            --after "$RUNNER_TEMP/runtime-after.json" \
+            --now-ms "$NOW_MS" \
+            --output "$RUNNER_TEMP/runtime-contract-result.json"
+
+      - name: Restore deployment identity after runtime verification
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup post-deploy runtime snapshot job
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${RUNTIME_AFTER_JOB:-}" ]; then
+            gcloud run jobs delete "$RUNTIME_AFTER_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
 
       - name: Verify Cloud Run IAM is unchanged
         shell: bash
