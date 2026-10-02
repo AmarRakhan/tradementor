@@ -115,6 +115,7 @@ type LiquidationDiagnostics = {
 
 type PriceZoneSeatSummary = {
   enabled: boolean;
+  runtimeTruthCanonical: boolean;
   activeZone: number | null;
   perZoneLong: number;
   perZoneShort: number;
@@ -342,6 +343,7 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     enabled: runtimeTruthCanonical
       ? runtimeTruth.strategyMode === "ZONE_WARRIORS" && runtimeTruth.enabled === true
       : seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
+    runtimeTruthCanonical,
     activeZone: activeZoneNumber === null ? null : Math.round(activeZoneNumber),
     perZoneLong,
     perZoneShort,
@@ -779,7 +781,7 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
   const liveZoneLabel = liveActiveZone === null ? "—" : `Zone ${liveActiveZone} actief`;
   if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_DETAILS_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
-  const displayActiveZone = liveActiveZone ?? summary.activeZone;
+  const displayActiveZone = summary.runtimeTruthCanonical ? summary.activeZone : (liveActiveZone ?? summary.activeZone);
   const backendZoneMatches = displayActiveZone !== null && summary.activeZone === displayActiveZone;
   const breakdown = displayActiveZone === null ? null : summary.zoneOpenCounts[String(displayActiveZone)] || null;
   const resolvedCounts = backendZoneMatches
