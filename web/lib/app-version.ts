@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 484: Scanner Status en Prijszone Details lezen canonical Strategy-2 runtime truth.
+// Build 484: Runtime Contract V1 operational UI truth voor Scanner Status, Prijszone Details en Portfolio Koers.
 export const WEBAPP_BUILD_NUMBER = "484";
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
