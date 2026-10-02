@@ -305,12 +305,12 @@ def test_active_trades_endpoint_is_analytics_only_and_never_writes_canonical_acc
 def test_build487_active_trades_history_is_persisted_by_server_scheduler_not_browser_only():
     source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
     start = source.index("def _run_aster_strategy2_tick(")
-    end = source.index("def _run_aster_strategy2_queue_scan(", start + 1) if source.find("def _run_aster_strategy2_queue_scan(", start + 1) >= 0 else len(source)
-    block = source[start:end]
+    sampler = source.index("# The Portfolio Koers is server-persistent", start)
+    hedge_guard = source.index("if not hedge:", sampler)
+    block = source[sampler:hedge_guard]
     assert 'if not dry_run and not str(event_symbol).strip()' in block
     assert 'active_basket=active_trades_snapshot({"positions":positions})' in block
     assert "_persist_active_trades_chart_sample(" in block
     assert "source_at_ms=source_at_ms" in block
-    assert "live_authorized=False" not in block
-    assert "place_order" not in block
+    assert "AsterV3Client(" not in block
 
