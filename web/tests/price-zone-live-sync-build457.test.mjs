@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Build 457 makes Portfolio Koers the single visible live-zone source for Portfolio Snapshot", async () => {
+test("Runtime Contract V1 keeps Portfolio Koers and Portfolio Snapshot on one operational active-zone source", async () => {
   const [chart, snapshot] = await Promise.all([
     readFile(new URL("../components/portfolio-koers-chart.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8"),
@@ -10,11 +10,12 @@ test("Build 457 makes Portfolio Koers the single visible live-zone source for Po
 
   assert.match(chart, /onActiveZoneChange\?:\(zone:number\|null\)=>void/);
   assert.match(chart, /const liveDisplayActiveZone=zoneContext\?\.activeIndex\?\?confirmedActiveZone/);
-  assert.match(chart, /onActiveZoneChange\?\.\(liveDisplayActiveZone\)/);
+  assert.match(chart, /const activeZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):liveDisplayActiveZone/);
+  assert.match(chart, /onActiveZoneChange\?\.\(activeZone\)/);
 
   assert.match(snapshot, /const \[liveActiveZone, setLiveActiveZone\] = useState<number \| null>\(null\)/);
   assert.match(snapshot, /onActiveZoneChange=\{setLiveActiveZone\}/);
-  assert.match(snapshot, /const displayActiveZone = liveActiveZone \?\? summary\.activeZone/);
+  assert.match(snapshot, /const displayActiveZone = summary\.runtimeTruthCanonical \? summary\.activeZone : \(liveActiveZone \?\? summary\.activeZone\)/);
   assert.match(snapshot, /const backendZoneMatches = displayActiveZone !== null && summary\.activeZone === displayActiveZone/);
   assert.match(snapshot, /const seatZoneInSync = resolvedCounts !== null/);
   assert.match(snapshot, /summary\.zoneOpenCountsReliable/);
