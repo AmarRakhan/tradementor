@@ -513,7 +513,7 @@ export function PortfolioKoersChart({
       setAdvisorEnabled(false);
       setCommandCenterAvailable(false);
       setActiveTradesAvailable(false);
-      if(viewMode==="active")setViewMode("account");
+      setViewMode((current)=>current==="active"?"account":current);
       setZoneSoldiersScreenOpen(false);
       setAdvisorSeats(EMPTY_ADVISOR);
     }
