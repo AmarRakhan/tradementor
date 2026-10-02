@@ -38,6 +38,7 @@ env:
   CLOUD_RUN_SERVICE: tradementor-api
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
   # Production safety floor: never allow a later feature deploy to roll the backend
   # behind the Zone Warriors capacity invariant restored in Build 470.
   PROTECTED_BACKEND_BASELINE: 81f1d8006e3df0dce8bef5688493f16b61b8a13c
@@ -219,6 +220,12 @@ jobs:
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
+      - name: Authenticate read-only observer for runtime baseline
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
       - name: Capture pre-deploy runtime contract baseline
         shell: bash
         run: |
@@ -237,6 +244,13 @@ jobs:
             --ticks-json "$RUNNER_TEMP/runtime-ticks-before.json" \
             --errors-json "$RUNNER_TEMP/runtime-errors-before.json" \
             --output "$RUNNER_TEMP/runtime-before.json"
+
+      - name: Restore deployment identity after runtime baseline
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Select mandatory contracts for exact production delta
         id: release-impact
@@ -420,6 +434,12 @@ jobs:
           assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           PY
 
+      - name: Authenticate read-only observer for post-deploy runtime verification
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
       - name: Verify post-deploy trading runtime contract
         shell: bash
         run: |
@@ -461,6 +481,13 @@ jobs:
             sleep 20
           done
           test "$PASSED" = "1"
+
+      - name: Restore deployment identity after runtime verification
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Verify Cloud Run IAM is unchanged
         shell: bash
