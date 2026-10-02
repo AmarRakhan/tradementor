@@ -295,6 +295,7 @@ def test_active_trades_endpoint_is_analytics_only_and_never_writes_canonical_acc
     end = source.index('@app.get("/v1/me/aster/portfolio-chart")', start + 1)
     block = source[start:end]
     assert "live_authorized=False" in block
+    assert 'require_release_feature(user, "active_trades_chart")' in block
     assert '"readOnly": True' in block
     assert '"ordersSent": 0' in block
     assert 'automation_ref.set({"accountSnapshot"' not in block
