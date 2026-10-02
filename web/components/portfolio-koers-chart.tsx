@@ -956,7 +956,7 @@ export function PortfolioKoersChart({
     container.addEventListener("pointermove",sync,{passive:true});
     container.addEventListener("touchmove",sync,{passive:true});
     chart.timeScale().setVisibleLogicalRange({
-      from:candles.length-focusVisibleBars-.5,
+      from:viewMode==="active"?candles.length-focusVisibleBars-.5:Math.max(-.5,candles.length-focusVisibleBars-.5),
       to:candles.length-1+view.rightOffset,
     });
     sync();
