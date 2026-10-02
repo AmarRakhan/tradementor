@@ -26,28 +26,34 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-02",
-  title: "Runtime Contract V1 · canonical UI truth",
+  title: "Runtime Contract V1 · operational UI truth",
   newItems: [
     "Scanner Status leest de server-authoritative Strategy-2 runtime truth wanneer die beschikbaar is.",
-    "Prijszone Details gebruikt dezelfde canonical active zone, capaciteit en runtime blockers.",
+    "Prijszone Details houdt de server-runtime actieve zone leidend zodra runtimeTruth beschikbaar is.",
+    "Portfolio Koers gebruikt dezelfde canonical runtime active zone en zone-entry safety als Scanner Status en Portfolio Snapshot.",
   ],
   problems: [
     "Backend en UI konden verschillende afgeleide velden gebruiken voor scanner-, zone- en capaciteitsstatus.",
+    "Scanner Status kon onterecht SCANNER STIL tonen wanneer de runtime wel actief was maar scanner counters geen nieuwere updatedAtMs bevatten.",
+    "Portfolio Koers kon een prijs-afgeleide actieve zone tonen terwijl de server-runtime een andere operationele zone gebruikte.",
   ],
   causes: [
-    "De frontend gebruikte legacy Multi-BB en zone-seat velden terwijl de backend inmiddels één runtimeTruth-contract publiceert.",
+    "De frontend gebruikte legacy Multi-BB, zone-seat en prijs-afgeleide velden naast het nieuwe runtimeTruth-contract.",
   ],
   fixes: [
-    "runtimeTruth is nu de voorkeursbron voor active zone, maximum positions, entry status/reason, scanner diagnostics, Dynamic Hedge blocking en queue halt.",
-    "Legacy velden blijven alleen fallback voor een veilige backend/web release-overlap.",
+    "runtimeTruth is de voorkeursbron voor active zone, maximum positions, entry status/reason, scanner diagnostics, Dynamic Hedge blocking en queue halt.",
+    "Scanner Status gebruikt runtimeTruth.lastTickAt als canonical heartbeat fallback.",
+    "Portfolio Koers en Portfolio Snapshot delen één operationele active-zone waarde wanneer Zone Warriors server-runtime actief is.",
+    "Legacy velden blijven alleen fallback tijdens backend/web release-overlap.",
   ],
   now: [
-    "Scanner Status en Prijszone Details delen dezelfde server-runtimewaarheid zonder tradinglogica of gebruikersinstellingen te wijzigen.",
+    "Scanner Status, Prijszone Details, Portfolio Koers en Portfolio Snapshot volgen dezelfde server-runtimewaarheid zonder tradinglogica of gebruikersinstellingen te wijzigen.",
+    "Een capacity-blocked of rustige scanner wordt niet meer alleen door ontbrekende scanner-counter updates als stil geclassificeerd.",
   ],
   technicalDetails: [
-    "Frontend read path: web/components/aster-portfolio-snapshot-enhancer.tsx.",
+    "Frontend read paths: web/components/aster-portfolio-snapshot-enhancer.tsx en web/components/portfolio-koers-chart.tsx.",
     "Canonical backend contract: cloud_api/aster_runtime_truth.py.",
-    "Geen order-, entry-, DCA-, hedge-, TP- of settings-mutaties.",
+    "Geen order-, entry-, DCA-, hedge-, TP-, settings-, Firestore- of runtime-mutaties.",
   ],
   confidence: "confirmed",
 };
