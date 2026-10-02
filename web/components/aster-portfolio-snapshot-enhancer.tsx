@@ -115,6 +115,7 @@ type LiquidationDiagnostics = {
 
 type PriceZoneSeatSummary = {
   enabled: boolean;
+  runtimeTruthCanonical: boolean;
   activeZone: number | null;
   perZoneLong: number;
   perZoneShort: number;
@@ -218,6 +219,14 @@ function firstString(records: Record<string, unknown>[], keys: string[]) {
     }
   }
   return "";
+}
+
+function timestampMs(value: unknown) {
+  const numeric = optionalNumber(value);
+  if (numeric !== null) return numeric > 0 && numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function money(value: number | null, fallback = "—") {
@@ -337,7 +346,10 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   }
 
   return {
-    enabled: seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
+    enabled: hasRuntimeTruth
+      ? runtimeTruth.strategyMode === "ZONE_WARRIORS" && runtimeTruth.enabled === true
+      : seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
+    runtimeTruthCanonical: hasRuntimeTruth,
     activeZone: activeZoneNumber === null ? null : Math.round(activeZoneNumber),
     perZoneLong,
     perZoneShort,
@@ -403,7 +415,7 @@ async function loadScannerStatus(): Promise<ScannerStatusSnapshot> {
     enabled: hasRuntimeTruth ? runtimeTruth.enabled === true : strategy2.enabled === true,
     monitor: hasRuntimeTruth ? runtimeTruth.monitor === true : strategy2.monitor === true,
     updatedAtMs: hasRuntimeTruth
-      ? firstNumber([scanner], ["updatedAtMs"])
+      ? firstNumber([scanner], ["updatedAtMs"]) ?? timestampMs(runtimeTruth.lastTickAt)
       : firstNumber([scanner, multiBb], ["updatedAtMs"]),
     entryStatus: hasRuntimeTruth
       ? firstString([runtimeTruth], ["entryStatus"])
@@ -785,7 +797,7 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
   const liveZoneLabel = liveActiveZone === null ? "—" : `Zone ${liveActiveZone} actief`;
   if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_DETAILS_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
-  const displayActiveZone = liveActiveZone ?? summary.activeZone;
+  const displayActiveZone = summary.runtimeTruthCanonical ? summary.activeZone : (liveActiveZone ?? summary.activeZone);
   const backendZoneMatches = displayActiveZone !== null && summary.activeZone === displayActiveZone;
   const breakdown = displayActiveZone === null ? null : summary.zoneOpenCounts[String(displayActiveZone)] || null;
   const resolvedCounts = backendZoneMatches
