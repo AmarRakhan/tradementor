@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from aster_runtime_truth import build_multi_bb_runtime_truth
 
 
@@ -98,3 +100,11 @@ def test_runtime_truth_exposes_blocking_state_without_changing_trading_logic():
     )
     assert result["dynamicHedgeBlocking"] is True
     assert result["queueHalted"] is True
+
+
+def test_strategy2_public_exposes_runtime_truth_without_replacing_legacy_fields():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    assert "build_multi_bb_runtime_truth(" in source
+    assert '"runtimeTruth":runtime_truth' in source
+    assert '"multiBb":report' in source
+    assert '"priceZoneSeats":zone_report' in source
