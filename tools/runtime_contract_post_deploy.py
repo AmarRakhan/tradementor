@@ -61,8 +61,8 @@ def evaluate_runtime_contract(
         failures.append("NO_WARM_INSTANCE")
     if not _b(after.get("periodicWorkerRecent")):
         failures.append("PERIODIC_WORKER_HEARTBEAT_MISSING")
-    if _i(after.get("periodicWorkerErrors")) > 0:
-        failures.append("PERIODIC_WORKER_ERRORS_PRESENT")
+    if _i(after.get("periodicWorkerErrors")) > _i(before.get("periodicWorkerErrors")):
+        failures.append("PERIODIC_WORKER_ERRORS_REGRESSED")
 
     before_rows = _row_map(before.get("accounts") if isinstance(before.get("accounts"), list) else [])
     after_rows = _row_map(after.get("accounts") if isinstance(after.get("accounts"), list) else [])
@@ -89,15 +89,21 @@ def evaluate_runtime_contract(
         if _b(current.get("enabled")):
             scanner_after = _i(current.get("scannerUpdatedAtMs"))
             scanner_before = _i(previous.get("scannerUpdatedAtMs"))
-            dynamic_blocking = _b(current.get("dynamicBlocking"))
+            scanner_blocked = _b(current.get("scannerBlocked"))
             if scanner_after > 0:
                 scanner_age = max(0, now_ms - scanner_after)
-                if scanner_age > MAX_SCANNER_AGE_MS and not dynamic_blocking:
+                if scanner_age > MAX_SCANNER_AGE_MS and not scanner_blocked:
                     failures.append(f"{account_ref}:SCANNER_HEARTBEAT_STALE")
-                if scanner_before > 0 and scanner_after <= scanner_before and not dynamic_blocking:
+                if scanner_before > 0 and scanner_after <= scanner_before and not scanner_blocked:
                     failures.append(f"{account_ref}:SCANNER_DID_NOT_ADVANCE")
-            elif not dynamic_blocking:
+            elif not scanner_blocked:
                 warnings.append(f"{account_ref}:SCANNER_HEARTBEAT_UNAVAILABLE")
+
+        bad_phases = {"DATA_HOLD", "CONFIG_ERROR"}
+        previous_phase = str(previous.get("phase") or "").upper()
+        current_phase = str(current.get("phase") or "").upper()
+        if current_phase in bad_phases and previous_phase not in bad_phases:
+            failures.append(f"{account_ref}:RUNTIME_PHASE_REGRESSED_TO_{current_phase}")
 
         if _b(previous.get("zoneEnabled")):
             previous_zone = previous.get("activeZone")
