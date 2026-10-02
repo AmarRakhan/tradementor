@@ -704,7 +704,7 @@ export function PortfolioKoersChart({
     const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
     const performanceByTime=new Map(performancePoints.map((row:any)=>[Number(row.time),Number(row.value)]));
     const view=TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"];
-    const focusVisibleBars=Math.min(candles.length,view.visibleBars);
+    // Keep the same logical viewport density for every tab. Sparse Active Trades history\n    // must not be auto-zoomed into giant candles; missing history stays empty rather than invented.\n    const focusVisibleBars=view.visibleBars;
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
@@ -956,7 +956,7 @@ export function PortfolioKoersChart({
     container.addEventListener("pointermove",sync,{passive:true});
     container.addEventListener("touchmove",sync,{passive:true});
     chart.timeScale().setVisibleLogicalRange({
-      from:Math.max(-.5,candles.length-focusVisibleBars-.5),
+      from:candles.length-focusVisibleBars-.5,
       to:candles.length-1+view.rightOffset,
     });
     sync();
