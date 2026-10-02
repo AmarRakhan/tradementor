@@ -6113,7 +6113,7 @@ def _read_portfolio_chart_candles(user: dict[str, Any], timeframe: str, limit: i
 
 def _persist_active_trades_chart_sample(
     user: dict[str, Any], *, basket: dict[str, Any], source_at_ms: int
-) -> float | None:
+) -> dict[str, Any] | None:
     """Persist a read-only continuity-adjusted active-position basket sample.
 
     The state document exists only for chart continuity. It never feeds an
@@ -6132,16 +6132,30 @@ def _persist_active_trades_chart_sample(
         previous = (state_snapshot.to_dict() or {}) if state_snapshot.exists else {}
         previous_at = int(safe_float(previous.get("sourceAtMs")))
         if previous_at > 0 and source_at_ms < previous_at:
-            return safe_float(previous.get("value"))
+            return previous
         if previous_at == source_at_ms and previous:
             adjusted = safe_float(previous.get("value"))
         else:
             adjusted = active_trades_continuity_value(previous, basket)
+        local_day = datetime.fromtimestamp(source_at_ms / 1000, tz=timezone.utc).astimezone(
+            ZoneInfo("Europe/Amsterdam")
+        ).date().isoformat()
+        if str(previous.get("dayKey", "")) == local_day:
+            previous_high = safe_float(previous.get("dayHigh"))
+            previous_low = safe_float(previous.get("dayLow"))
+            day_high = max(previous_high, adjusted) if previous.get("dayHigh") is not None else adjusted
+            day_low = min(previous_low, adjusted) if previous.get("dayLow") is not None else adjusted
+        else:
+            day_high = adjusted
+            day_low = adjusted
         state_value = {
             "value": adjusted,
             "sourceAtMs": source_at_ms,
             "positions": basket.get("positions", []),
             "openPnl": safe_float(basket.get("openPnl")),
+            "dayKey": local_day,
+            "dayHigh": day_high,
+            "dayLow": day_low,
             "updatedAt": now,
             "source": "ASTER_API_READ_ONLY",
         }
@@ -6157,7 +6171,7 @@ def _persist_active_trades_chart_sample(
                 existing, value=adjusted, source_at_ms=source_at_ms, timeframe=timeframe
             )
             txn.set(reference, {**merged, "updatedAt": now}, merge=True)
-        return adjusted
+        return state_value
 
     return apply(transaction)
 
@@ -6176,26 +6190,6 @@ def _read_active_trades_chart_candles(
             rows.append(candle)
     rows.sort(key=lambda row: int(row["atMs"]))
     return rows
-
-
-def _active_trades_day_summary(user: dict[str, Any], current_value: float | None) -> dict[str, Any]:
-    now_local = datetime.now(ZoneInfo("Europe/Amsterdam"))
-    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    start_ms = int(start_local.astimezone(timezone.utc).timestamp() * 1000)
-    rows = _read_active_trades_chart_candles(user, "1m", 1500)
-    today = [row for row in rows if int(safe_float(row.get("atMs"))) >= start_ms]
-    if not today:
-        return {"dayHigh": current_value, "dayLow": current_value, "recoveryPercent": 0.0}
-    day_high = max(safe_float(row.get("high")) for row in today)
-    day_low = min(safe_float(row.get("low")) for row in today)
-    latest = current_value if current_value is not None else safe_float(today[-1].get("close"))
-    if day_low < 0:
-        recovery = max(0.0, (latest - day_low) / abs(day_low) * 100.0)
-    elif abs(day_low) > 1e-12:
-        recovery = max(0.0, (latest - day_low) / abs(day_low) * 100.0)
-    else:
-        recovery = 0.0
-    return {"dayHigh": day_high, "dayLow": day_low, "recoveryPercent": recovery}
 
 
 def _portfolio_chart_cashflows(user: dict[str, Any], client: AsterV3Client | None = None) -> list[dict[str, Any]]:
@@ -6302,24 +6296,31 @@ def aster_portfolio_chart_active_trades(
             current = aster_dashboard_snapshot(client.account_information(), client.position_risk())
             snapshot = {**snapshot, **current, "capturedAt": now_utc}
             captured_ms = now_ms
-            automation_ref.set({"accountSnapshot": snapshot}, merge=True)
         except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, HTTPException, ValueError):
             pass
 
     basket = active_trades_snapshot(snapshot)
     snapshot_fresh = bool(captured_ms > 0 and 0 <= now_ms - captured_ms <= 120_000)
-    adjusted_value: float | None = None
+    active_state: dict[str, Any] | None = None
     if snapshot_fresh:
-        adjusted_value = _persist_active_trades_chart_sample(
+        active_state = _persist_active_trades_chart_sample(
             user, basket=basket, source_at_ms=captured_ms
         )
+    adjusted_value = safe_float(active_state.get("value")) if active_state else None
     candles = _read_active_trades_chart_candles(user, timeframe, limit)
 
     with _cache_lock:
         history_cache = _aster_closed_trades_cache.get(uid)
     recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
     markers = portfolio_chart_trade_markers(recent_activity, timeframe)
-    day = _active_trades_day_summary(user, adjusted_value)
+    day_high = safe_float(active_state.get("dayHigh")) if active_state else adjusted_value
+    day_low = safe_float(active_state.get("dayLow")) if active_state else adjusted_value
+    if day_low is not None and day_low < 0 and adjusted_value is not None:
+        recovery = max(0.0, (adjusted_value - day_low) / abs(day_low) * 100.0)
+    elif day_low is not None and abs(day_low) > 1e-12 and adjusted_value is not None:
+        recovery = max(0.0, (adjusted_value - day_low) / abs(day_low) * 100.0)
+    else:
+        recovery = 0.0
     return {
         "timeframe": timeframe,
         "candles": candles,
@@ -6335,7 +6336,9 @@ def aster_portfolio_chart_active_trades(
         "longTrades": int(safe_float(basket.get("longTrades"))),
         "shortTrades": int(safe_float(basket.get("shortTrades"))),
         "totalNotional": safe_float(basket.get("totalNotional")),
-        **day,
+        "dayHigh": day_high,
+        "dayLow": day_low,
+        "recoveryPercent": recovery,
         "snapshotAtMs": captured_ms if captured_ms > 0 else None,
         "live": snapshot_fresh,
         "persistent": True,
