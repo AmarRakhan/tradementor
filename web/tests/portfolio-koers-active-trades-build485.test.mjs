@@ -70,7 +70,7 @@ test("Active Trades keeps account-only zone overlays off the PnL axis while pres
   assert.ok(component.includes("BB 20,2"));
 });
 
-test("Build 485 adds only responsive Active Trades styling to the existing chart", async () => {
+test("Build 486 keeps Active Trades visually aligned with the existing chart", async () => {
   const [css, version] = await Promise.all([
     readFile(new URL("../app/portfolio-koers-chart.css", import.meta.url), "utf8"),
     readFile(new URL("../lib/app-version.ts", import.meta.url), "utf8"),
@@ -78,5 +78,14 @@ test("Build 485 adds only responsive Active Trades styling to the existing chart
   assert.ok(css.includes("Build 485 · Portfolio Koers · Actieve Trades 1.0"));
   assert.ok(css.includes(".portfolio-koers-active-summary"));
   assert.ok(css.includes(".portfolio-koers-active-summary-grid"));
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "485"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "486"/);
+});
+
+test("Build 486 does not auto-zoom sparse Active Trades candles", async () => {
+  const component = await readFile(new URL("../components/portfolio-koers-chart.tsx", import.meta.url), "utf8");
+  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.ok(component.includes('const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;'));
+  assert.ok(component.includes('from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:Math.max(-.5,candles.length-focusVisibleBars-.5),'));
+  assert.ok(component.includes("Math.min(candles.length,view.visibleBars)"));
+  assert.ok(component.includes("Math.max(-.5,candles.length-focusVisibleBars-.5)"));
 });

@@ -26,6 +26,38 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-02",
+  title: "Portfolio Koers · Actieve Trades 1.1 · chartstijl gelijkgetrokken",
+  newItems: [
+    "Actieve Trades gebruikt nu exact dezelfde candle-dichtheid en viewport-logica als Accountwaarde.",
+    "Wanneer de Actieve Trades-historie nog jong is, blijven ontbrekende oude candles leeg in plaats van dat enkele candles schermbreed worden uitgerekt.",
+  ],
+  problems: [
+    "Bij weinig opgebouwde Actieve Trades-candles zoomde de grafiek automatisch in op alleen de beschikbare punten.",
+    "Daardoor werd één 15m-candle extreem breed en leek het derde tabblad visueel niet op de bestaande Portfolio Koers.",
+  ],
+  causes: [
+    "De zichtbare logical range gebruikte Math.min(candles.length, visibleBars) en klemde de linkergrens op -0.5; bij twee candles werd de volledige chart dus over slechts enkele logical bars verdeeld.",
+  ],
+  fixes: [
+    "De chart reserveert voortaan altijd dezelfde timeframe-afhankelijke visibleBars als Accountwaarde.",
+    "De linker logical range mag bij jonge historie negatief beginnen, zodat echte candles hun normale breedte houden zonder kunstmatige backfill.",
+  ],
+  now: [
+    "Actieve Trades heeft dezelfde visuele candlemaat, grid, tijdas, zoomdichtheid en chart-engine als Accountwaarde, met zijn eigen P&L-schaal en eigen data.",
+    "Er is geen historische P&L verzonnen en geen trading-, scanner-, entry-, DCA-, TP-, hedge- of orderlogica gewijzigd.",
+  ],
+  technicalDetails: [
+    "Frontend-only wijziging in web/components/portfolio-koers-chart.tsx plus versie/tests.",
+    "Geen backend-, Firestore-, exchange- of gebruikersinstellingenmutatie.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  version: WEBAPP_VERSION,
+  build: WEBAPP_BUILD_NUMBER,
+  releasedAt: "2026-10-02",
   title: "Portfolio Koers · Actieve Trades 1.0",
   newItems: [
     "Portfolio Koers heeft voor BETA één nieuw derde tabblad: Actieve Trades.",
@@ -56,8 +88,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen entry-, DCA-, TP-, hedge-, scanner-, settings- of exchange-submitlogica gewijzigd.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
   id: "v46-build-482-performance-detail",
   version: "46",
