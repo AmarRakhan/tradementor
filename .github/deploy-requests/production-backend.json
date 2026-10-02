@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "a42dc8aff668ec87045da2dcc3d67f64e09d25b3",
+  "sourceCommit": "0dc403350f8c09dbe7b5a50b198949e1f63ce237",
   "requestedBy": "AmarRakhan",
-  "requestId": "build485-active-trades-beta-20261002"
+  "requestId": "build486-active-trades-style-20261003"
 }
