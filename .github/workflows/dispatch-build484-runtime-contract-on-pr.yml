@@ -1,0 +1,28 @@
+name: Dispatch Build 484 Runtime Contract
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/deploy-requests/build484-runtime-contract.json"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    if: >-
+      github.repository == 'AmarRakhan/tradementor' &&
+      github.event.pull_request.base.ref == 'amar-crypto-bot-2026-cloud' &&
+      github.event.pull_request.head.ref == 'release/build484-runtime-contract-dispatch-20261002'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch guarded exact-source Build 484 production deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-cloud-production.yml             --repo "$GITHUB_REPOSITORY"             --ref amar-crypto-bot-2026-cloud             -f confirmation=DEPLOY_PRODUCTION_BACKEND             -f source_commit=c075fe347399ceca4424c7ce83d46d8dce0100bb
