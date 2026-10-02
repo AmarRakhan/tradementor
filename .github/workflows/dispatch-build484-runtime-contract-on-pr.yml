@@ -25,4 +25,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh workflow run deploy-cloud-production.yml             --repo "$GITHUB_REPOSITORY"             --ref amar-crypto-bot-2026-cloud             -f confirmation=DEPLOY_PRODUCTION_BACKEND             -f source_commit=c075fe347399ceca4424c7ce83d46d8dce0100bb
+          gh workflow run deploy-cloud-production.yml             --repo "$GITHUB_REPOSITORY"             --ref amar-crypto-bot-2026-cloud             -f confirmation=DEPLOY_PRODUCTION_BACKEND             -f source_commit=310a59eccdab08a0a33b73a0105bf68fc181b802
