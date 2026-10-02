@@ -10,6 +10,7 @@ from typing import Iterable
 SUITE_TESTS: dict[str, tuple[str, ...]] = {
     "zone_warriors": (
         "cloud_api/test_runtime_contract_release_safety_v1.py",
+        "cloud_api/test_aster_runtime_truth.py",
         "cloud_api/test_aster_zone_soldiers.py",
         "cloud_api/test_aster_zone_soldiers_integration.py",
         "cloud_api/test_aster_bollinger_entry_filter_timeframes.py",
@@ -17,6 +18,7 @@ SUITE_TESTS: dict[str, tuple[str, ...]] = {
     ),
     "classic_dca": (
         "cloud_api/test_runtime_contract_release_safety_v1.py",
+        "cloud_api/test_aster_runtime_truth.py",
         "cloud_api/test_aster_multi_bb.py",
         "cloud_api/test_aster_pair_overrides.py",
         "cloud_api/test_aster_side_settings_persistence.py",
@@ -88,6 +90,7 @@ SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "cloud_api/aster_bollinger_entry_filter.py",
         "cloud_api/aster_zone_soldiers.py",
         "cloud_api/aster_portfolio_chart.py",
+        "cloud_api/aster_runtime_truth.py",
         "web/lib/portfolio-zone-advisor.mjs",
         "web/components/portfolio-koers-chart.tsx",
         "web/components/aster-portfolio-snapshot-enhancer.tsx",
@@ -102,6 +105,7 @@ SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "cloud_api/aster_bollinger_entry_filter.py",
         "cloud_api/aster_execution.py",
         "cloud_api/aster_gateway.py",
+        "cloud_api/aster_runtime_truth.py",
         "web/components/aster-bot-configurator-v2.tsx",
         "web/components/aster-bot-configurator-v3.tsx",
         "web/lib/aster-strategy2-settings-guard.ts",
