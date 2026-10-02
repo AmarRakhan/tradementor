@@ -2,6 +2,9 @@ from pathlib import Path
 
 from aster_portfolio_chart import (
     active_zone,
+    active_trades_collection_for_timeframe,
+    active_trades_continuity_value,
+    active_trades_snapshot,
     aggregate_trade_activity,
     bucket_start_ms,
     derive_equity_zones,
@@ -9,7 +12,9 @@ from aster_portfolio_chart import (
     latest_contiguous_candles,
     latest_established_contiguous_candles,
     latest_zone_ladder_candles,
+    merge_active_trades_sample,
     merge_equity_sample,
+    public_active_trades_candle,
     public_candle,
     strategy_audit_trade_markers,
     zone_shadow_backtest,
@@ -231,3 +236,67 @@ def test_latest_zone_ladder_candles_skips_newer_segment_without_valid_zones():
     assert derive_equity_zones(fresh, 100) == []
     selected = latest_zone_ladder_candles(old + fresh, "15m", cycle_start_equity=100, min_bars=7)
     assert [row["atMs"] for row in selected] == [row["atMs"] for row in old]
+
+def test_active_trades_snapshot_uses_exchange_open_positions_and_side_correct_pnl():
+    snapshot = {
+        "positions": [
+            {"symbol": "BTCUSDT", "side": "LONG", "quantity": 2, "entryPrice": 100, "markPrice": 103, "unrealizedPnl": 6, "notionalUsd": 206},
+            {"symbol": "ETHUSDT", "side": "SHORT", "quantity": 3, "entryPrice": 50, "markPrice": 48, "notionalUsd": 144},
+            {"symbol": "FLATUSDT", "side": "LONG", "quantity": 0, "entryPrice": 1, "markPrice": 2},
+        ]
+    }
+    basket = active_trades_snapshot(snapshot)
+    assert basket["activeTrades"] == 2
+    assert basket["longTrades"] == 1
+    assert basket["shortTrades"] == 1
+    assert basket["longPnl"] == 6
+    assert basket["shortPnl"] == 6
+    assert basket["openPnl"] == 12
+    assert basket["totalNotional"] == 350
+    assert round(basket["pnlPercent"], 6) == round(12 / 350 * 100, 6)
+
+
+def test_active_trades_continuity_neutralizes_entry_exit_dca_and_partial_close_jumps():
+    previous = {
+        "value": -10.0,
+        "positions": [
+            {"key": "BTCUSDT|LONG", "quantity": 2.0, "entryPrice": 100.0, "pnl": -8.0},
+            {"key": "ETHUSDT|SHORT", "quantity": 4.0, "entryPrice": 50.0, "pnl": -2.0},
+        ],
+    }
+    # BTC moves +$2 PnL. ETH is partially closed, so its resize is rebased.
+    # A new SOL leg starts with -$5 but entry itself must not jump the index.
+    current = {
+        "positions": [
+            {"key": "BTCUSDT|LONG", "quantity": 2.0, "entryPrice": 100.0, "pnl": -6.0},
+            {"key": "ETHUSDT|SHORT", "quantity": 2.0, "entryPrice": 50.0, "pnl": -1.0},
+            {"key": "SOLUSDT|LONG", "quantity": 1.0, "entryPrice": 20.0, "pnl": -5.0},
+        ],
+        "openPnl": -12.0,
+    }
+    assert active_trades_continuity_value(previous, current) == -8.0
+
+
+def test_active_trades_signed_ohlc_accepts_negative_and_zero_values():
+    first = merge_active_trades_sample(None, value=-10.0, source_at_ms=61_000, timeframe="1m")
+    second = merge_active_trades_sample(first, value=0.0, source_at_ms=75_000, timeframe="1m")
+    third = merge_active_trades_sample(second, value=-15.0, source_at_ms=89_000, timeframe="1m")
+    row = public_active_trades_candle(third)
+    assert row["open"] == -10.0
+    assert row["high"] == 0.0
+    assert row["low"] == -15.0
+    assert row["close"] == -15.0
+    assert active_trades_collection_for_timeframe("15m") == "asterActiveTradesChart15m"
+
+
+def test_active_trades_endpoint_is_analytics_only_and_never_writes_canonical_account_snapshot():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")')
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart")', start + 1)
+    block = source[start:end]
+    assert "live_authorized=False" in block
+    assert '"readOnly": True' in block
+    assert '"ordersSent": 0' in block
+    assert 'automation_ref.set({"accountSnapshot"' not in block
+    assert "place_order" not in block
+    assert "execute_" not in block
