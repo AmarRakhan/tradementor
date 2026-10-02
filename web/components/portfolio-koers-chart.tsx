@@ -30,10 +30,10 @@ type StructureOverlayLayout={
 type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number;realizedPnlUsd?:number;trades?:TpTrade[];markerTime?:number};
 type SoldierActivityEvent={id:string;atMs:number;side:"LONG"|"SHORT";count:number;originZone:number|null;role?:string;source?:string};
 type PortfolioViewMode="performance"|"account";
-type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;settings:Record<string,unknown>;zoneSoldiers:Record<string,unknown>;soldierOpenEvents:SoldierActivityEvent[]};
+type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;settings:Record<string,unknown>;zoneSoldiers:Record<string,unknown>;runtimeTruth:Record<string,unknown>;soldierOpenEvents:SoldierActivityEvent[]};
 
 const EMPTY=normalizePortfolioKoersPayload({}) as Payload;
-const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null,activeShort:null,settings:{},zoneSoldiers:{},soldierOpenEvents:[]};
+const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null,activeShort:null,settings:{},zoneSoldiers:{},runtimeTruth:{},soldierOpenEvents:[]};
 const ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32";
 const ZONE_SOLDIERS_SCREEN_REFERENCE="file_00000000c2d0821082a1b3c28f6462c1";
 const ZONE_SOLDIERS_OPEN_EVENT="tradementor:open-zone-soldiers-command-center";
@@ -95,6 +95,7 @@ function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
     if(Object.keys(candidate).length){strategy2=candidate;break}
   }
   const settings=record(strategy2.settings);
+  const runtimeTruth=record(strategy2.runtimeTruth);
   const managedPositions=record(strategy2.multiBbPositions);
   const primaryReport=record(strategy2.multiBb);
   const report=Object.keys(primaryReport).length?primaryReport:record(strategy2.multiBbReport);
@@ -111,6 +112,7 @@ function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
     activeShort:integerOrNull(report.activeShort),
     settings,
     zoneSoldiers:Object.keys(zoneSoldiers).length?zoneSoldiers:reportZoneSoldiers,
+    runtimeTruth,
     soldierOpenEvents:soldierOpenEventsFromManagedPositions(managedPositions) as SoldierActivityEvent[],
   };
 }
@@ -605,20 +607,22 @@ export function PortfolioKoersChart({
   },[advisorZoneSource,currentZonePrice]);
   const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice),[advisorZoneLadder,currentZonePrice]);
   const zoneSoldierReport=advisorSeats.zoneSoldiers;
-  const zoneSoldierEnabled=advisorEnabled&&zoneSoldierReport.enabled===true;
+  const runtimeTruth=advisorSeats.runtimeTruth;
+  const runtimeTruthCanonical=runtimeTruth.source==="SERVER_RUNTIME";
+  const runtimeZoneActive=runtimeTruthCanonical&&runtimeTruth.strategyMode==="ZONE_WARRIORS";
+  const zoneSoldierEnabled=advisorEnabled&&(runtimeZoneActive?runtimeTruth.enabled===true:zoneSoldierReport.enabled===true);
   const zoneSoldierLifecycle=String(zoneSoldierReport.lifecycle||"OFF").toUpperCase();
-  const zoneSoldierActiveZone=signedIntegerOrNull(zoneSoldierReport.activeZone);
   const liveDisplayActiveZone=zoneContext?.activeIndex??confirmedActiveZone;
-  // UI 4.1: one visible source of truth. The live-price zone drives the chart,
-  // footer and the sibling snapshot; a slower seat-status poll may not override it.
-  const activeZone=liveDisplayActiveZone;
+  // Runtime Contract V1: when Zone Warriors is live, operational UI follows
+  // the server-authoritative active zone. The price-derived zone remains a
+  // backward-compatible informational fallback before runtimeTruth is available.
+  const activeZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):liveDisplayActiveZone;
   advisorZoneLadderRef.current=advisorZoneLadder;
   activeZoneRef.current=activeZone;
 
-  // Build 457: Portfolio Koers owns the visible live-equity zone. The sibling
-  // Portfolio Snapshot consumes this exact value so a slower seat-status poll
-  // can never display a different active-zone number at the same moment.
-  useEffect(()=>{onActiveZoneChange?.(liveDisplayActiveZone)},[liveDisplayActiveZone,onActiveZoneChange]);
+  // The sibling Portfolio Snapshot receives the same operational zone used by
+  // this chart, so chart/status/detail pages cannot disagree about active zone.
+  useEffect(()=>{onActiveZoneChange?.(activeZone)},[activeZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
   useEffect(()=>{syncOverlaysRef.current()},[advisorZoneLadder,activeZone]);
   useEffect(()=>{setSelectedTpCluster(null);setTpDetailLoading(false);setTpDetailError("")},[timeframe,viewMode]);
@@ -980,7 +984,7 @@ export function PortfolioKoersChart({
   const balancerOpen=integerOrNull(zoneBalancer.openCount)??0;
   const balancerPending=Math.max(0,balancerDesired-balancerOpen);
   const balancerMessage=String(zoneBalancer.message||"Geen correctie nodig");
-  const zoneEntriesSafe=zoneSoldierReport.safeForNewEntries===true;
+  const zoneEntriesSafe=runtimeZoneActive?runtimeTruth.zoneSafeForNewEntries===true:zoneSoldierReport.safeForNewEntries===true;
   const drainingOpenCount=integerOrNull(zoneSoldierReport.drainingOpenCount)??0;
   const advisorTimelineReady=advisorTimeline?.safeForAdvisor===true;
   const timelineGap=advisorTimeline?.gaps?.at(-1)??null;
