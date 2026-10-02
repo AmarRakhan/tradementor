@@ -1,0 +1,150 @@
+name: Runtime Contract V1
+
+on:
+  pull_request:
+    paths:
+      - "cloud_api/**"
+      - "web/app/api/exchanges/aster/**"
+      - "web/components/aster-*.tsx"
+      - "web/components/portfolio-*.tsx"
+      - "web/lib/aster-*.ts"
+      - "web/lib/aster-*.mjs"
+      - "web/lib/portfolio-zone-advisor.mjs"
+      - "tools/runtime_contract_impact.py"
+      - "tools/runtime_contract_post_deploy.py"
+      - "tools/runtime_contract_snapshot.py"
+      - ".github/workflows/runtime-contract-v1.yml"
+      - ".github/workflows/cloud-backend-ci.yml"
+      - ".github/workflows/web-cloud-ci.yml"
+      - ".github/workflows/deploy-cloud-production.yml"
+      - ".github/workflows/ensure-cloudrun-background-cpu.yml"
+      - ".github/workflows/verify-aster-periodic-worker-live-*.yml"
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - "cloud_api/**"
+      - "web/app/api/exchanges/aster/**"
+      - "web/components/aster-*.tsx"
+      - "web/components/portfolio-*.tsx"
+      - "web/lib/aster-*.ts"
+      - "web/lib/aster-*.mjs"
+      - "web/lib/portfolio-zone-advisor.mjs"
+      - "tools/runtime_contract_impact.py"
+      - "tools/runtime_contract_post_deploy.py"
+      - "tools/runtime_contract_snapshot.py"
+      - ".github/workflows/runtime-contract-v1.yml"
+      - ".github/workflows/cloud-backend-ci.yml"
+      - ".github/workflows/web-cloud-ci.yml"
+      - ".github/workflows/deploy-cloud-production.yml"
+      - ".github/workflows/ensure-cloudrun-background-cpu.yml"
+      - ".github/workflows/verify-aster-periodic-worker-live-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  impact-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed files
+        id: changed
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE"
+            HEAD="$PR_HEAD"
+          else
+            BASE="$PUSH_BEFORE"
+            HEAD="$GITHUB_SHA"
+            if [ -z "$BASE" ] || [[ "$BASE" =~ ^0+$ ]] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+              BASE="$(git rev-parse "$HEAD^")"
+            fi
+          fi
+          git diff --name-only "$BASE" "$HEAD" | sort -u > "$RUNNER_TEMP/runtime-contract-changed.txt"
+          echo "Changed files:"
+          cat "$RUNNER_TEMP/runtime-contract-changed.txt"
+
+      - name: Select mandatory runtime contracts
+        id: impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/runtime_contract_impact.py             --files-file "$RUNNER_TEMP/runtime-contract-changed.txt"             --backend-tests-file "$RUNNER_TEMP/runtime-contract-backend-tests.txt"             --web-tests-file "$RUNNER_TEMP/runtime-contract-web-tests.txt"             --github-output "$GITHUB_OUTPUT"             --summary "$GITHUB_STEP_SUMMARY"             --json
+
+          echo "Backend tests:"
+          cat "$RUNNER_TEMP/runtime-contract-backend-tests.txt" || true
+          echo "Web tests:"
+          cat "$RUNNER_TEMP/runtime-contract-web-tests.txt" || true
+
+      - name: Assert contract runner has no production credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          test -z "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}"
+          test -z "${ASTER_PRIVATE_KEY:-}"
+          test -z "${ASTER_API_KEY:-}"
+
+      - uses: actions/setup-python@v5
+        if: steps.impact.outputs.has_backend_tests == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend test dependencies
+        if: steps.impact.outputs.has_backend_tests == 'true'
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run selected backend runtime contracts
+        if: steps.impact.outputs.has_backend_tests == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t TESTS < <(sed 's#^cloud_api/##' "$RUNNER_TEMP/runtime-contract-backend-tests.txt")
+          test "${#TESTS[@]}" -gt 0
+          cd cloud_api
+          pytest -q "${TESTS[@]}"
+
+      - uses: actions/setup-node@v4
+        if: steps.impact.outputs.has_web_tests == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web test dependencies
+        if: steps.impact.outputs.has_web_tests == 'true'
+        working-directory: web
+        run: npm ci
+
+      - name: Run selected web runtime contracts
+        if: steps.impact.outputs.has_web_tests == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t TESTS < <(sed 's#^web/##' "$RUNNER_TEMP/runtime-contract-web-tests.txt")
+          test "${#TESTS[@]}" -gt 0
+          cd web
+          node --test "${TESTS[@]}"
+
+      - name: Re-assert isolation after contracts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          test -z "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}"
+          test -z "${ASTER_PRIVATE_KEY:-}"
+          test -z "${ASTER_API_KEY:-}"
