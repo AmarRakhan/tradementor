@@ -24,7 +24,7 @@ test("Build 482 makes both Snapshot performance cards open the Rendement Overzic
   assert.match(route, /portfolio-growth\/daily-detail/);
   assert.match(css, /aps-performance-flip-in/);
   assert.match(css, /aps-performance-flip-out/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "483"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "484"/);
 });
 
 test("Build 482 explains residual equity honestly instead of inventing historical unrealized PnL", async () => {
