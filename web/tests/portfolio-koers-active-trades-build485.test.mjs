@@ -87,5 +87,5 @@ test("Build 486 does not auto-zoom sparse Active Trades candles", async () => {
   assert.ok(component.includes('const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;'));
   assert.ok(component.includes('from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:Math.max(-.5,candles.length-effectiveFocusVisibleBars-.5),'));
   assert.ok(component.includes("Math.min(candles.length,view.visibleBars)"));
-  assert.ok(component.includes("Math.max(-.5,candles.length-focusVisibleBars-.5)"));
+  assert.ok(component.includes("Math.max(-.5,candles.length-effectiveFocusVisibleBars-.5)"));
 });
