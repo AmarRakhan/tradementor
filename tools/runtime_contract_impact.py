@@ -52,6 +52,8 @@ SUITE_TESTS: dict[str, tuple[str, ...]] = {
     ),
     "release_safety": (
         "cloud_api/test_runtime_contract_impact_matrix.py",
+        "cloud_api/test_runtime_contract_post_deploy.py",
+        "cloud_api/test_runtime_contract_snapshot.py",
         "cloud_api/test_production_deploy_safety.py",
         "cloud_api/test_live_canary_deploy_contract.py",
         "cloud_api/test_manual_only_cloud_deployments.py",
@@ -156,7 +158,11 @@ SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         ".github/workflows/web-cloud-ci.yml",
         ".github/workflows/deploy-cloud-production.yml",
         "tools/runtime_contract_impact.py",
+        "tools/runtime_contract_post_deploy.py",
+        "tools/runtime_contract_snapshot.py",
         "cloud_api/test_runtime_contract_impact_matrix.py",
+        "cloud_api/test_runtime_contract_post_deploy.py",
+        "cloud_api/test_runtime_contract_snapshot.py",
         "cloud_api/test_runtime_contract_release_safety_v1.py",
     ),
 }
