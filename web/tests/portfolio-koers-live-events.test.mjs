@@ -39,8 +39,8 @@ test("Portfolio Koers uses a lightweight five-second marker feed and rebuilds on
   assert.ok(component.includes("const markerRowsRef=useRef<Marker[]>([])"));
   assert.ok(component.includes("markerRowsRef.current.filter((row)=>candleByTime.has(row.time))"));
   assert.ok(component.includes("setHover({candle,markers:markerRowsRef.current.filter((row)=>row.time===time)})"));
-  assert.ok(component.includes("},[baseCandles,payload.zones,payload.cycleStartEquity,timeframe,viewMode,cashflowSignature]);"));
-  assert.equal(component.includes("},[baseCandles,payload.markers,payload.zones,payload.cycleStartEquity,timeframe,viewMode,cashflowSignature]);"),false);
+  assert.ok(component.includes("},[baseCandles,activeCandles,payload.zones,payload.cycleStartEquity,timeframe,viewMode,cashflowSignature]);"));
+  assert.equal(component.includes("},[baseCandles,activeCandles,payload.markers,payload.zones,payload.cycleStartEquity,timeframe,viewMode,cashflowSignature]);"),false);
   assert.ok(component.includes("const cashflowSignature=useMemo"));
   assert.ok(route.includes("/v1/me/aster/portfolio-chart/events"));
 });

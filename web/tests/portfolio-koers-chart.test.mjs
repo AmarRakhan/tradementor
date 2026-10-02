@@ -148,7 +148,7 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(snapshotMount>chartMount);
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("Portfolio Koers"));
-  assert.ok(component.includes(">Accountwaarde</small>"));
+  assert.ok(component.includes('viewMode==="active"?"Actieve Trades":"Accountwaarde"'));
   assert.equal(component.includes("Accountwaarde · werkelijke Aster equity"),false);
   assert.ok(component.includes("file_00000000e2fc820a9057c8f60c1ec845"));
   assert.ok(component.includes("file_00000000267082109428370054535e59"));
@@ -234,7 +234,7 @@ test("Portfolio Koers mobile plot reserves only 48px for the price axis and matc
 
 test("standard chart event markup contains no event dollar value field",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  const layer=component.slice(component.indexOf('className="portfolio-koers-event-layer"'),component.indexOf("{loading&&initialChartReady&&!baseCandles.length"));
+  const layer=component.slice(component.indexOf('className="portfolio-koers-event-layer"'),component.indexOf('{viewMode==="active"&&activeLoading&&!activeCandles.length'));
   assert.equal(layer.includes("label.value"),false);
   assert.equal(layer.includes("compactUsd("),false);
   assert.equal(layer.includes("label.glyph"),false);

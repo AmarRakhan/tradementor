@@ -1060,3 +1060,28 @@
   .portfolio-koers-ui41-bb{font-size:6.4px}
   .portfolio-koers-tp-detail{left:30px;top:30px;width:min(220px,calc(100% - 42px))}
 }
+
+/* Build 485 · Portfolio Koers · Actieve Trades 1.0 (additive only) */
+.portfolio-koers-active-note{position:absolute;z-index:6;left:10px;top:9px;display:grid;gap:2px;max-width:190px;padding:6px 8px;border:1px solid rgba(44,225,153,.24);border-radius:9px;background:rgba(2,20,18,.82);backdrop-filter:blur(5px);color:#63efb0;font-size:7px;font-weight:900;letter-spacing:.03em;pointer-events:none}
+.portfolio-koers-active-note span{color:#8fa99d;font-size:5.6px;font-weight:750;letter-spacing:0}
+.portfolio-koers-active-summary{margin-top:10px;padding:11px;border:1px solid rgba(37,205,132,.24);border-radius:14px;background:linear-gradient(180deg,rgba(3,27,20,.86),rgba(2,16,14,.9));font-variant-numeric:tabular-nums}
+.portfolio-koers-active-summary h3{margin:0 0 9px;color:#f5f7f4;font-size:12px;line-height:1.1;font-weight:950}
+.portfolio-koers-active-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.portfolio-koers-active-summary-grid article{display:grid;align-content:center;min-width:0;min-height:67px;padding:8px;border:1px solid rgba(43,209,137,.22);border-radius:10px;background:rgba(3,24,20,.72)}
+.portfolio-koers-active-summary-grid small{color:#a4b0aa;font-size:5.7px;line-height:1.15;font-weight:850;letter-spacing:.035em}
+.portfolio-koers-active-summary-grid strong{margin-top:5px;color:#f4f7f5;font-size:14px;line-height:1;font-weight:950;white-space:nowrap}
+.portfolio-koers-active-summary-grid strong.positive{color:#41e7a0}.portfolio-koers-active-summary-grid strong.negative{color:#ff6879}
+.portfolio-koers-active-summary-grid em{margin-top:5px;color:#8fa099;font-size:6px;line-height:1.15;font-style:normal;font-weight:750}
+.portfolio-koers-active-summary-grid em .long{color:#54e9ab}.portfolio-koers-active-summary-grid em .short{color:#ff7c91}
+@media(max-width:640px){
+  .portfolio-koers-active-note{left:7px;top:7px;max-width:156px;padding:5px 6px;font-size:5.8px}.portfolio-koers-active-note span{font-size:4.8px}
+  .portfolio-koers-active-summary{margin-top:8px;padding:9px}
+  .portfolio-koers-active-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .portfolio-koers-active-summary-grid article{min-height:60px;padding:7px}
+  .portfolio-koers-active-summary-grid small{font-size:5px}.portfolio-koers-active-summary-grid strong{font-size:12px}.portfolio-koers-active-summary-grid em{font-size:5.3px}
+}
+@media(max-width:380px){
+  .portfolio-koers-view-toggle{width:100%}
+  .portfolio-koers-view-toggle button{flex:1 1 0;padding:4px 3px;font-size:4.75px}
+  .portfolio-koers-active-summary-grid{gap:5px}.portfolio-koers-active-summary-grid article{padding:6px}
+}
