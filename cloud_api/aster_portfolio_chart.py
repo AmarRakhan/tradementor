@@ -24,6 +24,15 @@ COLLECTION_BY_TIMEFRAME: dict[str, str] = {
     "4u": "asterPortfolioChart4h",
     "24u": "asterPortfolioChart24h",
 }
+
+ACTIVE_TRADES_COLLECTION_BY_TIMEFRAME: dict[str, str] = {
+    "1m": "asterActiveTradesChart1m",
+    "5m": "asterActiveTradesChart5m",
+    "15m": "asterActiveTradesChart15m",
+    "1u": "asterActiveTradesChart1h",
+    "4u": "asterActiveTradesChart4h",
+    "24u": "asterActiveTradesChart24h",
+}
 EXTERNAL_CASHFLOW_TYPES = frozenset({
     "TRANSFER", "DEPOSIT", "WITHDRAWAL", "WALLET_TRANSFER", "INTERNAL_TRANSFER",
     "WELCOME_BONUS", "INSURANCE_CLEAR", "BALANCE_ADJUSTMENT",
@@ -153,6 +162,163 @@ def merge_equity_sample(existing: dict[str, Any] | None, *, equity: float, sourc
         "source": "aster-account-equity",
     }
 
+
+
+def active_trades_collection_for_timeframe(timeframe: str) -> str:
+    try:
+        return ACTIVE_TRADES_COLLECTION_BY_TIMEFRAME[str(timeframe)]
+    except KeyError as exc:
+        raise ValueError("Onbekend Actieve Trades-timeframe") from exc
+
+
+def active_trades_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize the exchange-confirmed open positions into one read-only basket."""
+    root = snapshot if isinstance(snapshot, dict) else {}
+    positions = root.get("positions") if isinstance(root.get("positions"), list) else []
+    normalized: list[dict[str, Any]] = []
+    for raw in positions:
+        if not isinstance(raw, dict):
+            continue
+        symbol = str(raw.get("symbol", "")).upper().strip()
+        side = str(raw.get("side", raw.get("positionSide", ""))).upper().strip()
+        quantity = abs(_number(raw.get("quantity", raw.get("positionAmt"))))
+        if not symbol or side not in {"LONG", "SHORT"} or quantity <= 0:
+            continue
+        entry = _number(raw.get("entryPrice"))
+        mark = _number(raw.get("markPrice"))
+        explicit_pnl = raw.get("unrealizedPnl", raw.get("unRealizedProfit", raw.get("unrealizedProfit")))
+        pnl = _number(explicit_pnl)
+        if explicit_pnl in (None, "") and entry > 0 and mark > 0:
+            pnl = (mark - entry) * quantity if side == "LONG" else (entry - mark) * quantity
+        notional = abs(_number(raw.get("notionalUsd", raw.get("notional"))))
+        if notional <= 0 and mark > 0:
+            notional = mark * quantity
+        normalized.append({
+            "key": f"{symbol}|{side}",
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "entryPrice": entry,
+            "markPrice": mark,
+            "pnl": pnl,
+            "notionalUsd": notional,
+        })
+    normalized.sort(key=lambda row: str(row["key"]))
+    long_rows = [row for row in normalized if row["side"] == "LONG"]
+    short_rows = [row for row in normalized if row["side"] == "SHORT"]
+    long_pnl = sum(_number(row.get("pnl")) for row in long_rows)
+    short_pnl = sum(_number(row.get("pnl")) for row in short_rows)
+    long_notional = sum(abs(_number(row.get("notionalUsd"))) for row in long_rows)
+    short_notional = sum(abs(_number(row.get("notionalUsd"))) for row in short_rows)
+    total_notional = long_notional + short_notional
+    open_pnl = long_pnl + short_pnl
+    return {
+        "positions": normalized,
+        "openPnl": open_pnl,
+        "pnlPercent": (open_pnl / total_notional * 100.0) if total_notional > 1e-12 else 0.0,
+        "longPnl": long_pnl,
+        "shortPnl": short_pnl,
+        "longNotional": long_notional,
+        "shortNotional": short_notional,
+        "totalNotional": total_notional,
+        "activeTrades": len(normalized),
+        "longTrades": len(long_rows),
+        "shortTrades": len(short_rows),
+        "longSharePercent": (long_notional / total_notional * 100.0) if total_notional > 1e-12 else 0.0,
+        "shortSharePercent": (short_notional / total_notional * 100.0) if total_notional > 1e-12 else 0.0,
+    }
+
+
+def active_trades_continuity_value(previous: dict[str, Any] | None, current: dict[str, Any]) -> float:
+    """Advance the basket only by market PnL on unchanged legs.
+
+    New/removed legs and quantity/average-entry changes are rebased at the
+    observation boundary, so an entry, exit, DCA or partial close cannot create
+    an artificial chart jump. Unchanged LONG and SHORT legs contribute their
+    exchange-confirmed unrealized-PnL delta.
+    """
+    prior = previous if isinstance(previous, dict) else {}
+    if not prior or not isinstance(prior.get("positions"), list):
+        return _number(current.get("openPnl"))
+    previous_value = _number(prior.get("value"))
+    previous_rows = {
+        str(row.get("key", "")): row for row in prior.get("positions", [])
+        if isinstance(row, dict) and str(row.get("key", ""))
+    }
+    current_rows = {
+        str(row.get("key", "")): row for row in current.get("positions", [])
+        if isinstance(row, dict) and str(row.get("key", ""))
+    }
+    delta = 0.0
+    for key in previous_rows.keys() & current_rows.keys():
+        before, after = previous_rows[key], current_rows[key]
+        before_qty, after_qty = abs(_number(before.get("quantity"))), abs(_number(after.get("quantity")))
+        before_entry, after_entry = _number(before.get("entryPrice")), _number(after.get("entryPrice"))
+        quantity_same = math.isclose(before_qty, after_qty, rel_tol=1e-9, abs_tol=1e-12)
+        entry_same = math.isclose(before_entry, after_entry, rel_tol=1e-9, abs_tol=1e-12)
+        if quantity_same and entry_same:
+            delta += _number(after.get("pnl")) - _number(before.get("pnl"))
+    return previous_value + delta
+
+
+def merge_active_trades_sample(existing: dict[str, Any] | None, *, value: float, source_at_ms: int, timeframe: str) -> dict[str, Any]:
+    """Merge one signed, continuity-adjusted basket value into an OHLC bucket."""
+    if timeframe not in TIMEFRAME_MS:
+        raise ValueError("Onbekend Actieve Trades-timeframe")
+    observed = float(value)
+    stamp = int(source_at_ms)
+    if not math.isfinite(observed) or stamp <= 0:
+        raise ValueError("Actieve Trades-sample is ongeldig")
+    bucket = bucket_start_ms(stamp, timeframe)
+    current = existing if isinstance(existing, dict) else {}
+    if int(_number(current.get("bucketMs"))) != bucket:
+        current = {}
+    first = int(_number(current.get("firstSampleAtMs"))) or stamp
+    last = int(_number(current.get("lastSampleAtMs"))) or stamp
+    opened = float(current.get("open", observed)) if current else observed
+    high = float(current.get("high", observed)) if current else observed
+    low = float(current.get("low", observed)) if current else observed
+    close = float(current.get("close", observed)) if current else observed
+    samples = max(0, int(_number(current.get("sampleCount"))))
+    duplicate = bool(current and stamp == last and math.isclose(observed, close, rel_tol=1e-12, abs_tol=1e-12))
+    if stamp < first:
+        first, opened = stamp, observed
+    if stamp >= last:
+        last, close = stamp, observed
+    return {
+        "timeframe": timeframe,
+        "bucketMs": bucket,
+        "open": opened,
+        "high": max(high, observed),
+        "low": min(low, observed),
+        "close": close,
+        "firstSampleAtMs": first,
+        "lastSampleAtMs": last,
+        "sampleCount": samples if duplicate else samples + 1,
+        "source": "aster-active-trades-index",
+    }
+
+
+def public_active_trades_candle(row: dict[str, Any]) -> dict[str, Any] | None:
+    bucket = int(_number(row.get("bucketMs")))
+    values = [row.get(key) for key in ("open", "high", "low", "close")]
+    try:
+        opened, high, low, close = [float(value) for value in values]
+    except (TypeError, ValueError):
+        return None
+    if bucket <= 0 or not all(math.isfinite(value) for value in (opened, high, low, close)) or high < low:
+        return None
+    return {
+        "time": bucket // 1000,
+        "atMs": bucket,
+        "open": opened,
+        "high": high,
+        "low": low,
+        "close": close,
+        "samples": max(1, int(_number(row.get("sampleCount")))),
+        "firstSampleAtMs": int(_number(row.get("firstSampleAtMs"))) or bucket,
+        "sourceAtMs": int(_number(row.get("lastSampleAtMs"))),
+    }
 
 def public_candle(row: dict[str, Any]) -> dict[str, Any] | None:
     bucket = int(_number(row.get("bucketMs")))
