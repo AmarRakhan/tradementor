@@ -703,6 +703,7 @@ export function PortfolioKoersChart({
     candleDataRef.current=candles.map((row)=>({...row}));
     const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
     const performanceByTime=new Map(performancePoints.map((row:any)=>[Number(row.time),Number(row.value)]));
+    const view=TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"];
     // Preserve the existing Accountwaarde/Performance viewport exactly.
     // Only sparse Active Trades history reserves the normal timeframe density so
     // a few real P&L candles are not stretched to screen width.
