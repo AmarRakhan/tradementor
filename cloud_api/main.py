@@ -3099,6 +3099,7 @@ _RELEASE_FEATURE_DEFAULTS: dict[str, dict[str, Any]] = {
     "zone_command_center": {"status": "TESTEN", "beta": True, "stable": False},
     "auto_hedge_v2": {"status": "TESTEN", "beta": True, "stable": False},
     "legacy_hedge_recovery": {"status": "TESTEN", "beta": True, "stable": False},
+    "active_trades_chart": {"status": "TESTEN", "beta": True, "stable": False},
 }
 
 # Release rights are channel entitlements only. They must never mutate user
@@ -6280,7 +6281,7 @@ def aster_portfolio_chart_active_trades(
     user: dict[str, Any] = Depends(authenticated_user),
 ) -> dict[str, Any]:
     """Read-only OHLC index of the user's exchange-confirmed open Aster positions."""
-    uid = str(user["uid"])
+    uid = require_release_feature(user, "active_trades_chart")
     automation_ref = aster_automation_reference(uid)
     automation = automation_ref.get().to_dict() or {}
     snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
