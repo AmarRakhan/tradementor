@@ -53,12 +53,14 @@ test("Build 420 strategy cockpit separates informative zones from explicit zone 
 });
 
 
-test("Build 417 uses the canonical ladder for informational active zone and zone strategy",async()=>{
+test("Runtime Contract V1 uses server active zone for live Zone Warriors and ladder fallback otherwise",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice)"));
   assert.ok(component.includes("const liveDisplayActiveZone=zoneContext?.activeIndex??confirmedActiveZone"));
-  assert.ok(component.includes("const activeZone=liveDisplayActiveZone"));
+  assert.ok(component.includes('const runtimeTruthCanonical=runtimeTruth.source==="SERVER_RUNTIME"'));
+  assert.ok(component.includes('const runtimeZoneActive=runtimeTruthCanonical&&runtimeTruth.strategyMode==="ZONE_WARRIORS"'));
+  assert.ok(component.includes("const activeZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):liveDisplayActiveZone"));
   assert.equal(component.includes("zoneSoldierEnabled&&zoneSoldierActiveZone!==null?zoneSoldierActiveZone:liveDisplayActiveZone"),false);
 });
 
