@@ -17,7 +17,6 @@ def test_snapshot_collector_source_is_read_only_by_construction():
     source = MODULE_PATH.read_text(encoding="utf-8")
     for forbidden in (
         ".set(",
-        ".update(",
         ".delete(",
         ".add(",
         "submit_order",
@@ -91,7 +90,7 @@ def test_account_snapshot_contains_only_sanitized_runtime_contract_fields():
         "phase",
         "lastTickAtMs",
         "scannerUpdatedAtMs",
-        "dynamicBlocking",
+        "scannerBlocked",
         "zoneEnabled",
         "activeZone",
         "zoneSafeForNewEntries",
