@@ -18,6 +18,7 @@ SUITE_TESTS: dict[str, tuple[str, ...]] = {
     ),
     "classic_dca": (
         "cloud_api/test_runtime_contract_release_safety_v1.py",
+        "cloud_api/test_aster_runtime_truth.py",
         "cloud_api/test_aster_multi_bb.py",
         "cloud_api/test_aster_pair_overrides.py",
         "cloud_api/test_aster_side_settings_persistence.py",
