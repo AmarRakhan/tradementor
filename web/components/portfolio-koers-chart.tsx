@@ -437,6 +437,7 @@ export function PortfolioKoersChart({
   const [liveEquity,setLiveEquity]=useState<number|null>(null);
   const [advisorEnabled,setAdvisorEnabled]=useState(false);
   const [commandCenterAvailable,setCommandCenterAvailable]=useState(false);
+  const [activeTradesAvailable,setActiveTradesAvailable]=useState(false);
   const [advisorSeats,setAdvisorSeats]=useState<AdvisorSeats>(EMPTY_ADVISOR);
   const [advisorZones,setAdvisorZones]=useState<Zone[]>([]);
   const [advisorTimeline,setAdvisorTimeline]=useState<any>(null);
@@ -485,10 +486,12 @@ export function PortfolioKoersChart({
       const features=record(release.features);
       const zoneFeature=record(features.zone_soldiers);
       const commandCenterFeature=record(features.zone_command_center);
+      const activeTradesFeature=record(features.active_trades_chart);
       const strategyAccess=zoneFeature.enabled===true;
       const commandCenterAccess=commandCenterFeature.enabled===true;
       setAdvisorEnabled(strategyAccess);
       setCommandCenterAvailable(commandCenterAccess);
+      setActiveTradesAvailable(activeTradesFeature.enabled===true);
       if(strategyAccess){
         const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
         const nextAdvisor=advisorSeatsFromPayload(account);
@@ -509,6 +512,8 @@ export function PortfolioKoersChart({
     }catch{
       setAdvisorEnabled(false);
       setCommandCenterAvailable(false);
+      setActiveTradesAvailable(false);
+      if(viewMode==="active")setViewMode("account");
       setZoneSoldiersScreenOpen(false);
       setAdvisorSeats(EMPTY_ADVISOR);
     }
@@ -602,7 +607,7 @@ export function PortfolioKoersChart({
 
 
   const loadActiveTrades=useCallback(async()=>{
-    if(viewMode!=="active")return;
+    if(viewMode!=="active"||!activeTradesAvailable)return;
     setActiveLoading(true);
     try{
       const response=await authenticatedRequest(`/api/exchanges/aster/portfolio-chart/active-trades?timeframe=${encodeURIComponent(timeframe)}&limit=320`,{cache:"no-store"});
@@ -611,16 +616,16 @@ export function PortfolioKoersChart({
     }catch(reason){
       setActiveError(reason instanceof Error?reason.message:"Actieve Trades kon niet worden geladen.");
     }finally{setActiveLoading(false)}
-  },[timeframe,viewMode]);
+  },[timeframe,viewMode,activeTradesAvailable]);
 
   useEffect(()=>{
-    if(viewMode!=="active")return;
+    if(viewMode!=="active"||!activeTradesAvailable)return;
     void loadActiveTrades();
     const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void loadActiveTrades()},5_000);
     const visible=()=>{if(document.visibilityState==="visible")void loadActiveTrades()};
     document.addEventListener("visibilitychange",visible);
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
-  },[loadActiveTrades,viewMode]);
+  },[loadActiveTrades,viewMode,activeTradesAvailable]);
 
   useEffect(()=>{
     if(viewMode==="active")return;
@@ -1185,7 +1190,7 @@ export function PortfolioKoersChart({
       <div className="portfolio-koers-view-toggle" role="group" aria-label="Portfolio Koers weergave">
         <button type="button" className={viewMode==="performance"?"active":""} onClick={()=>setViewMode("performance")}>PERFORMANCE</button>
         <button type="button" className={viewMode==="account"?"active":""} onClick={()=>setViewMode("account")}>ACCOUNTWAARDE</button>
-        <button type="button" className={viewMode==="active"?"active":""} onClick={()=>setViewMode("active")}>ACTIEVE TRADES</button>
+        {activeTradesAvailable?<button type="button" className={viewMode==="active"?"active":""} onClick={()=>setViewMode("active")}>ACTIEVE TRADES</button>:null}
       </div>
     </header>
     <div className="portfolio-koers-stage">
