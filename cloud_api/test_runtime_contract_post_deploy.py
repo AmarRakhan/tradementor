@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 
@@ -9,6 +10,7 @@ MODULE_PATH = ROOT / "tools" / "runtime_contract_post_deploy.py"
 SPEC = importlib.util.spec_from_file_location("runtime_contract_post_deploy", MODULE_PATH)
 assert SPEC and SPEC.loader
 gate = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 
 
@@ -35,7 +37,7 @@ def account(ref="acct", **overrides):
         "enabled": True,
         "lastTickAtMs": NOW - 30_000,
         "scannerUpdatedAtMs": NOW - 30_000,
-        "dynamicBlocking": False,
+        "scannerBlocked": False,
         "zoneEnabled": True,
         "activeZone": 28,
         "zoneSafeForNewEntries": True,
@@ -110,7 +112,7 @@ def test_dynamic_hedge_hard_block_can_pause_scanner_without_failing_account_tick
     current = account(
         lastTickAtMs=NOW - 5_000,
         scannerUpdatedAtMs=prior["scannerUpdatedAtMs"],
-        dynamicBlocking=True,
+        scannerBlocked=True,
     )
     result = gate.evaluate_runtime_contract(
         snapshot(accounts=[prior]),
@@ -154,3 +156,31 @@ def test_deploy_must_not_disable_monitoring_for_existing_account():
     )
     assert result.ok is False
     assert "acct:MONITOR_DISABLED_AFTER_DEPLOY" in result.failures
+
+
+def test_new_periodic_worker_error_is_regression_but_existing_count_is_not():
+    stable = gate.evaluate_runtime_contract(
+        snapshot(periodicWorkerErrors=1),
+        snapshot(periodicWorkerErrors=1),
+        now_ms=NOW,
+    )
+    assert stable.ok is True
+    regressed = gate.evaluate_runtime_contract(
+        snapshot(periodicWorkerErrors=0),
+        snapshot(periodicWorkerErrors=1),
+        now_ms=NOW,
+    )
+    assert regressed.ok is False
+    assert "PERIODIC_WORKER_ERRORS_REGRESSED" in regressed.failures
+
+
+def test_runtime_phase_regression_to_data_hold_fails():
+    prior = account(phase="RUNNING", lastTickAtMs=NOW - 100_000, scannerUpdatedAtMs=NOW - 100_000)
+    current = account(phase="DATA_HOLD", lastTickAtMs=NOW - 5_000, scannerUpdatedAtMs=NOW - 5_000)
+    result = gate.evaluate_runtime_contract(
+        snapshot(accounts=[prior]),
+        snapshot(accounts=[current]),
+        now_ms=NOW,
+    )
+    assert result.ok is False
+    assert "acct:RUNTIME_PHASE_REGRESSED_TO_DATA_HOLD" in result.failures
