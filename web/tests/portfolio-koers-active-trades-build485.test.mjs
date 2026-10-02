@@ -8,10 +8,23 @@ test("Build 485 adds Active Trades without changing the Accountwaarde default", 
   assert.ok(component.includes('useState<PortfolioViewMode>("account")'));
   assert.ok(component.includes('onClick={()=>setViewMode("performance")}'));
   assert.ok(component.includes('onClick={()=>setViewMode("account")}'));
+  assert.ok(component.includes('activeTradesAvailable?<button'));
   assert.ok(component.includes('onClick={()=>setViewMode("active")}'));
   assert.ok(component.includes(">PERFORMANCE</button>"));
   assert.ok(component.includes(">ACCOUNTWAARDE</button>"));
   assert.ok(component.includes(">ACTIEVE TRADES</button>"));
+});
+
+test("Active Trades is release-gated to BETA and STABLE keeps the existing two-tab view", async () => {
+  const [component, backend] = await Promise.all([
+    readFile(new URL("../components/portfolio-koers-chart.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../cloud_api/main.py", import.meta.url), "utf8"),
+  ]);
+  assert.ok(component.includes("features.active_trades_chart"));
+  assert.ok(component.includes("setActiveTradesAvailable(activeTradesFeature.enabled===true)"));
+  assert.ok(component.includes("activeTradesAvailable?<button"));
+  assert.ok(backend.includes('"active_trades_chart": {"status": "TESTEN", "beta": True, "stable": False}'));
+  assert.ok(backend.includes('require_release_feature(user, "active_trades_chart")'));
 });
 
 test("Active Trades loads only its new read-only endpoint and uses signed candlesticks", async () => {
