@@ -101,6 +101,7 @@ from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_zone_soldiers import confirmed_zone_from_display_zones, prepare_zone_runtime
+from aster_runtime_truth import build_multi_bb_runtime_truth
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -1832,6 +1833,17 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             status=dynamic_status,
         )
         queue_state=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+        runtime_truth=build_multi_bb_runtime_truth(
+            settings=settings,
+            report=report,
+            zone_report=zone_report,
+            enabled=enabled,
+            monitor=monitor,
+            last_tick_at=raw.get("lastTickAt"),
+            zone_active=zone_active,
+            dynamic_hedge_blocking=dynamic_blocking,
+            queue_halted=bool(queue_state.get("haltedUncertain",False)),
+        )
         entry_diagnostics={
             "entryStatus":str(report.get("entryStatus") or ""),
             "entryReason":str(report.get("entryReason") or ""),
@@ -1865,6 +1877,7 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
             # Legacy key remains for persisted clients; all new UI reads the
             # priceZoneSeats alias and avoids soldier terminology.
             "zoneSoldiers":zone_report,"priceZoneSeats":zone_report,"entryDiagnostics":entry_diagnostics,
+            "runtimeTruth":runtime_truth,
             "universe":{"topN":int(settings.get("universeTopN",30)),"ranking":report.get("rankedTopN",[])},
             "operation":{"newEntries":{"blocked":not enabled,"reason":"bot staat uit" if not enabled else "directe slotvulling + Top-N + leveragefilter"},
                 "existingPositionManagement":{"reason":"Exchange truth + TP/DCA beheer"}},"candidateScan":{"checked":len(report.get("rankedTopN",[])),"reasons":[]},
