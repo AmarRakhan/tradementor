@@ -703,8 +703,10 @@ export function PortfolioKoersChart({
     candleDataRef.current=candles.map((row)=>({...row}));
     const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
     const performanceByTime=new Map(performancePoints.map((row:any)=>[Number(row.time),Number(row.value)]));
-    const view=TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"];
-    // Keep the same logical viewport density for every tab. Sparse Active Trades history\n    // must not be auto-zoomed into giant candles; missing history stays empty rather than invented.\n    const focusVisibleBars=view.visibleBars;
+    // Preserve the existing Accountwaarde/Performance viewport exactly.
+    // Only sparse Active Trades history reserves the normal timeframe density so
+    // a few real P&L candles are not stretched to screen width.
+    const focusVisibleBars=viewMode==="active"?view.visibleBars:Math.min(candles.length,view.visibleBars);
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
