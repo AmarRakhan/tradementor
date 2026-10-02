@@ -88,7 +88,7 @@ def _account_row(uid: str, raw: dict[str, Any]) -> dict[str, Any]:
         "phase": str(raw.get("phase") or ""),
         "lastTickAtMs": _ms(raw.get("lastTickAt")),
         "scannerUpdatedAtMs": _num(scanner.get("updatedAtMs")),
-        "dynamicBlocking": _dynamic_blocking(raw),
+        "scannerBlocked": _dynamic_blocking(raw) or str(raw.get("phase") or "").upper() in {"PORTFOLIO_TP_EXECUTING", "FLAT_CONFIRMING", "RESTARTING"},
         "zoneEnabled": zone_enabled,
         "activeZone": zone.get("activeZone") if zone_enabled else None,
         "zoneSafeForNewEntries": bool(zone.get("safeForNewEntries")) if zone_enabled else False,
