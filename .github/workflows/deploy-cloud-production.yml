@@ -219,6 +219,79 @@ jobs:
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
+      - name: Capture pre-deploy runtime contract baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=capture-runtime-baseline" >> "$GITHUB_ENV"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-ticks-before.json" || echo '[]' > "$RUNNER_TEMP/runtime-ticks-before.json"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-errors-before.json" || echo '[]' > "$RUNNER_TEMP/runtime-errors-before.json"
+          python tools/runtime_contract_snapshot.py \
+            --project "$GCP_PROJECT_ID" \
+            --service-json "$RUNNER_TEMP/service-before.json" \
+            --health-json "$RUNNER_TEMP/previous-health.json" \
+            --ticks-json "$RUNNER_TEMP/runtime-ticks-before.json" \
+            --errors-json "$RUNNER_TEMP/runtime-errors-before.json" \
+            --output "$RUNNER_TEMP/runtime-before.json"
+
+      - name: Select mandatory contracts for exact production delta
+        id: release-impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=runtime-contract-selection" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/release-changed-files.txt"
+          if [ "$PREVIOUS_SOURCE_COMMIT" != "$SOURCE_COMMIT" ]; then
+            git cat-file -e "$PREVIOUS_SOURCE_COMMIT^{commit}"
+            git diff --name-only "$PREVIOUS_SOURCE_COMMIT" "$SOURCE_COMMIT" | sort -u > "$RUNNER_TEMP/release-changed-files.txt"
+          fi
+          python tools/runtime_contract_impact.py \
+            --files-file "$RUNNER_TEMP/release-changed-files.txt" \
+            --backend-tests-file "$RUNNER_TEMP/release-backend-tests.txt" \
+            --web-tests-file "$RUNNER_TEMP/release-web-tests.txt" \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --json
+
+      - name: Run mandatory backend release contracts
+        if: steps.release-impact.outputs.has_backend_tests == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=runtime-backend-contracts" >> "$GITHUB_ENV"
+          mapfile -t TESTS < <(sed 's#^cloud_api/##' "$RUNNER_TEMP/release-backend-tests.txt")
+          test "${#TESTS[@]}" -gt 0
+          cd cloud_api
+          pytest -q "${TESTS[@]}"
+
+      - name: Set up Node for mandatory web release contracts
+        if: steps.release-impact.outputs.has_web_tests == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies for mandatory release contracts
+        if: steps.release-impact.outputs.has_web_tests == 'true'
+        working-directory: web
+        run: npm ci
+
+      - name: Run mandatory web release contracts
+        if: steps.release-impact.outputs.has_web_tests == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=runtime-web-contracts" >> "$GITHUB_ENV"
+          mapfile -t TESTS < <(sed 's#^web/##' "$RUNNER_TEMP/release-web-tests.txt")
+          test "${#TESTS[@]}" -gt 0
+          cd web
+          node --test "${TESTS[@]}"
+
       - name: Select exact image strategy
         shell: bash
         run: |
@@ -347,6 +420,48 @@ jobs:
           assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           PY
 
+      - name: Verify post-deploy trading runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=verify-trading-runtime-contract" >> "$GITHUB_ENV"
+          PASSED=0
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            gcloud run services describe "$CLOUD_RUN_SERVICE" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after-runtime.json"
+            curl --fail --silent --show-error --retry 3 --retry-delay 2 "$SERVICE_URL/health" > "$RUNNER_TEMP/health-after-runtime.json"
+            gcloud logging read \
+              'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"' \
+              --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-ticks-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-ticks-after.json"
+            gcloud logging read \
+              'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
+              --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-errors-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-errors-after.json"
+
+            python tools/runtime_contract_snapshot.py \
+              --project "$GCP_PROJECT_ID" \
+              --service-json "$RUNNER_TEMP/service-after-runtime.json" \
+              --health-json "$RUNNER_TEMP/health-after-runtime.json" \
+              --ticks-json "$RUNNER_TEMP/runtime-ticks-after.json" \
+              --errors-json "$RUNNER_TEMP/runtime-errors-after.json" \
+              --output "$RUNNER_TEMP/runtime-after.json"
+
+            NOW_MS="$(python - <<'PY'
+          import time
+          print(int(time.time()*1000))
+          PY
+            )"
+            if python tools/runtime_contract_post_deploy.py \
+              --before "$RUNNER_TEMP/runtime-before.json" \
+              --after "$RUNNER_TEMP/runtime-after.json" \
+              --now-ms "$NOW_MS" \
+              --output "$RUNNER_TEMP/runtime-contract-result.json"; then
+              PASSED=1
+              break
+            fi
+            sleep 20
+          done
+          test "$PASSED" = "1"
+
       - name: Verify Cloud Run IAM is unchanged
         shell: bash
         run: |
@@ -435,5 +550,9 @@ jobs:
             ${{ runner.temp }}/service-candidate.json
             ${{ runner.temp }}/iam-before.json
             ${{ runner.temp }}/iam-after.json
+            ${{ runner.temp }}/runtime-before.json
+            ${{ runner.temp }}/runtime-after.json
+            ${{ runner.temp }}/runtime-contract-result.json
+            ${{ runner.temp }}/release-changed-files.txt
           if-no-files-found: ignore
           retention-days: 14
