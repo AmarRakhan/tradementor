@@ -6159,7 +6159,7 @@ def _persist_active_trades_chart_sample(
             "updatedAt": now,
             "source": "ASTER_API_READ_ONLY",
         }
-        txn.set(state_ref, state_value, merge=True)
+        candle_rows: list[tuple[Any, str, dict[str, Any]]] = []
         for timeframe in PORTFOLIO_CHART_TIMEFRAME_MS:
             collection = active_trades_chart_collection(timeframe)
             interval = PORTFOLIO_CHART_TIMEFRAME_MS[timeframe]
@@ -6167,6 +6167,11 @@ def _persist_active_trades_chart_sample(
             reference = root.collection(collection).document(str(bucket_ms))
             candle_snapshot = reference.get(transaction=txn)
             existing = (candle_snapshot.to_dict() or {}) if candle_snapshot.exists else {}
+            candle_rows.append((reference, timeframe, existing))
+
+        # Firestore transactions require all reads before the first write.
+        txn.set(state_ref, state_value, merge=True)
+        for reference, timeframe, existing in candle_rows:
             merged = merge_active_trades_sample(
                 existing, value=adjusted, source_at_ms=source_at_ms, timeframe=timeframe
             )
