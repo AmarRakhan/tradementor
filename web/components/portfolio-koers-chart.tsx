@@ -707,7 +707,8 @@ export function PortfolioKoersChart({
     // Preserve the existing Accountwaarde/Performance viewport exactly.
     // Only sparse Active Trades history reserves the normal timeframe density so
     // a few real P&L candles are not stretched to screen width.
-    const focusVisibleBars=Math.min(candles.length,view.visibleBars);\n    const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;
+    const focusVisibleBars=Math.min(candles.length,view.visibleBars);
+    const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
