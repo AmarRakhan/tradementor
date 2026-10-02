@@ -54,6 +54,7 @@ SUITE_TESTS: dict[str, tuple[str, ...]] = {
         "cloud_api/test_runtime_contract_impact_matrix.py",
         "cloud_api/test_runtime_contract_post_deploy.py",
         "cloud_api/test_runtime_contract_snapshot.py",
+        "cloud_api/test_runtime_contract_release_gate.py",
         "cloud_api/test_production_deploy_safety.py",
         "cloud_api/test_live_canary_deploy_contract.py",
         "cloud_api/test_manual_only_cloud_deployments.py",
@@ -163,6 +164,7 @@ SUITE_PATTERNS: dict[str, tuple[str, ...]] = {
         "cloud_api/test_runtime_contract_impact_matrix.py",
         "cloud_api/test_runtime_contract_post_deploy.py",
         "cloud_api/test_runtime_contract_snapshot.py",
+        "cloud_api/test_runtime_contract_release_gate.py",
         "cloud_api/test_runtime_contract_release_safety_v1.py",
     ),
 }
