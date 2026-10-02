@@ -157,3 +157,19 @@ test("Build 469 keeps active-zone occupancy numeric across chart/backend zone tr
   assert.match(css,/\.aps-zone-seat-groups\{/);
   assert.match(css,/\.aps-zone-open-counts\{/);
 });
+
+
+test("Runtime Contract V1 phase 5 makes snapshot and scanner prefer canonical server runtime truth",async()=>{
+  const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
+  assert.match(component,/const runtimeTruth = record\(strategy2\.runtimeTruth\)/);
+  assert.match(component,/runtimeTruth\.source === "SERVER_RUNTIME"/);
+  assert.match(component,/runtimeTruthCanonical \? \[runtimeTruth, seatModel, seatReport\]/);
+  assert.match(component,/runtimeTruthCanonical \? \[runtimeTruth, settings\]/);
+  assert.match(component,/runtimeTruth\.strategyMode === "ZONE_WARRIORS"/);
+  assert.match(component,/runtimeTruth\.dynamicHedgeBlocking === true/);
+  assert.match(component,/runtimeTruth\.queueHalted === true/);
+  assert.match(component,/record\(runtimeTruthCanonical \? runtimeTruth\.scannerDiagnostics : multiBb\.scannerDiagnostics\)/);
+  assert.match(component,/timestampMs\(runtimeTruth\.lastTickAt\)/);
+  assert.match(component,/runtimeTruthCanonical \? runtimeTruth\.enabled === true/);
+  assert.match(component,/runtimeTruthCanonical \? runtimeTruth\.monitor === true/);
+});
