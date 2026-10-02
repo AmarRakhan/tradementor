@@ -2245,7 +2245,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if bool(dynamic_stored.get("enabled",False)):
         dynamic=run_dynamic_hedge_sequence(client=client,control_ref=dynamic_ref,settings=settings,uid=uid,account=account,
             positions=positions,open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
-        ref.set({"dynamicHedgeReport":dynamic,"dynamicHedgeUpdatedAt":now},merge=True)
+        ref.set({"dynamicHedgeReport":{**dynamic,"ownershipState":dynamic_owner_after},"dynamicHedgeUpdatedAt":now},merge=True)
         dynamic_orders=int(safe_float(dynamic.get("ordersSent")))
         dynamic_reason=str(dynamic.get("reason",""))
         dynamic_status=str(dynamic.get("status","waiting"))
