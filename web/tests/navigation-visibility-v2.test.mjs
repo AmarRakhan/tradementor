@@ -15,7 +15,7 @@ test("navigation visibility v2 keeps HOME, ASTER and WALLET fixed while optional
     readFile(new URL("../lib/app-version.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "483"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "484"/);
 
   for (const key of ["hyperliquid", "markets", "sniper", "news", "friends", "journey"]) {
     assert.match(preferences, new RegExp(`${key}: true`));
