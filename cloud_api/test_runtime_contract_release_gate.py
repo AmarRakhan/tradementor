@@ -65,3 +65,5 @@ def test_release_gate_does_not_add_any_live_order_or_settings_action():
         ".delete(",
     ):
         assert forbidden not in combined
+
+# Build 484 runtime snapshot identity validation trigger.
