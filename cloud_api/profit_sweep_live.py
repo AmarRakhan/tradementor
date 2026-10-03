@@ -956,11 +956,98 @@ def finalize_close_sweep(
                 "kindType": TRANSFER_KIND,
             })
         except AsterSubmissionUncertain as exc:
-            # -1006, -1007 and HTTP 503 explicitly mean execution status
-            # unknown. Reconcile read-only history first and never blind-retry.
-            return _uncertain_result(
+            # -1006, -1007 and HTTP 503 mean execution status is unknown.
+            # Reconcile authoritative history first. If the transfer is still
+            # NOT_FOUND, replay exactly once with the same deterministic
+            # clientTranId. This preserves idempotency and avoids abandoning a
+            # valid Profit Sweep forever after one ambiguous exchange response.
+            first = _uncertain_result(
                 ref=ref,
                 reason=str(exc),
+                client=client,
+                contribution=contribution,
+                submitted_at=submitted_at,
+            )
+            if str(first.get("status", "")).upper() == "SUCCEEDED":
+                return first
+            if str(first.get("reconciliationStatus", "")).upper() != "NOT_FOUND":
+                return first
+
+            replay_submitted_at = _now()
+            ref.set({
+                "status": "RESUBMITTING_SAME_ID",
+                "replayClientTranId": prepared.client_tran_id,
+                "replaySubmittedAt": replay_submitted_at,
+                "updatedAt": _now(),
+            }, merge=True)
+            try:
+                replay = client.signed_spot_request("POST", TRANSFER_PATH, {
+                    "asset": TRANSFER_ASSET,
+                    "amount": _plain(contribution),
+                    "clientTranId": prepared.client_tran_id,
+                    "kindType": TRANSFER_KIND,
+                })
+            except AsterSubmissionUncertain as replay_exc:
+                return _uncertain_result(
+                    ref=ref,
+                    reason=str(replay_exc),
+                    client=client,
+                    contribution=contribution,
+                    submitted_at=submitted_at,
+                )
+            except AsterApiError as replay_exc:
+                replay_message = str(replay_exc)
+                if "-4115" in replay_message:
+                    duplicate_state, duplicate_record = reconcile_transfer_history(
+                        client=client,
+                        amount=contribution,
+                        submitted_at=submitted_at,
+                        poll_attempts=4,
+                        poll_delay_seconds=0.5,
+                    )
+                    if duplicate_record is not None:
+                        return _reconciled_result(
+                            ref=ref,
+                            contribution=contribution,
+                            record=duplicate_record,
+                        )
+                    ref.set({
+                        "status": "UNCERTAIN",
+                        "reason": "DUPLICATED_CLIENT_TRAN_ID_AFTER_UNKNOWN",
+                        "reconciliationStatus": duplicate_state,
+                        "updatedAt": _now(),
+                    }, merge=True)
+                    return {"status": "UNCERTAIN", "reconciliationStatus": duplicate_state}
+                ref.set({
+                    "status": "FAILED_EXCHANGE",
+                    "reason": replay_message[:500],
+                    "completedAt": _now(),
+                }, merge=True)
+                return {"status": "FAILED_EXCHANGE"}
+
+            if (
+                isinstance(replay, dict)
+                and str(replay.get("status", "")).upper() == "SUCCESS"
+                and replay.get("tranId") not in (None, "")
+            ):
+                tran_id = str(replay.get("tranId"))
+                ref.set({
+                    "status": "SUCCEEDED",
+                    "providerTransactionId": tran_id,
+                    "providerStatus": "SUCCESS",
+                    "replayedSameClientTranId": True,
+                    "completedAt": _now(),
+                }, merge=True)
+                return {
+                    "status": "SUCCEEDED",
+                    "contribution": _plain(contribution),
+                    "tranId": tran_id,
+                    "replayed": True,
+                }
+
+            return _uncertain_result(
+                ref=ref,
+                reason="Aster Spot replay bevestigde geen SUCCESS + tranId",
                 client=client,
                 contribution=contribution,
                 submitted_at=submitted_at,
