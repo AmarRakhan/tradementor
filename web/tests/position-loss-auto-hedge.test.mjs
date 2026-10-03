@@ -191,9 +191,9 @@ test("Build 468 Tradecentrum consumes backend Auto Hedge lifecycle metadata per 
   assert.match(tradeCenter, /Recovery, re-hedge blijft UIT/);
 });
 
-test("Build 490 aligns the complete Auto Hedge Snapshot card and keeps its copy inside", async () => {
+test("Build 492 keeps Auto Hedge inside the native four-card Snapshot grid", async () => {
   const css = await readFile(new URL("../app/position-loss-auto-hedge.css", import.meta.url), "utf8");
-  assert.match(css, /#aster-position-loss-auto-hedge-host\{[\s\S]*left:-4px;[\s\S]*width:100%/);
+  assert.match(css, /\.aps-profit-pot-row\{[\s\S]*grid-template-columns:minmax\(0,1\.55fr\) minmax\(0,\.95fr\) minmax\(0,1\.45fr\) minmax\(0,1\.55fr\)/);
+  assert.match(css, /#aster-position-loss-auto-hedge-host\{[\s\S]*position:static;[\s\S]*left:auto;[\s\S]*width:100%/);
   assert.match(css, /#aster-position-loss-auto-hedge-host \.plah-tile\{[\s\S]*overflow:hidden/);
-  assert.match(css, /#aster-position-loss-auto-hedge-host \.plah-tile-copy em\{[\s\S]*font-size:5\.8px/);
 });
