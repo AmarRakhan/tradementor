@@ -26,6 +26,33 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-03",
+  title: "Portfolio Snapshot · Auto Hedge gridfix live",
+  newItems: [
+    "De Auto Hedge-kaart gebruikt de native vierkoloms grid zonder pixel-offsets en met echte tussenruimte naar beide buurtegels.",
+  ],
+  problems: [
+    "Build 491 bevatte de juiste gridfix, maar werd niet uitgerold omdat een oude regressietest nog de verwijderde left:-4px-hotfix verwachtte.",
+  ],
+  causes: [
+    "De code en de safety-test waren niet tegelijk aangepast naar hetzelfde nieuwe layoutcontract.",
+  ],
+  fixes: [
+    "De regressietest valideert nu de nieuwe gridverdeling, position: static, left: auto en 100% hostbreedte.",
+  ],
+  now: [
+    "Dezelfde gridfix kan nu door de bestaande CI- en deploymentgates naar de live V46-app.",
+  ],
+  technicalDetails: [
+    "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-491-auto-hedge-gridfix",
+  version: "46",
+  build: "491",
+  releasedAt: "2026-10-03",
   title: "Portfolio Snapshot · Auto Hedge gridfix",
   newItems: [
     "De vier Snapshot-kaarten gebruiken weer echte gridruimte met zichtbare tussenruimte; Auto Hedge overlapt de buurtegels niet meer.",
@@ -50,8 +77,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
   id: "v46-build-490-auto-hedge-alignment-2",
   version: "46",
