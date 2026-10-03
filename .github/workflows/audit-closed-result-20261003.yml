@@ -85,7 +85,7 @@ jobs:
               except Exception as exc:
                   inspected.append({"ref":hashlib.sha256(uid.encode()).hexdigest()[:10],"error":type(exc).__name__})
 
-          result={"status":"NO_EXACT_ACCOUNT","date":str(now.date()),"inspected":inspected,"accountsMatched":len(matches)}
+          result={"status":"NO_EXACT_ACCOUNT","date":str(now.date()),"accountsMatched":len(matches)}
           if len(matches)==1:
               uid,raw,client,positions=matches[0]
               income=client.income_history(start_time=start_ms,end_time=end_ms,limit=1000)
@@ -127,10 +127,10 @@ jobs:
 
               hedge_audit=[]
               try:
-                  for doc in db.collection("users").document(uid).collection("autoHedgeAudit").stream():
+                  for doc in db.collection("users").document(uid).collection("autoHedgeAudit").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(200).stream():
                       row=doc.to_dict() or {}
                       t=ms(row.get("timestamp"))
-                      if t>=start_ms:
+                      if t>=start_ms and (not symbols or str(row.get("symbol","")).upper() in symbols):
                           hedge_audit.append({
                               "timeMs":t,
                               "eventType":str(row.get("eventType",row.get("event",""))),
@@ -153,12 +153,12 @@ jobs:
                       "income":main.safe_float(x.get("income")),
                       "tranId":str(x.get("tranId",x.get("id",""))),
                       "positionSide":str(x.get("positionSide","")).upper(),
-                  } for x in realized],
+                  } for x in realized[:30]],
                   "realizedIncomeTotal":sum(main.safe_float(x.get("income")) for x in realized),
                   "realizedIncomeCount":len(realized),
-                  "fills":sorted(fills,key=lambda x:x["timeMs"]),
+                  "fills":sorted(fills,key=lambda x:x["timeMs"])[:50],
                   "fillRealizedTotal":sum(x["realizedPnl"] for x in fills),
-                  "autoHedgeAudit":sorted(hedge_audit,key=lambda x:x["timeMs"]),
+                  "autoHedgeAudit":sorted(hedge_audit,key=lambda x:x["timeMs"])[:30],
               }
           print("CLOSED_AUDIT_ACCOUNT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
           PY
@@ -204,7 +204,7 @@ jobs:
           print("- Modus: **READ ONLY** · 0 orders · 0 settingswijzigingen")
           if d.get("status")!="OK":
               print(f"- Exacte accountmatches: **{d.get('accountsMatched',0)}**")
-              print(f"- Geïnspecteerde account-fingerprints: {d.get('inspected',[])}")
+              print("- Accountselectie op vaste anonieme accountRef.")
               raise SystemExit(0)
           fp=d.get("fingerprint") or {}; print(f"- Accountfingerprint bevestigd: **{fp.get('total',0)} posities · {fp.get('long',0)} LONG · {fp.get('short',0)} SHORT**")
           print(f"- Aster REALIZED_PNL-regels sinds 00:00 Amsterdam: **{d.get('realizedIncomeCount',0)}**")
@@ -253,3 +253,5 @@ jobs:
 # target exact anonymous accountRef discovered by first read-only pass
 
 # explicit target-account rerun 2026-10-03
+
+# compact audit payload to avoid Cloud Logging truncation
