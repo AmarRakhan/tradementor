@@ -1,0 +1,249 @@
+name: Audit Closed Result 2026-10-03
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/audit-closed-result-20261003.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "452"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Collect exact account realized PnL read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          FIREBASE_AUTH_PROJECT_ID="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("FIREBASE_AUTH_PROJECT_ID",""))' <<<"$SERVICE_JSON")"
+          ADMIN_EMAIL="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("TRADEMENTOR_ADMIN_EMAIL",""))' <<<"$SERVICE_JSON")"
+          JOB="tm-closed-audit-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib, json
+          from datetime import datetime, time
+          from zoneinfo import ZoneInfo
+          from google.cloud import firestore
+          import main
+
+          tz=ZoneInfo("Europe/Amsterdam")
+          now=datetime.now(tz)
+          start_local=datetime.combine(now.date(),time.min,tzinfo=tz)
+          start_ms=int(start_local.timestamp()*1000)
+          end_ms=int(now.timestamp()*1000)
+          db=firestore.Client(project="tradementor-production")
+
+          def ms(value):
+              if isinstance(value,datetime): return int(value.timestamp()*1000)
+              try: return int(float(value))
+              except Exception: return 0
+
+          matches=[]
+          inspected=[]
+          for snap in db.collection("asterStrategy2").where("monitor","==",True).stream():
+              uid=snap.id
+              raw=snap.to_dict() or {}
+              try:
+                  secret=main.load_aster_secret({"uid":uid})
+                  client=main.AsterV3Client(
+                      signer_address=secret.signer_address,
+                      sign_message=main.local_eip712_signer(secret),
+                      live_authorized=False,
+                      before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
+                  )
+                  positions=[x for x in client.position_risk() if isinstance(x,dict) and abs(main.safe_float(x.get("positionAmt"))) > 0]
+                  longs=sum(1 for x in positions if str(x.get("positionSide","")).upper()=="LONG")
+                  shorts=sum(1 for x in positions if str(x.get("positionSide","")).upper()=="SHORT")
+                  inspected.append({"ref":hashlib.sha256(uid.encode()).hexdigest()[:10],"total":len(positions),"long":longs,"short":shorts})
+                  if (len(positions),longs,shorts)==(155,96,59):
+                      matches.append((uid,raw,client,positions))
+              except Exception as exc:
+                  inspected.append({"ref":hashlib.sha256(uid.encode()).hexdigest()[:10],"error":type(exc).__name__})
+
+          result={"status":"NO_EXACT_ACCOUNT","date":str(now.date()),"inspected":inspected,"accountsMatched":len(matches)}
+          if len(matches)==1:
+              uid,raw,client,positions=matches[0]
+              income=client.income_history(start_time=start_ms,end_time=end_ms,limit=1000)
+              income=[x for x in income if isinstance(x,dict)]
+              realized=[x for x in income if str(x.get("incomeType","")).upper()=="REALIZED_PNL"]
+              attrs=[x for x in raw.get("orderAttributions",[]) if isinstance(x,dict)] if isinstance(raw.get("orderAttributions"),list) else []
+              by_order={str(x.get("orderId","")):x for x in attrs if str(x.get("orderId","")).strip()}
+              by_client={str(x.get("clientOrderId","")):x for x in attrs if str(x.get("clientOrderId","")).strip()}
+
+              symbols=sorted({str(x.get("symbol","")).upper() for x in realized if str(x.get("symbol","")).strip()})
+              fills=[]
+              for symbol in symbols:
+                  try: rows=client.user_trades(symbol,limit=1000)
+                  except Exception: rows=[]
+                  for row in rows if isinstance(rows,list) else []:
+                      if not isinstance(row,dict): continue
+                      t=ms(row.get("time",row.get("updateTime")))
+                      rp=main.safe_float(row.get("realizedPnl",row.get("realizedProfit")))
+                      if t < start_ms or abs(rp) < 1e-12: continue
+                      oid=str(row.get("orderId",row.get("orderID","")) or "")
+                      cid=str(row.get("clientOrderId",row.get("clientOrderID","")) or "")
+                      a=by_order.get(oid) or by_client.get(cid) or {}
+                      fills.append({
+                          "timeMs":t,
+                          "symbol":symbol,
+                          "positionSide":str(row.get("positionSide","")).upper(),
+                          "orderSide":str(row.get("side","")).upper(),
+                          "qty":main.safe_float(row.get("qty",row.get("quantity"))),
+                          "price":main.safe_float(row.get("price")),
+                          "realizedPnl":rp,
+                          "commission":main.safe_float(row.get("commission")),
+                          "commissionAsset":str(row.get("commissionAsset","")),
+                          "orderId":oid,
+                          "clientOrderId":cid,
+                          "attributionAction":str(a.get("action","")),
+                          "attributionStrategy":str(a.get("strategyName",a.get("strategyId",""))),
+                          "cycleId":str(a.get("cycleId","")),
+                      })
+
+              hedge_audit=[]
+              try:
+                  for doc in db.collection("users").document(uid).collection("autoHedgeAudit").stream():
+                      row=doc.to_dict() or {}
+                      t=ms(row.get("timestamp"))
+                      if t>=start_ms:
+                          hedge_audit.append({
+                              "timeMs":t,
+                              "eventType":str(row.get("eventType",row.get("event",""))),
+                              "symbol":str(row.get("symbol","")).upper(),
+                              "closedSide":str(row.get("closedSide","")).upper(),
+                              "survivorSide":str(row.get("survivorSide","")).upper(),
+                              "requestedCloseQty":main.safe_float(row.get("requestedCloseQty")),
+                          })
+              except Exception:
+                  pass
+
+              result={
+                  "status":"OK",
+                  "date":str(now.date()),
+                  "accountRef":hashlib.sha256(uid.encode()).hexdigest()[:10],
+                  "fingerprint":{"total":155,"long":96,"short":59},
+                  "realizedIncome":[{
+                      "timeMs":ms(x.get("time",x.get("timestamp"))),
+                      "symbol":str(x.get("symbol","")).upper(),
+                      "income":main.safe_float(x.get("income")),
+                      "tranId":str(x.get("tranId",x.get("id",""))),
+                      "positionSide":str(x.get("positionSide","")).upper(),
+                  } for x in realized],
+                  "realizedIncomeTotal":sum(main.safe_float(x.get("income")) for x in realized),
+                  "realizedIncomeCount":len(realized),
+                  "fills":sorted(fills,key=lambda x:x["timeMs"]),
+                  "fillRealizedTotal":sum(x["realizedPnl"] for x in fills),
+                  "autoHedgeAudit":sorted(hedge_audit,key=lambda x:x["timeMs"]),
+              }
+          print("CLOSED_AUDIT_ACCOUNT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
+          PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=closed-result-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"
+          if [ -n "$FIREBASE_AUTH_PROJECT_ID" ]; then ENV_VARS="$ENV_VARS,FIREBASE_AUTH_PROJECT_ID=$FIREBASE_AUTH_PROJECT_ID"; fi
+          if [ -n "$ADMIN_EMAIL" ]; then ENV_VARS="$ENV_VARS,TRADEMENTOR_ADMIN_EMAIL=$ADMIN_EMAIL"; fi
+
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$PROD_IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "$ENV_VARS" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Publish audit result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"CLOSED_AUDIT_ACCOUNT \"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --order=desc --format='value(textPayload)' | grep 'CLOSED_AUDIT_ACCOUNT ' | head -n1 || true)"
+          if [ -z "$LINE" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Auditjob leverde geen accountresultaat op. Geen trading- of settingsmutatie uitgevoerd."
+            exit 1
+          fi
+          JSON="${LINE#*CLOSED_AUDIT_ACCOUNT }"
+          python - "$JSON" > /tmp/report.md <<'PY'
+          import json,sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          d=json.loads(sys.argv[1]); tz=ZoneInfo("Europe/Amsterdam")
+          def clock(ms): return datetime.fromtimestamp(ms/1000,tz).strftime("%H:%M:%S") if ms else "—"
+          print("## Read-only audit gesloten resultaat")
+          print()
+          print(f"- Status: **{d.get('status')}**")
+          print("- Modus: **READ ONLY** · 0 orders · 0 settingswijzigingen")
+          if d.get("status")!="OK":
+              print(f"- Exacte accountmatches: **{d.get('accountsMatched',0)}**")
+              print(f"- Geïnspecteerde account-fingerprints: {d.get('inspected',[])}")
+              raise SystemExit(0)
+          print("- Accountfingerprint bevestigd: **155 posities · 96 LONG · 59 SHORT**")
+          print(f"- Aster REALIZED_PNL-regels sinds 00:00 Amsterdam: **{d.get('realizedIncomeCount',0)}**")
+          print(f"- Som REALIZED_PNL: **US$ {d.get('realizedIncomeTotal',0):+.8f}**")
+          print()
+          print("### Aster income-ledger")
+          print("| Tijd | Symbool | Positiezijde | REALIZED_PNL | tranId |")
+          print("|---|---|---|---:|---|")
+          for r in d.get("realizedIncome",[]):
+              print(f"| {clock(r.get('timeMs',0))} | {r.get('symbol') or '—'} | {r.get('positionSide') or '—'} | {r.get('income',0):+.8f} | {r.get('tranId') or '—'} |")
+          print()
+          print("### Bevestigde fills met realized PnL")
+          print("| Tijd | Symbool | Positie | Orderzijde | Qty | Prijs | Realized | Commissie | Runtime-attributie |")
+          print("|---|---|---|---|---:|---:|---:|---:|---|")
+          for r in d.get("fills",[]):
+              attr=r.get("attributionAction") or "GEEN MATCH"
+              print(f"| {clock(r.get('timeMs',0))} | {r.get('symbol')} | {r.get('positionSide') or '—'} | {r.get('orderSide') or '—'} | {r.get('qty',0):.10g} | {r.get('price',0):.10g} | {r.get('realizedPnl',0):+.8f} | {r.get('commission',0):.8f} | {attr} |")
+          print()
+          ah=d.get("autoHedgeAudit",[])
+          print(f"### Auto Hedge-audit sinds 00:00: **{len(ah)} event(s)**")
+          for r in ah:
+              print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('eventType') or '—'} · closed={r.get('closedSide') or '—'} · qty={r.get('requestedCloseQty',0):.10g}")
+          print()
+          print("### Interpretatie")
+          realized=d.get("realizedIncome",[])
+          fills=d.get("fills",[])
+          if len(realized)==1:
+              r=realized[0]
+              print(f"- De Snapshot-teller van 1 gesloten event correspondeert exact met **één Aster REALIZED_PNL-regel** om {clock(r.get('timeMs',0))} voor **{r.get('symbol') or 'onbekend'}**.")
+          else:
+              print("- De Snapshot-teller kan niet één-op-één aan precies één REALIZED_PNL-regel worden gekoppeld; meerdere of geen regels zijn aanwezig.")
+          matched=[x for x in fills if x.get("attributionAction")]
+          if matched:
+              print("- Minstens één realized fill heeft een directe Strategy-2 runtime-attributie: " + ", ".join(sorted(set(x.get("attributionAction") for x in matched))) + ".")
+          else:
+              print("- Geen realized fill matcht een Strategy-2 orderAttribution; controleer daarom Auto Hedge/manual/exchange-side reductie als bron.")
+          if ah:
+              print("- Er zijn Auto Hedge-auditevents in hetzelfde dagvenster; tijden hierboven moeten met de realized fill worden vergeleken.")
+          else:
+              print("- Er zijn geen Auto Hedge-auditevents sinds 00:00 gevonden.")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
