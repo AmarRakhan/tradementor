@@ -1,4 +1,4 @@
-from aster_history import closed_trade_from_fill, closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
+from aster_history import closed_trade_from_fill, closed_trades_from_fills, fully_closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
 
 
 def test_long_sell_is_confirmed_close_even_at_breakeven():
@@ -235,3 +235,36 @@ def test_trade_events_can_return_multiple_confirmed_cycles_for_chart_history():
     ]
     events = trade_events_from_fills(fills, symbol="SOLUSDT", position_side="LONG", include_all_cycles=True)
     assert [(row["id"], row["kind"]) for row in events] == [("entry-1","entry"),("exit-1","close"),("entry-2","entry")]
+
+
+def test_fully_closed_trades_excludes_partial_reduction_that_leaves_position_open():
+    fills = [
+        {"id":"open","symbol":"ZECUSDT","positionSide":"LONG","side":"BUY","qty":"0.198","price":"1500","time":1_000},
+        {"id":"reduce","symbol":"ZECUSDT","positionSide":"LONG","side":"SELL","qty":"0.004","price":"1297.78","realizedPnl":"-1.13533333","time":2_000},
+    ]
+    assert fully_closed_trades_from_fills(fills) == []
+
+
+def test_fully_closed_trades_counts_one_cycle_and_aggregates_partial_realized_pnl():
+    fills = [
+        {"id":"open","symbol":"ETHUSDT","positionSide":"LONG","side":"BUY","qty":"2","price":"100","time":1_000},
+        {"id":"partial","symbol":"ETHUSDT","positionSide":"LONG","side":"SELL","qty":"0.5","price":"110","realizedPnl":"5","time":2_000},
+        {"id":"final","symbol":"ETHUSDT","positionSide":"LONG","side":"SELL","qty":"1.5","price":"120","realizedPnl":"30","time":3_000},
+    ]
+    rows = fully_closed_trades_from_fills(fills)
+    assert len(rows) == 1
+    assert rows[0]["exchangeTradeId"] == "final"
+    assert rows[0]["fullyClosed"] is True
+    assert rows[0]["realizedPnlUsd"] == 35
+    assert rows[0]["exitPrice"] == 117.5
+
+
+def test_fully_closed_trades_keeps_long_and_short_cycles_separate():
+    fills = [
+        {"id":"l-open","symbol":"SOLUSDT","positionSide":"LONG","side":"BUY","qty":"1","price":"10","time":1_000},
+        {"id":"s-open","symbol":"SOLUSDT","positionSide":"SHORT","side":"SELL","qty":"2","price":"11","time":1_100},
+        {"id":"l-close","symbol":"SOLUSDT","positionSide":"LONG","side":"SELL","qty":"1","price":"12","realizedPnl":"2","time":2_000},
+        {"id":"s-partial","symbol":"SOLUSDT","positionSide":"SHORT","side":"BUY","qty":"1","price":"10","realizedPnl":"1","time":2_100},
+    ]
+    rows = fully_closed_trades_from_fills(fills)
+    assert [(row["side"], row["realizedPnlUsd"]) for row in rows] == [("LONG", 2)]
