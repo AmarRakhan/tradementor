@@ -69,6 +69,105 @@ def closed_trades_from_fills(fills: list[dict[str, Any]]) -> list[dict[str, Any]
     return rows
 
 
+def fully_closed_trades_from_fills(fills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return one row per exchange-proven position cycle that actually reached zero.
+
+    Reductions while exposure remains open (partial TP, Auto Hedge exact-1:1
+    corrections, manual partial closes) are deliberately not counted as a
+    closed trade. Their realized PnL remains in Aster's REALIZED_PNL ledger and
+    therefore still belongs to portfolio performance/accounting.
+    """
+    epsilon = 1e-12
+    ordered: list[tuple[int, str, dict[str, Any]]] = []
+    for raw in fills or []:
+        if not isinstance(raw, dict):
+            continue
+        timestamp = int(_number(raw.get("time", raw.get("updateTime"))))
+        symbol = str(raw.get("symbol", "")).upper().strip()
+        side = str(raw.get("positionSide", "")).upper().strip()
+        order_side = str(raw.get("side", "")).upper().strip()
+        if not order_side and "buyer" in raw:
+            order_side = "BUY" if bool(raw.get("buyer")) else "SELL"
+        qty = abs(_number(raw.get("qty", raw.get("quantity"))))
+        price = _number(raw.get("price"))
+        if timestamp <= 0 or not symbol or side not in {"LONG", "SHORT"} or order_side not in {"BUY", "SELL"} or qty <= 0 or price <= 0:
+            continue
+        ordered.append((timestamp, str(raw.get("id", raw.get("tradeId", ""))), raw))
+    ordered.sort(key=lambda item: (item[0], item[1]))
+
+    states: dict[tuple[str, str], dict[str, Any]] = {}
+    closed: list[dict[str, Any]] = []
+    for timestamp, trade_id, raw in ordered:
+        symbol = str(raw.get("symbol", "")).upper().strip()
+        side = str(raw.get("positionSide", "")).upper().strip()
+        order_side = str(raw.get("side", "")).upper().strip()
+        if not order_side and "buyer" in raw:
+            order_side = "BUY" if bool(raw.get("buyer")) else "SELL"
+        qty = abs(_number(raw.get("qty", raw.get("quantity"))))
+        price = _number(raw.get("price"))
+        increases = (side == "LONG" and order_side == "BUY") or (side == "SHORT" and order_side == "SELL")
+        key = (symbol, side)
+        state = states.get(key)
+
+        if increases:
+            if state is None or _number(state.get("exposure")) <= epsilon:
+                state = {
+                    "exposure": 0.0,
+                    "openedAtMs": timestamp,
+                    "entryQty": 0.0,
+                    "entryNotional": 0.0,
+                    "increaseCount": 0,
+                    "closeQty": 0.0,
+                    "closeNotional": 0.0,
+                    "realizedPnlUsd": 0.0,
+                }
+                states[key] = state
+            state["exposure"] = _number(state.get("exposure")) + qty
+            state["entryQty"] = _number(state.get("entryQty")) + qty
+            state["entryNotional"] = _number(state.get("entryNotional")) + qty * price
+            state["increaseCount"] = int(_number(state.get("increaseCount"))) + 1
+            continue
+
+        # A reduction without a proven earlier opening fill cannot prove that a
+        # full position cycle closed. Fail closed rather than inventing a trade.
+        if state is None or _number(state.get("exposure")) <= epsilon:
+            continue
+        exposure_before = _number(state.get("exposure"))
+        applied = min(qty, exposure_before)
+        if applied <= epsilon:
+            continue
+        fraction = min(1.0, applied / qty) if qty > 0 else 0.0
+        state["exposure"] = max(0.0, exposure_before - applied)
+        state["closeQty"] = _number(state.get("closeQty")) + applied
+        state["closeNotional"] = _number(state.get("closeNotional")) + applied * price
+        state["realizedPnlUsd"] = _number(state.get("realizedPnlUsd")) + _number(raw.get("realizedPnl", raw.get("realizedProfit"))) * fraction
+
+        if _number(state.get("exposure")) > epsilon:
+            continue
+        entry_qty = _number(state.get("entryQty"))
+        close_qty = _number(state.get("closeQty"))
+        opened_at_ms = int(_number(state.get("openedAtMs")))
+        closed.append({
+            "symbol": symbol,
+            "side": side,
+            "notionalUsd": _number(state.get("closeNotional")),
+            "entryPrice": (_number(state.get("entryNotional")) / entry_qty) if entry_qty > 0 else 0.0,
+            "exitPrice": (_number(state.get("closeNotional")) / close_qty) if close_qty > 0 else price,
+            "realizedPnlUsd": _number(state.get("realizedPnlUsd")),
+            "openedAt": datetime.fromtimestamp(opened_at_ms / 1000, tz=timezone.utc).isoformat(),
+            "closedAt": datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).isoformat(),
+            "source": "aster-fill-full-cycle",
+            "exchangeTradeId": trade_id,
+            "dcaCount": max(0, int(_number(state.get("increaseCount"))) - 1),
+            "fullyClosed": True,
+            "closeKind": "FULL_POSITION_CLOSE",
+        })
+        states.pop(key, None)
+
+    closed.sort(key=lambda row: str(row.get("closedAt", "")), reverse=True)
+    return closed
+
+
 def realized_events_from_income(income: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalize Aster's authoritative REALIZED_PNL ledger for daily totals."""
     rows: list[dict[str, Any]] = []
