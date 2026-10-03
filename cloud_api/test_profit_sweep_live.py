@@ -170,6 +170,38 @@ def test_live_25_percent_sweep_posts_exactly_once(monkeypatch):
     assert len(client.transfers) == 1
 
 
+def test_live_sweep_does_not_require_legacy_master_address(monkeypatch):
+    """Spot V3 signs with the API wallet; legacy executionControls.masterAddress is not required."""
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5)
+    user.collection("executionControls").document("aster").data.pop("masterAddress", None)
+    client = FakeClient()
+
+    prepared = prepare_close_sweep(
+        uid="u-no-legacy-master",
+        user_ref=user,
+        client=client,
+        intent_id="close-without-legacy-master",
+        symbol="BTCUSDT",
+        position_side="LONG",
+        close_quantity="1",
+    )
+
+    assert prepared is not None
+    result = finalize_close_sweep(
+        prepared,
+        client=client,
+        confirmed_order={
+            "orderId": 99,
+            "positionSide": "LONG",
+            "side": "SELL",
+            "status": "FILLED",
+        },
+    )
+    assert result == {"status": "SUCCEEDED", "contribution": "0.1925", "tranId": "777"}
+    assert len(client.transfers) == 1
+
+
 def test_disabled_or_global_gate_off_never_posts(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "false")
     client = FakeClient()
