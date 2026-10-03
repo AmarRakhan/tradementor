@@ -125,19 +125,70 @@ jobs:
                           "cycleId":str(a.get("cycleId","")),
                       })
 
+              realized_times=[ms(x.get("time",x.get("timestamp"))) for x in realized]
+              focus_start=(min(realized_times)-10*60_000) if realized_times else start_ms
+              focus_end=(max(realized_times)+10*60_000) if realized_times else end_ms
               hedge_audit=[]
               try:
-                  for doc in db.collection("users").document(uid).collection("autoHedgeAudit").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(200).stream():
+                  for doc in db.collection("users").document(uid).collection("autoHedgeAudit").stream():
                       row=doc.to_dict() or {}
                       t=ms(row.get("timestamp"))
-                      if t>=start_ms and (not symbols or str(row.get("symbol","")).upper() in symbols):
+                      sym=str(row.get("symbol","")).upper()
+                      if focus_start<=t<=focus_end and (not symbols or sym in symbols):
                           hedge_audit.append({
                               "timeMs":t,
                               "eventType":str(row.get("eventType",row.get("event",""))),
-                              "symbol":str(row.get("symbol","")).upper(),
+                              "event":str(row.get("event","")),
+                              "symbol":sym,
                               "closedSide":str(row.get("closedSide","")).upper(),
                               "survivorSide":str(row.get("survivorSide","")).upper(),
+                              "protectedSide":str(row.get("protectedSide","")).upper(),
+                              "hedgeSide":str(row.get("hedgeSide","")).upper(),
                               "requestedCloseQty":main.safe_float(row.get("requestedCloseQty")),
+                              "requestedPercentage":main.safe_float(row.get("requestedPercentage")),
+                              "resultingStatus":str(row.get("resultingStatus","")),
+                              "reason":str(row.get("reason",row.get("lastReason",""))),
+                              "orderId":str(row.get("orderId","")),
+                              "clientOrderId":str(row.get("clientOrderId","")),
+                          })
+              except Exception:
+                  pass
+
+              pair_state={}
+              try:
+                  pdoc=db.collection("asterPositionLossAutoHedge").document(uid).collection("pairs").document("ZECUSDT").get()
+                  pv=pdoc.to_dict() or {}
+                  pair_state={
+                      "status":str(pv.get("status","")),
+                      "protectedSide":str(pv.get("protectedSide","")).upper(),
+                      "hedgeSide":str(pv.get("hedgeSide","")).upper(),
+                      "currentProtectedQty":main.safe_float(pv.get("currentProtectedQty")),
+                      "currentHedgeQty":main.safe_float(pv.get("currentHedgeQty")),
+                      "reservedHedgeQty":main.safe_float(pv.get("reservedHedgeQty")),
+                      "normalFreeQty":main.safe_float(pv.get("normalFreeQty")),
+                      "rehedgeEnabled":pv.get("rehedgeEnabled") is True,
+                      "lastReason":str(pv.get("lastReason","")),
+                      "generationId":str(pv.get("generationId","")),
+                  }
+              except Exception:
+                  pass
+
+              strategy_audit=[]
+              try:
+                  for doc in db.collection("asterStrategy2").document(uid).collection("audit").order_by("timestamp",direction=firestore.Query.DESCENDING).limit(800).stream():
+                      row=doc.to_dict() or {}
+                      t=ms(row.get("timestamp"))
+                      sym=str(row.get("symbol","")).upper()
+                      if focus_start<=t<=focus_end and (not sym or sym in symbols):
+                          strategy_audit.append({
+                              "timeMs":t,
+                              "event":str(row.get("event","")),
+                              "symbol":sym,
+                              "side":str(row.get("side","")).upper(),
+                              "action":str(row.get("action","")),
+                              "reason":str(row.get("reason","")),
+                              "orderId":str(row.get("orderId","")),
+                              "clientOrderId":str(row.get("clientOrderId","")),
                           })
               except Exception:
                   pass
@@ -159,6 +210,8 @@ jobs:
                   "fills":sorted(fills,key=lambda x:x["timeMs"])[:50],
                   "fillRealizedTotal":sum(x["realizedPnl"] for x in fills),
                   "autoHedgeAudit":sorted(hedge_audit,key=lambda x:x["timeMs"])[:30],
+                  "pairState":pair_state,
+                  "strategyAudit":sorted(strategy_audit,key=lambda x:x["timeMs"])[:50],
               }
           print("CLOSED_AUDIT_ACCOUNT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
           PY
@@ -222,11 +275,22 @@ jobs:
           for r in d.get("fills",[]):
               attr=r.get("attributionAction") or "GEEN MATCH"
               print(f"| {clock(r.get('timeMs',0))} | {r.get('symbol')} | {r.get('positionSide') or '—'} | {r.get('orderSide') or '—'} | {r.get('qty',0):.10g} | {r.get('price',0):.10g} | {r.get('realizedPnl',0):+.8f} | {r.get('commission',0):.8f} | {attr} |")
+              print(f"  - orderId={r.get('orderId') or '—'} · clientOrderId={r.get('clientOrderId') or '—'} · cycleId={r.get('cycleId') or '—'}")
           print()
           ah=d.get("autoHedgeAudit",[])
-          print(f"### Auto Hedge-audit sinds 00:00: **{len(ah)} event(s)**")
+          print(f"### Auto Hedge-audit rond de realized fill (±10 min): **{len(ah)} event(s)**")
           for r in ah:
               print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('eventType') or '—'} · closed={r.get('closedSide') or '—'} · qty={r.get('requestedCloseQty',0):.10g}")
+          print()
+          ps=d.get("pairState") or {}
+          print("### Huidige ZEC Auto Hedge-paarstate")
+          print(f"- status={ps.get('status') or '—'} · protected={ps.get('protectedSide') or '—'} · hedge={ps.get('hedgeSide') or '—'} · protectedQty={ps.get('currentProtectedQty',0):.10g} · hedgeQty={ps.get('currentHedgeQty',0):.10g} · rehedge={ps.get('rehedgeEnabled')}")
+          print(f"- lastReason={ps.get('lastReason') or '—'} · generation={ps.get('generationId') or '—'}")
+          sa=d.get("strategyAudit") or []
+          print()
+          print(f"### Strategy-2 audit rond dezelfde tijd: **{len(sa)} event(s)**")
+          for r in sa:
+              print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('event') or r.get('action') or '—'} · side={r.get('side') or '—'} · reason={r.get('reason') or '—'} · order={r.get('orderId') or r.get('clientOrderId') or '—'}")
           print()
           print("### Interpretatie")
           realized=d.get("realizedIncome",[])
@@ -255,3 +319,5 @@ jobs:
 # explicit target-account rerun 2026-10-03
 
 # compact audit payload to avoid Cloud Logging truncation
+
+# correlate exact ZEC realized fill with auto-hedge and strategy audit
