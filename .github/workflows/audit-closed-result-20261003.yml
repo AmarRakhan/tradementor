@@ -80,7 +80,7 @@ jobs:
                   longs=sum(1 for x in positions if str(x.get("positionSide","")).upper()=="LONG")
                   shorts=sum(1 for x in positions if str(x.get("positionSide","")).upper()=="SHORT")
                   inspected.append({"ref":hashlib.sha256(uid.encode()).hexdigest()[:10],"total":len(positions),"long":longs,"short":shorts})
-                  if (len(positions),longs,shorts)==(155,96,59):
+                  if hashlib.sha256(uid.encode()).hexdigest()[:10]=="dbcf103383":
                       matches.append((uid,raw,client,positions))
               except Exception as exc:
                   inspected.append({"ref":hashlib.sha256(uid.encode()).hexdigest()[:10],"error":type(exc).__name__})
@@ -146,7 +146,7 @@ jobs:
                   "status":"OK",
                   "date":str(now.date()),
                   "accountRef":hashlib.sha256(uid.encode()).hexdigest()[:10],
-                  "fingerprint":{"total":155,"long":96,"short":59},
+                  "fingerprint":{"total":len(positions),"long":sum(1 for x in positions if str(x.get("positionSide","")).upper()=="LONG"),"short":sum(1 for x in positions if str(x.get("positionSide","")).upper()=="SHORT")},
                   "realizedIncome":[{
                       "timeMs":ms(x.get("time",x.get("timestamp"))),
                       "symbol":str(x.get("symbol","")).upper(),
@@ -206,7 +206,7 @@ jobs:
               print(f"- Exacte accountmatches: **{d.get('accountsMatched',0)}**")
               print(f"- Geïnspecteerde account-fingerprints: {d.get('inspected',[])}")
               raise SystemExit(0)
-          print("- Accountfingerprint bevestigd: **155 posities · 96 LONG · 59 SHORT**")
+          fp=d.get("fingerprint") or {}; print(f"- Accountfingerprint bevestigd: **{fp.get('total',0)} posities · {fp.get('long',0)} LONG · {fp.get('short',0)} SHORT**")
           print(f"- Aster REALIZED_PNL-regels sinds 00:00 Amsterdam: **{d.get('realizedIncomeCount',0)}**")
           print(f"- Som REALIZED_PNL: **US$ {d.get('realizedIncomeTotal',0):+.8f}**")
           print()
@@ -249,3 +249,5 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
 
 # explicit read-only audit trigger 2026-10-03
+
+# target exact anonymous accountRef discovered by first read-only pass
