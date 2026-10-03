@@ -354,3 +354,14 @@ article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto
   .plah-tile-copy strong{font-size:10.4px}
   .plah-tile-copy em{font-size:5.8px}
 }
+
+
+/* Build 488 UI hotfix — align the Auto Hedge Snapshot tile with its grid boundary.
+   Presentation-only: no trading, hedge, scanner, settings or execution behavior changes. */
+@media(max-width:720px){
+  html[data-position-loss-auto-hedge="true"] #aster-position-loss-auto-hedge-host{
+    position:relative;
+    left:-2px;
+    width:calc(100% + 2px);
+  }
+}
