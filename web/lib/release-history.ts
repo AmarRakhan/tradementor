@@ -26,6 +26,34 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-03",
+  title: "Portfolio Snapshot · Auto Hedge uitlijning",
+  newItems: [
+    "De Auto Hedge-tegel in Portfolio Snapshot staat op mobiel weer exact binnen de bestaande rijbelijning.",
+  ],
+  problems: [
+    "De Auto Hedge-kaart stond visueel enkele pixels te ver naar rechts ten opzichte van de omliggende Snapshot-tegels.",
+  ],
+  causes: [
+    "De derde grid-host gebruikte de correcte kolom, maar de mobiele visuele rand begon net te ver naar rechts binnen de bestaande vierkolomsverdeling.",
+  ],
+  fixes: [
+    "De Auto Hedge-host wordt op mobiel 2 pixels naar links getrokken terwijl de rechterrand op dezelfde positie blijft.",
+  ],
+  now: [
+    "Profit Pot / Spot, Profit Sparen, Auto Hedge en Portfolio Cyclus sluiten visueel weer netjes op dezelfde rijbelijning aan.",
+  ],
+  technicalDetails: [
+    "Frontend CSS-only hotfix in web/app/position-loss-auto-hedge.css.",
+    "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-488-closed-trade-accounting",
+  version: "46",
+  build: "488",
+  releasedAt: "2026-10-03",
   title: "Gesloten resultaat 2.0 · volledige trades versus hedge/partial correcties",
   newItems: [
     "Gesloten resultaat vandaag en Trades gesloten tellen voortaan alleen exchange-bewezen positiecycli die daadwerkelijk volledig flat zijn geworden.",
@@ -53,8 +81,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan entry-, DCA-, TP-, Auto Hedge-, scanner-, settings- of order-submitlogica.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
     id: "v46-build-487-active-trades-server-history",
     version: "46",
