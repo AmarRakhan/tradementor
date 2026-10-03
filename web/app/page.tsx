@@ -538,7 +538,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         <Metric label="ACTIVE TRADE CAPITAL" value={view.activeTradeCapital} detail="Werkelijke margin in live posities" />
         <Metric label="ACTIEVE POSITIES" value={view.accountDataAvailable ? String(view.positions.length || view.activeCount) : "—"} detail={isHyperliquid ? "Hyperliquid exchange-truth" : "Actuele accountcontrole"} />
         {isHyperliquid && <Metric label="MAINTENANCE MARGIN" value={view.maintenanceMargin} detail="Perps maintenance margin" />}
-        {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} dailyRefreshKey={snapshot.serverUpdatedAt ?? null} available={snapshot.data?.historyAvailable === true} positions={view.positions} equity={view.equity} availableToTrade={view.available} openPnl={netOpenPnl} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
+        {destination === "aster" && <TodayRealizedMetric onChanged={onRefresh} dailyRefreshKey={snapshot.serverUpdatedAt ?? null} available={snapshot.data?.historyAvailable === true} summary={snapshot.data?.closedTradeSummaryToday && typeof snapshot.data.closedTradeSummaryToday === "object" ? snapshot.data.closedTradeSummaryToday as Record<string, unknown> : null} positions={view.positions} equity={view.equity} availableToTrade={view.available} openPnl={netOpenPnl} trades={realizedEvents.length ? realizedEvents.map((event) => ({ symbol: String(event.symbol ?? ""), side: "", size: 0, entry: 0, exit: 0, pnl: asNumber(event.realizedPnlUsd), openedAt: "", closedAt: String(event.closedAt ?? ""), strategy: "", dcaCount: 0 })) : view.closedTrades} />}
         {isHyperliquid && <Metric label="ACCOUNT LEVERAGE" value={view.accountLeverage} detail="Unified Account leverage" />}
       </section>}
 
@@ -1188,7 +1188,7 @@ function ActiveTradesIndex({positions,equity,availableToTrade,openPnl}:{position
 
 function ContributorList({title,rows}:{title:string;rows:IndexRow[]}){return <article><h3>{title}</h3>{rows.map((r,i)=><div key={`${title}-${r.symbol}-${r.side}`}><span>{i+1}. {r.symbol} <small>{r.side.toUpperCase()}</small></span><b className={r.contribution>=0?"positive":"negative"}>{r.contribution>=0?"+":""}{r.contribution.toFixed(3)}</b><em>{r.returnPct>=0?"+":""}{r.returnPct.toFixed(2)}%</em></div>)}</article>}
 
-function TodayRealizedMetric({ trades, available, onChanged, dailyRefreshKey, positions, equity, availableToTrade, openPnl }: { trades: ClosedTradeView[]; available: boolean; onChanged:()=>void; dailyRefreshKey:number|null; positions:PositionView[]; equity:string; availableToTrade:string; openPnl:number }) {
+function TodayRealizedMetric({ trades, available, summary, onChanged, dailyRefreshKey, positions, equity, availableToTrade, openPnl }: { trades: ClosedTradeView[]; available: boolean; summary?: Record<string, unknown> | null; onChanged:()=>void; dailyRefreshKey:number|null; positions:PositionView[]; equity:string; availableToTrade:string; openPnl:number }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     let timer = 0;
@@ -1207,10 +1207,22 @@ function TodayRealizedMetric({ trades, available, onChanged, dailyRefreshKey, po
     return () => { window.clearTimeout(timer); document.removeEventListener("visibilitychange", refreshAfterResume); };
   }, []);
   const { today } = realizedCalendar(trades.map((trade) => ({ closedAt: trade.closedAt, realizedPnlUsd: trade.pnl })), now);
+  const summaryReliable = summary?.reliable === true;
+  const closedTotal = summaryReliable ? asNumber(summary?.realizedPnlUsd) : null;
+  const closedCountRaw = summaryReliable ? asNumber(summary?.closedTrades) : null;
+  const closedCount = closedCountRaw === null ? null : Math.max(0, Math.round(closedCountRaw));
+  const adjustment = summaryReliable ? asNumber(summary?.adjustmentRealizedPnlUsd) : null;
+  const adjustmentVisible = adjustment !== null && Math.abs(adjustment) >= 0.005;
+  const closedAvailable = available && summaryReliable && closedTotal !== null && closedCount !== null;
+  const resultDetail = !closedAvailable
+    ? "Volledige sluitingen tijdelijk niet bevestigd"
+    : adjustmentVisible
+      ? `Hedge/partial correcties apart: ${formatSignedUsd(adjustment)}`
+      : "Alleen volledig gesloten posities · lokale dag";
   return <>
-    <article className={`metric realized-today ${available && today.total > 0 ? "positive" : available && today.total < 0 ? "negative" : ""}`}><span>GESLOTEN RESULTAAT VANDAAG</span><strong className="realized-amount">{available ? formatSignedUsd(today.total) : "—"}</strong><small>{available ? "Lokale dag 00:00–23:59" : "Aster-geschiedenis tijdelijk niet bevestigd"}</small></article>
+    <article className={`metric realized-today ${closedAvailable && closedTotal > 0 ? "positive" : closedAvailable && closedTotal < 0 ? "negative" : ""}`}><span>GESLOTEN RESULTAAT VANDAAG</span><strong className="realized-amount">{closedAvailable ? formatSignedUsd(closedTotal) : "—"}</strong><small>{resultDetail}</small></article>
     <PortfolioGrowthCard onChanged={onChanged} refreshKey={dailyRefreshKey} />
-    <article className="metric realized-trades"><div className="realized-trades-count"><span>TRADES GESLOTEN</span><strong>{available ? today.trades : "—"}</strong><small>{available ? "Vandaag bevestigd door Aster" : "Aster-geschiedenis tijdelijk niet bevestigd"}</small></div><ActiveTradesIndex positions={positions} equity={equity} availableToTrade={availableToTrade} openPnl={openPnl}/></article>
+    <article className="metric realized-trades"><div className="realized-trades-count"><span>TRADES GESLOTEN</span><strong>{closedAvailable ? closedCount : "—"}</strong><small>{closedAvailable ? "Alleen volledig flat bevestigde posities" : "Volledige sluitingen tijdelijk niet bevestigd"}</small></div><ActiveTradesIndex positions={positions} equity={equity} availableToTrade={availableToTrade} openPnl={openPnl}/></article>
   </>;
 }
 
