@@ -46,7 +46,7 @@ test("Build 432+ keeps the dedicated Auto Hedge screen while simplifying the Sna
   assert.match(applyRoute, /"POST"/);
   assert.match(rehedgeRoute, /pairs\/\$\{encodeURIComponent\(symbol\)\}\/rehedge/);
   assert.match(rehedgeRoute, /"PUT"/);
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "488"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "489"/);
 });
 
 test("Tradecentrum shows Auto Hedge status on every matching coin row without the redundant AH prefix", async () => {
@@ -189,4 +189,9 @@ test("Build 468 Tradecentrum consumes backend Auto Hedge lifecycle metadata per 
   assert.match(tradeCenter, /data-auto-hedge-status/);
   assert.match(tradeCenter, /AUTO HEDGE ·/);
   assert.match(tradeCenter, /Recovery, re-hedge blijft UIT/);
+});
+
+test("Build 489 aligns the Auto Hedge Snapshot tile on mobile without changing behavior", async () => {
+  const css = await readFile(new URL("../app/position-loss-auto-hedge.css", import.meta.url), "utf8");
+  assert.match(css, /#aster-position-loss-auto-hedge-host\{[\s\S]*left:-2px;[\s\S]*width:calc\(100% \+ 2px\)/);
 });
