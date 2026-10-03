@@ -167,3 +167,59 @@
   .aps-cycle-inactive-copy em{font-size:5.7px}
   .aps-cycle-remaining{font-size:5.7px}
 }
+
+
+/* Build 493 — mobile Snapshot row copy-fit polish. */
+@media(max-width:720px){
+  .aps-profit-save-card{
+    min-width:0;
+    padding:6px 6px;
+  }
+  .aps-profit-save-card small,
+  .aps-profit-save-card strong,
+  .aps-profit-save-card em{
+    display:block;
+    min-width:0;
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .aps-profit-save-card em{
+    font-size:5.15px;
+    letter-spacing:.01em;
+  }
+
+  .aps-portfolio-cycle-card.is-inactive,
+  .aps-portfolio-cycle-card.is-active{
+    grid-template-columns:17px minmax(0,1fr);
+    gap:4px;
+    padding:6px 5px;
+  }
+  .aps-cycle-icon svg{
+    width:16px;
+    height:16px;
+  }
+  .aps-cycle-inactive-copy,
+  .aps-cycle-active-copy{
+    min-width:0;
+    gap:2px;
+  }
+  .aps-cycle-inactive-copy small,
+  .aps-cycle-inactive-copy strong,
+  .aps-cycle-inactive-copy em,
+  .aps-cycle-active-head small,
+  .aps-cycle-active-head strong,
+  .aps-cycle-remaining{
+    display:block;
+    min-width:0;
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .aps-cycle-inactive-copy em{
+    font-size:5.3px;
+    letter-spacing:-.015em;
+  }
+}

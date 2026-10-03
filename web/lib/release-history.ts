@@ -26,6 +26,37 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-03",
+  title: "Portfolio Snapshot · kaartteksten mobiel passend",
+  newItems: [
+    "Auto Hedge, Profit Sparen en Portfolio Cyclus houden hun onderste tekstregels volledig binnen hun eigen kaart op mobiel.",
+  ],
+  problems: [
+    "In Build 492 werd de Auto Hedge-trigger rechts afgekapt en zaten ook AUTOMATISCH en Geen actieve cyclus te krap tegen hun kaartrand.",
+  ],
+  causes: [
+    "De mobiele kaartinhoud gebruikte nog te ruime icon-kolommen, padding en subteksttypografie voor de vierkoloms Snapshot-rij.",
+  ],
+  fixes: [
+    "De interne icon-kolommen, gaps en horizontale padding zijn compacter gemaakt zonder de kaartposities of gridgaps te wijzigen.",
+    "De kleine subregels gebruiken min-width:0, max-width:100%, nowrap en veilige overflow-begrenzing.",
+    "De Auto Hedge-triggerregel krijgt extra bruikbare tekstbreedte en compactere mobiele typografie.",
+  ],
+  now: [
+    "Trigger −US$ 10,00, AUTOMATISCH en Geen actieve cyclus blijven binnen hun eigen kaart.",
+    "De vier kaarten behouden dezelfde gridpositie en onderlinge tussenruimte.",
+  ],
+  technicalDetails: [
+    "Frontend-only wijzigingen in web/app/position-loss-auto-hedge.css en web/app/profit-pot-snapshot.css.",
+    "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-492-auto-hedge-gridfix-live",
+  version: "46",
+  build: "492",
+  releasedAt: "2026-10-03",
   title: "Portfolio Snapshot · Auto Hedge gridfix live",
   newItems: [
     "De Auto Hedge-kaart gebruikt de native vierkoloms grid zonder pixel-offsets en met echte tussenruimte naar beide buurtegels.",
@@ -46,8 +77,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
   id: "v46-build-491-auto-hedge-gridfix",
   version: "46",
