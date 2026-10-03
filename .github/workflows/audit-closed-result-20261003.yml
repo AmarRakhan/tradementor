@@ -159,6 +159,36 @@ jobs:
               except Exception:
                   pass
 
+              order_details=[]
+              try:
+                  for row in client.all_orders("ZECUSDT",start_time=focus_start,end_time=focus_end,limit=1000):
+                      if not isinstance(row,dict): continue
+                      oid=str(row.get("orderId",row.get("orderID","")) or "")
+                      if oid=="2634534461":
+                          order_details.append({
+                              "orderId":oid,
+                              "clientOrderId":str(row.get("clientOrderId",row.get("clientOrderID","")) or ""),
+                              "symbol":str(row.get("symbol","")).upper(),
+                              "side":str(row.get("side","")).upper(),
+                              "positionSide":str(row.get("positionSide","")).upper(),
+                              "type":str(row.get("type",row.get("origType",""))),
+                              "origType":str(row.get("origType","")),
+                              "status":str(row.get("status","")),
+                              "reduceOnly":row.get("reduceOnly"),
+                              "closePosition":row.get("closePosition"),
+                              "origQty":main.safe_float(row.get("origQty",row.get("quantity"))),
+                              "executedQty":main.safe_float(row.get("executedQty",row.get("cumQty"))),
+                              "avgPrice":main.safe_float(row.get("avgPrice",row.get("price"))),
+                              "price":main.safe_float(row.get("price")),
+                              "stopPrice":main.safe_float(row.get("stopPrice")),
+                              "timeMs":ms(row.get("time",row.get("updateTime"))),
+                              "updateTimeMs":ms(row.get("updateTime",row.get("time"))),
+                              "timeInForce":str(row.get("timeInForce","")),
+                              "workingType":str(row.get("workingType","")),
+                          })
+              except Exception:
+                  pass
+
               pair_state={}
               try:
                   pdoc=db.collection("asterPositionLossAutoHedge").document(uid).collection("pairs").document("ZECUSDT").get()
@@ -217,6 +247,7 @@ jobs:
                   "autoHedgeAudit":sorted(hedge_audit,key=lambda x:x["timeMs"])[:80],
                   "pairState":pair_state,
                   "strategyAudit":sorted(strategy_audit,key=lambda x:x["timeMs"])[:50],
+                  "orderDetails":order_details,
               }
           print("CLOSED_AUDIT_ACCOUNT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
           PY
@@ -287,6 +318,15 @@ jobs:
           for r in ah:
               print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('eventType') or '—'} · op={r.get('operation') or '—'} · protected={r.get('protectedSide') or '—'} · hedge={r.get('hedgeSide') or '—'} · req={r.get('requestedQty',0):.10g} · filled={r.get('filledQty',0):.10g} · result={r.get('result') or '—'} · status={r.get('resultingStatus') or '—'} · reason={r.get('reason') or '—'} · exchangeOrder={r.get('exchangeOrderId') or r.get('orderId') or '—'} · clientOrder={r.get('clientOrderId') or '—'}")
           print()
+          od=d.get("orderDetails") or []
+          print("### Aster orderhistorie voor orderId 2634534461")
+          if not od:
+              print("- Geen orderdetail gevonden in het exacte tijdvenster.")
+          for r in od:
+              print(f"- type={r.get('type') or '—'} · origType={r.get('origType') or '—'} · side={r.get('side') or '—'} · positionSide={r.get('positionSide') or '—'} · status={r.get('status') or '—'}")
+              print(f"- origQty={r.get('origQty',0):.10g} · executedQty={r.get('executedQty',0):.10g} · avgPrice={r.get('avgPrice',0):.10g} · price={r.get('price',0):.10g} · stopPrice={r.get('stopPrice',0):.10g}")
+              print(f"- reduceOnly={r.get('reduceOnly')} · closePosition={r.get('closePosition')} · TIF={r.get('timeInForce') or '—'} · workingType={r.get('workingType') or '—'} · clientOrderId={r.get('clientOrderId') or '—'}")
+          print()
           ps=d.get("pairState") or {}
           print("### Huidige ZEC Auto Hedge-paarstate")
           print(f"- status={ps.get('status') or '—'} · protected={ps.get('protectedSide') or '—'} · hedge={ps.get('hedgeSide') or '—'} · protectedQty={ps.get('currentProtectedQty',0):.10g} · hedgeQty={ps.get('currentHedgeQty',0):.10g} · rehedge={ps.get('rehedgeEnabled')}")
@@ -330,3 +370,5 @@ jobs:
 # final exact +/-2 minute auto-hedge correlation
 
 # final exchangeOrderId match for Auto Hedge proof
+
+# inspect authoritative Aster allOrders record for orderId 2634534461
