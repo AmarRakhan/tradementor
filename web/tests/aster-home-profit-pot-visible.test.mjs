@@ -51,7 +51,7 @@ test("Profit Pot row keeps the existing three-column mobile geometry without ove
 });
 
 
-test("Profit Pot value stays readable on narrow mobile snapshot tiles", () => {
+test("Build 494 Profit Pot value stays readable on narrow mobile snapshot tiles", () => {
   assert.match(css, /Build 494 — keep Profit Pot amount fully readable/);
   assert.match(css, /\.aps-profit-pot-copy strong\{[\s\S]*?font-size:10\.8px/);
   assert.match(css, /text-overflow:clip/);
