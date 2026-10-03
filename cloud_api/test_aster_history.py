@@ -1,4 +1,4 @@
-from aster_history import closed_trade_from_fill, closed_trades_from_fills, fully_closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
+from aster_history import closed_trade_from_fill, closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, strategy_by_order_id_from_orders, trade_events_from_fills
 
 
 def test_long_sell_is_confirmed_close_even_at_breakeven():
@@ -268,3 +268,37 @@ def test_fully_closed_trades_keeps_long_and_short_cycles_separate():
     ]
     rows = fully_closed_trades_from_fills(fills)
     assert [(row["side"], row["realizedPnlUsd"]) for row in rows] == [("LONG", 2)]
+
+
+def test_full_leg_close_from_sweep_counts_complete_hedge_side_close():
+    fills = [
+        {"id":"open","orderId":"open-1","symbol":"PUMPUSDT","positionSide":"LONG","side":"BUY","qty":"11284","price":"0.00573","time":1_000},
+        {"id":"close","orderId":"844067130","symbol":"PUMPUSDT","positionSide":"LONG","side":"SELL","qty":"11284","price":"0.00633","realizedPnl":"6.75486768","time":2_000},
+    ]
+    sweeps = [{
+        "exchangeOrderId":"844067130",
+        "symbol":"PUMPUSDT",
+        "positionSide":"LONG",
+        "openQuantityBeforeClose":"11284",
+        "calculation":{"closedQuantity":"11284"},
+    }]
+    rows = full_leg_closes_from_sweep_ledgers(sweeps, fills, day_start_ms=0, end_ms=3_000)
+    assert len(rows) == 1
+    assert rows[0]["symbol"] == "PUMPUSDT"
+    assert rows[0]["side"] == "LONG"
+    assert rows[0]["realizedPnlUsd"] == 6.75486768
+    assert rows[0]["closeKind"] == "FULL_POSITION_SIDE_CLOSE"
+
+
+def test_full_leg_close_from_sweep_excludes_partial_reduction():
+    fills = [
+        {"id":"close","orderId":"partial-1","symbol":"ZECUSDT","positionSide":"LONG","side":"SELL","qty":"0.004","price":"1297.78","realizedPnl":"-1.13533333","time":2_000},
+    ]
+    sweeps = [{
+        "exchangeOrderId":"partial-1",
+        "symbol":"ZECUSDT",
+        "positionSide":"LONG",
+        "openQuantityBeforeClose":"0.198",
+        "calculation":{"closedQuantity":"0.004"},
+    }]
+    assert full_leg_closes_from_sweep_ledgers(sweeps, fills, day_start_ms=0, end_ms=3_000) == []
