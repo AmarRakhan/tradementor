@@ -41,7 +41,6 @@ class PreparedSweep:
     symbol: str
     position_side: str
     sweep_percent: Decimal
-    master_address: str
     ledger_ref: Any
     open_quantity: Decimal
     entry_commission_pool: Decimal
@@ -810,10 +809,6 @@ def prepare_close_sweep(
         return None
     if percent <= 0:
         return None
-    master = str(control.get("masterAddress", "")).strip().lower()
-    if not (master.startswith("0x") and len(master) == 42):
-        return None
-
     sweep_id = _sweep_id(uid, intent_id)
     ledger_ref = user_ref.collection("asterProfitSweeps").document(sweep_id)
     created = {
@@ -869,7 +864,6 @@ def prepare_close_sweep(
             symbol=symbol.upper(),
             position_side=position_side.upper(),
             sweep_percent=percent,
-            master_address=master,
             ledger_ref=ledger_ref,
             open_quantity=open_qty,
             entry_commission_pool=fee_pool,
