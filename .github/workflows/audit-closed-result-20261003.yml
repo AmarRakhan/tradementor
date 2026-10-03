@@ -149,7 +149,12 @@ jobs:
                               "resultingStatus":str(row.get("resultingStatus","")),
                               "reason":str(row.get("reason",row.get("lastReason",""))),
                               "orderId":str(row.get("orderId","")),
+                              "exchangeOrderId":str(row.get("exchangeOrderId","")),
                               "clientOrderId":str(row.get("clientOrderId","")),
+                              "operation":str(row.get("operation","")),
+                              "requestedQty":main.safe_float(row.get("requestedQty")),
+                              "filledQty":main.safe_float(row.get("filledQty")),
+                              "result":str(row.get("result","")),
                           })
               except Exception:
                   pass
@@ -280,7 +285,7 @@ jobs:
           ah=d.get("autoHedgeAudit",[])
           print(f"### Auto Hedge-audit rond de realized fill (±2 min): **{len(ah)} event(s)**")
           for r in ah:
-              print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('eventType') or '—'} · protected={r.get('protectedSide') or '—'} · hedge={r.get('hedgeSide') or '—'} · closed={r.get('closedSide') or '—'} · qty={r.get('requestedCloseQty',0):.10g} · pct={r.get('requestedPercentage',0):.10g} · status={r.get('resultingStatus') or '—'} · reason={r.get('reason') or '—'} · order={r.get('orderId') or r.get('clientOrderId') or '—'}")
+              print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('eventType') or '—'} · op={r.get('operation') or '—'} · protected={r.get('protectedSide') or '—'} · hedge={r.get('hedgeSide') or '—'} · req={r.get('requestedQty',0):.10g} · filled={r.get('filledQty',0):.10g} · result={r.get('result') or '—'} · status={r.get('resultingStatus') or '—'} · reason={r.get('reason') or '—'} · exchangeOrder={r.get('exchangeOrderId') or r.get('orderId') or '—'} · clientOrder={r.get('clientOrderId') or '—'}")
           print()
           ps=d.get("pairState") or {}
           print("### Huidige ZEC Auto Hedge-paarstate")
@@ -323,3 +328,5 @@ jobs:
 # correlate exact ZEC realized fill with auto-hedge and strategy audit
 
 # final exact +/-2 minute auto-hedge correlation
+
+# final exchangeOrderId match for Auto Hedge proof
