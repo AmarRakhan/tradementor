@@ -10,7 +10,7 @@ test("Build 488 Snapshot uses verified full-position close summary, not raw REAL
     readFile(new URL("../lib/release-history.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "488"/);
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "489"/);
   assert.match(page, /closedTradeSummaryToday/);
   assert.match(page, /summary\?\.reliable === true/);
   assert.match(page, /adjustmentRealizedPnlUsd/);
