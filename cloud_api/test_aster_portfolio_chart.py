@@ -314,3 +314,13 @@ def test_build487_active_trades_history_is_persisted_by_server_scheduler_not_bro
     assert "source_at_ms=source_at_ms" in block
     assert "AsterV3Client(" not in block
 
+def test_build487_runtime_report_persists_dynamic_hedge_ownership_for_scanner_gate():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index("if bool(dynamic_stored.get(\"enabled\",False)):")
+    end = source.index("return run_multi_bb_step(", start)
+    block = source[start:end]
+    owner = block.index('dynamic_owner_after=str(dynamic_control_after.get("ownershipState") or "ADOPTING").upper()')
+    persisted = block.index('"dynamicHedgeReport":{**dynamic,"ownershipState":dynamic_owner_after}')
+    blocked = block.index("if dynamic_strategy_scan_blocked(")
+    assert owner < persisted < blocked
+
