@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "eeb137a72c485d30b8c0f886e678f168c1372e29",
+  "sourceCommit": "bbf1a79e096187491a16b516049adef0fbb69257",
   "requestedBy": "AmarRakhan",
-  "requestId": "build488-closed-trade-accounting-20261003"
+  "requestId": "build493-profit-sparen-master-gate-fix-20261003"
 }
