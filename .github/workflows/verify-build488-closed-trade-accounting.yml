@@ -1,0 +1,129 @@
+name: Verify Build 488 Closed Trade Accounting
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/verify-build488-closed-trade-accounting.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "452"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run exact-account production verification read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          SOURCE_COMMIT="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("TRADEMENTOR_SOURCE_COMMIT","") or env.get("TRADEMENTOR_IMAGE_SOURCE_COMMIT",""))' <<<"$SERVICE_JSON")"
+          JOB="tm-build488-verify-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib, json
+          from google.cloud import firestore
+          import main
+
+          TARGET="dbcf103383"
+          db=firestore.Client(project="tradementor-production")
+          result={"status":"ACCOUNT_NOT_FOUND"}
+          for snap in db.collection("asterStrategy2").where("monitor","==",True).stream():
+              uid=snap.id
+              if hashlib.sha256(uid.encode()).hexdigest()[:10] != TARGET:
+                  continue
+              secret=main.load_aster_secret({"uid":uid})
+              client=main.AsterV3Client(
+                  signer_address=secret.signer_address,
+                  sign_message=main.local_eip712_signer(secret),
+                  live_authorized=False,
+                  before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
+              )
+              summary=main._verified_aster_daily_close_summary(client)
+              zec_income=[
+                  row for row in client.income_history(income_type="REALIZED_PNL",limit=1000)
+                  if isinstance(row,dict)
+                  and str(row.get("symbol","")).upper()=="ZECUSDT"
+                  and abs(main.safe_float(row.get("income")) + 1.13533333) < 0.000001
+              ]
+              result={
+                  "status":"OK",
+                  "accountRef":TARGET,
+                  "summary":summary,
+                  "originalZecEventStillPresent":bool(zec_income),
+                  "ordersSent":0,
+              }
+              break
+          print("BUILD488_VERIFY "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
+          PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=build488-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$PROD_IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "$ENV_VARS" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+          echo "PROD_REVISION=$PROD_REVISION" >> "$GITHUB_ENV"
+          echo "SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Publish verified Build 488 result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"BUILD488_VERIFY \"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --order=desc --format='value(textPayload)' | grep 'BUILD488_VERIFY ' | head -n1 || true)"
+          test -n "$LINE"
+          JSON="${LINE#*BUILD488_VERIFY }"
+          python - "$JSON" "$PROD_REVISION" "$SOURCE_COMMIT" > /tmp/report.md <<'PY'
+          import json,sys
+          d=json.loads(sys.argv[1]); revision=sys.argv[2]; source=sys.argv[3]
+          s=d.get("summary") or {}
+          print("## Build 488 · live verificatie gesloten resultaat")
+          print()
+          print(f"- Status: **{d.get('status')}**")
+          print("- Modus: **READ ONLY** · 0 orders · 0 settingswijzigingen")
+          print(f"- Productierevision: `{revision}`")
+          print(f"- Productie source commit: `{source or 'onbekend'}`")
+          print(f"- Summary reliable: **{s.get('reliable')}**")
+          print(f"- Methode: **{s.get('method','—')}**")
+          if s.get("reliable"):
+              print(f"- Volledig gesloten trades vandaag: **{s.get('closedTrades',0)}**")
+              print(f"- Gesloten resultaat vandaag: **US$ {float(s.get('realizedPnlUsd',0)):+.8f}**")
+              print(f"- Totaal Aster REALIZED_PNL vandaag: **US$ {float(s.get('ledgerRealizedPnlUsd',0)):+.8f}**")
+              print(f"- Hedge/partial adjustments apart: **US$ {float(s.get('adjustmentRealizedPnlUsd',0)):+.8f}**")
+          else:
+              print(f"- Block reason: {s.get('blockReason','onbekend')}")
+          print(f"- Oorspronkelijke ZEC -1.13533333 ledger-event nog aanwezig: **{d.get('originalZecEventStillPresent')}**")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
