@@ -169,6 +169,30 @@
 }
 
 
+/* Build 494 — keep Profit Pot amount fully readable on narrow Snapshot tiles. */
+@media(max-width:720px){
+  .aps-profit-pot-card{
+    grid-template-columns:20px minmax(0,1fr);
+    gap:4px;
+    padding-left:5px;
+    padding-right:5px;
+  }
+  .aps-profit-pot-icon svg{width:18px;height:18px}
+  .aps-profit-pot-copy{min-width:0;overflow:hidden}
+  .aps-profit-pot-copy strong{
+    display:block;
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:clip;
+    white-space:nowrap;
+    font-size:10.8px;
+    letter-spacing:-.035em;
+  }
+}
+@media(max-width:380px){
+  .aps-profit-pot-copy strong{font-size:10px}
+}
+
 /* Build 493 — mobile Snapshot row copy-fit polish. */
 @media(max-width:720px){
   .aps-profit-save-card{
