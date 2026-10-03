@@ -370,5 +370,6 @@ jobs:
 # final exact +/-2 minute auto-hedge correlation
 
 # final exchangeOrderId match for Auto Hedge proof
+# rerun after PUMP +US$6.75 close reported missing from Snapshot
 
 # inspect authoritative Aster allOrders record for orderId 2634534461
