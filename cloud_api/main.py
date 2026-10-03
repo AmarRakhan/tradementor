@@ -71,7 +71,7 @@ from aster_gateway import (
     build_hedge_order_payload,
 )
 from aster_signing import AsterSecret, local_eip712_signer
-from aster_history import closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
+from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
@@ -234,7 +234,7 @@ _positions_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _info_cache: dict[str, tuple[float, Any]] = {}
 _aster_universe_cache: AsterUniverseSnapshot | None = None
 _bitcoin_backtest_cache: dict[int, tuple[float, dict[str, Any]]] = {}
-_aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]]]] = {}
+_aster_closed_trades_cache: dict[str, tuple[float, list[dict[str, Any]], list[dict[str, Any]], dict[str, list[dict[str, Any]]], dict[str, Any]]] = {}
 _aster_portfolio_chart_cashflow_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _aster_portfolio_chart_runtime_bucket_cache: dict[str, int] = {}
 _bot_health_platform_cache: tuple[float, dict[str, int]] = (0.0, {})
@@ -5531,6 +5531,74 @@ def _persist_aster_realized_events(user: dict[str, Any], rows: list[dict[str, An
     return len(pending)
 
 
+def _verified_aster_daily_close_summary(client: AsterV3Client) -> dict[str, Any]:
+    """Read-only daily summary where 'closed trade' means a proven flat cycle.
+
+    Aster records REALIZED_PNL for every reduction. This summary deliberately
+    separates that accounting truth from full position closures so Auto Hedge,
+    partial TP and manual partial reductions cannot increment the closed-trade
+    counter or masquerade as a fully closed loss/win.
+    """
+    local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Amsterdam"))
+    day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start_ms = int(day_start.timestamp() * 1000)
+    now_ms = int(local_now.timestamp() * 1000)
+    income = client.income_history(
+        income_type="REALIZED_PNL", start_time=day_start_ms, end_time=now_ms, limit=1000,
+    )
+    income = [row for row in income if isinstance(row, dict)]
+    if len(income) >= 1000:
+        return {
+            "reliable": False,
+            "method": "EXCHANGE_PROVEN_FULL_POSITION_CYCLES",
+            "blockReason": "Dagledger bevat 1000+ REALIZED_PNL-regels; volledige dag kan niet veilig worden bewezen",
+        }
+    symbols = sorted({
+        str(row.get("symbol", "")).upper().strip()
+        for row in income if str(row.get("symbol", "")).strip()
+    })
+    if len(symbols) > 40:
+        return {
+            "reliable": False,
+            "method": "EXCHANGE_PROVEN_FULL_POSITION_CYCLES",
+            "blockReason": "Te veel gerealiseerde markten om de volledige sluitingshistorie veilig in één snapshot te bewijzen",
+        }
+    fills: list[dict[str, Any]] = []
+    failed_symbols: list[str] = []
+    for symbol in symbols:
+        try:
+            rows = client.user_trades(symbol, limit=1000)
+        except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
+            failed_symbols.append(symbol)
+            continue
+        fills.extend(row for row in rows if isinstance(row, dict))
+    if failed_symbols:
+        return {
+            "reliable": False,
+            "method": "EXCHANGE_PROVEN_FULL_POSITION_CYCLES",
+            "blockReason": "Fillhistorie kon niet voor alle gerealiseerde markten worden bevestigd",
+            "failedSymbols": failed_symbols,
+        }
+    full_cycles = [
+        row for row in fully_closed_trades_from_fills(fills)
+        if day_start_ms <= int(datetime.fromisoformat(str(row.get("closedAt", "")).replace("Z", "+00:00")).timestamp() * 1000) <= now_ms
+    ]
+    ledger_total = sum(safe_float(row.get("income")) for row in income)
+    closed_total = sum(safe_float(row.get("realizedPnlUsd")) for row in full_cycles)
+    return {
+        "reliable": True,
+        "method": "EXCHANGE_PROVEN_FULL_POSITION_CYCLES",
+        "timezone": "Europe/Amsterdam",
+        "dayStartAt": day_start.isoformat(),
+        "closedTrades": len(full_cycles),
+        "realizedPnlUsd": round(closed_total, 8),
+        "ledgerRealizedPnlUsd": round(ledger_total, 8),
+        "adjustmentRealizedPnlUsd": round(ledger_total - closed_total, 8),
+        "ledgerEventCount": len(income),
+        "fullClosedTrades": full_cycles,
+    }
+
+
 @app.get("/v1/me/aster/closed-trades")
 def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     """Return exchange-confirmed closes, including trades closed outside strategy 1."""
@@ -5544,7 +5612,7 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
     # live-price feed. Keep a short activity cache so page refreshes/PWA tabs do
     # not compete with the trading scheduler for Aster's shared-IP quota.
     if cached and now - cached[0] < 120.0:
-        return {"closedTrades": _merge_aster_closed_trades(stored, cached[1]), "realizedEvents": merge_realized_events(stored_events, cached[2]), "recentTradeActivity": cached[3], "historyAvailable": True}
+        return {"closedTrades": _merge_aster_closed_trades(stored, cached[1]), "realizedEvents": merge_realized_events(stored_events, cached[2]), "recentTradeActivity": cached[3], "closedTradeSummaryToday": cached[4], "historyAvailable": True}
     try:
         secret = load_aster_secret(user)
         client = AsterV3Client(
@@ -5620,6 +5688,7 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
                 continue
             fills.extend(row for row in rows if isinstance(row, dict))
         confirmed = closed_trades_from_fills(fills)
+        closed_trade_summary_today = _verified_aster_daily_close_summary(client)
         fresh_activity = recent_trade_activity_from_fills(
             fills, active_positions=active_positions, strategy_by_intent=strategy_by_intent,
             strategy_by_order_id=strategy_by_order_id,
@@ -5628,14 +5697,15 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
         activity = merge_recent_trade_activity(previous_activity, fresh_activity)
         _persist_confirmed_aster_closed_trades(user, confirmed)
         with _cache_lock:
-            _aster_closed_trades_cache[uid] = (time.monotonic(), confirmed, realized_events, activity)
-        return {"closedTrades": _merge_aster_closed_trades(stored, confirmed), "realizedEvents": merge_realized_events(stored_events, realized_events), "recentTradeActivity": activity, "historyAvailable": True}
+            _aster_closed_trades_cache[uid] = (time.monotonic(), confirmed, realized_events, activity, closed_trade_summary_today)
+        return {"closedTrades": _merge_aster_closed_trades(stored, confirmed), "realizedEvents": merge_realized_events(stored_events, realized_events), "recentTradeActivity": activity, "closedTradeSummaryToday": closed_trade_summary_today, "historyAvailable": True}
     except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, HTTPException, ValueError):
         fallback = cached[1] if cached else []
         events = cached[2] if cached else []
         durable_events = merge_realized_events(stored_events, events)
         activity = cached[3] if cached else {"entries": [], "exits": []}
-        return {"closedTrades": _merge_aster_closed_trades(stored, fallback), "realizedEvents": durable_events, "recentTradeActivity": activity, "historyAvailable": bool(durable_events)}
+        summary = cached[4] if cached else {"reliable": False, "method": "EXCHANGE_PROVEN_FULL_POSITION_CYCLES", "blockReason": "Dagoverzicht tijdelijk niet bevestigd"}
+        return {"closedTrades": _merge_aster_closed_trades(stored, fallback), "realizedEvents": durable_events, "recentTradeActivity": activity, "closedTradeSummaryToday": summary, "historyAvailable": bool(durable_events)}
 
 
 @app.get("/v1/me/aster/status")
