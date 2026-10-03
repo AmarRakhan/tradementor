@@ -218,7 +218,7 @@ def test_disabled_or_global_gate_off_never_posts(monkeypatch):
     assert client.transfers == []
 
 
-def test_uncertain_transfer_is_never_blind_retried(monkeypatch):
+def test_uncertain_transfer_replays_at_most_once_with_same_id(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
     monkeypatch.setattr("profit_sweep_live.time.sleep", lambda _: None)
     user = FakeUserRef(enabled=True, percent=25)
@@ -231,7 +231,42 @@ def test_uncertain_transfer_is_never_blind_retried(monkeypatch):
         "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
     })
     assert result == {"status": "UNCERTAIN", "reconciliationStatus": "NOT_FOUND"}
-    assert len(client.transfers) == 1
+    assert len(client.transfers) == 2
+    first_id = client.transfers[0][2]["clientTranId"]
+    second_id = client.transfers[1][2]["clientTranId"]
+    assert first_id == second_id
+
+
+def test_live_unknown_replays_once_with_exact_same_client_tran_id(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    monkeypatch.setattr("profit_sweep_live.time.sleep", lambda _: None)
+
+    class OneUnknownThenSuccessClient(FakeClient):
+        def signed_spot_request(self, method, path, params):
+            if method.upper() == "GET":
+                return []
+            self.transfers.append((method, path, dict(params)))
+            if len(self.transfers) == 1:
+                raise AsterSubmissionUncertain("Aster -1006: Execution status unknown")
+            return {"tranId": 779, "status": "SUCCESS"}
+
+    user = FakeUserRef(enabled=True, percent=5)
+    client = OneUnknownThenSuccessClient()
+    prepared = prepare_close_sweep(
+        uid="u-live-replay", user_ref=user, client=client,
+        intent_id="close-live-replay", symbol="BTCUSDT",
+        position_side="LONG", close_quantity="1",
+    )
+    result = finalize_close_sweep(
+        prepared, client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["replayed"] is True
+    assert result["contribution"] == "0.1925"
+    assert len(client.transfers) == 2
+    assert client.transfers[0][2]["clientTranId"] == client.transfers[1][2]["clientTranId"]
 
 
 def test_uncertain_transfer_reconciles_from_authoritative_income_history(monkeypatch):
