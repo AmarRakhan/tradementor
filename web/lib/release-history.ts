@@ -26,6 +26,37 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-03",
+  title: "Portfolio Snapshot · Auto Hedge gridfix",
+  newItems: [
+    "De vier Snapshot-kaarten gebruiken weer echte gridruimte met zichtbare tussenruimte; Auto Hedge overlapt de buurtegels niet meer.",
+  ],
+  problems: [
+    "Build 490 gebruikte nog een positionele verschuiving van de Auto Hedge-host, waardoor de kaart tegen Profit Sparen en Portfolio Cyclus aan kwam te liggen.",
+    "De Auto Hedge-kolom was daarnaast te smal voor AUTO HEDGE, ACTIEF en de triggerregel.",
+  ],
+  causes: [
+    "De rijverdeling gaf Auto Hedge minder breedte dan de kaartinhoud nodig had en de latere pixel-offset brak de native grid-gap.",
+  ],
+  fixes: [
+    "De pixel-offset is volledig verwijderd.",
+    "De vier kolommen zijn opnieuw verdeeld zodat Auto Hedge meer eigen breedte krijgt, met behoud van de bestaande 7px grid-gap.",
+    "De triggertekst blijft binnen de kaart begrensd.",
+  ],
+  now: [
+    "Profit Pot / Spot, Profit Sparen, Auto Hedge en Portfolio Cyclus staan als vier afzonderlijke kaarten met gelijke zichtbare tussenruimte.",
+  ],
+  technicalDetails: [
+    "Frontend CSS-only gridfix in web/app/position-loss-auto-hedge.css.",
+    "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-490-auto-hedge-alignment-2",
+  version: "46",
+  build: "490",
+  releasedAt: "2026-10-03",
   title: "Portfolio Snapshot · Auto Hedge uitlijning 2.0",
   newItems: [
     "De volledige Auto Hedge-kaart wordt op mobiel als één geheel naar links uitgelijnd.",
@@ -52,8 +83,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
   id: "v46-build-489-auto-hedge-alignment",
   version: "46",
