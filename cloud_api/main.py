@@ -71,7 +71,7 @@ from aster_gateway import (
     build_hedge_order_payload,
 )
 from aster_signing import AsterSecret, local_eip712_signer
-from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
+from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
@@ -5531,7 +5531,7 @@ def _persist_aster_realized_events(user: dict[str, Any], rows: list[dict[str, An
     return len(pending)
 
 
-def _verified_aster_daily_close_summary(client: AsterV3Client) -> dict[str, Any]:
+def _verified_aster_daily_close_summary(client: AsterV3Client, user_ref: Any | None = None) -> dict[str, Any]:
     """Read-only daily summary where 'closed trade' means a proven flat cycle.
 
     Aster records REALIZED_PNL for every reduction. This summary deliberately
@@ -5583,19 +5583,55 @@ def _verified_aster_daily_close_summary(client: AsterV3Client) -> dict[str, Any]
         row for row in fully_closed_trades_from_fills(fills)
         if day_start_ms <= int(datetime.fromisoformat(str(row.get("closedAt", "")).replace("Z", "+00:00")).timestamp() * 1000) <= now_ms
     ]
+
+    # Hedge mode can fully close one position side while the opposite side
+    # remains open. Such a close is not a partial adjustment. Profit Sweep
+    # ledgers provide exact pre-close inventory plus the confirmed exchange
+    # order id, so they can prove a full LONG/SHORT leg close without guessing.
+    explicit_full_legs: list[dict[str, Any]] = []
+    if user_ref is not None:
+        try:
+            sweep_rows = [
+                snap.to_dict() or {}
+                for snap in user_ref.collection("asterProfitSweeps").stream()
+            ]
+            explicit_full_legs = full_leg_closes_from_sweep_ledgers(
+                sweep_rows, fills, day_start_ms=day_start_ms, end_ms=now_ms,
+            )
+        except Exception:
+            # Never make the whole daily summary unreliable merely because
+            # supplemental explicit-close evidence is unavailable.
+            explicit_full_legs = []
+
+    existing_order_ids = {
+        str(row.get("exchangeOrderId", "")).strip()
+        for row in full_cycles if str(row.get("exchangeOrderId", "")).strip()
+    }
+    additional_legs = [
+        row for row in explicit_full_legs
+        if str(row.get("exchangeOrderId", "")).strip() not in existing_order_ids
+    ]
+    closed_rows = sorted(
+        [*full_cycles, *additional_legs],
+        key=lambda row: str(row.get("closedAt", "")),
+        reverse=True,
+    )
+
     ledger_total = sum(safe_float(row.get("income")) for row in income)
-    closed_total = sum(safe_float(row.get("realizedPnlUsd")) for row in full_cycles)
+    closed_total = sum(safe_float(row.get("realizedPnlUsd")) for row in closed_rows)
     return {
         "reliable": True,
-        "method": "EXCHANGE_PROVEN_FULL_POSITION_CYCLES",
+        "method": "EXCHANGE_PROVEN_FULL_POSITION_OR_SIDE_CLOSES",
         "timezone": "Europe/Amsterdam",
         "dayStartAt": day_start.isoformat(),
-        "closedTrades": len(full_cycles),
+        "closedTrades": len(closed_rows),
         "realizedPnlUsd": round(closed_total, 8),
         "ledgerRealizedPnlUsd": round(ledger_total, 8),
         "adjustmentRealizedPnlUsd": round(ledger_total - closed_total, 8),
         "ledgerEventCount": len(income),
-        "fullClosedTrades": full_cycles,
+        "fullClosedTrades": closed_rows,
+        "fullPositionCycleCount": len(full_cycles),
+        "explicitFullLegCloseCount": len(additional_legs),
     }
 
 
@@ -5688,7 +5724,7 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
                 continue
             fills.extend(row for row in rows if isinstance(row, dict))
         confirmed = closed_trades_from_fills(fills)
-        closed_trade_summary_today = _verified_aster_daily_close_summary(client)
+        closed_trade_summary_today = _verified_aster_daily_close_summary(client, user_reference(user))
         fresh_activity = recent_trade_activity_from_fills(
             fills, active_positions=active_positions, strategy_by_intent=strategy_by_intent,
             strategy_by_order_id=strategy_by_order_id,
