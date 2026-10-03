@@ -62,7 +62,7 @@ jobs:
                   live_authorized=False,
                   before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
               )
-              summary=main._verified_aster_daily_close_summary(client)
+              summary=main._verified_aster_daily_close_summary(client, main.user_reference({"uid":uid}))
               zec_income=[
                   row for row in client.income_history(income_type="REALIZED_PNL",limit=1000)
                   if isinstance(row,dict)
@@ -119,6 +119,7 @@ jobs:
           print(f"- Methode: **{s.get('method','—')}**")
           if s.get("reliable"):
               print(f"- Volledig gesloten trades vandaag: **{s.get('closedTrades',0)}**")
+              print(f"- Expliciet bewezen volledige hedge-zijde closes: **{s.get('explicitFullLegCloseCount',0)}**")
               print(f"- Gesloten resultaat vandaag: **US$ {float(s.get('realizedPnlUsd',0)):+.8f}**")
               print(f"- Totaal Aster REALIZED_PNL vandaag: **US$ {float(s.get('ledgerRealizedPnlUsd',0)):+.8f}**")
               print(f"- Hedge/partial adjustments apart: **US$ {float(s.get('adjustmentRealizedPnlUsd',0)):+.8f}**")
@@ -127,3 +128,5 @@ jobs:
           print(f"- Oorspronkelijke ZEC -1.13533333 ledger-event nog aanwezig: **{d.get('originalZecEventStillPresent')}**")
           PY
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
+
+# live verification rerun after full hedge-side accounting production deploy 2026-10-04
