@@ -26,34 +26,68 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-03",
-  title: "Actieve Trades 1.2 · server-side historie",
+  title: "Gesloten resultaat 2.0 · volledige trades versus hedge/partial correcties",
   newItems: [
-    "De Active Trades-index wordt voortaan iedere scheduler-minuut server-side opgeslagen voor gemonitorde Strategy-2 accounts.",
-    "1m, 5m, 15m, 1u, 4u en 24u candles groeien door terwijl de app dicht is of een ander tabblad actief is.",
+    "Gesloten resultaat vandaag en Trades gesloten tellen voortaan alleen exchange-bewezen positiecycli die daadwerkelijk volledig flat zijn geworden.",
+    "REALIZED_PNL door Auto Hedge exact-1:1, partial TP of andere gedeeltelijke reducties blijft wel in de accounting zichtbaar, maar wordt apart gehouden van volledig gesloten trades.",
   ],
   problems: [
-    "De Active Trades-endpoint bouwde historie alleen op wanneer de gebruiker het tabblad Actieve Trades daadwerkelijk open had.",
-    "Daardoor konden 1m en 15m vrijwel dezelfde paar candles tonen, ondanks langdurig openstaande trades.",
+    "Aster boekt REALIZED_PNL bij iedere positiereductie, ook wanneer de positie na die fill gewoon open blijft.",
+    "Daardoor kon een Auto Hedge-correctie van bijvoorbeeld 0,004 ZEC als één gesloten verliestrade in Portfolio Snapshot verschijnen.",
   ],
   causes: [
-    "De persist-call zat alleen in de read-only Active Trades API-route en niet in de bestaande periodieke Aster runtime.",
+    "De oude Snapshot gebruikte de REALIZED_PNL-ledger rechtstreeks voor zowel het bedrag als de teller en maakte daardoor geen onderscheid tussen een realized event en een volledig gesloten positiecyclus.",
   ],
   fixes: [
-    "De bestaande minute scheduler gebruikt nu dezelfde exchange-confirmed position snapshot om ook de Active Trades basket één keer per minuut te persisteren.",
-    "De bestaande continuity/rebase-logica blijft ongewijzigd, zodat entry, exit, DCA en partial close geen kunstmatige indexsprong veroorzaken.",
+    "De backend reconstrueert per symbool en LONG/SHORT de exchange-fillcyclus en telt pas een trade wanneer de bewezen exposure nul bereikt.",
+    "Gedeeltelijke reducties worden niet meer als gesloten trade geteld; hun gerealiseerde PnL blijft onderdeel van de totale portfolio-performance.",
+    "De Snapshot toont eventuele hedge/partial correcties apart in de detailregel in plaats van ze als gesloten trade te presenteren.",
   ],
   now: [
-    "Vanaf Build 487 groeit 1m-historie automatisch server-side en is deze niet meer afhankelijk van browsergebruik.",
-    "Bestaande ontbrekende minuten van vóór Build 487 worden niet verzonnen of kunstmatig aangevuld.",
+    "Een Auto Hedge 1:1-reductie kan het getal Trades gesloten niet meer verhogen zolang de positie open blijft.",
+    "Gesloten resultaat vandaag is voortaan het resultaat van volledig gesloten posities; overige realized adjustments blijven transparant zichtbaar zonder de trade-teller te vervuilen.",
   ],
   technicalDetails: [
-    "Serverpad: _run_aster_strategy2_tick → active_trades_snapshot → _persist_active_trades_chart_sample.",
-    "De sampler draait alleen op de bestaande niet-realtime scheduler-tick en gebruikt dezelfde minute-bucket deduplicatie als Portfolio Koers.",
-    "Geen wijziging aan entry-, DCA-, TP-, hedge-, scanner-, settings- of order-submitlogica.",
+    "Nieuwe bron: closedTradeSummaryToday met methode EXCHANGE_PROVEN_FULL_POSITION_CYCLES.",
+    "Nieuwe helper: fully_closed_trades_from_fills reconstrueert exposure per symbol/positionSide en aggregeert partial closes pas wanneer de cyclus volledig flat wordt.",
+    "Geen wijziging aan entry-, DCA-, TP-, Auto Hedge-, scanner-, settings- of order-submitlogica.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-487-active-trades-server-history",
+    version: "46",
+    build: "487",
+    releasedAt: "2026-10-03",
+    title: "Actieve Trades 1.2 · server-side historie",
+    newItems: [
+      "De Active Trades-index wordt voortaan iedere scheduler-minuut server-side opgeslagen voor gemonitorde Strategy-2 accounts.",
+      "1m, 5m, 15m, 1u, 4u en 24u candles groeien door terwijl de app dicht is of een ander tabblad actief is.",
+    ],
+    problems: [
+      "De Active Trades-endpoint bouwde historie alleen op wanneer de gebruiker het tabblad Actieve Trades daadwerkelijk open had.",
+      "Daardoor konden 1m en 15m vrijwel dezelfde paar candles tonen, ondanks langdurig openstaande trades.",
+    ],
+    causes: [
+      "De persist-call zat alleen in de read-only Active Trades API-route en niet in de bestaande periodieke Aster runtime.",
+    ],
+    fixes: [
+      "De bestaande minute scheduler gebruikt nu dezelfde exchange-confirmed position snapshot om ook de Active Trades basket één keer per minuut te persisteren.",
+      "De bestaande continuity/rebase-logica blijft ongewijzigd, zodat entry, exit, DCA en partial close geen kunstmatige indexsprong veroorzaken.",
+    ],
+    now: [
+      "Vanaf Build 487 groeit 1m-historie automatisch server-side en is deze niet meer afhankelijk van browsergebruik.",
+      "Bestaande ontbrekende minuten van vóór Build 487 worden niet verzonnen of kunstmatig aangevuld.",
+    ],
+    technicalDetails: [
+      "Serverpad: _run_aster_strategy2_tick → active_trades_snapshot → _persist_active_trades_chart_sample.",
+      "De sampler draait alleen op de bestaande niet-realtime scheduler-tick en gebruikt dezelfde minute-bucket deduplicatie als Portfolio Koers.",
+      "Geen wijziging aan entry-, DCA-, TP-, hedge-, scanner-, settings- of order-submitlogica.",
+    ],
+    confidence: "confirmed",
+  },
+
   {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,

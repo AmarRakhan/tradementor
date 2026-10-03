@@ -66,6 +66,11 @@ export function mergeAsterSnapshotWithHistoryFallback(account, history, previous
     closedTrades: Array.isArray(previous?.closedTrades) ? previous.closedTrades : [],
     realizedEvents: Array.isArray(previous?.realizedEvents) ? previous.realizedEvents : [],
     recentTradeActivity: Array.isArray(previous?.recentTradeActivity) ? previous.recentTradeActivity : [],
+    closedTradeSummaryToday: isRecord(previous?.closedTradeSummaryToday) ? previous.closedTradeSummaryToday : {
+      reliable: false,
+      method: "EXCHANGE_PROVEN_FULL_POSITION_CYCLES",
+      blockReason: "Dagoverzicht tijdelijk niet bevestigd",
+    },
   };
   return mergeCompleteAsterSnapshot(account, fallback);
 }
