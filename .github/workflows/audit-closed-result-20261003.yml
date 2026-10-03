@@ -247,3 +247,5 @@ jobs:
               print("- Er zijn geen Auto Hedge-auditevents sinds 00:00 gevonden.")
           PY
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
+
+# explicit read-only audit trigger 2026-10-03
