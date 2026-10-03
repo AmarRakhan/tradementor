@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "005afe140f50b9df087d664f9c3b0dd8d4751f37",
+  "sourceCommit": "352d248febb2f10eec11fa9e8c446e84ec9c474a",
   "requestedBy": "AmarRakhan",
-  "requestId": "profit-sweep-unknown-replay-20261003"
+  "requestId": "closed-result-full-hedge-side-20261003"
 }
