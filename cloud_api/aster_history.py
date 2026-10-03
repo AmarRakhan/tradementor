@@ -158,6 +158,7 @@ def fully_closed_trades_from_fills(fills: list[dict[str, Any]]) -> list[dict[str
             "closedAt": datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).isoformat(),
             "source": "aster-fill-full-cycle",
             "exchangeTradeId": trade_id,
+            "exchangeOrderId": str(raw.get("orderId", raw.get("orderID", ""))).strip(),
             "dcaCount": max(0, int(_number(state.get("increaseCount"))) - 1),
             "fullyClosed": True,
             "closeKind": "FULL_POSITION_CLOSE",
@@ -166,6 +167,95 @@ def fully_closed_trades_from_fills(fills: list[dict[str, Any]]) -> list[dict[str
 
     closed.sort(key=lambda row: str(row.get("closedAt", "")), reverse=True)
     return closed
+
+
+def full_leg_closes_from_sweep_ledgers(
+    sweeps: list[dict[str, Any]],
+    fills: list[dict[str, Any]],
+    *,
+    day_start_ms: int,
+    end_ms: int,
+) -> list[dict[str, Any]]:
+    """Return exchange-proven full position-side closes from Profit Sweep ledgers.
+
+    In hedge mode one side can be closed completely while the opposite side
+    stays open. That is still a fully closed LONG/SHORT position and must count
+    in daily closed result. Aster's raw REALIZED_PNL cannot distinguish that
+    from partial/hedge corrections, so require all of:
+      * a confirmed Profit Sweep close ledger with exchange order id;
+      * closedQuantity == openQuantityBeforeClose;
+      * matching Aster closing fills for that exact order.
+
+    Partial reductions and Auto Hedge quantity corrections remain excluded.
+    """
+    epsilon = 1e-12
+    fills_by_order: dict[str, list[dict[str, Any]]] = {}
+    for raw in fills or []:
+        if not isinstance(raw, dict):
+            continue
+        order_id = str(raw.get("orderId", raw.get("orderID", ""))).strip()
+        if order_id:
+            fills_by_order.setdefault(order_id, []).append(raw)
+
+    rows: list[dict[str, Any]] = []
+    seen_orders: set[str] = set()
+    for sweep in sweeps or []:
+        if not isinstance(sweep, dict):
+            continue
+        order_id = str(sweep.get("exchangeOrderId", "")).strip()
+        if not order_id or order_id in seen_orders:
+            continue
+        symbol = str(sweep.get("symbol", "")).upper().strip()
+        side = str(sweep.get("positionSide", "")).upper().strip()
+        if not symbol or side not in {"LONG", "SHORT"}:
+            continue
+        open_qty = abs(_number(sweep.get("openQuantityBeforeClose")))
+        calculation = sweep.get("calculation") if isinstance(sweep.get("calculation"), dict) else {}
+        closed_qty = abs(_number(calculation.get("closedQuantity")))
+        tolerance = max(epsilon, open_qty * 1e-9)
+        if open_qty <= epsilon or closed_qty <= epsilon or abs(closed_qty - open_qty) > tolerance:
+            continue
+
+        target: list[dict[str, Any]] = []
+        for raw in fills_by_order.get(order_id, []):
+            raw_symbol = str(raw.get("symbol", "")).upper().strip()
+            raw_side = str(raw.get("positionSide", "")).upper().strip()
+            order_side = str(raw.get("side", "")).upper().strip()
+            closing = (
+                (raw_side == "LONG" and order_side == "SELL")
+                or (raw_side == "SHORT" and order_side == "BUY")
+            )
+            if raw_symbol == symbol and raw_side == side and closing:
+                target.append(raw)
+        if not target:
+            continue
+
+        closed_at_ms = max(int(_number(raw.get("time", raw.get("updateTime")))) for raw in target)
+        if closed_at_ms < day_start_ms or closed_at_ms > end_ms:
+            continue
+        realized = sum(_number(raw.get("realizedPnl", raw.get("realizedProfit"))) for raw in target)
+        close_qty = sum(abs(_number(raw.get("qty", raw.get("quantity")))) for raw in target)
+        close_notional = sum(
+            abs(_number(raw.get("qty", raw.get("quantity")))) * _number(raw.get("price"))
+            for raw in target
+        )
+        exit_price = close_notional / close_qty if close_qty > epsilon else 0.0
+        rows.append({
+            "symbol": symbol,
+            "side": side,
+            "notionalUsd": close_notional,
+            "exitPrice": exit_price,
+            "realizedPnlUsd": realized,
+            "closedAt": datetime.fromtimestamp(closed_at_ms / 1000, tz=timezone.utc).isoformat(),
+            "source": "aster-profit-sweep-full-leg",
+            "exchangeOrderId": order_id,
+            "fullyClosed": True,
+            "closeKind": "FULL_POSITION_SIDE_CLOSE",
+        })
+        seen_orders.add(order_id)
+
+    rows.sort(key=lambda row: str(row.get("closedAt", "")), reverse=True)
+    return rows
 
 
 def realized_events_from_income(income: list[dict[str, Any]]) -> list[dict[str, Any]]:
