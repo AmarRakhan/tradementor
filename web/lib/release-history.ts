@@ -26,6 +26,39 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-03",
+  title: "Portfolio Snapshot · Auto Hedge uitlijning 2.0",
+  newItems: [
+    "De volledige Auto Hedge-kaart wordt op mobiel als één geheel naar links uitgelijnd.",
+    "De triggertekst blijft nu volledig binnen de Auto Hedge-kaart en kan niet meer over Portfolio Cyclus heen lopen.",
+  ],
+  problems: [
+    "Build 489 verschoof de linkerrand, maar hield de rechterrand op dezelfde positie.",
+    "Daardoor bleef de kaart visueel te breed naar rechts en kon de triggertekst buiten de kaart doorlopen.",
+  ],
+  causes: [
+    "De eerdere hotfix gebruikte width: calc(100% + 2px), waardoor de rechtergrens niet mee naar links schoof.",
+    "De Auto Hedge-subtekst stond op overflow: visible.",
+  ],
+  fixes: [
+    "De host staat nu 4 pixels naar links met normale 100% breedte, zodat ook de rechterrand daadwerkelijk mee naar links gaat.",
+    "De kaart clipt eigen inhoud en de triggerregel wordt op mobiel iets compacter weergegeven.",
+  ],
+  now: [
+    "Profit Sparen, Auto Hedge en Portfolio Cyclus hebben weer zichtbare ruimte tussen hun randen.",
+    "AUTO HEDGE, ACTIEF en Trigger blijven binnen dezelfde kaart.",
+  ],
+  technicalDetails: [
+    "Frontend CSS-only wijziging in web/app/position-loss-auto-hedge.css.",
+    "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
+  ],
+  confidence: "confirmed",
+};
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-489-auto-hedge-alignment",
+  version: "46",
+  build: "489",
+  releasedAt: "2026-10-03",
   title: "Portfolio Snapshot · Auto Hedge uitlijning",
   newItems: [
     "De Auto Hedge-tegel in Portfolio Snapshot staat op mobiel weer exact binnen de bestaande rijbelijning.",
@@ -47,8 +80,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Geen wijziging aan trading-, entry-, DCA-, TP-, Auto Hedge-uitvoering, scanner-, settings- of order-submitlogica.",
   ],
   confidence: "confirmed",
-};
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+},
+
   {
   id: "v46-build-488-closed-trade-accounting",
   version: "46",
