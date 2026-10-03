@@ -1,4 +1,4 @@
-name: Diagnose Profit Sweep Via Runtime SA 2026-09-20
+name: Diagnose Profit Sweep Via Runtime SA 2026-10-03
 
 on:
   push:
@@ -58,8 +58,8 @@ jobs:
 
           db=firestore.Client(project="tradementor-production")
           ams=ZoneInfo("Europe/Amsterdam")
-          day_start=datetime(2026,9,20,0,0,tzinfo=ams).astimezone(timezone.utc)
-          latest_deploy=datetime(2026,9,20,9,31,tzinfo=timezone.utc)
+          day_start=datetime(2026,10,3,0,0,tzinfo=ams).astimezone(timezone.utc)
+          latest_deploy=datetime(2026,10,3,17,42,tzinfo=timezone.utc)
           accounts=[]
 
           def as_utc(value):
@@ -85,7 +85,7 @@ jobs:
                   pct=float(sweep.get("sweepPercent",0))
               except Exception:
                   continue
-              if abs(pct-25.0)>1e-9:
+              if abs(pct-5.0)>1e-9:
                   continue
               updated=as_utc(sweep.get("updatedAt")) or datetime.fromtimestamp(0,tz=timezone.utc)
               effective=max(updated,latest_deploy)
@@ -149,16 +149,16 @@ jobs:
               })
 
           report=json.dumps({
-              "matching25PctEnabledAccounts":len(accounts),
+              "matching5PctEnabledAccounts":len(accounts),
               "accounts":accounts,
           },separators=(",",":"),sort_keys=True)
-          print("PROFIT_SWEEP_DIAG="+report)
+          print("PROFIT_SWEEP_RUNTIME_DIAG_20261003="+report)
           token=os.environ.get("DIAG_GH_TOKEN","")
           repo=os.environ.get("DIAG_REPO","")
           if token and repo:
               req=urllib.request.Request(
                   f"https://api.github.com/repos/{repo}/issues/41/comments",
-                  data=json.dumps({"body":"PROFIT_SWEEP_RUNTIME_DIAG "+report}).encode(),
+                  data=json.dumps({"body":"PROFIT_SWEEP_RUNTIME_DIAG_20261003 "+report}).encode(),
                   method="POST",
                   headers={
                       "Authorization":f"Bearer {token}",
