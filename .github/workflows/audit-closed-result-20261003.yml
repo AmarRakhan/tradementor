@@ -126,8 +126,8 @@ jobs:
                       })
 
               realized_times=[ms(x.get("time",x.get("timestamp"))) for x in realized]
-              focus_start=(min(realized_times)-10*60_000) if realized_times else start_ms
-              focus_end=(max(realized_times)+10*60_000) if realized_times else end_ms
+              focus_start=(min(realized_times)-2*60_000) if realized_times else start_ms
+              focus_end=(max(realized_times)+2*60_000) if realized_times else end_ms
               hedge_audit=[]
               try:
                   for doc in db.collection("users").document(uid).collection("autoHedgeAudit").stream():
@@ -209,7 +209,7 @@ jobs:
                   "realizedIncomeCount":len(realized),
                   "fills":sorted(fills,key=lambda x:x["timeMs"])[:50],
                   "fillRealizedTotal":sum(x["realizedPnl"] for x in fills),
-                  "autoHedgeAudit":sorted(hedge_audit,key=lambda x:x["timeMs"])[:30],
+                  "autoHedgeAudit":sorted(hedge_audit,key=lambda x:x["timeMs"])[:80],
                   "pairState":pair_state,
                   "strategyAudit":sorted(strategy_audit,key=lambda x:x["timeMs"])[:50],
               }
@@ -278,9 +278,9 @@ jobs:
               print(f"  - orderId={r.get('orderId') or '—'} · clientOrderId={r.get('clientOrderId') or '—'} · cycleId={r.get('cycleId') or '—'}")
           print()
           ah=d.get("autoHedgeAudit",[])
-          print(f"### Auto Hedge-audit rond de realized fill (±10 min): **{len(ah)} event(s)**")
+          print(f"### Auto Hedge-audit rond de realized fill (±2 min): **{len(ah)} event(s)**")
           for r in ah:
-              print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('eventType') or '—'} · closed={r.get('closedSide') or '—'} · qty={r.get('requestedCloseQty',0):.10g}")
+              print(f"- {clock(r.get('timeMs',0))} · {r.get('symbol') or '—'} · {r.get('eventType') or '—'} · protected={r.get('protectedSide') or '—'} · hedge={r.get('hedgeSide') or '—'} · closed={r.get('closedSide') or '—'} · qty={r.get('requestedCloseQty',0):.10g} · pct={r.get('requestedPercentage',0):.10g} · status={r.get('resultingStatus') or '—'} · reason={r.get('reason') or '—'} · order={r.get('orderId') or r.get('clientOrderId') or '—'}")
           print()
           ps=d.get("pairState") or {}
           print("### Huidige ZEC Auto Hedge-paarstate")
@@ -321,3 +321,5 @@ jobs:
 # compact audit payload to avoid Cloud Logging truncation
 
 # correlate exact ZEC realized fill with auto-hedge and strategy audit
+
+# final exact +/-2 minute auto-hedge correlation
