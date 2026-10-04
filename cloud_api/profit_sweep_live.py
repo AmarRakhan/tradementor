@@ -515,9 +515,6 @@ def recover_failed_sweep(
     transfer_asset = str(ledger.get("asset", DEFAULT_TRANSFER_ASSET)).upper().strip()
     if transfer_asset not in SUPPORTED_TRANSFER_ASSETS:
         transfer_asset = DEFAULT_TRANSFER_ASSET
-    minimum_transfer = _d(settings.get("minimumTransfer", DEFAULT_MINIMUM_TRANSFER))
-    if minimum_transfer <= 0:
-        minimum_transfer = DEFAULT_MINIMUM_TRANSFER
     submitted_at = ledger.get("submittedAt") or ledger.get("updatedAt") or ledger.get("completedAt")
     if contribution <= 0 or _timestamp_ms(submitted_at) <= 0:
         return {"status": "INVALID_RECOVERY_EVIDENCE"}
@@ -830,6 +827,9 @@ def prepare_close_sweep(
     transfer_asset = str(settings.get("transferAsset", DEFAULT_TRANSFER_ASSET)).upper().strip()
     if transfer_asset not in SUPPORTED_TRANSFER_ASSETS:
         transfer_asset = DEFAULT_TRANSFER_ASSET
+    minimum_transfer = _d(settings.get("minimumTransfer", DEFAULT_MINIMUM_TRANSFER))
+    if minimum_transfer <= 0:
+        minimum_transfer = DEFAULT_MINIMUM_TRANSFER
     if settings.get("enabled") is not True:
         return None
     try:
