@@ -21,8 +21,13 @@ def test_settings_route_keeps_user_control_separate_from_global_live_gate():
     assert '"mode": "LIVE_AUTO_TRANSFER"' in source
     assert '"principalIncluded": False' in source
     assert '"unrealizedPnlIncluded": False' in source
-    assert "return False, float(DEFAULT_SWEEP_PERCENT), \"USDT\"" in source
+    assert "return False, float(DEFAULT_SWEEP_PERCENT), 1.0, \"USDT\"" in source
     assert '"transferAsset": asset' in source
+    assert '"minimumTransfer": minimum' in source
+    assert '"pendingSavings"' in source
+    assert '"todayTransferred"' in source
+    assert '"accumulateSmallAmounts": True' in source
+    assert '"retryFailedTransfers": True' in source
     # Configuration routes themselves still cannot move money.
     assert "signed_request" not in source
     assert "/asset/wallet/transfer" not in source
