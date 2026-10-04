@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 503: Actieve Trades 2.0 als samengestelde, basis-100 marktindex van open posities.
+// Build 503: Actieve Trades 2.0 · basis-100 samengestelde marktindex, server-side en read-only.
 export const WEBAPP_BUILD_NUMBER = "503";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
