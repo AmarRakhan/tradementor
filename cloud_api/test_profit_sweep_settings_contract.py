@@ -21,7 +21,8 @@ def test_settings_route_keeps_user_control_separate_from_global_live_gate():
     assert '"mode": "LIVE_AUTO_TRANSFER"' in source
     assert '"principalIncluded": False' in source
     assert '"unrealizedPnlIncluded": False' in source
-    assert "return False, float(DEFAULT_SWEEP_PERCENT)" in source
+    assert "return False, float(DEFAULT_SWEEP_PERCENT), \"USDT\"" in source
+    assert '"transferAsset": asset' in source
     # Configuration routes themselves still cannot move money.
     assert "signed_request" not in source
     assert "/asset/wallet/transfer" not in source
@@ -32,7 +33,9 @@ def test_live_engine_uses_only_internal_future_to_spot_transfer_and_no_withdrawa
     source = (ROOT / "profit_sweep_live.py").read_text(encoding="utf-8")
     assert 'TRANSFER_PATH = "/api/v3/asset/wallet/transfer"' in source
     assert 'TRANSFER_KIND = "FUTURE_SPOT"' in source
-    assert 'TRANSFER_ASSET = "USDT"' in source
+    assert 'DEFAULT_TRANSFER_ASSET = "USDT"' in source
+    assert 'SUPPORTED_TRANSFER_ASSETS = {"USDT", "USDC"}' in source
+    assert '"asset": prepared.transfer_asset' in source
     assert '"clientTranId": prepared.client_tran_id' in source
     assert 'client.signed_spot_request("POST", TRANSFER_PATH' in source
     assert 'str(payload.get("status", "")).upper() != "SUCCESS"' in source

@@ -13,7 +13,9 @@ test("each user can enable Profit sparen and choose 5, 10, 25, 50 or a custom pe
   assert.match(settingsBridge, /const PRESETS = \[5, 10, 25, 50\]/);
   assert.match(settingsBridge, /role="switch"/);
   assert.match(settingsBridge, /min="0" max="100"/);
-  assert.match(settingsBridge, /JSON\.stringify\(\{ enabled, sweepPercent: next \}\)/);
+  assert.match(settingsBridge, /JSON\.stringify\(\{ enabled, sweepPercent: next, transferAsset \}\)/);
+  assert.match(settingsBridge, /result\.transferAsset === "USDC" \? "USDC" : "USDT"/);
+  assert.match(settingsBridge, /Spaarasset: \{transferAsset\}/);
   assert.match(settingsBridge, /nieuwe positieve gerealiseerde nettowinst/);
   assert.match(settingsBridge, /Inleg, positieomvang, margin en ongerealiseerde PnL tellen niet mee/);
 });

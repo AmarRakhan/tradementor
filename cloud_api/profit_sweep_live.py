@@ -28,7 +28,8 @@ TRANSFER_PATH = "/api/v3/asset/wallet/transfer"
 SPOT_TRANSACTION_HISTORY_PATH = "/api/v3/transactionHistory"
 SPOT_TRANSFER_HISTORY_TYPE = "TRANSFER_FUTURE_TO_SPOT"
 TRANSFER_KIND = "FUTURE_SPOT"
-TRANSFER_ASSET = "USDT"
+DEFAULT_TRANSFER_ASSET = "USDT"
+SUPPORTED_TRANSFER_ASSETS = {"USDT", "USDC"}
 _AMOUNT_QUANTUM = Decimal("0.00000001")
 
 
@@ -41,6 +42,7 @@ class PreparedSweep:
     symbol: str
     position_side: str
     sweep_percent: Decimal
+    transfer_asset: str
     ledger_ref: Any
     open_quantity: Decimal
     entry_commission_pool: Decimal
@@ -89,8 +91,8 @@ def _commission_cost(row: dict[str, Any]) -> Decimal:
     raw = _d(row.get("commission"))
     if raw == 0:
         return Decimal("0")
-    asset = str(row.get("commissionAsset", TRANSFER_ASSET)).upper().strip()
-    if asset not in {"", TRANSFER_ASSET}:
+    asset = str(row.get("commissionAsset", "USDT")).upper().strip()
+    if asset not in {"", "USDT"}:
         raise ProfitSweepError(f"Commissie in {asset} kan niet veilig als USDT-nettowinst worden gewaardeerd")
     # Aster currently reports commission as a negative value.  abs() also
     # makes a future sign-format change conservative instead of profit-inflating.
@@ -249,6 +251,7 @@ def _transfer_history_match(
     *,
     amount: Decimal,
     submitted_at: Any,
+    asset: str = DEFAULT_TRANSFER_ASSET,
 ) -> tuple[str, dict[str, Any] | None]:
     """Match one FUTURE_SPOT transfer without issuing another money movement.
 
@@ -269,7 +272,7 @@ def _transfer_history_match(
             continue
         if str(row.get("incomeType", "")).upper() != "TRANSFER":
             continue
-        if str(row.get("asset", "")).upper() != TRANSFER_ASSET:
+        if str(row.get("asset", "")).upper() != asset:
             continue
         row_time = _timestamp_ms(row.get("time"))
         if row_time < lower or row_time > upper:
@@ -291,6 +294,7 @@ def _spot_transfer_history_match(
     *,
     amount: Decimal,
     submitted_at: Any,
+    asset: str = DEFAULT_TRANSFER_ASSET,
 ) -> tuple[str, dict[str, Any] | None]:
     """Match a FUTURE->SPOT credit in Aster Spot transaction history."""
     submitted_ms = _timestamp_ms(submitted_at)
@@ -305,7 +309,7 @@ def _spot_transfer_history_match(
             continue
         if str(row.get("type", "")).upper() != SPOT_TRANSFER_HISTORY_TYPE:
             continue
-        if str(row.get("asset", "")).upper() != TRANSFER_ASSET:
+        if str(row.get("asset", "")).upper() != asset:
             continue
         row_time = _timestamp_ms(row.get("time"))
         if row_time < lower or row_time > upper:
@@ -328,14 +332,15 @@ def reconcile_transfer_rows(
     futures_rows: list[dict[str, Any]],
     amount: Decimal,
     submitted_at: Any,
+    asset: str = DEFAULT_TRANSFER_ASSET,
 ) -> tuple[str, dict[str, Any] | None]:
     spot_state, spot_match = _spot_transfer_history_match(
-        spot_rows, amount=amount, submitted_at=submitted_at,
+        spot_rows, amount=amount, submitted_at=submitted_at, asset=asset,
     )
     if spot_match is not None or spot_state == "AMBIGUOUS_SPOT":
         return spot_state, spot_match
     future_state, future_match = _transfer_history_match(
-        futures_rows, amount=amount, submitted_at=submitted_at,
+        futures_rows, amount=amount, submitted_at=submitted_at, asset=asset,
     )
     if future_match is not None or future_state == "AMBIGUOUS":
         return future_state, future_match
@@ -347,6 +352,7 @@ def reconcile_transfer_history(
     client: Any,
     amount: Decimal,
     submitted_at: Any,
+    asset: str = DEFAULT_TRANSFER_ASSET,
     poll_attempts: int = 2,
     poll_delay_seconds: float = 0.35,
 ) -> tuple[str, dict[str, Any] | None]:
@@ -362,7 +368,7 @@ def reconcile_transfer_history(
         spot_ok = futures_ok = False
         try:
             payload = client.signed_spot_request("GET", SPOT_TRANSACTION_HISTORY_PATH, {
-                "asset": TRANSFER_ASSET,
+                "asset": asset,
                 "type": SPOT_TRANSFER_HISTORY_TYPE,
                 "startTime": max(0, submitted_ms - 15_000),
                 "endTime": submitted_ms + 180_000,
@@ -395,6 +401,7 @@ def reconcile_transfer_history(
                 futures_rows=futures_rows,
                 amount=amount,
                 submitted_at=submitted_at,
+                asset=asset,
             )
             if match is not None or state in {"AMBIGUOUS", "AMBIGUOUS_SPOT"}:
                 return state, match
@@ -436,11 +443,13 @@ def _uncertain_result(
     client: Any,
     contribution: Decimal,
     submitted_at: Any,
+    asset: str = DEFAULT_TRANSFER_ASSET,
 ) -> dict[str, Any]:
     state, record = reconcile_transfer_history(
         client=client,
         amount=contribution,
         submitted_at=submitted_at,
+        asset=asset,
     )
     if record is not None:
         return _reconciled_result(ref=ref, contribution=contribution, record=record)
@@ -497,6 +506,9 @@ def recover_failed_sweep(
         return {"status": "NOT_RECOVERABLE", "sourceStatus": status}
 
     contribution = _d(ledger.get("sweepContribution"))
+    transfer_asset = str(ledger.get("asset", DEFAULT_TRANSFER_ASSET)).upper().strip()
+    if transfer_asset not in SUPPORTED_TRANSFER_ASSETS:
+        transfer_asset = DEFAULT_TRANSFER_ASSET
     submitted_at = ledger.get("submittedAt") or ledger.get("updatedAt") or ledger.get("completedAt")
     if contribution <= 0 or _timestamp_ms(submitted_at) <= 0:
         return {"status": "INVALID_RECOVERY_EVIDENCE"}
@@ -507,12 +519,14 @@ def recover_failed_sweep(
             futures_rows=list(futures_rows or []),
             amount=contribution,
             submitted_at=submitted_at,
+            asset=transfer_asset,
         )
     else:
         reconcile_state, record = reconcile_transfer_history(
             client=client,
             amount=contribution,
             submitted_at=submitted_at,
+            asset=transfer_asset,
             poll_attempts=1,
             poll_delay_seconds=0,
         )
@@ -539,7 +553,7 @@ def recover_failed_sweep(
             "uid": uid,
             "sweepId": sweep_id,
             "clientTranId": recovery_client_id,
-            "asset": TRANSFER_ASSET,
+            "asset": transfer_asset,
             "kindType": TRANSFER_KIND,
             "amount": _plain(contribution),
             "status": "CLAIMED",
@@ -551,7 +565,7 @@ def recover_failed_sweep(
         # Never continue a claim whose immutable identity/economic fields differ.
         if (
             str(existing_recovery.get("clientTranId", "")) != recovery_client_id
-            or str(existing_recovery.get("asset", "")).upper() != TRANSFER_ASSET
+            or str(existing_recovery.get("asset", "")).upper() != transfer_asset
             or str(existing_recovery.get("kindType", "")).upper() != TRANSFER_KIND
             or _d(existing_recovery.get("amount")) != contribution
         ):
@@ -585,6 +599,7 @@ def recover_failed_sweep(
                 client=client,
                 amount=contribution,
                 submitted_at=prior_recovery_submitted,
+                asset=transfer_asset,
                 poll_attempts=2,
                 poll_delay_seconds=0.35,
             )
@@ -655,7 +670,7 @@ def recover_failed_sweep(
         }, merge=True)
         try:
             payload = client.signed_spot_request("POST", TRANSFER_PATH, {
-                "asset": TRANSFER_ASSET,
+                "asset": transfer_asset,
                 "amount": _plain(contribution),
                 "clientTranId": recovery_client_id,
                 "kindType": TRANSFER_KIND,
@@ -667,6 +682,7 @@ def recover_failed_sweep(
                 client=client,
                 contribution=contribution,
                 submitted_at=recovery_submitted_at,
+                asset=transfer_asset,
             )
             if str(result.get("status", "")).upper() == "SUCCEEDED":
                 recovery_ref.set({
@@ -694,6 +710,7 @@ def recover_failed_sweep(
                     client=client,
                     amount=contribution,
                     submitted_at=existing_recovery.get("submittedAt") or recovery_submitted_at,
+                    asset=transfer_asset,
                     poll_attempts=2,
                     poll_delay_seconds=0.35,
                 )
@@ -801,6 +818,9 @@ def prepare_close_sweep(
     control_ref = user_ref.collection("executionControls").document("aster")
     control = control_ref.get().to_dict() or {}
     settings = control.get("profitSweep") if isinstance(control.get("profitSweep"), dict) else {}
+    transfer_asset = str(settings.get("transferAsset", DEFAULT_TRANSFER_ASSET)).upper().strip()
+    if transfer_asset not in SUPPORTED_TRANSFER_ASSETS:
+        transfer_asset = DEFAULT_TRANSFER_ASSET
     if settings.get("enabled") is not True:
         return None
     try:
@@ -818,7 +838,7 @@ def prepare_close_sweep(
         "symbol": symbol.upper(),
         "positionSide": position_side.upper(),
         "sweepPercent": float(percent),
-        "asset": TRANSFER_ASSET,
+        "asset": transfer_asset,
         "kindType": TRANSFER_KIND,
         "clientTranId": _client_tran_id(uid, intent_id),
         "status": "PREPARING",
@@ -864,6 +884,7 @@ def prepare_close_sweep(
             symbol=symbol.upper(),
             position_side=position_side.upper(),
             sweep_percent=percent,
+            transfer_asset=transfer_asset,
             ledger_ref=ledger_ref,
             open_quantity=open_qty,
             entry_commission_pool=fee_pool,
@@ -950,7 +971,7 @@ def finalize_close_sweep(
             # Futures host produced repeated -1006 unknown-execution responses.
             # Submit through the approved API-wallet signer on Spot V3.
             payload = client.signed_spot_request("POST", TRANSFER_PATH, {
-                "asset": TRANSFER_ASSET,
+                "asset": prepared.transfer_asset,
                 "amount": _plain(contribution),
                 "clientTranId": prepared.client_tran_id,
                 "kindType": TRANSFER_KIND,
@@ -967,6 +988,7 @@ def finalize_close_sweep(
                 client=client,
                 contribution=contribution,
                 submitted_at=submitted_at,
+                asset=prepared.transfer_asset,
             )
             if str(first.get("status", "")).upper() == "SUCCEEDED":
                 return first
@@ -982,7 +1004,7 @@ def finalize_close_sweep(
             }, merge=True)
             try:
                 replay = client.signed_spot_request("POST", TRANSFER_PATH, {
-                    "asset": TRANSFER_ASSET,
+                    "asset": prepared.transfer_asset,
                     "amount": _plain(contribution),
                     "clientTranId": prepared.client_tran_id,
                     "kindType": TRANSFER_KIND,
@@ -994,6 +1016,7 @@ def finalize_close_sweep(
                     client=client,
                     contribution=contribution,
                     submitted_at=submitted_at,
+                    asset=prepared.transfer_asset,
                 )
             except AsterApiError as replay_exc:
                 replay_message = str(replay_exc)
@@ -1002,6 +1025,7 @@ def finalize_close_sweep(
                         client=client,
                         amount=contribution,
                         submitted_at=submitted_at,
+                        asset=prepared.transfer_asset,
                         poll_attempts=4,
                         poll_delay_seconds=0.5,
                     )
@@ -1051,6 +1075,7 @@ def finalize_close_sweep(
                 client=client,
                 contribution=contribution,
                 submitted_at=submitted_at,
+                asset=prepared.transfer_asset,
             )
         except AsterApiError as exc:
             # Defensive compatibility for older clients that still surface
@@ -1063,6 +1088,7 @@ def finalize_close_sweep(
                     client=client,
                     contribution=contribution,
                     submitted_at=submitted_at,
+                    asset=prepared.transfer_asset,
                 )
             ref.set({"status": "FAILED_EXCHANGE", "reason": message[:500], "completedAt": _now()}, merge=True)
             return {"status": "FAILED_EXCHANGE"}

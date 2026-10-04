@@ -20,6 +20,7 @@ from profit_sweep_live import live_enabled
 class ProfitSweepSettingsRequest(BaseModel):
     enabled: bool = DEFAULT_SWEEP_ENABLED
     sweepPercent: float = Field(default=float(DEFAULT_SWEEP_PERCENT), ge=0, le=100)
+    transferAsset: str = Field(default="USDT", pattern="^(USDT|USDC)$")
 
 
 def _settings_doc(user: dict[str, Any]):
@@ -28,21 +29,24 @@ def _settings_doc(user: dict[str, Any]):
     return main.user_reference(user).collection("executionControls").document("aster")
 
 
-def _current(data: dict[str, Any] | None) -> tuple[bool, float]:
+def _current(data: dict[str, Any] | None) -> tuple[bool, float, str]:
     root = dict(data or {})
     nested = root.get("profitSweep")
     if not isinstance(nested, dict):
-        return DEFAULT_SWEEP_ENABLED, float(DEFAULT_SWEEP_PERCENT)
+        return DEFAULT_SWEEP_ENABLED, float(DEFAULT_SWEEP_PERCENT), "USDT"
     enabled = nested.get("enabled") is True
     try:
         percent = float(normalize_sweep_percent(nested.get("sweepPercent", DEFAULT_SWEEP_PERCENT)))
     except ProfitSweepError:
         # Malformed legacy state fails closed: feature OFF and default percentage.
-        return False, float(DEFAULT_SWEEP_PERCENT)
-    return enabled, percent
+        return False, float(DEFAULT_SWEEP_PERCENT), "USDT"
+    asset = str(nested.get("transferAsset", "USDT")).upper().strip()
+    if asset not in {"USDT", "USDC"}:
+        asset = "USDT"
+    return enabled, percent, asset
 
 
-def _public(enabled: bool, percent: float) -> dict[str, Any]:
+def _public(enabled: bool, percent: float, asset: str) -> dict[str, Any]:
     automatic = bool(enabled) and percent > 0 and live_enabled()
     return {
         "enabled": bool(enabled),
@@ -53,6 +57,7 @@ def _public(enabled: bool, percent: float) -> dict[str, Any]:
         "principalIncluded": False,
         "unrealizedPnlIncluded": False,
         "transferDirection": "FUTURE_SPOT" if automatic else None,
+        "transferAsset": asset,
     }
 
 
@@ -61,9 +66,9 @@ def get_profit_sweep_settings(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    enabled, percent = _current(_settings_doc(user).get().to_dict() or {})
+    enabled, percent, asset = _current(_settings_doc(user).get().to_dict() or {})
     response.headers["Cache-Control"] = "no-store"
-    return _public(enabled, percent)
+    return _public(enabled, percent, asset)
 
 
 @main.app.put("/v1/me/aster/profit-sweep-settings")
@@ -77,15 +82,17 @@ def put_profit_sweep_settings(
     except ProfitSweepError as exc:
         raise HTTPException(422, str(exc)) from exc
 
+    asset = request.transferAsset.upper().strip()
     _settings_doc(user).set(
         {
             "profitSweep": {
                 "enabled": bool(request.enabled),
                 "sweepPercent": percent,
+                "transferAsset": asset,
                 "updatedAt": datetime.now(timezone.utc),
             }
         },
         merge=True,
     )
     response.headers["Cache-Control"] = "no-store"
-    return _public(bool(request.enabled), percent)
+    return _public(bool(request.enabled), percent, asset)

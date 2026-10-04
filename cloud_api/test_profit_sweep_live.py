@@ -45,12 +45,12 @@ class FakeCollection:
 
 
 class FakeUserRef:
-    def __init__(self, *, enabled=True, percent=25):
+    def __init__(self, *, enabled=True, percent=25, asset="USDT"):
         self.collections = {}
         control = self.collection("executionControls").document("aster")
         control.set({
             "masterAddress": "0x" + "a" * 40,
-            "profitSweep": {"enabled": enabled, "sweepPercent": percent},
+            "profitSweep": {"enabled": enabled, "sweepPercent": percent, "transferAsset": asset},
         })
     def collection(self, key):
         if key not in self.collections: self.collections[key] = FakeCollection()
@@ -505,3 +505,24 @@ def test_recovery_never_reposts_when_original_transfer_is_already_in_spot_histor
     assert result["status"] == "SUCCEEDED"
     assert result["tranId"] == "already-done"
     assert client.transfers == []
+
+
+def test_live_sweep_uses_configured_usdc_asset(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC")
+    client = FakeClient()
+    prepared = prepare_close_sweep(
+        uid="u-usdc", user_ref=user, client=client, intent_id="close-usdc-1", symbol="BTCUSDT",
+        position_side="LONG", close_quantity="1",
+    )
+    assert prepared is not None
+    assert prepared.transfer_asset == "USDC"
+    result = finalize_close_sweep(
+        prepared, client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    assert result["status"] == "SUCCEEDED"
+    assert len(client.transfers) == 1
+    assert client.transfers[0][2]["asset"] == "USDC"
+    ledger = user.collection("asterProfitSweeps").document(prepared.sweep_id).data
+    assert ledger["asset"] == "USDC"
