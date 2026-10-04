@@ -1,0 +1,166 @@
+name: Audit Profit Sweep Current Account 2026-10-04
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/audit-profit-sweep-current-20261004.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "452"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Collect current Profit Sweep state read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          GATE="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("ASTER_PROFIT_SWEEP_LIVE_ENABLED","false"))' <<<"$SERVICE_JSON")"
+          JOB="tm-profit-sweep-audit-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          import main
+          TARGET="dbcf103383"
+          db=firestore.Client(project="tradementor-production")
+          result={"status":"ACCOUNT_NOT_FOUND"}
+          for snap in db.collection("asterStrategy2").stream():
+              uid=snap.id
+              if hashlib.sha256(uid.encode()).hexdigest()[:10] != TARGET:
+                  continue
+              control=db.collection("users").document(uid).collection("executionControls").document("aster").get().to_dict() or {}
+              ps=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+              sweeps=[]
+              for doc in db.collection("users").document(uid).collection("asterProfitSweeps").stream():
+                  row=doc.to_dict() or {}
+                  def ms(v):
+                      if isinstance(v,datetime): return int(v.timestamp()*1000)
+                      try: return int(float(v or 0))
+                      except Exception: return 0
+                  stamp=max(ms(row.get("completedAt")),ms(row.get("updatedAt")),ms(row.get("calculatedAt")),ms(row.get("createdAt")))
+                  sweeps.append({
+                      "id":doc.id[:12],
+                      "timeMs":stamp,
+                      "symbol":str(row.get("symbol","")).upper(),
+                      "positionSide":str(row.get("positionSide","")).upper(),
+                      "status":str(row.get("status","")),
+                      "sweepPercent":row.get("sweepPercent"),
+                      "netRealizedProfit":str(row.get("netRealizedProfit","")),
+                      "sweepContribution":str(row.get("sweepContribution","")),
+                      "exchangeOrderId":str(row.get("exchangeOrderId","")),
+                      "providerTransactionId":str(row.get("providerTransactionId","")),
+                      "reason":str(row.get("reason","")),
+                      "marginSafetyReason":str(row.get("marginSafetyReason","")),
+                      "reconciliationStatus":str(row.get("reconciliationStatus","")),
+                  })
+              sweeps.sort(key=lambda x:x["timeMs"],reverse=True)
+              recoveries=[]
+              for doc in db.collection("users").document(uid).collection("asterProfitSweepRecoveries").stream():
+                  row=doc.to_dict() or {}
+                  recoveries.append({
+                      "id":doc.id[:12],"status":str(row.get("status","")),
+                      "providerTransactionId":str(row.get("providerTransactionId","")),
+                      "submitAttempts":row.get("submitAttempts"),
+                  })
+              secret=main.load_aster_secret({"uid":uid})
+              client=main.AsterV3Client(signer_address=secret.signer_address,sign_message=main.local_eip712_signer(secret),live_authorized=False,
+                  before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")))
+              transfers=[]
+              try:
+                  rows=client.income_history(income_type="TRANSFER",limit=1000)
+                  for row in rows if isinstance(rows,list) else []:
+                      if not isinstance(row,dict): continue
+                      transfers.append({
+                          "time":row.get("time"),"asset":str(row.get("asset","")),
+                          "income":str(row.get("income","")),"tranId":str(row.get("tranId","")),
+                      })
+              except Exception:
+                  pass
+              result={
+                  "status":"OK","accountRef":TARGET,
+                  "settings":{"enabled":ps.get("enabled") is True,"sweepPercent":ps.get("sweepPercent")},
+                  "globalGate":__import__("os").getenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED","false"),
+                  "recentSweeps":sweeps[:20],"recoveries":recoveries[:20],"recentTransfers":transfers[:20],
+                  "ordersSent":0,
+              }
+              break
+          print("PROFIT_SWEEP_AUDIT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
+          PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=profit-sweep-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false,ASTER_PROFIT_SWEEP_LIVE_ENABLED=$GATE"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$PROD_IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "$ENV_VARS" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Publish result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"PROFIT_SWEEP_AUDIT \"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --order=desc --format='value(textPayload)' | grep 'PROFIT_SWEEP_AUDIT ' | head -n1 || true)"
+          test -n "$LINE"
+          JSON="${LINE#*PROFIT_SWEEP_AUDIT }"
+          python - "$JSON" > /tmp/report.md <<'PY'
+          import json,sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          d=json.loads(sys.argv[1]);tz=ZoneInfo("Europe/Amsterdam")
+          def clock(ms):
+              try:return datetime.fromtimestamp(int(ms)/1000,tz).strftime("%d-%m %H:%M:%S")
+              except:return "—"
+          print("## Profit Sweep huidige live audit")
+          print()
+          print(f"- Status: **{d.get('status')}** · READ ONLY")
+          print(f"- Persoonlijk ingesteld: **{d.get('settings')}**")
+          print(f"- Globale live gate: **{d.get('globalGate')}**")
+          print()
+          print("### Laatste sweep-ledgers")
+          rows=d.get("recentSweeps") or []
+          if not rows: print("- Geen sweep-ledgers gevonden.")
+          for r in rows:
+              print(f"- {clock(r.get('timeMs'))} · {r.get('symbol') or '—'} {r.get('positionSide') or '—'} · **{r.get('status') or '—'}** · net={r.get('netRealizedProfit') or '—'} · 5%/bijdrage={r.get('sweepContribution') or '—'} · order={r.get('exchangeOrderId') or '—'} · transfer={r.get('providerTransactionId') or '—'} · reason={r.get('reason') or r.get('marginSafetyReason') or r.get('reconciliationStatus') or '—'}")
+          print()
+          print("### Futures TRANSFER-ledger")
+          trs=d.get("recentTransfers") or []
+          if not trs: print("- Geen TRANSFER-regels gevonden in de recente Aster income history.")
+          for r in trs[:10]:
+              print(f"- {r.get('time')} · {r.get('asset')} · {r.get('income')} · tranId={r.get('tranId')}")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
