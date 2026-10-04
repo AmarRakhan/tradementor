@@ -2193,6 +2193,23 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     try: hedge=client.position_mode();account=client.account_information();positions=client.position_risk();orders=client.open_orders()
     except (AsterApiError,ValueError) as exc:
         ref.set({"phase":"DATA_HOLD","lastReason":str(exc),"lastTickAt":now},merge=True);return {"status":"data-hold","reason":str(exc)}
+    # Profit Pot 2.0 reconciliation is accounting-only and uses the already
+    # authenticated tenant client from the normal minute scheduler. It can
+    # finish/retry previously booked threshold transfers while the app is closed
+    # and never creates a savings contribution by itself.
+    if not dry_run and not str(event_symbol).strip():
+        try:
+            from profit_sweep_live import reconcile_profit_savings_buffer
+            reconcile_profit_savings_buffer(
+                uid=uid,
+                user_ref=user_reference({"uid":uid}),
+                client=client,
+                max_blocks=20,
+            )
+        except Exception:
+            # Profit saving is subordinate to trading. Reconciliation failure
+            # must never pause Strategy 2 or convert the tick into DATA_HOLD.
+            pass
     # The Portfolio Koers is server-persistent, not browser-persistent. Record one
     # exchange-confirmed equity sample per scheduler minute so closing/backgrounding
     # the webapp can never create multi-hour chart holes. Realtime websocket ticks
