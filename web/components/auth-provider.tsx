@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const send = async (value: string) => {
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 12_000);
+      const timeout = window.setTimeout(() => controller.abort(), 6_000);
       try { return await fetch("/api/session/bootstrap", { method: "POST", headers: { Authorization: `Bearer ${value}` }, signal: controller.signal, cache: "no-store" }); }
       finally { window.clearTimeout(timeout); }
     };
