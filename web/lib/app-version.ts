@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 497: bestaand Actieve-zone LONG/SHORT-blok wordt ook onder Portfolio Koers weergegeven.
-export const WEBAPP_BUILD_NUMBER = "497";
+// Build 498: bestaand Actieve-zone LONG/SHORT-blok wordt gedeeld tussen Prijszone Details en Portfolio Koers.
+export const WEBAPP_BUILD_NUMBER = "498";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
