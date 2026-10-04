@@ -1161,7 +1161,59 @@ def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, cli
                 prepared, claim, tran_id=str(record.get("tranId", "")), reconciled=True,
             )
             return {"status": "SUCCEEDED", "state": next_state, "reconciled": True}
-        retry_status = "UNCERTAIN" if isinstance(exc, AsterSubmissionUncertain) or _unknown_execution_reason(message) else "RETRYABLE"
+
+        unknown = isinstance(exc, AsterSubmissionUncertain) or _unknown_execution_reason(message)
+        if unknown and state == "NOT_FOUND":
+            # One immediate idempotent replay is allowed only with the exact same
+            # deterministic clientTranId. This restores the proven legacy safety
+            # behavior without creating a second logical transfer.
+            replay_at = _now()
+            claim = _mark_claim(
+                prepared, claim, status="RESUBMITTING_SAME_ID",
+                replaySubmittedAt=replay_at, reconciliationStatus=state,
+            )
+            try:
+                replay = client.signed_spot_request("POST", TRANSFER_PATH, {
+                    "asset": prepared.transfer_asset,
+                    "amount": _plain(amount),
+                    "clientTranId": str(claim.get("clientTranId")),
+                    "kindType": TRANSFER_KIND,
+                })
+            except (AsterSubmissionUncertain, AsterApiError) as replay_exc:
+                replay_state, replay_record = reconcile_transfer_history(
+                    client=client,
+                    amount=amount,
+                    submitted_at=submitted_at,
+                    asset=prepared.transfer_asset,
+                    poll_attempts=3,
+                    poll_delay_seconds=0.35,
+                )
+                if replay_record is not None:
+                    next_state = _complete_claim(
+                        prepared, claim, tran_id=str(replay_record.get("tranId", "")), reconciled=True,
+                    )
+                    return {"status": "SUCCEEDED", "state": next_state, "reconciled": True}
+                _mark_claim(
+                    prepared, claim, status="UNCERTAIN", reason=str(replay_exc)[:500],
+                    reconciliationStatus=replay_state,
+                )
+                return {"status": "UNCERTAIN", "reconciliationStatus": replay_state}
+            if (
+                isinstance(replay, dict)
+                and str(replay.get("status", "")).upper() == "SUCCESS"
+                and replay.get("tranId") not in (None, "")
+            ):
+                next_state = _complete_claim(prepared, claim, tran_id=str(replay.get("tranId")))
+                return {
+                    "status": "SUCCEEDED",
+                    "state": next_state,
+                    "tranId": str(replay.get("tranId")),
+                    "replayed": True,
+                }
+            _mark_claim(prepared, claim, status="UNCERTAIN", reason="Aster replay bevestigde geen SUCCESS + tranId")
+            return {"status": "UNCERTAIN", "reconciliationStatus": state}
+
+        retry_status = "UNCERTAIN" if unknown else "RETRYABLE"
         _mark_claim(
             prepared, claim, status=retry_status, reason=message[:500], reconciliationStatus=state,
         )
