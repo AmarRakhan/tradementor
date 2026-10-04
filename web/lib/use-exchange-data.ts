@@ -28,15 +28,15 @@ async function timedRead(path: string) {
   const value = await withBoundedRetry(async () => {
     attempts += 1;
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    const timeout = window.setTimeout(() => controller.abort(), 6_000);
     try { return await authenticatedRequest(path, { cache: "no-store", signal: controller.signal }); }
     finally { window.clearTimeout(timeout); }
   }, { attempts: 2, delays: [350] }) as Record<string, unknown>;
   return { value, durationMs: Math.round(performance.now() - started), attempts };
 }
 
-function fetchAsterSnapshot(uid: string, generation: number) {
-  const key = `${uid}:aster:${generation}`;
+function fetchAsterSnapshot(uid: string, _generation: number) {
+  const key = `${uid}:aster`;
   const current = inFlight.get(key);
   if (current) return current;
   const started = performance.now();
@@ -156,7 +156,14 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
   }, [refresh]);
 
   useEffect(() => {
-    if (!cloudReady || !uid) return;
+    if (!uid) return;
+    // Startup fast path: authenticated Aster reads use the Firebase token directly,
+    // so they do not need to wait for the separate session/bootstrap round-trip.
+    void refresh("aster");
+  }, [refresh, uid]);
+
+  useEffect(() => {
+    if (!uid) return;
     const controller = new AbortController();
     let stopped = false;
     let retryMs = 1000;
@@ -202,7 +209,7 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
     };
     void run();
     return () => { stopped = true; controller.abort(); if (realtimeBatchTimer.current !== null) window.clearTimeout(realtimeBatchTimer.current); realtimeBatchTimer.current = null; realtimeBatch.current.clear(); };
-  }, [cloudReady, uid]);
+  }, [uid]);
 
   useEffect(() => {
     if (!cloudReady) return;
