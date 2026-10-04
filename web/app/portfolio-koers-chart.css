@@ -1018,7 +1018,8 @@
   font:900 7px/1 system-ui;
 }
 .portfolio-koers-ui41-hint{display:flex;align-items:center;justify-content:center;gap:7px;min-height:34px;color:#9eaaa8;font:760 7px/1.2 system-ui;text-align:center}
-.portfolio-koers-ui41-hint .portfolio-koers-moneybag{width:14px;height:14px;flex-basis:14px;color:#e9bd45}\n.portfolio-koers-active-zone-seat{width:100%;box-sizing:border-box;margin-top:8px}
+.portfolio-koers-ui41-hint .portfolio-koers-moneybag{width:14px;height:14px;flex-basis:14px;color:#e9bd45}
+.portfolio-koers-active-zone-seat{width:100%;box-sizing:border-box;margin-top:8px}
 .portfolio-koers-active-zone-seat .aps-active-zone-seat-block{width:100%;box-sizing:border-box}
 .portfolio-koers-active-zone-seat .aps-zone-group-title{font-size:8px}
 .portfolio-koers-active-zone-seat .aps-zone-meters span{font-size:8px}

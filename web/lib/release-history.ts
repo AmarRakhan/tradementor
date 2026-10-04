@@ -51,11 +51,13 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Nieuw gedeeld presentatiesubcomponent: web/components/active-zone-seat-block.tsx.",
     "Frontend-only wijziging in aster-portfolio-snapshot-enhancer.tsx, portfolio-koers-chart.tsx en portfolio-koers-chart.css.",
-    "Mockupreferentie: file_00000000796c8210aa150351316f20d1.",\n    "Releasecontract en appversie zijn samen vastgelegd voor Build 500.",
+    "Mockupreferentie: file_00000000796c8210aa150351316f20d1.",
+    "Releasecontract en appversie zijn samen vastgelegd voor Build 501.",
   ],
   confidence: "confirmed",
 };
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [\n  {
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
     id: "v46-build-496-profit-pot-threshold",
     version: "46",
     build: "496",
