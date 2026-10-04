@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 502: gedeeld Actieve-zone blok onder Portfolio Koers met bijgewerkte regressiecontracten.
-export const WEBAPP_BUILD_NUMBER = "502";
+// Build 503: Actieve Trades 2.0 als samengestelde, basis-100 marktindex van open posities.
+export const WEBAPP_BUILD_NUMBER = "503";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
