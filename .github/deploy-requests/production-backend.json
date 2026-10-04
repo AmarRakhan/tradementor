@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "352d248febb2f10eec11fa9e8c446e84ec9c474a",
+  "sourceCommit": "167e77b148dfdc01120ff1a9befc53cfe1904d0f",
   "requestedBy": "AmarRakhan",
-  "requestId": "closed-result-full-hedge-side-20261003"
+  "requestId": "build495-profit-sweep-usdc-20261004"
 }
