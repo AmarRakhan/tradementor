@@ -1,0 +1,101 @@
+name: Set Profit Sweep Asset USDC For Target Account
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/set-profit-sweep-usdc-target.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "452"
+
+jobs:
+  set-asset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set only target Profit Sweep transferAsset to USDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet google-cloud-firestore
+          python <<'PY' > /tmp/result.json
+          import hashlib,json
+          from google.cloud import firestore
+
+          TARGET="dbcf103383"
+          db=firestore.Client(project="tradementor-production")
+          result={"status":"ACCOUNT_NOT_FOUND"}
+          for snap in db.collection("asterStrategy2").stream():
+              uid=snap.id
+              if hashlib.sha256(uid.encode()).hexdigest()[:10] != TARGET:
+                  continue
+              ref=db.collection("users").document(uid).collection("executionControls").document("aster")
+              before=ref.get().to_dict() or {}
+              profit=before.get("profitSweep") if isinstance(before.get("profitSweep"),dict) else {}
+              enabled=profit.get("enabled") is True
+              percent=profit.get("sweepPercent")
+              old_asset=str(profit.get("transferAsset","USDT")).upper()
+              ref.update({"profitSweep.transferAsset":"USDC"})
+              after=ref.get().to_dict() or {}
+              saved=after.get("profitSweep") if isinstance(after.get("profitSweep"),dict) else {}
+              result={
+                  "status":"OK",
+                  "accountRef":TARGET,
+                  "enabledBefore":enabled,
+                  "percentBefore":percent,
+                  "assetBefore":old_asset,
+                  "enabledAfter":saved.get("enabled") is True,
+                  "percentAfter":saved.get("sweepPercent"),
+                  "assetAfter":saved.get("transferAsset"),
+                  "otherSettingsPreserved":(
+                      (saved.get("enabled") is True)==enabled and saved.get("sweepPercent")==percent
+                  ),
+              }
+              break
+          print(json.dumps(result,separators=(",",":"),sort_keys=True))
+          PY
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Publish result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          JSON="$(cat /tmp/result.json)"
+          python - "$JSON" > /tmp/report.md <<'PY'
+          import json,sys
+          d=json.loads(sys.argv[1])
+          print("## Profit Sweep asset ingesteld")
+          print()
+          print(f"- Status: **{d.get('status')}**")
+          print(f"- Account: **{d.get('accountRef')}**")
+          print(f"- Asset vóór: **{d.get('assetBefore')}**")
+          print(f"- Asset na: **{d.get('assetAfter')}**")
+          print(f"- Profit sparen bleef: **{d.get('enabledAfter')}**")
+          print(f"- Percentage bleef: **{d.get('percentAfter')}%**")
+          print(f"- Overige Profit Sweep-instellingen behouden: **{d.get('otherSettingsPreserved')}**")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
