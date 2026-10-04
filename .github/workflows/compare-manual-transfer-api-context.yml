@@ -1,0 +1,204 @@
+name: Compare Manual Transfer API Context
+
+on:
+  push:
+    branches: [audit/compare-manual-transfer-api-context-20261004]
+    paths: [.github/workflows/compare-manual-transfer-api-context.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "452"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read account linkage and recent transfer history
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          JOB="tm-transfer-context-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json,time
+          from datetime import datetime,timezone,timedelta
+          from google.cloud import firestore
+          import main
+
+          TARGET="dbcf103383"
+          db=firestore.Client(project="tradementor-production")
+          result={"status":"ACCOUNT_NOT_FOUND"}
+
+          for snap in db.collection("asterStrategy2").stream():
+              uid=snap.id
+              if hashlib.sha256(uid.encode()).hexdigest()[:10] != TARGET:
+                  continue
+              user_ref=db.collection("users").document(uid)
+              control=user_ref.collection("executionControls").document("aster").get().to_dict() or {}
+              secret=main.load_aster_secret({"uid":uid})
+              client=main.AsterV3Client(
+                  signer_address=secret.signer_address,
+                  sign_message=main.local_eip712_signer(secret),
+                  live_authorized=False,
+                  before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
+              )
+              account=client.account_information() or {}
+              now_ms=int(time.time()*1000)
+              start_ms=now_ms-48*60*60*1000
+
+              futures_transfers=[]
+              try:
+                  rows=client.income_history(income_type="TRANSFER",start_time=start_ms,end_time=now_ms,limit=1000)
+                  for row in rows:
+                      if not isinstance(row,dict): continue
+                      futures_transfers.append({
+                          "time":row.get("time"),
+                          "asset":str(row.get("asset","")),
+                          "income":str(row.get("income","")),
+                          "tranId":str(row.get("tranId","")),
+                      })
+              except Exception as exc:
+                  futures_transfers=[{"error":type(exc).__name__+":"+str(exc)[:160]}]
+
+              spot_transfers=[]
+              try:
+                  payload=client.signed_spot_request("GET","/api/v3/transactionHistory",{
+                      "asset":"USDT",
+                      "type":"TRANSFER_FUTURE_TO_SPOT",
+                      "startTime":start_ms,
+                      "endTime":now_ms,
+                      "limit":1000,
+                  })
+                  for row in payload if isinstance(payload,list) else []:
+                      if not isinstance(row,dict): continue
+                      spot_transfers.append({
+                          "time":row.get("time"),
+                          "asset":str(row.get("asset","")),
+                          "type":str(row.get("type","")),
+                          "balanceDelta":str(row.get("balanceDelta","")),
+                          "tranId":str(row.get("tranId","")),
+                      })
+              except Exception as exc:
+                  spot_transfers=[{"error":type(exc).__name__+":"+str(exc)[:160]}]
+
+              sweep_rows=[]
+              for doc in user_ref.collection("asterProfitSweeps").stream():
+                  row=doc.to_dict() or {}
+                  stamp=0
+                  for key in ("completedAt","updatedAt","calculatedAt","createdAt"):
+                      v=row.get(key)
+                      if isinstance(v,datetime):
+                          stamp=max(stamp,int(v.timestamp()*1000))
+                  sweep_rows.append({
+                      "time":stamp,
+                      "symbol":str(row.get("symbol","")),
+                      "status":str(row.get("status","")),
+                      "contribution":str(row.get("sweepContribution","")),
+                      "providerTransactionId":str(row.get("providerTransactionId","")),
+                      "reason":str(row.get("reason","")),
+                  })
+              sweep_rows.sort(key=lambda x:x["time"],reverse=True)
+
+              master=str(control.get("masterAddress","")).lower().strip()
+              signer=str(secret.signer_address).lower().strip()
+              result={
+                  "status":"OK",
+                  "accountRef":TARGET,
+                  "linkage":{
+                      "masterAddressSuffix":master[-8:] if master else "",
+                      "signerAddressSuffix":signer[-8:] if signer else "",
+                      "sameAddress":bool(master and signer and master==signer),
+                  },
+                  "futuresAccount":{
+                      "availableBalance":account.get("availableBalance"),
+                      "totalWalletBalance":account.get("totalWalletBalance"),
+                      "totalMarginBalance":account.get("totalMarginBalance"),
+                      "totalMaintMargin":account.get("totalMaintMargin"),
+                  },
+                  "futuresTransfers48h":sorted(futures_transfers,key=lambda x:int(x.get("time") or 0),reverse=True)[:30],
+                  "spotTransfers48h":sorted(spot_transfers,key=lambda x:int(x.get("time") or 0),reverse=True)[:30],
+                  "latestSweeps":sweep_rows[:15],
+                  "ordersSent":0,
+                  "moneyMoved":False,
+              }
+              break
+
+          print("TRANSFER_CONTEXT_AUDIT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
+          PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=transfer-context-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$PROD_IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "$ENV_VARS" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Publish result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"TRANSFER_CONTEXT_AUDIT \"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --order=desc --format='value(textPayload)' | grep 'TRANSFER_CONTEXT_AUDIT ' | head -n1 || true)"
+          test -n "$LINE"
+          JSON="${LINE#*TRANSFER_CONTEXT_AUDIT }"
+          python - "$JSON" > /tmp/report.md <<'PY'
+          import json,sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          d=json.loads(sys.argv[1]); tz=ZoneInfo("Europe/Amsterdam")
+          def clock(ms):
+              try:return datetime.fromtimestamp(int(ms)/1000,tz).strftime("%d-%m %H:%M:%S")
+              except:return "—"
+          print("## Handmatige transfer versus API-context")
+          print()
+          print(f"- Status: **{d.get('status')}** · volledig read-only")
+          print(f"- Linkage: {d.get('linkage')}")
+          print(f"- Futures account: {d.get('futuresAccount')}")
+          print()
+          print("### Spot FUTURE_TO_SPOT transfers laatste 48 uur")
+          rows=d.get("spotTransfers48h") or []
+          if not rows: print("- Geen regels.")
+          for r in rows:
+              print(f"- {clock(r.get('time'))} · {r.get('asset','')} · delta={r.get('balanceDelta','')} · tranId={r.get('tranId','')} · {r.get('error','')}")
+          print()
+          print("### Futures TRANSFER ledger laatste 48 uur")
+          rows=d.get("futuresTransfers48h") or []
+          if not rows: print("- Geen regels.")
+          for r in rows:
+              print(f"- {clock(r.get('time'))} · {r.get('asset','')} · income={r.get('income','')} · tranId={r.get('tranId','')} · {r.get('error','')}")
+          print()
+          print("### Laatste Profit Sweep ledgers")
+          for r in d.get("latestSweeps") or []:
+              print(f"- {clock(r.get('time'))} · {r.get('symbol')} · {r.get('status')} · bijdrage={r.get('contribution')} · transfer={r.get('providerTransactionId') or '—'} · {r.get('reason') or ''}")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
