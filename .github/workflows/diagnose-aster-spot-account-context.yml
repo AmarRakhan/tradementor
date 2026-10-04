@@ -120,12 +120,26 @@ jobs:
                           "balanceDelta":delta,
                           "tranId":str(row.get("tranId","")),
                       })
+              futures_assets={}
+              for row in account.get("assets",[]) if isinstance(account.get("assets"),list) else []:
+                  if not isinstance(row,dict): continue
+                  asset=str(row.get("asset","")).upper()
+                  if asset in {"USDT","USDC","USD1"}:
+                      futures_assets[asset]={
+                          "walletBalance":str(row.get("walletBalance","")),
+                          "availableBalance":str(row.get("availableBalance","")),
+                          "crossWalletBalance":str(row.get("crossWalletBalance","")),
+                          "unrealizedProfit":str(row.get("unrealizedProfit","")),
+                          "marginAvailable":row.get("marginAvailable"),
+                      }
+
               result={
                   "status":"OK",
                   "accountRef":TARGET,
                   "masterSuffix":master[-8:] if master else "",
                   "signerSuffix":signer[-8:] if signer else "",
                   "sameAddress":bool(master and signer and master==signer),
+                  "futuresAssets":futures_assets,
                   "genericSignerContext":{
                       "balances":balances(generic_account),
                       "canTrade":generic_account.get("canTrade") if isinstance(generic_account,dict) else None,
@@ -184,6 +198,7 @@ jobs:
           print(f"- Master suffix: **{d.get('masterSuffix')}**")
           print(f"- Signer suffix: **{d.get('signerSuffix')}**")
           print(f"- Zelfde adres: **{d.get('sameAddress')}**")
+          print(f"- Futures assets: {d.get('futuresAssets')}")
           print(f"- Signer-context: {d.get('genericSignerContext')}")
           print(f"- Expliciete user+signer-context: {d.get('explicitUserContext')}")
           print()
